@@ -8,7 +8,7 @@ The currently composed application path uses Candle on the CPU with Hugging Face
 
 A GGUF/llama.cpp CPU adapter also implements the lower inference compatibility boundary. It is not selectable through `application-runtime` or the Slint UI yet.
 
-The E0 inference runtime now contains a token-level direct-completion loop and a Phase 4 Candle CPU integration package. That path is not yet exposed through `application-runtime` or the Slint frontend, and its final locked validation plus pinned external-model smoke remain required before Phase 4 is marked complete. In particular:
+The E0 inference runtime contains a token-level direct-completion loop and the Phase 4 Candle CPU integration package. The original Phase 4 implementation passed the repository's locked validation gate and pinned external-model smoke on the recorded baseline. The closure patch strengthens explicit sequence destruction, post-unload accounting, documentation provenance, and fixture hygiene; rerun both gates on the resulting commit before beginning Phase 5. The E0 path is not yet exposed through `application-runtime` or the Slint frontend. In particular:
 
 - callers at E0 currently supply token IDs and receive token IDs;
 - tokenizer/text streaming and the frontend-neutral generation API are Phase 5 work;

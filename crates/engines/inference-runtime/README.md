@@ -10,6 +10,6 @@ The hosted worker alternates bounded command handling, one fair generation oppor
 
 Generated token IDs and ordered terminal state use `host-runtime`'s preallocated pull accumulator. Full output capacity yields without another backend step. Cleanup failure publishes pending and, when applicable, exhausted state while preserving the original terminal classification. Cleanup uses a configurable total-attempt limit and never retries a successfully released or exhausted resource automatically.
 
-Phase 4 adds an ordinary download-free integration test that drives the real `CandleLlamaLoader` through this same E0 scheduler for token-limit and EOS completion, backpressure, cancellation, release, unload, and shutdown. The opt-in `candle_llama_smoke` example exercises a pinned local model and emits diagnostic lifecycle timings and RSS checkpoints.
+Phase 4 adds an ordinary download-free integration test that drives the real `CandleLlamaLoader` through this same E0 scheduler for token-limit and EOS completion, backpressure, cancellation, release, unload, a final empty runtime/model snapshot, and shutdown. The opt-in `candle_llama_smoke` example exercises a pinned local model and emits diagnostic lifecycle timings and RSS checkpoints.
 
 See the [inference runtime guide](../../../docs/project/inference-runtime.md) for lifecycle, accounting, cancellation, output, and cleanup semantics.

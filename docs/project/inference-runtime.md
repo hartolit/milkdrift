@@ -178,11 +178,12 @@ No Candle branch or model-specific exception was added to the generic scheduler.
 
 That integration proves token-limit and EOS completion, output backpressure,
 cancellation at a backend boundary, ordered terminal/released publication, exact
-generation-workspace release, model unload, and terminal worker shutdown. Ordinary
-CI still performs no model download.
+generation-workspace release, model unload, a final empty runtime/model snapshot,
+and terminal worker shutdown. Ordinary CI still performs no model download.
 
-An opt-in external-model example adds the first real-file diagnostic path and emits
-load, first-token, decode-throughput, cancellation, unload, and RSS observations.
+An opt-in external-model example adds the first real-file diagnostic path, repeats
+the post-unload empty-state assertion, and emits load, first-token,
+decode-throughput, cancellation, unload, and RSS observations.
 See [Phase 4 Candle Llama Smoke Procedure](../execution/phase4-candle-smoke.md).
 
 Tokenizer integration, decoded text streaming, E1 generation commands, UI

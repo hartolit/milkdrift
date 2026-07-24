@@ -1,8 +1,8 @@
 # Phase 4 Candle Llama Smoke Procedure
 
 This is the opt-in real-model validation path for the Phase 4 Candle CPU vertical
-slice. It is deliberately separate from ordinary CI: the workspace tests create
-small deterministic Safetensors fixtures locally and do not download a model.
+slice. It is deliberately separate from ordinary CI: workspace tests use a small
+project-authored Safetensors fixture and never download a model.
 
 ## Pinned fixture
 
@@ -18,6 +18,10 @@ small deterministic Safetensors fixtures locally and do not download a model.
 This is a tiny random test model, not a quality or language benchmark. The smoke
 accepts caller-supplied token IDs and prints generated token IDs because tokenizer
 and decoded-text integration remain Phase 5 work.
+
+Downloaded model files are local validation inputs, not repository fixtures. The
+documented `.phase4/` directory is ignored; do not commit the downloaded config,
+weights, or machine-specific command transcript.
 
 ## Download the exact revision
 
@@ -71,6 +75,7 @@ load pinned local Llama
 → publish Released(Cancelled(UserRequested))
 → verify request/workspace/cleanup accounting is empty
 → unload the model
+→ verify loaded-model, request, workspace, cleanup, memory, and model-list state is empty
 → shut down and join the worker
 ```
 
@@ -102,7 +107,9 @@ The executable prefixes failures with one of two categories:
   missing files, invalid token syntax, or an oversized prompt;
 - `runtime error`: adapter inspection/load failure, descriptor mismatch, generation
   admission or execution failure, missing terminal/release records, retained
-  accounting, unload failure, or worker shutdown failure.
+  accounting, unload failure, non-empty post-unload state, or worker shutdown
+  failure.
 
 A successful model download alone is not evidence that Phase 4 passes. Record the
-complete command output together with the source commit used for the run.
+complete command output together with `git rev-parse HEAD`; both must refer to the
+same source commit.

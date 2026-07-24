@@ -160,8 +160,8 @@ fn exercise_sequences(
 
 fn unload_after_bounded_drain(
     mut model: CandleLlamaModel,
-    first: CandleLlamaSequence,
-    second: CandleLlamaSequence,
+    mut first: CandleLlamaSequence,
+    mut second: CandleLlamaSequence,
 ) -> TestResult {
     let mut lifecycle = ModelLifecycle::new();
     lifecycle.begin_load().map_err(|_| "begin lifecycle load")?;
@@ -206,6 +206,14 @@ fn unload_after_bounded_drain(
         LifecycleAction::ReleaseModel
     );
 
+    model
+        .destroy_sequence(&mut first)
+        .map_err(|_| "destroy first sequence")?;
+    model
+        .destroy_sequence(&mut second)
+        .map_err(|_| "destroy second sequence")?;
+    assert_eq!(first.state(), SequenceState::Finished);
+    assert_eq!(second.state(), SequenceState::Finished);
     drop(first);
     drop(second);
     model.synchronize().map_err(|_| "synchronize model")?;
@@ -280,6 +288,7 @@ fn advertised_scalar_types_produce_f32_vocabulary_logits() -> TestResult {
         model
             .destroy_sequence(&mut sequence)
             .map_err(|_| "destroy scalar sequence")?;
+        assert_eq!(sequence.state(), SequenceState::Finished);
         drop(sequence);
         model.prepare_unload().map_err(|_| "unload scalar model")?;
     }

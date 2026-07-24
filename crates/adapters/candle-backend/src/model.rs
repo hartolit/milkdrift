@@ -267,7 +267,8 @@ impl LoadedModel for CandleLlamaModel {
         })
     }
 
-    fn destroy_sequence(&mut self, _sequence: &mut Self::Sequence) -> Result<(), SequenceError> {
+    fn destroy_sequence(&mut self, sequence: &mut Self::Sequence) -> Result<(), SequenceError> {
+        sequence.state = SequenceState::Finished;
         Ok(())
     }
 

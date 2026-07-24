@@ -358,11 +358,48 @@ fn unload_model(hosted: &HostedRuntime<CandleLlamaSource>, handle: ModelHandle) 
         RuntimeEvent::ModelUnload {
             ticket,
             result: Ok(receipt),
-        } if ticket == CommandTicket::new(5) && receipt.status == UnloadStatus::Unloaded => Ok(()),
+        } if ticket == CommandTicket::new(5) && receipt.status == UnloadStatus::Unloaded => {
+            assert_unloaded_snapshot(hosted)
+        }
         RuntimeEvent::ModelUnload {
             result: Err(error), ..
         } => Err(format!("model unload failed: {error:?}")),
         _ => Err("unexpected model unload event".into()),
+    }
+}
+
+fn assert_unloaded_snapshot(hosted: &HostedRuntime<CandleLlamaSource>) -> TestResult {
+    hosted
+        .try_submit(RuntimeCommand::Snapshot {
+            ticket: CommandTicket::new(6),
+        })
+        .map_err(|error| format!("post-unload snapshot command rejected: {error:?}"))?;
+    match hosted
+        .receive_timeout(Duration::from_secs(5))
+        .map_err(|error| format!("post-unload snapshot event failed: {error:?}"))?
+    {
+        RuntimeEvent::Snapshot {
+            ticket,
+            runtime,
+            models,
+        } if ticket == CommandTicket::new(6) => {
+            assert_eq!(runtime.loaded_models, 0);
+            assert_eq!(runtime.active_requests, 0);
+            assert_eq!(runtime.reserved_footprint, MemoryFootprint::default());
+            assert_eq!(runtime.generation_workspaces, 0);
+            assert_eq!(
+                runtime.reserved_generation_workspace,
+                MemoryFootprint::default()
+            );
+            assert_eq!(runtime.pending_cleanup_models, 0);
+            assert_eq!(runtime.pending_cleanup_sequences, 0);
+            assert_eq!(runtime.exhausted_cleanup_models, 0);
+            assert_eq!(runtime.exhausted_cleanup_sequences, 0);
+            assert!(runtime.maintenance_error.is_none());
+            assert!(models.is_empty());
+            Ok(())
+        }
+        _ => Err("unexpected post-unload snapshot event".into()),
     }
 }
 
@@ -373,7 +410,7 @@ fn unload_model(hosted: &HostedRuntime<CandleLlamaSource>, handle: ModelHandle) 
 fn shutdown(hosted: HostedRuntime<CandleLlamaSource>, thread: RuntimeThread) -> TestResult {
     hosted
         .try_submit(RuntimeCommand::Shutdown {
-            ticket: CommandTicket::new(6),
+            ticket: CommandTicket::new(7),
         })
         .map_err(|error| format!("shutdown command rejected: {error:?}"))?;
     match hosted

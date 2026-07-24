@@ -1,29 +1,29 @@
-# Phase 4 Completion Report
+# Phase 4 Closure Report
 
-**Prepared:** 2026-07-24
-**Scope:** Phase 4 Candle CPU vertical slice against the final applied working tree
-**Baseline:** Phase 3 completion tree plus the Phase 4 implementation and validation corrections
+**Prepared:** 2026-07-25
+**Implementation baseline:** `8de2ebf2811d5158e3439efe2114379de59322d0`
+**Scope:** Candle CPU vertical slice plus lifecycle, validation-provenance, and external-fixture closure corrections
 
 ## Result
 
-Phase 4 is complete on the validated source tree.
+The Phase 4 implementation is complete. Formal closure is pending one final locked verification and one pinned external-model smoke on the commit produced after applying the closure patch.
 
-The repository's canonical locked verification completed successfully under the
-toolchain pinned by `rust-toolchain.toml`. The pinned external-model smoke also
-completed successfully using the exact Safetensors fixture and revision documented
-in `docs/execution/phase4-candle-smoke.md`.
+The recorded baseline run proved the real Candle Llama path through E0: model inspection and load, prompt prefill, sampling, incremental decode, bounded token output, cancellation between backend calls, terminal and released publication, empty request/workspace/cleanup accounting, model unload, worker shutdown, and join.
 
-The evidence proves the real Candle Llama path through E0: model inspection and
-load, prompt prefill, sampling, incremental decode, bounded token output,
-cancellation between backend calls, terminal and released publication, empty
-request/workspace/cleanup accounting, model unload, worker shutdown, and join.
+The closure patch strengthens that evidence by:
 
-Phase 5 may begin after the validated tree is committed without further source
-changes. If source changes are made before or after the commit, rerun both gates.
+- transitioning a successfully destroyed Candle sequence to `SequenceState::Finished`;
+- explicitly destroying both adapter-test sequences before unload;
+- requiring an empty runtime and model registry snapshot after unload in deterministic integration tests and the real-model smoke;
+- removing the downloaded external model and machine-specific transcript from the repository;
+- ignoring `.phase4/`, which is the documented local download location; and
+- synchronizing the canonical status, root README, component guide, smoke procedure, and this report.
+
+Because those changes touch source and tests, the recorded baseline output is not represented as proof for the new commit. Phase 5 remains gated on the final commands in [Final closure rule](#final-closure-rule).
 
 ## Phase 4 closure matrix
 
-| Phase 4 requirement | Validated closure |
+| Phase 4 requirement | Implemented closure |
 |---|---|
 | Prompt positions | Deterministic Candle fixtures verify prefill consumes the complete prompt and decode advances from the preserved position. |
 | Final prefill logits | Token-identity fixture weights prove that the final prompt token controls the full-vocabulary logits used for sampling. |
@@ -31,45 +31,36 @@ changes. If source changes are made before or after the commit, rerun both gates
 | Vocabulary logits | Adapter and E0 integration tests require exact vocabulary-sized caller-owned F32 output. |
 | EOS handling | Candle E0 integration publishes the EOS token followed by terminal and released EOS outcomes. |
 | Scalar compatibility | F32 and F16 execute using their supported CPU dtypes. BF16 source tensors are validated as BF16 and deliberately upcast to F32 because Candle 0.11 CPU matmul does not execute BF16 operands. Resident-weight and KV-cache admission use the execution dtype so memory is not undercounted. |
-| Sequence destruction | Adapter tests destroy native sequences explicitly; E0 tests require terminal `Released` state and zero retained request, workspace, and cleanup accounting. |
-| Model unload | Completion, EOS, and cancellation paths unload with `RejectIfBusy`, then shut down and join the worker. |
+| Sequence destruction | Successful Candle destruction marks the sequence `Finished`; adapter tests assert the state and E0 tests require terminal `Released` publication. |
+| Model unload | Completion, EOS, and cancellation paths unload with `RejectIfBusy`, then assert zero loaded models, zero retained accounting, and an empty model snapshot before shutdown. |
 | Cancellation boundary | One-token output capacity creates deterministic backpressure; cancellation is observed before another backend call and ownership is released. |
-| Real-model execution | The pinned `neubla/tiny-random-LlamaForCausalLM` revision loaded and generated eight tokens through the hosted E0 worker. |
+| Real-model execution | The pinned `neubla/tiny-random-LlamaForCausalLM` revision generated eight tokens through the hosted E0 worker in the recorded baseline run. |
 | Failure classification | The smoke distinguishes fixture/configuration failures from runtime/lifecycle failures. |
-| Measurements | The successful smoke recorded load time, time to first token, decode throughput, cancellation latency, unload time, and RSS checkpoints. |
-| Ordinary CI | Deterministic integration tests use tiny committed/local Safetensors fixtures and require no network download. |
+| Measurements | The recorded smoke captured load time, time to first token, decode throughput, cancellation latency, unload time, and RSS checkpoints. |
+| Ordinary CI | Deterministic integration tests use a tiny project-authored committed fixture and require no network download. |
+| External fixture hygiene | The pinned external model is downloaded into ignored `.phase4/` storage and is not redistributed by this repository. |
 
-## Final corrective changes included
+## Recorded baseline validation evidence
 
-- Corrected the Candle backend test identifier construction from `u32` to the
-  required `u64` backend identifier type.
-- Preserved BF16 as source metadata while upcasting BF16 CPU execution to F32,
-  matching Candle 0.11's supported CPU matmul dtypes.
-- Updated BF16 resident-memory and KV-cache admission estimates to use the F32
-  execution footprint.
-- Merged identical scalar-type match arms to satisfy strict Clippy.
-- Replaced an explicit test `panic!`, inlined format arguments, and removed an
-  obsolete lint expectation so `cargo clippy -- -D warnings` passes.
-
-## Canonical validation evidence
-
-The following command completed successfully against the final source tree:
+The following command completed successfully for the implementation assembled into the Phase 4 baseline:
 
 ```text
 cargo run --locked --bin llm-app -- verify
 ```
 
-That command passed:
+That run passed:
 
 - workspace architecture and dependency-policy validation;
 - `cargo fmt --all -- --check`;
 - `cargo check --workspace --all-targets --locked`;
-- `cargo test --workspace --locked`, including doctests and the real Candle fixture integration tests;
+- `cargo test --workspace --locked`, including doctests and Candle fixture integration tests;
 - `cargo clippy --workspace --all-targets --locked -- -D warnings`;
 - `cargo doc --workspace --no-deps --locked`; and
 - `cargo bench --workspace --no-run --locked`.
 
-## Pinned real-model smoke evidence
+No GitHub Actions run is attached to the baseline commit. This section records the supplied local output and does not claim independent CI attestation.
+
+## Recorded pinned smoke evidence
 
 The downloaded model file passed the required SHA-256 check:
 
@@ -77,9 +68,7 @@ The downloaded model file passed the required SHA-256 check:
 49c20f32c6c597480fcaec5df2f86c645eabea765cbea1e67886dbae45e5c992
 ```
 
-Smoke fixture:
-
-| Field | Validated value |
+| Field | Recorded value |
 |---|---|
 | Repository | `neubla/tiny-random-LlamaForCausalLM` |
 | Revision | `39ca1f8a1fc940377c5cb49a21aff73bb99b52f5` |
@@ -87,9 +76,7 @@ Smoke fixture:
 | Prompt token IDs | `1,2,3` |
 | Generated token IDs | `18568, 1727, 8705, 3598, 27426, 4496, 998, 16911` |
 
-Recorded diagnostics:
-
-| Measurement | Result |
+| Measurement | Recorded result |
 |---|---:|
 | Model load duration | 0.005661 s |
 | Time to first generated token | 0.060969 s |
@@ -101,32 +88,28 @@ Recorded diagnostics:
 | RSS during generation | 14,088 KiB |
 | RSS after unload | 10,412 KiB |
 
-The elevated post-unload RSS is not treated as evidence of retained model
-ownership: allocators may retain freed pages for reuse. The runtime's explicit
-ownership evidence is the successful released records, empty accounting, model
-unload, worker shutdown, and clean process exit.
+Elevated post-unload RSS is not treated as evidence of retained model ownership: allocators may retain freed pages for reuse. Explicit ownership evidence consists of released records, empty accounting, the post-unload empty snapshot, successful worker shutdown, and clean process exit.
 
-## Evidence provenance
+## Final closure rule
 
-The validation was recorded against the final local working tree before its Phase
-4 commit. Add the resulting commit SHA here after committing the tree without
-source changes:
+After applying the closure patch, create or identify the final commit and run:
 
 ```text
-Phase 4 source commit: <record after commit>
+cargo run --locked --bin llm-app -- verify
 ```
+
+Then run the exact procedure in [Phase 4 Candle Llama Smoke Procedure](phase4-candle-smoke.md). Record:
+
+```text
+git rev-parse HEAD
+```
+
+with the complete output from both commands. Phase 4 is formally closed, and Phase 5 may begin, only when both commands pass on that exact commit without further source changes.
 
 ## Remaining product limitations
 
 - This is a CPU-only Candle Llama vertical slice.
-- The E0 request accepts token IDs and emits token IDs; tokenizer ownership,
-  incremental decoded-text streaming, E1 generation commands, and frontend
-  generation remain Phase 5 work.
-- The tiny random smoke model proves execution and lifecycle integration, not
-  language quality.
-- Strict allocation-free Candle execution is not claimed because upstream Candle
-  allocates intermediate and KV-cache tensors.
+- The E0 request accepts token IDs and emits token IDs; tokenizer ownership, incremental decoded-text streaming, E1 generation commands, and frontend generation remain Phase 5 work.
+- The tiny random smoke model proves execution and lifecycle integration, not language quality.
+- Strict allocation-free Candle execution is not claimed because upstream Candle allocates intermediate and KV-cache tensors.
 - GPU execution, general chat rendering, and GGUF UI generation remain unsupported.
-
-Phase 4 is complete. The next execution step is
-**Phase 5 — Expose generation through `application-runtime`**.

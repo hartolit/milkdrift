@@ -122,6 +122,7 @@ fn run() -> SmokeResult {
     let unload_started = Instant::now();
     unload_model(&hosted, handle)?;
     let unload_duration = unload_started.elapsed();
+    assert_unloaded_snapshot(&hosted)?;
     let rss_after_unload = resident_set_kib();
     shutdown(hosted, thread)?;
 
@@ -524,6 +525,44 @@ fn unload_model(hosted: &HostedRuntime<CandleLlamaSource>, handle: ModelHandle) 
     }
 }
 
+fn assert_unloaded_snapshot(hosted: &HostedRuntime<CandleLlamaSource>) -> SmokeResult {
+    hosted
+        .try_submit(RuntimeCommand::Snapshot {
+            ticket: CommandTicket::new(7),
+        })
+        .map_err(|error| {
+            SmokeError::runtime(format!("post-unload snapshot command rejected: {error:?}"))
+        })?;
+    match receive(hosted, "post-unload runtime snapshot")? {
+        RuntimeEvent::Snapshot {
+            ticket,
+            runtime,
+            models,
+        } if ticket == CommandTicket::new(7) => {
+            if runtime.loaded_models != 0
+                || runtime.active_requests != 0
+                || runtime.reserved_footprint != MemoryFootprint::default()
+                || runtime.generation_workspaces != 0
+                || runtime.reserved_generation_workspace != MemoryFootprint::default()
+                || runtime.pending_cleanup_models != 0
+                || runtime.pending_cleanup_sequences != 0
+                || runtime.exhausted_cleanup_models != 0
+                || runtime.exhausted_cleanup_sequences != 0
+                || runtime.maintenance_error.is_some()
+                || !models.is_empty()
+            {
+                return Err(SmokeError::runtime(format!(
+                    "runtime retained ownership after unload: {runtime:?}"
+                )));
+            }
+            Ok(())
+        }
+        _ => Err(SmokeError::runtime(
+            "unexpected post-unload runtime snapshot event",
+        )),
+    }
+}
+
 #[expect(
     clippy::needless_pass_by_value,
     reason = "the helper owns both runtime endpoints through worker join"
@@ -531,7 +570,7 @@ fn unload_model(hosted: &HostedRuntime<CandleLlamaSource>, handle: ModelHandle) 
 fn shutdown(hosted: HostedRuntime<CandleLlamaSource>, thread: RuntimeThread) -> SmokeResult {
     hosted
         .try_submit(RuntimeCommand::Shutdown {
-            ticket: CommandTicket::new(7),
+            ticket: CommandTicket::new(8),
         })
         .map_err(|error| SmokeError::runtime(format!("shutdown command rejected: {error:?}")))?;
     match receive(&hosted, "runtime shutdown")? {

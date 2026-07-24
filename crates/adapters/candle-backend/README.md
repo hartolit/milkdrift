@@ -2,7 +2,7 @@
 
 CPU reference adapter for unquantized Hugging Face Llama models stored as Safetensors.
 
-The crate owns all Candle-specific types and implements only the portable contracts from `domain-contracts`. It supports inspection, admission planning, loading, independent sequence caches, prompt prefill, incremental decode, synchronization, and unload preparation. Phase 4 compatibility tests verify final-position prefill logits, decode position progression, cancellation boundaries, explicit destruction/unload, and F32 output for F32, F16, and BF16 model sources.
+The crate owns all Candle-specific types and implements only the portable contracts from `domain-contracts`. It supports inspection, admission planning, loading, independent sequence caches, prompt prefill, incremental decode, synchronization, and unload preparation. Phase 4 compatibility tests verify final-position prefill logits, decode position progression, cancellation boundaries, explicit destruction to `SequenceState::Finished`, post-unload cleanup, and F32 output for F32, F16, and BF16 model sources.
 
 ## Allocation contract
 
@@ -18,6 +18,6 @@ The upstream cache cannot be cleared in place without constructing a replacement
 - unquantized Llama-family models
 - Hugging Face `config.json`
 - one or more Safetensors shards
-- F32, F16, and BF16 requested execution types
+- F32, F16, and BF16 source weight types; BF16 CPU execution is upcast to F32
 
 CUDA, Metal, quantized GGUF, model downloading, and tokenizer integration remain separate adapters.
