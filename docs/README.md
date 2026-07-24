@@ -39,6 +39,8 @@ ADRs record context, rejected alternatives, consequences, and review triggers. A
 - [Execution plan](execution/execution-plan.md) — active ordered implementation program.
 - [Architecture analysis](execution/analyzer.md) — evidence and findings that motivated the execution plan; it is analysis, not normative policy.
 - [Current implementation status](project/implementation-status.md) — supported backends/devices, integration depth, validation evidence, known limitations, and active execution position.
+- [Phase 4 implementation report](execution/PHASE4_IMPLEMENTATION_REPORT.md) — implemented Candle vertical-slice package, remaining validation gates, and completion rule.
+- [Phase 4 Candle smoke](execution/phase4-candle-smoke.md) — pinned opt-in real-model procedure and diagnostic evidence format.
 
 The status page is the canonical answer to “what works now?” A claim of validation must name a reproducible command and the source commit or CI run used.
 

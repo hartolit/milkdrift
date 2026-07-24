@@ -4,7 +4,7 @@
 
 **Source baseline:** uploaded Phase 3 archive, including `Cargo.lock`; repository VCS metadata was not included
 
-**Execution position:** Phase 3 completion patch implemented at source level; the canonical locked validation gate must pass before Phase 4 starts
+**Execution position:** Phase 4 source package implemented; locked validation and the pinned external-model smoke remain required before Phase 4 completion
 
 **Canonical plan:** [LLM App Execution Plan](../execution/execution-plan.md)
 
@@ -14,34 +14,29 @@ This document is the canonical statement of what the delivered source tree claim
 
 | Backend | Device | Adapter/E0 boundary | `application-runtime` (E1) | Slint UI |
 |---|---|---:|---:|---:|
-| Candle 0.11 Llama/Safetensors | CPU | Yes | Yes, lifecycle composition | Yes, lifecycle only |
-| GGUF via llama.cpp | CPU | Yes | No | No |
+| Candle 0.11 Llama/Safetensors | CPU | Phase 4 source path implemented | Yes, lifecycle composition | Yes, lifecycle only |
+| GGUF via llama.cpp | CPU | Lifecycle and backend primitives | No | No |
 | Candle or GGUF | CUDA/Metal/other GPU | No supported product path | No | No |
 
-The repository is CPU-only today. Real-model prompt-to-token generation remains Phase 4; Phase 3 ordinary generation coverage uses a deterministic fake backend.
+The repository remains CPU-only. Candle Llama can now be driven through the E0 generation scheduler at source level; E1 and the UI still expose lifecycle only.
 
-## Phase 3 source implementation
+## Completed Phase 3 foundation
 
-The source tree now contains the integrated backend-independent generation kernel:
+The Phase 3 completion report records a passing canonical locked validation for its exact source tree. That foundation includes worker-owned prefill/sampling/decode, bounded output, cancellation and stop conditions, exact admission accounting, deterministic cleanup quarantine and retry exhaustion, and fault-injection coverage.
 
-- worker-owned prompt prefill, in-E0 sampling, incremental decode, bounded round-robin scheduling, cancellation, EOS, token-limit, and token stop-sequence handling;
-- pull-oriented preallocated token/state output with nonblocking backpressure and ordered terminal records;
-- explicit `GenerationOutputCapacityPolicy` admission against the hosted accumulator;
-- preflight of prompt batch length, total sequence length, exact full-vocabulary logits capacity, model lifecycle/degraded state, identities, backend sequence memory, and generation host workspace memory before native sequence publication;
-- generation workspace accounting for logits, sampling indices, repetition epochs, prompt/history/generated token storage, EOS storage, and stop-pattern storage;
-- workspace accounting retained until terminal output release, even when backend sequence cleanup completed earlier;
-- one cleanup state machine for admission rollback, completion, cancellation, backend/sampling failure, unload maintenance, drain escalation, and shutdown;
-- allocation-free primary-plus-cleanup failure classification;
-- quarantined model and sequence ownership with truthful memory/sequence accounting;
-- deterministic total-attempt cleanup policy, one retry opportunity per maintenance loop, explicit retry/exhaustion state, and no retry after success or exhaustion;
-- failed normal unload and shutdown unload routed through the same model quarantine policy;
-- degraded-model admission rejection while a sequence remains quarantined;
-- terminal explicit-shutdown and endpoint-disconnection policies that preserve unresolved native ownership rather than invoking an unverified implicit drop;
-- shutdown termination independent of frontend token-output draining, with retained generation workspace accounting released before worker exit;
-- deterministic fake-backend counters for loads, unload attempts, sequence creation/destruction, successful destruction, prefill/decode calls, sampling opportunities, active native resources, and retained simulated memory;
-- fault-injection coverage added for cancellation before prefill, scheduled drain timeout, exact admission failures, repeated cleanup failure/exhaustion, model cleanup, shutdown cleanup, healthy-model isolation, later cleanup success, and exact single release.
+The Phase 4 patch preserves those generic contracts and changes Candle-specific behavior only at the adapter and integration-test boundaries.
 
-`Cargo.lock` is present in the delivered tree.
+## Phase 4 source implementation
+
+The delivered source adds:
+
+- deterministic Candle CPU fixture semantics for prompt positions, final-position prefill logits, independent incremental decode progression, cancellation boundaries, exact vocabulary output, sequence destruction, and unload;
+- F32 and F16 native CPU execution plus BF16 source compatibility through admission-accounted F32 upcasting; Candle logits are normalized to the backend-independent F32 output contract;
+- actual Candle Llama execution through the hosted E0 generation scheduler, including token-limit completion, EOS completion, bounded output backpressure, cancellation, terminal/released publication, exact accounting release, model unload, shutdown, and worker join;
+- an opt-in pinned real-model smoke example that accepts local model files and caller-supplied token IDs, verifies the loaded architecture and context, produces tokens through E0, cancels a second generation, checks cleanup/accounting, unloads, and records diagnostic timings and RSS;
+- a reproducible smoke procedure at [Phase 4 Candle Llama Smoke Procedure](../execution/phase4-candle-smoke.md).
+
+Ordinary CI remains download-free: its Candle integration tests use deterministic tiny local Safetensors fixtures.
 
 ## Integration depth
 
@@ -49,36 +44,36 @@ The source tree now contains the integrated backend-independent generation kerne
 |---|---:|---:|---:|
 | Model load, generation-safe handle, drain, cancellation, unload | Yes | Yes for Candle lifecycle | Yes for Candle lifecycle |
 | Backend prefill and decode primitives | Yes | Not exposed as generation | No |
-| Backend-independent generation scheduler | Implemented with deterministic fake backend | Not exposed | No |
+| Backend-independent generation scheduler | Fake backend plus Candle CPU integration source | Not exposed | No |
 | Sampling algorithm | Integrated inside E0 | Not exposed | No |
 | Bounded streamed token output | Pull-oriented token/state batches | No | No |
-| Direct-completion real-model loop | Phase 4 | No | No |
+| Direct-completion real-model loop | Opt-in E0 smoke source | No | No |
 | Tokenization and decoded text streaming | Separate foundations only | Not integrated | No |
 | General chat templates/history | No | No | No |
 
 ## Validation status for this delivered patch
 
-The canonical validation commands were **not executed in the artifact-editing environment** because it contains no Rust toolchain (`cargo`, `rustc`, or `rustfmt`) and external network access was unavailable. Therefore this document does not claim a passing test count, warning-free Clippy, rustdoc success, formatting success, or a completed Phase 3 gate for this exact archive.
+The canonical Phase 4 commands were **not executed in the artifact-editing environment** because it contains no Rust toolchain (`cargo`, `rustc`, or `rustfmt`) and external network access was unavailable. The pinned external-model smoke was also not executed here. Therefore this tree does not yet claim warning-free compilation, passing tests, successful real-model execution, or recorded local measurements.
 
 Run the following from the repository root with the pinned toolchain in `rust-toolchain.toml`:
 
 ```text
-cargo metadata --locked --format-version 1 --no-deps
+cargo fmt --all --check
 cargo run --locked --bin llm-app -- verify
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 cargo deny --workspace --locked check advisories bans licenses sources
+lychee --offline --no-progress "**/*.md"
 git diff --check
 ```
 
-Also run the configured portability and Markdown-link checks described by the execution plan and CI workflow. Phase 4 must remain gated until these commands pass on the exact delivered tree.
+Then run [the pinned Phase 4 smoke procedure](../execution/phase4-candle-smoke.md). The exact completion rule and implementation matrix are in the [Phase 4 implementation report](../execution/PHASE4_IMPLEMENTATION_REPORT.md).
 
 ## Known limitations
 
-- Phase 3 starts from caller-supplied token IDs and emits token IDs; tokenizer ownership, incremental text decoding, E1 generation commands, and frontend pulls remain later work.
-- Real Candle/GGUF prompt-to-token generation is not claimed by this phase.
-- The deterministic cleanup policy uses a total-attempt limit, not wall-clock retry backoff. One non-exhausted cleanup is attempted per worker maintenance loop.
-- Exhausted resources remain quarantined and accounted until process termination or explicit future policy intervention; they do not re-enter normal registries.
-- On endpoint disconnection, unresolved native resources are intentionally retained rather than implicitly dropped after failed explicit cleanup.
+- The E0 request starts from caller-supplied token IDs and emits token IDs. Tokenizer ownership, incremental text decoding, E1 generation commands, and frontend pulls remain Phase 5 work.
+- The selected smoke fixture is a tiny random test model. It proves architecture and lifecycle integration, not output quality.
+- The deterministic cleanup policy uses a total-attempt limit, not wall-clock retry backoff. Exhausted resources remain quarantined and accounted.
+- Strict allocation-free Candle execution is not claimed because upstream Candle allocates intermediate and KV-cache tensors.
 - GPU execution, remote/browser transport, general chat, GGUF UI selection, and multi-model E1 state are unsupported.
 
 ## Historical implementation record

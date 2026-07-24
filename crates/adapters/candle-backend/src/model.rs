@@ -359,7 +359,10 @@ fn copy_cpu_logits(
             usize_to_u64(available),
         )));
     };
-    let (storage, layout) = tensor.storage_and_layout();
+    let logits = tensor
+        .to_dtype(DType::F32)
+        .map_err(|_| sequence_failure(backend, CODE_LOGITS_STORAGE))?;
+    let (storage, layout) = logits.storage_and_layout();
     let Storage::Cpu(cpu) = &*storage else {
         return Err(sequence_failure(backend, CODE_LOGITS_STORAGE));
     };

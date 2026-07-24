@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use candle_core::DType;
 use domain_contracts::ScalarType;
 
-/// Weight scalar type requested from Candle's variable builder.
+/// Scalar type stored in the source weight tensors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CandleScalarType {
     /// IEEE-754 32-bit floating point.
@@ -19,11 +19,20 @@ pub enum CandleScalarType {
 }
 
 impl CandleScalarType {
-    pub(crate) const fn candle_dtype(self) -> DType {
+    pub(crate) const fn weight_dtype(self) -> DType {
         match self {
             Self::F32 => DType::F32,
             Self::F16 => DType::F16,
             Self::Bf16 => DType::BF16,
+        }
+    }
+
+    pub(crate) const fn execution_dtype(self) -> DType {
+        // Candle 0.11 CPU matmul does not support BF16 operands. Preserve BF16
+        // as source metadata while executing BF16-sourced CPU models in F32.
+        match self {
+            Self::F32 | Self::Bf16 => DType::F32,
+            Self::F16 => DType::F16,
         }
     }
 
@@ -35,10 +44,17 @@ impl CandleScalarType {
         }
     }
 
-    pub(crate) const fn bytes_per_element(self) -> u64 {
+    pub(crate) const fn weight_bytes_per_element(self) -> u64 {
         match self {
             Self::F32 => 4,
             Self::F16 | Self::Bf16 => 2,
+        }
+    }
+
+    pub(crate) const fn execution_bytes_per_element(self) -> u64 {
+        match self {
+            Self::F32 | Self::Bf16 => 4,
+            Self::F16 => 2,
         }
     }
 }
@@ -102,7 +118,7 @@ impl CandleLlamaSource {
         &self.weight_paths
     }
 
-    /// Returns the scalar type requested for model execution.
+    /// Returns the scalar type stored in the source weight tensors.
     #[must_use]
     pub const fn scalar_type(&self) -> CandleScalarType {
         self.scalar_type

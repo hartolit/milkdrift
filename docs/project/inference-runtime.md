@@ -169,9 +169,22 @@ explicit cleanup preserves the unresolved runtime allocation rather than falling
 back to an unverified implicit backend drop. The same preservation rule applies
 when client endpoints disconnect before cleanup can complete.
 
-## Scope after Phase 3
+## Phase 4 Candle integration
 
-Phase 3 is backend-independent and uses deterministic fake models in ordinary CI.
-It does **not** claim real Candle/GGUF generation, tokenizer integration, decoded
-text streaming, E1 generation commands, UI generation, chat templates, or GPU
-execution. Those remain later execution-plan phases.
+Ordinary scheduler and fault-injection coverage remains backend-independent. Phase 4
+adds a separate integration test that supplies the real `CandleLlamaLoader` to the
+same hosted E0 worker and uses a deterministic committed local Safetensors fixture.
+No Candle branch or model-specific exception was added to the generic scheduler.
+
+That integration proves token-limit and EOS completion, output backpressure,
+cancellation at a backend boundary, ordered terminal/released publication, exact
+generation-workspace release, model unload, and terminal worker shutdown. Ordinary
+CI still performs no model download.
+
+An opt-in external-model example adds the first real-file diagnostic path and emits
+load, first-token, decode-throughput, cancellation, unload, and RSS observations.
+See [Phase 4 Candle Llama Smoke Procedure](../execution/phase4-candle-smoke.md).
+
+Tokenizer integration, decoded text streaming, E1 generation commands, UI
+generation, chat templates, GGUF generation integration, and GPU execution remain
+later execution-plan work.

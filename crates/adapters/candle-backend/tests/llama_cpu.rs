@@ -79,6 +79,7 @@ fn exercise_sequences(
             logits_written: 16,
         }
     );
+    assert_eq!(maximum_logit_token(&first_logits)?, TokenId::new(2));
 
     let mut second_logits = [0.0_f32; 16];
     let second_prefill = prefill_checked(
@@ -113,6 +114,7 @@ fn exercise_sequences(
             logits_written: 16,
         }
     );
+    assert_eq!(maximum_logit_token(&first_logits)?, TokenId::new(3));
 
     let second_decode = decode_checked(
         model,
@@ -129,6 +131,7 @@ fn exercise_sequences(
             logits_written: 16,
         }
     );
+    assert_eq!(maximum_logit_token(&second_logits)?, TokenId::new(4));
 
     let cancelled_position = first.position();
     let cancelled = decode_checked(
@@ -216,6 +219,74 @@ fn unload_after_bounded_drain(
 }
 
 #[test]
+fn advertised_scalar_types_produce_f32_vocabulary_logits() -> TestResult {
+    for (index, scalar_type) in [
+        CandleScalarType::F32,
+        CandleScalarType::F16,
+        CandleScalarType::Bf16,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let fixture = TinyLlamaFixture::create_with_scalar(scalar_type)?;
+        let source = fixture.source()?;
+        let mut loader = CandleLlamaLoader::new(BackendId::new(
+            u64::try_from(index + 10).map_err(|_| "backend identifier")?,
+        ));
+        let descriptor = loader
+            .inspect(&source)
+            .map_err(|_| "inspect scalar fixture")?;
+        if scalar_type == CandleScalarType::Bf16 {
+            let source_bytes = fs::metadata(&fixture.weight_path)
+                .map_err(|_| "inspect scalar weight file")?
+                .len();
+            assert!(descriptor.estimated_footprint.host_weight_bytes >= source_bytes * 2);
+            assert_eq!(descriptor.estimated_footprint.cache_bytes_per_token % 4, 0);
+        }
+        let mut model = loader
+            .load(&source, &load_configuration())
+            .map_err(|_| "load scalar fixture")?;
+        let configuration = SequenceConfiguration::new(
+            NonZeroU32::new(16).ok_or("maximum tokens")?,
+            NonZeroU32::new(8).ok_or("maximum prefill")?,
+        );
+        let mut sequence = model
+            .create_sequence(SequenceId::new(10), &configuration)
+            .map_err(|_| "create scalar sequence")?;
+        let prompt = [TokenId::new(1), TokenId::new(2)];
+        let mut logits = [0.0_f32; 16];
+        let outcome = prefill_checked(
+            &mut model,
+            &mut sequence,
+            PrefillInput::new(&prompt, true),
+            PrefillBuffers::new(&mut logits),
+            CancellationStatus::Running,
+        )
+        .map_err(|_| match scalar_type {
+            CandleScalarType::F32 => "prefill failed for F32",
+            CandleScalarType::F16 => "prefill failed for F16",
+            CandleScalarType::Bf16 => "prefill failed for BF16",
+        })?;
+
+        assert_eq!(
+            outcome,
+            PrefillOutcome::Ready {
+                consumed_tokens: 2,
+                position: 2,
+                logits_written: 16,
+            }
+        );
+        assert_eq!(maximum_logit_token(&logits)?, TokenId::new(2));
+        model
+            .destroy_sequence(&mut sequence)
+            .map_err(|_| "destroy scalar sequence")?;
+        drop(sequence);
+        model.prepare_unload().map_err(|_| "unload scalar model")?;
+    }
+    Ok(())
+}
+
+#[test]
 fn rejects_weight_dtype_mismatch() -> TestResult {
     let fixture = TinyLlamaFixture::create()?;
     let source = CandleLlamaSource::new(
@@ -267,10 +338,15 @@ struct TinyLlamaFixture {
     directory: PathBuf,
     config_path: PathBuf,
     weight_path: PathBuf,
+    scalar_type: CandleScalarType,
 }
 
 impl TinyLlamaFixture {
     fn create() -> Result<Self, &'static str> {
+        Self::create_with_scalar(CandleScalarType::F32)
+    }
+
+    fn create_with_scalar(scalar_type: CandleScalarType) -> Result<Self, &'static str> {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| "system clock")?
@@ -283,12 +359,13 @@ impl TinyLlamaFixture {
         let config_path = directory.join("config.json");
         let weight_path = directory.join("model.safetensors");
         fs::write(&config_path, TINY_CONFIG).map_err(|_| "write config")?;
-        write_weights(&weight_path)?;
+        write_weights(&weight_path, scalar_type)?;
 
         Ok(Self {
             directory,
             config_path,
             weight_path,
+            scalar_type,
         })
     }
 
@@ -296,7 +373,7 @@ impl TinyLlamaFixture {
         CandleLlamaSource::new(
             self.config_path.clone(),
             vec![self.weight_path.clone()],
-            CandleScalarType::F32,
+            self.scalar_type,
         )
         .map_err(|_| "create source")
     }
@@ -308,17 +385,19 @@ impl Drop for TinyLlamaFixture {
     }
 }
 
-fn write_weights(path: &Path) -> Result<(), &'static str> {
+fn write_weights(path: &Path, scalar_type: CandleScalarType) -> Result<(), &'static str> {
     let device = Device::Cpu;
+    let dtype = scalar_dtype(scalar_type);
     let mut tensors = HashMap::new();
-    insert_matrix(&mut tensors, "model.embed_tokens.weight", 16, 8, &device)?;
-    insert_matrix(&mut tensors, "lm_head.weight", 16, 8, &device)?;
-    insert_vector(&mut tensors, "model.norm.weight", 8, &device)?;
+    insert_token_matrix(&mut tensors, "model.embed_tokens.weight", dtype, &device)?;
+    insert_token_matrix(&mut tensors, "lm_head.weight", dtype, &device)?;
+    insert_vector(&mut tensors, "model.norm.weight", 8, dtype, &device)?;
     insert_matrix(
         &mut tensors,
         "model.layers.0.self_attn.q_proj.weight",
         8,
         8,
+        dtype,
         &device,
     )?;
     insert_matrix(
@@ -326,6 +405,7 @@ fn write_weights(path: &Path) -> Result<(), &'static str> {
         "model.layers.0.self_attn.k_proj.weight",
         8,
         8,
+        dtype,
         &device,
     )?;
     insert_matrix(
@@ -333,6 +413,7 @@ fn write_weights(path: &Path) -> Result<(), &'static str> {
         "model.layers.0.self_attn.v_proj.weight",
         8,
         8,
+        dtype,
         &device,
     )?;
     insert_matrix(
@@ -340,18 +421,21 @@ fn write_weights(path: &Path) -> Result<(), &'static str> {
         "model.layers.0.self_attn.o_proj.weight",
         8,
         8,
+        dtype,
         &device,
     )?;
     insert_vector(
         &mut tensors,
         "model.layers.0.input_layernorm.weight",
         8,
+        dtype,
         &device,
     )?;
     insert_vector(
         &mut tensors,
         "model.layers.0.post_attention_layernorm.weight",
         8,
+        dtype,
         &device,
     )?;
     insert_matrix(
@@ -359,6 +443,7 @@ fn write_weights(path: &Path) -> Result<(), &'static str> {
         "model.layers.0.mlp.gate_proj.weight",
         16,
         8,
+        dtype,
         &device,
     )?;
     insert_matrix(
@@ -366,6 +451,7 @@ fn write_weights(path: &Path) -> Result<(), &'static str> {
         "model.layers.0.mlp.up_proj.weight",
         16,
         8,
+        dtype,
         &device,
     )?;
     insert_matrix(
@@ -373,9 +459,36 @@ fn write_weights(path: &Path) -> Result<(), &'static str> {
         "model.layers.0.mlp.down_proj.weight",
         8,
         16,
+        dtype,
         &device,
     )?;
     candle_core::safetensors::save(&tensors, path).map_err(|_| "save weights")
+}
+
+fn insert_token_matrix(
+    tensors: &mut HashMap<String, Tensor>,
+    name: &str,
+    dtype: DType,
+    device: &Device,
+) -> Result<(), &'static str> {
+    let values = (0_u32..16)
+        .flat_map(|token| {
+            (0_u32..8).map(move |dimension| {
+                if token & (1_u32 << (dimension % 4)) == 0 {
+                    -1.0_f32
+                } else {
+                    1.0_f32
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    let tensor = Tensor::from_vec(values, (16, 8), device)
+        .and_then(|tensor| tensor.to_dtype(dtype))
+        .map_err(|_| "create token matrix")?;
+    if tensors.insert(name.to_owned(), tensor).is_some() {
+        return Err("duplicate token matrix name");
+    }
+    Ok(())
 }
 
 fn insert_matrix(
@@ -383,9 +496,10 @@ fn insert_matrix(
     name: &str,
     rows: usize,
     columns: usize,
+    dtype: DType,
     device: &Device,
 ) -> Result<(), &'static str> {
-    let tensor = Tensor::zeros((rows, columns), DType::F32, device).map_err(|_| "create matrix")?;
+    let tensor = Tensor::zeros((rows, columns), dtype, device).map_err(|_| "create matrix")?;
     if tensors.insert(name.to_owned(), tensor).is_some() {
         return Err("duplicate matrix name");
     }
@@ -396,13 +510,33 @@ fn insert_vector(
     tensors: &mut HashMap<String, Tensor>,
     name: &str,
     length: usize,
+    dtype: DType,
     device: &Device,
 ) -> Result<(), &'static str> {
-    let tensor = Tensor::ones(length, DType::F32, device).map_err(|_| "create vector")?;
+    let tensor = Tensor::ones(length, dtype, device).map_err(|_| "create vector")?;
     if tensors.insert(name.to_owned(), tensor).is_some() {
         return Err("duplicate vector name");
     }
     Ok(())
+}
+
+fn maximum_logit_token(logits: &[f32]) -> Result<TokenId, &'static str> {
+    let (index, _) = logits
+        .iter()
+        .copied()
+        .enumerate()
+        .max_by(|(_, left), (_, right)| left.total_cmp(right))
+        .ok_or("empty logits")?;
+    let token = u32::try_from(index).map_err(|_| "token identifier overflow")?;
+    Ok(TokenId::new(token))
+}
+
+const fn scalar_dtype(scalar_type: CandleScalarType) -> DType {
+    match scalar_type {
+        CandleScalarType::F32 => DType::F32,
+        CandleScalarType::F16 => DType::F16,
+        CandleScalarType::Bf16 => DType::BF16,
+    }
 }
 
 const TINY_CONFIG: &str = r#"{

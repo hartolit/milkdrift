@@ -1,8 +1,8 @@
 # candle-backend
 
-Phase 3 CPU reference adapter for unquantized Hugging Face Llama models stored as Safetensors.
+CPU reference adapter for unquantized Hugging Face Llama models stored as Safetensors.
 
-The crate owns all Candle-specific types and implements only the portable contracts from `domain-contracts`. It supports inspection, admission planning, loading, independent sequence caches, prompt prefill, incremental decode, synchronization, and unload preparation.
+The crate owns all Candle-specific types and implements only the portable contracts from `domain-contracts`. It supports inspection, admission planning, loading, independent sequence caches, prompt prefill, incremental decode, synchronization, and unload preparation. Phase 4 compatibility tests verify final-position prefill logits, decode position progression, cancellation boundaries, explicit destruction/unload, and F32 output for F32, F16, and BF16 model sources.
 
 ## Allocation contract
 

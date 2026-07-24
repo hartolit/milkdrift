@@ -57,7 +57,7 @@ impl CandleLlamaLoader {
         let config = hugging_face.into_config(false);
         validate_config(&config)?;
 
-        let (host_weight_bytes, largest_shard_bytes) =
+        let (source_weight_bytes, largest_shard_bytes) =
             source
                 .weight_paths()
                 .iter()
@@ -85,8 +85,14 @@ impl CandleLlamaLoader {
             u32::try_from(config.max_position_embeddings).map_err(|_| LoadError::InvalidSource)?;
         let vocabulary_size =
             u32::try_from(config.vocab_size).map_err(|_| LoadError::InvalidSource)?;
+        let scalar_type = source.scalar_type();
+        let host_weight_bytes = scaled_weight_bytes(
+            source_weight_bytes,
+            scalar_type.weight_bytes_per_element(),
+            scalar_type.execution_bytes_per_element(),
+        )?;
         let cache_bytes_per_token =
-            cache_bytes_per_token(&config, source.scalar_type().bytes_per_element())?;
+            cache_bytes_per_token(&config, scalar_type.execution_bytes_per_element())?;
         let metadata = ModelMetadata {
             architecture: ModelArchitecture::Llama,
             scalar_type: source.scalar_type().domain_type(),
@@ -164,6 +170,9 @@ impl ModelLoader for CandleLlamaLoader {
         let plan = self.plan_load(source, configuration)?;
         let inspected = self.inspect_source(source)?;
         let device = Device::Cpu;
+        let scalar_type = source.scalar_type();
+        let weight_dtype = scalar_type.weight_dtype();
+        let execution_dtype = scalar_type.execution_dtype();
         let mut tensors = HashMap::<String, Tensor>::new();
 
         for path in source.weight_paths() {
@@ -175,9 +184,20 @@ impl ModelLoader for CandleLlamaLoader {
                 ))
             })?;
             for (name, tensor) in shard {
-                if tensor.dtype() != source.scalar_type().candle_dtype() {
+                if tensor.dtype() != weight_dtype {
                     return Err(LoadError::UnsupportedFormat);
                 }
+                let tensor = if weight_dtype == execution_dtype {
+                    tensor
+                } else {
+                    tensor.to_dtype(execution_dtype).map_err(|_| {
+                        LoadError::Backend(failure(
+                            self.backend,
+                            BackendFailureKind::InvalidModel,
+                            CODE_WEIGHT_LOAD,
+                        ))
+                    })?
+                };
                 if tensors.insert(name, tensor).is_some() {
                     return Err(LoadError::Backend(failure(
                         self.backend,
@@ -188,8 +208,7 @@ impl ModelLoader for CandleLlamaLoader {
             }
         }
 
-        let variable_builder =
-            VarBuilder::from_tensors(tensors, source.scalar_type().candle_dtype(), &device);
+        let variable_builder = VarBuilder::from_tensors(tensors, execution_dtype, &device);
         let loaded = catch_unwind(AssertUnwindSafe(|| {
             Llama::load(variable_builder, &inspected.config)
         }))
@@ -213,7 +232,7 @@ impl ModelLoader for CandleLlamaLoader {
             configuration.handle,
             plan.descriptor,
             inspected.config,
-            source.scalar_type().candle_dtype(),
+            execution_dtype,
             device,
             loaded,
         ))
@@ -252,6 +271,17 @@ fn validate_config(config: &Config) -> Result<(), LoadError> {
         return Err(LoadError::InvalidSource);
     }
     Ok(())
+}
+
+fn scaled_weight_bytes(
+    source_bytes: u64,
+    source_bytes_per_element: u64,
+    execution_bytes_per_element: u64,
+) -> Result<u64, LoadError> {
+    source_bytes
+        .checked_mul(execution_bytes_per_element)
+        .map(|bytes| bytes / source_bytes_per_element)
+        .ok_or(LoadError::InvalidSource)
 }
 
 fn cache_bytes_per_token(config: &Config, scalar_bytes: u64) -> Result<u64, LoadError> {

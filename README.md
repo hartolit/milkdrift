@@ -8,10 +8,11 @@ The currently composed application path uses Candle on the CPU with Hugging Face
 
 A GGUF/llama.cpp CPU adapter also implements the lower inference compatibility boundary. It is not selectable through `application-runtime` or the Slint UI yet.
 
-Backend prefill/decode primitives exist, but the repository does **not** currently expose an integrated prompt-to-stream generation loop. In particular:
+The E0 inference runtime now contains a token-level direct-completion loop and a Phase 4 Candle CPU integration package. That path is not yet exposed through `application-runtime` or the Slint frontend, and its final locked validation plus pinned external-model smoke remain required before Phase 4 is marked complete. In particular:
 
-- direct completion is the first planned generation mode, not current functionality;
-- general chat rendering and conversation history come after that direct-completion slice;
+- callers at E0 currently supply token IDs and receive token IDs;
+- tokenizer/text streaming and the frontend-neutral generation API are Phase 5 work;
+- general chat rendering and conversation history follow the direct-completion slice;
 - GPU execution, remote transport, and multiple application-level resident models are not supported.
 
 See the [current implementation status](docs/project/implementation-status.md) for the exact integration matrix and validation evidence. The [execution plan](docs/execution/execution-plan.md) is the active roadmap.

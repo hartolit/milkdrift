@@ -2,7 +2,7 @@
 
 ## Scope
 
-`crates/adapters/candle-backend` is the Phase 3 reference implementation of the
+`crates/adapters/candle-backend` is the Candle CPU reference implementation of the
 `domain-contracts` backend boundary. It supports unquantized Hugging Face Llama
 configuration files and one or more Safetensors weight shards on the CPU.
 
@@ -35,6 +35,36 @@ inspect
 → expire a bounded drain window
 → synchronize and prepare unload
 ```
+
+## Phase 4 generation semantics
+
+The adapter preserves the backend-independent F32 logits contract for every scalar
+type it advertises. F32 and F16 sources execute in their native scalar type. Candle
+0.11 CPU matmul does not support BF16 operands, so BF16 source weights are validated
+as BF16 and upcast to F32 at load time. Admission accounts for the expanded resident
+weights and F32 sequence cache. Returned vocabulary logits are normalized to F32
+before copying into the caller-owned slice. Capacity and layout validation occur
+before sampling.
+
+The deterministic compatibility fixture assigns distinguishable token embeddings
+and LM-head rows while keeping the transformer residual path stable. Tests therefore
+verify all of the following as semantic facts rather than only successful calls:
+
+- prefill consumes the complete prompt and reports the next absolute position;
+- the returned prefill logits belong to the final prompt position;
+- each decode call consumes exactly one selected token and increments position once;
+- independent sequence caches do not alter each other's progression;
+- cancelled decode leaves the sequence position unchanged;
+- logits contain exactly one full vocabulary for F32, F16, and BF16 sources;
+- explicit sequence destruction and model unload remain valid after generation.
+
+`inference-runtime/tests/candle_generation.rs` additionally drives the actual
+`CandleLlamaLoader` through the hosted E0 scheduler. It covers token-limit and EOS
+completion, one-token output backpressure, cancellation between backend calls,
+terminal/released publication, accounting release, unload, and worker shutdown.
+
+The opt-in external-model procedure is documented in
+[Phase 4 Candle Llama Smoke Procedure](../execution/phase4-candle-smoke.md).
 
 ## Allocation capability
 
