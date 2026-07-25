@@ -14,4 +14,4 @@ Accepted ADRs remain part of the project architecture until superseded. A supers
 - [ADR-0006: Require explicit bounded shutdown](0006-explicit-bounded-shutdown.md)
 - [ADR-0007: Name the supported portability targets](0007-portability-targets.md)
 
-For current applied structure, see [project architecture](../project/architecture.md). For reusable architecture principles, see [architecture principles](../architecture.md).
+For current applied structure, see [project architecture](../../project/architecture.md). For the reusable selectable model, see the [architecture blueprint](../../architecture.md).

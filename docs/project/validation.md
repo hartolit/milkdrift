@@ -1,6 +1,6 @@
 # Validation
 
-This document owns repeatable project validation procedures. [Implementation status](implementation-status.md) records whether the current source baseline has passed the required gates; [execution history](../execution/history.md) preserves older run evidence.
+This document owns repeatable project validation procedures. [Implementation status](implementation-status.md) records whether the current source baseline has passed the required gates; [execution history](../agent/execution/history.md) preserves older run evidence.
 
 ## Canonical repository gate
 

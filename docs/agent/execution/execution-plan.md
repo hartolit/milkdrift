@@ -1,7 +1,7 @@
 # LLM App Execution Plan
 
-**Intended repository path:** `docs/execution/execution-plan.md`  
-**Companion analysis:** `docs/execution/analyzer.md`  
+**Intended repository path:** `docs/agent/execution/execution-plan.md`
+**Companion analysis:** `docs/agent/execution/analyzer.md`
 **Plan status:** Active execution baseline
 **Prepared:** 2026-07-22
 
@@ -132,7 +132,7 @@ The corrective workflow may receive correctness fixes, but it should not expand 
 Every work package should follow these rules.
 
 1. Read, in order:
-   - `docs/execution/analyzer.md`;
+   - `docs/agent/execution/analyzer.md`;
    - this plan;
    - `docs/README.md` once Phase 0 creates it;
    - the component document relevant to the package.
@@ -204,11 +204,11 @@ Required corrections:
 - distinguish direct completion, chat generation, and planned behavior;
 - fix links to `docs/project/...`;
 - stop presenting an old phase sequence as the current roadmap;
-- point to `docs/execution/execution-plan.md` and the canonical status page.
+- point to `docs/agent/execution/execution-plan.md` and the canonical status page.
 
 ## Work package 0.3 — Rewrite architectural doctrine as evidence-based rules
 
-Update `docs/architecture.md`, `docs/rules.md`, and `docs/knowledge/rust_knowledge.md`.
+Update `docs/architecture.md`, `docs/rules.md`, and `docs/agent/knowledge/rust_knowledge.md`.
 
 Correct at least these statements:
 
@@ -252,7 +252,7 @@ A status claim such as “validated” must include either a CI run or a reprodu
 
 ## Work package 0.5 — Add initial ADRs
 
-Create `docs/decisions/` and add:
+Create `docs/agent/decisions/` and add:
 
 - **ADR-0001:** `application-runtime` remains the frontend-neutral façade.
 - **ADR-0002:** CPU Candle is the first vertical-slice backend.

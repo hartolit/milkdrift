@@ -12,7 +12,7 @@ You are a senior systems engineer and Rust expert focused on elegant, highly opt
 
 ## Knowledge linker
 
-Before proposing architecture or writing code, read the [documentation model](README.md) and the documents that own the relevant domain.
+Before proposing architecture or writing code, read the local [agent context map](README.md), the repository [documentation model](../README.md), and the documents that own the relevant domain.
 
 Use reusable architecture/rules as policy, ADRs for project decision rationale, project architecture/status for the current applied design, component guides for domain detail, execution documents for plan/history, and knowledge notes for reusable engineering guidance. If those sources conflict, identify the conflict rather than silently choosing the convenient source.
 

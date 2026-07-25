@@ -1,6 +1,6 @@
 # Rust Performance and Systems Notes
 
-This document is evidence-oriented guidance, not a set of universal language laws. The normative [architecture](../architecture.md), [engineering rules](../rules.md), and accepted ADRs take precedence. Apply an optimization only to a named path and retain the measurement or code-generation evidence that motivated it.
+This document is evidence-oriented guidance, not a set of universal language laws. The reusable [architecture](../../architecture.md), [engineering rules](../../rules.md), and [accepted ADRs](../decisions/README.md) provide the governing context. Apply an optimization only to a named path and retain the measurement or code-generation evidence that motivated it.
 
 ## Start with the workload
 

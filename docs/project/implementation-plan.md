@@ -1,4 +1,4 @@
-> **Historical document.** This recovered draft does not describe the current workspace or roadmap. It is retained only as architecture history. Follow the [active execution plan](../execution/execution-plan.md), [current architecture](../architecture.md), and [current implementation status](implementation-status.md).
+> **Historical document.** This recovered draft does not describe the current workspace or roadmap. It is retained only as architecture history. Follow the [active execution plan](../agent/execution/execution-plan.md), [current architecture](../architecture.md), and [current implementation status](implementation-status.md).
 
 NOTE: Due to loss of context the implementation plan was recovered from an earlier draft of a chat conversation.
 

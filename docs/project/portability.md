@@ -1,6 +1,6 @@
 # Portable Feature Targets
 
-The portability contract is established by [ADR-0007](../decisions/0007-portability-targets.md). It applies to feature libraries only; adapters, engines, applications, tests, and benchmarks are excluded from cross-target claims.
+The portability contract is established by [ADR-0007](../agent/decisions/0007-portability-targets.md). It applies to feature libraries only; adapters, engines, applications, tests, and benchmarks are excluded from cross-target claims.
 
 ## Target matrix
 

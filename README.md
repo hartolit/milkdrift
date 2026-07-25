@@ -16,7 +16,7 @@ The E0 inference runtime owns token-level scheduling, sampling, backend executio
 - general chat rendering and conversation history follow the direct-completion slice;
 - GPU execution, remote transport, and multiple application-level resident models are not supported.
 
-See the [current implementation status](docs/project/implementation-status.md) for the exact integration matrix and validation evidence. The [execution plan](docs/execution/execution-plan.md) is the active roadmap.
+See the [current implementation status](docs/project/implementation-status.md) for the exact integration matrix and validation evidence. The [execution plan](docs/agent/execution/execution-plan.md) is the active roadmap.
 
 ## Workspace
 

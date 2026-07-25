@@ -4,10 +4,13 @@ This directory contains the project's execution inputs and chronological closure
 
 ## Active execution inputs
 
+- [Current execution context](current.md) — dense, mutable working context for the phase being executed now.
 - [Architecture analysis](analyzer.md) — the evidence and findings that motivated the active program.
 - [Execution plan](execution-plan.md) — the ordered implementation program and phase gates.
 
-These two files are intentionally preserved as source artifacts. They are exempt from opportunistic restyling or consolidation during ordinary documentation cleanup; revise them only when the analysis or execution baseline itself changes.
+`current.md` is derived operational context: it may restate selected facts so an execution agent can start quickly, but it links to the canonical project owners and must be advanced as the active phase changes.
+
+The analyzer and execution plan are intentionally preserved as source artifacts. They are exempt from opportunistic restyling or consolidation during ordinary documentation cleanup; revise their substance only when the analysis or execution baseline itself changes. Mechanical path corrections after repository moves are permitted.
 
 ## Historical execution record
 
@@ -17,11 +20,12 @@ Closed phases append to `history.md`. Do not add another `PHASE*_COMPLETION_REPO
 
 ## What does not belong here
 
-- current project architecture → [`../project/architecture.md`](../project/architecture.md)
-- current product support and validation state → [`../project/implementation-status.md`](../project/implementation-status.md)
-- repeatable validation procedures → [`../project/validation.md`](../project/validation.md)
-- component/backend behavior → [`../project/README.md`](../project/README.md)
-- reusable architecture/rules/knowledge → top-level docs and [Rust systems knowledge](../knowledge/rust_knowledge.md)
+- current project architecture → [project architecture](../../project/architecture.md)
+- current product support and validation state → [implementation status](../../project/implementation-status.md)
+- repeatable validation procedures → [project validation](../../project/validation.md)
+- component/backend behavior → [project documentation](../../project/README.md)
+- reusable architecture/rules → [architecture blueprint](../../architecture.md) and [engineering rules](../../rules.md)
+- reusable Rust knowledge → [Rust systems knowledge](../knowledge/rust_knowledge.md)
 
 Execution documents may link to those owners, but should not become parallel copies of them.
 

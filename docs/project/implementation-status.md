@@ -1,11 +1,12 @@
 # Current implementation status
 
 **Status date:** 2026-07-26
-**Source baseline:** `main` commit `bda24063ad04dd21527cbfa88e2c2e4ed8313d22`
-**Execution position:** Phase 5 source closure is present on `main`; a successful canonical gate is not recorded for this exact commit, so Phase 6 remains gated on fresh validation
-**Canonical plan:** [LLM App Execution Plan](../execution/execution-plan.md)
+**Reviewed source baseline:** `main` commit `a81a3aefb999f2f5a70fee6d1830dd3f3811d2ba` (`Docs restructure`)
+**Execution position:** Phase 5 source closure is present; Phase 6 is the current implementation target but remains gated on the canonical gate passing on the exact post-documentation-repair tree
+**Canonical plan:** [LLM App Execution Plan](../agent/execution/execution-plan.md)
+**Current working context:** [Phase 6 execution context](../agent/execution/current.md)
 
-This is the canonical product-level status page. Component behavior lives in the corresponding project guide; historical phase evidence lives in [execution history](../execution/history.md).
+This is the canonical product-level status page. Component behavior lives in the corresponding project guide; historical phase evidence lives in [execution history](../agent/execution/history.md).
 
 ## Supported devices and backends
 
@@ -47,9 +48,9 @@ The source tree contains:
 
 ## Validation state
 
-The current `main` baseline is `bda24063ad04dd21527cbfa88e2c2e4ed8313d22`. No GitHub Actions run is attached to this commit in the connected repository, and the older Phase 5 closure evidence explicitly required validation after its closure patch. Therefore this page does not claim that the current baseline has passed the final locked gate.
+The latest reviewed `main` baseline is `a81a3aefb999f2f5a70fee6d1830dd3f3811d2ba`. The commit only restructures documentation relative to `bda24063ad04dd21527cbfa88e2c2e4ed8313d22`, but no combined CI status is attached to the reviewed commit in the connected repository. The older Phase 5 closure evidence explicitly required validation on the exact resulting tree. Therefore this page does not claim that the current documentation/source tree has passed the final locked gate.
 
-Run the canonical procedure in [validation](validation.md) on the exact current tree and record the resulting commit/CI provenance before advancing the execution state. Older Phase 3–5 evidence remains available in [execution history](../execution/history.md) but does not substitute for current-tree validation.
+Run the canonical procedure in [validation](validation.md) on the exact working tree and record the resulting commit/CI provenance before starting Phase 6 implementation. Older Phase 3–5 evidence remains available in [execution history](../agent/execution/history.md) but does not substitute for current-tree validation.
 
 ## Known limitations
 
@@ -62,4 +63,4 @@ Run the canonical procedure in [validation](validation.md) on the exact current 
 
 ## Historical context
 
-The [recovered implementation plan](implementation-plan.md) is retained as historical source material and is not authoritative. The active roadmap is the [execution plan](../execution/execution-plan.md); closed-phase evidence is consolidated in [execution history](../execution/history.md).
+The [recovered implementation plan](implementation-plan.md) is retained as historical source material and is not authoritative. The active roadmap is the [execution plan](../agent/execution/execution-plan.md), the current working set is [current execution context](../agent/execution/current.md), and closed-phase evidence is consolidated in [execution history](../agent/execution/history.md).

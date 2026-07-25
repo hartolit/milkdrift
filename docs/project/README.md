@@ -1,6 +1,6 @@
 # llm-app project documentation
 
-This directory owns current llm-app-specific reference material. Reusable engineering doctrine lives one level above; execution plans and historical closure evidence live under `../execution/`.
+This directory owns current llm-app-specific reference material. Reusable engineering doctrine lives one level above; agent-facing decisions, current execution context, plans, and historical closure evidence live under `../agent/`.
 
 ## Canonical ownership
 
@@ -28,7 +28,7 @@ A document may restate a small boundary when needed locally, but changing facts 
 - [Project architecture](architecture.md) applies the reusable [architecture principles](../architecture.md) to llm-app and records the current F0/F1, E0/E1, backend, and frontend model.
 - [Workspace boundaries](workspace.md) is the concrete crate inventory and dependency graph.
 - [Implementation status](implementation-status.md) is the only product-level support matrix and validation-state page.
-- Accepted project decisions are indexed in [architecture decisions](../decisions/README.md).
+- Accepted project decisions are indexed in [architecture decisions](../agent/decisions/README.md).
 
 ## Runtime and frontend
 
@@ -58,4 +58,4 @@ Procedures and measurements stay close to the domain that owns them. The status 
 
 ## Historical material
 
-The [recovered implementation plan](implementation-plan.md) is retained as historical source material. It is not the active roadmap. Closed execution-phase evidence is consolidated in [execution history](../execution/history.md), while the active program remains [execution-plan.md](../execution/execution-plan.md).
+The [recovered implementation plan](implementation-plan.md) is retained as historical source material. It is not the active roadmap. The dense working set is [current execution context](../agent/execution/current.md), closed execution-phase evidence is consolidated in [execution history](../agent/execution/history.md), and the active program remains the [execution plan](../agent/execution/execution-plan.md).
