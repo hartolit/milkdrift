@@ -104,3 +104,20 @@ fn streaming_decoder_writes_valid_text() -> Result<(), TestError> {
     assert_eq!(output.as_str()?, "hello");
     Ok(())
 }
+
+#[test]
+fn owned_streaming_decoder_preserves_state_across_steps() -> Result<(), TestError> {
+    let tokenizer = fixture()?;
+    let mut decoder = tokenizer.owned_decoder(DecodeOptions::default());
+
+    let mut first_storage = [0_u8; 32];
+    let mut first = TextBuffer::new(&mut first_storage);
+    let _first_report = decoder.step(TokenId::new(1), &mut first)?;
+    assert_eq!(first.as_str()?, "hello");
+
+    let mut second_storage = [0_u8; 32];
+    let mut second = TextBuffer::new(&mut second_storage);
+    let _second_report = decoder.step(TokenId::new(2), &mut second)?;
+    assert_eq!(second.as_str()?, " world");
+    Ok(())
+}

@@ -32,9 +32,6 @@ pub fn create_runtime(
     preferences: &ApplicationPreferences,
     configuration: &ApplicationRuntimeConfiguration,
 ) -> Result<(HostedRuntime<CandleLlamaSource>, RuntimeThread), ApplicationError> {
-    let maximum_models = NonZeroU32::new(configuration.maximum_models).ok_or(
-        ApplicationError::InvalidConfiguration(ApplicationConfigurationField::MaximumModels),
-    )?;
     let maximum_requests = NonZeroU32::new(configuration.maximum_requests).ok_or(
         ApplicationError::InvalidConfiguration(ApplicationConfigurationField::MaximumRequests),
     )?;
@@ -44,6 +41,15 @@ pub fn create_runtime(
     let event_capacity = NonZeroUsize::new(configuration.event_capacity).ok_or(
         ApplicationError::InvalidConfiguration(ApplicationConfigurationField::EventCapacity),
     )?;
+    let token_output_capacity = NonZeroUsize::new(configuration.token_output_capacity).ok_or(
+        ApplicationError::InvalidConfiguration(ApplicationConfigurationField::TokenOutputCapacity),
+    )?;
+    let token_output_record_capacity = NonZeroUsize::new(
+        configuration.token_output_record_capacity,
+    )
+    .ok_or(ApplicationError::InvalidConfiguration(
+        ApplicationConfigurationField::TokenOutputRecordCapacity,
+    ))?;
     let poll_milliseconds = duration_milliseconds(
         configuration.timing.runtime_poll,
         ApplicationConfigurationField::RuntimePoll,
@@ -52,14 +58,15 @@ pub fn create_runtime(
         ApplicationConfigurationField::RuntimePoll,
     ))?;
     let limits = RuntimeLimits::new(
-        maximum_models,
+        NonZeroU32::MIN,
         maximum_requests,
         MemoryBudget {
             host_bytes: preferences.maximum_host_memory_bytes,
             device_bytes: preferences.maximum_device_memory_bytes,
         },
     );
-    let hosted = HostedRuntimeConfiguration::new(command_capacity, event_capacity, poll);
+    let hosted = HostedRuntimeConfiguration::new(command_capacity, event_capacity, poll)
+        .with_token_output_capacity(token_output_capacity, token_output_record_capacity);
     start_hosted_runtime(CandleLlamaLoader::new(BACKEND_ID), limits, hosted)
         .map_err(|error| ApplicationFailure::new(ApplicationFailureKind::Worker, error).into())
 }
@@ -67,10 +74,6 @@ pub fn create_runtime(
 pub fn validate_configuration(
     configuration: &ApplicationRuntimeConfiguration,
 ) -> Result<(), ApplicationError> {
-    validate_non_zero(
-        &configuration.maximum_models,
-        ApplicationConfigurationField::MaximumModels,
-    )?;
     validate_non_zero(
         &configuration.maximum_requests,
         ApplicationConfigurationField::MaximumRequests,
@@ -87,6 +90,28 @@ pub fn validate_configuration(
         &configuration.hub_channel_capacity,
         ApplicationConfigurationField::HubChannelCapacity,
     )?;
+    validate_non_zero(
+        &configuration.token_output_capacity,
+        ApplicationConfigurationField::TokenOutputCapacity,
+    )?;
+    validate_non_zero(
+        &configuration.token_output_record_capacity,
+        ApplicationConfigurationField::TokenOutputRecordCapacity,
+    )?;
+    validate_non_zero(
+        &configuration.text_output_byte_capacity,
+        ApplicationConfigurationField::TextOutputByteCapacity,
+    )?;
+    validate_non_zero(
+        &configuration.text_output_record_capacity,
+        ApplicationConfigurationField::TextOutputRecordCapacity,
+    )?;
+    configuration
+        .token_output_capacity
+        .checked_add(configuration.token_output_record_capacity)
+        .ok_or(ApplicationError::InvalidConfiguration(
+            ApplicationConfigurationField::PendingGenerationOutputCapacity,
+        ))?;
     validate_timing(&configuration.timing)
 }
 

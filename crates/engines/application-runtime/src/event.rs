@@ -1,8 +1,8 @@
 //! Structured application events consumed by Slint, Tauri, CLI, or other frontends.
 
-use domain_contracts::ModelHandle;
+use domain_contracts::{ModelHandle, RequestId};
 
-use crate::{ApplicationFailure, LoadedModel, ResolvedModel};
+use crate::{ApplicationFailure, GenerationTerminal, LoadedModel, ResolvedModel};
 
 /// Frontend-neutral result of polling the application orchestrator.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,6 +33,37 @@ pub enum ApplicationEvent {
     ModelCompatibilityFailed {
         /// Normalized compatibility diagnostic.
         failure: ApplicationFailure,
+    },
+    /// E0 admitted the complete direct-completion request.
+    GenerationStarted {
+        /// Active request identity.
+        request_id: RequestId,
+    },
+    /// E0 accepted a cancellation request for the active generation.
+    GenerationCancellationRequested {
+        /// Request being cancelled.
+        request_id: RequestId,
+    },
+    /// E0 rejected a cancellation request before terminal release.
+    GenerationCancellationFailed {
+        /// Request addressed by the cancellation command.
+        request_id: RequestId,
+        /// Normalized failure.
+        failure: ApplicationFailure,
+    },
+    /// Sequence cleanup failed and ownership remains retained by E0.
+    GenerationCleanupPending {
+        /// Request whose sequence remains retained.
+        request_id: RequestId,
+        /// Whether the automatic cleanup attempt budget is exhausted.
+        exhausted: bool,
+        /// Normalized cleanup diagnostic.
+        failure: ApplicationFailure,
+    },
+    /// Generation reached terminal release or failed admission.
+    GenerationFinished {
+        /// Final frontend-neutral request summary.
+        terminal: GenerationTerminal,
     },
     /// Active work is draining before deterministic unload.
     ModelDraining {

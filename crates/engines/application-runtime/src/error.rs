@@ -3,6 +3,8 @@
 use std::error::Error;
 use std::fmt::{self, Debug, Display, Formatter};
 
+use domain_contracts::RequestId;
+
 use crate::ApplicationActivity;
 
 /// Infrastructure or adapter category associated with one failure.
@@ -10,7 +12,7 @@ use crate::ApplicationActivity;
 pub enum ApplicationFailureKind {
     /// Hugging Face artifact resolution failed.
     Hub,
-    /// Tokenizer loading or validation failed.
+    /// Tokenizer loading, encoding, or streaming decode failed.
     Tokenizer,
     /// Persistent state could not be read or written.
     Storage,
@@ -18,7 +20,7 @@ pub enum ApplicationFailureKind {
     ModelSource,
     /// Inference runtime rejected or failed an operation.
     Inference,
-    /// A host worker could not be created or terminated cleanly.
+    /// A host worker or bounded output accumulator failed.
     Worker,
 }
 
@@ -71,8 +73,6 @@ pub enum ApplicationWorker {
 /// Invalid runtime-configuration field.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApplicationConfigurationField {
-    /// Maximum loaded-model count.
-    MaximumModels,
     /// Maximum active-request count.
     MaximumRequests,
     /// Inference command queue capacity.
@@ -81,6 +81,16 @@ pub enum ApplicationConfigurationField {
     EventCapacity,
     /// Hub command and event queue capacity.
     HubChannelCapacity,
+    /// E0 token output capacity.
+    TokenOutputCapacity,
+    /// E0 token/state record capacity.
+    TokenOutputRecordCapacity,
+    /// E1 decoded text byte capacity.
+    TextOutputByteCapacity,
+    /// E1 decoded text/state record capacity.
+    TextOutputRecordCapacity,
+    /// Combined E1 pending token/state capacity overflowed `usize`.
+    PendingGenerationOutputCapacity,
     /// Inference worker poll interval.
     RuntimePoll,
     /// Hub worker poll interval.
@@ -107,11 +117,32 @@ pub enum ApplicationConfigurationField {
     DrainTimeout,
 }
 
+/// Application-level generation setting rejected before E0 admission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GenerationSettingsField {
+    /// Maximum generated-token count must be non-zero.
+    MaximumNewTokens,
+    /// Temperature must be finite and positive.
+    Temperature,
+    /// Top-p must be finite and in `(0, 1]`.
+    TopP,
+    /// Min-p must be finite and in `[0, 1]`.
+    MinP,
+    /// Repetition penalty must be finite and positive.
+    RepetitionPenalty,
+    /// Explicit EOS token identifiers must belong to the loaded vocabulary.
+    EndOfSequenceToken,
+    /// Textual stop sequences must be non-empty and encode to at least one token.
+    StopSequence,
+}
+
 /// Immediate command, configuration, or shutdown failure.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ApplicationError {
     /// Static or persisted configuration is invalid.
     InvalidConfiguration(ApplicationConfigurationField),
+    /// Application-level generation settings are invalid.
+    InvalidGenerationSettings(GenerationSettingsField),
     /// Another stateful operation must complete first.
     Busy(ApplicationActivity),
     /// A loaded model must be unloaded before resolving another selection.
@@ -120,6 +151,28 @@ pub enum ApplicationError {
     NoResolvedModel,
     /// No model generation is currently loaded.
     NoLoadedModel,
+    /// No compatible tokenizer is retained for direct completion.
+    NoTokenizer,
+    /// A generation request is already active or awaiting output release.
+    GenerationAlreadyActive(RequestId),
+    /// The addressed generation request is not the active request.
+    GenerationNotActive(RequestId),
+    /// Encoded prompt is empty.
+    EmptyPrompt,
+    /// Encoded prompt exceeds the model's prefill limit.
+    PromptTooLong {
+        /// Encoded prompt tokens required.
+        required: usize,
+        /// Maximum prompt tokens accepted in one E0 prefill.
+        available: usize,
+    },
+    /// Prompt plus configured continuation exceeds the model context window.
+    ContextCapacityExceeded {
+        /// Total token positions required.
+        required: u64,
+        /// Maximum token positions available.
+        available: u64,
+    },
     /// The resolved configuration does not declare a supported scalar type.
     UnknownScalarType,
     /// Visible selection changed after immutable artifact resolution.
@@ -146,19 +199,55 @@ impl Display for ApplicationError {
             Self::InvalidConfiguration(field) => {
                 write!(formatter, "invalid application configuration: {field:?}")
             }
+            Self::InvalidGenerationSettings(field) => {
+                write!(formatter, "invalid generation setting: {field:?}")
+            }
             Self::Busy(activity) => {
-                write!(formatter, "application operation is already active: {activity:?}")
+                write!(
+                    formatter,
+                    "application operation is already active: {activity:?}"
+                )
             }
             Self::ModelAlreadyLoaded => {
                 formatter.write_str("unload the resident model before resolving another model")
             }
             Self::NoResolvedModel => formatter.write_str("no model artifacts have been resolved"),
             Self::NoLoadedModel => formatter.write_str("no model generation is loaded"),
+            Self::NoTokenizer => formatter.write_str("no tokenizer is available for generation"),
+            Self::GenerationAlreadyActive(request_id) => write!(
+                formatter,
+                "generation request {} is still active or awaiting output release",
+                request_id.get()
+            ),
+            Self::GenerationNotActive(request_id) => write!(
+                formatter,
+                "generation request {} is not the active request",
+                request_id.get()
+            ),
+            Self::EmptyPrompt => {
+                formatter.write_str("direct-completion prompt encoded to no tokens")
+            }
+            Self::PromptTooLong {
+                required,
+                available,
+            } => write!(
+                formatter,
+                "encoded prompt requires {required} tokens but prefill accepts {available}"
+            ),
+            Self::ContextCapacityExceeded {
+                required,
+                available,
+            } => write!(
+                formatter,
+                "generation requires {required} token positions but model context provides \
+                 {available}"
+            ),
             Self::UnknownScalarType => formatter.write_str(
                 "model configuration does not declare a supported floating-point scalar type",
             ),
             Self::SelectionChanged => formatter.write_str(
-                "repository or revision changed after resolution; resolve the current selection again",
+                "repository or revision changed after resolution; resolve the current selection \
+                 again",
             ),
             Self::TicketExhausted => formatter.write_str("command ticket space is exhausted"),
             Self::HubBusy => formatter.write_str("Hub resolver queue is full"),
@@ -166,7 +255,10 @@ impl Display for ApplicationError {
             Self::RuntimeBusy => formatter.write_str("inference runtime queue is full"),
             Self::RuntimeDisconnected => formatter.write_str("inference runtime is disconnected"),
             Self::ShutdownTimeout(worker) => {
-                write!(formatter, "{worker:?} worker did not stop before its deadline")
+                write!(
+                    formatter,
+                    "{worker:?} worker did not stop before its deadline"
+                )
             }
             Self::Failure(failure) => Display::fmt(failure, formatter),
         }

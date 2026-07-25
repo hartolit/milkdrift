@@ -24,4 +24,5 @@ pub use generation::{
     GenerationRequest, GenerationStopSequence,
 };
 pub use runtime::InferenceRuntime;
+pub use sampling::SamplingConfig;
 pub use worker::{HostedRuntime, HostedRuntimeStartError, RuntimeThread, start_hosted_runtime};

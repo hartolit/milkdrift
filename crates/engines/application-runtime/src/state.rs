@@ -1,11 +1,15 @@
 //! Frontend-neutral application state exposed by the orchestration engine.
 
-use domain_contracts::{ModelHandle, ScalarType};
+use domain_contracts::{
+    DeviceKind, FinishReason, GenerationUsage, ModelHandle, RequestId, ScalarType,
+};
+
+use crate::ApplicationFailure;
 
 /// Long-running application operation currently in progress.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ApplicationActivity {
-    /// No command is awaiting completion.
+    /// No model-lifecycle command is awaiting completion.
     #[default]
     Idle,
     /// Immutable model artifacts are being resolved and validated.
@@ -16,6 +20,13 @@ pub enum ApplicationActivity {
     Unloading,
     /// Worker shutdown has begun and no new work is accepted.
     ShuttingDown,
+}
+
+/// Backend selected by the initial application product path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApplicationBackend {
+    /// Candle Llama/Safetensors backend.
+    Candle,
 }
 
 /// Validated immutable model selection available for loading.
@@ -48,6 +59,62 @@ pub struct LoadedModel {
     pub handle: ModelHandle,
     /// Vocabulary size reported by the loaded model descriptor.
     pub vocabulary_size: u32,
+    /// Maximum token positions supported by one sequence.
+    pub maximum_context_tokens: u32,
+    /// Maximum prompt tokens accepted by one prefill operation.
+    pub maximum_prefill_batch: u32,
+    /// Application-selected backend.
+    pub backend: ApplicationBackend,
+    /// Application-selected execution device category.
+    pub device: DeviceKind,
+}
+
+/// Frontend-visible phase of one direct-completion request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GenerationPhase {
+    /// E1 submitted the complete request and awaits E0 admission.
+    Starting,
+    /// E0 admitted the request and generation may advance independently.
+    Running,
+    /// E1 requested cancellation and awaits a safe E0 terminal boundary.
+    Cancelling,
+    /// Generation is terminal and explicit sequence cleanup is in progress.
+    Finishing,
+    /// Sequence cleanup failed but remains retained for bounded retry.
+    CleanupPending,
+    /// Automatic cleanup attempts are exhausted and ownership remains retained.
+    CleanupExhausted,
+}
+
+/// Current request identity and usage exposed to every frontend.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GenerationSummary {
+    /// Active request identity.
+    pub request_id: RequestId,
+    /// Current frontend-visible phase.
+    pub phase: GenerationPhase,
+    /// Prompt/generated token accounting observed by E1.
+    pub usage: GenerationUsage,
+}
+
+/// Final frontend-neutral generation result.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GenerationTerminalOutcome {
+    /// E0 completed generation with a stable finish reason.
+    Finished(FinishReason),
+    /// E0 or E1 failed the request; diagnostic ownership remains in E1.
+    Failed(ApplicationFailure),
+}
+
+/// Last terminal request summary retained after release or failed admission.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GenerationTerminal {
+    /// Request identity.
+    pub request_id: RequestId,
+    /// Final completion or failure classification.
+    pub outcome: GenerationTerminalOutcome,
+    /// Prompt/generated usage observed before terminal release.
+    pub usage: GenerationUsage,
 }
 
 /// Read-only application state shared by every frontend implementation.
@@ -56,6 +123,8 @@ pub struct ApplicationState {
     activity: ApplicationActivity,
     resolved: Option<ResolvedModel>,
     loaded: Option<LoadedModel>,
+    generation: Option<GenerationSummary>,
+    last_generation: Option<GenerationTerminal>,
     hub_available: bool,
     inference_available: bool,
 }
@@ -66,6 +135,8 @@ impl Default for ApplicationState {
             activity: ApplicationActivity::Idle,
             resolved: None,
             loaded: None,
+            generation: None,
+            last_generation: None,
             hub_available: true,
             inference_available: true,
         }
@@ -73,7 +144,7 @@ impl Default for ApplicationState {
 }
 
 impl ApplicationState {
-    /// Returns the current long-running operation.
+    /// Returns the current long-running model-lifecycle operation.
     #[must_use]
     pub const fn activity(&self) -> ApplicationActivity {
         self.activity
@@ -89,6 +160,18 @@ impl ApplicationState {
     #[must_use]
     pub const fn loaded(&self) -> Option<LoadedModel> {
         self.loaded
+    }
+
+    /// Returns the active direct-completion request, when present.
+    #[must_use]
+    pub const fn active_generation(&self) -> Option<GenerationSummary> {
+        self.generation
+    }
+
+    /// Returns the most recently terminal generation summary.
+    #[must_use]
+    pub const fn last_generation(&self) -> Option<&GenerationTerminal> {
+        self.last_generation.as_ref()
     }
 
     /// Returns whether the Hub resolver worker can accept work.
@@ -109,6 +192,7 @@ impl ApplicationState {
         matches!(self.activity, ApplicationActivity::Idle)
             && self.hub_available
             && self.loaded.is_none()
+            && self.generation.is_none()
     }
 
     /// Returns whether a model may be loaded for the current visible selection.
@@ -117,9 +201,31 @@ impl ApplicationState {
         self.activity == ApplicationActivity::Idle
             && self.inference_available
             && self.loaded.is_none()
+            && self.generation.is_none()
             && self.resolved.as_ref().is_some_and(|resolved| {
                 resolved.scalar_type.is_some() && resolved.matches_selection(repository, revision)
             })
+    }
+
+    /// Returns whether direct completion may start against the resident model.
+    #[must_use]
+    pub const fn can_start_generation(&self) -> bool {
+        matches!(self.activity, ApplicationActivity::Idle)
+            && self.inference_available
+            && self.loaded.is_some()
+            && self.generation.is_none()
+    }
+
+    /// Returns whether the active request still accepts an explicit cancellation request.
+    #[must_use]
+    pub const fn can_cancel_generation(&self) -> bool {
+        matches!(
+            self.generation,
+            Some(GenerationSummary {
+                phase: GenerationPhase::Starting | GenerationPhase::Running,
+                ..
+            })
+        )
     }
 
     /// Returns whether the resident model may be unloaded.
@@ -168,6 +274,28 @@ impl ApplicationState {
     pub(crate) const fn clear_loaded(&mut self) {
         self.loaded = None;
         self.activity = ApplicationActivity::Idle;
+    }
+
+    pub(crate) fn begin_generation(&mut self, summary: GenerationSummary) {
+        self.generation = Some(summary);
+        self.last_generation = None;
+    }
+
+    pub(crate) fn set_generation_phase(&mut self, phase: GenerationPhase) {
+        if let Some(summary) = self.generation.as_mut() {
+            summary.phase = phase;
+        }
+    }
+
+    pub(crate) fn increment_generated_tokens(&mut self) {
+        if let Some(summary) = self.generation.as_mut() {
+            summary.usage.generated_tokens = summary.usage.generated_tokens.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn finish_generation(&mut self, terminal: GenerationTerminal) {
+        self.generation = None;
+        self.last_generation = Some(terminal);
     }
 
     pub(crate) const fn disconnect_hub(&mut self) {

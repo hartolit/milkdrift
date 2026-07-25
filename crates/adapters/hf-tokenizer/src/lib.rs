@@ -61,6 +61,7 @@ impl Error for HfTokenizerLoadError {
 /// Upstream encoding and streaming decode allocate internally. The adapter keeps
 /// those allocations quarantined and validates caller-owned sink capacity before
 /// committing output. It does not claim allocation-free execution.
+#[derive(Clone)]
 pub struct HfTokenizer {
     ordinary: tokenizers::Tokenizer,
     special: tokenizers::Tokenizer,
@@ -108,6 +109,22 @@ impl HfTokenizer {
     #[must_use]
     pub const fn inner(&self) -> &tokenizers::Tokenizer {
         &self.ordinary
+    }
+
+    /// Creates request-local owned streaming decode state.
+    ///
+    /// The owned session clones the tokenizer once at request construction and
+    /// keeps only the bounded suffix required to preserve upstream streaming
+    /// semantics. It does not repeatedly decode the complete generated history.
+    #[must_use]
+    pub fn owned_decoder(&self, options: DecodeOptions) -> HfOwnedStreamingDecoder {
+        HfOwnedStreamingDecoder {
+            tokenizer: self.ordinary.clone(),
+            skip_special_tokens: options.skip_special_tokens,
+            ids: Vec::new(),
+            prefix: String::new(),
+            prefix_index: 0,
+        }
     }
 
     fn reject_special_spellings(&self, text: &str) -> Result<(), TokenizationError> {
@@ -189,7 +206,7 @@ impl Tokenizer for HfTokenizer {
     }
 }
 
-/// Request-local stateful decoder backed by Hugging Face `DecodeStream`.
+/// Request-local stateful decoder borrowing the adapter tokenizer.
 pub struct HfStreamingDecoder<'tokenizer> {
     inner: DecodeStream<
         'tokenizer,
@@ -228,20 +245,81 @@ impl StreamingDecoder for HfStreamingDecoder<'_> {
         else {
             return Ok(DecodeReport::default());
         };
-        if fragment.len() > output.remaining_capacity() {
-            return Err(CapacityExhausted::new(
-                CapacityResource::DecodeBytes,
-                usize_to_u64(fragment.len()),
-                usize_to_u64(output.remaining_capacity()),
-            )
-            .into());
-        }
-        output.push_str(fragment.as_str())?;
-        Ok(DecodeReport {
-            bytes_written: fragment.len(),
-            skipped_special_token: fragment.is_empty(),
-        })
+        write_fragment(fragment.as_str(), output)
     }
+}
+
+/// Request-local streaming decoder that owns its tokenizer state.
+///
+/// This mirrors the upstream `DecodeStream` state machine while owning the
+/// tokenizer clone, avoiding a self-referential application object. The retained
+/// identifier suffix is drained whenever a stable prefix is emitted.
+pub struct HfOwnedStreamingDecoder {
+    tokenizer: tokenizers::Tokenizer,
+    skip_special_tokens: bool,
+    ids: Vec<u32>,
+    prefix: String,
+    prefix_index: usize,
+}
+
+impl StreamingDecoder for HfOwnedStreamingDecoder {
+    fn step<S: TextSink>(
+        &mut self,
+        token: TokenId,
+        output: &mut S,
+    ) -> Result<DecodeReport, TokenizationError> {
+        if self.prefix.is_empty() && !self.ids.is_empty() {
+            let new_prefix = self.decode_ids()?;
+            if !new_prefix.ends_with('�') {
+                self.prefix = new_prefix;
+                self.prefix_index = self.ids.len();
+            }
+        }
+
+        self.ids.push(token.get());
+        let decoded = self.decode_ids()?;
+        if decoded.len() <= self.prefix.len() || decoded.ends_with('�') {
+            return Ok(DecodeReport::default());
+        }
+        let Some(fragment) = decoded.strip_prefix(self.prefix.as_str()) else {
+            return Err(TokenizationError::Implementation { code: ERROR_DECODE });
+        };
+        let fragment = fragment.to_owned();
+        let retained_index = self.prefix_index.min(self.ids.len());
+        let new_prefix_index = self.ids.len().saturating_sub(retained_index);
+        let retained = self.ids.drain(retained_index..).collect();
+        self.ids = retained;
+        self.prefix = self.decode_ids()?;
+        self.prefix_index = new_prefix_index;
+        write_fragment(fragment.as_str(), output)
+    }
+}
+
+impl HfOwnedStreamingDecoder {
+    fn decode_ids(&self) -> Result<String, TokenizationError> {
+        self.tokenizer
+            .decode(self.ids.as_slice(), self.skip_special_tokens)
+            .map_err(|_| TokenizationError::Implementation { code: ERROR_DECODE })
+    }
+}
+
+fn write_fragment<S: TextSink>(
+    fragment: &str,
+    output: &mut S,
+) -> Result<DecodeReport, TokenizationError> {
+    if fragment.len() > output.remaining_capacity() {
+        return Err(CapacityExhausted::new(
+            CapacityResource::DecodeBytes,
+            usize_to_u64(fragment.len()),
+            usize_to_u64(output.remaining_capacity()),
+        )
+        .into());
+    }
+    output.push_str(fragment)?;
+    Ok(DecodeReport {
+        bytes_written: fragment.len(),
+        skipped_special_token: fragment.is_empty(),
+    })
 }
 
 fn usize_to_u64(value: usize) -> u64 {

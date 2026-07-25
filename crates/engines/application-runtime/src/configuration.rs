@@ -7,11 +7,14 @@ const DEFAULT_REVISION: &str = "main";
 const DEFAULT_HOST_MEMORY_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 const DEFAULT_DEVICE_MEMORY_BYTES: u64 = 0;
 const DEFAULT_DRAIN_TIMEOUT_MILLISECONDS: u64 = 2_000;
-const DEFAULT_MAXIMUM_MODELS: u32 = 1;
 const DEFAULT_MAXIMUM_REQUESTS: u32 = 1;
 const DEFAULT_COMMAND_CAPACITY: usize = 32;
 const DEFAULT_EVENT_CAPACITY: usize = 32;
 const DEFAULT_HUB_CHANNEL_CAPACITY: usize = 4;
+const DEFAULT_TOKEN_OUTPUT_CAPACITY: usize = 256;
+const DEFAULT_TOKEN_OUTPUT_RECORD_CAPACITY: usize = 512;
+const DEFAULT_TEXT_OUTPUT_BYTE_CAPACITY: usize = 64 * 1024;
+const DEFAULT_TEXT_OUTPUT_RECORD_CAPACITY: usize = 512;
 const DEFAULT_RUNTIME_POLL_MILLISECONDS: u64 = 10;
 const DEFAULT_HUB_WORKER_POLL_MILLISECONDS: u64 = 100;
 const DEFAULT_HUB_EVENT_SEND_TIMEOUT_MILLISECONDS: u64 = 100;
@@ -120,8 +123,6 @@ pub struct ApplicationRuntimeConfiguration {
     pub hub: ApplicationHubConfiguration,
     /// Settings used only when no persisted record exists.
     pub defaults: ApplicationPreferences,
-    /// Maximum concurrently loaded model instances.
-    pub maximum_models: u32,
     /// Maximum concurrently active inference requests.
     pub maximum_requests: u32,
     /// Maximum queued inference commands.
@@ -130,23 +131,34 @@ pub struct ApplicationRuntimeConfiguration {
     pub event_capacity: usize,
     /// Maximum queued Hub commands and results.
     pub hub_channel_capacity: usize,
+    /// Maximum unpublished E0 token identifiers retained between application pulls.
+    pub token_output_capacity: usize,
+    /// Maximum unpublished E0 token/state records retained between application pulls.
+    pub token_output_record_capacity: usize,
+    /// Maximum unpublished decoded UTF-8 bytes retained for frontend pulls.
+    pub text_output_byte_capacity: usize,
+    /// Maximum unpublished decoded text/state records retained for frontend pulls.
+    pub text_output_record_capacity: usize,
     /// Worker polling and shutdown intervals.
     pub timing: ApplicationTiming,
 }
 
 impl ApplicationRuntimeConfiguration {
-    /// Creates a desktop-oriented configuration with bounded defaults.
+    /// Creates a desktop-oriented single-model configuration with bounded defaults.
     #[must_use]
     pub fn desktop(database_path: impl Into<PathBuf>) -> Self {
         Self {
             database_path: database_path.into(),
             hub: ApplicationHubConfiguration::default(),
             defaults: ApplicationPreferences::default(),
-            maximum_models: DEFAULT_MAXIMUM_MODELS,
             maximum_requests: DEFAULT_MAXIMUM_REQUESTS,
             command_capacity: DEFAULT_COMMAND_CAPACITY,
             event_capacity: DEFAULT_EVENT_CAPACITY,
             hub_channel_capacity: DEFAULT_HUB_CHANNEL_CAPACITY,
+            token_output_capacity: DEFAULT_TOKEN_OUTPUT_CAPACITY,
+            token_output_record_capacity: DEFAULT_TOKEN_OUTPUT_RECORD_CAPACITY,
+            text_output_byte_capacity: DEFAULT_TEXT_OUTPUT_BYTE_CAPACITY,
+            text_output_record_capacity: DEFAULT_TEXT_OUTPUT_RECORD_CAPACITY,
             timing: ApplicationTiming::default(),
         }
     }

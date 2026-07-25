@@ -3,11 +3,16 @@
 #![forbid(unsafe_code)]
 
 mod output;
+mod text_output;
 mod token_output;
 
 pub use output::{
     OutputConsumer, OutputInitializationError, OutputProducer, OutputPullError, OutputPushError,
     output_accumulator,
+};
+pub use text_output::{
+    TextOutputBatch, TextOutputConsumer, TextOutputCursor, TextOutputInitializationError,
+    TextOutputProducer, TextOutputRecord, TextOutputRecordKind, TextRange, text_output_accumulator,
 };
 pub use token_output::{
     TokenOutputBatch, TokenOutputConsumer, TokenOutputCursor, TokenOutputInitializationError,

@@ -2,87 +2,83 @@
 
 **Status date:** 2026-07-25
 
-**Source baseline:** Phase 4 implementation commit `8de2ebf2811d5158e3439efe2114379de59322d0` plus the lifecycle, provenance, and fixture-hygiene closure patch
+**Source baseline:** `main` commit `09f54fde16069da750ba2180fb9452e5097e7bcc` plus the Phase 5 implementation patch
 
-**Execution position:** Phase 4 implementation complete; final locked validation and the pinned smoke must be rerun on the closure commit before Phase 5 begins
+**Execution position:** Phase 5 source implementation prepared; local locked Rust validation is required before Phase 5 is marked complete
 
 **Canonical plan:** [LLM App Execution Plan](../execution/execution-plan.md)
 
-This document is the canonical statement of what the delivered source tree claims. It deliberately separates implemented source, recorded baseline evidence, and validation still required after source changes.
+This document is the canonical statement of what the delivered source tree claims. It deliberately separates implemented source from validation evidence.
 
 ## Supported devices and backends
 
 | Backend | Device | Adapter/E0 boundary | `application-runtime` (E1) | Slint UI |
 |---|---|---:|---:|---:|
-| Candle 0.11 Llama/Safetensors | CPU | Phase 4 vertical slice implemented | Yes, lifecycle composition | Yes, lifecycle only |
-| GGUF via llama.cpp | CPU | Lifecycle and backend primitives | No | No |
+| Candle 0.11 Llama/Safetensors | CPU | Phase 4 generation vertical slice | Phase 5 direct-completion façade implemented | Lifecycle only |
+| GGUF via llama.cpp | CPU | Lifecycle and backend primitives | No generation composition | No |
 | Candle or GGUF | CUDA/Metal/other GPU | No supported product path | No | No |
 
-The repository remains CPU-only. Candle Llama is driven through the E0 generation scheduler; E1 and the UI still expose lifecycle only.
+The repository remains CPU-only. Candle Llama is driven through the E0 generation scheduler. Phase 5 adds the frontend-neutral E1 generation boundary; Slint generation controls remain Phase 6.
 
-## Completed Phase 3 foundation
+## Phase 5 source implementation
 
-The Phase 3 completion report records a passing canonical locked validation for its exact source tree. That foundation includes worker-owned prefill/sampling/decode, bounded output, cancellation and stop conditions, exact admission accounting, deterministic cleanup quarantine and retry exhaustion, and fault-injection coverage.
+The patch adds:
 
-The Phase 4 implementation preserves those generic contracts and changes Candle-specific behavior only at the adapter and integration-test boundaries.
-
-## Phase 4 implementation
-
-The delivered source includes:
-
-- deterministic Candle CPU fixture semantics for prompt positions, final-position prefill logits, independent incremental decode progression, cancellation boundaries, exact vocabulary output, explicit sequence destruction, and unload;
-- F32 and F16 native CPU execution plus BF16 source compatibility through admission-accounted F32 upcasting; Candle logits are normalized to the backend-independent F32 output contract;
-- actual Candle Llama execution through the hosted E0 generation scheduler, including token-limit completion, EOS completion, bounded output backpressure, cancellation, terminal/released publication, exact accounting release, model unload, a final empty post-unload snapshot, shutdown, and worker join;
-- an opt-in pinned real-model smoke example that accepts local model files and caller-supplied token IDs, verifies the loaded architecture and context, produces tokens through E0, cancels a second generation, checks release and post-unload accounting, unloads, and records diagnostic timings and RSS;
-- a reproducible smoke procedure at [Phase 4 Candle Llama Smoke Procedure](../execution/phase4-candle-smoke.md).
-
-Ordinary CI remains download-free: Candle integration tests use the tiny project-authored Safetensors fixture under `crates/engines/inference-runtime/tests/fixtures/`. The pinned external smoke model is downloaded into ignored `.phase4/` storage and is not committed.
+- stable E1 `GenerationSettings` with maximum new tokens, temperature, top-k, top-p, min-p, repetition penalty/window, seed policy, explicit EOS tokens, and textual stop suffixes;
+- direct-completion prompt encoding through the resolved `HfTokenizer`, with boundary-special-token behavior explicit and no chat-template claim;
+- owned request-local Hugging Face streaming decode state that does not borrow `ApplicationRuntime`'s tokenizer and does not re-decode the complete generated history;
+- application-owned request state for starting, running, cancelling, terminal cleanup, cleanup exhaustion, usage, and the last terminal result;
+- a bounded generic UTF-8/state accumulator in `host-runtime` and an E1 wrapper that hides host-runtime implementation types from frontends;
+- translation of E0 token/state pulls into decoded text/state pulls without frontend-driven per-token commands;
+- explicit single-model E1 configuration: E1 configures E0 for one resident model and no longer exposes a misleading `maximum_models` setting;
+- focused tokenizer, text-accumulator, and application-state contract tests;
+- compatibility handling in the existing Slint presenter for the new low-frequency generation events without adding Phase 6 generation controls.
 
 ## Integration depth
 
 | Capability | E0 inference runtime | E1 application runtime | Slint UI |
 |---|---:|---:|---:|
-| Model load, generation-safe handle, drain, cancellation, unload | Yes | Yes for Candle lifecycle | Yes for Candle lifecycle |
-| Backend prefill and decode primitives | Yes | Not exposed as generation | No |
-| Backend-independent generation scheduler | Fake backend plus Candle CPU integration | Not exposed | No |
-| Sampling algorithm | Integrated inside E0 | Not exposed | No |
-| Bounded streamed token output | Pull-oriented token/state batches | No | No |
-| Direct-completion real-model loop | Opt-in E0 smoke | No | No |
-| Tokenization and decoded text streaming | Separate foundations only | Not integrated | No |
+| Model load, generation-safe handle, drain, cancellation, unload | Yes | Yes | Yes for lifecycle |
+| Backend-independent generation scheduler | Yes | Submitted as one complete request | No direct access |
+| Sampling algorithm | Integrated inside E0 | Stable settings translated at admission | No |
+| Bounded streamed token output | Pull-oriented token/state batches | Consumed internally | No |
+| Prompt tokenization | Token IDs only | Direct-completion prompt encoded once | No generation control yet |
+| Stateful decoded text streaming | No text ownership | Bounded request-local UTF-8 pulls | Phase 6 wiring pending |
+| Generation start/cancel state | Runtime command/state | Public E1 API/state/events | Phase 6 controls pending |
 | General chat templates/history | No | No | No |
 
 ## Validation evidence and remaining gate
 
-The recorded Phase 4 baseline locally passed:
+Phase 4 was validated before this patch. Phase 5 changes E1, tokenizer, host output, tests, and documentation, so previous validation is not evidence for the resulting tree.
+
+Run the repository's canonical locked gate after applying the patch:
 
 ```text
 cargo run --locked --bin llm-app -- verify
 ```
 
-It also passed the pinned smoke for `neubla/tiny-random-LlamaForCausalLM` revision `39ca1f8a1fc940377c5cb49a21aff73bb99b52f5`; the complete recorded diagnostics are retained in the [Phase 4 closure report](../execution/PHASE4_IMPLEMENTATION_REPORT.md). That evidence was captured before the squashed Phase 4 commit and is local evidence rather than a GitHub Actions result.
-
-The closure patch changes source and tests by making successful Candle destruction transition the sequence to `Finished` and by asserting a completely empty runtime/model snapshot after unload. Therefore the final closure commit must rerun both gates before Phase 4 is formally closed:
+For focused diagnosis before or after the canonical gate:
 
 ```text
-cargo run --locked --bin llm-app -- verify
-
-MODEL_DIR="$PWD/.phase4/tiny-random-llama"
-MODEL_REVISION="39ca1f8a1fc940377c5cb49a21aff73bb99b52f5"
-export LLM_APP_CANDLE_MODEL_DIR="$MODEL_DIR"
-export LLM_APP_CANDLE_MODEL_REVISION="$MODEL_REVISION"
-export LLM_APP_CANDLE_PROMPT_TOKENS="1,2,3"
-cargo run --locked -p inference-runtime --example candle_llama_smoke
+cargo fmt --all -- --check
+cargo check --workspace --all-targets --locked
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
+cargo bench --workspace --no-run --locked
+git diff --check
 ```
 
-Record `git rev-parse HEAD` together with the complete command output. Phase 5 begins only after both commands pass on that exact commit.
+Phase 5 is complete only after the canonical locked verification passes on the exact patched commit/tree. Any compile, Clippy, test, or rustdoc failure found by local validation remains an implementation defect to feed back into the patch.
 
 ## Known limitations
 
-- The E0 request starts from caller-supplied token IDs and emits token IDs. Tokenizer ownership, incremental text decoding, E1 generation commands, and frontend pulls remain Phase 5 work.
-- The selected smoke fixture is a tiny random test model. It proves architecture and lifecycle integration, not output quality.
-- The deterministic cleanup policy uses a total-attempt limit, not wall-clock retry backoff. Exhausted resources remain quarantined and accounted.
-- Strict allocation-free Candle execution is not claimed because upstream Candle allocates intermediate and KV-cache tensors.
-- GPU execution, remote/browser transport, general chat, GGUF UI selection, and multi-model E1 state are unsupported.
+- Phase 5 is direct completion only. General chat templates, message history, context rendering, and conversation persistence remain later phases.
+- Slint still exposes lifecycle controls only; Phase 6 adds prompt input, generated output, generate/cancel controls, usage display, and frame-aligned text application.
+- The E1 product path is deliberately single-model even though lower E0 contracts can represent more general residency.
+- The selected Candle smoke fixture is a tiny random test model. It proves architecture and lifecycle integration, not output quality.
+- Strict allocation-free Candle or Hugging Face tokenization/decoding execution is not claimed because upstream libraries allocate internally.
+- GPU execution, remote/browser transport, and GGUF UI selection remain unsupported.
 
 ## Historical implementation record
 

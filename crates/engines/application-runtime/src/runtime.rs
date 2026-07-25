@@ -11,6 +11,7 @@ use inference_runtime::{
 use redb_storage::{ModelRecord, RedbStorage};
 use tokenization::Tokenizer;
 
+use crate::generation::GenerationBridge;
 use crate::hub_worker::{HubCommand, HubEvent, HubWorker, start_hub_worker};
 use crate::support::{
     application_preferences, candle_scalar_type, create_runtime, domain_scalar_type,
@@ -18,16 +19,16 @@ use crate::support::{
     stored_settings, unix_milliseconds, validate_configuration, validate_preferences,
 };
 use crate::{
-    ApplicationActivity, ApplicationError, ApplicationEvent, ApplicationFailure,
-    ApplicationFailureKind, ApplicationPreferences, ApplicationRuntimeConfiguration,
-    ApplicationState, LoadedModel, ResolvedModel,
+    ApplicationActivity, ApplicationBackend, ApplicationError, ApplicationEvent,
+    ApplicationFailure, ApplicationFailureKind, ApplicationPreferences,
+    ApplicationRuntimeConfiguration, ApplicationState, LoadedModel, ResolvedModel,
 };
 
 const MODEL_ID: ModelId = ModelId::new(1);
 const CPU_DEVICE: DeviceId = DeviceId::new(0);
 const INITIAL_COMMAND_TICKET: u64 = 1;
 
-/// Frontend-neutral owner of model acquisition, persistence, and lifecycle workers.
+/// Frontend-neutral owner of model acquisition, persistence, lifecycle, and generation workers.
 pub struct ApplicationRuntime {
     pub(crate) inference: HostedRuntime<CandleLlamaSource>,
     pub(crate) inference_thread: Option<RuntimeThread>,
@@ -39,7 +40,8 @@ pub struct ApplicationRuntime {
     pub(crate) configuration: ApplicationRuntimeConfiguration,
     pub(crate) state: ApplicationState,
     resolved_artifacts: Option<ResolvedModelArtifacts>,
-    tokenizer: Option<HfTokenizer>,
+    pub(crate) tokenizer: Option<HfTokenizer>,
+    pub(crate) generation: GenerationBridge,
     next_ticket: u64,
 }
 
@@ -48,10 +50,12 @@ impl ApplicationRuntime {
     ///
     /// # Errors
     ///
-    /// Returns an error when configuration or persisted preferences are invalid, storage cannot be
-    /// opened or read, or either bounded worker cannot be started.
+    /// Returns an error when configuration or persisted preferences are invalid, bounded output
+    /// storage cannot be allocated, storage cannot be opened or read, or either worker cannot be
+    /// started.
     pub fn start(configuration: ApplicationRuntimeConfiguration) -> Result<Self, ApplicationError> {
         validate_configuration(&configuration)?;
+        let generation = GenerationBridge::new(&configuration)?;
         let storage = RedbStorage::open(&configuration.database_path).map_err(storage_failure)?;
         let preferences = storage
             .load_settings()
@@ -83,6 +87,7 @@ impl ApplicationRuntime {
             state: ApplicationState::default(),
             resolved_artifacts: None,
             tokenizer: None,
+            generation,
             next_ticket: INITIAL_COMMAND_TICKET,
         })
     }
@@ -181,6 +186,9 @@ impl ApplicationRuntime {
 
     /// Requests bounded draining and deterministic release of the resident model.
     ///
+    /// Active generation remains owned by E0 and may complete during the configured drain window;
+    /// expiry escalates to safe-boundary cancellation.
+    ///
     /// # Errors
     ///
     /// Returns an error when unloading is not currently valid, no model is loaded, or the
@@ -195,9 +203,13 @@ impl ApplicationRuntime {
         self.submit_unload(handle)
     }
 
-    /// Processes at most one pending Hub or inference event without blocking.
+    /// Processes at most one pending application, Hub, or inference event without blocking.
     #[must_use]
     pub fn poll_event(&mut self) -> Option<ApplicationEvent> {
+        if let Some(event) = self.take_generation_event() {
+            return Some(event);
+        }
+
         if self.state.hub_available() {
             match self.hub_results.try_receive() {
                 Ok(event) => return Some(self.process_hub_event(event)),
@@ -218,6 +230,7 @@ impl ApplicationRuntime {
                 Err(inference_runtime::RuntimeReceiveError::Timeout) => {}
                 Err(inference_runtime::RuntimeReceiveError::Disconnected) => {
                     self.state.disconnect_inference();
+                    self.handle_generation_runtime_disconnected();
                     if matches!(
                         self.state.activity(),
                         ApplicationActivity::Loading | ApplicationActivity::Unloading
@@ -228,7 +241,7 @@ impl ApplicationRuntime {
                 }
             }
         }
-        None
+        self.pump_generation_event()
     }
 
     /// Cooperatively shuts down workers and waits only to configured hard deadlines.
@@ -258,7 +271,7 @@ impl ApplicationRuntime {
         }
     }
 
-    fn submit_inference(
+    pub(crate) fn submit_inference(
         &mut self,
         command: RuntimeCommand<CandleLlamaSource>,
     ) -> Result<(), ApplicationError> {
@@ -339,9 +352,11 @@ impl ApplicationRuntime {
         match event {
             RuntimeEvent::ModelLoaded { result, .. } => Some(self.process_model_loaded(*result)),
             RuntimeEvent::ModelUnload { result, .. } => Some(self.process_model_unload(*result)),
+            RuntimeEvent::GenerationAdmitted { .. }
+            | RuntimeEvent::GenerationCancellationRequested { .. } => {
+                self.process_generation_runtime_event(event)
+            }
             RuntimeEvent::Shutdown { .. }
-            | RuntimeEvent::GenerationAdmitted { .. }
-            | RuntimeEvent::GenerationCancellationRequested { .. }
             | RuntimeEvent::RequestStarted { .. }
             | RuntimeEvent::PrefillCompleted { .. }
             | RuntimeEvent::DecodeCompleted { .. }
@@ -370,6 +385,10 @@ impl ApplicationRuntime {
         let loaded = LoadedModel {
             handle: receipt.handle,
             vocabulary_size: receipt.descriptor.metadata.vocabulary_size,
+            maximum_context_tokens: receipt.descriptor.capabilities.maximum_context_tokens,
+            maximum_prefill_batch: receipt.descriptor.capabilities.maximum_prefill_batch,
+            backend: ApplicationBackend::Candle,
+            device: DeviceKind::Cpu,
         };
         self.state.set_loaded(loaded);
         let tokenizer_vocabulary = self.tokenizer.as_ref().map(Tokenizer::vocabulary_size);

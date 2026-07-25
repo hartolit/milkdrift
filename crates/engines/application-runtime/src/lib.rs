@@ -1,10 +1,11 @@
-//! Frontend-neutral orchestration for local model acquisition and lifecycle.
+//! Frontend-neutral orchestration for local model acquisition, lifecycle, and generation.
 
 #![forbid(unsafe_code)]
 
 mod configuration;
 mod error;
 mod event;
+mod generation;
 mod hub_worker;
 mod runtime;
 mod shutdown;
@@ -20,11 +21,19 @@ pub use configuration::{
 pub use domain_contracts::ScalarType;
 pub use error::{
     ApplicationConfigurationField, ApplicationError, ApplicationFailure, ApplicationFailureKind,
-    ApplicationWorker,
+    ApplicationWorker, GenerationSettingsField,
 };
 pub use event::ApplicationEvent;
+pub use generation::{
+    ApplicationOutputBatch, ApplicationOutputRecord, ApplicationOutputRecordKind,
+    ApplicationOutputState, ApplicationTextRange, GenerationSeed, GenerationSettings,
+    GenerationTerminalKind,
+};
 pub use runtime::ApplicationRuntime;
-pub use state::{ApplicationActivity, ApplicationState, LoadedModel, ResolvedModel};
+pub use state::{
+    ApplicationActivity, ApplicationBackend, ApplicationState, GenerationPhase, GenerationSummary,
+    GenerationTerminal, GenerationTerminalOutcome, LoadedModel, ResolvedModel,
+};
 pub use workflow::{
     Artifact, ArtifactContent, ArtifactContentKind, ArtifactId, ArtifactInputs, ArtifactKind,
     ArtifactReference, ArtifactRole, ArtifactStore, CorrectiveWorkflowConfiguration,

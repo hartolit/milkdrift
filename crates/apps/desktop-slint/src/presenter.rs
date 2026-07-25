@@ -115,7 +115,8 @@ fn apply_event(window: &AppWindow, event: ApplicationEvent) {
             let scalar = model.scalar_type.map_or("unknown", scalar_type_name);
             let message = match persistence_warning {
                 Some(warning) => format!(
-                    "Artifacts and tokenizer ({} tokens, {scalar}) are ready; catalogue persistence failed: {warning}",
+                    "Artifacts and tokenizer ({} tokens, {scalar}) are ready; catalogue \
+                     persistence failed: {warning}",
                     model.vocabulary_size,
                 ),
                 None => format!(
@@ -145,6 +146,50 @@ fn apply_event(window: &AppWindow, event: ApplicationEvent) {
         ApplicationEvent::ModelCompatibilityFailed { failure } => {
             window.set_status_text(format!("Model compatibility check failed: {failure}").into());
         }
+        ApplicationEvent::GenerationStarted { request_id } => {
+            window.set_status_text(format!("Generation {} started.", request_id.get()).into());
+        }
+        ApplicationEvent::GenerationCancellationRequested { request_id } => {
+            window.set_status_text(
+                format!(
+                    "Cancellation requested for generation {}.",
+                    request_id.get()
+                )
+                .into(),
+            );
+        }
+        ApplicationEvent::GenerationCancellationFailed {
+            request_id,
+            failure,
+        } => {
+            window.set_status_text(
+                format!(
+                    "Cancellation failed for generation {}: {failure}",
+                    request_id.get()
+                )
+                .into(),
+            );
+        }
+        ApplicationEvent::GenerationCleanupPending {
+            request_id,
+            exhausted,
+            failure,
+        } => {
+            let state = if exhausted { "exhausted" } else { "pending" };
+            window.set_status_text(
+                format!("Generation {} cleanup {state}: {failure}", request_id.get()).into(),
+            );
+        }
+        ApplicationEvent::GenerationFinished { terminal } => {
+            window.set_status_text(
+                format!(
+                    "Generation {} finished: {:?}",
+                    terminal.request_id.get(),
+                    terminal.outcome
+                )
+                .into(),
+            );
+        }
         ApplicationEvent::ModelDraining { .. } => {
             window.set_status_text("Model is draining active work.".into());
         }
@@ -155,7 +200,8 @@ fn apply_event(window: &AppWindow, event: ApplicationEvent) {
                 "Model resources were unloaded.".to_owned()
             } else {
                 format!(
-                    "Model resources were unloaded after cancelling {cancelled_requests} active requests."
+                    "Model resources were unloaded after cancelling {cancelled_requests} active \
+                     requests."
                 )
             };
             window.set_status_text(message.into());
