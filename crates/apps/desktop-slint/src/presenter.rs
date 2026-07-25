@@ -106,6 +106,10 @@ fn connect_unload(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) 
 }
 
 fn apply_event(window: &AppWindow, event: ApplicationEvent) {
+    if apply_generation_event(window, &event) {
+        return;
+    }
+
     match event {
         ApplicationEvent::ModelResolved {
             model,
@@ -146,6 +150,41 @@ fn apply_event(window: &AppWindow, event: ApplicationEvent) {
         ApplicationEvent::ModelCompatibilityFailed { failure } => {
             window.set_status_text(format!("Model compatibility check failed: {failure}").into());
         }
+        ApplicationEvent::ModelDraining { .. } => {
+            window.set_status_text("Model is draining active work.".into());
+        }
+        ApplicationEvent::ModelUnloaded {
+            cancelled_requests, ..
+        } => {
+            let message = if cancelled_requests == 0 {
+                "Model resources were unloaded.".to_owned()
+            } else {
+                format!(
+                    "Model resources were unloaded after cancelling {cancelled_requests} active \
+                     requests."
+                )
+            };
+            window.set_status_text(message.into());
+        }
+        ApplicationEvent::ModelUnloadFailed { failure } => {
+            window.set_status_text(format!("Model unload failed: {failure}").into());
+        }
+        ApplicationEvent::HubDisconnected => {
+            window.set_status_text("Hub resolver disconnected".into());
+        }
+        ApplicationEvent::RuntimeDisconnected => {
+            window.set_status_text("Inference runtime disconnected".into());
+        }
+        ApplicationEvent::GenerationStarted { .. }
+        | ApplicationEvent::GenerationCancellationRequested { .. }
+        | ApplicationEvent::GenerationCancellationFailed { .. }
+        | ApplicationEvent::GenerationCleanupPending { .. }
+        | ApplicationEvent::GenerationFinished { .. } => {}
+    }
+}
+
+fn apply_generation_event(window: &AppWindow, event: &ApplicationEvent) -> bool {
+    match event {
         ApplicationEvent::GenerationStarted { request_id } => {
             window.set_status_text(format!("Generation {} started.", request_id.get()).into());
         }
@@ -175,7 +214,7 @@ fn apply_event(window: &AppWindow, event: ApplicationEvent) {
             exhausted,
             failure,
         } => {
-            let state = if exhausted { "exhausted" } else { "pending" };
+            let state = if *exhausted { "exhausted" } else { "pending" };
             window.set_status_text(
                 format!("Generation {} cleanup {state}: {failure}", request_id.get()).into(),
             );
@@ -190,32 +229,10 @@ fn apply_event(window: &AppWindow, event: ApplicationEvent) {
                 .into(),
             );
         }
-        ApplicationEvent::ModelDraining { .. } => {
-            window.set_status_text("Model is draining active work.".into());
-        }
-        ApplicationEvent::ModelUnloaded {
-            cancelled_requests, ..
-        } => {
-            let message = if cancelled_requests == 0 {
-                "Model resources were unloaded.".to_owned()
-            } else {
-                format!(
-                    "Model resources were unloaded after cancelling {cancelled_requests} active \
-                     requests."
-                )
-            };
-            window.set_status_text(message.into());
-        }
-        ApplicationEvent::ModelUnloadFailed { failure } => {
-            window.set_status_text(format!("Model unload failed: {failure}").into());
-        }
-        ApplicationEvent::HubDisconnected => {
-            window.set_status_text("Hub resolver disconnected".into());
-        }
-        ApplicationEvent::RuntimeDisconnected => {
-            window.set_status_text("Inference runtime disconnected".into());
-        }
+        _ => return false,
     }
+
+    true
 }
 
 const fn scalar_type_name(value: ScalarType) -> &'static str {

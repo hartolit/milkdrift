@@ -281,13 +281,13 @@ impl ApplicationState {
         self.last_generation = None;
     }
 
-    pub(crate) fn set_generation_phase(&mut self, phase: GenerationPhase) {
+    pub(crate) const fn set_generation_phase(&mut self, phase: GenerationPhase) {
         if let Some(summary) = self.generation.as_mut() {
             summary.phase = phase;
         }
     }
 
-    pub(crate) fn increment_generated_tokens(&mut self) {
+    pub(crate) const fn increment_generated_tokens(&mut self) {
         if let Some(summary) = self.generation.as_mut() {
             summary.usage.generated_tokens = summary.usage.generated_tokens.saturating_add(1);
         }

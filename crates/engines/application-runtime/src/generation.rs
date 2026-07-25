@@ -110,7 +110,11 @@ impl GenerationSettings {
                 GenerationSettingsField::RepetitionPenalty,
             ));
         }
-        if self.stop_sequences.iter().any(|stop| stop.is_empty()) {
+        if self
+            .stop_sequences
+            .iter()
+            .any(std::string::String::is_empty)
+        {
             return Err(ApplicationError::InvalidGenerationSettings(
                 GenerationSettingsField::StopSequence,
             ));
@@ -235,7 +239,7 @@ impl<'a> ApplicationOutputBatch<'a> {
     }
 }
 
-pub(crate) struct GenerationBridge {
+pub struct GenerationBridge {
     output_producer: TextOutputProducer<ApplicationOutputState>,
     output_consumer: TextOutputConsumer<ApplicationOutputState>,
     pending_capacity: usize,
@@ -315,6 +319,10 @@ impl ApplicationRuntime {
     ///
     /// Returns an error when lifecycle state, settings, prompt capacity, tokenizer
     /// state, or bounded runtime command capacity prevents admission.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "generation admission keeps validation, allocation, translation, submission, and state publication contiguous"
+    )]
     pub fn start_generation(
         &mut self,
         input: &str,
@@ -495,7 +503,7 @@ impl ApplicationRuntime {
         self.generation.output_batch(consume)
     }
 
-    pub(crate) fn take_generation_event(&mut self) -> Option<ApplicationEvent> {
+    pub(crate) const fn take_generation_event(&mut self) -> Option<ApplicationEvent> {
         self.generation.pending_event.take()
     }
 
@@ -596,7 +604,7 @@ impl ApplicationRuntime {
         let usage = self
             .state
             .active_generation()
-            .map_or(GenerationUsage::default(), |summary| summary.usage);
+            .map_or_else(GenerationUsage::default, |summary| summary.usage);
         let terminal = GenerationTerminal {
             request_id,
             outcome: GenerationTerminalOutcome::Failed(failure),
@@ -669,7 +677,7 @@ impl ApplicationRuntime {
         let pending_capacity = self.generation.pending_capacity;
         let pending = &mut self.generation.pending;
         self.inference
-            .pull_token_output(|batch| append_token_batch(pending, pending_capacity, batch))
+            .pull_token_output(|batch| append_token_batch(pending, pending_capacity, &batch))
             .map_err(|_| ())?
     }
 
@@ -771,7 +779,7 @@ impl ApplicationRuntime {
                 let usage = self
                     .state
                     .active_generation()
-                    .map_or(GenerationUsage::default(), |summary| summary.usage);
+                    .map_or_else(GenerationUsage::default, |summary| summary.usage);
                 let terminal = GenerationTerminal {
                     request_id,
                     outcome: effective,
@@ -871,7 +879,7 @@ impl ApplicationRuntime {
 fn append_token_batch(
     pending: &mut VecDeque<PendingOutput>,
     capacity: usize,
-    batch: TokenOutputBatch<'_, GenerationOutputState>,
+    batch: &TokenOutputBatch<'_, GenerationOutputState>,
 ) -> Result<(), ()> {
     let required = batch.tokens.len().saturating_add(batch.records.len());
     if required > capacity || !pending.is_empty() {
@@ -978,7 +986,7 @@ fn encode_text(
     Ok(storage.into_boxed_slice())
 }
 
-fn terminal_kind(outcome: GenerationOutcome) -> GenerationTerminalKind {
+const fn terminal_kind(outcome: GenerationOutcome) -> GenerationTerminalKind {
     match outcome {
         GenerationOutcome::Finished(reason) => GenerationTerminalKind::Finished(reason),
         GenerationOutcome::Failed(_) => GenerationTerminalKind::Failed,
