@@ -1,8 +1,8 @@
-# GGUF Backend
+# GGUF backend
 
 ## Scope
 
-`gguf-backend` is the Phase 6 CPU adapter for local GGUF files. It quarantines
+`gguf-backend` is the CPU adapter for local GGUF files. It quarantines
 `llama-cpp-2`, llama.cpp native resources, GGUF metadata, and context-cache
 management behind the portable `domain-contracts` API.
 

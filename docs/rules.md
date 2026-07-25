@@ -1,55 +1,60 @@
-# General Engineering Rules
+# Engineering rules
 
-The [documentation map](README.md) defines the authority of this document. Rules are classified so safety requirements are not confused with preferences or unmeasured performance claims.
+These rules are reusable defaults for production Rust and systems engineering. Project-specific toolchain versions, crate graphs, support matrices, active phases, and validation evidence belong under `project/`.
 
 ## Hard invariants
 
 ### Production behavior
 
 - Merged production paths must be complete, compile-ready, and honest about unsupported behavior.
-- Do not use placeholder results, fabricated backend behavior, silent truncation, or `TODO` branches as if they were product functionality.
-- Tests may use deterministic fakes, stubs, fixtures, and fault-injection implementations. They are required when real dependencies cannot reliably reproduce rollback, timeout, or contract-violation paths.
-- Every new invariant and reproduced failure needs a focused test when the repository can exercise it deterministically.
+- Do not present placeholder results, fabricated backend behavior, silent truncation, or unfinished branches as working product functionality.
+- Tests may and should use deterministic fakes, fixtures, stubs, and fault injection when real dependencies cannot reliably reproduce failure paths.
+- Add focused regression coverage for new invariants and reproduced failures when they can be exercised deterministically.
 
-### Error and resource handling
+### Errors and resource handling
 
-- Return typed `Result`/`Option` outcomes for recoverable failures. Do not use panic-based control flow.
-- `.unwrap()` and `.expect()` remain denied by workspace lint policy. A proven invariant should still normally use an explicit branch or typed conversion that makes failure semantics reviewable.
-- Validate capacities and arithmetic before mutating externally visible state. Multi-step resource operations must either commit completely or roll back explicit native resources and accounting.
-- Cancellation, drain, unload, and shutdown behavior must identify bounded safe points and the behavior of an uncooperative dependency.
-- Secrets, tokens, and credentials must not be hardcoded or committed.
+- Use typed outcomes for recoverable failures; panic is not ordinary control flow.
+- Validate bounds, capacities, identities, and checked arithmetic before publishing externally visible state.
+- Multi-step resource operations must either commit completely or preserve enough ownership and accounting to perform explicit cleanup.
+- Cancellation, drain, unload, and shutdown contracts must identify their safe points and describe behavior when a dependency does not cooperate.
+- Secrets, credentials, and private tokens must not be hardcoded or committed.
 
-### Unsafe and native boundaries
+### Unsafe and native code
 
-- Project-authored source denies unsafe code unless an explicitly reviewed boundary requires it.
-- Every authored unsafe operation must state the safety preconditions and why they hold. Generated code and third-party macros are confined to the narrowest module that needs their lint exception.
-- Raw native pointers, invalid borrowing relationships, and vendor error types must not escape a safe adapter boundary.
+- Deny project-authored unsafe code by default; exceptions require a deliberate boundary and review.
+- Authored unsafe operations document their safety preconditions and why those preconditions hold.
+- Generated code and third-party macro exceptions remain confined to the narrowest module that needs them.
+- Raw native pointers, invalid borrowing relationships, and vendor-specific errors do not escape safe adapter boundaries.
 
-## Current decisions
+## Change discipline
 
-- The workspace is pinned by `rust-toolchain.toml`; the current stable compiler is Rust 1.96.1.
-- Follow edition 2024 idioms supported by the pinned toolchain. “Modern” does not mean adopting unstable or unnecessary features.
-- Preserve public APIs unless the active work package explicitly authorizes a change.
-- Use the current repository verification command documented in the [execution plan](execution/execution-plan.md).
-- Update the canonical [implementation status](project/implementation-status.md) when behavior, support, validation evidence, or the active phase changes.
-- Record architectural changes in an ADR instead of silently rewriting policy.
+- Use the repository's pinned toolchain and lockfile when they exist.
+- Follow the stable language/edition idioms supported by that toolchain; "modern" does not mean unstable or unnecessarily novel.
+- Preserve public APIs unless the scoped change intentionally authorizes a break.
+- Record architectural decisions in ADRs instead of silently changing project doctrine.
+- Update the canonical status when support, limitations, or validation provenance changes.
+- Keep a change reviewable around one invariant, subsystem slice, migration, or clearly coupled set of edits.
 
-## Performance hypotheses
+## Performance evidence
 
 - Optimize a named hot path only after a benchmark, allocation gate, profile, or generated-code inspection identifies the cost.
-- Static dispatch and preallocated buffers are defaults for token/tensor loops. They are not blanket requirements for cold service boundaries.
-- Do not claim allocation-free, portable, backend-neutral, chat-compatible, or GPU-capable behavior without a named test or measurement defining the scope.
-- Compiler attributes and data-layout changes are hints or tradeoffs, not guarantees. Measure before and after on the same toolchain and representative workload.
-- Shared-CI wall-clock timing is observational unless the environment is controlled; deterministic correctness and allocation tests may be hard gates.
+- Static dispatch and preallocated buffers are strong defaults for measured token/tensor-style loops, not blanket requirements for cold service boundaries.
+- Do not claim allocation-free, portable, backend-neutral, device-capable, or protocol-compatible behavior without a named test or measurement defining the scope.
+- Compiler attributes and data-layout changes are hints and tradeoffs, not guarantees; compare before and after on the same relevant toolchain and workload.
+- Shared-CI wall-clock timing is observational unless the environment is controlled. Deterministic correctness and allocation tests may still be hard gates.
 
 ## Style preferences
 
-- Names should communicate domain meaning. Familiar short terms are acceptable when they are standard in the local domain; avoid unexplained abbreviations.
-- Comments explain non-obvious intent, invariants, safety, or tradeoffs. Do not narrate obvious syntax or use source comments as a changelog.
-- Prefer cohesive modules and crates over both god modules and one-type micro-crates. Crate count follows ownership and reuse, not a quota.
-- Prefer centralized typed configuration for policy values. A local constant is appropriate when a value is genuinely local and named; not every numeric literal is a configuration option.
-- Favor readable idiomatic Rust on cold paths. Introduce complex type-state, custom collections, or service abstractions only when they prevent a demonstrated class of errors or support a real consumer.
+- Names communicate domain meaning; standard local abbreviations are acceptable when their meaning is obvious.
+- Comments explain non-obvious intent, invariants, safety, or tradeoffs rather than narrating syntax or serving as a changelog.
+- Prefer cohesive modules and crates over both god modules and one-type micro-crates.
+- Prefer typed configuration for policy values that genuinely vary. Local constants are appropriate for genuinely local invariants.
+- Favor readable idiomatic Rust on cold paths. Introduce complex type-state, custom collections, or service abstractions only when they prevent demonstrated errors, isolate dependencies, or support a real consumer.
+
+## Documentation
+
+Follow [documentation conventions](conventions.md). Preserve technical rationale and evidence, but keep current status, historical execution, project architecture, and reusable knowledge in their respective owners.
 
 ## Experimental work
 
-Spikes and experimental branches are allowed to answer uncertain design or performance questions. They must be clearly identified and need not satisfy production completeness while isolated. Before merge, either convert the result into tested production behavior or discard it; experimental shortcuts must not be presented as supported functionality.
+Spikes and experimental branches may use shortcuts to answer a clearly identified question. They must be labelled as experiments and may not be merged or documented as supported production behavior until converted into tested, reviewable implementation.

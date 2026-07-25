@@ -1,101 +1,100 @@
-# Architecture
+# Architecture principles
 
-This document is the current normative architecture policy. The [documentation map](README.md) defines its authority relative to ADRs, status, component guides, historical plans, and knowledge notes.
+This document defines reusable architectural principles for modular systems software. Project-specific layers, crate names, supported devices, backend choices, and temporary product constraints belong in `project/architecture.md` and project ADRs.
 
 ## Rule classes
 
-Every architectural statement should be understood as one of these classes:
+Architectural statements should be classified rather than treated as equally permanent:
 
-- **Hard invariant** — required for correctness, safety, or a deliberately enforced boundary. A change requires implementation evidence and, when architectural, an ADR.
-- **Current decision** — the selected design for the present product. It may change through an ADR when a real use case provides contrary evidence.
-- **Performance hypothesis** — a claim that must be supported by a named benchmark, allocation test, profile, or generated-code inspection before it becomes a requirement.
-- **Style preference** — a default that improves consistency but may yield to clearer code.
-- **Temporary constraint** — a deliberate limit while the first product slice is being proved.
+- **Hard invariant** — required for correctness, safety, or an intentionally enforced boundary.
+- **Current decision** — the selected design for the present system; revisable when evidence changes.
+- **Performance hypothesis** — a claim that requires a named benchmark, profile, allocation test, or generated-code inspection.
+- **Style preference** — a consistency default that may yield to clearer code.
+- **Temporary constraint** — an explicit simplification used while a product slice or integration is being proved.
 
-## Hard invariants
+This classification prevents preferences and unmeasured optimization folklore from becoming accidental architecture law.
 
-### Ownership and lifecycle
+## Ownership and lifecycle
 
-- The inference runtime exclusively owns loaded model and sequence values during normal execution. Public handles carry identity, not shared model ownership.
-- Model, sequence, request, cancellation, drain, unload, and shutdown transitions are explicit and bounded where the underlying backend permits bounded progress.
-- Native resources are not destroyed while backend code holds mutable access to them.
-- Commands, event queues, workspaces, and output accumulation use explicit capacities where unbounded growth could violate runtime behavior.
+Stateful resources should have a clear owner. Handles exposed across boundaries should carry the minimum identity or capability required by callers rather than creating shared ownership by default.
 
-### Dependency direction
+Lifecycle-sensitive operations should use explicit states and transitions when ordering matters. Resource creation, admission, cancellation, drain, cleanup, unload, and shutdown should define:
 
-- The workspace dependency graph is acyclic.
-- Portable feature contracts do not import engines, applications, vendor runtimes, filesystem/network/database clients, frontend toolkits, or OS transport implementations.
-- Adapters do not import engines or applications.
-- `inference-runtime` does not import `application-runtime` or an application.
-- Application production code enters model lifecycle behavior through `application-runtime`, rather than bypassing it to compose E0 and adapters independently.
+- who owns the resource at each state;
+- when state becomes externally visible;
+- what happens when an intermediate step fails;
+- which cleanup operations are mandatory;
+- which operations are bounded and where progress depends on an external dependency.
 
-The architecture validator loads typed Cargo metadata, fails closed on unknown workspace locations and local path targets, distinguishes normal/build/development dependencies, tests the complete layer matrix, and enforces reviewed external dependency policy. Exact exceptions and their justifications are inspectable in the validator; the [dependency policy guide](project/dependency-policy.md) summarizes the enforced rules.
+Do not destroy native or stateful resources while another execution path may still hold access to them. Multi-step admission should validate and reserve before publishing state, then commit atomically or retain enough ownership to perform explicit rollback.
 
-### Unsafe code
+Use explicit capacities where unbounded queues, workspaces, histories, or output accumulation could violate memory, latency, or lifecycle guarantees.
 
-Project-authored Rust denies unsafe code. Generated-code or FFI containment exceptions must be narrow, documented, and kept inside the adapter or generated module that requires them. Safe types must prevent native pointers or invalid lifetimes from escaping those boundaries.
+## Dependency direction
 
-## Current decisions
+The production dependency graph should be acyclic and reflect ownership rather than folder aesthetics.
 
-### Physical layout
-
-The repository uses these categories:
+A useful layered model is:
 
 ```text
-crates/features/    portable contracts and algorithms
-crates/adapters/    infrastructure and vendor implementations
-crates/engines/     stateful orchestration and resource ownership
-crates/apps/        process, event-loop, and presentation boundaries
+applications / presentation
+          ↓
+use-case orchestration
+          ↓
+resource-owning engines
+          ↓
+adapters and portable domain logic
 ```
 
-Folder names communicate ownership but have no Cargo semantics. Crates move only when ownership, reuse, or dependency evidence justifies the change; path churn is not an architecture improvement by itself. See [ADR-0005](decisions/0005-retain-crate-folders.md).
+The exact graph is project-specific, but the underlying rules are reusable:
 
-### Feature tiers
+- lower-level portable logic does not import application or infrastructure concerns;
+- adapters quarantine vendor, FFI, filesystem, network, database, and OS-specific dependencies;
+- orchestration depends downward on the contracts and implementations it composes;
+- applications own process, event-loop, environment, and presentation concerns;
+- cross-layer exceptions are explicit, narrow, and reviewable rather than implicit shortcuts.
 
-`domain-contracts` is the current F0 shared foundation. `tokenization`, `context-planner`, `sampling`, and `task-graph` are F1 algorithm crates.
+Folder names are communication tools, not dependency mechanisms. Move a crate or module only when ownership, reuse, lifecycle, or dependency evidence justifies the change.
 
-The currently enforced production policy allows F1 → F0 and rejects F1 → F1. This is a **temporary constraint**, not a universal Rust principle. It remains in force until the generation slice supplies enough evidence to replace it with an approved acyclic dependency graph. New shared vocabulary must not be pushed into `domain-contracts` merely to evade the policy.
+## Boundaries and public APIs
 
-### Engine tiers
+Public APIs should expose the minimum stable vocabulary needed by consumers. Vendor types, native pointers, transport details, UI framework types, and persistence formats should not leak through boundaries that claim to be portable or implementation-neutral.
 
-- E0 `inference-runtime` owns models, sequences, requests, admission, cancellation, draining, and unload.
-- E1 `application-runtime` is the frontend-neutral application façade and current native composition root. It owns artifact resolution, tokenizer validation, persistence, normalized application state/events, and model lifecycle use cases.
-- E1 may depend on E0. E0 may not depend on E1.
+Prefer cohesive modules before extracting micro-crates. A new crate is justified by independent ownership, reuse, lifecycle, portability, dependency isolation, or a meaningful test/build boundary—not by a numerical target for crate count.
 
-Keeping E1 as the reusable frontend boundary is [ADR-0001](decisions/0001-application-runtime-facade.md). It should not be made generic over every service. Cold, coarse replacement points may use trait objects or closed enums; token-sensitive model execution remains statically dispatched.
+Dependency injection is preferred over hidden global state. Use generics where static dispatch or type relationships materially matter; do not spread type parameters through public cold-path APIs without a concrete reuse or performance reason.
 
-### Frontends and deployment
+## Unsafe and native boundaries
 
-Slint, a native Tauri host, a CLI, or another native process may call `application-runtime` directly. A browser-only frontend cannot own Candle, llama.cpp, redb, native threads, and filesystem paths; it requires an explicit transport to a native or remote host.
+Project-authored unsafe code should be denied where practical. When FFI, generated code, or a low-level primitive requires unsafe code:
 
-The frontend presents state and pulls bounded output. It does not drive one inference command per generated token. Generation scheduling belongs beside model execution as recorded by [ADR-0003](decisions/0003-generation-scheduling-ownership.md).
+- keep the exception in the narrowest module that requires it;
+- state the safety preconditions for authored unsafe operations;
+- expose a safe boundary that prevents invalid pointers, lifetimes, aliasing, or vendor error representation from escaping;
+- do not treat generated or third-party unsafe implementation details as permission for unrelated authored unsafe code.
 
-## Temporary product constraints
+## Performance claims
 
-Until the first streamed generation slice is complete:
+Readable, idiomatic code is the default. Optimize a named hot path only when evidence identifies the cost.
 
-- CPU is the only supported device class;
-- Candle is the composed E1/UI backend;
-- GGUF exists only at the adapter/E0 compatibility boundary;
-- E1 represents one resident model generation;
-- direct completion is the first planned generation mode;
-- general chat templates, remote transport, GPU execution, and broad crate reorganization are deferred.
+Static dispatch, preallocation, compact layouts, inlining hints, cold annotations, custom collections, and specialized data structures are tools rather than universal rules. Their value depends on workload, target, compiler, and surrounding code generation.
 
-The backend and prompt sequencing decisions are recorded in [ADR-0002](decisions/0002-candle-cpu-first-vertical-slice.md) and [ADR-0004](decisions/0004-direct-completion-before-chat.md).
+An allocation-free claim requires a defined measured region. `no_std`, caller-owned output, or bounded APIs do not prove that upstream libraries, native runtimes, drivers, or allocators perform no allocation.
 
-## Performance hypotheses and evidence
+Component benchmarks prove component behavior only. End-to-end latency, throughput, cancellation, memory, and shutdown behavior require system-level evidence.
 
-- Static dispatch is required in measured token/tensor loops where it materially affects code generation. Dynamic dispatch is permitted for cold, coarse operations such as storage, artifact resolution, configuration, and backend selection.
-- Allocation-free behavior may be required for a named project-owned hot path only when a test defines the measured region. It is not inferred from `no_std`, caller-owned output, or adapter boundaries.
-- `#[inline]`, `#[inline(always)]`, `#[cold]`, layout changes, smaller integer types, and custom data layouts require profiling or generated-code evidence when used as optimizations.
-- Component benchmarks establish component behavior only. They do not prove end-to-end latency or throughput.
+## Shutdown and uncooperative dependencies
 
-## Crate and module design preferences
+Explicit shutdown is preferred when resource release or worker termination can fail, time out, or produce observable results. Blocking `Drop` should not be the primary shutdown protocol for resources whose cleanup needs coordination.
 
-Crates should follow cohesive ownership, independent reuse, dependency direction, and meaningful test boundaries. There is no numerical crate quota. Before extracting a crate, prefer an internal module split when the code shares one lifecycle and has no independent consumer.
+A bounded caller cannot make an arbitrary in-process dependency forcibly cancellable. If an operation may not return, choose and document one of these strategies:
 
-Public APIs should expose the minimum stable vocabulary required by callers. Internal helpers use the narrowest practical visibility. Dependency injection is preferred over hidden global state, but type parameters should not spread through public application APIs without a hot-path or reuse reason.
+- require a backend contract with bounded/cooperative safe points;
+- split work into bounded chunks controlled by the owner;
+- isolate the untrusted or uncooperative work in a process whose termination delegates final reclamation to the operating system.
 
-## Shutdown
+Timeouts define caller patience; they do not by themselves prove physical resource reclamation.
 
-Callers must use explicit bounded shutdown for workers and model resources. Blocking `Drop` is not the primary shutdown mechanism; a best-effort drop path cannot replace an observable shutdown result. See [ADR-0006](decisions/0006-explicit-bounded-shutdown.md).
+## Project specialization
+
+Apply these principles in `project/architecture.md`. Record project-specific decisions and rejected alternatives in ADRs. Keep temporary product constraints and support claims out of this reusable document.

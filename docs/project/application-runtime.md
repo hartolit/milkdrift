@@ -1,4 +1,4 @@
-# Application Runtime
+# Application runtime
 
 ## Responsibility
 
@@ -38,7 +38,7 @@ It does not own:
 
 Frontends construct `ApplicationRuntimeConfiguration`, start `ApplicationRuntime`,
 inspect `ApplicationState`, submit model-lifecycle operations, and use the narrow
-Phase 5 direct-completion API:
+direct-completion API:
 
 ```text
 start_generation(input, settings) -> RequestId
@@ -95,9 +95,10 @@ and cleanup failures remain observable as low-frequency application events.
 
 ## Single-model policy
 
-Phase 5 makes the initial single-model product decision explicit. E1 always configures
-E0 for one resident model and does not expose a misleading `maximum_models` setting.
-Multi-model application state and UI remain later work.
+The application layer deliberately configures E0 for one resident model and does not
+expose a misleading `maximum_models` setting. Multi-model application state is not part
+of the current E1 product boundary; product-level support is tracked in
+[implementation status](implementation-status.md).
 
 ## Engine tiers
 
@@ -122,6 +123,6 @@ and reuse the same model and generation APIs. A standalone browser frontend cann
 run Candle or redb directly; it should use a transport adapter to a native or remote
 host that owns `ApplicationRuntime`.
 
-Phase 6 adds Slint generation controls and frame-aligned text application. Phase 5
-only establishes the reusable frontend-neutral product API and does not add chat
-history or general prompt templates.
+The current E1 boundary establishes the reusable frontend-neutral product API.
+Frontend generation controls, chat history, and broader prompt rendering are tracked
+in [implementation status](implementation-status.md) and the active execution plan.

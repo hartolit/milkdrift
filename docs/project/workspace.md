@@ -1,4 +1,6 @@
-# Workspace Boundaries
+# Workspace boundaries
+
+This document is the concrete workspace inventory: crate placement, current members, production dependency edges, and generated-code lint boundaries. Architectural rationale and layer responsibilities live in [project architecture](architecture.md).
 
 ## Physical layout
 
@@ -28,76 +30,7 @@ llm-app/
         └── desktop-slint/
 ```
 
-The root package is a native Rust maintenance runner. Product execution vectors
-remain under `crates/apps/`.
-
-## Feature dependency tiers
-
-```text
-F1 algorithmic features
-├── tokenization
-├── context-planner
-├── sampling
-└── task-graph
-          ↓
-F0 shared contract foundation
-└── domain-contracts
-```
-
-`domain-contracts` is the sole F0 leaf. It owns vocabulary that genuinely
-crosses engine/backend or multiple-feature boundaries: strongly typed IDs,
-capacity failures, model and sequence contracts, lifecycle transitions, and
-output records. It has no workspace-local dependencies.
-
-F1 crates may depend downward on `domain-contracts`. They may not depend on one
-another. This avoids duplicated IDs without splitting identifiers, capacities,
-and metadata into micro-crates.
-
-## Engine dependency tiers
-
-The two engine crates are cohesive rather than interchangeable:
-
-```text
-E1 application use-case orchestration
-└── application-runtime
-          ↓
-E0 inference resource ownership
-└── inference-runtime
-```
-
-`inference-runtime` owns loaded model generations, request sequences, admission,
-cancellation, draining, and unload. It does not know about Hub repositories,
-persistence, tokenizers, or UI state.
-
-`application-runtime` coordinates Hub resolution, tokenizer validation,
-persistence, and inference lifecycle for host frontends. It may depend downward
-on `inference-runtime`; the reverse edge is forbidden. This explicit E1 → E0
-edge permits Slint, Tauri, CLI, or another frontend to reuse one application
-workflow without placing vendor concerns inside the inference owner.
-
-Adding an engine crate requires architectural review and evidence of independent
-ownership, lifecycle, or reuse. The project has no numerical crate quota.
-
-## Layer direction
-
-```text
-apps
-  ↓
-E1 application-runtime
-  ↓
-E0 inference-runtime
-  ↓
-adapters and features
-  ↓
-domain-contracts
-```
-
-The diagram expresses permitted composition, not a requirement that every crate
-traverse every layer. Adapters quarantine vendor, FFI, filesystem, network,
-database, and OS dependencies. Engines coordinate state and lifetimes.
-Applications own the event loop, environment-specific paths, and presentation.
-
-No production crate may depend upward. Adapter crates do not import one another. Development dependencies are reviewed separately and may cross production direction only for an explicitly named compatibility test or benchmark.
+The root package is the native Rust maintenance runner. Product execution vectors remain under `crates/apps/`.
 
 ## Current members
 
@@ -119,8 +52,7 @@ crates/engines/application-runtime
 crates/apps/desktop-slint
 ```
 
-Each feature and engine crate owns a complete, independently testable domain.
-None exists merely to hold one identifier, one data structure, or one callback.
+Each feature and engine crate owns a coherent, independently testable domain. None exists merely to hold one identifier, data structure, or callback.
 
 ## Production dependency edges
 
@@ -134,21 +66,20 @@ application-runtime -> inference-runtime + selected adapters/features
 desktop-slint       -> application-runtime + slint
 ```
 
-`desktop-slint` no longer imports Candle, Hugging Face, redb, host channels, or
-inference commands directly. Slint types remain confined to the application
-crate, and application-runtime public events expose stable application/domain
-values rather than vendor types.
+`desktop-slint` does not import Candle, Hugging Face, redb, host channels, or inference commands directly. Slint types remain in the application crate; E1 public events expose stable application/domain values rather than vendor types.
 
-The validator uses typed Cargo metadata, fails closed on unknown workspace
-locations and path targets, distinguishes dependency kinds, and applies the
-external dependency rules documented in the [dependency policy](dependency-policy.md).
+Production code may not acquire an upward dependency. Production adapters do not import one another. Development dependencies are reviewed separately and may cross production direction only for an explicitly named compatibility test or benchmark.
+
+The exact F0/F1 and E0/E1 meanings are defined in [project architecture](architecture.md), avoiding a second copy of that rationale here.
+
+## Architecture enforcement
+
+The validator uses typed Cargo metadata, fails closed on unknown workspace locations and unresolved local path targets, distinguishes dependency kinds, and applies the external dependency rules documented in [dependency policy](dependency-policy.md).
+
+Its purpose is to enforce the real graph rather than infer architecture from folder names.
 
 ## Generated-code lint boundary
 
-Workspace-owned source denies unsafe code. Most pure crates additionally use
-`#![forbid(unsafe_code)]`. The workspace-level lint is `deny`, not `forbid`,
-because Slint and `self_cell` generate Rust that applies a narrow local
-`allow(unsafe_code)` inside private generated-code modules. `forbid` cannot be
-lowered by generated code and therefore makes those valid expansions
-uncompilable. These boundaries do not permit unsafe blocks in project-authored
-source.
+Workspace-owned source denies unsafe code. Most pure crates additionally use `#![forbid(unsafe_code)]`.
+
+The workspace-level lint is `deny`, not `forbid`, because Slint and `self_cell` generate Rust that applies a narrow local `allow(unsafe_code)` inside private generated-code modules. `forbid` cannot be lowered by generated code and would reject those valid expansions. This exception does not permit unsafe blocks in project-authored source.

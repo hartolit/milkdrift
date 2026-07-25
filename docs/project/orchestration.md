@@ -1,9 +1,9 @@
-# Corrective Workflow Orchestration
+# Corrective workflow orchestration
 
 ## Scope
 
-Phase 7 implements the typed corrective workflow inside the existing E1
-`application-runtime` ownership domain:
+The typed corrective workflow lives inside the existing E1 `application-runtime`
+ownership domain:
 
 ```text
 draft

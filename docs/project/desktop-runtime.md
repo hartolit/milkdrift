@@ -1,4 +1,4 @@
-# Desktop Runtime
+# Desktop runtime
 
 ## Scope
 
@@ -13,10 +13,9 @@ lifecycle and direct-completion orchestration to `application-runtime`:
 6. expose E1 direct-completion start, cancel, text-pull, and unload behavior;
 7. keep all network, database, vendor, and UI types outside portable features.
 
-Phase 5 wires generation through E1, not through Slint callbacks. The current Slint
-window remains lifecycle-only until Phase 6 adds prompt input, generated-output
-presentation, generate/cancel controls, and frame-aligned text pulls. General chat
-templates and conversation history remain later work.
+Generation is composed through E1 rather than Slint callbacks. The current Slint
+window remains lifecycle-only; frontend generation controls and broader conversation
+features are tracked in [implementation status](implementation-status.md).
 
 See the [application runtime guide](application-runtime.md) for the complete E1 public boundary.
 
@@ -119,9 +118,9 @@ or network frequency therefore cannot directly enqueue Slint callbacks or
 trigger unbounded layout work.
 
 E1 generation output already uses `host-runtime`'s preallocated pull-oriented
-accumulators. Phase 6 will make the Slint frame timer pull one bounded decoded-text
-batch per frame, append it to presentation state, and release the borrowed storage
-promptly.
+accumulators. When generated text is wired into the frontend, the Slint frame timer
+should pull one bounded decoded-text batch per frame, append it to presentation state,
+and release the borrowed storage promptly.
 
 ## Generated Rust and unsafe linting
 

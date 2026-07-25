@@ -1,0 +1,17 @@
+# Architecture decisions
+
+This directory records project-specific architectural decisions. ADRs explain the context, selected decision, rejected alternatives, consequences, and the condition that should trigger review.
+
+Accepted ADRs remain part of the project architecture until superseded. A superseded ADR stays in the repository as historical rationale and links to its replacement.
+
+## Current ADRs
+
+- [ADR-0001: Keep `application-runtime` as the frontend-neutral façade](0001-application-runtime-facade.md)
+- [ADR-0002: Use Candle CPU for the first vertical slice](0002-candle-cpu-first-vertical-slice.md)
+- [ADR-0003: Schedule generation beside model execution](0003-generation-scheduling-ownership.md)
+- [ADR-0004: Deliver direct completion before general chat](0004-direct-completion-before-chat.md)
+- [ADR-0005: Retain the current crate folders](0005-retain-crate-folders.md)
+- [ADR-0006: Require explicit bounded shutdown](0006-explicit-bounded-shutdown.md)
+- [ADR-0007: Name the supported portability targets](0007-portability-targets.md)
+
+For current applied structure, see [project architecture](../project/architecture.md). For reusable architecture principles, see [architecture principles](../architecture.md).

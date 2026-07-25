@@ -1,4 +1,4 @@
-# Candle CPU Reference Backend
+# Candle CPU reference backend
 
 ## Scope
 
@@ -32,7 +32,7 @@ inspect
 → synchronize and prepare unload
 ```
 
-## Phase 4 generation semantics
+## Generation semantics
 
 The adapter preserves the backend-independent F32 logits contract for every scalar type it advertises. F32 and F16 sources execute in their native scalar type. Candle 0.11 CPU matmul does not support BF16 operands, so BF16 source weights are validated as BF16 and upcast to F32 at load time. Admission accounts for the expanded resident weights and F32 sequence cache. Returned vocabulary logits are normalized to F32 before copying into the caller-owned slice. Capacity and layout validation occur before sampling.
 
@@ -49,7 +49,7 @@ The deterministic compatibility fixture assigns distinguishable token embeddings
 
 `inference-runtime/tests/candle_generation.rs` additionally drives the actual `CandleLlamaLoader` through the hosted E0 scheduler. It covers token-limit and EOS completion, one-token output backpressure, cancellation between backend calls, terminal/released publication, accounting release, unload, a final empty post-unload snapshot, and worker shutdown.
 
-The opt-in external-model procedure is documented in [Phase 4 Candle Llama Smoke Procedure](../execution/phase4-candle-smoke.md). External smoke weights are downloaded into ignored `.phase4/` storage and are not committed.
+The opt-in external-model procedure is documented under [project validation](validation.md#candle-real-model-smoke). External smoke weights are downloaded into ignored `.phase4/` storage and are not committed.
 
 ## Allocation capability
 
