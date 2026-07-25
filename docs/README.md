@@ -39,6 +39,7 @@ ADRs record context, rejected alternatives, consequences, and review triggers. A
 - [Execution plan](execution/execution-plan.md) — active ordered implementation program.
 - [Architecture analysis](execution/analyzer.md) — evidence and findings that motivated the execution plan; it is analysis, not normative policy.
 - [Current implementation status](project/implementation-status.md) — supported backends/devices, integration depth, validation evidence, known limitations, and active execution position.
+- [Phase 5 closure report](execution/PHASE5_IMPLEMENTATION_REPORT.md) — E1 direct-completion closure, integration coverage, and final validation rule.
 - [Phase 4 closure report](execution/PHASE4_IMPLEMENTATION_REPORT.md) — implemented Candle vertical slice, recorded baseline evidence, closure corrections, and the exact final validation rule.
 - [Phase 4 Candle smoke](execution/phase4-candle-smoke.md) — pinned opt-in real-model procedure and diagnostic evidence format.
 

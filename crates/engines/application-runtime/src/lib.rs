@@ -11,6 +11,7 @@ mod runtime;
 mod shutdown;
 mod state;
 mod support;
+mod unload;
 
 pub mod workflow;
 
@@ -34,6 +35,7 @@ pub use state::{
     ApplicationActivity, ApplicationBackend, ApplicationState, GenerationPhase, GenerationSummary,
     GenerationTerminal, GenerationTerminalOutcome, LoadedModel, ResolvedModel,
 };
+pub use unload::ModelUnloadBehavior;
 pub use workflow::{
     Artifact, ArtifactContent, ArtifactContentKind, ArtifactId, ArtifactInputs, ArtifactKind,
     ArtifactReference, ArtifactRole, ArtifactStore, CorrectiveWorkflowConfiguration,

@@ -1,21 +1,22 @@
-# Phase 5 Desktop Runtime
+# Desktop Runtime
 
 ## Scope
 
-Phase 5 establishes the host application boundaries needed before generation is
-wired:
+The desktop composition owns native process concerns while delegating model
+lifecycle and direct-completion orchestration to `application-runtime`:
 
 1. resolve one immutable Hugging Face model revision;
 2. cache and validate its required artifacts;
 3. load its serialized tokenizer;
 4. persist the logical repository/revision selection;
-5. load and unload one Candle CPU model generation;
-6. expose the workflow through a frontend-neutral engine;
+5. load one Candle CPU model;
+6. expose E1 direct-completion start, cancel, text-pull, and unload behavior;
 7. keep all network, database, vendor, and UI types outside portable features.
 
-It does not fabricate a chat loop. Context planning, prompt rendering, sampling,
-stateful decode, stop matching, and generation scheduling must be connected as a
-single later phase with allocation and backpressure tests.
+Phase 5 wires generation through E1, not through Slint callbacks. The current Slint
+window remains lifecycle-only until Phase 6 adds prompt input, generated-output
+presentation, generate/cancel controls, and frame-aligned text pulls. General chat
+templates and conversation history remain later work.
 
 See the [application runtime guide](application-runtime.md) for the complete E1 public boundary.
 
@@ -28,8 +29,9 @@ See the [application runtime guide](application-runtime.md) for the complete E1 
 - persisted application preferences and model catalogue updates;
 - exact-selection validation before loading;
 - the hosted inference-runtime endpoint;
-- loaded-generation state;
-- bounded drain and unload commands;
+- loaded-generation and active-request state;
+- direct-completion prompt/tokenizer/text orchestration;
+- explicit reject/cancel/drain unload behavior;
 - normalized structured events;
 - bounded worker shutdown and joins.
 
@@ -116,9 +118,10 @@ tick pulls at most a fixed number of structured application events. Worker token
 or network frequency therefore cannot directly enqueue Slint callbacks or
 trigger unbounded layout work.
 
-Generation output will later use `host-runtime`'s preallocated frame-pull output
-accumulator. The UI will copy one accumulated batch per frame and release the
-accumulator lock promptly.
+E1 generation output already uses `host-runtime`'s preallocated pull-oriented
+accumulators. Phase 6 will make the Slint frame timer pull one bounded decoded-text
+batch per frame, append it to presentation state, and release the borrowed storage
+promptly.
 
 ## Generated Rust and unsafe linting
 

@@ -1,7 +1,7 @@
 //! Frontend-neutral application orchestration over bounded host workers.
 
 use candle_backend::CandleLlamaSource;
-use domain_contracts::{DeviceId, DeviceKind, DrainTimeout, ModelHandle, ModelId, UnloadPolicy};
+use domain_contracts::{DeviceId, DeviceKind, ModelId};
 use hf_hub_adapter::{HubModelReference, ResolvedModelArtifacts};
 use hf_tokenizer::HfTokenizer;
 use host_runtime::{BoundedReceiver, BoundedSender, HostThread, TryReceiveError, TrySendError};
@@ -186,21 +186,16 @@ impl ApplicationRuntime {
 
     /// Requests bounded draining and deterministic release of the resident model.
     ///
-    /// Active generation remains owned by E0 and may complete during the configured drain window;
-    /// expiry escalates to safe-boundary cancellation.
+    /// This is the convenience form of
+    /// [`ApplicationRuntime::unload_model_with_behavior`] using
+    /// [`crate::ModelUnloadBehavior::Drain`].
     ///
     /// # Errors
     ///
-    /// Returns an error when unloading is not currently valid, no model is loaded, or the
-    /// inference worker cannot accept the command.
+    /// Returns an error when unloading is not currently valid, no model is loaded, the drain
+    /// timeout is invalid, or the inference worker cannot accept the command.
     pub fn unload_model(&mut self) -> Result<(), ApplicationError> {
-        self.require_idle()?;
-        let handle = self
-            .state
-            .loaded()
-            .ok_or(ApplicationError::NoLoadedModel)?
-            .handle;
-        self.submit_unload(handle)
+        self.unload_model_with_behavior(crate::ModelUnloadBehavior::Drain)
     }
 
     /// Processes at most one pending application, Hub, or inference event without blocking.
@@ -262,7 +257,7 @@ impl ApplicationRuntime {
         Ok(ticket)
     }
 
-    fn require_idle(&self) -> Result<(), ApplicationError> {
+    pub(crate) fn require_idle(&self) -> Result<(), ApplicationError> {
         let activity = self.state.activity();
         if activity == ApplicationActivity::Idle {
             Ok(())
@@ -285,25 +280,6 @@ impl ApplicationRuntime {
                 Err(ApplicationError::RuntimeDisconnected)
             }
         }
-    }
-
-    fn submit_unload(&mut self, handle: ModelHandle) -> Result<(), ApplicationError> {
-        let timeout = DrainTimeout::from_millis(self.preferences.drain_timeout_milliseconds)
-            .map_err(|error| {
-                ApplicationFailure::from_debug(
-                    ApplicationFailureKind::Inference,
-                    "invalid drain timeout",
-                    error,
-                )
-            })?;
-        let command = RuntimeCommand::UnloadModel {
-            ticket: self.next_ticket()?,
-            handle,
-            policy: UnloadPolicy::Drain { timeout },
-        };
-        self.submit_inference(command)?;
-        self.state.begin_unloading();
-        Ok(())
     }
 
     fn process_hub_event(&mut self, event: HubEvent) -> ApplicationEvent {
@@ -395,12 +371,12 @@ impl ApplicationRuntime {
         if tokenizer_vocabulary
             .is_some_and(|size| size != receipt.descriptor.metadata.vocabulary_size)
         {
-            return self.reject_incompatible_model(receipt.handle);
+            return self.reject_incompatible_model();
         }
         ApplicationEvent::ModelLoaded { model: loaded }
     }
 
-    fn reject_incompatible_model(&mut self, handle: ModelHandle) -> ApplicationEvent {
+    fn reject_incompatible_model(&mut self) -> ApplicationEvent {
         self.state.clear_resolved();
         self.resolved_artifacts = None;
         self.tokenizer = None;
@@ -410,7 +386,7 @@ impl ApplicationRuntime {
                 "tokenizer and model vocabulary sizes differ; deterministic unload was requested"
                     .to_owned(),
         };
-        if let Err(error) = self.submit_unload(handle) {
+        if let Err(error) = self.unload_model_with_behavior(crate::ModelUnloadBehavior::Drain) {
             self.state.set_idle();
             return ApplicationEvent::ModelLoadFailed {
                 failure: ApplicationFailure {
@@ -476,3 +452,6 @@ impl ApplicationRuntime {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

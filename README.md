@@ -4,14 +4,15 @@ A layered Rust workspace for local, CPU-only language-model inference, context p
 
 ## Current product state
 
-The currently composed application path uses Candle on the CPU with Hugging Face artifacts and tokenization. It can resolve, validate, load, drain, unload, and persist the selection for one model generation through the frontend-neutral `application-runtime` façade and the Slint application.
+The currently composed application path uses Candle on the CPU with Hugging Face artifacts and tokenization. It can resolve, validate, load, generate direct-completion text, cancel, drain, unload, and persist the selection for one resident model through the frontend-neutral `application-runtime` façade.
 
 A GGUF/llama.cpp CPU adapter also implements the lower inference compatibility boundary. It is not selectable through `application-runtime` or the Slint UI yet.
 
-The E0 inference runtime contains a token-level direct-completion loop and the Phase 4 Candle CPU integration package. The original Phase 4 implementation passed the repository's locked validation gate and pinned external-model smoke on the recorded baseline. The closure patch strengthens explicit sequence destruction, post-unload accounting, documentation provenance, and fixture hygiene; rerun both gates on the resulting commit before beginning Phase 5. The E0 path is not yet exposed through `application-runtime` or the Slint frontend. In particular:
+The E0 inference runtime owns token-level scheduling, sampling, backend execution, cancellation boundaries, backpressure, and cleanup. Phase 5 exposes that loop through E1: `application-runtime` encodes UTF-8 prompts, translates stable generation settings, owns request-local streaming decode state, and returns bounded pulled text/state batches. In particular:
 
-- callers at E0 currently supply token IDs and receive token IDs;
-- tokenizer/text streaming and the frontend-neutral generation API are Phase 5 work;
+- frontends use E1 generation APIs rather than E0 commands, logits, or sequence state;
+- tokenizer and decoded-text ownership live in E1 while sampling and token stepping remain in E0;
+- the Slint frontend still exposes lifecycle controls only; prompt/output/generate/cancel presentation is Phase 6;
 - general chat rendering and conversation history follow the direct-completion slice;
 - GPU execution, remote transport, and multiple application-level resident models are not supported.
 

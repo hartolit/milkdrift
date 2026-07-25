@@ -2,9 +2,9 @@
 
 **Status date:** 2026-07-25
 
-**Source baseline:** `main` commit `09f54fde16069da750ba2180fb9452e5097e7bcc` plus the Phase 5 implementation patch
+**Source baseline:** `main` commit `f6ac1806c33d4a1d84dfabb66c14f3475af5872a` plus the Phase 5 closure patch
 
-**Execution position:** Phase 5 source implementation prepared; local locked Rust validation is required before Phase 5 is marked complete
+**Execution position:** Phase 5 closure candidate; rerun the locked repository gate on the resulting tree before Phase 6
 
 **Canonical plan:** [LLM App Execution Plan](../execution/execution-plan.md)
 
@@ -22,7 +22,7 @@ The repository remains CPU-only. Candle Llama is driven through the E0 generatio
 
 ## Phase 5 source implementation
 
-The patch adds:
+The Phase 5 tree contains:
 
 - stable E1 `GenerationSettings` with maximum new tokens, temperature, top-k, top-p, min-p, repetition penalty/window, seed policy, explicit EOS tokens, and textual stop suffixes;
 - direct-completion prompt encoding through the resolved `HfTokenizer`, with boundary-special-token behavior explicit and no chat-template claim;
@@ -31,8 +31,9 @@ The patch adds:
 - a bounded generic UTF-8/state accumulator in `host-runtime` and an E1 wrapper that hides host-runtime implementation types from frontends;
 - translation of E0 token/state pulls into decoded text/state pulls without frontend-driven per-token commands;
 - explicit single-model E1 configuration: E1 configures E0 for one resident model and no longer exposes a misleading `maximum_models` setting;
-- focused tokenizer, text-accumulator, and application-state contract tests;
-- compatibility handling in the existing Slint presenter for the new low-frequency generation events without adding Phase 6 generation controls.
+- application-owned `ModelUnloadBehavior` for reject, safe-boundary cancel, or bounded-drain unload without leaking E0 policy types;
+- tokenizer, text-accumulator, application-state, and download-free E1/Candle integration tests covering generation, backpressure, cancellation, unload policies, worker disconnection, and shutdown;
+- Slint presentation compatibility for low-frequency generation events without adding Phase 6 generation controls.
 
 ## Integration depth
 
@@ -49,9 +50,9 @@ The patch adds:
 
 ## Validation evidence and remaining gate
 
-Phase 4 was validated before this patch. Phase 5 changes E1, tokenizer, host output, tests, and documentation, so previous validation is not evidence for the resulting tree.
+The committed Phase 5 implementation reached `f6ac1806c33d4a1d84dfabb66c14f3475af5872a`. This closure patch changes E1 unload behavior, application-level tests, presenter structure, and documentation, so validation of the baseline commit is not evidence for the resulting tree.
 
-Run the repository's canonical locked gate after applying the patch:
+Run the repository's canonical locked gate after applying the closure patch:
 
 ```text
 cargo run --locked --bin llm-app -- verify
@@ -69,7 +70,7 @@ cargo bench --workspace --no-run --locked
 git diff --check
 ```
 
-Phase 5 is complete only after the canonical locked verification passes on the exact patched commit/tree. Any compile, Clippy, test, or rustdoc failure found by local validation remains an implementation defect to feed back into the patch.
+Phase 5 is complete only after the canonical locked verification passes on the exact resulting commit/tree. Record a successful CI run for that same commit when available; any compile, Clippy, test, rustdoc, or runtime failure remains a Phase 5 defect.
 
 ## Known limitations
 

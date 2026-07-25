@@ -1,44 +1,65 @@
-# Phase 5 Implementation Report
+# Phase 5 Closure Report
 
 **Prepared:** 2026-07-25  
-**Baseline:** `09f54fde16069da750ba2180fb9452e5097e7bcc`  
+**Implementation baseline:** `f6ac1806c33d4a1d84dfabb66c14f3475af5872a`
 **Scope:** Phase 5 — expose direct-completion generation through `application-runtime`
 
 ## Result
 
-The Phase 5 source implementation is prepared against the baseline above. It is intentionally **not** marked validated until the patched tree passes the repository's locked Rust quality gate locally.
+The Phase 5 source boundary is implemented. This closure patch addresses the remaining review gaps: explicit application-owned unload behavior, application-level generation integration coverage, presenter dispatch cleanup, and documentation synchronization.
+
+The resulting tree must pass the repository's locked validation gate before Phase 5 is marked complete or Phase 6 begins. Validation of the baseline commit does not substitute for validation after applying this closure patch.
 
 ## Closure matrix
 
-| Requirement | Source implementation |
+| Requirement | Closure |
 |---|---|
-| Narrow E1 generation API | `start_generation`, `cancel_generation`, `poll_event`, and borrowed `pull_output` API on `ApplicationRuntime`. |
+| Narrow E1 generation API | `start_generation`, `cancel_generation`, `poll_event`, and borrowed `pull_output` remain the frontend-neutral generation surface. |
 | Stable E1 settings | Application-owned settings validate completion and sampling controls before E0 admission. |
 | Direct-completion prompt | Resolved `HfTokenizer` encodes ordinary prompt text once; no chat-template claim is made. |
-| Owned streaming decode | `HfOwnedStreamingDecoder` owns a tokenizer clone plus upstream-compatible streaming suffix state. |
-| Token-to-text bridge | E1 drains E0 token/state batches into bounded pending state, advances the request-local decoder, and republishes UTF-8/state records through a bounded text accumulator. |
-| Backpressure | Decoded fragments remain in request-owned preallocated storage until the frontend accumulator can accept them; pending E0 items are retained in bounded E1 storage. |
-| Application state/events | Active request phase, cancellation, usage, cleanup pending/exhausted, released terminal result, and failure diagnostics are normalized at E1. |
-| Single-model policy | E1 no longer exposes `maximum_models`; it configures E0 with exactly one resident model. |
-| Frontend isolation | E1's pulled batch wrapper hides host-runtime types; frontends do not receive raw logits, backend sequences, E0 commands, or tokenizer implementation types. |
-| Phase boundary | Existing Slint code only learns the new event variants so it compiles; generation controls and text presentation remain Phase 6. |
+| Owned streaming decode | `HfOwnedStreamingDecoder` owns request-local tokenizer/decode state without full-history re-decode. |
+| Token-to-text bridge | E1 translates bounded E0 token/state batches into bounded UTF-8/state batches. |
+| Backpressure | Tests exercise output stalls and resume without token/text loss. |
+| Application state/events | Tests cover start, cancellation, terminal state, usage, and release. |
+| Single-model policy | E1 configures exactly one resident model. |
+| Unload policy | E1 exposes `ModelUnloadBehavior::{RejectIfBusy, CancelActive, Drain}` without exposing E0 `UnloadPolicy`. |
+| Unload integration | Tests cover idle unload plus reject/cancel/drain behavior while generation is active. |
+| Worker lifecycle | Application-level tests cover inference-worker disconnection and explicit bounded shutdown. |
+| Frontend isolation | Slint remains presentation-only; generation scheduling stays in E0 and generated text remains pull-oriented. |
+| Documentation | Root README, E1/desktop guides, status, documentation map, and this closure report describe the same Phase 5 boundary. |
 
-## Manual validation handoff
+## Integration coverage
 
-Apply and check the patch first:
+The application-runtime test composition uses:
 
-```bash
-git apply --check --binary ~/Downloads/llm-app-phase5.patch
-git apply --binary ~/Downloads/llm-app-phase5.patch
-```
+- the repository's download-free Candle Llama fixture from `inference-runtime`;
+- a project-authored 16-token WordLevel tokenizer fixture;
+- real hosted E0 scheduling and Candle execution;
+- real E1 prompt encoding, generation admission, cancellation, output translation, state/events, unload policy, worker disconnection, and shutdown.
 
-Then run the canonical gate:
+The suite covers:
+
+- generation without a loaded model;
+- invalid settings and empty prompts;
+- duplicate generation admission;
+- token-limit, EOS, and textual stop-sequence completion;
+- token-to-text streaming;
+- output backpressure and resume;
+- cancellation under constrained output capacity;
+- unload while idle;
+- unload while generating with reject, cancel, and drain behavior;
+- inference-worker disconnection;
+- explicit application shutdown.
+
+## Final closure rule
+
+Run the canonical gate on the exact resulting tree:
 
 ```bash
 cargo run --locked --bin llm-app -- verify
 ```
 
-Useful focused commands when diagnosing feedback:
+For focused diagnosis:
 
 ```bash
 cargo fmt --all -- --check
@@ -50,15 +71,8 @@ cargo bench --workspace --no-run --locked
 git diff --check
 ```
 
-Report any compiler, formatter, Clippy, test, rustdoc, or runtime failures verbatim. They should be treated as patch defects rather than as reasons to weaken the documented Phase 5 contracts.
+Phase 5 may be marked complete only when the resulting commit/tree passes the canonical locked gate. If CI runs the same resulting commit, record that run in `docs/project/implementation-status.md`.
 
 ## Agent handoff convention
 
-When an execution environment does not provide the Rust toolchain, that absence is a validation limitation, not a reason to withhold completed source changes. Deliver the changes as a patch file, or as a code block when the change is genuinely small, and include copy/paste commands for checking and applying the result. The local operator will run the Rust gates and return compiler, formatter, Clippy, test, rustdoc, or runtime feedback for correction.
-
-For patch deliveries, always include commands in this form with the actual filename:
-
-```bash
-git apply --check --binary ~/Downloads/llm-app-phase5.patch
-git apply --binary ~/Downloads/llm-app-phase5.patch
-```
+When the execution environment lacks the Rust toolchain, deliver source changes as a patch file, or as a code block when the change is genuinely small. Include copy/paste commands for checking and applying the patch. The local operator runs the Rust gates and returns failures verbatim for correction.

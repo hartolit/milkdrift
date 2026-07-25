@@ -15,7 +15,8 @@ It owns:
 - exact repository/revision selection checks;
 - one hosted `inference-runtime` endpoint;
 - explicit single-model product residency;
-- model load, bounded drain, terminal unload completion, and shutdown commands;
+- model load plus application-owned reject/cancel/drain unload behavior;
+- terminal unload completion and bounded shutdown commands;
 - direct-completion prompt encoding;
 - stable application-level generation settings and translation to E0 contracts;
 - one request-local owned streaming decoder;
@@ -42,9 +43,14 @@ Phase 5 direct-completion API:
 ```text
 start_generation(input, settings) -> RequestId
 cancel_generation(request_id)
+unload_model_with_behavior(behavior)
 poll_event() -> Option<ApplicationEvent>
 pull_output(callback)
 ```
+
+`unload_model()` remains the default bounded-drain path. `ModelUnloadBehavior`
+provides application-owned `RejectIfBusy`, `CancelActive`, and `Drain` choices
+without exposing E0's `UnloadPolicy` contract to frontends.
 
 `GenerationSettings` is owned by E1. It exposes stable completion controls rather
 than re-exporting the sampling crate. E1 validates the settings, encodes the prompt
