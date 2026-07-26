@@ -54,11 +54,51 @@ That same idea could apply everywhere.
 
 A code-search agent might understand an indexed repository without feeding the primary model thousands of unrelated lines. A compiler integration could reduce pages of diagnostics into the exact failures relevant to the current change while keeping the raw evidence outside the main context. A filesystem tool could expose a narrow capability without teaching the model an entire shell environment. A system service could keep its internal state in memory and reveal only the parts needed for the current decision.
 
+Modern AI systems already use parts of this idea through retrieval, subagents, context compression, and tools that keep intermediate work outside the main conversation. That validates the problem, but it does not settle it for me. I am interested in whether those ideas can become native parts of a local runtime instead of depending on another large orchestration layer around an otherwise conventional software stack.
+
 I don't know yet what the right abstraction is.
 
 It might involve typed handles, capability-based APIs, compact binary representations, specialist models, deterministic processors, or something I haven't encountered yet.
 
 The important part is the direction: **the model should reason about meaning, not spend half of its attention translating plumbing.**
+
+## Memory as a moving window
+
+Another idea came from a cellular automata game I built.
+
+The world was divided into chunks, with a toroidal grid acting as the bounded active area around the player. As the player moved, the active window moved with them. Chunks could be loaded into and removed from that window, while the larger world remained intact outside it.
+
+The grid was finite. The world it represented was not limited to whatever happened to be visible at that moment.
+
+That feels surprisingly close to the problem of long-term context.
+
+Imagine we spend an hour talking about spaceships and then drift into philosophy. As the conversation grows, the spaceship discussion will eventually be compressed, dropped, or require a deliberate search before it becomes useful again.
+
+What if the conversation did not disappear because we changed subjects? What if we had simply moved somewhere else?
+
+The long-term memory could remain outside the model as durable contextual chunks, while the context window acts as a moving projection over them. When the conversation moves into philosophy, the active window follows. If we later return to propulsion, hull design, or something strongly connected to that earlier discussion, the system could move back toward the relevant region and bring those chunks into view again.
+
+The model would still have a finite context window. The difference is that context overflow would no longer have to mean that the underlying memory was gone.
+
+This also makes me think about more than one memory space.
+
+One could organize personal memories. Another could follow a project. Others could index books, research papers, code, or temporary web research. The same underlying information might appear through several different views depending on whether the useful relationship is chronological, semantic, causal, personal, or project-specific.
+
+The hardest part is giving those chunks meaningful positions.
+
+A game world already has coordinates. A conversation does not. Two memories might be close because they happened together, discuss the same subject, depend on each other, came from the same source, or tend to become useful at the same time.
+
+That may mean a literal two-dimensional toroidal grid is the wrong structure. It may only be the analogy that points toward something more useful: memory as a navigable world, with a bounded working window that moves through it.
+
+I find that idea more compelling than treating long-term memory as one enormous transcript or a flat bag of embeddings.
+
+It could also change how useful smaller local models are. A small model will not become a frontier model just because it has good retrieval, but it may become far more capable when the surrounding system consistently places it near the right information.
+
+The goal would not be an infinite prompt. It would be a finite prompt with access to a much larger world.
+
+The model would not carry the library.
+
+It would move through it.
 
 ## A local AI system, not just a model runner
 
@@ -199,6 +239,8 @@ Maybe this ends as a very good local inference application with a clean Rust run
 That would already be worthwhile.
 
 Maybe the context system becomes more important and leads to a different way of integrating tools.
+
+Maybe the toroidal grid remains only an analogy, or maybe it becomes the basis of a navigable long-term memory where the active context moves through conversations, books, research, code, and personal history without trying to hold all of it at once.
 
 Maybe small specialist models become part of the architecture and allow the main model to work with much cleaner information.
 
