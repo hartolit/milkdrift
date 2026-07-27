@@ -12,9 +12,7 @@ That is the idea underneath this project.
 
 Not just another local LLM interface, and not an attempt to reimplement everything that Candle, llama.cpp, or other inference engines already do well. I want to build the foundations for a local AI system where inference, tools, context, and the computer itself can eventually fit together much more naturally.
 
-For now, it starts as an inference app.
-
-That is intentional.
+For now, it starts as an inference app. That is intentional.
 
 ## The part that bothers me
 
@@ -28,13 +26,7 @@ Sometimes this is exactly the right design. HTTP and JSON are popular for good r
 
 But I don't think they should automatically become the language between an AI and the machine it lives on.
 
-If a model is running locally, why should every internal capability pretend to be a web service?
-
-Why should a tool with a small, well-defined operation need a giant schema injected into context?
-
-Why should the primary reasoning model spend tokens reading through fifty search results when a smaller, faster model could inspect them first and return the three pieces that actually matter?
-
-Why should the model repeatedly reconstruct system state from text when the runtime already knows that state exactly?
+If a model is running locally, why should every internal capability pretend to be a web service? Why should a small, well-defined operation need a giant schema injected into context? Why should the primary reasoning model read through fifty search results when something faster could reduce them to the few pieces that matter? Why should it reconstruct system state from prose when the runtime already knows that state exactly?
 
 Those questions are more interesting to me than building another chat window.
 
@@ -42,25 +34,39 @@ Those questions are more interesting to me than building another chat window.
 
 The clearest example is web search.
 
-If the main model asks a focused question, I don't necessarily want it to become the search engine too. I would rather hand that question to a smaller, fast agent whose entire job is to search, inspect, discard noise, preserve useful sources, and return a compact result.
+If a prompt depends on information that may have changed, I would rather let a small, fast agent inspect and expand it *before* the expensive model sees it. That agent can search, compare sources, throw away noise, keep the useful evidence, and hand the main model a compact piece of current context instead of the raw internet.
 
-The expensive model gets the information it needs.
+The main model should still be able to ask for another search when its own reasoning exposes a missing fact or a new direction. I just don't want that to be the ordinary path. Retrieval is often preparation for reasoning, not something the largest model should spend its time orchestrating from scratch.
 
-The search agent gets the messy retrieval problem.
+The same idea could apply elsewhere. A code-search agent might understand an indexed repository without feeding the primary model thousands of unrelated lines. A compiler integration could reduce pages of diagnostics into the failures relevant to the current change while keeping the raw evidence outside the active context. A filesystem capability could expose a narrow operation without teaching the model an entire shell environment. A system service could keep exact internal state and reveal only the parts needed for the current decision.
 
-The context window does not become a dumping ground for the internet.
+Modern AI systems already use pieces of this idea through retrieval, subagents, context compression, and tools that keep intermediate work outside the main conversation. That validates the problem, but it does not settle it for me. I am interested in whether those ideas can become native parts of a local runtime instead of depending on another large orchestration layer around an otherwise conventional software stack.
 
-That same idea could apply everywhere.
-
-A code-search agent might understand an indexed repository without feeding the primary model thousands of unrelated lines. A compiler integration could reduce pages of diagnostics into the exact failures relevant to the current change while keeping the raw evidence outside the main context. A filesystem tool could expose a narrow capability without teaching the model an entire shell environment. A system service could keep its internal state in memory and reveal only the parts needed for the current decision.
-
-Modern AI systems already use parts of this idea through retrieval, subagents, context compression, and tools that keep intermediate work outside the main conversation. That validates the problem, but it does not settle it for me. I am interested in whether those ideas can become native parts of a local runtime instead of depending on another large orchestration layer around an otherwise conventional software stack.
-
-I don't know yet what the right abstraction is.
-
-It might involve typed handles, capability-based APIs, compact binary representations, specialist models, deterministic processors, or something I haven't encountered yet.
+I don't know yet what the right abstraction is. It might involve typed handles, capability-based APIs, compact binary representations, specialist models, deterministic processors, or something I haven't encountered yet.
 
 The important part is the direction: **the model should reason about meaning, not spend half of its attention translating plumbing.**
+
+## The prompt should be part of a workflow
+
+I increasingly think the path from prompt to output should be something the user can shape rather than one hard-coded sequence.
+
+A request might first pass through a small research agent that adds current information, a project agent that retrieves the relevant code and decisions, or a deterministic processor that attaches exact machine state. The primary model then receives a prompt that has already been prepared for the problem in front of it.
+
+Work can continue while the answer is being generated. A small model could watch the live output for a narrow concern without taking over the main response. On a software project it might notice that a proposed change is pushing everything into one giant module, that the workspace is accumulating pointless crates, or that the response is becoming vague and repetitive. Another workflow might enforce a writing convention, check claims against available evidence, or look for a contradiction with the context that was already established.
+
+The useful response to that signal does not always have to be the same. A corrective workflow might fix a small semantic mistake locally. A larger problem could become a new instruction for the primary model, giving it a chance to reconsider what it is doing. Some checks may be better after generation, when the whole result is available. Others can run beside it and react before the answer is finished.
+
+That also means I don't want to treat a conversation as an append-only transcript that becomes increasingly expensive to carry forever. The raw history can remain available for provenance, but the active context should be allowed to improve its representation of the past. A wrong assumption can be retracted. Repeated explanations can become one stronger statement. A stale summary can be replaced. If the model discovers that an earlier part of the conversation was misleading, the useful state should be able to reflect the correction instead of preserving the mistake simply because it happened first.
+
+Bad context has a cascade effect. Once sloppy language, duplicated assumptions, or incorrect state enters the working window, later generations inherit it as if it were evidence. The opposite should also be possible: a system that notices problems, repairs what it carries forward, and gradually makes the working context denser rather than noisier.
+
+Some workflows may not exist to change the answer at all. A small trigger agent could watch for a user-defined condition and invoke an external capability while generation continues. If the user seemed a bit down, a configured workflow might start some music or send a simple message to a friend; another could update a service or react to something happening in a project. Those actions should be explicit about the authority they have and easy to disable, but they do not need to wait for the primary model to finish reasoning if the relevant signal is already clear.
+
+I don't want any of these examples to become *the* pipeline. One combination may dramatically improve a model while another makes it worse. A useful system should make stages easy to add, remove, bypass, reorder, run in parallel, or feed back into earlier state without forcing every conversation through the same machinery.
+
+That flexibility may be more valuable than any individual workflow I can design now. Instead of depending on an external service every time someone wants a different orchestration pattern, the runtime itself could become a place where these ideas can be assembled and tested locally.
+
+The danger is obvious: flexibility can turn into a maze of hidden behavior, latency, duplicated work, and features that are difficult to reason about. The system has to make composition possible without making complexity permanent. A workflow should earn its place in exactly the same way as any other abstraction in the project.
 
 ## Memory as a moving window
 
@@ -78,11 +84,9 @@ What if the conversation did not disappear because we changed subjects? What if 
 
 The long-term memory could remain outside the model as durable contextual chunks, while the context window acts as a moving projection over them. When the conversation moves into philosophy, the active window follows. If we later return to propulsion, hull design, or something strongly connected to that earlier discussion, the system could move back toward the relevant region and bring those chunks into view again.
 
-The model would still have a finite context window. The difference is that context overflow would no longer have to mean that the underlying memory was gone.
+The model would still have a finite context window. Context overflow just would not have to mean that the underlying memory was gone.
 
-This also makes me think about more than one memory space.
-
-One could organize personal memories. Another could follow a project. Others could index books, research papers, code, or temporary web research. The same underlying information might appear through several different views depending on whether the useful relationship is chronological, semantic, causal, personal, or project-specific.
+This also makes me think about more than one memory space. One could organize personal memories, another could follow a project, while others index books, research papers, code, or temporary web research. The same information might appear through several views depending on whether the useful relationship is chronological, semantic, causal, personal, or project-specific.
 
 The hardest part is giving those chunks meaningful positions.
 
@@ -104,21 +108,37 @@ It would move through it.
 
 This is where the project starts becoming more ambitious.
 
-I don't really want to build an application where the UI is the product and the inference engine is the interesting part underneath.
-
-I want the system around the model to become interesting too.
+I don't really want to build an application where the UI is the product and the inference engine is the interesting part underneath. I want the system around the model to become interesting too.
 
 The inference backend should eventually be replaceable. Candle might be right for one path, llama.cpp for another, and something else might make more sense later. The project should own the behavior that matters above those implementations: lifecycle, context, memory, tools, permissions, state, orchestration, and the way the AI experiences the rest of the machine.
 
-That also gives me room to experiment with inference itself.
+That is also how I think about `application-runtime`. Its purpose is not to become a giant desktop backend. It is the reusable layer where application behavior can exist without belonging to Slint, a terminal, a web page, or a particular inference implementation. The presentation should sit above it; model execution should sit below it.
 
-I want to understand what current inference stacks are doing, where they are wasting time or memory on local machines, and which parts can be shaped differently when the entire system is designed around one local AI rather than a general-purpose framework.
+I want to understand what current inference stacks are doing, where they waste time or memory on local machines, and which parts can be shaped differently when the surrounding system is designed for local AI rather than as a general-purpose framework. I may discover that most of the underlying work is already better solved elsewhere, which would be useful too.
 
-I may discover that most of the underlying work is already better solved elsewhere.
+The point is not to replace mature libraries for the sake of owning more code. It is to get close enough to the machine that I can tell which layers are essential and which ones only exist because that is how software has traditionally been assembled.
 
-That would be useful too.
+## One system across several machines
 
-The point is not to replace mature libraries for the sake of owning more code. The point is to get close enough to the machine that I can tell which layers are essential and which ones only exist because that is how software has traditionally been assembled.
+Local does not have to mean that every model runs inside the same computer.
+
+A desktop might have enough memory for the large model I actually want to talk to but no room left for the smaller agents that search the web, inspect a repository, rerank context, or watch a live response. Meanwhile an old laptop or unused PC might have more than enough resources for those jobs.
+
+I want those machines to be able to become one local AI system.
+
+The large model can stay where the memory and compute make sense. Specialist work can run elsewhere. A node should be able to expose what it can do and what resources it has available, while the runtime decides where a particular piece of work belongs. The user should not have to think about a second machine as a separate application every time a research agent is needed.
+
+I also don't want this project to become a VPN. WireGuard, Tailscale, NetBird, an ordinary LAN, or whatever comes next already solve the problem of making machines reachable. If two nodes can communicate, this project should care about discovering or naming the peer, establishing identity, understanding its capabilities, and routing work to it. The network underneath is someone else's problem unless there is a very good reason to make it ours.
+
+This changes how I think about the application itself. A Slint desktop interface is useful because it gives the project a tangible product while the runtime is still taking shape. A btop-like terminal interface could make the same system pleasant to operate over SSH on a server, an old laptop, or a headless machine. A web interface might later make conversations reachable from devices that should not run the inference stack themselves.
+
+None of those interfaces should *be* the node.
+
+Closing a terminal window should not define the lifetime of a server that is meant to keep serving work. A desktop client should be able to control local state without making that state fundamentally graphical. The same application behavior should be reachable from different frontends, and eventually a frontend may talk to a local node, a remote one, or a collection of them.
+
+I like the idea that installation can still feel simple. Run the binary, choose a model, inspect the machine, see peers, change settings, start or stop services, and understand what the system is doing without having to remember a collection of commands and configuration files. Whether that experience is presented through Slint or a terminal matters less than keeping the underlying runtime independent of both.
+
+A mesh also gives small models a more concrete role. They do not only save context; they can occupy machines where the primary model would never fit alongside them. The system becomes capable by combining hardware that would otherwise sit idle, without pretending that every task belongs on the biggest box.
 
 ## The larger idea
 
@@ -126,9 +146,7 @@ I have another project sitting on the side: a custom x86_64 operating system bui
 
 The original thought was simple: if an AI were a first-class participant in an operating system rather than an application bolted onto one, what would the machine look like?
 
-Would it still expose itself through the same collection of files, processes, command lines, configuration formats, services, and protocols?
-
-Or could the system present a much cleaner model of what exists, what owns what, what can be changed, and what each capability is allowed to do?
+Would it still expose itself through the same collection of files, processes, command lines, configuration formats, services, and protocols? Or could the system present a much cleaner model of what exists, what owns what, what can be changed, and what each capability is allowed to do?
 
 An ECS-style system is interesting to me because it can make the machine look less like a pile of opaque programs and more like a world of explicit state and capabilities. That feels naturally compatible with an AI that needs to understand and manipulate a system without being given unrestricted access to everything.
 
@@ -144,23 +162,17 @@ One of the stranger ideas behind the OS project is a suspicion that extreme stan
 
 Today, millions of machines often run the same operating systems, libraries, services, protocols, and deployment patterns. That standardization is incredibly useful, but it also means one successful exploit can sometimes be turned into a repeatable recipe.
 
-Now imagine attackers that can reason, adapt, probe, generate exploits, and operate continuously at machine speed.
-
-The attacker is no longer one person patiently studying one target. It can become a huge population of automated systems constantly testing everything they can reach.
+Now imagine attackers that can reason, adapt, probe, generate exploits, and operate continuously at machine speed. The attacker is no longer one person patiently studying one target; it can become a huge population of automated systems constantly testing everything they can reach.
 
 In that world, I wonder whether some amount of system-level uniqueness becomes valuable.
 
 Not "security through obscurity" in the old sense. Hiding a broken system does not make it secure. A unique buffer overflow is still a buffer overflow.
 
-What interests me is the possibility of systems that share strong security principles but do not all share the exact same internal structure.
-
-Maybe two machines can agree on how to communicate without having identical internals. Maybe capabilities can be composed differently. Maybe layouts, services, execution paths, and internal relationships can be inferred or generated for the environment rather than copied from one universal distribution.
+What interests me is the possibility of systems that share strong security principles without sharing the exact same internal structure. Two machines might agree on how to communicate while composing capabilities, layouts, services, execution paths, and internal relationships differently.
 
 Then compromising one machine does not automatically reveal a perfect map of the next million.
 
-I have no proof that this would work. It could easily create new problems: harder auditing, harder updates, harder reproducibility, and a much larger space for subtle mistakes.
-
-But I think the question is worth asking.
+I have no proof that this would work. It could easily create new problems: harder auditing, harder updates, harder reproducibility, and a much larger space for subtle mistakes. But I think the question is worth asking.
 
 The future probably needs both: common ground where communication and verification matter, and diversity where identical internal structure only makes large-scale exploitation easier.
 
@@ -170,17 +182,15 @@ The same uncertainty applies to communication between AI systems.
 
 I don't like the idea that authentication automatically means trust.
 
-People don't usually meet someone and immediately hand over their private history, personal thoughts, credentials, and authority to act on their behalf. Trust develops slowly. It is contextual. You might trust someone with one thing and not another. You can know someone for years and still keep boundaries.
+People don't usually meet someone and immediately hand over their private history, personal thoughts, credentials, and authority to act on their behalf. Trust develops slowly and remains contextual. You might trust someone with one thing and not another, even after knowing them for years.
 
 A personal AI holding a large amount of information about its user may need something closer to that.
 
 Two systems could begin with almost nothing shared. Over time, repeated interactions might establish enough trust for deeper capabilities or information to become available. Access could remain narrow, purpose-specific, temporary, and revocable instead of turning into one giant yes/no permission boundary.
 
-Again, I don't know what that actually looks like yet.
+I don't know what that actually looks like yet. I only know that "connected" and "trusted" should not become synonyms, especially if personal AI systems eventually hold the most intimate parts of people's lives.
 
-I only know that "connected" and "trusted" should probably not become synonyms.
-
-And if personal AI systems eventually hold the most intimate parts of people's lives, I would rather have them default to restraint than openness.
+I would rather have them default to restraint than openness.
 
 ## Why local AI matters to me
 
@@ -192,21 +202,7 @@ That does not mean large providers are automatically malicious. It means depende
 
 If the model, memory, tools, permissions, data, and system intelligence all live somewhere else, then the user's relationship with their own computer starts depending on whoever owns that infrastructure.
 
-Local AI gives us another path.
-
-Not necessarily the most powerful model.
-
-Not necessarily the easiest system.
-
-But one where the machine can still belong to the person using it in a meaningful sense.
-
-Where the important state can stay local.
-
-Where the underlying behavior can be inspected and changed.
-
-Where an application can choose different inference engines instead of becoming inseparable from one vendor.
-
-Where experimentation with how AI interacts with the rest of the system is still possible.
+Local AI gives us another path: not necessarily the most powerful model or the easiest system, but one where the machine can still belong to the person using it in a meaningful sense. Important state can stay under their control, behavior can be inspected and changed, inference engines can be replaced, and experiments in how AI interacts with the rest of the system do not require permission from a remote platform.
 
 That possibility is enough reason for me to explore it.
 
@@ -214,49 +210,29 @@ That possibility is enough reason for me to explore it.
 
 All of this is much larger than the project in its current form.
 
-I've only been working on this specific project for a couple of days. I don't know exactly what it wants to become yet, and I don't want to pretend otherwise.
+I've only been working on this specific project for a short time. I don't know exactly what it wants to become yet, and I don't want to pretend otherwise.
 
-Right now the goal is much simpler:
+Right now the goal is simpler: build a really clean local inference application and use it to discover the boundaries the larger system actually needs.
 
-Build a really clean local inference application.
+Loading models should be reliable, generation predictable, ownership explicit, and the interfaces responsive. The runtime should be reusable rather than trapped behind one frontend. Performance should be measured instead of assumed. Context and workflow infrastructure should be substantial enough to support real experiments, but nothing gets to survive merely because it was difficult to build.
 
-Make loading models reliable. Make generation predictable. Keep the UI fast. Keep ownership explicit. Avoid unnecessary dependencies and layers. Make the runtime reusable. Understand the performance characteristics instead of hand-waving about them. Build enough context and workflow infrastructure to experiment, but be willing to delete anything that turns out to be pointless.
+I know that starting with a wide foundation sounds contradictory when one of the goals is avoiding bloat. For now, I think that is acceptable because I am mapping the space.
 
-I know that building a wide foundation seems contradictory when one of the goals is avoiding bloat.
-
-For now, I think that is acceptable.
-
-I'm mapping the space.
-
-The important part is that the wide base does not become permanent just because it exists. Once the system is usable, I want to cut ruthlessly. If an abstraction does not make the system clearer, safer, faster, or more capable, it should probably disappear.
+The important part is that the map does not become the territory. Once the system is usable, I want to cut ruthlessly. If an abstraction does not make the project clearer, safer, faster, or more capable, it should probably disappear.
 
 The project should earn its complexity.
 
 ## Where I hope this leads
 
-Maybe this ends as a very good local inference application with a clean Rust runtime.
+A very good local inference application with a clean Rust runtime would already be worthwhile.
 
-That would already be worthwhile.
+From there, the more interesting possibilities can prove themselves instead of existing only as plans: context that behaves more like a navigable memory than a transcript; specialist models that prepare, verify, or react to work around a larger model; workflows that can reshape the path from input to output without depending on a hosted orchestration service; and a mesh that lets those pieces live across the machines a person already owns.
 
-Maybe the context system becomes more important and leads to a different way of integrating tools.
+The runtime may become useful from a desktop, a terminal, a headless node, or something I have not thought of yet. I may find places where current inference engines are poorly suited to local hardware and replace pieces, or discover that the mature implementations were right and keep them. Some of these ideas may eventually flow back into the OS project.
 
-Maybe the toroidal grid remains only an analogy, or maybe it becomes the basis of a navigable long-term memory where the active context moves through conversations, books, research, code, and personal history without trying to hold all of it at once.
+The larger vision could also collapse under real-world constraints and leave me throwing most of it away. I am fine with that.
 
-Maybe small specialist models become part of the architecture and allow the main model to work with much cleaner information.
-
-Maybe I find places where current inference engines are poorly suited to local hardware and start replacing pieces.
-
-Maybe the runtime becomes useful outside the desktop application.
-
-Maybe some of the ideas eventually flow back into the OS project.
-
-Or maybe the larger vision collapses under real-world constraints and I throw most of it away.
-
-I am fine with that.
-
-The point of this project is not to prove that I already know the answer.
-
-It is to build close enough to the problem that I can discover better questions.
+The point of this project is not to prove that I already know the answer. It is to build close enough to the problem that I can discover better questions.
 
 The idea I keep coming back to is this:
 
