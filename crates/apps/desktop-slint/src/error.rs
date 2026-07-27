@@ -12,6 +12,13 @@ pub enum DesktopError {
     Application(ApplicationError),
     /// Slint platform or event-loop operation failed.
     Slint(slint::PlatformError),
+    /// Slint failed and explicit application shutdown also reported a failure.
+    SlintAndShutdown {
+        /// Primary Slint construction or event-loop failure.
+        slint: slint::PlatformError,
+        /// Failure reported while explicitly stopping application workers.
+        shutdown: ApplicationError,
+    },
     /// A supported per-user data directory could not be resolved.
     MissingDataDirectory,
     /// The application-state directory could not be created.
@@ -23,6 +30,10 @@ impl Display for DesktopError {
         match self {
             Self::Application(error) => Display::fmt(error, formatter),
             Self::Slint(error) => write!(formatter, "Slint failure: {error}"),
+            Self::SlintAndShutdown { slint, shutdown } => write!(
+                formatter,
+                "Slint failure: {slint}; application shutdown also failed: {shutdown}",
+            ),
             Self::MissingDataDirectory => {
                 formatter.write_str("no supported per-user application data directory is available")
             }
@@ -40,7 +51,7 @@ impl Error for DesktopError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Application(error) => Some(error),
-            Self::Slint(error) => Some(error),
+            Self::Slint(error) | Self::SlintAndShutdown { slint: error, .. } => Some(error),
             Self::CreateDataDirectory(error) => Some(error),
             Self::MissingDataDirectory => None,
         }

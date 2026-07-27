@@ -40,21 +40,32 @@ use generated::AppWindow;
 pub fn run() -> Result<(), DesktopError> {
     let configuration =
         ApplicationRuntimeConfiguration::desktop(paths::application_database_path()?);
-    let runtime = ApplicationRuntime::start(configuration)?;
-    let window = AppWindow::new()?;
+    let mut runtime = ApplicationRuntime::start(configuration)?;
+    let window = match AppWindow::new() {
+        Ok(window) => window,
+        Err(slint) => {
+            return match runtime.shutdown() {
+                Ok(()) => Err(DesktopError::Slint(slint)),
+                Err(shutdown) => Err(DesktopError::SlintAndShutdown { slint, shutdown }),
+            };
+        }
+    };
     window.set_repository(runtime.preferences().default_repository.clone().into());
     window.set_revision(runtime.preferences().default_revision.clone().into());
 
     let runtime = Rc::new(RefCell::new(runtime));
-    presenter::connect(&window, Rc::clone(&runtime));
+    let presenter = presenter::Presenter::connect(&window, &runtime);
     presenter::synchronize_controls(&window, &runtime.borrow());
-    let timer = presenter::start_frame_timer(&window, Rc::clone(&runtime));
+    let timer = presenter.start_frame_timer(&window, Rc::clone(&runtime));
     let run_result = window.run();
     timer.stop();
     let shutdown_result = runtime.borrow_mut().shutdown();
     drop(window);
 
-    run_result?;
-    shutdown_result?;
-    Ok(())
+    match (run_result, shutdown_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(slint), Ok(())) => Err(DesktopError::Slint(slint)),
+        (Ok(()), Err(shutdown)) => Err(DesktopError::Application(shutdown)),
+        (Err(slint), Err(shutdown)) => Err(DesktopError::SlintAndShutdown { slint, shutdown }),
+    }
 }

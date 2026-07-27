@@ -2,7 +2,7 @@
 
 This file is the chronological closure record for completed execution work. It preserves phase-specific rationale, acceptance evidence, measurements, and validation provenance without making each closed phase a separate top-level document.
 
-For current product truth, use [implementation status](../project/implementation-status.md). For repeatable commands, use [validation](../project/validation.md). Historical results below apply only to the baseline named in each entry.
+For current product truth, use [implementation status](../../project/implementation-status.md). For repeatable commands, use [validation](../../project/validation.md). Historical results below apply only to the baseline named in each entry.
 
 ## Phase 3 — backend-independent generation kernel
 
@@ -125,7 +125,7 @@ The model file passed this SHA-256 check:
 
 Elevated post-unload RSS was not treated as retained model ownership because allocators may keep freed pages for reuse. The ownership evidence was released records, empty accounting, an empty post-unload snapshot, successful worker shutdown, and clean process exit.
 
-The repeatable external-model procedure now lives in [project validation](../project/validation.md); this section retains only the historical evidence.
+The repeatable external-model procedure now lives in [project validation](../../project/validation.md); this section retains only the historical evidence.
 
 ### Historical boundary at closure
 
@@ -180,4 +180,42 @@ The suite covered:
 
 ### Closure validation rule
 
-The report required the canonical gate on the exact resulting tree, with focused commands used only for diagnosis. Current procedures are centralized in [project validation](../project/validation.md), and current completion state belongs in [implementation status](../project/implementation-status.md).
+The report required the canonical gate on the exact resulting tree, with focused commands used only for diagnosis. Current procedures are centralized in [project validation](../../project/validation.md), and current completion state belongs in [implementation status](../../project/implementation-status.md).
+
+## Phase 6 — first usable Slint product
+
+**Prepared:** 2026-07-27
+**Implementation baseline:** `a81a3aefb999f2f5a70fee6d1830dd3f3811d2ba` plus the Phase 6 working-tree changes
+**Scope:** expose the existing E1 direct-completion path through `desktop-slint`
+**Recorded outcome:** source and download-free validation complete; no manual graphical external-model session was recorded
+
+Phase 6 replaced the lifecycle-only window with the first complete presentation path while keeping generation scheduling, prompt/tokenizer behavior, cancellation, unload policy, and resource ownership below the frontend.
+
+### Closure matrix
+
+| Requirement | Recorded closure |
+|---|---|
+| Minimum interface | Repository/revision, resolve/load/unload, prompt, generated output, generate/cancel/clear, status, terminal reason, prompt/generated usage, and Candle/CPU identity are visible. |
+| Frame-aligned pulling | The existing 16 ms timer drains at most 64 events, performs one unconditional bounded E1 output pull, applies one presentation delta, then synchronizes controls and usage. |
+| Batched text | Borrowed fragments are copied by request identity and appended before one Slint output assignment per frame; final output is still pulled after terminal release. |
+| Control truth | Resolve/load/generate/cancel/unload enablement derives from `ApplicationState`; prompt emptiness affects only Generate. |
+| Cancellation | Cancel requests E1 cancellation and reports that completion remains pending until a safe backend boundary. |
+| Unload | The UI retains E1's bounded drain behavior and does not disable unload merely because generation is active. |
+| Terminal cleanup | Finishing, cleanup pending/exhausted, and released states are presented distinctly; cleanup exhaustion is not reported as release. |
+| Clear output | Clear mutates presentation text only and preserves request identity, runtime history, usage, and lifecycle state. |
+| Shutdown | Normal event-loop exit and post-runtime window-construction failure both invoke explicit bounded shutdown; combined Slint/cleanup failures are retained. |
+| Presenter tests | Pure tests cover active-work controls, prompt admission mapping, batched text/clear behavior, and cleanup messaging. |
+
+### Recorded validation
+
+The Phase 6 closure tree passed:
+
+```text
+cargo test --locked -p desktop-slint
+cargo clippy --locked -p desktop-slint --all-targets -- -D warnings
+cargo run --locked --bin llm-app -- verify
+```
+
+The canonical run covered architecture/dependency validation, formatting, workspace checks, tests/doctests, strict Clippy, rustdoc, and benchmark compilation. This was local working-tree evidence; no independent CI run or committed Phase 6 revision was recorded.
+
+The graphical product scenario was not manually driven against an external model in this environment. Existing download-free E1/Candle integration coverage proves generation, backpressure, cancellation, unload behavior, worker disconnection, and shutdown below presentation; the new desktop tests and Slint compilation prove the presenter mapping and generated UI boundary.

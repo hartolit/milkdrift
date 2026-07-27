@@ -13,9 +13,10 @@ lifecycle and direct-completion orchestration to `application-runtime`:
 6. expose E1 direct-completion start, cancel, text-pull, and unload behavior;
 7. keep all network, database, vendor, and UI types outside portable features.
 
-Generation is composed through E1 rather than Slint callbacks. The current Slint
-window remains lifecycle-only; frontend generation controls and broader conversation
-features are tracked in [implementation status](implementation-status.md).
+Generation is composed through E1 rather than Slint callbacks. The Slint window exposes
+the first direct-completion product path: prompt input, generated output, generate/cancel/
+clear actions, usage, terminal state, and the existing model lifecycle controls. Broader
+conversation features remain tracked in [implementation status](implementation-status.md).
 
 See the [application runtime guide](application-runtime.md) for the complete E1 public boundary.
 
@@ -44,8 +45,9 @@ backend orchestration.
 - per-user application-data path selection;
 - Slint component construction;
 - callback-to-command mapping;
-- 16 millisecond event polling;
-- structured-event presentation;
+- one 16 millisecond frame cadence for bounded event draining and one decoded-output pull;
+- presentation-owned batched text and terminal-state mapping;
+- control and usage synchronization from `ApplicationState`;
 - process exit reporting.
 
 The binary `src/main.rs` delegates directly to the Slint library entry point.
@@ -113,14 +115,16 @@ schema. Each write occurs in a redb transaction.
 ## Slint event cadence
 
 The Slint thread owns the component and a repeated 16 millisecond timer. Each
-tick pulls at most a fixed number of structured application events. Worker token
-or network frequency therefore cannot directly enqueue Slint callbacks or
-trigger unbounded layout work.
+tick drains at most 64 structured application events, pulls exactly one bounded E1
+decoded-output batch, applies one presentation delta, then synchronizes controls and
+usage from `ApplicationState`. Worker token or network frequency therefore cannot
+directly enqueue Slint callbacks or trigger one layout update per generated token.
 
-E1 generation output already uses `host-runtime`'s preallocated pull-oriented
-accumulators. When generated text is wired into the frontend, the Slint frame timer
-should pull one bounded decoded-text batch per frame, append it to presentation state,
-and release the borrowed storage promptly.
+The presenter copies borrowed text fragments before E1 reuses its accumulator, filters
+them by request identity, and appends all fragments from one pull before assigning the
+Slint output property once. Pulling remains unconditional after terminal state so final
+text and `Released` records cannot be stranded. Clear output changes only presentation
+state; it does not cancel generation or mutate E1 terminal history.
 
 ## Generated Rust and unsafe linting
 
@@ -148,6 +152,9 @@ sleep is capped to the remaining budget. Timeout overflow is rejected as invalid
 configuration rather than panicking. Explicit `ApplicationRuntime::shutdown` is
 mandatory on normal frontend closure because `Drop` intentionally performs no
 unbounded join; the Slint runner calls it immediately after the window loop exits.
+If window construction fails after runtime startup, the runner also performs explicit
+shutdown before returning. Combined Slint and shutdown failures are preserved in one
+`DesktopError` rather than hiding the cleanup failure.
 
 Hub resolution is different. The upstream synchronous `hf-hub` builder exposes
 cache, authentication, retry, endpoint, and progress controls, but no global

@@ -3,9 +3,11 @@
 Thin Slint presentation adapter over `application-runtime`.
 
 The crate owns the Slint event loop, per-user database path, widget callbacks,
-16 millisecond event polling, and status presentation. It does not directly
-import Candle, Hugging Face, redb, Flume, tokenizer, or inference command types.
-Those reusable use cases are owned by the E1 application engine.
+one 16 millisecond frame cadence, batched decoded-text presentation, control/usage
+mapping, and status/terminal presentation. It exposes model resolution/load/unload,
+direct-completion prompt/output, generate/cancel, and clear-output controls. It does
+not directly import Candle, Hugging Face, redb, Flume, tokenizer, or inference command
+types. Those reusable use cases are owned by the E1 application engine.
 
 The binary entry point delegates to the library so process startup remains lean.
 
