@@ -121,10 +121,13 @@ usage from `ApplicationState`. Worker token or network frequency therefore canno
 directly enqueue Slint callbacks or trigger one layout update per generated token.
 
 The presenter copies borrowed text fragments before E1 reuses its accumulator, filters
-them by request identity, and appends all fragments from one pull before assigning the
-Slint output property once. Pulling remains unconditional after terminal state so final
-text and `Released` records cannot be stranded. Clear output changes only presentation
-state; it does not cancel generation or mutate E1 terminal history.
+them by request identity, and sends only the new frame fragment through one Slint append
+callback. The same read-only `TextEdit` instance retains selection ownership; the callback
+snapshots and restores its `viewport-x` and `viewport-y` around each append. Rust no longer
+retains or reassigns the complete displayed output. Pulling remains unconditional after
+terminal state so final text and `Released` records cannot be stranded. Clear output resets
+the widget text, selection, and viewport only; it does not cancel generation or mutate E1
+terminal history.
 
 ## Generated Rust and unsafe linting
 

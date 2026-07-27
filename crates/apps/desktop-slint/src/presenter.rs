@@ -30,7 +30,7 @@ impl Presenter {
         connect_unload(window, Rc::clone(runtime));
         connect_generate(window, Rc::clone(runtime), Rc::clone(&state));
         connect_cancel(window, Rc::clone(runtime));
-        connect_clear_output(window, Rc::clone(&state));
+        connect_clear_output(window);
         Self { state }
     }
 
@@ -165,28 +165,18 @@ fn control_state(
 #[derive(Default)]
 struct PresentationState {
     displayed_request: Option<u64>,
-    output: String,
     terminal_text: String,
 }
 
 impl PresentationState {
     fn begin_request(&mut self, request_id: u64) {
         self.displayed_request = Some(request_id);
-        self.output.clear();
         self.terminal_text.clear();
         self.terminal_text
             .push_str("Generation submitted; waiting for admission.");
     }
 
-    fn clear_output(&mut self) {
-        self.output.clear();
-    }
-
     fn apply_delta(&mut self, delta: FrameOutputDelta) -> PresentationUpdate {
-        let output_changed = !delta.text.is_empty();
-        if output_changed {
-            self.output.push_str(&delta.text);
-        }
         let terminal_changed = if let Some(terminal_text) = delta.terminal_text {
             self.terminal_text = terminal_text;
             true
@@ -194,18 +184,35 @@ impl PresentationState {
             false
         };
         PresentationUpdate {
-            output_changed,
+            output: (!delta.text.is_empty()).then_some(GeneratedOutputUpdate::Append(delta.text)),
             terminal_changed,
             invalid_text_record: delta.invalid_text_record,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
+enum GeneratedOutputUpdate {
+    Append(String),
+    Reset,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 struct PresentationUpdate {
-    output_changed: bool,
+    output: Option<GeneratedOutputUpdate>,
     terminal_changed: bool,
     invalid_text_record: bool,
+}
+
+const fn reset_generated_output_update() -> GeneratedOutputUpdate {
+    GeneratedOutputUpdate::Reset
+}
+
+fn render_generated_output_update(window: &AppWindow, update: GeneratedOutputUpdate) {
+    match update {
+        GeneratedOutputUpdate::Append(text) => window.invoke_append_generated_output(text.into()),
+        GeneratedOutputUpdate::Reset => window.invoke_reset_generated_output(),
+    }
 }
 
 fn render_presentation_update(
@@ -213,8 +220,8 @@ fn render_presentation_update(
     presentation: &PresentationState,
     update: PresentationUpdate,
 ) {
-    if update.output_changed {
-        window.set_generated_output(presentation.output.clone().into());
+    if let Some(output) = update.output {
+        render_generated_output_update(window, output);
     }
     if update.terminal_changed {
         window.set_terminal_text(presentation.terminal_text.clone().into());
@@ -258,6 +265,23 @@ fn collect_output_batch(
     delta
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CancellationMessageState {
+    Submitted,
+    Accepted,
+}
+
+fn cancellation_pending_message(request_id: u64, state: CancellationMessageState) -> String {
+    match state {
+        CancellationMessageState::Submitted => format!(
+            "Cancellation for generation {request_id} is pending until a safe backend boundary."
+        ),
+        CancellationMessageState::Accepted => format!(
+            "Cancellation for generation {request_id} was accepted and remains pending until completion."
+        ),
+    }
+}
+
 fn output_state_message(state: ApplicationOutputState) -> Option<String> {
     match state {
         ApplicationOutputState::Yielded(_) => None,
@@ -272,18 +296,43 @@ fn output_state_message(state: ApplicationOutputState) -> Option<String> {
             "Generation ended, but backend cleanup retries were exhausted; resources remain retained."
                 .to_owned(),
         ),
-        ApplicationOutputState::Released(kind) => Some(format!(
-            "{} Backend resources were released.",
-            terminal_kind_message(kind)
-        )),
+        ApplicationOutputState::Released(kind) => {
+            Some(released_terminal_message(&terminal_presentation(kind)))
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum TerminalPresentation {
+    Finished(String),
+    Failed,
+}
+
+fn terminal_presentation(kind: GenerationTerminalKind) -> TerminalPresentation {
+    match kind {
+        GenerationTerminalKind::Finished(reason) => {
+            TerminalPresentation::Finished(format!("{reason:?}"))
+        }
+        GenerationTerminalKind::Failed => TerminalPresentation::Failed,
     }
 }
 
 fn terminal_kind_message(kind: GenerationTerminalKind) -> String {
-    match kind {
-        GenerationTerminalKind::Finished(reason) => format!("Generation finished: {reason:?}."),
-        GenerationTerminalKind::Failed => "Generation failed.".to_owned(),
+    terminal_presentation_message(&terminal_presentation(kind))
+}
+
+fn terminal_presentation_message(presentation: &TerminalPresentation) -> String {
+    match presentation {
+        TerminalPresentation::Finished(reason) => format!("Generation finished: {reason}."),
+        TerminalPresentation::Failed => "Generation failed.".to_owned(),
     }
+}
+
+fn released_terminal_message(presentation: &TerminalPresentation) -> String {
+    format!(
+        "{} Backend resources were released.",
+        terminal_presentation_message(presentation)
+    )
 }
 
 fn format_terminal_outcome(outcome: &GenerationTerminalOutcome) -> String {
@@ -366,7 +415,7 @@ fn connect_generate(
             Ok(request_id) => {
                 let mut presentation = presentation.borrow_mut();
                 presentation.begin_request(request_id.get());
-                window.set_generated_output(presentation.output.clone().into());
+                render_generated_output_update(&window, reset_generated_output_update());
                 window.set_terminal_text(presentation.terminal_text.clone().into());
                 drop(presentation);
                 window.set_status_text(
@@ -402,11 +451,8 @@ fn connect_cancel(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) 
         };
         match runtime.borrow_mut().cancel_generation(request_id) {
             Ok(()) => window.set_status_text(
-                format!(
-                    "Cancellation for generation {} is pending until a safe backend boundary.",
-                    request_id.get()
-                )
-                .into(),
+                cancellation_pending_message(request_id.get(), CancellationMessageState::Submitted)
+                    .into(),
             ),
             Err(error) => {
                 window.set_status_text(
@@ -418,14 +464,13 @@ fn connect_cancel(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) 
     });
 }
 
-fn connect_clear_output(window: &AppWindow, presentation: Rc<RefCell<PresentationState>>) {
+fn connect_clear_output(window: &AppWindow) {
     let weak = window.as_weak();
     window.on_clear_output(move || {
         let Some(window) = weak.upgrade() else {
             return;
         };
-        presentation.borrow_mut().clear_output();
-        window.set_generated_output("".into());
+        render_generated_output_update(&window, reset_generated_output_update());
     });
 }
 
@@ -460,11 +505,8 @@ fn apply_event(window: &AppWindow, event: ApplicationEvent) {
         }
         ApplicationEvent::GenerationCancellationRequested { request_id } => {
             window.set_status_text(
-                format!(
-                    "Cancellation for generation {} was accepted and remains pending until completion.",
-                    request_id.get()
-                )
-                .into(),
+                cancellation_pending_message(request_id.get(), CancellationMessageState::Accepted)
+                    .into(),
             );
         }
         ApplicationEvent::GenerationCancellationFailed {
@@ -559,17 +601,36 @@ const fn scalar_type_name(value: ScalarType) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{FrameOutputDelta, PresentationState, control_state, output_state_message};
-    use application_runtime::ApplicationOutputState;
+    use super::{
+        CancellationMessageState, FrameOutputDelta, GeneratedOutputUpdate, PresentationState,
+        TerminalPresentation, cancellation_pending_message, control_state, format_terminal_outcome,
+        output_state_message, released_terminal_message, reset_generated_output_update,
+    };
+    use application_runtime::{
+        ApplicationFailure, ApplicationFailureKind, ApplicationOutputState, GenerationTerminalKind,
+        GenerationTerminalOutcome,
+    };
 
     #[test]
-    fn control_mapping_preserves_cancel_and_unload_during_active_work() {
+    fn running_generation_exposes_cancellation() {
         let controls = control_state(false, false, false, true, true, "prompt");
 
         assert!(!controls.can_generate);
         assert!(controls.can_cancel);
         assert!(controls.can_unload);
         assert!(!controls.can_edit_prompt);
+    }
+
+    #[test]
+    fn cancellation_pending_is_explicit_before_and_after_backend_acceptance() {
+        let submitted = cancellation_pending_message(7, CancellationMessageState::Submitted);
+        let accepted = cancellation_pending_message(7, CancellationMessageState::Accepted);
+
+        assert!(submitted.contains("generation 7"));
+        assert!(submitted.contains("pending until a safe backend boundary"));
+        assert!(accepted.contains("generation 7"));
+        assert!(accepted.contains("accepted"));
+        assert!(accepted.contains("remains pending"));
     }
 
     #[test]
@@ -583,26 +644,84 @@ mod tests {
     }
 
     #[test]
-    fn text_deltas_are_batched_and_clear_preserves_request_identity() {
+    fn released_generation_reenables_generate_and_keeps_unload_available() {
+        let controls = control_state(false, false, true, false, true, "Next prompt");
+
+        assert!(controls.can_edit_prompt);
+        assert!(controls.can_generate);
+        assert!(!controls.can_cancel);
+        assert!(controls.can_unload);
+    }
+
+    #[test]
+    fn text_delta_contains_only_the_new_fragment() {
         let mut presentation = PresentationState {
             displayed_request: Some(7),
-            output: "before".to_owned(),
             terminal_text: String::new(),
         };
         let delta = FrameOutputDelta {
-            text: " after".to_owned(),
+            text: "new frame text".to_owned(),
             terminal_text: None,
             invalid_text_record: false,
         };
 
         let update = presentation.apply_delta(delta);
-        assert!(update.output_changed);
-        assert!(!update.terminal_changed);
-        assert_eq!(presentation.output, "before after");
 
-        presentation.clear_output();
-        assert!(presentation.output.is_empty());
+        assert_eq!(
+            update.output,
+            Some(GeneratedOutputUpdate::Append("new frame text".to_owned()))
+        );
+        assert!(!update.terminal_changed);
         assert_eq!(presentation.displayed_request, Some(7));
+    }
+
+    #[test]
+    fn clear_output_resets_only_widget_output_state() {
+        let presentation = PresentationState {
+            displayed_request: Some(7),
+            terminal_text: "Still running".to_owned(),
+        };
+
+        assert_eq!(
+            reset_generated_output_update(),
+            GeneratedOutputUpdate::Reset
+        );
+        assert_eq!(presentation.displayed_request, Some(7));
+        assert_eq!(presentation.terminal_text, "Still running");
+    }
+
+    #[test]
+    fn successful_terminal_release_is_presented_as_released() {
+        let message =
+            released_terminal_message(&TerminalPresentation::Finished("TokenLimit".to_owned()));
+
+        assert!(message.contains("Generation finished: TokenLimit"));
+        assert!(message.contains("resources were released"));
+    }
+
+    #[test]
+    fn generation_failure_preserves_the_diagnostic_and_release_state() {
+        let outcome = GenerationTerminalOutcome::Failed(ApplicationFailure::new(
+            ApplicationFailureKind::Inference,
+            "decode failed",
+        ));
+        let terminal = format_terminal_outcome(&outcome);
+        let released = output_state_message(ApplicationOutputState::Released(
+            GenerationTerminalKind::Failed,
+        ));
+
+        assert!(terminal.contains("Generation failed: decode failed"));
+        assert!(terminal.contains("resources were released"));
+        assert!(
+            released
+                .as_deref()
+                .is_some_and(|value| value.contains("Generation failed"))
+        );
+        assert!(
+            released
+                .as_deref()
+                .is_some_and(|value| value.contains("resources were released"))
+        );
     }
 
     #[test]

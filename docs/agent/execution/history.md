@@ -185,7 +185,7 @@ The report required the canonical gate on the exact resulting tree, with focused
 ## Phase 6 — first usable Slint product
 
 **Prepared:** 2026-07-27
-**Implementation baseline:** `a81a3aefb999f2f5a70fee6d1830dd3f3811d2ba` plus the Phase 6 working-tree changes
+**Implementation baseline:** reviewed `phase-6` commit `68438648c09bc008e628508ebf269456c6299096` plus the source-level review closure
 **Scope:** expose the existing E1 direct-completion path through `desktop-slint`
 **Recorded outcome:** source and download-free validation complete; no manual graphical external-model session was recorded
 
@@ -197,14 +197,14 @@ Phase 6 replaced the lifecycle-only window with the first complete presentation 
 |---|---|
 | Minimum interface | Repository/revision, resolve/load/unload, prompt, generated output, generate/cancel/clear, status, terminal reason, prompt/generated usage, and Candle/CPU identity are visible. |
 | Frame-aligned pulling | The existing 16 ms timer drains at most 64 events, performs one unconditional bounded E1 output pull, applies one presentation delta, then synchronizes controls and usage. |
-| Batched text | Borrowed fragments are copied by request identity and appended before one Slint output assignment per frame; final output is still pulled after terminal release. |
+| Batched text | Borrowed fragments are copied by request identity and only the new frame fragment crosses into Slint. The persistent `TextEdit` keeps selection ownership while its viewport coordinates are saved/restored around append; final output is still pulled after terminal release. |
 | Control truth | Resolve/load/generate/cancel/unload enablement derives from `ApplicationState`; prompt emptiness affects only Generate. |
 | Cancellation | Cancel requests E1 cancellation and reports that completion remains pending until a safe backend boundary. |
 | Unload | The UI retains E1's bounded drain behavior and does not disable unload merely because generation is active. |
 | Terminal cleanup | Finishing, cleanup pending/exhausted, and released states are presented distinctly; cleanup exhaustion is not reported as release. |
 | Clear output | Clear mutates presentation text only and preserves request identity, runtime history, usage, and lifecycle state. |
 | Shutdown | Normal event-loop exit and post-runtime window-construction failure both invoke explicit bounded shutdown; combined Slint/cleanup failures are retained. |
-| Presenter tests | Pure tests cover active-work controls, prompt admission mapping, batched text/clear behavior, and cleanup messaging. |
+| Presenter tests | Nine pure tests cover running cancellation availability, cancellation-pending messages, prompt admission, post-release Generate/Unload controls, fragment-only append/reset behavior, successful release, failure diagnostics, and cleanup pending/exhausted messaging. |
 
 ### Recorded validation
 

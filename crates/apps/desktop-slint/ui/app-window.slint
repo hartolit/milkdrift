@@ -1,4 +1,4 @@
-import { Button, HorizontalBox, LineEdit, ScrollView, TextEdit, VerticalBox } from "std-widgets.slint";
+import { Button, HorizontalBox, LineEdit, TextEdit, VerticalBox } from "std-widgets.slint";
 
 export component AppWindow inherits Window {
     title: "LLM App";
@@ -8,7 +8,6 @@ export component AppWindow inherits Window {
     in-out property <string> repository;
     in-out property <string> revision;
     in-out property <string> prompt;
-    in property <string> generated-output;
     in property <string> status-text: "Ready";
     in property <string> terminal-text: "No generation has completed.";
     in property <string> resolved-commit: "Not resolved";
@@ -28,6 +27,24 @@ export component AppWindow inherits Window {
     callback generate();
     callback cancel-generation();
     callback clear-output();
+    callback append-generated-output(string);
+    callback reset-generated-output();
+
+    append-generated-output(fragment) => {
+        // Selection remains owned by this TextEdit instance. Preserve its explicit scroll state.
+        let saved-viewport-x = output-editor.viewport-x;
+        let saved-viewport-y = output-editor.viewport-y;
+        output-editor.text += fragment;
+        output-editor.viewport-x = saved-viewport-x;
+        output-editor.viewport-y = saved-viewport-y;
+    }
+
+    reset-generated-output() => {
+        output-editor.text = "";
+        output-editor.viewport-x = 0px;
+        output-editor.viewport-y = 0px;
+        output-editor.clear-selection();
+    }
 
     VerticalBox {
         padding: 20px;
@@ -137,15 +154,11 @@ export component AppWindow inherits Window {
             text: "Generated output";
             font-weight: 700;
         }
-        ScrollView {
+        output-editor := TextEdit {
+            text: "";
+            read-only: true;
+            wrap: word-wrap;
             height: 210px;
-            TextEdit {
-                text: root.generated-output;
-                read-only: true;
-                wrap: word-wrap;
-                width: parent.viewport-width;
-                height: max(parent.viewport-height, self.preferred-height);
-            }
         }
 
         Rectangle { height: 1px; background: #d0d0d0; }

@@ -1,6 +1,6 @@
 # Current execution context
 
-**Reviewed baseline:** `a81a3aefb999f2f5a70fee6d1830dd3f3811d2ba` (`Docs restructure`) plus Phase 6 working-tree closure
+**Reviewed baseline:** `phase-6` commit `68438648c09bc008e628508ebf269456c6299096` plus source-level review closure
 **Current target:** Phase 7 — real chat and context planning
 **Gate state:** The canonical locked gate passed locally on the Phase 6 closure tree; no independent CI run or committed Phase 6 revision is recorded
 **Canonical plan:** [execution-plan.md](execution-plan.md)
@@ -35,7 +35,7 @@ Phase 7 changes conversation semantics. It must preserve the Phase 6 lifecycle c
 - direct-completion prompt and generated-output views;
 - generate, cancel, and clear-output actions;
 - prompt/generated usage, status, terminal reason, and a Candle/CPU label;
-- one 16 millisecond cadence that drains at most 64 events, pulls one bounded decoded-output batch, applies one presentation delta, and synchronizes from `ApplicationState`;
+- one 16 millisecond cadence that drains at most 64 events, pulls one bounded decoded-output batch, appends only the new frame fragment while preserving selection/viewport state, and synchronizes from `ApplicationState`;
 - explicit shutdown after the event loop and after post-runtime window-construction failure.
 
 This is the presentation baseline to evolve, not a second inference path. See [desktop runtime](../../project/desktop-runtime.md).

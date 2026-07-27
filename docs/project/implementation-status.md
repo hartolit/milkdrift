@@ -1,7 +1,7 @@
 # Current implementation status
 
 **Status date:** 2026-07-27
-**Reviewed source baseline:** `main` commit `a81a3aefb999f2f5a70fee6d1830dd3f3811d2ba` (`Docs restructure`) plus the Phase 6 working-tree changes recorded below
+**Reviewed source baseline:** `phase-6` commit `68438648c09bc008e628508ebf269456c6299096` plus the source-level review closure recorded below
 **Execution position:** Phase 6 source closure is present; Phase 7 is the current implementation target
 **Canonical plan:** [LLM App Execution Plan](../agent/execution/execution-plan.md)
 **Current working context:** [Phase 7 execution context](../agent/execution/current.md)
@@ -31,7 +31,7 @@ The source tree contains:
 - explicit single-model E1 configuration;
 - application-owned `ModelUnloadBehavior::{RejectIfBusy, CancelActive, Drain}` rather than exposing E0 unload policy types;
 - download-free E1/Candle integration coverage for generation, backpressure, cancellation, unload behavior, worker disconnection, and shutdown;
-- Slint generation controls with frame-aligned bounded text pulling, usage, terminal-state, cancellation-pending, and clear-output presentation.
+- Slint generation controls with frame-aligned bounded text pulling, fragment-only widget appends that preserve selection/viewport state, usage, terminal-state, cancellation-pending, and clear-output presentation.
 
 ## Integration depth
 
@@ -48,7 +48,7 @@ The source tree contains:
 
 ## Validation state
 
-The canonical locked repository gate passed locally on 2026-07-27 on `a81a3aefb999f2f5a70fee6d1830dd3f3811d2ba` plus the documented Phase 6 working-tree changes. The run covered architecture/dependency validation, formatting, workspace checks, tests/doctests, strict Clippy, rustdoc, and benchmark compilation. Focused `desktop-slint` tests and strict all-target Clippy also passed. No independent GitHub Actions run or committed Phase 6 revision is attached to this local evidence.
+The canonical locked repository gate passed locally on 2026-07-27 on `68438648c09bc008e628508ebf269456c6299096` plus the documented Phase 6 review-closure changes. The run covered architecture/dependency validation, formatting, workspace checks, tests/doctests, strict Clippy, rustdoc, and benchmark compilation. Nine focused `desktop-slint` presenter tests and strict all-target Clippy also passed. No independent GitHub Actions run or committed review-closure revision is attached to this local evidence.
 
 The graphical external-model acceptance scenario was not manually exercised in this environment. Download-free E1/Candle integration tests cover the underlying generation, cancellation, unload, backpressure, and shutdown loop; presenter tests cover the new UI mapping. Historical Phase 3–5 evidence remains in [execution history](../agent/execution/history.md).
 
