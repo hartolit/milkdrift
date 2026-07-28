@@ -3,7 +3,7 @@
 ## Scope
 
 The typed corrective workflow is an independently stateful capability engine in
-`crates/engines/corrective-workflow`:
+`crates/runtime/corrective-workflow`:
 
 ```text
 draft
@@ -21,7 +21,7 @@ stateful subsystem into the same crate.
 
 ## Pure graph boundary
 
-`task-graph` remains an F1, `no_std`, allocation-free feature crate. It owns:
+`task-graph` remains an F1, `no_std`, allocation-free domain crate. It owns:
 
 - semantic artifact roles;
 - workflow-input, task-input, and task-output declarations;

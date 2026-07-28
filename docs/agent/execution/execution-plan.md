@@ -98,9 +98,11 @@ The existing native application is already composed around Candle, Hugging Face 
 
 GPU support is deferred until CPU correctness, cancellation, output backpressure, and system benchmarks exist.
 
-### 3.6 Keep the current folder taxonomy initially
+### 3.6 Keep folder movement out of the first vertical slice
 
-Do not rename `features`, `adapters`, `engines`, and `apps` merely to look more conventional. Folder movement without an ownership change creates churn without improving the dependency graph.
+During the first vertical slice, do not rename folders merely to look more conventional. Folder movement without an ownership change creates churn without improving the dependency graph.
+
+That constraint ended after the Phase 6 product milestone. The workspace now uses `domain`, `platform`, `adapters`, `runtime`, and `apps`; the move preserves the existing logical dependency roles and is enforced as the current layout rather than supported through permanent legacy aliases.
 
 ### 3.7 Replace absolute layer doctrine with an approved DAG later
 
@@ -108,7 +110,7 @@ Do not change the F0/F1 policy during the first vertical slice unless it blocks 
 
 ### 3.8 Component benchmarks remain with their crates
 
-`crates/features/sampling/benches/sampling_pipeline.rs` is correctly located. Cross-crate and end-to-end benchmarks should be added as a dedicated benchmark workspace package after the generation path exists.
+`crates/domain/sampling/benches/sampling_pipeline.rs` is correctly located. Cross-crate and end-to-end benchmarks should be added as a dedicated benchmark workspace package after the generation path exists.
 
 ## 4. Scope guardrails
 
@@ -308,12 +310,14 @@ The validator must:
 
 - use the typed `cargo_metadata` API;
 - fail closed on unknown workspace paths;
+- require explicit classification for E0, capability, and E1 runtime roles; unknown runtime crates must fail closed;
 - distinguish normal, build, and development dependencies;
 - test the complete layer matrix;
 - analyze the actual workspace graph in an integration test;
 - report why an edge is forbidden and which policy rule applies;
+- require exact review for production engine dependencies on adapters or other engines;
 - enforce external dependency rules for portable crates;
-- avoid treating every unrecognized crate as an application.
+- avoid treating runtime-folder placement as an implicit capability-engine role.
 
 Initial external dependency policy:
 
@@ -1855,22 +1859,24 @@ docs/
   knowledge/
 
 crates/
-  features/
+  domain/
     domain-contracts
     tokenization
     context-planner
     sampling
     task-graph
+  platform/
+    host-runtime
   adapters/
     candle-backend
     gguf-backend
     hf-hub
     hf-tokenizer
-    host-runtime
     redb-storage
     # optional GGUF tokenizer adapter if required
-  engines/
+  runtime/
     inference-runtime
+    corrective-workflow
     application-runtime
     # native-runtime only if Phase 8 proves the split
   apps/

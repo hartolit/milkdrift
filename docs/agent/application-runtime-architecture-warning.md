@@ -141,13 +141,15 @@ The corrective workflow was the clearest subsystem with a reason to change indep
 It now lives as a capability engine:
 
 ```text
-engines/
+runtime/
 ├── inference-runtime
 ├── corrective-workflow
 ├── application-runtime
 ```
 
 This is not a template to create an engine for every feature. The extraction is justified by existing state, lifecycle, ports, tests, and reuse pressure.
+
+The repository should enforce that distinction. A runtime package does not become a capability engine because it was placed beside the existing runtimes: E0, capability, and E1 roles must remain explicitly classified. Likewise, a runtime dependency on an adapter or another runtime should require a reviewed composition edge rather than becoming legal merely because the layer matrix points downward. These checks make new ownership and coupling visible in code review.
 
 ## Conversation and context
 

@@ -109,6 +109,71 @@ fn unknown_workspace_location_fails_closed() -> Result<(), Box<dyn Error>> {
 
     assert_eq!(violation.rule(), "LAYOUT-1");
     assert!(violation.target().contains("crates/experimental/mystery"));
-    assert!(violation.reason().contains("unknown locations"));
+    assert!(
+        violation
+            .reason()
+            .contains("never receive a fallback layer")
+    );
+    Ok(())
+}
+
+#[test]
+fn unregistered_runtime_role_fails_closed() -> Result<(), Box<dyn Error>> {
+    let fixture = FixtureWorkspace::new("unregistered-runtime")?;
+    let report = validate_workspace(&fixture.manifest())?;
+    let Some(violation) = report
+        .violations()
+        .iter()
+        .find(|violation| violation.source() == "memory-runtime")
+    else {
+        return Err("fixture's unregistered runtime was accepted".into());
+    };
+
+    assert_eq!(violation.rule(), "RUNTIME-ROLE-1");
+    assert!(
+        violation
+            .reason()
+            .contains("directory placement does not grant a capability role")
+    );
+    Ok(())
+}
+
+#[test]
+fn unregistered_platform_role_fails_closed() -> Result<(), Box<dyn Error>> {
+    let fixture = FixtureWorkspace::new("unregistered-platform")?;
+    let report = validate_workspace(&fixture.manifest())?;
+    let Some(violation) = report
+        .violations()
+        .iter()
+        .find(|violation| violation.source() == "native")
+    else {
+        return Err("fixture's unregistered platform crate was accepted".into());
+    };
+
+    assert_eq!(violation.rule(), "PLATFORM-ROLE-1");
+    assert!(
+        violation
+            .reason()
+            .contains("directory placement does not grant infrastructure authority")
+    );
+    Ok(())
+}
+
+#[test]
+fn unreviewed_runtime_edge_fails_closed() -> Result<(), Box<dyn Error>> {
+    let fixture = FixtureWorkspace::new("unreviewed-runtime-edge")?;
+    let report = validate_workspace(&fixture.manifest())?;
+    let Some(violation) = report.violations().iter().find(|violation| {
+        violation.source() == "application-runtime" && violation.target() == "corrective-workflow"
+    }) else {
+        return Err("fixture's unreviewed E1 -> capability edge was accepted".into());
+    };
+
+    assert_eq!(violation.rule(), "ENGINE-LOCAL-PROD-1");
+    assert!(
+        violation
+            .reason()
+            .contains("exact reviewed composition edge")
+    );
     Ok(())
 }

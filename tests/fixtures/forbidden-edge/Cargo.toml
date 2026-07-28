@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "crates/features/domain-contracts",
+    "crates/domain/domain-contracts",
     "crates/adapters/candle-backend",
 ]
 resolver = "3"

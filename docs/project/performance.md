@@ -18,7 +18,7 @@ cargo run --bin llm-app -- benchmark
 
 ## Sampling pipeline
 
-`crates/features/sampling/benches/sampling_pipeline.rs` measures the production
+`crates/domain/sampling/benches/sampling_pipeline.rs` measures the production
 `Sampler::sample` implementation with the default sampling policy and 32,768
 logits. Each iteration restores the mutable logit slice, performs top-k selection,
 probability filtering, and random selection, and returns the selected sample to a
@@ -62,7 +62,7 @@ cost being addressed.
 
 ## Allocation enforcement
 
-`crates/features/sampling/tests/allocation.rs` executes the production sampler 64
+`crates/domain/sampling/tests/allocation.rs` executes the production sampler 64
 times over preallocated logits, candidate indices, repetition state, and history.
 The test enables repetition processing and fails if the measured region performs
 an allocation or reallocation.

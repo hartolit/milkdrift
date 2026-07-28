@@ -21,9 +21,10 @@ See the [current implementation status](docs/project/implementation-status.md) f
 ## Workspace
 
 ```text
-crates/features/     portable contracts and algorithms
-crates/adapters/     model, tokenizer, storage, network, and host integrations
-crates/engines/      E0 inference, capability engines, and E1 application coordination
+crates/domain/       portable contracts and algorithms
+crates/platform/     process-host threading, timing, channels, and bounded output plumbing
+crates/adapters/     model, tokenizer, storage, network, and vendor integrations
+crates/runtime/      E0 inference, capability engines, and E1 application coordination
 crates/apps/         presentation and process entry points
 ```
 

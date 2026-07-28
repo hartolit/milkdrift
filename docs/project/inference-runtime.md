@@ -1,6 +1,6 @@
 # Inference runtime
 
-`crates/engines/inference-runtime` is the E0 single-owner model registry and
+`crates/runtime/inference-runtime` is the E0 single-owner model registry and
 backend-independent generation scheduler. It is generic over one concrete
 `ModelLoader` and owns every loaded model, backend sequence, generation workspace,
 lifecycle transition, and aggregate memory reservation.

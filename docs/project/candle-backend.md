@@ -4,7 +4,7 @@
 
 `crates/adapters/candle-backend` is the Candle CPU reference implementation of the `domain-contracts` backend boundary. It supports unquantized Hugging Face Llama configuration files and one or more Safetensors weight shards on the CPU.
 
-The adapter owns all Candle types. No Candle tensor, device, model, cache, or error type crosses into a feature crate.
+The adapter owns all Candle types. No Candle tensor, device, model, cache, or error type crosses into a domain crate.
 
 ## Lifecycle
 

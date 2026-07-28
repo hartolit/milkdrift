@@ -1,4 +1,4 @@
-# Feature crates
+# Domain crates
 
 Portable domain building blocks.
 
@@ -6,5 +6,5 @@ Portable domain building blocks.
 dependencies. `tokenization`, `context-planner`, `sampling`, and `task-graph` are
 F1 crates: they may depend on `domain-contracts`, but never on one another.
 
-Feature crates are always `no_std`. Infrastructure, vendor SDKs, filesystem I/O,
-network access, databases, and OS synchronization belong in adapters.
+Domain crates are always `no_std`. Host-process facilities, vendor SDKs, filesystem
+I/O, network access, databases, and OS synchronization belong outside this layer.

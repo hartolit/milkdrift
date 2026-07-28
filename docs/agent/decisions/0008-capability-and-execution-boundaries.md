@@ -30,7 +30,7 @@ E0 when justified, but never on E1 or an application frontend. E1 may coordinate
 capability engines without absorbing their implementation.
 
 The existing corrective workflow becomes the first capability engine in
-`crates/engines/corrective-workflow`. This is an extraction of ownership, not a
+`crates/runtime/corrective-workflow`. This is an extraction of ownership, not a
 redesign of its six-stage behavior.
 
 E0 `inference-runtime` remains the owner of local/native model resources,
@@ -71,7 +71,7 @@ a speculative generic service graph first.
 - Corrective workflows can evolve without expanding E1's public surface.
 - External execution can be added without distorting E0.
 - Sending context outside the user's machines remains an explicit choice with target-specific capability, credential, privacy, and failure policy.
-- The architecture validator distinguishes E0, capability engines, and E1 and forbids upward dependencies.
+- The architecture validator classifies runtime and platform roles explicitly rather than by folder fallback, forbids upward dependencies, and requires exact review for runtime-to-infrastructure or runtime-to-runtime production composition edges.
 
 ## Review trigger
 

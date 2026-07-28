@@ -10,9 +10,10 @@ Accepted ADRs remain part of the project architecture until superseded. A supers
 - [ADR-0002: Use Candle CPU for the first vertical slice](0002-candle-cpu-first-vertical-slice.md)
 - [ADR-0003: Schedule generation beside model execution](0003-generation-scheduling-ownership.md)
 - [ADR-0004: Deliver direct completion before general chat](0004-direct-completion-before-chat.md)
-- [ADR-0005: Retain the current crate folders](0005-retain-crate-folders.md)
+- [ADR-0005: Retain the current crate folders](0005-retain-crate-folders.md) — superseded by ADR-0009
 - [ADR-0006: Require explicit bounded shutdown](0006-explicit-bounded-shutdown.md)
 - [ADR-0007: Name the supported portability targets](0007-portability-targets.md)
 - [ADR-0008: Separate application coordination, capabilities, and model execution](0008-capability-and-execution-boundaries.md)
+- [ADR-0009: Adopt domain, platform, adapter, runtime, and app roots](0009-workspace-physical-taxonomy.md)
 
 For current applied structure, see [project architecture](../../project/architecture.md). For the reusable selectable model, see the [architecture blueprint](../../architecture.md).

@@ -4,16 +4,17 @@ This project selects **[Model B: Layered Workspace](../architecture.md#model-b-l
 
 ## Physical layout and logical roles
 
-The repository keeps four physical categories:
+The repository keeps five physical categories:
 
 ```text
-crates/features/    portable contracts and algorithms
-crates/adapters/    infrastructure and vendor implementations
-crates/engines/     stateful orchestration and resource ownership
+crates/domain/      portable contracts and algorithms
+crates/platform/    process-host execution primitives
+crates/adapters/    external, vendor, model, and persistence integrations
+crates/runtime/     stateful orchestration and resource ownership
 crates/apps/        process, event-loop, and presentation boundaries
 ```
 
-Engines have distinct logical roles rather than one undifferentiated tier:
+Runtime crates have distinct logical roles rather than one undifferentiated tier:
 
 ```text
 apps / transported frontends
@@ -24,20 +25,20 @@ application-runtime (E1 application coordinator)
 capability engines     inference-runtime (E0 local inference)
       └──────────┬──────────┘
                  ↓
-          adapters / features
+      platform / adapters / domain
                  ↓
           domain-contracts
 ```
 
-E1 may coordinate capability engines and E0. A capability engine may use E0, adapters, and features when its own lifecycle requires them. Neither capability engines nor E0 depend on E1. Applications depend on E1 rather than reconstructing application state machines. Exact edges and reviewed development exceptions are documented in [workspace boundaries](workspace.md) and enforced by the architecture validator.
+E1 may coordinate capability engines and E0. A capability engine may use E0, platform services, adapters, and domain code when its own lifecycle requires them. Neither capability engines nor E0 depend on E1. Applications depend on E1 rather than reconstructing application state machines. Exact edges and reviewed development exceptions are documented in [workspace boundaries](workspace.md) and enforced by the architecture validator.
 
-## Feature tiers
+## Domain tiers
 
-`domain-contracts` is the F0 shared foundation. It owns vocabulary that genuinely crosses backend/engine or multiple-feature boundaries: typed identities, capacities, model/sequence contracts, lifecycle transitions, and output records.
+`domain-contracts` is the F0 shared foundation. It owns vocabulary that genuinely crosses backend/runtime or multiple-domain boundaries: typed identities, capacities, model/sequence contracts, lifecycle transitions, and output records.
 
 `tokenization`, `context-planner`, `sampling`, and `task-graph` are F1 algorithm crates. The currently enforced production policy permits F1 → F0 and rejects F1 → F1. This is a project constraint rather than a universal Rust rule; do not push unrelated vocabulary into F0 merely to evade the graph.
 
-Portable feature code does not import engines, applications, vendor runtimes, frontend toolkits, or filesystem/network/database/OS transport implementations. Portability claims are scoped in [portability](portability.md).
+Portable domain code does not import runtimes, applications, platform implementations, vendor libraries, frontend toolkits, or filesystem/network/database/OS transport implementations. Portability claims are scoped in [portability](portability.md).
 
 ## E0: local inference ownership
 
@@ -76,9 +77,15 @@ The common boundary is coarse: target identity and capabilities, complete reques
 
 Uniformity must not hide real differences. Context limits, token accounting, prompt/message formats, sampling controls, tool support, privacy boundary, cancellation guarantees, and usage reporting are target capabilities. Unsupported behavior fails explicitly instead of being guessed or silently emulated. This direction is recorded in [ADR-0008](../agent/decisions/0008-capability-and-execution-boundaries.md).
 
+## Platform
+
+`host-runtime` is the current process-host platform implementation. It quarantines bounded channels, named threads, monotonic time, and the synchronization/storage used by pull-oriented output accumulators. It is infrastructure below runtime orchestration; it does not own model, workflow, conversation, or application state.
+
+`platform` is a physical category rather than a new dependency tier today. The validator maps the registered `host-runtime` package to the same lower infrastructure layer as adapters, while keeping the directory distinction explicit. A second platform crate requires architecture review instead of inheriting authority from its folder.
+
 ## Adapters
 
-Adapters own vendor, native, persistence, network, filesystem, and host integration details. They do not depend on engines or applications, and production adapters do not depend on one another.
+Adapters own vendor, model/backend, persistence, network, filesystem, and external-service integration details. They do not depend on runtimes or applications, and production adapters do not depend on one another.
 
 Candle is the currently composed local inference backend. GGUF/llama.cpp exists at the adapter/E0 compatibility boundary but is not yet composed through E1 or the UI. Future hosted-model clients and peer transports also belong at adapter boundaries; being an adapter does not make them E0 model backends. Product support belongs in [implementation status](implementation-status.md).
 
@@ -113,6 +120,10 @@ These are current product constraints, not reusable architecture rules. The auth
 
 ## Enforcement
 
-The architecture validator loads typed Cargo metadata, fails closed on unknown workspace locations and unresolved local path targets, distinguishes dependency kinds, and enforces the logical direction F0/F1 → adapters → E0/capabilities → E1 → applications rather than treating every engine as E1. [Dependency policy](dependency-policy.md) documents the reviewed external dependency rules.
+The architecture validator loads typed Cargo metadata, fails closed on unknown workspace locations and unresolved local path targets, distinguishes dependency kinds, and enforces the logical direction F0/F1 → platform/adapters → E0/capabilities → E1 → applications.
+
+Runtime and platform roles are explicit rather than inferred from folder membership. `inference-runtime`, `corrective-workflow`, and `application-runtime` are the recognized E0, capability, and E1 packages, while `host-runtime` is the only recognized platform crate. The completed `domain`/`runtime` migration is now the accepted layout, and nested adapter categories are not pre-authorized.
+
+Runtime production dependencies on platform/adapters or other runtimes require exact reviewed source/target/kind entries in addition to satisfying the layer matrix. [Dependency policy](dependency-policy.md) owns those review rules and their current justifications.
 
 Project-authored source denies unsafe code. Generated-code or FFI exceptions are narrow and contained; [workspace boundaries](workspace.md) records the current generated-code lint boundary.

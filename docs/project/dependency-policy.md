@@ -4,18 +4,22 @@
 
 `cargo run --locked --bin llm-app -- architecture` loads the actual workspace through the typed `cargo_metadata` API. Unknown workspace locations and unresolved local path targets fail closed.
 
-Normal and build dependencies use the complete production layer matrix. Development dependencies are reviewed separately because compatibility tests and benchmarks may need edges that production code must not acquire. Every exception is an exact source/target/kind entry with a justification in `src/lib.rs`; there are no wildcard portable exceptions.
+Runtime and platform roles are explicit. `inference-runtime`, `corrective-workflow`, and `application-runtime` are the recognized E0, capability, and E1 packages; `host-runtime` is the only recognized package under `crates/platform`. Additional runtime or platform crates fail closed instead of inheriting authority from their directory.
+
+Normal and build dependencies first use the complete production layer matrix. Production edges from a runtime to platform/adapters or another runtime then require an exact source/target/kind review entry with a narrow composition justification. This makes concrete runtime/infrastructure coupling deliberate without requiring per-edge registration for ordinary domain dependencies.
+
+Development dependencies are reviewed separately because compatibility tests and benchmarks may need edges that production code must not acquire. External production exceptions are also exact and justified; there are no wildcard portable exceptions.
 
 The initial external policy is:
 
 - F0 production code has no external dependencies;
 - F1 production code may use only reviewed portable dependencies, currently `sampling -> libm`;
-- adapters may use vendor, filesystem, network, database, FFI, and host dependencies;
-- engines may use orchestration dependencies but not frontend toolkits;
+- platform/adapters may use implementation dependencies appropriate to their integration boundary;
+- runtimes may use only reviewed external orchestration dependencies and no frontend toolkit;
 - apps depend on E1 in production rather than directly on E0 or adapters;
 - external and workspace-local development dependencies require separate exact review.
 
-Validator unit tests cover all 49 source/target layer combinations and external-policy failures. Integration tests validate the real workspace and locked fixture workspaces containing a forbidden edge and an unknown package location.
+Validator unit tests cover all 64 source/target layer combinations, explicit runtime/platform classification, reviewed runtime composition edges, and external-policy failures. Integration fixtures prove that an unregistered runtime, an unregistered platform crate, and an otherwise layer-valid but unreviewed E1-to-capability edge all fail closed.
 
 ## Supply-chain policy
 

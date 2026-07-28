@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "crates/runtime/application-runtime",
+    "crates/runtime/corrective-workflow",
+]
+resolver = "3"

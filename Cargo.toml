@@ -13,58 +13,58 @@ cargo_metadata.workspace = true
 
 [workspace]
 members = [
-    "crates/features/domain-contracts",
-    "crates/features/tokenization",
-    "crates/features/context-planner",
-    "crates/features/sampling",
-    "crates/features/task-graph",
+    "crates/domain/domain-contracts",
+    "crates/domain/tokenization",
+    "crates/domain/context-planner",
+    "crates/domain/sampling",
+    "crates/domain/task-graph",
+    "crates/platform/host-runtime",
     "crates/adapters/candle-backend",
     "crates/adapters/gguf-backend",
-    "crates/adapters/host-runtime",
     "crates/adapters/hf-tokenizer",
     "crates/adapters/hf-hub",
     "crates/adapters/redb-storage",
-    "crates/engines/inference-runtime",
-    "crates/engines/corrective-workflow",
-    "crates/engines/application-runtime",
+    "crates/runtime/inference-runtime",
+    "crates/runtime/corrective-workflow",
+    "crates/runtime/application-runtime",
     "crates/apps/desktop-slint",
 ]
 default-members = [
     ".",
-    "crates/features/domain-contracts",
-    "crates/features/tokenization",
-    "crates/features/context-planner",
-    "crates/features/sampling",
-    "crates/features/task-graph",
+    "crates/domain/domain-contracts",
+    "crates/domain/tokenization",
+    "crates/domain/context-planner",
+    "crates/domain/sampling",
+    "crates/domain/task-graph",
+    "crates/platform/host-runtime",
     "crates/adapters/candle-backend",
     "crates/adapters/gguf-backend",
-    "crates/adapters/host-runtime",
     "crates/adapters/hf-tokenizer",
     "crates/adapters/hf-hub",
     "crates/adapters/redb-storage",
-    "crates/engines/inference-runtime",
-    "crates/engines/corrective-workflow",
-    "crates/engines/application-runtime",
+    "crates/runtime/inference-runtime",
+    "crates/runtime/corrective-workflow",
+    "crates/runtime/application-runtime",
     "crates/apps/desktop-slint",
 ]
 resolver = "3"
 
 [workspace.dependencies]
 cargo_metadata = "0.23.1"
-application-runtime = { path = "crates/engines/application-runtime" }
+application-runtime = { path = "crates/runtime/application-runtime" }
 candle-backend = { path = "crates/adapters/candle-backend" }
-corrective-workflow = { path = "crates/engines/corrective-workflow" }
-context-planner = { path = "crates/features/context-planner" }
-domain-contracts = { path = "crates/features/domain-contracts" }
+corrective-workflow = { path = "crates/runtime/corrective-workflow" }
+context-planner = { path = "crates/domain/context-planner" }
+domain-contracts = { path = "crates/domain/domain-contracts" }
 gguf-backend = { path = "crates/adapters/gguf-backend" }
 hf-hub-adapter = { path = "crates/adapters/hf-hub" }
 hf-tokenizer = { path = "crates/adapters/hf-tokenizer" }
-host-runtime = { path = "crates/adapters/host-runtime" }
-inference-runtime = { path = "crates/engines/inference-runtime" }
+host-runtime = { path = "crates/platform/host-runtime" }
+inference-runtime = { path = "crates/runtime/inference-runtime" }
 redb-storage = { path = "crates/adapters/redb-storage" }
-sampling = { path = "crates/features/sampling" }
-task-graph = { path = "crates/features/task-graph" }
-tokenization = { path = "crates/features/tokenization" }
+sampling = { path = "crates/domain/sampling" }
+task-graph = { path = "crates/domain/task-graph" }
+tokenization = { path = "crates/domain/tokenization" }
 libm = { version = "0.2", default-features = false }
 candle-core = { version = "0.11.0", default-features = false }
 candle-nn = { version = "0.11.0", default-features = false }

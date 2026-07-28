@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/platform/native"]
+resolver = "3"

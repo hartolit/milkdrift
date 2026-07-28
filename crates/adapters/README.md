@@ -1,21 +1,19 @@
 # Adapter crates
 
-Standard-library, FFI, storage, network, device, and third-party integrations
-are quarantined here.
+Model, tokenizer, storage, network, device, FFI, and third-party integrations are
+quarantined here. Process-host execution primitives live under `crates/platform`.
 
 Current adapters:
 
 - `candle-backend`: CPU Llama reference backend using Candle and Safetensors;
-- `host-runtime`: bounded host channels, threads, monotonic time, and frame-pull
-  output accumulation;
 - `hf-tokenizer`: Hugging Face tokenizer implementation of portable tokenizer
   contracts;
 - `hf-hub-adapter`: synchronous cached model-artifact resolution;
 - `redb-storage`: versioned desktop settings and model-catalogue persistence.
 
-Adapters may depend downward on feature contracts. Features never depend on
-adapters, and adapters do not import one another. Outer applications compose
-multiple adapters when required.
+Adapters may depend downward on domain contracts. Domain and platform crates never
+depend on adapters, and production adapters do not import one another. Runtime
+composition selects multiple adapters when required.
 
 ## `gguf-backend`
 

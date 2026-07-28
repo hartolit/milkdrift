@@ -1,10 +1,11 @@
 # host-runtime
 
-User-space infrastructure adapter for the local LLM workspace.
+Host-process platform support for native runtime execution.
 
 It quarantines Flume, `std::thread`, `Instant`, and the short-lived synchronization
-used by frame-pull output batching. Engine crates receive stable wrapper types
-rather than importing Flume directly.
+used by frame-pull output batching. Runtime crates receive stable wrapper types
+rather than importing Flume or coupling orchestration to concrete host primitives.
+It does not own application, inference, or workflow state.
 
 The text output accumulator allocates its byte and record storage once during
 setup. The separate generic token accumulator preallocates token IDs and ordered

@@ -1,7 +1,8 @@
 # ADR-0005: Retain the current crate folders
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0009](0009-workspace-physical-taxonomy.md)
 - **Date:** 2026-07-22
+- **Superseded:** 2026-07-29
 
 ## Context
 
@@ -27,4 +28,4 @@ Crate count is an outcome of cohesion and reuse; there is no numerical crate quo
 
 ## Review trigger
 
-Review after the first vertical slice, when a crate gains an independent consumer/lifecycle, when folder breadth materially harms discovery, or when the approved dependency graph can be simplified by a real ownership move.
+The first vertical slice and the corrective-workflow extraction satisfied this review trigger. ADR-0009 records the resulting physical taxonomy while preserving the dependency roles established here.

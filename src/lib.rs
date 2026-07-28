@@ -13,7 +13,10 @@ use cargo_metadata::{Dependency, Metadata, MetadataCommand, Package};
 const RULE_KNOWN_LOCATION: &str = "LAYOUT-1";
 const RULE_LOCAL_TARGET: &str = "LAYOUT-2";
 const RULE_KNOWN_KIND: &str = "DEPENDENCY-KIND-1";
+const RULE_PLATFORM_ROLE: &str = "PLATFORM-ROLE-1";
 const RULE_PRODUCTION_DIRECTION: &str = "LAYER-PROD-1";
+const RULE_RUNTIME_ROLE: &str = "RUNTIME-ROLE-1";
+const RULE_ENGINE_LOCAL_REVIEW: &str = "ENGINE-LOCAL-PROD-1";
 const RULE_LOCAL_DEV_REVIEW: &str = "DEV-LOCAL-1";
 const RULE_EXTERNAL_DEV_REVIEW: &str = "EXT-DEV-1";
 const RULE_ROOT_EXTERNAL: &str = "EXT-ROOT-PROD-1";
@@ -30,7 +33,7 @@ pub enum Layer {
     FeatureFoundation,
     /// F1 portable algorithms.
     FeatureAlgorithm,
-    /// Infrastructure and vendor adapters.
+    /// Host-platform, infrastructure, and vendor adapters.
     Adapter,
     /// E0 inference lifecycle orchestration.
     EngineFoundation,
@@ -184,8 +187,54 @@ struct ReviewedDependency {
     justification: &'static str,
 }
 
-// This table is intentionally exact and reviewable. Portable and engine production dependencies,
-// plus all external development dependencies, must be added here with a narrow justification.
+// Engine dependencies on infrastructure or another engine are exact reviewed composition edges.
+// Lower feature dependencies continue to follow the layer matrix without per-edge registration.
+const REVIEWED_ENGINE_PRODUCTION_DEPENDENCIES: &[ReviewedDependency] = &[
+    ReviewedDependency {
+        source: "inference-runtime",
+        target: "host-runtime",
+        kind: DependencyKind::Normal,
+        justification: "E0 uses the bounded host worker integration that runs its command loop",
+    },
+    ReviewedDependency {
+        source: "application-runtime",
+        target: "candle-backend",
+        kind: DependencyKind::Normal,
+        justification: "the first E1 local composition constructs the supported Candle model source",
+    },
+    ReviewedDependency {
+        source: "application-runtime",
+        target: "hf-hub-adapter",
+        kind: DependencyKind::Normal,
+        justification: "the first E1 local composition resolves immutable Hugging Face artifacts",
+    },
+    ReviewedDependency {
+        source: "application-runtime",
+        target: "hf-tokenizer",
+        kind: DependencyKind::Normal,
+        justification: "the first E1 local composition owns prompt encoding and streaming decode",
+    },
+    ReviewedDependency {
+        source: "application-runtime",
+        target: "host-runtime",
+        kind: DependencyKind::Normal,
+        justification: "E1 hosts bounded workers and frontend-facing output accumulation",
+    },
+    ReviewedDependency {
+        source: "application-runtime",
+        target: "inference-runtime",
+        kind: DependencyKind::Normal,
+        justification: "E1 delegates current local model execution and lifecycle ownership to E0",
+    },
+    ReviewedDependency {
+        source: "application-runtime",
+        target: "redb-storage",
+        kind: DependencyKind::Normal,
+        justification: "the first E1 composition persists application preferences with redb",
+    },
+];
+
+// External production exceptions and all external development dependencies are exact and reviewed.
 const REVIEWED_EXTERNAL_DEPENDENCIES: &[ReviewedDependency] = &[
     ReviewedDependency {
         source: "llm-app",
@@ -303,15 +352,37 @@ fn validate_metadata(metadata: &Metadata) -> ValidationReport {
 
 fn unknown_package_location(package: &Package, root: &Path) -> Violation {
     let manifest = package.manifest_path.as_std_path();
-    let rendered = manifest.strip_prefix(root).unwrap_or(manifest).display();
+    let relative = manifest.strip_prefix(root).unwrap_or(manifest);
+    let package_directory = relative.parent();
+    let runtime_location = package_directory
+        .is_some_and(|directory| is_direct_child(directory, Path::new("crates/runtime")));
+    let platform_location = package_directory
+        .is_some_and(|directory| is_direct_child(directory, Path::new("crates/platform")));
+    let (rule, reason) = if runtime_location {
+        (
+            RULE_RUNTIME_ROLE,
+            "runtime crates require an explicitly classified E0, capability, or E1 role; directory placement does not grant a capability role",
+        )
+    } else if platform_location {
+        (
+            RULE_PLATFORM_ROLE,
+            "platform crates require an explicitly classified host/platform role; directory placement does not grant infrastructure authority",
+        )
+    } else {
+        (
+            RULE_KNOWN_LOCATION,
+            "workspace packages must be the root runner or an explicitly registered crate at an approved path under crates/domain, crates/platform, crates/adapters, crates/runtime, or crates/apps; unknown package names or locations never receive a fallback layer",
+        )
+    };
+
     Violation {
         source: package.name.to_string(),
-        target: rendered.to_string(),
+        target: relative.display().to_string(),
         dependency_kind: None,
         source_layer: None,
         target_layer: None,
-        rule: RULE_KNOWN_LOCATION,
-        reason: "workspace packages must be the root runner or a direct crate under crates/features, crates/adapters, crates/engines, or crates/apps; unknown locations are never assigned a fallback layer".to_owned(),
+        rule,
+        reason: reason.to_owned(),
     }
 }
 
@@ -394,12 +465,13 @@ fn validate_local_dependency(
     };
 
     let failure = match kind {
-        DependencyKind::Normal | DependencyKind::Build => {
-            (!allows_production(source_layer, target_layer)).then_some(PolicyFailure {
-                rule: RULE_PRODUCTION_DIRECTION,
-                reason: "normal and build dependencies must follow the declared 8-layer production direction matrix".to_owned(),
-            })
-        }
+        DependencyKind::Normal | DependencyKind::Build => local_production_policy(
+            source_name,
+            source_layer,
+            target_name,
+            target_layer,
+            kind,
+        ),
         DependencyKind::Development => reviewed_dependency(
             REVIEWED_LOCAL_DEV_DEPENDENCIES,
             source_name,
@@ -427,6 +499,54 @@ fn validate_local_dependency(
             failure,
         ));
     }
+}
+
+fn local_production_policy(
+    source_name: &str,
+    source_layer: Layer,
+    target_name: &str,
+    target_layer: Layer,
+    kind: DependencyKind,
+) -> Option<PolicyFailure> {
+    if !allows_production(source_layer, target_layer) {
+        return Some(PolicyFailure {
+            rule: RULE_PRODUCTION_DIRECTION,
+            reason: "normal and build dependencies must follow the declared 8-layer production direction matrix".to_owned(),
+        });
+    }
+
+    if requires_engine_composition_review(source_layer, target_layer) {
+        return reviewed_dependency(
+            REVIEWED_ENGINE_PRODUCTION_DEPENDENCIES,
+            source_name,
+            target_name,
+            kind,
+        )
+        .map_or_else(
+            || {
+                Some(PolicyFailure {
+                    rule: RULE_ENGINE_LOCAL_REVIEW,
+                    reason: "engine dependencies on adapters or other engines require an exact reviewed composition edge with a justification".to_owned(),
+                })
+            },
+            |_| None,
+        );
+    }
+
+    None
+}
+
+const fn requires_engine_composition_review(source: Layer, target: Layer) -> bool {
+    matches!(
+        source,
+        Layer::EngineFoundation | Layer::EngineCapability | Layer::EngineApplication
+    ) && matches!(
+        target,
+        Layer::Adapter
+            | Layer::EngineFoundation
+            | Layer::EngineCapability
+            | Layer::EngineApplication
+    )
 }
 
 struct PolicyFailure {
@@ -571,18 +691,24 @@ fn classify_manifest(root: &Path, manifest: &Path) -> Option<Layer> {
     }
     let package_directory = relative.parent()?;
 
-    if package_directory == Path::new("crates/features/domain-contracts") {
+    if package_directory == Path::new("crates/domain/domain-contracts") {
         Some(Layer::FeatureFoundation)
-    } else if is_direct_child(package_directory, Path::new("crates/features")) {
+    } else if is_direct_child(package_directory, Path::new("crates/domain")) {
         Some(Layer::FeatureAlgorithm)
+    } else if package_directory == Path::new("crates/platform/host-runtime") {
+        Some(Layer::Adapter)
+    } else if is_direct_child(package_directory, Path::new("crates/platform")) {
+        None
     } else if is_direct_child(package_directory, Path::new("crates/adapters")) {
         Some(Layer::Adapter)
-    } else if package_directory == Path::new("crates/engines/inference-runtime") {
+    } else if package_directory == Path::new("crates/runtime/inference-runtime") {
         Some(Layer::EngineFoundation)
-    } else if package_directory == Path::new("crates/engines/application-runtime") {
-        Some(Layer::EngineApplication)
-    } else if is_direct_child(package_directory, Path::new("crates/engines")) {
+    } else if package_directory == Path::new("crates/runtime/corrective-workflow") {
         Some(Layer::EngineCapability)
+    } else if package_directory == Path::new("crates/runtime/application-runtime") {
+        Some(Layer::EngineApplication)
+    } else if is_direct_child(package_directory, Path::new("crates/runtime")) {
+        None
     } else if is_direct_child(package_directory, Path::new("crates/apps")) {
         Some(Layer::Application)
     } else {
@@ -628,9 +754,11 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        DependencyKind, Layer, REVIEWED_EXTERNAL_DEPENDENCIES, REVIEWED_LOCAL_DEV_DEPENDENCIES,
-        RULE_ENGINE_EXTERNAL, RULE_EXTERNAL_DEV_REVIEW, RULE_F0_EXTERNAL, RULE_F1_EXTERNAL,
-        allows_production, classify_manifest, external_policy, reviewed_dependency,
+        DependencyKind, Layer, REVIEWED_ENGINE_PRODUCTION_DEPENDENCIES,
+        REVIEWED_EXTERNAL_DEPENDENCIES, REVIEWED_LOCAL_DEV_DEPENDENCIES, RULE_ENGINE_EXTERNAL,
+        RULE_ENGINE_LOCAL_REVIEW, RULE_EXTERNAL_DEV_REVIEW, RULE_F0_EXTERNAL, RULE_F1_EXTERNAL,
+        allows_production, classify_manifest, external_policy, local_production_policy,
+        reviewed_dependency,
     };
 
     const LAYERS: [Layer; 8] = [
@@ -670,38 +798,44 @@ mod tests {
     }
 
     #[test]
-    fn manifests_are_classified_without_an_application_fallback() {
+    fn manifests_are_classified_without_runtime_fallbacks() {
         let root = Path::new("/workspace");
         let cases = [
             ("Cargo.toml", Some(Layer::Root)),
             (
-                "crates/features/domain-contracts/Cargo.toml",
+                "crates/domain/domain-contracts/Cargo.toml",
                 Some(Layer::FeatureFoundation),
             ),
             (
-                "crates/features/sampling/Cargo.toml",
+                "crates/domain/sampling/Cargo.toml",
                 Some(Layer::FeatureAlgorithm),
+            ),
+            (
+                "crates/platform/host-runtime/Cargo.toml",
+                Some(Layer::Adapter),
             ),
             (
                 "crates/adapters/candle-backend/Cargo.toml",
                 Some(Layer::Adapter),
             ),
             (
-                "crates/engines/inference-runtime/Cargo.toml",
+                "crates/runtime/inference-runtime/Cargo.toml",
                 Some(Layer::EngineFoundation),
             ),
             (
-                "crates/engines/corrective-workflow/Cargo.toml",
+                "crates/runtime/corrective-workflow/Cargo.toml",
                 Some(Layer::EngineCapability),
             ),
             (
-                "crates/engines/application-runtime/Cargo.toml",
+                "crates/runtime/application-runtime/Cargo.toml",
                 Some(Layer::EngineApplication),
             ),
             (
                 "crates/apps/desktop-slint/Cargo.toml",
                 Some(Layer::Application),
             ),
+            ("crates/runtime/memory-runtime/Cargo.toml", None),
+            ("crates/platform/native/Cargo.toml", None),
             ("crates/experimental/new-layer/Cargo.toml", None),
             ("crates/apps/nested/too-deep/Cargo.toml", None),
             ("tools/maintenance/Cargo.toml", None),
@@ -774,6 +908,64 @@ mod tests {
     }
 
     #[test]
+    fn engine_composition_edges_require_exact_review() {
+        assert!(
+            local_production_policy(
+                "application-runtime",
+                Layer::EngineApplication,
+                "inference-runtime",
+                Layer::EngineFoundation,
+                DependencyKind::Normal,
+            )
+            .is_none()
+        );
+        assert!(
+            local_production_policy(
+                "application-runtime",
+                Layer::EngineApplication,
+                "candle-backend",
+                Layer::Adapter,
+                DependencyKind::Normal,
+            )
+            .is_none()
+        );
+        assert!(
+            local_production_policy(
+                "application-runtime",
+                Layer::EngineApplication,
+                "tokenization",
+                Layer::FeatureAlgorithm,
+                DependencyKind::Normal,
+            )
+            .is_none()
+        );
+
+        let unreviewed_capability = local_production_policy(
+            "application-runtime",
+            Layer::EngineApplication,
+            "corrective-workflow",
+            Layer::EngineCapability,
+            DependencyKind::Normal,
+        );
+        assert_eq!(
+            unreviewed_capability.map(|failure| failure.rule),
+            Some(RULE_ENGINE_LOCAL_REVIEW)
+        );
+
+        let unreviewed_e0 = local_production_policy(
+            "corrective-workflow",
+            Layer::EngineCapability,
+            "inference-runtime",
+            Layer::EngineFoundation,
+            DependencyKind::Normal,
+        );
+        assert_eq!(
+            unreviewed_e0.map(|failure| failure.rule),
+            Some(RULE_ENGINE_LOCAL_REVIEW)
+        );
+    }
+
+    #[test]
     fn external_dev_dependencies_have_an_exact_separate_review_list() {
         assert!(
             external_policy(
@@ -797,27 +989,19 @@ mod tests {
     }
 
     #[test]
-    fn policy_exceptions_include_inspectable_justifications() {
-        for reviewed in REVIEWED_EXTERNAL_DEPENDENCIES
-            .iter()
-            .chain(REVIEWED_LOCAL_DEV_DEPENDENCIES)
-        {
-            assert!(!reviewed.justification.is_empty());
-            assert!(
-                reviewed_dependency(
-                    if reviewed.kind == DependencyKind::Development
-                        && reviewed.source == "inference-runtime"
-                    {
-                        REVIEWED_LOCAL_DEV_DEPENDENCIES
-                    } else {
-                        REVIEWED_EXTERNAL_DEPENDENCIES
-                    },
-                    reviewed.source,
-                    reviewed.target,
-                    reviewed.kind,
-                )
-                .is_some()
-            );
+    fn reviewed_dependencies_include_inspectable_justifications() {
+        for policy in [
+            REVIEWED_EXTERNAL_DEPENDENCIES,
+            REVIEWED_LOCAL_DEV_DEPENDENCIES,
+            REVIEWED_ENGINE_PRODUCTION_DEPENDENCIES,
+        ] {
+            for reviewed in policy {
+                assert!(!reviewed.justification.is_empty());
+                assert!(
+                    reviewed_dependency(policy, reviewed.source, reviewed.target, reviewed.kind)
+                        .is_some()
+                );
+            }
         }
     }
 }
