@@ -88,7 +88,7 @@ fn forbidden_actual_manifest_edge_reports_rule_and_reason() -> Result<(), Box<dy
         violation.dependency_kind(),
         Some(llm_app::DependencyKind::Normal)
     );
-    assert!(violation.reason().contains("7-layer production direction"));
+    assert!(violation.reason().contains("8-layer production direction"));
     let rendered = violation.to_string();
     assert!(rendered.contains("policy rule LAYER-PROD-1"));
     assert!(rendered.contains("normal and build dependencies"));

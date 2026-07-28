@@ -1,5 +1,7 @@
 //! Synchronous frontend-neutral corrective workflow orchestration.
 
+#![forbid(unsafe_code)]
+
 mod artifact;
 mod diagnostics;
 mod executor;

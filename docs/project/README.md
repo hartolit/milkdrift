@@ -25,7 +25,7 @@ A document may restate a small boundary when needed locally, but changing facts 
 
 ## Architecture and state
 
-- [Project architecture](architecture.md) applies the reusable [architecture principles](../architecture.md) to llm-app and records the current F0/F1, E0/E1, backend, and frontend model.
+- [Project architecture](architecture.md) applies the reusable [architecture principles](../architecture.md) to llm-app and records the current F0/F1, E0/capability/E1, execution-target, backend, and frontend model.
 - [Workspace boundaries](workspace.md) is the concrete crate inventory and dependency graph.
 - [Implementation status](implementation-status.md) is the only product-level support matrix and validation-state page.
 - Accepted project decisions are indexed in [architecture decisions](../agent/decisions/README.md).
@@ -34,6 +34,7 @@ A document may restate a small boundary when needed locally, but changing facts 
 
 - [Inference runtime](inference-runtime.md)
 - [Application runtime](application-runtime.md)
+- [Corrective workflow](orchestration.md)
 - [Desktop runtime](desktop-runtime.md)
 - [Model lifecycle](lifecycle.md)
 
@@ -52,7 +53,6 @@ Backend documents own backend-specific capabilities, limitations, native-resourc
 - [Dependency and repository policy](dependency-policy.md)
 - [Portable feature targets](portability.md)
 - [Performance evidence](performance.md)
-- [Corrective workflow](orchestration.md)
 
 Procedures and measurements stay close to the domain that owns them. The status page records whether the current source baseline has satisfied required gates; it does not duplicate every command.
 

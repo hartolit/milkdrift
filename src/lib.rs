@@ -34,6 +34,8 @@ pub enum Layer {
     Adapter,
     /// E0 inference lifecycle orchestration.
     EngineFoundation,
+    /// Independently stateful reusable capability orchestration below E1.
+    EngineCapability,
     /// E1 application orchestration.
     EngineApplication,
     /// Process and presentation boundaries.
@@ -395,7 +397,7 @@ fn validate_local_dependency(
         DependencyKind::Normal | DependencyKind::Build => {
             (!allows_production(source_layer, target_layer)).then_some(PolicyFailure {
                 rule: RULE_PRODUCTION_DIRECTION,
-                reason: "normal and build dependencies must follow the declared 7-layer production direction matrix".to_owned(),
+                reason: "normal and build dependencies must follow the declared 8-layer production direction matrix".to_owned(),
             })
         }
         DependencyKind::Development => reviewed_dependency(
@@ -478,13 +480,15 @@ fn external_policy(
             RULE_F1_EXTERNAL,
             "F1 production external dependencies are limited to reviewed portable dependencies (currently sampling -> libm)",
         ),
-        Layer::EngineFoundation | Layer::EngineApplication => reviewed_external_or_failure(
-            source_name,
-            target_name,
-            kind,
-            RULE_ENGINE_EXTERNAL,
-            "engine external production dependencies require an exact justification and explicit orchestration review; frontend toolkits are prohibited",
-        ),
+        Layer::EngineFoundation | Layer::EngineCapability | Layer::EngineApplication => {
+            reviewed_external_or_failure(
+                source_name,
+                target_name,
+                kind,
+                RULE_ENGINE_EXTERNAL,
+                "engine external production dependencies require an exact justification and explicit orchestration review; frontend toolkits are prohibited",
+            )
+        }
         Layer::Adapter | Layer::Application => None,
     }
 }
@@ -575,8 +579,10 @@ fn classify_manifest(root: &Path, manifest: &Path) -> Option<Layer> {
         Some(Layer::Adapter)
     } else if package_directory == Path::new("crates/engines/inference-runtime") {
         Some(Layer::EngineFoundation)
-    } else if is_direct_child(package_directory, Path::new("crates/engines")) {
+    } else if package_directory == Path::new("crates/engines/application-runtime") {
         Some(Layer::EngineApplication)
+    } else if is_direct_child(package_directory, Path::new("crates/engines")) {
+        Some(Layer::EngineCapability)
     } else if is_direct_child(package_directory, Path::new("crates/apps")) {
         Some(Layer::Application)
     } else {
@@ -598,12 +604,20 @@ const fn allows_production(source: Layer, target: Layer) -> bool {
             target,
             Layer::FeatureFoundation | Layer::FeatureAlgorithm | Layer::Adapter
         ),
+        Layer::EngineCapability => matches!(
+            target,
+            Layer::FeatureFoundation
+                | Layer::FeatureAlgorithm
+                | Layer::Adapter
+                | Layer::EngineFoundation
+        ),
         Layer::EngineApplication => matches!(
             target,
             Layer::FeatureFoundation
                 | Layer::FeatureAlgorithm
                 | Layer::Adapter
                 | Layer::EngineFoundation
+                | Layer::EngineCapability
         ),
         Layer::Application => matches!(target, Layer::EngineApplication),
     }
@@ -619,27 +633,29 @@ mod tests {
         allows_production, classify_manifest, external_policy, reviewed_dependency,
     };
 
-    const LAYERS: [Layer; 7] = [
+    const LAYERS: [Layer; 8] = [
         Layer::Root,
         Layer::FeatureFoundation,
         Layer::FeatureAlgorithm,
         Layer::Adapter,
         Layer::EngineFoundation,
+        Layer::EngineCapability,
         Layer::EngineApplication,
         Layer::Application,
     ];
 
     #[test]
-    fn complete_seven_by_seven_production_layer_matrix_matches_policy() {
+    fn complete_eight_by_eight_production_layer_matrix_matches_policy() {
         #[rustfmt::skip]
-        const EXPECTED: [[bool; 7]; 7] = [
-            [false, false, false, false, false, false, false],
-            [false, false, false, false, false, false, false],
-            [false, true,  false, false, false, false, false],
-            [false, true,  true,  false, false, false, false],
-            [false, true,  true,  true,  false, false, false],
-            [false, true,  true,  true,  true,  false, false],
-            [false, false, false, false, false, true,  false],
+        const EXPECTED: [[bool; 8]; 8] = [
+            [false, false, false, false, false, false, false, false],
+            [false, false, false, false, false, false, false, false],
+            [false, true,  false, false, false, false, false, false],
+            [false, true,  true,  false, false, false, false, false],
+            [false, true,  true,  true,  false, false, false, false],
+            [false, true,  true,  true,  true,  false, false, false],
+            [false, true,  true,  true,  true,  true,  false, false],
+            [false, false, false, false, false, false, true,  false],
         ];
 
         for (source, expected_targets) in LAYERS.into_iter().zip(EXPECTED) {
@@ -673,6 +689,10 @@ mod tests {
             (
                 "crates/engines/inference-runtime/Cargo.toml",
                 Some(Layer::EngineFoundation),
+            ),
+            (
+                "crates/engines/corrective-workflow/Cargo.toml",
+                Some(Layer::EngineCapability),
             ),
             (
                 "crates/engines/application-runtime/Cargo.toml",
@@ -728,6 +748,12 @@ mod tests {
             "iced",
             DependencyKind::Normal,
         );
+        let capability = external_policy(
+            "corrective-workflow",
+            Layer::EngineCapability,
+            "tokio",
+            DependencyKind::Normal,
+        );
         let orchestration = external_policy(
             "application-runtime",
             Layer::EngineApplication,
@@ -735,7 +761,7 @@ mod tests {
             DependencyKind::Normal,
         );
 
-        for failure in [&frontend, &orchestration] {
+        for failure in [&frontend, &capability, &orchestration] {
             assert_eq!(
                 failure.as_ref().map(|failure| failure.rule),
                 Some(RULE_ENGINE_EXTERNAL)

@@ -1,15 +1,17 @@
 # application-runtime
 
-Frontend-neutral orchestration for desktop model acquisition, validation,
-persistence, loading, unloading, bounded worker shutdown, and typed corrective
-workflows.
+Frontend-neutral application orchestration for model acquisition, persistence,
+lifecycle, direct completion, bounded output, cancellation, and explicit shutdown.
 
-The crate owns no UI toolkit types. Slint, Tauri, CLI, or another host frontend
-can drive the same commands, poll the same structured events, and inspect the
-same application state without duplicating Hub, storage, tokenizer, or inference
-lifecycle logic.
+The crate owns no UI toolkit types. Slint, Tauri, TUI/CLI, a headless node, or
+another host can drive the same application behavior without duplicating model
+lifecycle and generation state machines.
 
-Phase 7 adds a statically dispatched `CorrectiveWorkflowExecutor` for the canonical
-draft → validate → normalize → review → revise → validate flow. Workflow tasks
-exchange immutable `ArtifactId` references instead of copied transcripts; concrete
-model and validator services remain injected coarse boundaries.
+The first production composition is deliberately concrete: Candle CPU, Hugging
+Face resolution/tokenization, redb, host workers, and E0 are wired here while the
+product establishes its real seams. That composition is not the semantic
+definition of E1. Conversation state must not depend on Slint, Candle source
+types, provider SDKs, or transport DTOs.
+
+The independently stateful corrective workflow is owned by the
+`corrective-workflow` capability engine.

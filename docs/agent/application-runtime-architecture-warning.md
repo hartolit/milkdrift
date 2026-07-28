@@ -39,12 +39,13 @@ E1 already sits where many concerns meet:
 - persistence;
 - host workers;
 - generation state and decoded output;
-- unload and shutdown;
-- corrective workflow APIs.
+- unload and shutdown.
 
 Some of these belong to the application façade. Others are infrastructure or separate domains.
 
-If future work adds conversation history, prompt rendering, context planning, workflows, memory, tools, permissions, backend selection, and diagnostics directly into the same crate, the result could become a monolith even though the workspace still contains many crates.
+The corrective workflow has now been extracted into its own capability engine because it already had independent state, lifecycle, ports, and tests. That is the kind of ownership split this warning is intended to encourage: not more crates by default, but separation after the boundary is proven.
+
+If future work adds conversation history, prompt rendering, context planning, execution-target routing, memory, tools, permissions, provider transports, peer discovery, and diagnostics directly into the same crate, the result could become a monolith even though the workspace still contains many crates.
 
 A warning shape would look like this:
 
@@ -83,7 +84,9 @@ A subsystem should live in `application-runtime` when E1 genuinely owns its appl
 | redb implementation | adapter/native composition |
 | Context selection algorithm | `context-planner` |
 | Prompt rendering logic | separate/internal renderer boundary when justified |
-| Corrective workflow engine | separate ownership if it remains substantial |
+| Corrective workflow engine | `corrective-workflow` capability engine |
+| Hosted-provider client/protocol | adapter/composition below application semantics |
+| Peer discovery/transport | adapter or capability engine according to state/lifecycle |
 | UI presentation state | app/frontend |
 
 This distinction should also guide later memory, tool, and agent systems.
@@ -94,9 +97,9 @@ E1 may coordinate them. It should not automatically implement them.
 
 The current runtime contains concrete Candle, Hugging Face, redb, and host-runtime types. That is acceptable while there is one real production composition.
 
-Once Candle and GGUF both reach the application layer, the project will have enough evidence to decide whether concrete native wiring belongs elsewhere.
+Once Candle and GGUF both reach the application layer, or when a remote execution target becomes real, the project will have enough evidence to decide where concrete local wiring belongs.
 
-If E1 is still dominated by infrastructure types at that point, prefer a split similar to:
+If E1 is still dominated by local model infrastructure at that point, prefer a coarse split similar to:
 
 ```text
 application-runtime
@@ -105,17 +108,17 @@ application-runtime
     commands and events
     lifecycle policy
 
-native-runtime
-    Candle/GGUF selection
+local-model capability
+    Candle/GGUF selection and E0 composition
     Hugging Face integration
-    persistence implementation
     host worker construction
-    concrete production wiring
 ```
 
-The name `native-runtime` is not important. The important distinction is between **application semantics** and **production composition**.
+Persistence can receive its own coarse replacement boundary if another store/deployment proves that need. Do not move unrelated infrastructure into one new catch-all merely to make E1 look smaller.
 
 Do not create this layer only for symmetry. A second working backend should reveal the actual common boundary.
+
+Remote providers and peer nodes create a different seam. They should satisfy a coarse model-execution boundary above E0; they should not be inserted below E0 as if a hosted API owned local tensors and sequences.
 
 ## Do not genericize the entire façade
 
@@ -131,22 +134,20 @@ Replacement points should be coarse and justified by real substitution. Cold-pat
 
 The public E1 API should describe what the application can do, not how its dependency graph is assembled.
 
-## Corrective workflow deserves separate scrutiny
+## Corrective workflow extraction
 
-The corrective workflow is the clearest existing subsystem that may not share E1's core reason to change.
+The corrective workflow was the clearest subsystem with a reason to change independent from E1. It owns artifacts, attempts, diagnostics, validation, review, revision, retries, and workflow events without sharing the hosted model lifecycle.
 
-Artifacts, task attempts, diagnostics, validation, review, revision, retries, and workflow events form a domain of their own. If that subsystem grows, gains independent consumers, or dominates E1's public API, it should receive separate ownership.
-
-For example:
+It now lives as a capability engine:
 
 ```text
 engines/
 ├── inference-runtime
+├── corrective-workflow
 ├── application-runtime
-└── corrective-workflow
 ```
 
-If it remains small and tightly coupled to application behavior, it can stay internal behind a narrow façade. The decision should follow ownership and consumers rather than crate-count symmetry.
+This is not a template to create an engine for every feature. The extraction is justified by existing state, lifecycle, ports, tests, and reuse pressure.
 
 ## Conversation and context
 
@@ -161,6 +162,10 @@ Conversation support will put more pressure on E1, but related concerns should r
 
 A chat feature should connect these capabilities rather than collapse them into one runtime module.
 
+Conversation state must also remain independent from where generation happens. A message should not carry a Candle source, local `ModelHandle`, provider request object, socket, or peer connection as its semantic identity. Local E0, a peer node, and a hosted provider may have different capabilities, but switching execution target should not require a second conversation implementation.
+
+The common model-execution seam should be coarse: complete request admission, target capabilities, cancellation intent, bounded output, usage, and terminal state. E0 remains the local token/resource engine underneath the local implementation.
+
 The same rule applies later to memory, tools, permissions, and specialist agents.
 
 ## Warning signs
@@ -171,6 +176,8 @@ Revisit the structure when several of these appear:
 - E1 directly imports multiple concrete backend implementations;
 - backend-specific types reach frontend-facing APIs;
 - workflows, memory, tools, or context internals dominate the public surface;
+- provider SDK or peer-transport types enter conversation/application-domain state;
+- a hosted service is forced into E0's backend contract despite not owning local model resources;
 - tests for one application concern require constructing many unrelated systems;
 - `runtime.rs`, `state.rs`, or `lib.rs` become routing points for unrelated domains;
 - broad re-exports turn internal subsystem types into application API;
@@ -207,25 +214,19 @@ If future integration justifies it, a clean structure could resemble:
 ```text
 apps/
     desktop-slint
-    other hosts
+    TUI / headless host / transported frontend
         │
         ▼
 application-runtime
     frontend-neutral application behavior
         │
-        ├── inference-runtime
-        ├── context-planner
         ├── corrective-workflow
-        └── other explicit capabilities
-
-native-runtime
-    concrete native composition
-        ├── candle-backend
-        ├── gguf-backend
-        ├── hf-tokenizer
-        ├── hf-hub
-        ├── redb-storage
-        └── host-runtime
+        ├── context-planner
+        ├── other proven capability engines
+        └── model execution
+              ├── local -> inference-runtime -> Candle/GGUF
+              ├── peer  -> peer transport
+              └── hosted -> provider adapter
 ```
 
 This is a direction, not a required crate map.
@@ -236,7 +237,8 @@ The important properties are:
 2. `application-runtime` remains a coherent façade rather than the entire AI system;
 3. algorithms remain owned by their feature domains;
 4. vendor and platform implementation stays outside application semantics where practical;
-5. new boundaries are created only when ownership, lifecycle, replacement, testing, or reuse evidence justifies them.
+5. E0 remains a local inference engine rather than a universal remote-provider abstraction;
+6. new boundaries are created only when ownership, lifecycle, replacement, testing, or reuse evidence justifies them.
 
 ## Guidance
 

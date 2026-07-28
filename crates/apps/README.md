@@ -1,15 +1,17 @@
 # Application crates
 
-Applications are thin execution boundaries. They own event loops,
-environment-specific paths, presentation, and process exit behavior. Reusable
-Hub, persistence, tokenizer, and model lifecycle workflows belong in
-`application-runtime`, not in individual frontends.
+Applications are process and presentation boundaries. They own event loops,
+environment-specific paths, presentation, attachment to long-lived services, and
+process exit behavior. Reusable application semantics belong behind
+`application-runtime`; independently stateful subsystems belong in capability
+engines rather than individual frontends.
 
 Current application:
 
 - `desktop-slint`: Slint component construction, callback mapping, frame polling,
   and presentation over `application-runtime`.
 
-A future Tauri or CLI runner should depend on `application-runtime` rather than
-copying Candle, Hugging Face, redb, or bounded-worker composition. Lower layers
-never import application or Slint types.
+A future TUI, headless node host, Tauri process, or other native frontend should
+reuse E1 rather than rebuild model lifecycle and conversation state. A frontend
+may attach to a service whose lifetime outlives that frontend. Lower layers never
+import application or UI types.

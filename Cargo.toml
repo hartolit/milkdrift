@@ -25,6 +25,7 @@ members = [
     "crates/adapters/hf-hub",
     "crates/adapters/redb-storage",
     "crates/engines/inference-runtime",
+    "crates/engines/corrective-workflow",
     "crates/engines/application-runtime",
     "crates/apps/desktop-slint",
 ]
@@ -42,6 +43,7 @@ default-members = [
     "crates/adapters/hf-hub",
     "crates/adapters/redb-storage",
     "crates/engines/inference-runtime",
+    "crates/engines/corrective-workflow",
     "crates/engines/application-runtime",
     "crates/apps/desktop-slint",
 ]
@@ -51,6 +53,7 @@ resolver = "3"
 cargo_metadata = "0.23.1"
 application-runtime = { path = "crates/engines/application-runtime" }
 candle-backend = { path = "crates/adapters/candle-backend" }
+corrective-workflow = { path = "crates/engines/corrective-workflow" }
 context-planner = { path = "crates/features/context-planner" }
 domain-contracts = { path = "crates/features/domain-contracts" }
 gguf-backend = { path = "crates/adapters/gguf-backend" }

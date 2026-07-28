@@ -42,7 +42,7 @@ This is the presentation baseline to evolve, not a second inference path. See [d
 
 ### E1 direct-completion boundary
 
-`application-runtime` owns prompt encoding, generation settings, request-local streaming decode, bounded text output, state/events, cancellation, unload behavior, and shutdown. Chat/history/template/context behavior must be added here so frontends do not duplicate it. See [application runtime](../../project/application-runtime.md).
+`application-runtime` owns prompt encoding, generation settings, request-local streaming decode, bounded text output, state/events, cancellation, unload behavior, and shutdown. Phase 7 adds reusable conversation semantics and coordinates context planning/rendering through their own boundaries; it must not absorb the planner algorithm, provider transports, or workflow engine. See [application runtime](../../project/application-runtime.md).
 
 ### Existing context planner
 
@@ -50,7 +50,7 @@ The portable `context-planner` crate already owns deterministic capacity selecti
 
 ## Phase 7 work packages
 
-1. Define frontend-neutral conversation messages with role, identity/order, text, optional provenance, retention/pinning policy, and measured or conservative token estimates.
+1. Define frontend-neutral conversation messages with role, identity/order, text, optional provenance, retention/pinning policy, and measured or conservative token estimates. Message identity and history must not depend on a local model handle, provider DTO, or transport connection.
 2. Define explicit prompt-rendering compatibility for a verified model family/profile or tested resolved chat template. Unknown compatibility must fail; never guess a template.
 3. Reserve output capacity, select context deterministically, render in conversation order, tokenize the final prompt, verify actual model capacity, and retry selection or fail clearly when estimates were insufficient.
 4. Add E1 operations for user-message submission, allowed regeneration, conversation clearing, context diagnostics, and cancellation. Keep persistence out until in-memory semantics stabilize.
@@ -58,9 +58,9 @@ The portable `context-planner` crate already owns deterministic capacity selecti
 
 ## Architectural invariants
 
-1. Conversation state and rendering compatibility are frontend-neutral E1 behavior.
-2. Widget types and backend-specific templates do not enter conversation-domain types.
-3. E0 remains the token-step and model-resource owner.
+1. Conversation semantics and rendering compatibility coordination are frontend-neutral E1 behavior.
+2. Widget types, local model handles, provider DTOs, transport types, and backend-specific templates do not enter conversation-domain types.
+3. E0 remains the local token-step and native model-resource owner; it is not the abstraction for hosted or peer execution.
 4. Pinned content either fits or returns `PinnedBudgetExceeded`; it is never silently dropped.
 5. Actual tokenized input plus reserved output cannot exceed model capacity.
 6. Unknown model/template compatibility fails explicitly.
@@ -73,6 +73,7 @@ The portable `context-planner` crate already owns deterministic capacity selecti
 - no GGUF product selection;
 - no GPU execution;
 - no browser/remote transport;
+- no hosted-provider or peer execution implementation;
 - no multi-model E1 residency;
 - no guessed universal Llama prompt template;
 - no conversation persistence before in-memory semantics stabilize;
@@ -84,7 +85,7 @@ The portable `context-planner` crate already owns deterministic capacity selecti
 - context planning changes real generation input;
 - actual token count cannot exceed capacity;
 - pinned content is never silently discarded;
-- E1 owns conversation history and assistant streaming;
+- E1 owns conversation history and assistant streaming semantics without binding message state to the current local execution implementation;
 - unknown template compatibility fails explicitly.
 
 ## Validation and documentation

@@ -128,6 +128,10 @@ I want those machines to be able to become one local AI system.
 
 The large model can stay where the memory and compute make sense. Specialist work can run elsewhere. A node should be able to expose what it can do and what resources it has available, while the runtime decides where a particular piece of work belongs. The user should not have to think about a second machine as a separate application every time a research agent is needed.
 
+There will also be models that do not make sense on any machine I own. Local-first should not mean refusing useful compute elsewhere. I might rent a GPU for a large model, connect a machine in another location, or deliberately use a hosted model such as OpenAI, Claude, or Gemini for work that local hardware cannot handle.
+
+I want that to feel like another execution choice rather than a different application. The conversation, context, workflows, and tools should not have to be rebuilt around the provider. At the same time, crossing that boundary should never be invisible. If context leaves my machines, the system should know where it is going, which capabilities change, and what authority that target has.
+
 I also don't want this project to become a VPN. WireGuard, Tailscale, NetBird, an ordinary LAN, or whatever comes next already solve the problem of making machines reachable. If two nodes can communicate, this project should care about discovering or naming the peer, establishing identity, understanding its capabilities, and routing work to it. The network underneath is someone else's problem unless there is a very good reason to make it ours.
 
 This changes how I think about the application itself. A Slint desktop interface is useful because it gives the project a tangible product while the runtime is still taking shape. A btop-like terminal interface could make the same system pleasant to operate over SSH on a server, an old laptop, or a headless machine. A web interface might later make conversations reachable from devices that should not run the inference stack themselves.

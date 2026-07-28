@@ -2,8 +2,8 @@
 
 ## Scope
 
-The typed corrective workflow lives inside the existing E1 `application-runtime`
-ownership domain:
+The typed corrective workflow is an independently stateful capability engine in
+`crates/engines/corrective-workflow`:
 
 ```text
 draft
@@ -14,17 +14,10 @@ draft
 → validate again
 ```
 
-No third engine crate is introduced. The project-specific engine tiers remain:
-
-```text
-application-runtime (E1 workflow and application use cases)
-    ↓
-inference-runtime (E0 model and sequence resource ownership)
-```
-
-The older implementation-plan example named `task-orchestrator`, but the current
-architecture consolidates application orchestration in E1. Adding another engine
-would duplicate ownership and violate that consolidation.
+`application-runtime` may coordinate this engine, but workflow artifacts, retries,
+validation state, and workflow events do not share E1's application lifecycle.
+Extracting that ownership keeps E1 as the application façade without forcing every
+stateful subsystem into the same crate.
 
 ## Pure graph boundary
 
@@ -45,7 +38,7 @@ Every graph task declares exactly one output. A produced artifact can be consume
 only when its producer is a direct prerequisite of the consumer. Workflow inputs
 are external immutable roots and cannot also be task outputs.
 
-## E1 execution boundary
+## Capability-engine boundary
 
 `CorrectiveWorkflowExecutor<M, V>` owns:
 
@@ -60,7 +53,7 @@ are external immutable roots and cannot also be task outputs.
 - accepted or rejected terminal outcomes.
 
 Model-backed stages use a concrete `ModelTaskExecutor`. Compile and validation
-stages use a concrete `ValidationTaskExecutor`. These are coarse application
+stages use a concrete `ValidationTaskExecutor`. These are coarse capability
 service ports and are statically dispatched by the workflow executor. Requests
 contain task metadata, the validated model policy where applicable, and borrowed
 `ArtifactId` slices only. A restricted `ArtifactInputs` view enforces that a port
@@ -69,7 +62,8 @@ from earlier workflows.
 
 The ports deliberately do not define tensor execution, prompt rendering, sampling,
 compiler process sandboxing, or vendor-specific error formats. Those policies
-belong in their respective E0 or adapter implementations.
+belong in local E0 execution, provider/peer execution composition, or validator
+adapters as appropriate. The workflow itself does not know where model work runs.
 
 ## Artifact lifecycle
 
@@ -119,22 +113,24 @@ problems. The initial rejection therefore continues through normalization, revie
 and revision. Only an operational port error consumes an attempt. Exhausting the
 configured attempt budget returns a typed terminal failure containing the final
 owned diagnostic. Model and validator ports receive non-zero token budgets and are
-responsible for enforcing them at their tokenization/execution boundaries; E1
-independently enforces complete artifact byte bounds. Diagnostic normalization is a
+responsible for enforcing them at their tokenization/execution boundaries; the
+workflow engine independently enforces complete artifact byte bounds. Diagnostic normalization is a
 single-attempt non-tokenized task. The final verdict maps to an accepted or rejected
 workflow outcome, both of which reference committed revision and final-validation
 artifacts.
 
 ## Current composition
 
-The workflow engine is intentionally separately composable from the existing
-`ApplicationRuntime` model-acquisition and lifecycle host. This permits deterministic
+The `corrective-workflow` engine is separately composable from
+`ApplicationRuntime` and the hosted local inference lifecycle. This permits deterministic
 validator and model-service implementations to be selected without exposing
 Candle, GGUF, compiler-process, channel, or UI types through the public workflow
 contract.
 
-A production model-task port should delegate complete generation to E0 when that
-coarse generation operation is connected. It must not implement a token-by-token
+A model-task port should delegate complete generation through the selected model
+execution capability. The current local composition may route that work to E0; a
+future peer or hosted-provider implementation can satisfy the same coarse port
+without pretending to own local sequences. It must not implement a token-by-token
 frontend round trip. A compiler or validator adapter must additionally enforce its
 own timeout, output bound, working-directory, environment, and untrusted-code
 policy.

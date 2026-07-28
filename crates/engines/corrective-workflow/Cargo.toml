@@ -1,0 +1,15 @@
+[package]
+name = "corrective-workflow"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Typed corrective draft, validation, review, and revision orchestration"
+publish = false
+
+[dependencies]
+domain-contracts.workspace = true
+task-graph.workspace = true
+
+[lints]
+workspace = true

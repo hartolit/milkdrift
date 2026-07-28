@@ -7,16 +7,14 @@ use std::fmt::{self, Display, Formatter};
 use std::num::NonZeroU16;
 use std::rc::Rc;
 
-use application_runtime::workflow::{
-    ArtifactInputs, WorkflowExecutorLimitError, WorkflowExecutorLimits,
-};
-use application_runtime::{
-    Artifact, ArtifactContent, ArtifactContentKind, ArtifactId, ArtifactKind, ArtifactReference,
-    ArtifactRole, ArtifactStore, CorrectiveWorkflowConfiguration, CorrectiveWorkflowExecutor,
-    Diagnostic, DiagnosticLocation, DiagnosticSeverity, ModelPolicy, ModelTaskExecutor,
-    ModelTaskRequest, RawDiagnostic, TaskBudget, TaskId, TaskKind, ValidationReport,
-    ValidationTaskExecutor, ValidationTaskRequest, ValidationVerdict, WorkflowArtifactLimits,
-    WorkflowBudgetClass, WorkflowConfigurationError, WorkflowError, WorkflowEvent, WorkflowId,
+use corrective_workflow::{
+    Artifact, ArtifactContent, ArtifactContentKind, ArtifactId, ArtifactInputs, ArtifactKind,
+    ArtifactReference, ArtifactRole, ArtifactStore, CorrectiveWorkflowConfiguration,
+    CorrectiveWorkflowExecutor, Diagnostic, DiagnosticLocation, DiagnosticSeverity, ModelPolicy,
+    ModelTaskExecutor, ModelTaskRequest, NormalizedValidationReport, RawDiagnostic, TaskBudget,
+    TaskId, TaskKind, ValidationReport, ValidationTaskExecutor, ValidationTaskRequest,
+    ValidationVerdict, WorkflowArtifactLimits, WorkflowBudgetClass, WorkflowConfigurationError,
+    WorkflowError, WorkflowEvent, WorkflowExecutorLimitError, WorkflowExecutorLimits, WorkflowId,
     WorkflowOutcome, WorkflowStage, WorkflowStatus, normalize_validation_report,
 };
 use domain_contracts::{BackendId, ModelId};
@@ -306,7 +304,7 @@ fn canonical_workflow_uses_exact_call_order_and_input_ids() -> Result<(), Box<dy
         .ok_or(TestPortError("missing normalized artifact"))?;
     assert_eq!(
         normalized.content(),
-        &ArtifactContent::NormalizedDiagnostics(application_runtime::NormalizedValidationReport {
+        &ArtifactContent::NormalizedDiagnostics(NormalizedValidationReport {
             verdict: ValidationVerdict::Rejected,
             diagnostics: vec![Diagnostic {
                 severity: DiagnosticSeverity::Error,

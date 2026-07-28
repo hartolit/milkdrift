@@ -13,5 +13,6 @@ Accepted ADRs remain part of the project architecture until superseded. A supers
 - [ADR-0005: Retain the current crate folders](0005-retain-crate-folders.md)
 - [ADR-0006: Require explicit bounded shutdown](0006-explicit-bounded-shutdown.md)
 - [ADR-0007: Name the supported portability targets](0007-portability-targets.md)
+- [ADR-0008: Separate application coordination, capabilities, and model execution](0008-capability-and-execution-boundaries.md)
 
 For current applied structure, see [project architecture](../../project/architecture.md). For the reusable selectable model, see the [architecture blueprint](../../architecture.md).

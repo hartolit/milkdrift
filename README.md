@@ -1,6 +1,6 @@
 # llm-app
 
-A layered Rust workspace for local, CPU-only language-model inference, context planning, sampling, orchestration, persistence, and a replaceable native frontend.
+A layered Rust workspace for a local-first, composable language-model system with explicit inference ownership, context planning, workflows, persistence, and replaceable frontends.
 
 ## Current product state
 
@@ -8,13 +8,13 @@ The currently composed application path uses Candle on the CPU with Hugging Face
 
 A GGUF/llama.cpp CPU adapter also implements the lower inference compatibility boundary. It is not selectable through `application-runtime` or the Slint UI yet.
 
-The E0 inference runtime owns token-level scheduling, sampling, backend execution, cancellation boundaries, backpressure, and cleanup. Phase 5 exposes that loop through E1: `application-runtime` encodes UTF-8 prompts, translates stable generation settings, owns request-local streaming decode state, and returns bounded pulled text/state batches. In particular:
+The E0 inference runtime owns local token-level scheduling, sampling, backend execution, cancellation boundaries, backpressure, and cleanup. E1 `application-runtime` exposes that loop as frontend-neutral application behavior: it encodes UTF-8 prompts, translates stable generation settings, owns request-local streaming decode state, and returns bounded pulled text/state batches. The independently stateful corrective workflow is a separate capability engine. In particular:
 
 - frontends use E1 generation APIs rather than E0 commands, logits, or sequence state;
 - tokenizer and decoded-text ownership live in E1 while sampling and token stepping remain in E0;
-- the Slint frontend still exposes lifecycle controls only; prompt/output/generate/cancel presentation is Phase 6;
+- the Slint frontend exposes the complete direct-completion Phase 6 path with prompt/output/generate/cancel controls;
 - general chat rendering and conversation history follow the direct-completion slice;
-- GPU execution, remote transport, and multiple application-level resident models are not supported.
+- GPU execution, hosted-provider/peer execution, remote frontend transport, and multiple application-level resident models are not supported yet.
 
 See the [current implementation status](docs/project/implementation-status.md) for the exact integration matrix and validation evidence. The [execution plan](docs/agent/execution/execution-plan.md) is the active roadmap.
 
@@ -23,7 +23,7 @@ See the [current implementation status](docs/project/implementation-status.md) f
 ```text
 crates/features/     portable contracts and algorithms
 crates/adapters/     model, tokenizer, storage, network, and host integrations
-crates/engines/      inference ownership and application use cases
+crates/engines/      E0 inference, capability engines, and E1 application coordination
 crates/apps/         presentation and process entry points
 ```
 
@@ -54,7 +54,7 @@ Run the native frontend with:
 cargo run -p desktop-slint
 ```
 
-The frontend currently manages model resolution and lifecycle through the Candle CPU composition; it does not generate text yet. Application state is stored in the platform's per-user application-data directory.
+The frontend resolves and loads the Candle CPU model, submits direct completions through E1, streams bounded decoded output, cancels active work, and unloads deterministically. Application state is stored in the platform's per-user application-data directory.
 
 Relevant guides:
 

@@ -25,6 +25,7 @@ llm-app/
     │   └── redb-storage/
     ├── engines/
     │   ├── inference-runtime/
+    │   ├── corrective-workflow/
     │   └── application-runtime/
     └── apps/
         └── desktop-slint/
@@ -48,6 +49,7 @@ crates/adapters/hf-tokenizer
 crates/adapters/hf-hub
 crates/adapters/redb-storage
 crates/engines/inference-runtime
+crates/engines/corrective-workflow
 crates/engines/application-runtime
 crates/apps/desktop-slint
 ```
@@ -62,7 +64,8 @@ gguf-backend        -> domain-contracts
 host-runtime        -> domain-contracts
 hf-tokenizer        -> tokenization -> domain-contracts
 inference-runtime   -> host-runtime + domain-contracts
-application-runtime -> inference-runtime + selected adapters/features
+corrective-workflow -> task-graph + domain-contracts
+application-runtime -> inference-runtime + selected adapters/features/capability engines
 desktop-slint       -> application-runtime + slint
 ```
 
@@ -70,7 +73,7 @@ desktop-slint       -> application-runtime + slint
 
 Production code may not acquire an upward dependency. Production adapters do not import one another. Development dependencies are reviewed separately and may cross production direction only for an explicitly named compatibility test or benchmark.
 
-The exact F0/F1 and E0/E1 meanings are defined in [project architecture](architecture.md), avoiding a second copy of that rationale here.
+Within `crates/engines`, `inference-runtime` is E0, `application-runtime` is E1, and other direct engine crates are capability engines. E1 may depend on capability engines; capability engines cannot depend on E1. The full rationale is defined in [project architecture](architecture.md).
 
 ## Architecture enforcement
 

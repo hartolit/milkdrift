@@ -154,7 +154,6 @@ dependencies = [
  "host-runtime",
  "inference-runtime",
  "redb-storage",
- "task-graph",
  "tokenization",
 ]
 
@@ -1192,6 +1191,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77745e017f5edba1a9c1d854f6f3a52dac8a12dd5af5d2f54aecf61e43d80d30"
 dependencies = [
  "libm",
+]
+
+[[package]]
+name = "corrective-workflow"
+version = "0.1.0"
+dependencies = [
+ "domain-contracts",
+ "task-graph",
 ]
 
 [[package]]

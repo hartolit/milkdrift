@@ -1278,6 +1278,8 @@ Add frontend-neutral message types with:
 
 Keep UI widget types and backend-specific templates out of this domain representation.
 
+Conversation identity must also be independent from execution location. Do not store local model handles, Candle sources, provider request DTOs, peer connections, or transport state in message records.
+
 ## Work package 7.2 — Define prompt rendering compatibility
 
 Introduce a prompt-rendering boundary only after the first completion path works.
@@ -1292,6 +1294,8 @@ Supported options must be explicit:
 Do not silently apply a Llama template to Gemma, Qwen, Mistral, or an unknown model.
 
 Extend artifact resolution where required, for example with tokenizer configuration or chat-template artifacts. Missing template metadata must produce a clear compatibility result rather than guessed formatting.
+
+This renderer belongs to the current local-model path. A future hosted target may accept structured messages or require different rendering; conversation semantics must not assume that every execution target consumes the same prompt string.
 
 ## Work package 7.3 — Connect context planning
 
@@ -1310,7 +1314,7 @@ Pinned system content must either fit or produce `PinnedBudgetExceeded`. It must
 
 ## Work package 7.4 — Add conversation state to E1
 
-`application-runtime` owns reusable conversation behavior so frontends do not duplicate it. Add operations for:
+`application-runtime` owns reusable conversation semantics so frontends do not duplicate them. It coordinates context planning, rendering compatibility, and model execution without absorbing their algorithms or transport implementations. Add operations for:
 
 - submit user message;
 - regenerate last response where policy allows;
@@ -1319,6 +1323,8 @@ Pinned system content must either fit or produce `PinnedBudgetExceeded`. It must
 - cancel active response.
 
 Persistence of conversation history may be added only after in-memory semantics are stable.
+
+The conversation state must remain valid if the eventual execution target changes from local E0 to a peer or hosted model.
 
 ## Work package 7.5 — Expand the UI into a chat surface
 
@@ -1331,6 +1337,8 @@ Replace the direct prompt/output presentation with message records while preserv
 - Actual token count cannot exceed model capacity.
 - Pinned content is never silently discarded.
 - Conversation history and assistant streaming are owned by E1, not duplicated in Slint.
+- Conversation records contain no local-backend, provider-SDK, or transport identity.
+- E0 remains the local inference engine rather than becoming a remote-service abstraction.
 - Unknown template compatibility fails explicitly.
 
 ---
@@ -1356,6 +1364,8 @@ It must support prompt encoding and stateful streaming decode under the same por
 
 Use a closed enum or coarse backend service boundary for the supported native set. Avoid genericizing the entire application façade.
 
+This selection is specifically for local E0-backed execution. Hosted providers and peer nodes are execution targets above E0 and must not become variants of a native backend enum.
+
 The application-visible selection should include:
 
 - backend kind;
@@ -1369,11 +1379,12 @@ The frontend should not construct Candle/GGUF source types directly.
 
 At this point there will be real evidence from two backends. Review whether concrete Candle, GGUF, Hugging Face, redb, and host types still dominate `application-runtime`.
 
-If they do, split along this boundary:
+If local-model concerns dominate E1, extract the proven local composition as a capability beneath the application façade rather than creating another application coordinator:
 
 ```text
 application-runtime   frontend-neutral use cases, state, commands, events
-native-runtime        Candle/GGUF/HF/redb/host production composition
+        ↓
+local-model runtime   Candle/GGUF/HF/E0 production composition
 ```
 
 Possible later transport boundary:
@@ -1383,6 +1394,8 @@ application-api       serializable DTOs for process/network clients
 ```
 
 Do not create `application-api` until a separate process or browser client is actually being implemented.
+
+Storage or Hub composition should move with the local-model capability only when its ownership belongs there; do not create a second catch-all merely to reduce E1's dependency count.
 
 ## Work package 8.4 — Run one shared backend suite
 
@@ -1444,11 +1457,10 @@ Only split if current `domain-contracts` changes for unrelated reasons often eno
 
 ## Work package 9.2 — Narrow `application-runtime`
 
-- stop broad root re-exports of workflow internals;
+- keep the extracted `corrective-workflow` capability outside E1 and do not re-export its internals from the application façade;
 - make generation/model lifecycle the primary documented façade;
-- separate native composition if Phase 8 justified it;
-- move corrective workflow to its own crate only if it has independent consumers/lifecycle or continues to dominate E1;
-- otherwise split it into coherent internal modules and expose a narrow workflow façade.
+- separate local-model composition if Phase 8 justified it;
+- keep new stateful capability engines outside E1 when their lifecycle/reuse boundary is independently proven.
 
 ## Work package 9.3 — Split oversized modules internally
 
@@ -1462,16 +1474,6 @@ task-graph/
   attempt.rs
   state.rs
   error.rs
-
-application-runtime/workflow/
-  configuration.rs
-  plan.rs
-  admission.rs
-  executor.rs
-  artifacts.rs
-  diagnostics.rs
-  event.rs
-  ports.rs
 
 inference-runtime/runtime/
   model_registry.rs
@@ -1674,6 +1676,43 @@ Record:
 
 ---
 
+# Future track — Add peer and hosted model execution
+
+This track begins only after application conversation semantics and the local
+composition boundary are stable enough to expose a coarse model-execution seam.
+It does not turn E0 into a network/provider abstraction.
+
+Define one application-facing execution contract for:
+
+- target identity and capability discovery;
+- complete generation request admission;
+- supported message/prompt input form;
+- context and token-accounting semantics;
+- sampling and tool capabilities;
+- cancellation intent and target guarantees;
+- bounded streamed output;
+- usage and terminal results.
+
+The local implementation delegates complete requests to E0. Provider adapters own
+authentication, vendor DTOs, response translation, rate/error normalization, and
+provider-specific capabilities. Peer execution uses the same semantic boundary but
+routes through the node protocol rather than a hosted-provider client.
+
+External execution is explicit. The application must show when context leaves the
+user's machines, which target receives it, and which capabilities or guarantees
+differ. Credentials never enter model context or conversation history.
+
+Peer networking assumes existing reachability through LAN, WireGuard, Tailscale,
+NetBird, or equivalent infrastructure. This project owns peer identity/discovery,
+capability advertisement, routing, and its application protocol; it does not become
+a VPN implementation.
+
+Acceptance requires that local, peer, and hosted targets can satisfy the same
+conversation/workflow intent without provider SDK or transport types entering E1
+domain state, and without representing remote services as E0 backends.
+
+---
+
 # 12. Parallel work and dependencies
 
 The critical path is:
@@ -1762,9 +1801,9 @@ This milestone does **not** require GGUF UI parity, general chat templates, mult
 | Analyzer finding | Addressed in |
 |---|---|
 | Central generation loop absent | Phases 3–7 |
-| `application-runtime` is a valid façade but concrete/growing | Phases 5, 8, 9 |
+| `application-runtime` is a valid façade but concrete/growing | Architecture closure and Phases 5, 8, 9 |
 | Candle/HF/redb lock-in at E1 | Phase 8 composition review |
-| Corrective workflow dominates E1 | Phase 9 narrowing/extraction gate |
+| Corrective workflow dominates E1 | Architecture closure extraction; Phase 9 keeps E1 narrow |
 | Single-model state conflicts with `maximum_models` | Phase 5.6 |
 | Model-load cleanup bypass | Phase 2.1 |
 | Sequence/request commit not rollback-safe | Phase 2.2–2.3 |

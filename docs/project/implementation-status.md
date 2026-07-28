@@ -1,6 +1,6 @@
 # Current implementation status
 
-**Status date:** 2026-07-27
+**Status date:** 2026-07-28
 **Reviewed source baseline:** `phase-6` commit `68438648c09bc008e628508ebf269456c6299096` plus the source-level review closure recorded below
 **Execution position:** Phase 6 source closure is present; Phase 7 is the current implementation target
 **Canonical plan:** [LLM App Execution Plan](../agent/execution/execution-plan.md)
@@ -17,6 +17,14 @@ This is the canonical product-level status page. Component behavior lives in the
 | Candle or GGUF | CUDA/Metal/other GPU | No supported product path | No | No |
 
 The product remains CPU-only. Candle Llama is driven through the E0 generation scheduler and exposed through the frontend-neutral E1 generation boundary. Slint now wires the first direct-completion loop through E1. GGUF is not yet selectable through E1 or the UI.
+
+## Current engine boundaries
+
+The corrective workflow is now an independent `corrective-workflow` capability
+engine rather than an E1 subsystem. E1 remains the frontend-neutral application
+coordinator; E0 remains the owner of local model resources and token-level
+scheduling. Hosted providers and peer nodes are not implemented and are not
+modeled as E0 backends.
 
 ## Current E1 generation boundary
 
@@ -50,6 +58,8 @@ The source tree contains:
 
 The canonical locked repository gate passed locally on 2026-07-27 on `68438648c09bc008e628508ebf269456c6299096` plus the documented Phase 6 review-closure changes. The run covered architecture/dependency validation, formatting, workspace checks, tests/doctests, strict Clippy, rustdoc, and benchmark compilation. Nine focused `desktop-slint` presenter tests and strict all-target Clippy also passed. No independent GitHub Actions run or committed review-closure revision is attached to this local evidence.
 
+The architecture extraction recorded above postdates the Phase 6 validation evidence. The locked repository gate should be rerun on the final architecture-closure tree before that evidence is treated as current.
+
 The graphical external-model acceptance scenario was not manually exercised in this environment. Download-free E1/Candle integration tests cover the underlying generation, cancellation, unload, backpressure, and shutdown loop; presenter tests cover the new UI mapping. Historical Phase 3–5 evidence remains in [execution history](../agent/execution/history.md).
 
 ## Known limitations
@@ -59,7 +69,7 @@ The graphical external-model acceptance scenario was not manually exercised in t
 - The E1 product path is deliberately single-model even though lower E0 contracts can represent more general residency.
 - The Candle external smoke fixture is a tiny random test model. It proves execution/lifecycle integration, not language quality.
 - Strict allocation-free Candle or Hugging Face tokenization/decoding execution is not claimed because upstream libraries allocate internally.
-- GPU execution, remote/browser transport, and GGUF UI selection remain unsupported.
+- GPU execution, hosted-provider execution, peer execution, remote/browser transport, and GGUF UI selection remain unsupported.
 
 ## Historical context
 
