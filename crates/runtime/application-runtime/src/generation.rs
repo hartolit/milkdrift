@@ -311,21 +311,35 @@ impl GenerationBridge {
 impl ApplicationRuntime {
     /// Starts one direct-completion request against the resident single model.
     ///
-    /// Prompt rendering is intentionally not performed here: Phase 5 accepts one
-    /// direct-completion string, encodes it once, and submits the complete E0
-    /// generation request. Chat templates and history remain later-phase work.
+    /// This mode intentionally performs no chat rendering and remains available
+    /// when the resolved model has no verified chat compatibility profile.
     ///
     /// # Errors
     ///
     /// Returns an error when lifecycle state, settings, prompt capacity, tokenizer
     /// state, or bounded runtime command capacity prevents admission.
+    pub fn start_generation(
+        &mut self,
+        input: &str,
+        settings: GenerationSettings,
+    ) -> Result<RequestId, ApplicationError> {
+        let loaded = self.state.loaded().ok_or(ApplicationError::NoLoadedModel)?;
+        let tokenizer = self
+            .tokenizer
+            .as_ref()
+            .ok_or(ApplicationError::NoTokenizer)?;
+        let prompt_tokens =
+            encode_direct_completion_prompt(tokenizer, input, loaded.maximum_context_tokens)?;
+        self.start_generation_tokens(prompt_tokens, settings)
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "generation admission keeps validation, allocation, translation, submission, and state publication contiguous"
     )]
-    pub fn start_generation(
+    pub(crate) fn start_generation_tokens(
         &mut self,
-        input: &str,
+        prompt_tokens: Box<[TokenId]>,
         settings: GenerationSettings,
     ) -> Result<RequestId, ApplicationError> {
         if let Some(active) = self.state.active_generation() {
@@ -348,22 +362,19 @@ impl ApplicationRuntime {
                 GenerationSettingsField::EndOfSequenceToken,
             ));
         }
-        let (prompt_tokens, stop_sequences) = {
+        if prompt_tokens.is_empty() {
+            return Err(ApplicationError::EmptyPrompt);
+        }
+        let stop_sequences = {
             let tokenizer = self
                 .tokenizer
                 .as_ref()
                 .ok_or(ApplicationError::NoTokenizer)?;
-            let prompt_tokens =
-                encode_direct_completion_prompt(tokenizer, input, loaded.maximum_context_tokens)?;
-            if prompt_tokens.is_empty() {
-                return Err(ApplicationError::EmptyPrompt);
-            }
-            let stop_sequences = encode_stop_sequences(
+            encode_stop_sequences(
                 tokenizer,
                 settings.stop_sequences.as_slice(),
                 loaded.maximum_context_tokens,
-            )?;
-            (prompt_tokens, stop_sequences)
+            )?
         };
         let prompt_len = prompt_tokens.len();
         let maximum_prefill = usize::try_from(loaded.maximum_prefill_batch).unwrap_or(usize::MAX);
@@ -524,6 +535,11 @@ impl ApplicationRuntime {
             }),
             usage: active.usage,
         };
+        self.conversation.finish_active(
+            active.request_id,
+            &terminal.outcome,
+            terminal.usage.generated_tokens,
+        );
         self.state.finish_generation(terminal.clone());
         self.generation.session = None;
         self.generation.pending.clear();
@@ -610,6 +626,11 @@ impl ApplicationRuntime {
             outcome: GenerationTerminalOutcome::Failed(failure),
             usage,
         };
+        self.conversation.finish_active(
+            request_id,
+            &terminal.outcome,
+            terminal.usage.generated_tokens,
+        );
         self.state.finish_generation(terminal.clone());
         self.generation.session = None;
         self.generation.pending.clear();
@@ -691,6 +712,15 @@ impl ApplicationRuntime {
         let mut sink = TextBuffer::new(session.decode_storage.as_mut_slice());
         session.decoder.step(token, &mut sink).map_err(|_| ())?;
         session.pending_text_length = sink.len_bytes();
+        if session.pending_text_length != 0 {
+            let bytes = session
+                .decode_storage
+                .get(..session.pending_text_length)
+                .ok_or(())?;
+            let text = std::str::from_utf8(bytes).map_err(|_| ())?;
+            self.conversation
+                .append_active_text(session.request_id, text);
+        }
         self.state.increment_generated_tokens();
         Ok(true)
     }
@@ -776,23 +806,35 @@ impl ApplicationRuntime {
                 {
                     return Ok(false);
                 }
-                let usage = self
-                    .state
-                    .active_generation()
-                    .map_or_else(GenerationUsage::default, |summary| summary.usage);
-                let terminal = GenerationTerminal {
-                    request_id,
-                    outcome: effective,
-                    usage,
-                };
-                self.state.finish_generation(terminal.clone());
-                self.generation.session = None;
-                self.generation.pending_event =
-                    Some(ApplicationEvent::GenerationFinished { terminal });
+                self.finish_released_generation(request_id, effective);
                 return Ok(true);
             }
         };
         self.try_push_output_state(request_id, output_state)
+    }
+
+    fn finish_released_generation(
+        &mut self,
+        request_id: RequestId,
+        outcome: GenerationTerminalOutcome,
+    ) {
+        let usage = self
+            .state
+            .active_generation()
+            .map_or_else(GenerationUsage::default, |summary| summary.usage);
+        let terminal = GenerationTerminal {
+            request_id,
+            outcome,
+            usage,
+        };
+        self.conversation.finish_active(
+            request_id,
+            &terminal.outcome,
+            terminal.usage.generated_tokens,
+        );
+        self.state.finish_generation(terminal.clone());
+        self.generation.session = None;
+        self.generation.pending_event = Some(ApplicationEvent::GenerationFinished { terminal });
     }
 
     fn try_push_output_state(
@@ -906,7 +948,13 @@ fn encode_direct_completion_prompt(
     input: &str,
     maximum_context_tokens: u32,
 ) -> Result<Box<[TokenId]>, ApplicationError> {
-    encode_text(tokenizer, input, maximum_context_tokens).map_err(|error| {
+    encode_text_with_policy(
+        tokenizer,
+        input,
+        maximum_context_tokens,
+        SpecialTokenPolicy::OrdinaryText,
+    )
+    .map_err(|error| {
         ApplicationFailure::from_debug(
             ApplicationFailureKind::Tokenizer,
             "direct-completion prompt encoding failed",
@@ -931,7 +979,13 @@ fn encode_stop_sequences(
                 GenerationSettingsField::StopSequence,
             ));
         }
-        let tokens = encode_text(tokenizer, stop, maximum_context_tokens).map_err(|error| {
+        let tokens = encode_text_with_policy(
+            tokenizer,
+            stop,
+            maximum_context_tokens,
+            SpecialTokenPolicy::OrdinaryText,
+        )
+        .map_err(|error| {
             ApplicationFailure::from_debug(
                 ApplicationFailureKind::Tokenizer,
                 "stop-sequence encoding failed",
@@ -954,10 +1008,11 @@ fn encode_stop_sequences(
     Ok(encoded.into_boxed_slice())
 }
 
-fn encode_text(
+pub fn encode_text_with_policy(
     tokenizer: &HfTokenizer,
     text: &str,
     capacity: u32,
+    special_tokens: SpecialTokenPolicy,
 ) -> Result<Box<[TokenId]>, TokenizationError> {
     let capacity = usize::try_from(capacity).unwrap_or(usize::MAX);
     let mut storage = Vec::new();
@@ -974,7 +1029,7 @@ fn encode_text(
         tokenizer.encode(
             text,
             EncodeOptions {
-                special_tokens: SpecialTokenPolicy::OrdinaryText,
+                special_tokens,
                 add_beginning_of_sequence: false,
                 add_end_of_sequence: false,
             },

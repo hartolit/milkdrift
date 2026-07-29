@@ -1,112 +1,72 @@
 # Current execution context
 
-**Reviewed baseline:** `main` commit `f8b3396cc23085696123b95c9dcb4b17c3d9c214` plus this documentation-only Phase 7 preparation closure
-**Current target:** Phase 7 — real chat and context planning
-**Gate state:** Source and architecture readiness review is complete; the canonical locked gate must be recorded on the exact final Phase 7-preparation tree before implementation evidence is called current
+**Reviewed baseline:** Phase 7 implementation working tree based on commit `afecb6c8f9d22d8f84d9e46f9be9d6c4fad73bea`
+**Current target:** Phase 8 — GGUF parity and native composition evidence
+**Gate state:** Phase 7 focused tests and strict focused Clippy pass; the canonical locked gate result for the final working tree is recorded in [execution history](history.md)
 **Canonical plan:** [execution-plan.md](execution-plan.md)
 **Current product truth:** [project implementation status](../../project/implementation-status.md)
 
-This document is the dense working set for the active phase. It is derived context, not a replacement for the plan, ADRs, status page, or component guides.
+This document is the dense handoff for the next phase. Phase 7 behavior is canonical in the application/desktop guides and its closure evidence belongs in execution history.
 
 ## Immediate objective
 
-Turn the proven direct-completion product path into honest conversation behavior and connect deterministic context planning to real generation input:
+Make GGUF a correct second local E0-backed product path without duplicating E1 conversation semantics or pretending that an arbitrary Hugging Face tokenizer is compatible:
 
 ```text
-typed conversation messages
-→ explicit model/template compatibility
-→ deterministic context selection with reserved output capacity
-→ render selected messages in order
-→ tokenize and verify actual capacity
-→ submit through E1
-→ stream assistant text as conversation state
+verified GGUF tokenizer/model metadata
+→ closed local backend/source selection
+→ shared E0 and E1 generation behavior
+→ evidence-based native composition decision
+→ backend selection in Slint only after parity
 ```
 
-Phase 7 changes conversation semantics. It must preserve the Phase 6 lifecycle controls, bounded frame-aligned presentation updates, E0 scheduling ownership, E1 façade, cancellation behavior, unload policy, and explicit shutdown.
+## Architecture entering Phase 8
 
-## Architecture entering Phase 7
+- `application-runtime` remains E1 and now owns in-memory raw conversation records, response-attempt provenance, regeneration/supersession, context diagnostics, prompt compatibility coordination, bounded decoded output, and model lifecycle policy.
+- `context-planner` owns deterministic estimate selection and the exact-correction candidate order. E1 derives request-local `ContextEntry` views, pins the current user and stored pinned content, renders selected records, tokenizes exactly, and admits only a capacity-safe prompt.
+- Chat compatibility is closed to `TinyLlama/TinyLlama-1.1B-Chat-v1.0`. Its role markers and EOS token 2 policy are tested together. Unknown compatibility fails; direct completion remains a separate honest E1 mode.
+- Slint is a thin chat presenter. It retains the 16 ms cadence, drains at most 64 events, performs one bounded output pull, and appends one frame-batched assistant fragment while conversation ownership remains in E1.
+- E0 still exclusively owns native model resources, token scheduling, cancellation boundaries, cleanup, and unload. Hosted and peer execution remain future coarse targets above E0.
 
-- Physical roots are `domain`, `platform`, `adapters`, `runtime`, and `apps`; runtime and platform roles are explicit rather than granted by directory placement.
-- `inference-runtime` is E0, `corrective-workflow` is an independently stateful capability runtime, and `application-runtime` is E1. Runtime-to-infrastructure and runtime-to-runtime production edges require exact reviewed composition entries.
-- E1 remains the current concrete Candle/Hugging Face/redb composition root until a second backend or deployment proves the correct local composition seam. Phase 7 must not pre-empt that evidence with a generic service graph.
-- Future peer, rented-GPU, and hosted-provider execution belongs behind a coarse request/stream boundary above E0. Conversation state must survive a target change without containing provider SDK, peer transport, or local model-resource identity.
+## Phase 7 invariants to preserve
 
-## What Phase 7 inherits
+1. Raw history and the active-context view remain distinct; failed, cancelled, and superseded attempts are inspectable but excluded from ordinary future context.
+2. Regeneration preserves prior attempts and creates one replacement for the same user turn; no arbitrary branch tree is implied.
+3. Actual rendered input plus reserved output never exceeds model context, and rendered input never exceeds prefill capacity.
+4. Exact-token correction strictly removes one planner-selected non-pinned entry per retry and is bounded by the initial droppable count plus one.
+5. Pinned content is never silently dropped.
+6. Conversation records contain no Candle source, model handle, provider DTO, peer connection, or transport identity.
+7. Unknown prompt/termination compatibility fails rather than selecting a guessed family template.
+8. Direct completion remains available for models without the one supported chat profile.
+9. Assistant streaming stays bounded and pull-oriented; frontends do not drive per-token work.
+10. Conversation persistence remains out of scope until in-memory semantics stabilize.
 
-### First usable Slint product
+## Phase 8 work packages
 
-`desktop-slint` now exposes:
-
-- repository and revision controls;
-- resolve, CPU load, and drain-unload actions;
-- direct-completion prompt and generated-output views;
-- generate, cancel, and clear-output actions;
-- prompt/generated usage, status, terminal reason, and a Candle/CPU label;
-- one 16 millisecond cadence that drains at most 64 events, pulls one bounded decoded-output batch, appends only the new frame fragment while preserving selection/viewport state, and synchronizes from `ApplicationState`;
-- explicit shutdown after the event loop and after post-runtime window-construction failure.
-
-This is the presentation baseline to evolve, not a second inference path. See [desktop runtime](../../project/desktop-runtime.md).
-
-### E1 direct-completion boundary
-
-`application-runtime` owns prompt encoding, generation settings, request-local streaming decode, bounded text output, state/events, cancellation, unload behavior, and shutdown. Phase 7 adds reusable conversation semantics and coordinates context planning/rendering through their own boundaries; it must not absorb the planner algorithm, provider transports, or workflow engine. See [application runtime](../../project/application-runtime.md).
-
-### Existing context planner
-
-The portable `context-planner` crate already owns deterministic capacity selection contracts. Phase 7 should integrate it through typed E1 conversation input rather than moving UI or tokenizer/vendor types into the domain layer. `ContextEntry` is a derived planner input, not the canonical representation of conversation history.
-
-## Phase 7 work packages
-
-1. Define frontend-neutral conversation records with stable identity/order, role, UTF-8 content, provenance, retention/pinning policy, measured or conservative token estimates, and response-attempt terminal state where applicable. User messages become committed history immediately; assistant streaming is an active response attempt. A cancelled or failed attempt preserves its partial text and terminal provenance for inspection but is not silently promoted into ordinary future context.
-2. Define explicit prompt-rendering compatibility for a verified model family/profile or tested resolved chat template. Rendering produces the local prompt plus the model/profile termination semantics required for one assistant turn. Unknown compatibility must fail; never guess a template or silently invent EOS/stop behavior.
-3. Derive `ContextEntry` values from conversation state for each request, reserve output capacity, select deterministically, render in conversation order, tokenize the final prompt, and verify actual capacity. If estimates were insufficient, each correction pass must strictly reduce the selected non-pinned set; unchanged retries are forbidden. The number of render/tokenize attempts is bounded by the initial selected droppable-entry count plus one. If no droppable entry remains, fail explicitly rather than dropping pinned content or looping.
-4. Add E1 operations for user-message submission, regeneration, conversation clearing, context diagnostics, and cancellation. Regeneration creates a new assistant response attempt for the same user turn and supersedes the previous attempt in the active-context view without deleting the raw prior record. Phase 7 does not need a general branch tree. Clearing while a response is active is rejected; callers cancel and observe terminal state before clearing. Keep persistence out until in-memory semantics stabilize.
-5. Replace the direct prompt/output presentation with conversation records while retaining lifecycle controls and batched assistant updates. The UI must represent successful, cancelled, and failed assistant attempts without converting presentation state into conversation ownership.
-
-## Architectural invariants
-
-1. Conversation semantics and rendering compatibility coordination are frontend-neutral E1 behavior.
-2. Widget types, local model handles, provider DTOs, transport types, and backend-specific templates do not enter conversation-domain types.
-3. E0 remains the local token-step and native model-resource owner; it is not the abstraction for hosted or peer execution.
-4. Pinned content either fits or returns `PinnedBudgetExceeded`; it is never silently dropped.
-5. Actual tokenized input plus reserved output cannot exceed model capacity.
-6. Unknown model/template compatibility fails explicitly.
-7. Assistant streaming remains bounded and pull-oriented; Slint does not receive one callback per token.
-8. Direct completion remains an honest mode until a supported chat renderer is proven.
-9. Do not extract a new rendering crate before independent renderers or consumers justify it.
-10. Raw conversation provenance and the active context view are distinct: regeneration or failed attempts may change what is selected next without erasing what happened.
-11. Planner records are request-local derived views over conversation state; `context-planner` does not become the conversation store.
-12. Context correction after exact tokenization is finite and monotonic; every retry removes at least one droppable entry.
-13. Chat termination policy is part of model/rendering compatibility and is tested alongside prompt formatting.
+1. Implement a GGUF-compatible tokenizer path from llama.cpp/GGUF metadata or verified immutable external metadata. Prompt encoding and stateful streaming decode must satisfy the existing portable tokenization contracts.
+2. Add a closed local native backend/source selection. Do not genericize the public E1 façade, and do not model hosted/peer targets as local backend variants.
+3. Use real two-backend pressure to decide whether concrete local composition should move beneath E1. Record the result in an ADR; do not create `application-api` without a real transported consumer.
+4. Run one shared backend generation suite covering load, start, prefill, greedy/seeded decode where defined, EOS/token limit, cancellation, backpressure, cleanup, and unload.
+5. Expose backend/source selection in Slint only after parity is proven; the frontend must not construct backend source types.
 
 ## Explicit non-goals
 
-- no GGUF product selection;
-- no GPU execution;
-- no browser/remote transport;
-- no hosted-provider or peer execution implementation;
-- no multi-model E1 residency;
-- no guessed universal Llama prompt template;
-- no conversation persistence before in-memory semantics stabilize;
-- no arbitrary conversation branch tree beyond the regeneration/supersession semantics required by this phase;
-- no general workflow, long-term-memory, tool/permission, or peer-routing framework pulled into Phase 7;
-- no broad crate/folder reorganization.
+- no GPU path;
+- no hosted-provider or peer implementation;
+- no browser transport or speculative `application-api` crate;
+- no arbitrary HF-tokenizer/GGUF pairing by vocabulary size;
+- no duplicated application/conversation state machine;
+- no broad architecture split before the second backend supplies evidence.
 
 ## Acceptance criteria
 
-- a known supported instruct model receives the verified prompt format;
-- the same compatibility profile supplies tested assistant-turn termination behavior rather than relying on accidental default stops;
-- context planning changes real generation input;
-- actual token count cannot exceed capacity;
-- pinned content is never silently discarded;
-- exact-token correction is bounded and cannot retry the same selection indefinitely;
-- E1 owns conversation history and assistant streaming semantics without binding message state to the current local execution implementation;
-- cancelled/failed partial assistant output remains inspectable but is not silently treated as a normal successful history message;
-- regeneration preserves the previous attempt for provenance while the active-context view uses the replacement;
-- `ContextEntry` remains a derived planner representation rather than stored conversation identity;
-- unknown template compatibility fails explicitly.
+- Candle and GGUF complete the same E1 generation scenario;
+- tokenization is model-compatible for both paths;
+- the UI contains no backend construction logic;
+- switching backend does not duplicate lifecycle, conversation, context, or streaming semantics;
+- the composition decision is captured in an ADR.
 
-## Validation and documentation
+## Validation rule
 
 Run the canonical gate on the exact final tree:
 
@@ -115,4 +75,4 @@ git rev-parse HEAD
 cargo run --locked --bin llm-app -- verify
 ```
 
-Record the exact commit together with the complete gate result. Update the canonical application runtime, desktop runtime, implementation status, and execution history documents when behavior changes. The full Phase 7 specification is in [execution-plan.md](execution-plan.md#phase-7--add-real-chat-and-context-planning).
+Record whether the tree is committed or a working tree. Historical validation on the Phase 7 tree is not evidence for later Phase 8 edits.

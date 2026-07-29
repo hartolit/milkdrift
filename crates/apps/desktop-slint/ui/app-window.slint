@@ -3,47 +3,52 @@ import { Button, HorizontalBox, LineEdit, TextEdit, VerticalBox } from "std-widg
 export component AppWindow inherits Window {
     title: "LLM App";
     width: 960px;
-    height: 760px;
+    height: 800px;
 
     in-out property <string> repository;
     in-out property <string> revision;
-    in-out property <string> prompt;
+    in-out property <string> message-input;
     in property <string> status-text: "Ready";
-    in property <string> terminal-text: "No generation has completed.";
+    in property <string> terminal-text: "No response has completed.";
     in property <string> resolved-commit: "Not resolved";
     in property <string> prompt-token-count: "0";
     in property <string> generated-token-count: "0";
     in property <bool> busy: false;
     in property <bool> can-resolve: true;
     in property <bool> can-load: false;
-    in property <bool> can-edit-prompt: false;
-    in property <bool> can-generate: false;
+    in property <bool> can-edit-message: false;
+    in property <bool> can-submit-message: false;
+    in property <bool> can-regenerate: false;
+    in property <bool> can-clear-conversation: true;
     in property <bool> can-cancel: false;
     in property <bool> can-unload: false;
 
     callback resolve-model();
     callback load-model();
     callback unload-model();
-    callback generate();
+    callback submit-message();
+    callback regenerate-response();
     callback cancel-generation();
-    callback clear-output();
-    callback append-generated-output(string);
-    callback reset-generated-output();
+    callback clear-conversation();
+    callback append-assistant-text(string);
+    callback replace-conversation-transcript(string);
 
-    append-generated-output(fragment) => {
-        // Selection remains owned by this TextEdit instance. Preserve its explicit scroll state.
-        let saved-viewport-x = output-editor.viewport-x;
-        let saved-viewport-y = output-editor.viewport-y;
-        output-editor.text += fragment;
-        output-editor.viewport-x = saved-viewport-x;
-        output-editor.viewport-y = saved-viewport-y;
+    append-assistant-text(fragment) => {
+        // Selection remains owned by this TextEdit. Preserve explicit scroll state per frame batch.
+        let saved-viewport-x = transcript-editor.viewport-x;
+        let saved-viewport-y = transcript-editor.viewport-y;
+        transcript-editor.text += fragment;
+        transcript-editor.viewport-x = saved-viewport-x;
+        transcript-editor.viewport-y = saved-viewport-y;
     }
 
-    reset-generated-output() => {
-        output-editor.text = "";
-        output-editor.viewport-x = 0px;
-        output-editor.viewport-y = 0px;
-        output-editor.clear-selection();
+    replace-conversation-transcript(transcript) => {
+        let saved-viewport-x = transcript-editor.viewport-x;
+        let saved-viewport-y = transcript-editor.viewport-y;
+        transcript-editor.text = transcript;
+        transcript-editor.viewport-x = saved-viewport-x;
+        transcript-editor.viewport-y = saved-viewport-y;
+        transcript-editor.clear-selection();
     }
 
     VerticalBox {
@@ -52,13 +57,13 @@ export component AppWindow inherits Window {
 
         HorizontalBox {
             Text {
-                text: "Local completion";
+                text: "Local chat";
                 font-size: 26px;
                 font-weight: 700;
                 horizontal-stretch: 1;
             }
             Text {
-                text: "Candle • CPU";
+                text: "TinyLlama Chat v1 • Candle • CPU";
                 color: #356859;
                 font-weight: 700;
                 vertical-alignment: center;
@@ -66,7 +71,7 @@ export component AppWindow inherits Window {
         }
 
         Text {
-            text: "Resolve an immutable Hugging Face revision, load it on CPU, then run a direct completion.";
+            text: "Chat requires the verified TinyLlama/TinyLlama-1.1B-Chat-v1.0 profile. Other resolved models remain available through E1 direct completion, but this chat surface will not guess their templates.";
             wrap: word-wrap;
         }
 
@@ -112,22 +117,38 @@ export component AppWindow inherits Window {
         Rectangle { height: 1px; background: #d0d0d0; }
 
         Text {
-            text: "Prompt";
+            text: "Conversation";
+            font-weight: 700;
+        }
+        transcript-editor := TextEdit {
+            text: "";
+            read-only: true;
+            wrap: word-wrap;
+            height: 300px;
+        }
+
+        Text {
+            text: "Message";
             font-weight: 700;
         }
         TextEdit {
-            text <=> root.prompt;
-            enabled: root.can-edit-prompt;
-            height: 130px;
+            text <=> root.message-input;
+            enabled: root.can-edit-message;
+            height: 100px;
             wrap: word-wrap;
         }
 
         HorizontalBox {
             spacing: 10px;
             Button {
-                text: "Generate";
-                enabled: root.can-generate;
-                clicked => { root.generate(); }
+                text: "Send";
+                enabled: root.can-submit-message;
+                clicked => { root.submit-message(); }
+            }
+            Button {
+                text: "Regenerate";
+                enabled: root.can-regenerate;
+                clicked => { root.regenerate-response(); }
             }
             Button {
                 text: "Cancel";
@@ -135,8 +156,9 @@ export component AppWindow inherits Window {
                 clicked => { root.cancel-generation(); }
             }
             Button {
-                text: "Clear output";
-                clicked => { root.clear-output(); }
+                text: "Clear conversation";
+                enabled: root.can-clear-conversation;
+                clicked => { root.clear-conversation(); }
             }
             Text {
                 text: "Default sampling • maximum 128 new tokens";
@@ -145,20 +167,9 @@ export component AppWindow inherits Window {
                 horizontal-stretch: 1;
             }
             Text {
-                text: "Prompt " + root.prompt-token-count + " • Generated " + root.generated-token-count;
+                text: "Context " + root.prompt-token-count + " • Generated " + root.generated-token-count;
                 vertical-alignment: center;
             }
-        }
-
-        Text {
-            text: "Generated output";
-            font-weight: 700;
-        }
-        output-editor := TextEdit {
-            text: "";
-            read-only: true;
-            wrap: word-wrap;
-            height: 210px;
         }
 
         Rectangle { height: 1px; background: #d0d0d0; }
@@ -168,7 +179,7 @@ export component AppWindow inherits Window {
             wrap: word-wrap;
         }
         Text {
-            text: "Terminal: " + root.terminal-text;
+            text: "Response: " + root.terminal-text;
             wrap: word-wrap;
             color: #555555;
         }

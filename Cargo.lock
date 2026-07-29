@@ -148,6 +148,7 @@ name = "application-runtime"
 version = "0.1.0"
 dependencies = [
  "candle-backend",
+ "context-planner",
  "domain-contracts",
  "hf-hub-adapter",
  "hf-tokenizer",

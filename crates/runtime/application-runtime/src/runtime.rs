@@ -11,6 +11,7 @@ use inference_runtime::{
 use redb_storage::{ModelRecord, RedbStorage};
 use tokenization::Tokenizer;
 
+use crate::conversation::ConversationState;
 use crate::generation::GenerationBridge;
 use crate::hub_worker::{HubCommand, HubEvent, HubWorker, start_hub_worker};
 use crate::support::{
@@ -21,7 +22,8 @@ use crate::support::{
 use crate::{
     ApplicationActivity, ApplicationBackend, ApplicationError, ApplicationEvent,
     ApplicationFailure, ApplicationFailureKind, ApplicationPreferences,
-    ApplicationRuntimeConfiguration, ApplicationState, LoadedModel, ResolvedModel,
+    ApplicationRuntimeConfiguration, ApplicationState, ContextDiagnostics, LoadedModel,
+    ResolvedModel,
 };
 
 const MODEL_ID: ModelId = ModelId::new(1);
@@ -42,6 +44,8 @@ pub struct ApplicationRuntime {
     resolved_artifacts: Option<ResolvedModelArtifacts>,
     pub(crate) tokenizer: Option<HfTokenizer>,
     pub(crate) generation: GenerationBridge,
+    pub(crate) conversation: ConversationState,
+    pub(crate) context_diagnostics: Option<ContextDiagnostics>,
     next_ticket: u64,
 }
 
@@ -88,6 +92,8 @@ impl ApplicationRuntime {
             resolved_artifacts: None,
             tokenizer: None,
             generation,
+            conversation: ConversationState::default(),
+            context_diagnostics: None,
             next_ticket: INITIAL_COMMAND_TICKET,
         })
     }
@@ -304,12 +310,15 @@ impl ApplicationRuntime {
                 };
             }
         };
+        let chat_compatibility =
+            crate::chat::detect_chat_compatibility(artifacts.repository.as_str(), &tokenizer);
         let resolved = ResolvedModel {
             repository: artifacts.repository.clone(),
             revision: artifacts.revision.clone(),
             commit: artifacts.commit.clone(),
             vocabulary_size: tokenizer.vocabulary_size(),
             scalar_type: artifacts.declared_scalar_type.map(domain_scalar_type),
+            chat_compatibility,
         };
         let persistence_warning = self
             .persist_resolved(&artifacts)

@@ -1,0 +1,37 @@
+{
+  "version": "1.0",
+  "truncation": null,
+  "padding": null,
+  "added_tokens": [
+    { "id": 1, "content": "<|system|>", "single_word": false, "lstrip": false, "rstrip": false, "normalized": false, "special": true },
+    { "id": 2, "content": "</s>", "single_word": false, "lstrip": false, "rstrip": false, "normalized": false, "special": true },
+    { "id": 3, "content": "<|user|>", "single_word": false, "lstrip": false, "rstrip": false, "normalized": false, "special": true },
+    { "id": 4, "content": "<|assistant|>", "single_word": false, "lstrip": false, "rstrip": false, "normalized": false, "special": true }
+  ],
+  "normalizer": null,
+  "pre_tokenizer": { "type": "Whitespace" },
+  "post_processor": null,
+  "decoder": null,
+  "model": {
+    "type": "WordLevel",
+    "vocab": {
+      "[UNK]": 0,
+      "<|system|>": 1,
+      "</s>": 2,
+      "<|user|>": 3,
+      "<|assistant|>": 4,
+      "be": 5,
+      "concise": 6,
+      "hello": 7,
+      "old": 8,
+      "answer": 9,
+      "question": 10,
+      "prompt": 11,
+      "seed": 12,
+      "one": 13,
+      "two": 14,
+      "three": 15
+    },
+    "unk_token": "[UNK]"
+  }
+}

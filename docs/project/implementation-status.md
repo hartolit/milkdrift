@@ -1,8 +1,8 @@
 # Current implementation status
 
 **Status date:** 2026-07-29
-**Reviewed source baseline:** `main` commit `f8b3396cc23085696123b95c9dcb4b17c3d9c214` plus this documentation-only Phase 7 preparation closure
-**Execution position:** Phase 6 product closure and the pre-Phase 7 architecture/taxonomy closure are present; Phase 7 is the current implementation target
+**Reviewed source baseline:** Phase 7 implementation working tree based on commit `afecb6c8f9d22d8f84d9e46f9be9d6c4fad73bea`
+**Execution position:** Phase 7 real chat and context planning is implemented; Phase 8 GGUF parity is next
 **Canonical plan:** [LLM App Execution Plan](../agent/execution/execution-plan.md)
 **Current working context:** [Phase 7 execution context](../agent/execution/current.md)
 
@@ -12,11 +12,11 @@ This is the canonical product-level status page. Component behavior lives in the
 
 | Backend | Device | Adapter/E0 boundary | `application-runtime` (E1) | Slint UI |
 |---|---|---:|---:|---:|
-| Candle 0.11 Llama/Safetensors | CPU | Generation vertical slice | Direct-completion façade implemented | Direct completion implemented |
+| Candle 0.11 Llama/Safetensors | CPU | Generation vertical slice | Direct completion plus verified TinyLlama Chat v1 | Conversation UI for verified TinyLlama Chat v1 |
 | GGUF via llama.cpp | CPU | Lifecycle and backend primitives | No generation composition | No |
 | Candle or GGUF | CUDA/Metal/other GPU | No supported product path | No | No |
 
-The product remains CPU-only. Candle Llama is driven through the E0 generation scheduler and exposed through the frontend-neutral E1 generation boundary. Slint now wires the first direct-completion loop through E1. GGUF is not yet selectable through E1 or the UI.
+The product remains CPU-only. Candle Llama is driven through the E0 generation scheduler and exposed through E1. Direct completion remains available for compatible Candle Llama models. Chat is deliberately narrower: Slint and E1 support only the verified `TinyLlama/TinyLlama-1.1B-Chat-v1.0` prompt/termination profile. GGUF is not yet selectable through E1 or the UI.
 
 ## Current runtime boundaries
 
@@ -28,20 +28,24 @@ modeled as E0 backends.
 
 The workspace now uses `domain`, `platform`, `adapters`, `runtime`, and `apps` as its physical roots. Runtime and platform roles fail closed in the architecture validator, and runtime production dependencies on platform/adapters or another runtime require an exact reviewed composition edge.
 
-## Current E1 generation boundary
+## Current E1 generation and conversation boundary
 
 The source tree contains:
 
 - stable E1 `GenerationSettings` for maximum new tokens, sampling controls, repetition policy, seed policy, EOS tokens, and textual stop suffixes;
-- direct-completion prompt encoding through the resolved `HfTokenizer`, with special-token behavior explicit and no chat-template claim;
-- request-local owned Hugging Face streaming decode state without full-history re-decode;
+- direct-completion prompt encoding through the resolved `HfTokenizer`, with special-token behavior explicit;
+- exact `TinyLlama/TinyLlama-1.1B-Chat-v1.0` textual role rendering plus EOS token 2 termination compatibility, enabled only when tokenizer `</s>` resolves to ID 2;
+- stable frontend-neutral conversation records with raw provenance, retention, token estimates, response-attempt terminal state, and supersession;
+- deterministic derived `ContextEntry` planning, reserved output capacity, ordered rendering, exact tokenization, strictly shrinking bounded correction, pinned overflow, and selected/dropped diagnostics;
+- submit, regenerate, clear, and cancel operations with active mutation rejection and in-memory-only history;
+- request-local owned Hugging Face streaming decode state without full-history re-decode, with fragments appended once to E1 assistant state;
 - application-owned generation state for start, running, cancellation, terminal cleanup/exhaustion, usage, and last terminal result;
 - bounded UTF-8/state accumulation with E1 types that hide host-runtime implementation details from frontends;
 - bounded translation of E0 token/state pulls into decoded text/state pulls without frontend-driven per-token commands;
 - explicit single-model E1 configuration;
 - application-owned `ModelUnloadBehavior::{RejectIfBusy, CancelActive, Drain}` rather than exposing E0 unload policy types;
 - download-free E1/Candle integration coverage for generation, backpressure, cancellation, unload behavior, worker disconnection, and shutdown;
-- Slint generation controls with frame-aligned bounded text pulling, fragment-only widget appends that preserve selection/viewport state, usage, terminal-state, cancellation-pending, and clear-output presentation.
+- Slint conversation controls with frame-aligned bounded text pulling, fragment-only assistant appends, turn-start transcript snapshots, send/regenerate/cancel/clear behavior, usage, and explicit successful/cancelled/failed presentation.
 
 ## Integration depth
 
@@ -51,22 +55,27 @@ The source tree contains:
 | Backend-independent generation scheduler | Yes | Submitted as one complete request | No direct access; bounded consumer only |
 | Sampling algorithm | Integrated inside E0 | Stable settings translated at admission | Uses E1 defaults |
 | Bounded streamed token output | Pull-oriented token/state batches | Consumed internally | One decoded-text pull per frame |
-| Prompt tokenization | Token IDs only | Direct-completion prompt encoded once | Prompt control wired through E1 |
-| Stateful decoded text streaming | No text ownership | Bounded request-local UTF-8 pulls | Batched presentation output |
-| Generation start/cancel state | Runtime command/state | Public E1 API/state/events | Generate/cancel/status/terminal controls |
-| General chat templates/history | No | No | No |
+| Prompt tokenization | Token IDs only | Direct completion or planned/rendered TinyLlama chat prompt | Message composer through E1 |
+| Stateful decoded text streaming | No text ownership | Bounded request-local UTF-8 pulls plus assistant attempt state | Batched transcript fragments |
+| Generation start/cancel state | Runtime command/state | Public E1 API/state/events | Send/regenerate/cancel/status controls |
+| Chat templates/history | No | One verified TinyLlama Chat v1 profile; in-memory raw history | Conversation transcript and clear |
 
 ## Validation state
 
-The last recorded complete local gate remains the Phase 6 closure run from 2026-07-27. It covered architecture/dependency validation, formatting, workspace checks, tests/doctests, strict Clippy, rustdoc, benchmark compilation, and focused `desktop-slint` presenter coverage.
+On 2026-07-29, the complete canonical locked gate passed on the Phase 7 working tree based on `afecb6c8f9d22d8f84d9e46f9be9d6c4fad73bea`:
 
-The corrective-workflow extraction, fail-closed runtime/platform role registration, reviewed runtime composition edges, and physical taxonomy migration are present in `f8b3396cc23085696123b95c9dcb4b17c3d9c214`, but the repository does not yet contain a validation record tying the complete canonical gate to that exact tree or to this documentation closure. Run the canonical gate on the final Phase 7-preparation commit and record its SHA before treating the current baseline as fully validated.
+```text
+cargo run --locked --bin llm-app -- verify
+```
 
-The graphical external-model acceptance scenario was not manually exercised in this environment. Download-free E1/Candle integration tests cover the underlying generation, cancellation, unload, backpressure, and shutdown loop; presenter tests cover the new UI mapping. Historical Phase 3–5 evidence remains in [execution history](../agent/execution/history.md).
+It covered architecture/dependency validation, formatting, workspace checks, the full test/doctest suite, strict Clippy, rustdoc, and benchmark compilation. Focused runs also passed for `context-planner`, `application-runtime`, and `desktop-slint`, including strict all-target Clippy. The tree is uncommitted, so this evidence applies to the documented working tree, not to the base commit by itself.
+
+The graphical external-model acceptance scenario was not manually exercised in this environment. Download-free E1/Candle integration tests cover rendered prompt admission, exact usage, planning/correction, regeneration, pinned overflow, cancellation/unload/backpressure, and shutdown; presenter tests cover the chat UI mapping. Historical earlier-phase evidence remains in [execution history](../agent/execution/history.md).
 
 ## Known limitations
 
-- Direct completion is implemented; general chat templates, message history, context rendering, and conversation persistence are not.
+- Chat compatibility is intentionally limited to `TinyLlama/TinyLlama-1.1B-Chat-v1.0`; unknown model/template compatibility fails and uses no guessed fallback.
+- Conversation history is in memory only; persistence and arbitrary branch trees are not implemented.
 - Slint uses the stable E1 default generation settings; a configurable settings panel is not yet exposed.
 - The E1 product path is deliberately single-model even though lower E0 contracts can represent more general residency.
 - The Candle external smoke fixture is a tiny random test model. It proves execution/lifecycle integration, not language quality.

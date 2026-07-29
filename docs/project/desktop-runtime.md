@@ -3,20 +3,22 @@
 ## Scope
 
 The desktop composition owns native process concerns while delegating model
-lifecycle and direct-completion orchestration to `application-runtime`:
+lifecycle, direct-completion, and compatible conversation orchestration to `application-runtime`:
 
 1. resolve one immutable Hugging Face model revision;
 2. cache and validate its required artifacts;
 3. load its serialized tokenizer;
 4. persist the logical repository/revision selection;
 5. load one Candle CPU model;
-6. expose E1 direct-completion start, cancel, text-pull, and unload behavior;
-7. keep all network, database, vendor, and UI types outside portable features.
+6. expose E1 conversation submit/regenerate/clear, cancellation, bounded text-pull, and unload behavior;
+7. retain direct completion as an E1 API without guessing chat compatibility in the UI;
+8. keep all network, database, vendor, and UI types outside portable features.
 
-Generation is composed through E1 rather than Slint callbacks. The Slint window exposes
-the first direct-completion product path: prompt input, generated output, generate/cancel/
-clear actions, usage, terminal state, and the existing model lifecycle controls. Broader
-conversation features remain tracked in [implementation status](implementation-status.md).
+Generation is composed through E1 rather than Slint callbacks. The Slint window now
+exposes a conversation transcript, message composer, send/regenerate/cancel/clear
+actions, exact context/generated usage, terminal state, and the existing model
+lifecycle controls. Chat submission succeeds only for E1's verified TinyLlama Chat v1
+profile; the frontend does not select or implement templates.
 
 See the [application runtime guide](application-runtime.md) for the complete E1 public boundary.
 
@@ -30,7 +32,8 @@ See the [application runtime guide](application-runtime.md) for the complete E1 
 - exact-selection validation before loading;
 - the hosted inference-runtime endpoint;
 - loaded-generation and active-request state;
-- direct-completion prompt/tokenizer/text orchestration;
+- direct-completion and verified chat prompt/tokenizer/text orchestration;
+- raw conversation state, regeneration/supersession, context planning, and diagnostics;
 - explicit reject/cancel/drain unload behavior;
 - normalized structured events;
 - bounded worker shutdown and joins.
@@ -46,7 +49,7 @@ backend orchestration.
 - Slint component construction;
 - callback-to-command mapping;
 - one 16 millisecond frame cadence for bounded event draining and one decoded-output pull;
-- presentation-owned batched text and terminal-state mapping;
+- presentation-owned transcript formatting plus batched assistant fragment and terminal-state mapping;
 - control and usage synchronization from `ApplicationState`;
 - process exit reporting.
 
@@ -117,17 +120,19 @@ schema. Each write occurs in a redb transaction.
 The Slint thread owns the component and a repeated 16 millisecond timer. Each
 tick drains at most 64 structured application events, pulls exactly one bounded E1
 decoded-output batch, applies one presentation delta, then synchronizes controls and
-usage from `ApplicationState`. Worker token or network frequency therefore cannot
+usage from `ApplicationState`. Conversation ownership remains in E1; Slint formats a
+snapshot when a turn starts and appends only the new assistant frame fragment while it
+streams. Worker token or network frequency therefore cannot
 directly enqueue Slint callbacks or trigger one layout update per generated token.
 
 The presenter copies borrowed text fragments before E1 reuses its accumulator, filters
 them by request identity, and sends only the new frame fragment through one Slint append
-callback. The same read-only `TextEdit` instance retains selection ownership; the callback
-snapshots and restores its `viewport-x` and `viewport-y` around each append. Rust no longer
-retains or reassigns the complete displayed output. Pulling remains unconditional after
-terminal state so final text and `Released` records cannot be stranded. Clear output resets
-the widget text, selection, and viewport only; it does not cancel generation or mutate E1
-terminal history.
+callback. The same read-only transcript `TextEdit` retains selection ownership; append and
+turn-start replacement callbacks preserve its viewport. A turn-start snapshot is formatted
+from E1 raw records so regeneration can show superseded provenance, while streaming remains
+fragment-only. Pulling remains unconditional after terminal state so final text and
+`Released` records cannot be stranded. Clear conversation invokes E1, is disabled/rejected
+while a response is active, and resets the transcript only after semantic history clears.
 
 ## Generated Rust and unsafe linting
 

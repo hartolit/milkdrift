@@ -10,13 +10,15 @@ use inference_runtime::{RuntimeCommand, RuntimeEvent};
 use super::ApplicationRuntime;
 use crate::{
     ApplicationActivity, ApplicationError, ApplicationEvent, ApplicationOutputRecordKind,
-    ApplicationOutputState, ApplicationRuntimeConfiguration, GenerationPhase, GenerationSeed,
-    GenerationSettings, GenerationSettingsField, GenerationTerminal, GenerationTerminalKind,
-    GenerationTerminalOutcome, LoadedModel, ModelUnloadBehavior,
+    ApplicationOutputState, ApplicationRuntimeConfiguration, ConversationRole, GenerationPhase,
+    GenerationSeed, GenerationSettings, GenerationSettingsField, GenerationTerminal,
+    GenerationTerminalKind, GenerationTerminalOutcome, LoadedModel, ModelUnloadBehavior,
+    ResponseAttemptState,
 };
 
 const REPOSITORY: &str = "fixture/tiny-llama";
-const REVISION: &str = "phase5";
+const CHAT_REPOSITORY: &str = "TinyLlama/TinyLlama-1.1B-Chat-v1.0";
+const REVISION: &str = "phase7";
 const COMMIT: &str = "fixture";
 const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 const TEST_POLL: Duration = Duration::from_millis(1);
@@ -72,6 +74,141 @@ fn direct_completion_streams_text_and_releases_state() -> TestResult {
         )));
         assert!(runtime.state().active_generation().is_none());
         assert_eq!(runtime.state().last_generation(), Some(&result.terminal));
+        Ok(())
+    })
+}
+
+#[test]
+fn compatible_chat_plans_and_submits_the_rendered_prompt_with_profile_eos() -> TestResult {
+    with_loaded_chat_runtime(default_test_configuration, |runtime, loaded| {
+        let request_id = runtime
+            .submit_user_message("hello", deterministic_settings(3))
+            .map_err(application_error)?;
+        let diagnostics = runtime
+            .context_diagnostics()
+            .cloned()
+            .ok_or_else(|| "chat context diagnostics were not published".to_owned())?;
+        assert_eq!(diagnostics.selected.len(), 1);
+        assert!(diagnostics.dropped.is_empty());
+        assert!(
+            diagnostics.actual_input_tokens + diagnostics.reserved_output_tokens
+                <= loaded.maximum_context_tokens
+        );
+        assert!(diagnostics.actual_input_tokens > 1);
+
+        wait_for_generation_started(runtime, request_id)?;
+        let result = collect_generation(runtime, request_id)?;
+        assert!(matches!(
+            result.terminal.outcome,
+            GenerationTerminalOutcome::Finished(_)
+        ));
+        assert_eq!(
+            result.terminal.usage.prompt_tokens,
+            u64::from(diagnostics.actual_input_tokens)
+        );
+        assert_eq!(runtime.conversation().len(), 2);
+        let assistant = runtime
+            .conversation()
+            .get(1)
+            .ok_or_else(|| "assistant attempt was not retained".to_owned())?;
+        assert_eq!(assistant.role, ConversationRole::Assistant);
+        assert!(assistant.is_active_context());
+        assert!(matches!(
+            assistant
+                .response_attempt
+                .as_ref()
+                .map(|attempt| &attempt.state),
+            Some(ResponseAttemptState::Completed(_))
+        ));
+        Ok(())
+    })
+}
+
+#[test]
+fn regeneration_preserves_superseded_attempt_and_clear_rejects_active_response() -> TestResult {
+    with_loaded_chat_runtime(default_test_configuration, |runtime, _loaded| {
+        let first_request = runtime
+            .submit_user_message("hello", deterministic_settings(3))
+            .map_err(application_error)?;
+        assert_eq!(
+            runtime.clear_conversation(),
+            Err(ApplicationError::GenerationAlreadyActive(first_request))
+        );
+        wait_for_generation_started(runtime, first_request)?;
+        let _first = collect_generation(runtime, first_request)?;
+
+        let second_request = runtime
+            .regenerate_last_response(deterministic_settings(3))
+            .map_err(application_error)?;
+        wait_for_generation_started(runtime, second_request)?;
+        let _second = collect_generation(runtime, second_request)?;
+
+        assert_eq!(runtime.conversation().len(), 3);
+        let first_attempt = runtime
+            .conversation()
+            .get(1)
+            .and_then(|record| record.response_attempt.as_ref())
+            .ok_or_else(|| "first response attempt was not retained".to_owned())?;
+        let second_attempt = runtime
+            .conversation()
+            .get(2)
+            .and_then(|record| record.response_attempt.as_ref())
+            .ok_or_else(|| "replacement response attempt was not retained".to_owned())?;
+        assert!(first_attempt.superseded);
+        assert!(!second_attempt.superseded);
+        assert_ne!(first_attempt.id, second_attempt.id);
+        assert!(
+            !runtime
+                .conversation()
+                .get(1)
+                .is_some_and(crate::ConversationRecord::is_active_context)
+        );
+        assert!(
+            runtime
+                .conversation()
+                .get(2)
+                .is_some_and(crate::ConversationRecord::is_active_context)
+        );
+
+        runtime.clear_conversation().map_err(application_error)?;
+        assert!(runtime.conversation().is_empty());
+        assert!(runtime.context_diagnostics().is_none());
+        Ok(())
+    })
+}
+
+#[test]
+fn pinned_overflow_keeps_committed_user_history_and_never_starts_an_attempt() -> TestResult {
+    with_loaded_chat_runtime(default_test_configuration, |runtime, _loaded| {
+        runtime
+            .set_system_instruction(
+                "old old old old old old old old old old old old old old old old old old",
+            )
+            .map_err(application_error)?;
+        let result = runtime.submit_user_message("hello", deterministic_settings(3));
+
+        assert!(matches!(
+            result,
+            Err(ApplicationError::PinnedBudgetExceeded { .. })
+        ));
+        assert_eq!(runtime.conversation().len(), 2);
+        assert_eq!(
+            runtime.conversation().get(1).map(|record| record.role),
+            Some(ConversationRole::User)
+        );
+        assert!(runtime.state().active_generation().is_none());
+        Ok(())
+    })
+}
+
+#[test]
+fn unknown_chat_compatibility_fails_without_guessing_a_template() -> TestResult {
+    with_loaded_runtime(default_test_configuration, |runtime, _loaded| {
+        assert_eq!(
+            runtime.submit_user_message("hello", deterministic_settings(1)),
+            Err(ApplicationError::UnsupportedChatCompatibility)
+        );
+        assert!(runtime.conversation().is_empty());
         Ok(())
     })
 }
@@ -358,6 +495,17 @@ where
     })
 }
 
+fn with_loaded_chat_runtime<C, F>(configure: C, test: F) -> TestResult
+where
+    C: FnOnce(&mut ApplicationRuntimeConfiguration),
+    F: FnOnce(&mut ApplicationRuntime, LoadedModel) -> TestResult,
+{
+    with_runtime(configure, |runtime| {
+        let loaded = load_fixture_with(runtime, CHAT_REPOSITORY, "chat-tokenizer.json")?;
+        test(runtime, loaded)
+    })
+}
+
 fn with_runtime<C, F>(configure: C, test: F) -> TestResult
 where
     C: FnOnce(&mut ApplicationRuntimeConfiguration),
@@ -397,15 +545,23 @@ const fn backpressure_test_configuration(configuration: &mut ApplicationRuntimeC
 }
 
 fn load_fixture(runtime: &mut ApplicationRuntime) -> TestResult<LoadedModel> {
+    load_fixture_with(runtime, REPOSITORY, "tokenizer.json")
+}
+
+fn load_fixture_with(
+    runtime: &mut ApplicationRuntime,
+    repository: &str,
+    tokenizer_filename: &str,
+) -> TestResult<LoadedModel> {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let candle = manifest.join("../inference-runtime/tests/fixtures/candle-llama");
     let artifacts = ResolvedModelArtifacts {
-        repository: REPOSITORY.to_owned(),
+        repository: repository.to_owned(),
         revision: REVISION.to_owned(),
         commit: COMMIT.to_owned(),
         declared_scalar_type: Some(ArtifactScalarType::F32),
         config_path: canonical(candle.join("config.json"))?,
-        tokenizer_path: canonical(manifest.join("tests/fixtures/tokenizer.json"))?,
+        tokenizer_path: canonical(manifest.join("tests/fixtures").join(tokenizer_filename))?,
         weight_paths: vec![canonical(candle.join("model.safetensors"))?],
     };
     match runtime.accept_resolved_artifacts(artifacts) {
@@ -414,7 +570,7 @@ fn load_fixture(runtime: &mut ApplicationRuntime) -> TestResult<LoadedModel> {
     }
 
     runtime
-        .load_model(REPOSITORY, REVISION)
+        .load_model(repository, REVISION)
         .map_err(application_error)?;
     let event = wait_for_event(runtime, |event| {
         matches!(

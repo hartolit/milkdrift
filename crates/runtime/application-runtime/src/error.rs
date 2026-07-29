@@ -157,8 +157,29 @@ pub enum ApplicationError {
     GenerationAlreadyActive(RequestId),
     /// The addressed generation request is not the active request.
     GenerationNotActive(RequestId),
-    /// Encoded prompt is empty.
+    /// Encoded direct-completion prompt is empty.
     EmptyPrompt,
+    /// A submitted conversation message is empty after trimming.
+    EmptyConversationMessage,
+    /// Semantic message content contains a reserved renderer control marker.
+    ReservedChatMarker,
+    /// The resolved model/tokenizer pair has no verified chat profile.
+    UnsupportedChatCompatibility,
+    /// A system instruction may only be installed before conversation history exists.
+    SystemInstructionRequiresEmptyConversation,
+    /// No prior assistant attempt is available for regeneration.
+    NoRegenerableResponse,
+    /// Stable conversation or attempt identity space was exhausted.
+    ConversationIdentityExhausted,
+    /// Pinned semantic content cannot fit within the available input budget.
+    PinnedBudgetExceeded {
+        /// Lower bound on required input positions.
+        required_at_least: u64,
+        /// Available input positions after output reservation.
+        available: u64,
+    },
+    /// Exact-token correction failed to strictly reduce the selected set.
+    UnchangedContextCorrection,
     /// Encoded prompt exceeds the model's prefill limit.
     PromptTooLong {
         /// Encoded prompt tokens required.
@@ -227,6 +248,34 @@ impl Display for ApplicationError {
             Self::EmptyPrompt => {
                 formatter.write_str("direct-completion prompt encoded to no tokens")
             }
+            Self::EmptyConversationMessage => {
+                formatter.write_str("conversation message is empty")
+            }
+            Self::ReservedChatMarker => formatter.write_str(
+                "conversation message contains a marker reserved by the active chat profile",
+            ),
+            Self::UnsupportedChatCompatibility => formatter.write_str(
+                "the resolved model and tokenizer have no verified chat prompt/termination profile; direct completion remains available",
+            ),
+            Self::SystemInstructionRequiresEmptyConversation => formatter.write_str(
+                "a system instruction can only be set before conversation history exists",
+            ),
+            Self::NoRegenerableResponse => {
+                formatter.write_str("no assistant response attempt is available for regeneration")
+            }
+            Self::ConversationIdentityExhausted => {
+                formatter.write_str("conversation identity space is exhausted")
+            }
+            Self::PinnedBudgetExceeded {
+                required_at_least,
+                available,
+            } => write!(
+                formatter,
+                "pinned conversation content requires at least {required_at_least} input tokens but only {available} are available",
+            ),
+            Self::UnchangedContextCorrection => formatter.write_str(
+                "exact-token context correction did not reduce the selected non-pinned set",
+            ),
             Self::PromptTooLong {
                 required,
                 available,

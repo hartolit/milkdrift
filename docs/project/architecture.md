@@ -113,7 +113,7 @@ The current product boundary is intentionally narrower than the architecture:
 - Candle Llama/Safetensors is the composed E1 inference path;
 - GGUF is not yet an E1/UI selection;
 - E1 exposes one resident local model at a time;
-- direct completion is implemented before general chat/history rendering;
+- direct completion remains available, and chat/history rendering is implemented for the verified TinyLlama Chat v1 profile only;
 - hosted providers, peer execution, GPU execution, and browser transport are not supported product paths.
 
 These are current product constraints, not reusable architecture rules. The authoritative integration matrix and active execution position are in [implementation status](implementation-status.md).

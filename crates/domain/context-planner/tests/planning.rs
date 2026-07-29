@@ -2,7 +2,8 @@
 
 use context_planner::{
     ContextBudget, ContextContent, ContextEntry, ContextEntryId, ContextPersistence,
-    ContextPriority, ContextRole, ContextSource, PlanWorkspace, PlanningError, plan,
+    ContextPriority, ContextRole, ContextSource, PlanWorkspace, PlanningError,
+    exact_token_correction_candidate_index, plan,
 };
 
 const fn entry(
@@ -23,6 +24,24 @@ const fn entry(
         estimated_tokens,
         content: ContextContent::Text(text),
     }
+}
+
+fn correction_candidate(entries: &[ContextEntry<'static>]) -> Result<Option<usize>, PlanningError> {
+    let budget = ContextBudget::new(100, 0)?;
+    let mut ordering = [0_usize; 3];
+    let mut selected = [0_usize; 3];
+    let mut dropped = [0_usize; 3];
+    let result = plan(
+        entries,
+        budget,
+        PlanWorkspace {
+            ordering: &mut ordering,
+            selected: &mut selected,
+            dropped: &mut dropped,
+        },
+    )?;
+
+    Ok(result.exact_token_correction_candidate_index())
 }
 
 #[test]
@@ -56,6 +75,72 @@ fn planner_preserves_pinned_and_selects_high_priority_entries() -> Result<(), Pl
         .map(|value| value.id.get())
         .collect();
     assert_eq!(ids, [1, 3, 4]);
+    Ok(())
+}
+
+#[test]
+fn exact_token_correction_candidate_uses_selection_order() -> Result<(), PlanningError> {
+    let lower_priority = [
+        entry(1, 2, 1, ContextPersistence::Retained, 1, "lower"),
+        entry(2, 1, 2, ContextPersistence::Ephemeral, 1, "higher"),
+    ];
+    assert_eq!(correction_candidate(&lower_priority)?, Some(0));
+
+    let ephemeral = [
+        entry(1, 1, 1, ContextPersistence::Retained, 1, "retained"),
+        entry(2, 2, 1, ContextPersistence::Ephemeral, 1, "ephemeral"),
+    ];
+    assert_eq!(correction_candidate(&ephemeral)?, Some(1));
+
+    let older = [
+        entry(1, 2, 1, ContextPersistence::Retained, 1, "newer"),
+        entry(2, 1, 1, ContextPersistence::Retained, 1, "older"),
+    ];
+    assert_eq!(correction_candidate(&older)?, Some(1));
+
+    let identity_tie_break = [
+        entry(2, 1, 1, ContextPersistence::Retained, 1, "larger id"),
+        entry(1, 1, 1, ContextPersistence::Retained, 1, "smaller id"),
+    ];
+    assert_eq!(correction_candidate(&identity_tie_break)?, Some(0));
+    Ok(())
+}
+
+#[test]
+fn exact_token_correction_candidate_advances_as_selected_indices_shrink() {
+    let entries = [
+        entry(1, 0, 0, ContextPersistence::Pinned, 1, "pinned"),
+        entry(2, 5, 1, ContextPersistence::Retained, 1, "low priority"),
+        entry(3, 5, 2, ContextPersistence::Ephemeral, 1, "ephemeral"),
+        entry(4, 1, 2, ContextPersistence::Retained, 1, "older"),
+        entry(6, 2, 2, ContextPersistence::Retained, 1, "larger id"),
+        entry(5, 2, 2, ContextPersistence::Retained, 1, "smaller id"),
+    ];
+
+    let candidates = [
+        exact_token_correction_candidate_index(&entries, &[0, 1, 2, 3, 4, 5]),
+        exact_token_correction_candidate_index(&entries, &[0, 2, 3, 4, 5]),
+        exact_token_correction_candidate_index(&entries, &[0, 3, 4, 5]),
+        exact_token_correction_candidate_index(&entries, &[0, 4, 5]),
+        exact_token_correction_candidate_index(&entries, &[0, 5]),
+        exact_token_correction_candidate_index(&entries, &[0]),
+    ];
+
+    assert_eq!(
+        candidates,
+        [Some(1), Some(2), Some(3), Some(4), Some(5), None]
+    );
+}
+
+#[test]
+fn exact_token_correction_candidate_is_none_when_all_selected_entries_are_pinned()
+-> Result<(), PlanningError> {
+    let entries = [
+        entry(1, 1, 1, ContextPersistence::Pinned, 1, "a"),
+        entry(2, 2, 1, ContextPersistence::Pinned, 1, "b"),
+    ];
+
+    assert_eq!(correction_candidate(&entries)?, None);
     Ok(())
 }
 

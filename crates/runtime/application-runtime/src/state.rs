@@ -4,7 +4,7 @@ use domain_contracts::{
     DeviceKind, FinishReason, GenerationUsage, ModelHandle, RequestId, ScalarType,
 };
 
-use crate::ApplicationFailure;
+use crate::{ApplicationFailure, ChatCompatibility};
 
 /// Long-running application operation currently in progress.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -42,6 +42,8 @@ pub struct ResolvedModel {
     pub vocabulary_size: u32,
     /// Scalar type declared by the model configuration when recognized.
     pub scalar_type: Option<ScalarType>,
+    /// Explicit prompt-rendering and termination compatibility for chat mode.
+    pub chat_compatibility: ChatCompatibility,
 }
 
 impl ResolvedModel {
@@ -207,7 +209,7 @@ impl ApplicationState {
             })
     }
 
-    /// Returns whether direct completion may start against the resident model.
+    /// Returns whether completion or compatible chat generation may start against the resident model.
     #[must_use]
     pub const fn can_start_generation(&self) -> bool {
         matches!(self.activity, ApplicationActivity::Idle)

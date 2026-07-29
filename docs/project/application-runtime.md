@@ -18,6 +18,10 @@ It currently owns:
 - model load plus application-owned reject/cancel/drain unload behavior;
 - terminal unload completion and bounded shutdown commands;
 - direct-completion prompt encoding;
+- frontend-neutral in-memory conversation records and response-attempt provenance;
+- explicit `TinyLlama/TinyLlama-1.1B-Chat-v1.0` prompt/termination compatibility;
+- request-local context derivation, deterministic planning, exact-token correction, and diagnostics;
+- submit, regenerate, clear, and cancellation semantics for conversation turns;
 - stable application-level generation settings and translation to E0 contracts;
 - one request-local owned streaming decoder;
 - bounded token-to-text translation and frontend text pulls;
@@ -32,20 +36,26 @@ It does not own:
 - provider SDK/wire DTOs or peer transport implementations;
 - OS-specific application-data path policy.
 
-Phase 7 adds conversation semantics to E1 because every frontend should observe the
-same message history, context policy, regeneration behavior, and cancellation
-state. The context-selection algorithm remains in `context-planner`; prompt
-rendering keeps a distinct compatibility boundary; corrective workflows live in
-`corrective-workflow`. Coordination does not imply implementation ownership.
+Conversation semantics live in E1 because every frontend must observe the same raw
+history, active-context policy, regeneration behavior, and cancellation state. The
+context-selection and exact-correction candidate order remain in `context-planner`;
+the first prompt renderer is an internal compatibility module rather than a new
+crate; corrective workflows remain in `corrective-workflow`. Coordination does not
+imply implementation ownership.
 
 ## Public boundary
 
 Frontends construct `ApplicationRuntimeConfiguration`, start `ApplicationRuntime`,
-inspect `ApplicationState`, submit model-lifecycle operations, and use the narrow
-direct-completion API:
+inspect `ApplicationState`, submit model-lifecycle operations, and use completion
+or compatible conversation operations:
 
 ```text
 start_generation(input, settings) -> RequestId
+submit_user_message(content, settings) -> RequestId
+regenerate_last_response(settings) -> RequestId
+clear_conversation()
+conversation() -> &[ConversationRecord]
+context_diagnostics() -> Option<&ContextDiagnostics>
 cancel_generation(request_id)
 unload_model_with_behavior(behavior)
 poll_event() -> Option<ApplicationEvent>
@@ -57,14 +67,15 @@ provides application-owned `RejectIfBusy`, `CancelActive`, and `Drain` choices
 without exposing E0's `UnloadPolicy` contract to frontends.
 
 `GenerationSettings` is owned by E1. It exposes stable completion controls rather
-than re-exporting the sampling crate. E1 validates the settings, encodes the prompt
-and textual stop suffixes once, and translates them into the E0 `GenerationRequest`.
-Beginning/end special-token policy is explicit: the direct-completion mode encodes
-ordinary prompt text without automatically adding boundary tokens.
+than re-exporting the sampling crate. Direct completion validates settings, encodes
+ordinary prompt text without automatic boundary tokens, and translates the result
+to E0. Chat preserves sampling controls but its compatibility profile replaces
+caller EOS/text-stop values with the tested assistant-turn termination policy.
 
 Generated token IDs remain private below E1. E1 pulls bounded E0 token/state
-batches, advances one owned request-local Hugging Face streaming decoder, and
-republishes bounded UTF-8 text plus compact generation state. A token whose decoded
+batches, advances one owned request-local Hugging Face streaming decoder, appends
+each decoded fragment to the active assistant attempt exactly once, and republishes
+bounded UTF-8 text plus compact generation state. A token whose decoded
 fragment cannot yet be published remains in E1 pending state until frontend output
 capacity becomes available; E0 is not advanced by frontend per-token commands.
 
@@ -78,6 +89,36 @@ Asynchronous worker outcomes are returned as structured `ApplicationEvent` value
 High-frequency generated text is pulled separately in borrowed batches. Vendor
 failures are normalized into `ApplicationFailure` with a stable category and owned
 cold-path diagnostic.
+
+## Conversation and context semantics
+
+Raw `ConversationRecord` values have stable record/attempt identities, monotonic
+order, semantic role/content, provenance, retention policy, token estimate, and
+assistant terminal state. They contain no local model handle, provider DTO, peer
+connection, or transport state. Successful unsuperseded assistant attempts enter
+the default active-context view; streaming, failed, cancelled, and superseded
+attempts remain inspectable but are excluded.
+
+For every chat request E1 derives temporary `ContextEntry` values, pins the target
+user record and stored pinned content, reserves output positions, and invokes
+`context-planner`. Selected records render in conversation order. E1 then tokenizes
+the complete rendered prompt against the smaller of model context and prefill
+capacity. Overflow removes exactly one planner-selected non-pinned entry per retry.
+Attempts are bounded by the initially selected droppable count plus one; pinned-only
+overflow returns `PinnedBudgetExceeded` and unchanged correction fails explicitly.
+The admitted exact count is exposed through `ContextDiagnostics` and generation
+usage.
+
+The only built-in profile is `TinyLlama/TinyLlama-1.1B-Chat-v1.0`. Compatibility
+requires `</s>` to resolve to EOS token ID 2. The role markers are verified template
+text and need not each be one added token. Rendering and EOS token 2 are tested together. Unknown repositories
+or incompatible tokenizer metadata return `UnsupportedChatCompatibility`; E1 never
+applies this template to another model family.
+
+Regeneration creates a new attempt for the latest responded-to user record and marks
+all prior attempts for that turn superseded without deleting them. Clearing is
+rejected while a conversation response is active. Conversation persistence and a
+general branch tree are intentionally absent.
 
 ## Current composition versus application semantics
 
@@ -117,12 +158,16 @@ See [ADR-0008](../agent/decisions/0008-capability-and-execution-boundaries.md).
 
 ## Generation state
 
-`ApplicationState` currently records:
+`ApplicationState` records:
 
 - the loaded local model and its Candle/CPU execution target;
-- the active request identity, phase, prompt/generated usage;
+- resolved chat compatibility (`Supported(TinyLlamaChatV1)` or `Unsupported`);
+- the active request identity, phase, exact prompt/generated usage;
 - whether generation can start or be cancelled;
 - the last terminal completion/failure summary.
+
+Raw conversation history and context diagnostics are queried separately from this
+compact lifecycle state.
 
 Generation completion and E0 resource release remain distinct. `Terminal`, cleanup
 pending/exhausted, and `Released` states are preserved in the pulled output stream,

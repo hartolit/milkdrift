@@ -6,8 +6,9 @@ use std::time::Duration;
 
 use application_runtime::{
     ApplicationActivity, ApplicationEvent, ApplicationFailure, ApplicationOutputBatch,
-    ApplicationOutputRecordKind, ApplicationOutputState, ApplicationRuntime, GenerationSettings,
-    GenerationTerminalKind, GenerationTerminalOutcome, ResolvedModel, ScalarType,
+    ApplicationOutputRecordKind, ApplicationOutputState, ApplicationRuntime, ChatCompatibility,
+    ConversationRecord, ConversationRole, GenerationSettings, GenerationTerminalKind,
+    GenerationTerminalOutcome, ResolvedModel, ResponseAttemptState, ScalarType,
 };
 use slint::ComponentHandle;
 
@@ -28,9 +29,10 @@ impl Presenter {
         connect_resolve(window, Rc::clone(runtime));
         connect_load(window, Rc::clone(runtime));
         connect_unload(window, Rc::clone(runtime));
-        connect_generate(window, Rc::clone(runtime), Rc::clone(&state));
+        connect_submit_message(window, Rc::clone(runtime), Rc::clone(&state));
+        connect_regenerate(window, Rc::clone(runtime), Rc::clone(&state));
         connect_cancel(window, Rc::clone(runtime));
-        connect_clear_output(window);
+        connect_clear_conversation(window, Rc::clone(runtime));
         Self { state }
     }
 
@@ -87,21 +89,24 @@ pub fn synchronize_controls(window: &AppWindow, runtime: &ApplicationRuntime) {
     let state = runtime.state();
     let repository = window.get_repository().to_string();
     let revision = window.get_revision().to_string();
-    let prompt = window.get_prompt().to_string();
+    let message = window.get_message_input().to_string();
     let controls = control_state(
         state.can_resolve(),
         state.can_load(&repository, &revision),
         state.can_start_generation(),
+        runtime.can_regenerate_response(),
         state.can_cancel_generation(),
         state.can_unload(),
-        &prompt,
+        &message,
     );
 
     window.set_busy(state.activity() != ApplicationActivity::Idle);
     window.set_can_resolve(controls.can_resolve);
     window.set_can_load(controls.can_load);
-    window.set_can_edit_prompt(controls.can_edit_prompt);
-    window.set_can_generate(controls.can_generate);
+    window.set_can_edit_message(controls.can_edit_message);
+    window.set_can_submit_message(controls.can_submit_message);
+    window.set_can_regenerate(controls.can_regenerate);
+    window.set_can_clear_conversation(state.active_generation().is_none());
     window.set_can_cancel(controls.can_cancel);
     window.set_can_unload(controls.can_unload);
 
@@ -134,8 +139,9 @@ pub fn synchronize_controls(window: &AppWindow, runtime: &ApplicationRuntime) {
 struct ControlState {
     can_resolve: bool,
     can_load: bool,
-    can_edit_prompt: bool,
-    can_generate: bool,
+    can_edit_message: bool,
+    can_submit_message: bool,
+    can_regenerate: bool,
     can_cancel: bool,
     can_unload: bool,
 }
@@ -148,15 +154,17 @@ fn control_state(
     can_resolve: bool,
     can_load: bool,
     can_start_generation: bool,
+    can_regenerate: bool,
     can_cancel: bool,
     can_unload: bool,
-    prompt: &str,
+    message: &str,
 ) -> ControlState {
     ControlState {
         can_resolve,
         can_load,
-        can_edit_prompt: can_start_generation,
-        can_generate: can_start_generation && !prompt.trim().is_empty(),
+        can_edit_message: can_start_generation,
+        can_submit_message: can_start_generation && !message.trim().is_empty(),
+        can_regenerate,
         can_cancel,
         can_unload,
     }
@@ -194,7 +202,7 @@ impl PresentationState {
 #[derive(Debug, PartialEq, Eq)]
 enum GeneratedOutputUpdate {
     Append(String),
-    Reset,
+    Replace(String),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -204,14 +212,16 @@ struct PresentationUpdate {
     invalid_text_record: bool,
 }
 
-const fn reset_generated_output_update() -> GeneratedOutputUpdate {
-    GeneratedOutputUpdate::Reset
+const fn replace_conversation_update(transcript: String) -> GeneratedOutputUpdate {
+    GeneratedOutputUpdate::Replace(transcript)
 }
 
 fn render_generated_output_update(window: &AppWindow, update: GeneratedOutputUpdate) {
     match update {
-        GeneratedOutputUpdate::Append(text) => window.invoke_append_generated_output(text.into()),
-        GeneratedOutputUpdate::Reset => window.invoke_reset_generated_output(),
+        GeneratedOutputUpdate::Append(text) => window.invoke_append_assistant_text(text.into()),
+        GeneratedOutputUpdate::Replace(text) => {
+            window.invoke_replace_conversation_transcript(text.into());
+        }
     }
 }
 
@@ -397,41 +407,74 @@ fn connect_unload(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) 
     });
 }
 
-fn connect_generate(
+fn connect_submit_message(
     window: &AppWindow,
     runtime: Rc<RefCell<ApplicationRuntime>>,
     presentation: Rc<RefCell<PresentationState>>,
 ) {
     let weak = window.as_weak();
-    window.on_generate(move || {
+    window.on_submit_message(move || {
         let Some(window) = weak.upgrade() else {
             return;
         };
-        let prompt = window.get_prompt().to_string();
-        match runtime
+        let message = window.get_message_input().to_string();
+        let result = runtime
             .borrow_mut()
-            .start_generation(&prompt, GenerationSettings::default())
-        {
+            .submit_user_message(&message, GenerationSettings::default());
+        match result {
             Ok(request_id) => {
-                let mut presentation = presentation.borrow_mut();
-                presentation.begin_request(request_id.get());
-                render_generated_output_update(&window, reset_generated_output_update());
-                window.set_terminal_text(presentation.terminal_text.clone().into());
-                drop(presentation);
-                window.set_status_text(
-                    format!(
-                        "Generation {} submitted to Candle on CPU.",
-                        request_id.get()
-                    )
-                    .into(),
-                );
+                begin_presented_request(&window, &runtime, &presentation, request_id.get());
+                window.set_message_input("".into());
             }
             Err(error) => {
-                window.set_status_text(format!("Generation could not start: {error}").into());
+                window.set_status_text(format!("Message could not be submitted: {error}").into());
             }
         }
         synchronize_controls(&window, &runtime.borrow());
     });
+}
+
+fn connect_regenerate(
+    window: &AppWindow,
+    runtime: Rc<RefCell<ApplicationRuntime>>,
+    presentation: Rc<RefCell<PresentationState>>,
+) {
+    let weak = window.as_weak();
+    window.on_regenerate_response(move || {
+        let Some(window) = weak.upgrade() else {
+            return;
+        };
+        let result = runtime
+            .borrow_mut()
+            .regenerate_last_response(GenerationSettings::default());
+        match result {
+            Ok(request_id) => {
+                begin_presented_request(&window, &runtime, &presentation, request_id.get());
+            }
+            Err(error) => {
+                window
+                    .set_status_text(format!("Response could not be regenerated: {error}").into());
+            }
+        }
+        synchronize_controls(&window, &runtime.borrow());
+    });
+}
+
+fn begin_presented_request(
+    window: &AppWindow,
+    runtime: &Rc<RefCell<ApplicationRuntime>>,
+    presentation: &Rc<RefCell<PresentationState>>,
+    request_id: u64,
+) {
+    let transcript = format_conversation(runtime.borrow().conversation());
+    let mut presentation = presentation.borrow_mut();
+    presentation.begin_request(request_id);
+    render_generated_output_update(window, replace_conversation_update(transcript));
+    window.set_terminal_text(presentation.terminal_text.clone().into());
+    drop(presentation);
+    window.set_status_text(
+        format!("Response {request_id} submitted to TinyLlama Chat on Candle CPU.").into(),
+    );
 }
 
 fn connect_cancel(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) {
@@ -464,14 +507,66 @@ fn connect_cancel(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) 
     });
 }
 
-fn connect_clear_output(window: &AppWindow) {
+fn connect_clear_conversation(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) {
     let weak = window.as_weak();
-    window.on_clear_output(move || {
+    window.on_clear_conversation(move || {
         let Some(window) = weak.upgrade() else {
             return;
         };
-        render_generated_output_update(&window, reset_generated_output_update());
+        match runtime.borrow_mut().clear_conversation() {
+            Ok(()) => {
+                render_generated_output_update(&window, replace_conversation_update(String::new()));
+                window.set_terminal_text("No response has completed.".into());
+                window.set_status_text("Conversation cleared.".into());
+            }
+            Err(error) => {
+                window
+                    .set_status_text(format!("Conversation could not be cleared: {error}").into());
+            }
+        }
+        synchronize_controls(&window, &runtime.borrow());
     });
+}
+
+fn format_conversation(records: &[ConversationRecord]) -> String {
+    let mut transcript = String::new();
+    for record in records {
+        let label = match record.role {
+            ConversationRole::System => "System",
+            ConversationRole::User => "User",
+            ConversationRole::Assistant => "Assistant",
+        };
+        transcript.push_str(label);
+        transcript.push_str(": ");
+        transcript.push_str(record.content.as_str());
+        if let Some(attempt) = record.response_attempt.as_ref() {
+            match &attempt.state {
+                ResponseAttemptState::Streaming => {}
+                ResponseAttemptState::Completed(reason) => {
+                    transcript.push_str(format!("\n[completed: {reason:?}]").as_str());
+                }
+                ResponseAttemptState::Cancelled(reason) => {
+                    transcript.push_str(format!("\n[cancelled: {reason:?}]").as_str());
+                }
+                ResponseAttemptState::Failed(failure) => {
+                    transcript.push_str(format!("\n[failed: {failure}]").as_str());
+                }
+            }
+            if attempt.superseded {
+                transcript.push_str("\n[superseded by regeneration]");
+            }
+        }
+        if !matches!(
+            record
+                .response_attempt
+                .as_ref()
+                .map(|attempt| &attempt.state),
+            Some(ResponseAttemptState::Streaming)
+        ) {
+            transcript.push_str("\n\n");
+        }
+    }
+    transcript
 }
 
 fn apply_event(window: &AppWindow, event: ApplicationEvent) {
@@ -575,13 +670,17 @@ fn apply_model_resolved(
 ) {
     window.set_resolved_commit(model.commit.into());
     let scalar = model.scalar_type.map_or("unknown", scalar_type_name);
+    let chat = match model.chat_compatibility {
+        ChatCompatibility::Supported(_) => "verified TinyLlama Chat v1",
+        ChatCompatibility::Unsupported => "direct completion only; chat compatibility unknown",
+    };
     let message = match persistence_warning {
         Some(warning) => format!(
-            "Artifacts and tokenizer ({} tokens, {scalar}) are ready; catalogue persistence failed: {warning}",
+            "Artifacts and tokenizer ({} tokens, {scalar}, {chat}) are ready; catalogue persistence failed: {warning}",
             model.vocabulary_size,
         ),
         None => format!(
-            "Artifacts and tokenizer ({} tokens, {scalar}) are ready for CPU loading.",
+            "Artifacts and tokenizer ({} tokens, {scalar}, {chat}) are ready for CPU loading.",
             model.vocabulary_size,
         ),
     };
@@ -603,22 +702,25 @@ const fn scalar_type_name(value: ScalarType) -> &'static str {
 mod tests {
     use super::{
         CancellationMessageState, FrameOutputDelta, GeneratedOutputUpdate, PresentationState,
-        TerminalPresentation, cancellation_pending_message, control_state, format_terminal_outcome,
-        output_state_message, released_terminal_message, reset_generated_output_update,
+        TerminalPresentation, cancellation_pending_message, control_state, format_conversation,
+        format_terminal_outcome, output_state_message, released_terminal_message,
+        replace_conversation_update,
     };
     use application_runtime::{
-        ApplicationFailure, ApplicationFailureKind, ApplicationOutputState, GenerationTerminalKind,
-        GenerationTerminalOutcome,
+        ApplicationFailure, ApplicationFailureKind, ApplicationOutputState, ConversationProvenance,
+        ConversationRecord, ConversationRecordId, ConversationRetention, ConversationRole,
+        ConversationTokenEstimate, GenerationTerminalKind, GenerationTerminalOutcome,
+        ResponseAttempt, ResponseAttemptId, ResponseAttemptState,
     };
 
     #[test]
     fn running_generation_exposes_cancellation() {
-        let controls = control_state(false, false, false, true, true, "prompt");
+        let controls = control_state(false, false, false, false, true, true, "message");
 
-        assert!(!controls.can_generate);
+        assert!(!controls.can_submit_message);
         assert!(controls.can_cancel);
         assert!(controls.can_unload);
-        assert!(!controls.can_edit_prompt);
+        assert!(!controls.can_edit_message);
     }
 
     #[test]
@@ -634,21 +736,22 @@ mod tests {
     }
 
     #[test]
-    fn generation_requires_a_nonempty_visible_prompt() {
-        let empty = control_state(false, false, true, false, true, "  \n ");
-        let populated = control_state(false, false, true, false, true, "Hello");
+    fn message_submission_requires_nonempty_visible_input() {
+        let empty = control_state(false, false, true, false, false, true, "  \n ");
+        let populated = control_state(false, false, true, false, false, true, "Hello");
 
-        assert!(empty.can_edit_prompt);
-        assert!(!empty.can_generate);
-        assert!(populated.can_generate);
+        assert!(empty.can_edit_message);
+        assert!(!empty.can_submit_message);
+        assert!(populated.can_submit_message);
     }
 
     #[test]
-    fn released_generation_reenables_generate_and_keeps_unload_available() {
-        let controls = control_state(false, false, true, false, true, "Next prompt");
+    fn released_response_reenables_submit_and_regeneration() {
+        let controls = control_state(false, false, true, true, false, true, "Next message");
 
-        assert!(controls.can_edit_prompt);
-        assert!(controls.can_generate);
+        assert!(controls.can_edit_message);
+        assert!(controls.can_submit_message);
+        assert!(controls.can_regenerate);
         assert!(!controls.can_cancel);
         assert!(controls.can_unload);
     }
@@ -676,18 +779,38 @@ mod tests {
     }
 
     #[test]
-    fn clear_output_resets_only_widget_output_state() {
-        let presentation = PresentationState {
-            displayed_request: Some(7),
-            terminal_text: "Still running".to_owned(),
+    fn replacing_transcript_is_one_batched_presentation_update() {
+        assert_eq!(
+            replace_conversation_update("User: hello".to_owned()),
+            GeneratedOutputUpdate::Replace("User: hello".to_owned())
+        );
+    }
+
+    #[test]
+    fn transcript_preserves_failed_partial_attempt_provenance() {
+        let record = ConversationRecord {
+            id: ConversationRecordId::new(2),
+            ordinal: 2,
+            role: ConversationRole::Assistant,
+            content: "partial".to_owned(),
+            provenance: ConversationProvenance::Model,
+            retention: ConversationRetention::Retained,
+            token_estimate: ConversationTokenEstimate::Measured(1),
+            response_attempt: Some(ResponseAttempt {
+                id: ResponseAttemptId::new(1),
+                responding_to: ConversationRecordId::new(1),
+                state: ResponseAttemptState::Failed(ApplicationFailure::new(
+                    ApplicationFailureKind::Inference,
+                    "decode failed",
+                )),
+                superseded: false,
+            }),
         };
 
-        assert_eq!(
-            reset_generated_output_update(),
-            GeneratedOutputUpdate::Reset
-        );
-        assert_eq!(presentation.displayed_request, Some(7));
-        assert_eq!(presentation.terminal_text, "Still running");
+        let transcript = format_conversation(&[record]);
+
+        assert!(transcript.contains("Assistant: partial"));
+        assert!(transcript.contains("failed: decode failed"));
     }
 
     #[test]

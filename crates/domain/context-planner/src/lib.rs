@@ -238,6 +238,16 @@ impl<'entries> ContextPlan<'entries, '_> {
         self.maximum_tokens
     }
 
+    /// Returns the original index of the least-preferred selected entry eligible
+    /// for removal during exact-token correction.
+    ///
+    /// Pinned entries are never eligible. Remaining entries use the same priority,
+    /// persistence, ordinal, and identity ordering as initial candidate selection.
+    #[must_use]
+    pub fn exact_token_correction_candidate_index(&self) -> Option<usize> {
+        exact_token_correction_candidate_index(self.entries, self.selected)
+    }
+
     /// Iterates selected entries without copying their content.
     #[must_use]
     pub fn selected_entries(&self) -> ContextEntryIter<'_, 'entries> {
@@ -272,6 +282,28 @@ impl<'entries> Iterator for ContextEntryIter<'_, 'entries> {
 }
 
 impl ExactSizeIterator for ContextEntryIter<'_, '_> {}
+
+/// Returns the original index of the least-preferred selected entry eligible for
+/// removal during exact-token correction.
+///
+/// Pinned entries and selected indices outside `entries` are ignored. Remaining
+/// entries use the same priority, persistence, ordinal, and identity ordering as
+/// initial candidate selection.
+#[must_use]
+pub fn exact_token_correction_candidate_index(
+    entries: &[ContextEntry<'_>],
+    selected_indices: &[usize],
+) -> Option<usize> {
+    selected_indices
+        .iter()
+        .copied()
+        .filter(|index| {
+            entries
+                .get(*index)
+                .is_some_and(|entry| entry.persistence != ContextPersistence::Pinned)
+        })
+        .max_by(|left, right| candidate_order(entries, *left, *right))
+}
 
 /// Selects entries into a deterministic budgeted plan.
 ///

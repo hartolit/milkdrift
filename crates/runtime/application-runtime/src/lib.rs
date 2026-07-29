@@ -2,7 +2,9 @@
 
 #![forbid(unsafe_code)]
 
+mod chat;
 mod configuration;
+mod conversation;
 mod error;
 mod event;
 mod generation;
@@ -13,9 +15,15 @@ mod state;
 mod support;
 mod unload;
 
+pub use chat::{ChatCompatibility, ContextDiagnostics, PromptCompatibilityProfile};
 pub use configuration::{
     ApplicationHubConfiguration, ApplicationPreferences, ApplicationRuntimeConfiguration,
     ApplicationTiming,
+};
+pub use conversation::{
+    ConversationProvenance, ConversationRecord, ConversationRecordId, ConversationRetention,
+    ConversationRole, ConversationTokenEstimate, ResponseAttempt, ResponseAttemptId,
+    ResponseAttemptState,
 };
 pub use domain_contracts::ScalarType;
 pub use error::{

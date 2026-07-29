@@ -1,8 +1,8 @@
 //! Frontend-neutral application-state contract tests.
 
 use application_runtime::{
-    ApplicationActivity, ApplicationBackend, ApplicationState, GenerationPhase, GenerationSummary,
-    LoadedModel, ResolvedModel,
+    ApplicationActivity, ApplicationBackend, ApplicationState, ChatCompatibility, GenerationPhase,
+    GenerationSummary, LoadedModel, ResolvedModel,
 };
 use domain_contracts::{
     DeviceKind, GenerationUsage, ModelGeneration, ModelHandle, ModelId, RequestId, ScalarType,
@@ -20,6 +20,7 @@ fn resolved_selection_controls_load_admission() {
         commit: "immutable".to_owned(),
         vocabulary_size: 32,
         scalar_type: Some(ScalarType::F32),
+        chat_compatibility: ChatCompatibility::Unsupported,
     };
     assert!(resolved.matches_selection(" owner/model ", " main "));
 }
