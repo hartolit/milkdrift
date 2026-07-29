@@ -163,8 +163,7 @@ impl ApplicationRuntime {
     /// Returns whether the latest response attempt may be regenerated now.
     #[must_use]
     pub fn can_regenerate_response(&self) -> bool {
-        self.can_submit_chat_message()
-            && self.conversation.last_regenerable_user().is_some()
+        self.can_submit_chat_message() && self.conversation.last_regenerable_user().is_some()
     }
 
     /// Adds one pinned system instruction to an empty, inactive conversation.

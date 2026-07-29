@@ -737,10 +737,9 @@ impl ApplicationRuntime {
             GenerationOutputState::Terminal(outcome) => {
                 let effective = self.effective_generation_outcome(outcome);
                 let kind = application_terminal_kind(&effective);
-                if !self.try_push_output_state(
-                    request_id,
-                    ApplicationOutputState::Terminal(kind),
-                )? {
+                if !self
+                    .try_push_output_state(request_id, ApplicationOutputState::Terminal(kind))?
+                {
                     return Ok(false);
                 }
                 self.finish_conversation_attempt(request_id, &effective);
@@ -1050,9 +1049,7 @@ pub fn encode_text_with_policy(
     Ok(storage.into_boxed_slice())
 }
 
-const fn application_terminal_kind(
-    outcome: &GenerationTerminalOutcome,
-) -> GenerationTerminalKind {
+const fn application_terminal_kind(outcome: &GenerationTerminalOutcome) -> GenerationTerminalKind {
     match outcome {
         GenerationTerminalOutcome::Finished(reason) => GenerationTerminalKind::Finished(*reason),
         GenerationTerminalOutcome::Failed(_) => GenerationTerminalKind::Failed,

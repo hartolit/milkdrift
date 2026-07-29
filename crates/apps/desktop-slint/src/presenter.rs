@@ -588,7 +588,7 @@ fn synchronize_conversation(window: &AppWindow, runtime: &ApplicationRuntime) {
     render_generated_output_update(window, replace_conversation_update(transcript));
 }
 
-fn event_requires_conversation_snapshot(event: &ApplicationEvent) -> bool {
+const fn event_requires_conversation_snapshot(event: &ApplicationEvent) -> bool {
     matches!(
         event,
         ApplicationEvent::GenerationCleanupPending { .. }

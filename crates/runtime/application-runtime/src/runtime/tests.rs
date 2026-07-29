@@ -149,8 +149,9 @@ fn chat_attempt_becomes_terminal_before_backend_release() -> TestResult {
             if states.iter().any(|state| {
                 matches!(
                     state,
-                    ApplicationOutputState::Terminal(GenerationTerminalKind::Finished(_))
-                        | ApplicationOutputState::Terminal(GenerationTerminalKind::Failed)
+                    ApplicationOutputState::Terminal(
+                        GenerationTerminalKind::Finished(_) | GenerationTerminalKind::Failed
+                    )
                 )
             }) {
                 let attempt = runtime
