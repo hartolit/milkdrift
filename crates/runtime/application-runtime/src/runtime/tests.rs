@@ -81,9 +81,11 @@ fn direct_completion_streams_text_and_releases_state() -> TestResult {
 #[test]
 fn compatible_chat_plans_and_submits_the_rendered_prompt_with_profile_eos() -> TestResult {
     with_loaded_chat_runtime(default_test_configuration, |runtime, loaded| {
+        assert!(runtime.can_submit_chat_message());
         let request_id = runtime
             .submit_user_message("hello", deterministic_settings(3))
             .map_err(application_error)?;
+        assert!(!runtime.can_submit_chat_message());
         let diagnostics = runtime
             .context_diagnostics()
             .cloned()
@@ -120,6 +122,62 @@ fn compatible_chat_plans_and_submits_the_rendered_prompt_with_profile_eos() -> T
                 .map(|attempt| &attempt.state),
             Some(ResponseAttemptState::Completed(_))
         ));
+        Ok(())
+    })
+}
+
+#[test]
+fn chat_attempt_becomes_terminal_before_backend_release() -> TestResult {
+    with_loaded_chat_runtime(backpressure_test_configuration, |runtime, _loaded| {
+        let request_id = runtime
+            .submit_user_message("hello", deterministic_settings(3))
+            .map_err(application_error)?;
+        wait_for_generation_started(runtime, request_id)?;
+
+        let deadline = deadline()?;
+        loop {
+            let mut states = Vec::new();
+            runtime
+                .pull_output(|batch| {
+                    states.extend(batch.records().filter_map(|record| match record.kind {
+                        ApplicationOutputRecordKind::State(state) => Some(state),
+                        ApplicationOutputRecordKind::Text(_) => None,
+                    }));
+                })
+                .map_err(application_error)?;
+
+            if states.iter().any(|state| {
+                matches!(
+                    state,
+                    ApplicationOutputState::Terminal(GenerationTerminalKind::Finished(_))
+                        | ApplicationOutputState::Terminal(GenerationTerminalKind::Failed)
+                )
+            }) {
+                let attempt = runtime
+                    .conversation()
+                    .last()
+                    .and_then(|record| record.response_attempt.as_ref())
+                    .ok_or_else(|| "terminal assistant attempt was not retained".to_owned())?;
+                assert!(!matches!(&attempt.state, ResponseAttemptState::Streaming));
+                assert_eq!(
+                    runtime
+                        .state()
+                        .active_generation()
+                        .map(|summary| summary.request_id),
+                    Some(request_id)
+                );
+                assert_eq!(
+                    runtime.clear_conversation(),
+                    Err(ApplicationError::GenerationAlreadyActive(request_id))
+                );
+                break;
+            }
+
+            ensure_before_deadline(deadline, "generation terminal state before release")?;
+            std::thread::sleep(TEST_POLL);
+        }
+
+        let _result = collect_generation(runtime, request_id)?;
         Ok(())
     })
 }
@@ -178,6 +236,38 @@ fn regeneration_preserves_superseded_attempt_and_clear_rejects_active_response()
 }
 
 #[test]
+fn unanswered_committed_user_blocks_regeneration_of_the_previous_response() -> TestResult {
+    with_loaded_chat_runtime(default_test_configuration, |runtime, loaded| {
+        let first_request = runtime
+            .submit_user_message("first", deterministic_settings(1))
+            .map_err(application_error)?;
+        wait_for_generation_started(runtime, first_request)?;
+        let _first = collect_generation(runtime, first_request)?;
+        assert!(runtime.can_regenerate_response());
+
+        let oversized_output = loaded.maximum_context_tokens.saturating_add(1);
+        let second = runtime.submit_user_message(
+            "second unanswered message",
+            deterministic_settings(oversized_output),
+        );
+        assert!(matches!(
+            second,
+            Err(ApplicationError::ContextCapacityExceeded { .. })
+        ));
+        assert_eq!(
+            runtime.conversation().last().map(|record| record.role),
+            Some(ConversationRole::User)
+        );
+        assert!(!runtime.can_regenerate_response());
+        assert_eq!(
+            runtime.regenerate_last_response(deterministic_settings(1)),
+            Err(ApplicationError::NoRegenerableResponse)
+        );
+        Ok(())
+    })
+}
+
+#[test]
 fn pinned_overflow_keeps_committed_user_history_and_never_starts_an_attempt() -> TestResult {
     with_loaded_chat_runtime(default_test_configuration, |runtime, _loaded| {
         runtime
@@ -204,6 +294,8 @@ fn pinned_overflow_keeps_committed_user_history_and_never_starts_an_attempt() ->
 #[test]
 fn unknown_chat_compatibility_fails_without_guessing_a_template() -> TestResult {
     with_loaded_runtime(default_test_configuration, |runtime, _loaded| {
+        assert!(!runtime.can_submit_chat_message());
+        assert!(!runtime.can_regenerate_response());
         assert_eq!(
             runtime.submit_user_message("hello", deterministic_settings(1)),
             Err(ApplicationError::UnsupportedChatCompatibility)

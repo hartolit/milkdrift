@@ -329,7 +329,7 @@ impl ConversationState {
     }
 
     pub(crate) fn last_regenerable_user(&self) -> Option<ConversationRecordId> {
-        self.records.iter().rev().find_map(|record| {
+        self.records.last().and_then(|record| {
             (record.role == ConversationRole::Assistant)
                 .then_some(record.response_attempt.as_ref())
                 .flatten()
@@ -424,6 +424,36 @@ mod tests {
                     Some(ResponseAttemptState::Failed(_))
                 )
         }));
+        Ok(())
+    }
+
+    #[test]
+    fn later_unanswered_user_blocks_regeneration_of_an_older_turn()
+    -> Result<(), crate::ApplicationError> {
+        let mut conversation = ConversationState::default();
+        let first_user = conversation.commit_user(
+            "first".to_owned(),
+            ConversationRetention::Retained,
+            ConversationTokenEstimate::Measured(1),
+        )?;
+        let first_request = RequestId::new(1);
+        conversation.begin_response(first_request, first_user, false)?;
+        conversation.finish_active(
+            first_request,
+            &GenerationTerminalOutcome::Finished(FinishReason::TokenLimit),
+            1,
+        );
+
+        assert_eq!(conversation.last_regenerable_user(), Some(first_user));
+
+        let second_user = conversation.commit_user(
+            "second".to_owned(),
+            ConversationRetention::Retained,
+            ConversationTokenEstimate::Measured(1),
+        )?;
+
+        assert_ne!(first_user, second_user);
+        assert_eq!(conversation.last_regenerable_user(), None);
         Ok(())
     }
 }

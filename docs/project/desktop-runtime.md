@@ -18,7 +18,8 @@ Generation is composed through E1 rather than Slint callbacks. The Slint window 
 exposes a conversation transcript, message composer, send/regenerate/cancel/clear
 actions, exact context/generated usage, terminal state, and the existing model
 lifecycle controls. Chat submission succeeds only for E1's verified TinyLlama Chat v1
-profile; the frontend does not select or implement templates.
+profile; Send/edit/regenerate availability is derived from E1's chat-specific
+admission state rather than generic generation readiness.
 
 See the [application runtime guide](application-runtime.md) for the complete E1 public boundary.
 
@@ -121,18 +122,21 @@ The Slint thread owns the component and a repeated 16 millisecond timer. Each
 tick drains at most 64 structured application events, pulls exactly one bounded E1
 decoded-output batch, applies one presentation delta, then synchronizes controls and
 usage from `ApplicationState`. Conversation ownership remains in E1; Slint formats a
-snapshot when a turn starts and appends only the new assistant frame fragment while it
-streams. Worker token or network frequency therefore cannot
+snapshot when a turn starts, after a submission error that may have committed user
+history, and when terminal/cleanup events change response provenance. It appends only
+the new assistant frame fragment while streaming. Worker token or network frequency therefore cannot
 directly enqueue Slint callbacks or trigger one layout update per generated token.
 
 The presenter copies borrowed text fragments before E1 reuses its accumulator, filters
 them by request identity, and sends only the new frame fragment through one Slint append
 callback. The same read-only transcript `TextEdit` retains selection ownership; append and
 turn-start replacement callbacks preserve its viewport. A turn-start snapshot is formatted
-from E1 raw records so regeneration can show superseded provenance, while streaming remains
-fragment-only. Pulling remains unconditional after terminal state so final text and
-`Released` records cannot be stranded. Clear conversation invokes E1, is disabled/rejected
-while a response is active, and resets the transcript only after semantic history clears.
+from E1 raw records so regeneration can show superseded provenance. Terminal snapshot
+replacement is applied after that frame's output pull so final fragments are not duplicated.
+Pulling remains unconditional after terminal state so final text and `Released` records
+cannot be stranded. Clear conversation invokes E1, is disabled/rejected until the active
+generation and cleanup lifecycle reaches release, and resets the transcript only after
+semantic history clears.
 
 ## Generated Rust and unsafe linting
 

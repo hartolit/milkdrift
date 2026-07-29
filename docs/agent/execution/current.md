@@ -1,8 +1,8 @@
 # Current execution context
 
-**Reviewed baseline:** Phase 7 implementation working tree based on commit `afecb6c8f9d22d8f84d9e46f9be9d6c4fad73bea`
+**Reviewed baseline:** committed Phase 7 implementation `2b03cfbd7d82ef4aee39270a1f95b81c9bfada44` plus the Phase 7 quality-closure working tree
 **Current target:** Phase 8 — GGUF parity and native composition evidence
-**Gate state:** Phase 7 focused tests and strict focused Clippy pass; the canonical locked gate result for the final working tree is recorded in [execution history](history.md)
+**Gate state:** the original Phase 7 working tree has recorded focused and canonical local validation; the post-review closure tree must run the canonical locked gate before Phase 8 work begins
 **Canonical plan:** [execution-plan.md](execution-plan.md)
 **Current product truth:** [project implementation status](../../project/implementation-status.md)
 
@@ -40,6 +40,9 @@ verified GGUF tokenizer/model metadata
 8. Direct completion remains available for models without the one supported chat profile.
 9. Assistant streaming stays bounded and pull-oriented; frontends do not drive per-token work.
 10. Conversation persistence remains out of scope until in-memory semantics stabilize.
+11. Response-attempt terminal semantics are independent from E0 cleanup/release; cleanup exhaustion cannot leave a terminal response marked as streaming.
+12. Regeneration is allowed only for the newest responded turn; a later unanswered user record blocks regeneration of older turns.
+13. Slint chat controls and transcript snapshots derive from E1 chat compatibility and canonical history rather than generic generation readiness or stale presentation state.
 
 ## Phase 8 work packages
 

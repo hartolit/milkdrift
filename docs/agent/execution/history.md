@@ -249,9 +249,9 @@ The next validation record should use the final preparation commit rather than t
 ## Phase 7 — real chat and context planning
 
 **Prepared:** 2026-07-29
-**Implementation tree:** uncommitted Phase 7 working tree based on `afecb6c8f9d22d8f84d9e46f9be9d6c4fad73bea`
+**Committed implementation:** `2b03cfbd7d82ef4aee39270a1f95b81c9bfada44` (`Phase 7 vibes`); the original local validation record described its pre-commit working tree based on `afecb6c8f9d22d8f84d9e46f9be9d6c4fad73bea`
 **Scope:** add one honest compatible chat path, connect context planning to real generation input, and replace the Slint completion surface with E1-owned conversation behavior
-**Recorded outcome:** source, download-free integration, presenter, focused strict-Clippy, and canonical locked-gate validation complete; no manual external-model graphical session was recorded
+**Recorded outcome:** the original implementation working tree recorded source, download-free integration, presenter, focused strict-Clippy, and canonical locked-gate validation; the review-closure tree requires a new exact-tree gate before Phase 8
 
 Phase 7 retained E0 token scheduling and native resource ownership while adding frontend-neutral conversation semantics to E1. It did not add a provider/peer abstraction, persistence, general branching, or a universal Llama template.
 
@@ -269,6 +269,15 @@ Phase 7 retained E0 token scheduling and native resource ownership while adding 
 | Regeneration and clear | Regeneration preserves and supersedes prior attempts for the same user turn. Clear is rejected while a conversation response is active and removes raw history/diagnostics only after terminal state. |
 | Slint chat surface | The window now presents a transcript, message composer, send/regenerate/cancel/clear controls, context/generated usage, and model lifecycle controls. One 16 ms timer still drains at most 64 events and performs one bounded decoded-output pull; streaming crosses Slint as frame-batched fragments. |
 | Non-goals preserved | No GGUF composition, GPU, remote target, persistence, arbitrary branch tree, provider SDK, transport DTO, or broad crate extraction was introduced. |
+
+### Post-implementation review closure
+
+The closure working tree based on `2b03cfbd7d82ef4aee39270a1f95b81c9bfada44` corrects four issues found during source review:
+
+- response attempts become terminal when generation becomes terminal, independently from later E0 cleanup/release;
+- a committed unanswered user turn blocks regeneration of an older response instead of creating an implicit branch;
+- Slint refreshes canonical E1 history after commit-then-admission failures and terminal/cleanup lifecycle events;
+- Send/edit/regenerate controls use E1 chat compatibility rather than generic generation readiness.
 
 ### Recorded validation
 
@@ -290,3 +299,5 @@ cargo run --locked --bin llm-app -- verify
 It validated architecture/dependency policy and formatting, then passed the full workspace tests/doctests, strict Clippy, rustdoc generation, and benchmark compilation. The tree was intentionally not committed by the implementation agent. The recorded base SHA therefore identifies the parent commit, while the validation applies to the explicit uncommitted working tree described by `git status`; it is not evidence for the base commit alone.
 
 The graphical application was not manually driven against the external TinyLlama repository in this environment. Download-free tests use a tokenizer fixture with the verified textual template and EOS identity plus the existing tiny Candle model to prove rendered prompt admission, exact usage, E1 attempt state, regeneration, active-clear rejection, and lifecycle integration. This proves integration semantics, not model language quality or external artifact availability.
+
+The recorded gate above predates the post-implementation review closure. After applying that closure to `2b03cfbd7d82ef4aee39270a1f95b81c9bfada44`, run `cargo run --locked --bin llm-app -- verify` on the exact resulting tree and record that result before treating Phase 7 as the validated input to Phase 8.

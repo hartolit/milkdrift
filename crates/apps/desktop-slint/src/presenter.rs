@@ -52,23 +52,30 @@ impl Presenter {
                 let Some(window) = weak.upgrade() else {
                     return;
                 };
-                let output = {
+                let (output, refresh_conversation) = {
                     let mut runtime_ref = runtime.borrow_mut();
+                    let mut refresh_conversation = false;
                     for _ in 0..MAXIMUM_EVENTS_PER_FRAME {
                         let Some(event) = runtime_ref.poll_event() else {
                             break;
                         };
+                        refresh_conversation |= event_requires_conversation_snapshot(&event);
                         apply_event(&window, event);
                     }
 
                     let displayed_request = presentation.borrow().displayed_request;
-                    runtime_ref.pull_output(|batch| collect_output_batch(&batch, displayed_request))
+                    let output = runtime_ref
+                        .pull_output(|batch| collect_output_batch(&batch, displayed_request));
+                    (output, refresh_conversation)
                 };
 
                 match output {
                     Ok(delta) => {
                         let mut presentation = presentation.borrow_mut();
-                        let update = presentation.apply_delta(delta);
+                        let mut update = presentation.apply_delta(delta);
+                        if refresh_conversation {
+                            update.output = None;
+                        }
                         render_presentation_update(&window, &presentation, update);
                     }
                     Err(error) => {
@@ -76,6 +83,10 @@ impl Presenter {
                             format!("Generated output pull failed: {error}").into(),
                         );
                     }
+                }
+                if refresh_conversation {
+                    let runtime_ref = runtime.borrow();
+                    synchronize_conversation(&window, &runtime_ref);
                 }
                 synchronize_controls(&window, &runtime.borrow());
             },
@@ -93,7 +104,7 @@ pub fn synchronize_controls(window: &AppWindow, runtime: &ApplicationRuntime) {
     let controls = control_state(
         state.can_resolve(),
         state.can_load(&repository, &revision),
-        state.can_start_generation(),
+        runtime.can_submit_chat_message(),
         runtime.can_regenerate_response(),
         state.can_cancel_generation(),
         state.can_unload(),
@@ -153,7 +164,7 @@ struct ControlState {
 fn control_state(
     can_resolve: bool,
     can_load: bool,
-    can_start_generation: bool,
+    can_submit_chat: bool,
     can_regenerate: bool,
     can_cancel: bool,
     can_unload: bool,
@@ -162,8 +173,8 @@ fn control_state(
     ControlState {
         can_resolve,
         can_load,
-        can_edit_message: can_start_generation,
-        can_submit_message: can_start_generation && !message.trim().is_empty(),
+        can_edit_message: can_submit_chat,
+        can_submit_message: can_submit_chat && !message.trim().is_empty(),
         can_regenerate,
         can_cancel,
         can_unload,
@@ -427,6 +438,8 @@ fn connect_submit_message(
                 window.set_message_input("".into());
             }
             Err(error) => {
+                let runtime_ref = runtime.borrow();
+                synchronize_conversation(&window, &runtime_ref);
                 window.set_status_text(format!("Message could not be submitted: {error}").into());
             }
         }
@@ -466,12 +479,13 @@ fn begin_presented_request(
     presentation: &Rc<RefCell<PresentationState>>,
     request_id: u64,
 ) {
-    let transcript = format_conversation(runtime.borrow().conversation());
     let mut presentation = presentation.borrow_mut();
     presentation.begin_request(request_id);
-    render_generated_output_update(window, replace_conversation_update(transcript));
     window.set_terminal_text(presentation.terminal_text.clone().into());
     drop(presentation);
+    let runtime_ref = runtime.borrow();
+    synchronize_conversation(window, &runtime_ref);
+    drop(runtime_ref);
     window.set_status_text(
         format!("Response {request_id} submitted to TinyLlama Chat on Candle CPU.").into(),
     );
@@ -567,6 +581,20 @@ fn format_conversation(records: &[ConversationRecord]) -> String {
         }
     }
     transcript
+}
+
+fn synchronize_conversation(window: &AppWindow, runtime: &ApplicationRuntime) {
+    let transcript = format_conversation(runtime.conversation());
+    render_generated_output_update(window, replace_conversation_update(transcript));
+}
+
+fn event_requires_conversation_snapshot(event: &ApplicationEvent) -> bool {
+    matches!(
+        event,
+        ApplicationEvent::GenerationCleanupPending { .. }
+            | ApplicationEvent::GenerationFinished { .. }
+            | ApplicationEvent::RuntimeDisconnected
+    )
 }
 
 fn apply_event(window: &AppWindow, event: ApplicationEvent) {
@@ -702,15 +730,15 @@ const fn scalar_type_name(value: ScalarType) -> &'static str {
 mod tests {
     use super::{
         CancellationMessageState, FrameOutputDelta, GeneratedOutputUpdate, PresentationState,
-        TerminalPresentation, cancellation_pending_message, control_state, format_conversation,
-        format_terminal_outcome, output_state_message, released_terminal_message,
-        replace_conversation_update,
+        TerminalPresentation, cancellation_pending_message, control_state,
+        event_requires_conversation_snapshot, format_conversation, format_terminal_outcome,
+        output_state_message, released_terminal_message, replace_conversation_update,
     };
     use application_runtime::{
-        ApplicationFailure, ApplicationFailureKind, ApplicationOutputState, ConversationProvenance,
-        ConversationRecord, ConversationRecordId, ConversationRetention, ConversationRole,
-        ConversationTokenEstimate, GenerationTerminalKind, GenerationTerminalOutcome,
-        ResponseAttempt, ResponseAttemptId, ResponseAttemptState,
+        ApplicationEvent, ApplicationFailure, ApplicationFailureKind, ApplicationOutputState,
+        ConversationProvenance, ConversationRecord, ConversationRecordId, ConversationRetention,
+        ConversationRole, ConversationTokenEstimate, GenerationTerminalKind,
+        GenerationTerminalOutcome, ResponseAttempt, ResponseAttemptId, ResponseAttemptState,
     };
 
     #[test]
@@ -743,6 +771,17 @@ mod tests {
         assert!(empty.can_edit_message);
         assert!(!empty.can_submit_message);
         assert!(populated.can_submit_message);
+    }
+
+    #[test]
+    fn unavailable_chat_disables_message_editing_and_submission() {
+        let controls = control_state(false, false, false, false, false, true, "Hello");
+
+        assert!(!controls.can_edit_message);
+        assert!(!controls.can_submit_message);
+        assert!(!controls.can_regenerate);
+        assert!(!controls.can_cancel);
+        assert!(controls.can_unload);
     }
 
     #[test]
@@ -811,6 +850,16 @@ mod tests {
 
         assert!(transcript.contains("Assistant: partial"));
         assert!(transcript.contains("failed: decode failed"));
+    }
+
+    #[test]
+    fn terminal_lifecycle_events_refresh_the_conversation_snapshot() {
+        assert!(event_requires_conversation_snapshot(
+            &ApplicationEvent::RuntimeDisconnected
+        ));
+        assert!(!event_requires_conversation_snapshot(
+            &ApplicationEvent::HubDisconnected
+        ));
     }
 
     #[test]

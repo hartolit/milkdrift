@@ -149,11 +149,21 @@ impl ApplicationRuntime {
         self.context_diagnostics.as_ref()
     }
 
+    /// Returns whether the current loaded model and lifecycle state can accept chat input.
+    #[must_use]
+    pub fn can_submit_chat_message(&self) -> bool {
+        self.state.can_start_generation()
+            && !self.conversation.has_active_response()
+            && self.tokenizer.is_some()
+            && self.state.resolved().is_some_and(|resolved| {
+                matches!(resolved.chat_compatibility, ChatCompatibility::Supported(_))
+            })
+    }
+
     /// Returns whether the latest response attempt may be regenerated now.
     #[must_use]
     pub fn can_regenerate_response(&self) -> bool {
-        self.state.can_start_generation()
-            && !self.conversation.has_active_response()
+        self.can_submit_chat_message()
             && self.conversation.last_regenerable_user().is_some()
     }
 
@@ -223,12 +233,10 @@ impl ApplicationRuntime {
     ///
     /// # Errors
     ///
-    /// Returns an error while an assistant response is active. Callers cancel and
-    /// observe its terminal state before clearing.
+    /// Returns an error while generation or its backend cleanup lifecycle remains active.
+    /// Callers cancel when needed and wait for E0 release before clearing semantic history.
     pub fn clear_conversation(&mut self) -> Result<(), ApplicationError> {
-        if let Some(active) = self.state.active_generation()
-            && self.conversation.has_active_response()
-        {
+        if let Some(active) = self.state.active_generation() {
             return Err(ApplicationError::GenerationAlreadyActive(active.request_id));
         }
         self.conversation.clear();

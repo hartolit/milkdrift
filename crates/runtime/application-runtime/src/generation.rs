@@ -735,17 +735,17 @@ impl ApplicationRuntime {
         let output_state = match state {
             GenerationOutputState::Yielded(reason) => ApplicationOutputState::Yielded(reason),
             GenerationOutputState::Terminal(outcome) => {
+                let effective = self.effective_generation_outcome(outcome);
+                let kind = application_terminal_kind(&effective);
+                if !self.try_push_output_state(
+                    request_id,
+                    ApplicationOutputState::Terminal(kind),
+                )? {
+                    return Ok(false);
+                }
+                self.finish_conversation_attempt(request_id, &effective);
                 self.state.set_generation_phase(GenerationPhase::Finishing);
-                let kind = self
-                    .generation
-                    .session
-                    .as_ref()
-                    .and_then(|session| session.local_failure.as_ref())
-                    .map_or_else(
-                        || terminal_kind(outcome),
-                        |_| GenerationTerminalKind::Failed,
-                    );
-                ApplicationOutputState::Terminal(kind)
+                return Ok(true);
             }
             GenerationOutputState::CleanupPending { failure, retry, .. } => {
                 if !self
@@ -786,21 +786,8 @@ impl ApplicationRuntime {
                 return Ok(true);
             }
             GenerationOutputState::Released(outcome) => {
-                let effective = self
-                    .generation
-                    .session
-                    .as_ref()
-                    .and_then(|session| session.local_failure.clone())
-                    .map_or_else(
-                        || normalize_outcome(outcome),
-                        GenerationTerminalOutcome::Failed,
-                    );
-                let kind = match &effective {
-                    GenerationTerminalOutcome::Finished(reason) => {
-                        GenerationTerminalKind::Finished(*reason)
-                    }
-                    GenerationTerminalOutcome::Failed(_) => GenerationTerminalKind::Failed,
-                };
+                let effective = self.effective_generation_outcome(outcome);
+                let kind = application_terminal_kind(&effective);
                 if !self
                     .try_push_output_state(request_id, ApplicationOutputState::Released(kind))?
                 {
@@ -811,6 +798,33 @@ impl ApplicationRuntime {
             }
         };
         self.try_push_output_state(request_id, output_state)
+    }
+
+    fn effective_generation_outcome(
+        &self,
+        outcome: GenerationOutcome,
+    ) -> GenerationTerminalOutcome {
+        self.generation
+            .session
+            .as_ref()
+            .and_then(|session| session.local_failure.clone())
+            .map_or_else(
+                || normalize_outcome(outcome),
+                GenerationTerminalOutcome::Failed,
+            )
+    }
+
+    fn finish_conversation_attempt(
+        &mut self,
+        request_id: RequestId,
+        outcome: &GenerationTerminalOutcome,
+    ) {
+        let generated_tokens = self
+            .state
+            .active_generation()
+            .map_or(0, |summary| summary.usage.generated_tokens);
+        self.conversation
+            .finish_active(request_id, outcome, generated_tokens);
     }
 
     fn finish_released_generation(
@@ -827,11 +841,6 @@ impl ApplicationRuntime {
             outcome,
             usage,
         };
-        self.conversation.finish_active(
-            request_id,
-            &terminal.outcome,
-            terminal.usage.generated_tokens,
-        );
         self.state.finish_generation(terminal.clone());
         self.generation.session = None;
         self.generation.pending_event = Some(ApplicationEvent::GenerationFinished { terminal });
@@ -1041,10 +1050,12 @@ pub fn encode_text_with_policy(
     Ok(storage.into_boxed_slice())
 }
 
-const fn terminal_kind(outcome: GenerationOutcome) -> GenerationTerminalKind {
+const fn application_terminal_kind(
+    outcome: &GenerationTerminalOutcome,
+) -> GenerationTerminalKind {
     match outcome {
-        GenerationOutcome::Finished(reason) => GenerationTerminalKind::Finished(reason),
-        GenerationOutcome::Failed(_) => GenerationTerminalKind::Failed,
+        GenerationTerminalOutcome::Finished(reason) => GenerationTerminalKind::Finished(*reason),
+        GenerationTerminalOutcome::Failed(_) => GenerationTerminalKind::Failed,
     }
 }
 

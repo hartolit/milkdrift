@@ -51,6 +51,7 @@ or compatible conversation operations:
 
 ```text
 start_generation(input, settings) -> RequestId
+can_submit_chat_message() -> bool
 submit_user_message(content, settings) -> RequestId
 regenerate_last_response(settings) -> RequestId
 clear_conversation()
@@ -115,10 +116,12 @@ text and need not each be one added token. Rendering and EOS token 2 are tested 
 or incompatible tokenizer metadata return `UnsupportedChatCompatibility`; E1 never
 applies this template to another model family.
 
-Regeneration creates a new attempt for the latest responded-to user record and marks
-all prior attempts for that turn superseded without deleting them. Clearing is
-rejected while a conversation response is active. Conversation persistence and a
-general branch tree are intentionally absent.
+Regeneration creates a new attempt only when the newest semantic record is an
+assistant response attempt. A later committed but unanswered user record blocks
+regeneration of an older turn rather than creating an implicit branch. Prior attempts
+for the regenerated turn are superseded without being deleted. Clearing is rejected
+until the generation lifecycle, including backend cleanup, reaches release.
+Conversation persistence and a general branch tree are intentionally absent.
 
 ## Current composition versus application semantics
 
@@ -170,8 +173,12 @@ Raw conversation history and context diagnostics are queried separately from thi
 compact lifecycle state.
 
 Generation completion and E0 resource release remain distinct. `Terminal`, cleanup
-pending/exhausted, and `Released` states are preserved in the pulled output stream,
-and cleanup failures remain observable as low-frequency application events. Remote
+pending/exhausted, and `Released` states are preserved in the pulled output stream.
+The assistant attempt becomes completed, cancelled, or failed when E1 accepts the
+terminal generation state; later cleanup failure cannot leave a finished response
+semantically marked as streaming. E1 keeps the generation lifecycle active until
+release, so cleanup remains observable and conversation clearing stays blocked while
+native ownership is unresolved. Remote
 execution must expose its own honest terminal semantics rather than inheriting E0
 cleanup states it does not own.
 
