@@ -17,6 +17,7 @@ The E0 inference runtime owns local token-level scheduling, sampling, backend ex
 - GPU execution, hosted-provider/peer execution, remote frontend transport, and multiple application-level resident models are not supported yet.
 
 See the [current implementation status](docs/project/implementation-status.md) for the exact integration matrix and validation evidence. The [execution plan](docs/agent/execution/execution-plan.md) is the active roadmap.
+The [project vision](docs/vision.md) records the longer-term research direction; it is intentionally aspirational and does not override current architecture, ADRs, or support status.
 
 ## Workspace
 
@@ -28,7 +29,7 @@ crates/runtime/      E0 inference, capability engines, and E1 application coordi
 crates/apps/         presentation and process entry points
 ```
 
-The current dependency policy and its enforcement scope are documented in [the architecture](docs/architecture.md). Documentation authority and all component guides are indexed in [the documentation map](docs/README.md).
+The applied system structure is documented in [project architecture](docs/project/architecture.md), with enforcement details in [dependency policy](docs/project/dependency-policy.md). Documentation authority and all component guides are indexed in [the documentation map](docs/README.md).
 
 ## Validate
 

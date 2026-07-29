@@ -1,8 +1,8 @@
 # Current implementation status
 
-**Status date:** 2026-07-28
-**Reviewed source baseline:** `phase-6` commit `68438648c09bc008e628508ebf269456c6299096` plus the source-level review closure recorded below
-**Execution position:** Phase 6 source closure is present; Phase 7 is the current implementation target
+**Status date:** 2026-07-29
+**Reviewed source baseline:** `main` commit `f8b3396cc23085696123b95c9dcb4b17c3d9c214` plus this documentation-only Phase 7 preparation closure
+**Execution position:** Phase 6 product closure and the pre-Phase 7 architecture/taxonomy closure are present; Phase 7 is the current implementation target
 **Canonical plan:** [LLM App Execution Plan](../agent/execution/execution-plan.md)
 **Current working context:** [Phase 7 execution context](../agent/execution/current.md)
 
@@ -18,13 +18,15 @@ This is the canonical product-level status page. Component behavior lives in the
 
 The product remains CPU-only. Candle Llama is driven through the E0 generation scheduler and exposed through the frontend-neutral E1 generation boundary. Slint now wires the first direct-completion loop through E1. GGUF is not yet selectable through E1 or the UI.
 
-## Current engine boundaries
+## Current runtime boundaries
 
 The corrective workflow is now an independent `corrective-workflow` capability
-engine rather than an E1 subsystem. E1 remains the frontend-neutral application
+runtime rather than an E1 subsystem. E1 remains the frontend-neutral application
 coordinator; E0 remains the owner of local model resources and token-level
 scheduling. Hosted providers and peer nodes are not implemented and are not
 modeled as E0 backends.
+
+The workspace now uses `domain`, `platform`, `adapters`, `runtime`, and `apps` as its physical roots. Runtime and platform roles fail closed in the architecture validator, and runtime production dependencies on platform/adapters or another runtime require an exact reviewed composition edge.
 
 ## Current E1 generation boundary
 
@@ -56,9 +58,9 @@ The source tree contains:
 
 ## Validation state
 
-The canonical locked repository gate passed locally on 2026-07-27 on `68438648c09bc008e628508ebf269456c6299096` plus the documented Phase 6 review-closure changes. The run covered architecture/dependency validation, formatting, workspace checks, tests/doctests, strict Clippy, rustdoc, and benchmark compilation. Nine focused `desktop-slint` presenter tests and strict all-target Clippy also passed. No independent GitHub Actions run or committed review-closure revision is attached to this local evidence.
+The last recorded complete local gate remains the Phase 6 closure run from 2026-07-27. It covered architecture/dependency validation, formatting, workspace checks, tests/doctests, strict Clippy, rustdoc, benchmark compilation, and focused `desktop-slint` presenter coverage.
 
-The architecture extraction recorded above postdates the Phase 6 validation evidence. The locked repository gate should be rerun on the final architecture-closure tree before that evidence is treated as current.
+The corrective-workflow extraction, fail-closed runtime/platform role registration, reviewed runtime composition edges, and physical taxonomy migration are present in `f8b3396cc23085696123b95c9dcb4b17c3d9c214`, but the repository does not yet contain a validation record tying the complete canonical gate to that exact tree or to this documentation closure. Run the canonical gate on the final Phase 7-preparation commit and record its SHA before treating the current baseline as fully validated.
 
 The graphical external-model acceptance scenario was not manually exercised in this environment. Download-free E1/Candle integration tests cover the underlying generation, cancellation, unload, backpressure, and shutdown loop; presenter tests cover the new UI mapping. Historical Phase 3–5 evidence remains in [execution history](../agent/execution/history.md).
 

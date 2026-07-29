@@ -12,6 +12,7 @@ docs/
 ├── conventions.md         reusable documentation conventions
 ├── architecture.md        reusable/selectable architecture blueprint
 ├── rules.md               reusable engineering rules
+├── vision.md              non-normative project motivation and long-term research direction
 ├── agent/                  agent-facing context and project execution memory
 │   ├── README.md           how the agent context is organized
 │   ├── persona.md          reusable collaboration/system definition
@@ -35,6 +36,16 @@ See [documentation conventions](conventions.md) for naming, ownership, maintenan
 - [Agent persona](agent/persona.md) and [knowledge notes](agent/knowledge/rust_knowledge.md) are reusable agent inputs.
 
 These files should not accumulate project support state, concrete crate inventories, temporary phase constraints, or validation claims.
+
+### Project vision
+
+[Project vision](vision.md) records why llm-app exists and the longer-term ideas the
+current product is intended to explore: clean context, composable workflows,
+navigable memory, local/peer/hosted execution, multiple frontends, trust, and deeper
+system integration. It is deliberately exploratory rather than normative.
+
+Vision may motivate experiments and future tracks, but it does not override accepted
+ADRs, applied project architecture, current status, or an active phase specification.
 
 ### Project decisions and execution memory
 
@@ -85,6 +96,7 @@ Use the full analyzer when architectural rationale or previously identified risk
 ### Looking up domain knowledge
 
 Start at [project/README.md](project/README.md) for current system behavior, [agent/decisions/README.md](agent/decisions/README.md) for decision rationale, and `agent/knowledge/` for reusable technical explanation.
+Use [project vision](vision.md) when evaluating long-term direction or whether a proposed capability serves the larger system; do not use it as evidence that a capability is implemented or architecturally committed.
 
 ## Maintenance rule
 

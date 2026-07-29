@@ -59,7 +59,9 @@ The current repository has a strong low-level foundation:
 - Slint is a thin frontend;
 - package-local tests and Criterion benchmarks follow Cargo conventions.
 
-The immediate problem is sequencing. The repository has two model adapters, architecture enforcement, persistence, a workflow engine, and component benchmarks, but no integrated prompt-to-stream generation loop. Until that loop exists, the architecture has not been tested by the product behavior it is intended to support.
+The first integrated prompt-to-stream generation loop now exists through E0, E1, and Slint. The immediate problem is semantic integration: turn a proven direct completion into conversation behavior without binding conversation state to Candle/local execution, duplicating application state in frontends, or collapsing context planning and model-specific rendering into one catch-all runtime.
+
+The pre-Phase 7 architecture closure also extracted `corrective-workflow`, adopted the `domain`/`platform`/`adapters`/`runtime`/`apps` physical taxonomy, and made runtime/platform roles and runtime composition edges fail closed. Phase 7 builds on those boundaries rather than reopening them without new evidence.
 
 ## 3. Decisions this plan makes
 
@@ -114,20 +116,20 @@ Do not change the F0/F1 policy during the first vertical slice unless it blocks 
 
 ## 4. Scope guardrails
 
-Until the first streamed generation is working, do not add:
+The first streamed generation milestone is complete. From Phase 7 onward, do not pull later research tracks into the active phase merely because the new conversation surface makes them imaginable. In particular, do not add:
 
-- new workflow domains;
-- broad folder renames;
-- a remote transport protocol;
-- a browser-only Leptos client;
+- hosted-provider, peer-routing, or browser transport implementation during Phase 7;
+- a general workflow system, long-term-memory system, or tool/permission framework as part of chat integration;
+- GGUF product selection before Phase 8 proves tokenizer/generation parity;
 - multi-model residency in the application façade;
-- GPU execution;
+- GPU execution before its explicit device/build/test phase;
 - new model architecture families;
 - speculative micro-crates;
+- broad folder renames without a new ownership/dependency reason;
 - performance annotations without measurements;
 - hard wall-clock benchmark thresholds on shared CI runners.
 
-The corrective workflow may receive correctness fixes, but it should not expand on the critical path.
+The existing corrective workflow may receive correctness fixes, but Phase 7 must not turn its fixed six-stage behavior into the universal workflow architecture. New future boundaries require the same ownership/lifecycle/reuse evidence as existing runtime roles.
 
 ## 5. Operating rules for agents
 
@@ -950,7 +952,7 @@ These counters should make duplicate cleanup, leaked ownership, or incorrect sch
 
 Update:
 
-* `crates/engines/inference-runtime/README.md`;
+* `crates/runtime/inference-runtime/README.md`;
 * `docs/project/inference-runtime.md`;
 * `docs/project/implementation-status.md`;
 * runtime lifecycle and failure-taxonomy documentation;
@@ -1271,18 +1273,25 @@ Turn direct completion into honest conversation behavior and connect the existin
 
 ## Work package 7.1 — Define conversation-domain input
 
-Add frontend-neutral message types with:
+Add frontend-neutral conversation records with:
 
+- stable message/response-attempt identity and order;
 - role;
-- stable identity/order;
-- text content;
-- provenance where needed;
+- UTF-8 content;
+- provenance;
 - retention/pinning policy;
-- measured or conservative token estimate.
+- measured or conservative token estimate;
+- response-attempt terminal state where applicable.
 
 Keep UI widget types and backend-specific templates out of this domain representation.
 
 Conversation identity must also be independent from execution location. Do not store local model handles, Candle sources, provider request DTOs, peer connections, or transport state in message records.
+
+Conversation history and planner input are different representations. `ContextEntry` values are derived from conversation state for one planning request; they are not the canonical stored message type.
+
+User messages become committed history immediately. Assistant generation is an active response attempt while text streams. Successful completion commits a normal assistant response. Cancellation or failure preserves any partial text plus terminal provenance for inspection, but that partial response is not silently eligible as ordinary successful context on the next turn.
+
+Regeneration creates a new assistant response attempt for the same user turn. The prior attempt remains in raw history and is marked superseded for the active-context view. General arbitrary branching is outside this phase.
 
 ## Work package 7.2 — Define prompt rendering compatibility
 
@@ -1299,32 +1308,43 @@ Do not silently apply a Llama template to Gemma, Qwen, Mistral, or an unknown mo
 
 Extend artifact resolution where required, for example with tokenizer configuration or chat-template artifacts. Missing template metadata must produce a clear compatibility result rather than guessed formatting.
 
-This renderer belongs to the current local-model path. A future hosted target may accept structured messages or require different rendering; conversation semantics must not assume that every execution target consumes the same prompt string.
+For the local-model path, renderer compatibility also owns the assistant-turn termination semantics required by that model/profile: required EOS tokens, token stop sequences, textual stop suffixes, or equivalent explicit policy. Phase 7 must test prompt formatting and termination together; a correct prompt with accidental/default stop behavior is not chat compatibility.
+
+The rendered prompt and local stop policy are request material, not conversation history. Do not persist model-specific wrappers back into semantic messages.
+
+This renderer belongs to the current local-model path. A future hosted target may accept structured messages or require different rendering; conversation semantics must not assume that every execution target consumes the same prompt string or exposes identical stop controls.
 
 ## Work package 7.3 — Connect context planning
 
 For each request:
 
-1. build typed context entries;
+1. derive typed context entries from conversation state;
 2. obtain or conservatively compute token estimates;
 3. reserve output tokens;
 4. run deterministic selection;
 5. render selected messages in conversation order;
 6. tokenize the final prompt;
 7. verify the actual token count against the model capacity;
-8. retry selection or fail gracefully if estimates were insufficient.
+8. if estimates were insufficient, deterministically remove at least one selected non-pinned entry according to the planning policy before rendering/tokenizing again;
+9. stop correction after at most the initially selected droppable-entry count plus one render/tokenize attempts.
 
 Pinned system content must either fit or produce `PinnedBudgetExceeded`. It must never be silently dropped.
+
+A correction pass that produces the same selected set is a bug. If exact rendering still exceeds capacity after all droppable content has been removed, return an explicit capacity/rendering failure. Template overhead does not authorize dropping pinned semantic content or retrying indefinitely.
 
 ## Work package 7.4 — Add conversation state to E1
 
 `application-runtime` owns reusable conversation semantics so frontends do not duplicate them. It coordinates context planning, rendering compatibility, and model execution without absorbing their algorithms or transport implementations. Add operations for:
 
 - submit user message;
-- regenerate last response where policy allows;
+- regenerate the last response where policy allows;
 - clear conversation;
 - inspect selected/dropped context diagnostics;
 - cancel active response.
+
+Submitting or regenerating while another response attempt is active is rejected rather than creating overlapping conversation mutations. Clearing while a response is active is also rejected; the caller cancels first and observes a terminal response state before clearing.
+
+Regeneration changes the active-context view by superseding the prior response attempt, but it never erases raw conversation provenance. Failed and cancelled attempts remain inspectable and carry explicit terminal state. The default active-context policy excludes unsuccessful/superseded assistant attempts unless a later explicit retention policy says otherwise.
 
 Persistence of conversation history may be added only after in-memory semantics are stable.
 
@@ -1332,15 +1352,22 @@ The conversation state must remain valid if the eventual execution target change
 
 ## Work package 7.5 — Expand the UI into a chat surface
 
-Replace the direct prompt/output presentation with message records while preserving the lifecycle controls. Batch assistant text updates rather than creating one UI event per token.
+Replace the direct prompt/output presentation with conversation records while preserving the lifecycle controls. Batch assistant text updates rather than creating one UI event per token.
+
+The frontend may display an active assistant response as it grows, then its successful/cancelled/failed terminal state. It does not decide whether that attempt becomes active future context; E1 owns that semantic decision.
 
 ## Acceptance criteria
 
 - A known supported instruct model receives the correct prompt format.
+- The same compatibility profile supplies tested assistant-turn termination behavior.
 - Context planning affects real generation input.
 - Actual token count cannot exceed model capacity.
 - Pinned content is never silently discarded.
+- Exact-token correction is bounded, deterministic, and cannot retry an unchanged selection.
 - Conversation history and assistant streaming are owned by E1, not duplicated in Slint.
+- `ContextEntry` is derived planner input rather than the stored conversation identity.
+- Cancelled and failed partial responses remain inspectable without silently becoming ordinary successful context.
+- Regeneration preserves the superseded response for provenance while the active-context view uses the replacement.
 - Conversation records contain no local-backend, provider-SDK, or transport identity.
 - E0 remains the local inference engine rather than becoming a remote-service abstraction.
 - Unknown template compatibility fails explicitly.
@@ -1686,6 +1713,8 @@ This track begins only after application conversation semantics and the local
 composition boundary are stable enough to expose a coarse model-execution seam.
 It does not turn E0 into a network/provider abstraction.
 
+This is not Phase 12 and it does not depend on GPU support. It may begin when conversation semantics are stable and a real second execution/deployment need proves the coarse seam; GGUF/composition work in Phases 8–9 is likely to provide useful evidence, but Phase 11 is not a prerequisite.
+
 Define one application-facing execution contract for:
 
 - target identity and capability discovery;
@@ -1715,6 +1744,22 @@ Acceptance requires that local, peer, and hosted targets can satisfy the same
 conversation/workflow intent without provider SDK or transport types entering E1
 domain state, and without representing remote services as E0 backends.
 
+When the first non-local execution target is implemented, review `task-graph::ModelPolicy`. Its current `PreferredBackend(BackendId)` vocabulary refers to a compiled local inference backend. Do not repurpose `BackendId` to mean a provider, peer, deployment, or generic execution target merely to reuse the existing enum. Move or replace that selection policy only when the real execution contract supplies the required vocabulary.
+
+---
+
+# Future research tracks — preserve direction without pre-committing architecture
+
+These tracks come from [the project vision](../../vision.md). They are intentionally unnumbered and unordered. Recording them prevents the larger direction from disappearing, but it does not authorize speculative crates, protocols, or public interfaces. Promote one into an implementation phase only when product evidence and a concrete acceptance scenario make the boundary testable.
+
+- **Composable prompt/work workflows.** Explore pre-generation enrichment, concurrent narrow observers, post-processing, and feedback/revision paths that can be reordered, bypassed, or combined. `corrective-workflow` remains one concrete six-stage capability; it must not expand into the universal workflow runtime by accident.
+- **Long-term memory and active-context repair.** Preserve raw provenance while allowing the active representation of earlier information to be corrected, condensed, replaced, or retrieved. The moving-window/toroidal-grid idea is a research direction, not a selected storage structure. Any memory runtime must earn an independent ownership/lifecycle boundary.
+- **Tools, permissions, authority, and trust.** Model access to machine capabilities should be explicit, narrow, inspectable, revocable, and purpose-specific. Peer authentication must not imply broad trust, and credentials/authority must not become ordinary model context.
+- **Long-lived node and multiple frontends.** A TUI, desktop app, headless service, or later browser client should share application semantics. Interface lifetime and node/service lifetime remain separate; a terminal or window closing must not define the lifetime of a node intended to keep serving work.
+- **System-native integration.** The longer-term OS/capability experiments may inform llm-app, but current contracts should not be distorted around a speculative custom operating system. First prove useful capability boundaries on normal hosts.
+
+For all of these tracks, prefer explicit coarse contracts at real ownership boundaries over a universal agent/service abstraction.
+
 ---
 
 # 12. Parallel work and dependencies
@@ -1724,6 +1769,8 @@ The critical path is:
 ```text
 0 -> 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10 -> 11
 ```
+
+The peer/hosted execution track and the research tracks above are not additional links in this numeric critical path. They start from their own evidence/review triggers.
 
 Limited parallel work is safe:
 
@@ -1804,14 +1851,14 @@ This milestone does **not** require GGUF UI parity, general chat templates, mult
 
 | Analyzer finding | Addressed in |
 |---|---|
-| Central generation loop absent | Phases 3–7 |
+| Central generation loop absent | Phases 3–6 |
 | `application-runtime` is a valid façade but concrete/growing | Architecture closure and Phases 5, 8, 9 |
 | Candle/HF/redb lock-in at E1 | Phase 8 composition review |
 | Corrective workflow dominates E1 | Architecture closure extraction; Phase 9 keeps E1 narrow |
 | Single-model state conflicts with `maximum_models` | Phase 5.6 |
 | Model-load cleanup bypass | Phase 2.1 |
 | Sequence/request commit not rollback-safe | Phase 2.2–2.3 |
-| Folder taxonomy is unconventional but understandable | Decision 3.6 and Phase 9 |
+| Folder taxonomy is unconventional but understandable | Closed by ADR-0009 before Phase 7 |
 | F1-to-F1 ban is too absolute | Phase 9.1 |
 | `domain-contracts` junk-drawer pressure | Phase 9.1 |
 | Sampling benchmark placement is correct | Decision 3.8 and Phase 10 |

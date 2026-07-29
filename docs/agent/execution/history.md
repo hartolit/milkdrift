@@ -219,3 +219,29 @@ cargo run --locked --bin llm-app -- verify
 The canonical run covered architecture/dependency validation, formatting, workspace checks, tests/doctests, strict Clippy, rustdoc, and benchmark compilation. This was local working-tree evidence; no independent CI run or committed Phase 6 revision was recorded.
 
 The graphical product scenario was not manually driven against an external model in this environment. Existing download-free E1/Candle integration coverage proves generation, backpressure, cancellation, unload behavior, worker disconnection, and shutdown below presentation; the new desktop tests and Slint compilation prove the presenter mapping and generated UI boundary.
+
+## Pre-Phase 7 architecture closure — composability and workspace taxonomy
+
+**Prepared:** 2026-07-29
+**Reviewed baseline:** `f8b3396cc23085696123b95c9dcb4b17c3d9c214`
+**Scope:** close the E1/capability/execution-boundary review and adopt the accepted physical workspace taxonomy before conversation semantics expand the product
+**Recorded outcome:** architecture changes are present in source; the complete canonical gate still needs a validation record tied to the exact final Phase 7-preparation commit
+
+The closure deliberately changed ownership and enforcement without inventing remote-provider implementations or a generic service graph.
+
+### Recorded architectural closure
+
+- `corrective-workflow` is independently owned under `crates/runtime` rather than implemented or re-exported from E1.
+- E0 remains the local/native model-resource and token-step engine; peer and hosted execution are defined as future coarse request/stream targets above E0 rather than fake E0 backends.
+- `application-runtime` remains the frontend-neutral application coordinator and current concrete local composition root until a second backend/deployment proves the extraction seam.
+- Physical roots are now `domain`, `platform`, `adapters`, `runtime`, and `apps`; `host-runtime` moved to `platform` while retaining its narrow process-host responsibility.
+- Runtime roles fail closed: only registered E0/capability/E1 packages receive runtime authority, and an arbitrary crate under `crates/runtime` is rejected.
+- Platform roles fail closed: only the reviewed `host-runtime` package is currently registered under `crates/platform`.
+- Runtime production dependencies on platform/adapters or another runtime require exact reviewed source/target/kind entries with inspectable justifications in addition to satisfying the layer matrix.
+- Integration fixtures cover unregistered runtime/platform packages and an otherwise layer-valid but unreviewed E1-to-capability edge.
+
+### Phase 7 implication
+
+Conversation semantics may now grow in E1 while context selection remains in `context-planner`, model-specific rendering remains a compatibility boundary, and execution location remains outside message identity. New memory, tool, workflow, peer-routing, or provider concerns do not become E1 modules or new runtimes merely because chat needs to call them.
+
+The next validation record should use the final preparation commit rather than treating the Phase 6 gate as evidence for this later architecture tree.
