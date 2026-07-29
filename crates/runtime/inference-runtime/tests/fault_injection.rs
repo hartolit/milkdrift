@@ -34,6 +34,15 @@ impl Faults {
     const WRONG_SEQUENCE_ID: Self = Self(1 << 4);
     const WRONG_SEQUENCE_CAPACITY: Self = Self(1 << 5);
     const FAIL_SEQUENCE_DESTRUCTION: Self = Self(1 << 6);
+    const MISMATCHED_DESCRIPTOR: Self = Self(1 << 7);
+    const MISSING_MULTIPLE_SEQUENCES: Self = Self(1 << 8);
+    const ZERO_VOCABULARY: Self = Self(1 << 9);
+    const ZERO_CONTEXT_LENGTH: Self = Self(1 << 10);
+    const ZERO_MAXIMUM_CONTEXT: Self = Self(1 << 11);
+    const ZERO_MAXIMUM_SEQUENCES: Self = Self(1 << 12);
+    const ZERO_MAXIMUM_PREFILL: Self = Self(1 << 13);
+    const CONTEXT_EXCEEDS_METADATA: Self = Self(1 << 14);
+    const PREFILL_EXCEEDS_CONTEXT: Self = Self(1 << 15);
 
     const fn contains(self, fault: Self) -> bool {
         self.0 & fault.0 != 0
@@ -62,7 +71,7 @@ struct FaultLoader {
 
 struct FaultModel {
     handle: ModelHandle,
-    metadata: ModelMetadata,
+    descriptor: ModelDescriptor,
     faults: Faults,
     counts: Rc<CleanupCounts>,
 }
@@ -96,7 +105,38 @@ impl ModelLoader for FaultLoader {
     type Model = FaultModel;
 
     fn inspect(&self, _source: &Self::Source) -> Result<ModelDescriptor, LoadError> {
-        Ok(descriptor())
+        let mut descriptor = descriptor();
+        if self.faults.contains(Faults::MISSING_MULTIPLE_SEQUENCES) {
+            descriptor.capabilities.operations = CapabilitySet::PREFILL
+                .union(CapabilitySet::INCREMENTAL_DECODE)
+                .union(CapabilitySet::EXPLICIT_SYNCHRONIZATION);
+        }
+        if self.faults.contains(Faults::ZERO_VOCABULARY) {
+            descriptor.metadata.vocabulary_size = 0;
+        }
+        if self.faults.contains(Faults::ZERO_CONTEXT_LENGTH) {
+            descriptor.metadata.context_length = 0;
+        }
+        if self.faults.contains(Faults::ZERO_MAXIMUM_CONTEXT) {
+            descriptor.capabilities.maximum_context_tokens = 0;
+        }
+        if self.faults.contains(Faults::ZERO_MAXIMUM_SEQUENCES) {
+            descriptor.capabilities.maximum_sequences = 0;
+        }
+        if self.faults.contains(Faults::ZERO_MAXIMUM_PREFILL) {
+            descriptor.capabilities.maximum_prefill_batch = 0;
+        }
+        if self.faults.contains(Faults::CONTEXT_EXCEEDS_METADATA) {
+            descriptor.capabilities.maximum_context_tokens =
+                descriptor.metadata.context_length.saturating_add(1);
+        }
+        if self.faults.contains(Faults::PREFILL_EXCEEDS_CONTEXT) {
+            descriptor.capabilities.maximum_prefill_batch = descriptor
+                .capabilities
+                .maximum_context_tokens
+                .saturating_add(1);
+        }
+        Ok(descriptor)
     }
 
     fn plan_load(
@@ -119,10 +159,16 @@ impl ModelLoader for FaultLoader {
         self.counts
             .model_loads
             .set(self.counts.model_loads.get().saturating_add(1));
-        let descriptor = self.inspect(source)?;
-        let mut metadata = descriptor.metadata;
+        let mut descriptor = self.inspect(source)?;
         if self.faults.contains(Faults::MISMATCHED_METADATA) {
-            metadata.vocabulary_size = metadata.vocabulary_size.saturating_add(1);
+            descriptor.metadata.vocabulary_size =
+                descriptor.metadata.vocabulary_size.saturating_add(1);
+        }
+        if self.faults.contains(Faults::MISMATCHED_DESCRIPTOR) {
+            descriptor.capabilities.maximum_prefill_batch = descriptor
+                .capabilities
+                .maximum_prefill_batch
+                .saturating_add(1);
         }
         let handle = if self.faults.contains(Faults::WRONG_MODEL_HANDLE) {
             ModelHandle::new(ModelId::new(999), configuration.handle.generation)
@@ -131,7 +177,7 @@ impl ModelLoader for FaultLoader {
         };
         Ok(FaultModel {
             handle,
-            metadata,
+            descriptor,
             faults: self.faults,
             counts: Rc::clone(&self.counts),
         })
@@ -145,8 +191,8 @@ impl LoadedModel for FaultModel {
         self.handle
     }
 
-    fn metadata(&self) -> &ModelMetadata {
-        &self.metadata
+    fn descriptor(&self) -> &ModelDescriptor {
+        &self.descriptor
     }
 
     fn plan_sequence(
@@ -154,14 +200,17 @@ impl LoadedModel for FaultModel {
         configuration: &SequenceConfiguration,
     ) -> Result<SequencePlan, ModelError> {
         let accepted = if self.faults.contains(Faults::CONTRADICTORY_SEQUENCE_PLAN) {
-            SequenceConfiguration::new(NonZeroU32::MIN, configuration.maximum_prefill_batch)
+            SequenceConfiguration::new(
+                NonZeroU32::new(17).unwrap_or(NonZeroU32::MIN),
+                configuration.maximum_prefill_batch,
+            )
         } else {
             *configuration
         };
         Ok(SequencePlan {
             configuration: accepted,
             expected_footprint: sequence_footprint(),
-            logits_capacity: self.metadata.vocabulary_size as usize,
+            logits_capacity: self.descriptor.metadata.vocabulary_size as usize,
         })
     }
 
@@ -281,6 +330,54 @@ fn mismatched_metadata_is_explicitly_cleaned_without_publication() {
 }
 
 #[test]
+fn mismatched_loaded_descriptor_is_explicitly_cleaned_without_publication() {
+    let counts = Rc::new(CleanupCounts::default());
+    let mut runtime = runtime(Faults::MISMATCHED_DESCRIPTOR, Rc::clone(&counts));
+
+    let result = load(&mut runtime);
+    assert_eq!(result, Err(RuntimeError::BackendContractViolation));
+    assert_eq!(counts.model_loads.get(), 1);
+    assert_eq!(counts.model_cleanups.get(), 1);
+    assert_empty(&runtime);
+}
+
+#[test]
+fn multiple_sequences_requires_the_matching_capability() {
+    let counts = Rc::new(CleanupCounts::default());
+    let mut runtime = runtime(Faults::MISSING_MULTIPLE_SEQUENCES, Rc::clone(&counts));
+
+    let result = load(&mut runtime);
+    assert_eq!(result, Err(RuntimeError::BackendContractViolation));
+    assert_eq!(counts.model_loads.get(), 0);
+    assert_eq!(counts.model_cleanups.get(), 0);
+    assert_empty(&runtime);
+}
+
+#[test]
+fn descriptor_numeric_fields_must_be_nonzero_and_consistent() {
+    for fault in [
+        Faults::ZERO_VOCABULARY,
+        Faults::ZERO_CONTEXT_LENGTH,
+        Faults::ZERO_MAXIMUM_CONTEXT,
+        Faults::ZERO_MAXIMUM_SEQUENCES,
+        Faults::ZERO_MAXIMUM_PREFILL,
+        Faults::CONTEXT_EXCEEDS_METADATA,
+        Faults::PREFILL_EXCEEDS_CONTEXT,
+    ] {
+        let counts = Rc::new(CleanupCounts::default());
+        let mut runtime = runtime(fault, Rc::clone(&counts));
+
+        assert_eq!(
+            load(&mut runtime),
+            Err(RuntimeError::BackendContractViolation)
+        );
+        assert_eq!(counts.model_loads.get(), 0);
+        assert_eq!(counts.model_cleanups.get(), 0);
+        assert_empty(&runtime);
+    }
+}
+
+#[test]
 fn model_cleanup_failure_preserves_primary_error_ownership_and_accounting() {
     let counts = Rc::new(CleanupCounts::default());
     let faults = Faults::WRONG_MODEL_HANDLE.union(Faults::FAIL_MODEL_CLEANUP);
@@ -340,7 +437,7 @@ fn failed_sequence_rollback_is_reported_without_registry_mutation() -> TestResul
 }
 
 #[test]
-fn contradictory_sequence_plan_is_rejected_before_native_creation() -> TestResult {
+fn over_advertised_sequence_plan_is_rejected_before_native_creation() -> TestResult {
     let counts = Rc::new(CleanupCounts::default());
     let mut runtime = runtime(Faults::CONTRADICTORY_SEQUENCE_PLAN, Rc::clone(&counts));
     let loaded = load(&mut runtime).map_err(debug_error)?;
@@ -349,6 +446,44 @@ fn contradictory_sequence_plan_is_rejected_before_native_creation() -> TestResul
         start(&mut runtime, loaded.handle, 10, 100),
         Err(RuntimeError::BackendContractViolation)
     );
+    assert_eq!(counts.sequence_creations.get(), 0);
+    assert_eq!(counts.sequence_destructions.get(), 0);
+    assert_only_model_reserved(&runtime);
+    Ok(())
+}
+
+#[test]
+fn direct_sequence_configuration_respects_advertised_limits() -> TestResult {
+    let counts = Rc::new(CleanupCounts::default());
+    let mut runtime = runtime(Faults::default(), Rc::clone(&counts));
+    let loaded = load(&mut runtime).map_err(debug_error)?;
+    let configurations = [
+        SequenceConfiguration::new(
+            NonZeroU32::new(17).unwrap_or(NonZeroU32::MIN),
+            NonZeroU32::new(4).unwrap_or(NonZeroU32::MIN),
+        ),
+        SequenceConfiguration::new(
+            NonZeroU32::new(8).unwrap_or(NonZeroU32::MIN),
+            NonZeroU32::new(5).unwrap_or(NonZeroU32::MIN),
+        ),
+        SequenceConfiguration::new(
+            NonZeroU32::new(3).unwrap_or(NonZeroU32::MIN),
+            NonZeroU32::new(4).unwrap_or(NonZeroU32::MIN),
+        ),
+    ];
+
+    for (offset, configuration) in configurations.into_iter().enumerate() {
+        let offset = u64::try_from(offset).map_err(debug_error)?;
+        assert_eq!(
+            runtime.start_request(
+                loaded.handle,
+                RequestId::new(20_u64.saturating_add(offset)),
+                SequenceId::new(200_u64.saturating_add(offset)),
+                configuration,
+            ),
+            Err(RuntimeError::Model(ModelError::Unsupported))
+        );
+    }
     assert_eq!(counts.sequence_creations.get(), 0);
     assert_eq!(counts.sequence_destructions.get(), 0);
     assert_only_model_reserved(&runtime);

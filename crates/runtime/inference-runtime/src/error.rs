@@ -244,7 +244,7 @@ pub enum RuntimeError {
     Synchronization(SynchronizationError),
     /// Lifecycle transition failed.
     Lifecycle(LifecycleError),
-    /// Backend returned a handle or metadata inconsistent with its accepted plan.
+    /// Backend contradicted an admitted descriptor, identity, or operation result.
     BackendContractViolation,
     /// The addressed model owns a resource awaiting explicit cleanup.
     ModelDegraded(ModelId),

@@ -127,8 +127,7 @@ impl PromptCompatibilityProfile {
     fn detect(repository: &str, commit: &str, tokenizer: &HfTokenizer) -> ChatCompatibility {
         if repository == TINYLLAMA_CHAT_REPOSITORY
             && commit == TINYLLAMA_CHAT_COMMIT
-            && tokenizer.inner().token_to_id(TINYLLAMA_END_OF_MESSAGE)
-                == Some(TINYLLAMA_EOS_TOKEN.get())
+            && tokenizer.token_id(TINYLLAMA_END_OF_MESSAGE) == Some(TINYLLAMA_EOS_TOKEN)
         {
             ChatCompatibility::Supported(Self::TinyLlamaChatV1)
         } else {

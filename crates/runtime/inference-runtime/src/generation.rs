@@ -299,6 +299,18 @@ impl GenerationScheduler {
         if snapshot.degraded {
             return Err(RuntimeError::ModelDegraded(handle.id));
         }
+        let required_operations = domain_contracts::CapabilitySet::PREFILL
+            .union(domain_contracts::CapabilitySet::INCREMENTAL_DECODE);
+        if !snapshot
+            .descriptor
+            .capabilities
+            .operations
+            .contains(required_operations)
+        {
+            return Err(RuntimeError::Model(
+                domain_contracts::ModelError::Unsupported,
+            ));
+        }
         let vocabulary_size = usize::try_from(snapshot.descriptor.metadata.vocabulary_size)
             .map_err(|_| RuntimeError::BackendContractViolation)?;
         let sampler = Sampler::new(request.sampling, request.seed)
@@ -555,7 +567,7 @@ fn advance_task<L: ModelLoader>(
                 return progressed();
             }
         };
-        let Some(sample_logits) = task.logits.get_mut(..logits_written) else {
+        if logits_written != task.logits.len() {
             let primary = RuntimeError::BackendContractViolation;
             let cleanup = runtime
                 .fail_request(
@@ -571,10 +583,10 @@ fn advance_task<L: ModelLoader>(
                 cleanup,
             );
             return progressed();
-        };
+        }
 
         let sample = task.sampler.sample(
-            sample_logits,
+            task.logits.as_mut_slice(),
             &task.history,
             SamplingWorkspace {
                 indices: task.sampling_indices.as_mut_slice(),

@@ -42,13 +42,13 @@ Portable domain code does not import runtimes, applications, platform implementa
 
 ## E0: local inference ownership
 
-E0 `inference-runtime` exclusively owns local loaded model generations, backend sequences, request admission, generation workspaces, sampling execution, cancellation boundaries, draining, cleanup quarantine, accounting, and unload. Its contracts describe direct ownership of native model resources and token-step scheduling.
+E0 `inference-runtime` exclusively owns local loaded model generations, backend sequences, request admission, generation workspaces, sampling execution, cancellation boundaries, draining, cleanup quarantine, accounting, and unload. Its contracts describe direct ownership of native model resources and token-step scheduling. E0 verifies complete loaded descriptors, advertised limits and capabilities, sequence identity/state, position transitions, and exact vocabulary logits rather than trusting adapter claims after trait conformance. [ADR-0010](../agent/decisions/0010-verify-backend-contracts-at-e0.md) records this substitution rule.
 
 A hosted model API or another machine is not an E0 backend merely because it can produce text. Remote execution has different ownership, cancellation, accounting, and capability semantics and belongs behind a coarser execution boundary above E0.
 
 ## Capability engines
 
-A capability engine owns independently stateful reusable behavior whose lifecycle or reason to change is distinct from the application façade. `corrective-workflow` is the first concrete example: it owns workflow artifacts, attempts, retries, validation state, and events without owning the application or local inference lifecycle.
+A capability engine owns independently stateful reusable behavior whose lifecycle or reason to change is distinct from the application façade. `corrective-workflow` is the first concrete example: it owns workflow artifacts, attempts, retries, validation state, bounded output production, explicit artifact release, and events without owning the application or local inference lifecycle. Its model and validator ports write into engine-owned bounded sinks so execution targets do not define artifact storage semantics; see [ADR-0011](../agent/decisions/0011-bound-workflow-output-at-the-port.md).
 
 Capability engines are created only from evidence. Memory orchestration, peer routing, or another subsystem should not become an engine until state, lifecycle, reuse, replacement, or testing pressure gives it a coherent boundary. Capability engines do not depend on one another by default; E1 coordinates separate capabilities unless a lower dependency is explicitly justified.
 

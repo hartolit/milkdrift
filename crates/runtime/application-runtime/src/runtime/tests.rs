@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use domain_contracts::{CancellationReason, FinishReason, RequestId, TokenId};
-use hf_hub_adapter::{ArtifactScalarType, ResolvedModelArtifacts};
+use hf_hub_adapter::{ArtifactScalarType, ResolvedSafetensorsLlamaArtifacts};
 use inference_runtime::{RuntimeCommand, RuntimeEvent};
 
 use super::ApplicationRuntime;
@@ -651,7 +651,7 @@ fn load_fixture_with(
 ) -> TestResult<LoadedModel> {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let candle = manifest.join("../inference-runtime/tests/fixtures/candle-llama");
-    let artifacts = ResolvedModelArtifacts {
+    let artifacts = ResolvedSafetensorsLlamaArtifacts {
         repository: repository.to_owned(),
         revision: REVISION.to_owned(),
         commit: commit.to_owned(),

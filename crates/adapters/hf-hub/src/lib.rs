@@ -17,7 +17,7 @@ const WEIGHT_INDEX_FILE: &str = "model.safetensors.index.json";
 const SINGLE_WEIGHT_FILE: &str = "model.safetensors";
 
 /// Explicit Hugging Face Hub client configuration.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct HubClientConfiguration {
     /// Optional cache root overriding `HF_HOME` resolution.
     pub cache_directory: Option<PathBuf>,
@@ -25,6 +25,20 @@ pub struct HubClientConfiguration {
     pub access_token: Option<String>,
     /// Number of download retries after the initial attempt.
     pub maximum_retries: usize,
+}
+
+impl fmt::Debug for HubClientConfiguration {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HubClientConfiguration")
+            .field("cache_directory", &self.cache_directory)
+            .field(
+                "access_token",
+                &self.access_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("maximum_retries", &self.maximum_retries)
+            .finish()
+    }
 }
 
 /// Immutable repository and revision selection.
@@ -74,7 +88,7 @@ impl HubModelReference {
 
 /// Local immutable artifact paths resolved from one Hub revision.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ResolvedModelArtifacts {
+pub struct ResolvedSafetensorsLlamaArtifacts {
     /// Requested repository.
     pub repository: String,
     /// Requested revision.
@@ -229,10 +243,10 @@ impl HubClient {
     /// Returns a [`HubError`] if repository inspection fails, metadata or required artifacts are
     /// missing, the weight layout or an artifact path is invalid, configuration or index data
     /// cannot be read or parsed, or an artifact cannot be downloaded.
-    pub fn resolve_llama(
+    pub fn resolve_safetensors_llama(
         &self,
         reference: &HubModelReference,
-    ) -> Result<ResolvedModelArtifacts, HubError> {
+    ) -> Result<ResolvedSafetensorsLlamaArtifacts, HubError> {
         let (owner, name) = split_id(reference.repository.as_str());
         let repository = self.client.model(owner, name);
         let information = repository
@@ -271,7 +285,7 @@ impl HubClient {
             )?);
         }
 
-        Ok(ResolvedModelArtifacts {
+        Ok(ResolvedSafetensorsLlamaArtifacts {
             repository: reference.repository.clone(),
             revision: reference.revision.clone(),
             commit,
@@ -421,8 +435,25 @@ fn resolve_file(
 
 #[cfg(test)]
 mod tests {
-    use super::{ArtifactScalarType, direct_weights, indexed_weights, parse_scalar_type};
+    use super::{
+        ArtifactScalarType, HubClientConfiguration, direct_weights, indexed_weights,
+        parse_scalar_type,
+    };
     use std::collections::BTreeSet;
+
+    #[test]
+    fn client_configuration_debug_redacts_access_tokens() {
+        let configuration = HubClientConfiguration {
+            cache_directory: None,
+            access_token: Some("secret-token".to_owned()),
+            maximum_retries: 2,
+        };
+
+        let debug = format!("{configuration:?}");
+        assert!(!debug.contains("secret-token"));
+        assert!(debug.contains("<redacted>"));
+        assert!(debug.contains("maximum_retries: 2"));
+    }
 
     #[test]
     fn index_deduplicates_and_orders_shards() {

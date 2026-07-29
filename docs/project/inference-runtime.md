@@ -65,6 +65,29 @@ leave the borrowed sequence valid after failure, and `prepare_unload(&mut model)
 must leave the model valid after failure. The runtime never treats unverified
 `Drop` behavior as successful explicit cleanup.
 
+## Backend contract verification
+
+Rust trait conformance is necessary but not sufficient for backend substitution.
+During model admission E0 validates internally ordered non-zero descriptor limits,
+capability consistency, and equality between the accepted plan and the complete
+descriptor retained by the loaded model. Sequence requests and backend plans must
+remain within the descriptor's context and prefill limits.
+
+A successful prefill or decode result is accepted only when it:
+
+- uses an advertised operation;
+- preserves the admitted sequence identity and fixed token capacity;
+- leaves the sequence in `Ready` state;
+- advances the exact expected position;
+- reports the exact consumed prompt count where applicable;
+- writes exactly the model vocabulary's logits when logits are requested.
+
+A contradiction becomes `BackendContractViolation` before sampling. The request then
+uses the ordinary explicit destruction/quarantine path, so a malformed adapter cannot
+bypass ownership cleanup. Unsupported caller requests and missing advertised
+operations remain explicit unsupported-operation failures. The decision and rejected
+alternatives are recorded in [ADR-0010](../agent/decisions/0010-verify-backend-contracts-at-e0.md).
+
 ## Generation admission
 
 `RuntimeCommand::Generate` carries the minimum token-level runtime request:
@@ -79,7 +102,8 @@ must leave the model valid after failure. The runtime never treats unverified
 
 It does not carry tokenizer objects, decoded text, paths, display strings, frontend
 DTOs, or UI state. Before backend sequence creation, E0 validates prompt and total
-sequence length, model state, identities, and sampling configuration, then reserves:
+sequence length, model state, identities, required prefill/decode capabilities,
+advertised context/prefill limits, and sampling configuration, then reserves:
 
 - vocabulary-sized logits;
 - sampling indices and repetition epochs;

@@ -81,9 +81,11 @@ fragment cannot yet be published remains in E1 pending state until frontend outp
 capacity becomes available; E0 is not advanced by frontend per-token commands.
 
 The public boundary exposes application-owned values and stable domain types.
-Candle tensors, Hugging Face implementation types, host-runtime accumulator types,
+Candle tensors, Hugging Face tokenizer instances, host-runtime accumulator types,
 inference commands/events, provider DTOs, and transport connections remain private
-to their implementation boundaries.
+to their implementation boundaries. Tokenizer vocabulary inspection returns only a
+project-owned token identifier. Hub access tokens are redacted from both adapter and
+application configuration `Debug` output.
 
 Immediate admission or queue failures are returned as `ApplicationError`.
 Asynchronous worker outcomes are returned as structured `ApplicationEvent` values.
@@ -135,7 +137,9 @@ Conversation persistence and a general branch tree are intentionally absent.
 ## Current composition versus application semantics
 
 `ApplicationRuntime` currently constructs Candle CPU, Hugging Face, redb, host
-workers, and E0 directly. That is accepted for the first production composition.
+workers, and E0 directly. Its Hub result is explicitly the Candle-compatible
+`ResolvedSafetensorsLlamaArtifacts` bundle rather than a falsely generic model
+artifact type. That is accepted for the first production composition.
 It should not be copied into another frontend, and it should not be mistaken for
 the long-term semantic boundary.
 

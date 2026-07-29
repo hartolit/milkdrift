@@ -5,10 +5,11 @@
 use std::alloc::System;
 
 use domain_contracts::{
-    BackendSequence, CancellationStatus, DecodeBufferRequirements, DecodeBuffers, DecodeInput,
-    DecodeOutcome, LoadedModel, MemoryFootprint, ModelArchitecture, ModelError, ModelGeneration,
-    ModelHandle, ModelId, ModelMetadata, PrefillBufferRequirements, PrefillBuffers, PrefillInput,
-    PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers, QuantizationFormat, ScalarType,
+    BackendId, BackendSequence, CancellationStatus, CapabilitySet, DecodeBufferRequirements,
+    DecodeBuffers, DecodeInput, DecodeOutcome, LoadedModel, MemoryFootprint, ModelArchitecture,
+    ModelCapabilities, ModelDescriptor, ModelError, ModelGeneration, ModelHandle, ModelId,
+    ModelMetadata, PrefillBufferRequirements, PrefillBuffers, PrefillInput, PrefillOutcome,
+    PreparedDecodeBuffers, PreparedPrefillBuffers, QuantizationFormat, ScalarType,
     SequenceConfiguration, SequenceError, SequenceId, SequencePlan, SequenceState,
     SynchronizationError, TokenId, decode_checked, prefill_checked,
 };
@@ -56,15 +57,31 @@ impl LoadedModel for TestModel {
         ModelHandle::new(ModelId::new(1), ModelGeneration::new(1))
     }
 
-    fn metadata(&self) -> &ModelMetadata {
-        static METADATA: ModelMetadata = ModelMetadata {
-            architecture: ModelArchitecture::Llama,
-            scalar_type: ScalarType::F32,
-            quantization: QuantizationFormat::None,
-            vocabulary_size: METADATA_VOCABULARY_SIZE,
-            context_length: METADATA_CONTEXT_LENGTH,
+    fn descriptor(&self) -> &ModelDescriptor {
+        static DESCRIPTOR: ModelDescriptor = ModelDescriptor {
+            backend: BackendId::new(1),
+            metadata: ModelMetadata {
+                architecture: ModelArchitecture::Llama,
+                scalar_type: ScalarType::F32,
+                quantization: QuantizationFormat::None,
+                vocabulary_size: METADATA_VOCABULARY_SIZE,
+                context_length: METADATA_CONTEXT_LENGTH,
+            },
+            capabilities: ModelCapabilities {
+                operations: CapabilitySet::PREFILL.union(CapabilitySet::INCREMENTAL_DECODE),
+                maximum_context_tokens: METADATA_CONTEXT_LENGTH,
+                maximum_sequences: 1,
+                maximum_prefill_batch: METADATA_CONTEXT_LENGTH,
+            },
+            estimated_footprint: MemoryFootprint {
+                host_weight_bytes: 0,
+                device_weight_bytes: 0,
+                host_working_bytes: 0,
+                device_working_bytes: 0,
+                cache_bytes_per_token: 0,
+            },
         };
-        &METADATA
+        &DESCRIPTOR
     }
 
     fn plan_sequence(

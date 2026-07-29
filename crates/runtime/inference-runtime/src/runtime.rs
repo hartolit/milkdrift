@@ -3,12 +3,13 @@
 use std::collections::BTreeMap;
 
 use domain_contracts::{
-    BackendSequence, CancellationReason, CancellationStatus, CapacityExhausted, CapacityResource,
-    DecodeBuffers, DecodeInput, DecodeOutcome, DeviceId, DeviceKind, FinishReason, GenerationUsage,
-    LifecycleAction, LoadConfiguration, LoadedModel, MemoryBudget, MemoryFootprint,
-    ModelGeneration, ModelHandle, ModelId, ModelLifecycle, ModelLifecycleState, ModelLoader,
-    MonotonicMillis, PrefillBuffers, PrefillInput, PrefillOutcome, RequestId,
-    SequenceConfiguration, SequenceId, TokenId, UnloadPolicy, decode_checked, prefill_checked,
+    BackendSequence, CancellationReason, CancellationStatus, CapabilitySet, CapacityExhausted,
+    CapacityResource, DecodeBuffers, DecodeInput, DecodeOutcome, DeviceId, DeviceKind,
+    FinishReason, GenerationUsage, LifecycleAction, LoadConfiguration, LoadedModel, MemoryBudget,
+    MemoryFootprint, ModelDescriptor, ModelError, ModelGeneration, ModelHandle, ModelId,
+    ModelLifecycle, ModelLifecycleState, ModelLoader, MonotonicMillis, PrefillBuffers,
+    PrefillInput, PrefillOutcome, RequestId, SequenceConfiguration, SequenceError, SequenceId,
+    SequenceState, TokenId, UnloadPolicy, decode_checked, prefill_checked,
 };
 
 use crate::{
@@ -85,6 +86,8 @@ struct RequestSlot<S>
 where
     S: BackendSequence,
 {
+    sequence_id: SequenceId,
+    token_capacity: usize,
     sequence: S,
     backend_footprint: MemoryFootprint,
     workspace_footprint: MemoryFootprint,
@@ -220,18 +223,18 @@ where
         let mut lifecycle = ModelLifecycle::new();
         lifecycle.begin_load()?;
         let plan = self.loader.plan_load(source, &configuration)?;
+        validate_descriptor(&plan.descriptor)?;
         let next_reserved = admit_footprint(
             self.reserved_footprint,
             plan.expected_footprint,
             self.limits.memory_budget,
         )?;
         let mut model = self.loader.load(source, &configuration)?;
-        let validation =
-            if model.handle() != handle || model.metadata() != &plan.descriptor.metadata {
-                Err(RuntimeError::BackendContractViolation)
-            } else {
-                lifecycle.complete_load().map(|_| ()).map_err(Into::into)
-            };
+        let validation = if model.handle() != handle || model.descriptor() != &plan.descriptor {
+            Err(RuntimeError::BackendContractViolation)
+        } else {
+            lifecycle.complete_load().map(|_| ()).map_err(Into::into)
+        };
         if let Err(primary) = validation {
             if let Err(cleanup) = model.prepare_unload() {
                 let report = CleanupFailureReport::new(
@@ -372,6 +375,7 @@ where
                 domain_contracts::LifecycleError::InvalidTransition,
             ));
         }
+        validate_requested_sequence_configuration(&slot.descriptor, configuration)?;
         if slot
             .requests
             .len()
@@ -391,7 +395,10 @@ where
         }
 
         let plan = slot.model.plan_sequence(&configuration)?;
-        if plan.configuration != configuration || plan.logits_capacity != expected_logits_capacity {
+        if !sequence_configuration_is_supported(&slot.descriptor, plan.configuration)
+            || plan.configuration != configuration
+            || plan.logits_capacity != expected_logits_capacity
+        {
             return Err(RuntimeError::BackendContractViolation);
         }
         let committed_footprint =
@@ -497,6 +504,7 @@ where
                 ));
             }
         }
+        validate_requested_sequence_configuration(&slot.descriptor, configuration)?;
         if slot.requests.contains_key(&request_id) {
             return Err(RuntimeError::RequestAlreadyActive(request_id));
         }
@@ -519,7 +527,8 @@ where
         }
 
         let plan = slot.model.plan_sequence(&configuration)?;
-        if plan.configuration != configuration
+        if !sequence_configuration_is_supported(&slot.descriptor, plan.configuration)
+            || plan.configuration != configuration
             || expected_logits_capacity.is_some_and(|expected| plan.logits_capacity != expected)
         {
             return Err(RuntimeError::BackendContractViolation);
@@ -627,6 +636,8 @@ where
         }
 
         let request = RequestSlot {
+            sequence_id,
+            token_capacity: expected_token_capacity,
             sequence,
             backend_footprint: plan.expected_footprint,
             workspace_footprint,
@@ -673,40 +684,69 @@ where
                 .models
                 .get_mut(&model_id)
                 .ok_or(RuntimeError::ModelNotLoaded(model_id))?;
+            let expected_logits = if emit_logits {
+                usize::try_from(slot.descriptor.metadata.vocabulary_size).ok()
+            } else {
+                Some(0)
+            };
             let request = slot
                 .requests
                 .get_mut(&request_id)
                 .ok_or(RuntimeError::RequestNotActive(request_id))?;
-            let outcome = prefill_checked(
-                &mut slot.model,
-                &mut request.sequence,
-                PrefillInput::new(tokens, emit_logits),
-                PrefillBuffers::new(logits),
-                CancellationStatus::Running,
-            );
+            let previous_position = request.sequence.position();
+            let outcome = if slot
+                .descriptor
+                .capabilities
+                .operations
+                .contains(CapabilitySet::PREFILL)
+            {
+                prefill_checked(
+                    &mut slot.model,
+                    &mut request.sequence,
+                    PrefillInput::new(tokens, emit_logits),
+                    PrefillBuffers::new(logits),
+                    CancellationStatus::Running,
+                )
+            } else {
+                Err(SequenceError::Unsupported)
+            };
+            let current_position = request.sequence.position();
             match outcome {
                 Ok(PrefillOutcome::Ready {
                     consumed_tokens,
                     position,
                     logits_written,
                 }) => {
-                    request.usage.prompt_tokens = request
-                        .usage
-                        .prompt_tokens
-                        .saturating_add(saturating_u64(consumed_tokens));
-                    Ok((
-                        PrefillOutcome::Ready {
-                            consumed_tokens,
-                            position,
-                            logits_written,
-                        },
-                        request.usage,
-                    ))
+                    let expected_position = previous_position.checked_add(tokens.len());
+                    if consumed_tokens != tokens.len()
+                        || expected_position != Some(current_position)
+                        || position != current_position
+                        || request.sequence.id() != request.sequence_id
+                        || request.sequence.token_capacity() != request.token_capacity
+                        || request.sequence.state() != SequenceState::Ready
+                        || expected_logits != Some(logits_written)
+                        || logits_written > logits.len()
+                    {
+                        Err(RuntimeError::BackendContractViolation)
+                    } else {
+                        request.usage.prompt_tokens = request
+                            .usage
+                            .prompt_tokens
+                            .saturating_add(saturating_u64(consumed_tokens));
+                        Ok((
+                            PrefillOutcome::Ready {
+                                consumed_tokens,
+                                position,
+                                logits_written,
+                            },
+                            request.usage,
+                        ))
+                    }
                 }
                 Ok(PrefillOutcome::Finished(reason)) => {
                     Ok((PrefillOutcome::Finished(reason), request.usage))
                 }
-                Err(error) => Err(error),
+                Err(error) => Err(RuntimeError::Sequence(error)),
             }
         };
 
@@ -721,8 +761,7 @@ where
                 }
                 Ok(PrefillReceipt { outcome, usage })
             }
-            Err(error) => {
-                let primary = RuntimeError::Sequence(error);
+            Err(primary) => {
                 preserve_primary_cleanup(self.remove_request(
                     request_id,
                     RuntimeOperation::Prefill,
@@ -752,36 +791,60 @@ where
                 .models
                 .get_mut(&model_id)
                 .ok_or(RuntimeError::ModelNotLoaded(model_id))?;
+            let expected_logits = usize::try_from(slot.descriptor.metadata.vocabulary_size).ok();
             let request = slot
                 .requests
                 .get_mut(&request_id)
                 .ok_or(RuntimeError::RequestNotActive(request_id))?;
-            let outcome = decode_checked(
-                &mut slot.model,
-                &mut request.sequence,
-                DecodeInput::new(token),
-                DecodeBuffers::new(logits),
-                CancellationStatus::Running,
-            );
+            let previous_position = request.sequence.position();
+            let outcome = if slot
+                .descriptor
+                .capabilities
+                .operations
+                .contains(CapabilitySet::INCREMENTAL_DECODE)
+            {
+                decode_checked(
+                    &mut slot.model,
+                    &mut request.sequence,
+                    DecodeInput::new(token),
+                    DecodeBuffers::new(logits),
+                    CancellationStatus::Running,
+                )
+            } else {
+                Err(SequenceError::Unsupported)
+            };
+            let current_position = request.sequence.position();
             match outcome {
                 Ok(DecodeOutcome::Ready {
                     position,
                     logits_written,
                 }) => {
-                    request.usage.generated_tokens =
-                        request.usage.generated_tokens.saturating_add(1);
-                    Ok((
-                        DecodeOutcome::Ready {
-                            position,
-                            logits_written,
-                        },
-                        request.usage,
-                    ))
+                    let expected_position = previous_position.checked_add(1);
+                    if expected_position != Some(current_position)
+                        || position != current_position
+                        || request.sequence.id() != request.sequence_id
+                        || request.sequence.token_capacity() != request.token_capacity
+                        || request.sequence.state() != SequenceState::Ready
+                        || expected_logits != Some(logits_written)
+                        || logits_written > logits.len()
+                    {
+                        Err(RuntimeError::BackendContractViolation)
+                    } else {
+                        request.usage.generated_tokens =
+                            request.usage.generated_tokens.saturating_add(1);
+                        Ok((
+                            DecodeOutcome::Ready {
+                                position,
+                                logits_written,
+                            },
+                            request.usage,
+                        ))
+                    }
                 }
                 Ok(DecodeOutcome::Finished(reason)) => {
                     Ok((DecodeOutcome::Finished(reason), request.usage))
                 }
-                Err(error) => Err(error),
+                Err(error) => Err(RuntimeError::Sequence(error)),
             }
         };
 
@@ -796,8 +859,7 @@ where
                 }
                 Ok(DecodeReceipt { outcome, usage })
             }
-            Err(error) => {
-                let primary = RuntimeError::Sequence(error);
+            Err(primary) => {
                 preserve_primary_cleanup(self.remove_request(
                     request_id,
                     RuntimeOperation::Decode,
@@ -1529,7 +1591,7 @@ where
                     .requests
                     .remove(&request_id)
                     .ok_or(RuntimeError::BackendContractViolation)?;
-                let sequence_id = request.sequence.id();
+                let sequence_id = request.sequence_id;
                 let pending = PendingSequence {
                     request_id,
                     sequence_id,
@@ -1588,7 +1650,7 @@ where
                 .requests
                 .remove(&request_id)
                 .ok_or(RuntimeError::BackendContractViolation)?;
-            let sequence_id = request.sequence.id();
+            let sequence_id = request.sequence_id;
             let total_footprint =
                 checked_add_footprint(request.backend_footprint, request.workspace_footprint)?;
             slot.reserved_footprint =
@@ -1792,6 +1854,62 @@ where
             status: UnloadStatus::AlreadyAbsent,
             cancelled_requests: 0,
         })
+    }
+}
+
+const fn validate_descriptor(descriptor: &ModelDescriptor) -> Result<(), RuntimeError> {
+    let metadata = descriptor.metadata;
+    let capabilities = descriptor.capabilities;
+    let numeric_limits_are_nonzero = metadata.vocabulary_size > 0
+        && metadata.context_length > 0
+        && capabilities.maximum_context_tokens > 0
+        && capabilities.maximum_sequences > 0
+        && capabilities.maximum_prefill_batch > 0;
+    let context_limits_are_consistent = context_limits_are_ordered(
+        metadata.context_length,
+        capabilities.maximum_context_tokens,
+        capabilities.maximum_prefill_batch,
+    );
+    let sequence_capability_is_consistent = capabilities.maximum_sequences <= 1
+        || capabilities
+            .operations
+            .contains(CapabilitySet::MULTIPLE_SEQUENCES);
+    if numeric_limits_are_nonzero
+        && context_limits_are_consistent
+        && sequence_capability_is_consistent
+    {
+        Ok(())
+    } else {
+        Err(RuntimeError::BackendContractViolation)
+    }
+}
+
+const fn context_limits_are_ordered(
+    native_context_limit: u32,
+    sequence_context_limit: u32,
+    prefill_limit: u32,
+) -> bool {
+    sequence_context_limit <= native_context_limit && prefill_limit <= sequence_context_limit
+}
+
+const fn sequence_configuration_is_supported(
+    descriptor: &ModelDescriptor,
+    configuration: SequenceConfiguration,
+) -> bool {
+    configuration.maximum_tokens.get() <= descriptor.capabilities.maximum_context_tokens
+        && configuration.maximum_prefill_batch.get()
+            <= descriptor.capabilities.maximum_prefill_batch
+        && configuration.maximum_prefill_batch.get() <= configuration.maximum_tokens.get()
+}
+
+const fn validate_requested_sequence_configuration(
+    descriptor: &ModelDescriptor,
+    configuration: SequenceConfiguration,
+) -> Result<(), RuntimeError> {
+    if sequence_configuration_is_supported(descriptor, configuration) {
+        Ok(())
+    } else {
+        Err(RuntimeError::Model(ModelError::Unsupported))
     }
 }
 

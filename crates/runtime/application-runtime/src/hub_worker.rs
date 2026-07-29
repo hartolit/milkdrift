@@ -4,7 +4,8 @@ use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use hf_hub_adapter::{
-    HubClient, HubClientConfiguration, HubError, HubModelReference, ResolvedModelArtifacts,
+    HubClient, HubClientConfiguration, HubError, HubModelReference,
+    ResolvedSafetensorsLlamaArtifacts,
 };
 use host_runtime::{
     BoundedReceiver, BoundedSender, ChannelCapacity, HostThread, ReceiveTimeoutError,
@@ -21,7 +22,7 @@ pub enum HubCommand {
 }
 
 pub enum HubEvent {
-    Resolved(Result<ResolvedModelArtifacts, HubError>),
+    Resolved(Result<ResolvedSafetensorsLlamaArtifacts, HubError>),
 }
 
 pub struct HubWorker {
@@ -75,7 +76,7 @@ fn run_hub_worker(
     loop {
         match commands.receive_timeout(worker_poll) {
             Ok(HubCommand::Resolve(reference)) => {
-                let mut pending = HubEvent::Resolved(client.resolve_llama(&reference));
+                let mut pending = HubEvent::Resolved(client.resolve_safetensors_llama(&reference));
                 loop {
                     match events.send_timeout(pending, event_send_timeout) {
                         Ok(()) => break,

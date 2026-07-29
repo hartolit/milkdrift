@@ -114,8 +114,8 @@ impl LoadedModel for MockModel {
         self.handle
     }
 
-    fn metadata(&self) -> &ModelMetadata {
-        &self.descriptor.metadata
+    fn descriptor(&self) -> &ModelDescriptor {
+        &self.descriptor
     }
 
     fn plan_sequence(

@@ -5,10 +5,9 @@ use candle_transformers::models::llama::{Cache, Config, Llama};
 use domain_contracts::{
     BackendFailureKind, BackendId, BackendSequence, CapacityExhausted, CapacityResource,
     DecodeBufferRequirements, DecodeInput, DecodeOutcome, LoadedModel, MemoryFootprint,
-    ModelDescriptor, ModelError, ModelHandle, ModelMetadata, PrefillBufferRequirements,
-    PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers,
-    SequenceConfiguration, SequenceError, SequenceId, SequencePlan, SequenceState,
-    SynchronizationError,
+    ModelDescriptor, ModelError, ModelHandle, PrefillBufferRequirements, PrefillInput,
+    PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers, SequenceConfiguration,
+    SequenceError, SequenceId, SequencePlan, SequenceState, SynchronizationError,
 };
 
 use crate::failure::{
@@ -54,8 +53,8 @@ impl CandleLlamaModel {
 
     /// Returns the complete inspected descriptor retained by the loaded model.
     #[must_use]
-    pub const fn descriptor(&self) -> ModelDescriptor {
-        self.descriptor
+    pub const fn descriptor(&self) -> &ModelDescriptor {
+        &self.descriptor
     }
 
     fn sequence_footprint(
@@ -109,8 +108,8 @@ impl LoadedModel for CandleLlamaModel {
         self.handle
     }
 
-    fn metadata(&self) -> &ModelMetadata {
-        &self.descriptor.metadata
+    fn descriptor(&self) -> &ModelDescriptor {
+        &self.descriptor
     }
 
     fn plan_sequence(

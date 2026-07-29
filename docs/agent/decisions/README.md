@@ -15,5 +15,7 @@ Accepted ADRs remain part of the project architecture until superseded. A supers
 - [ADR-0007: Name the supported portability targets](0007-portability-targets.md)
 - [ADR-0008: Separate application coordination, capabilities, and model execution](0008-capability-and-execution-boundaries.md)
 - [ADR-0009: Adopt domain, platform, adapter, runtime, and app roots](0009-workspace-physical-taxonomy.md)
+- [ADR-0010: Verify backend contracts at E0](0010-verify-backend-contracts-at-e0.md)
+- [ADR-0011: Bound workflow output at the service port](0011-bound-workflow-output-at-the-port.md)
 
 For current applied structure, see [project architecture](../../project/architecture.md). For the reusable selectable model, see the [architecture blueprint](../../architecture.md).

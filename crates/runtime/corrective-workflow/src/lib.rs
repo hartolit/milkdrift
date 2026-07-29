@@ -5,6 +5,7 @@
 mod artifact;
 mod diagnostics;
 mod executor;
+mod output;
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -17,6 +18,7 @@ pub use diagnostics::{
 };
 pub use domain_contracts::{ArtifactId, TaskId};
 pub use executor::CorrectiveWorkflowExecutor;
+pub use output::{BoundedDiagnosticsSink, BoundedTextSink, OutputSinkError};
 pub use task_graph::{
     ArtifactKind, ArtifactReference, ArtifactRole, ModelPolicy, TaskAttempt, TaskBudget,
     TaskGraphError, TaskKind,
@@ -172,6 +174,19 @@ pub enum WorkflowEvent {
     },
 }
 
+impl WorkflowEvent {
+    /// Returns the workflow that owns this event.
+    #[must_use]
+    pub const fn workflow(self) -> WorkflowId {
+        match self {
+            Self::StageStarted { workflow, .. }
+            | Self::ArtifactCommitted { workflow, .. }
+            | Self::RetryScheduled { workflow, .. }
+            | Self::Completed { workflow, .. } => workflow,
+        }
+    }
+}
+
 /// Identity-only model task invocation.
 #[derive(Clone, Copy, Debug)]
 pub struct ModelTaskRequest<'a> {
@@ -202,17 +217,22 @@ pub trait ModelTaskExecutor {
     ///
     /// The restricted [`ArtifactInputs`] resolver exposes only the identities in
     /// [`ModelTaskRequest::input_artifacts`] without copying artifact payloads.
-    /// The concrete model port must enforce the request's token limits during
-    /// tokenization and generation; this engine owns artifact-byte bounds only.
+    /// Generated chunks must be appended to the executor-owned
+    /// [`BoundedTextSink`]. The concrete model port must enforce the request's
+    /// token limits during tokenization and generation; the sink independently
+    /// enforces the stage's artifact-byte contract.
     ///
     /// # Errors
     ///
     /// Returns an implementation-defined operational failure eligible for retry.
+    /// A sink failure is non-retryable and takes precedence even if the port also
+    /// returns an operational error.
     fn execute_model_task(
         &mut self,
         request: ModelTaskRequest<'_>,
         artifacts: &ArtifactInputs<'_>,
-    ) -> Result<String, Self::Error>;
+        output: &mut BoundedTextSink,
+    ) -> Result<(), Self::Error>;
 }
 
 /// Identity-only deterministic validation invocation.
@@ -243,17 +263,22 @@ pub trait ValidationTaskExecutor {
     ///
     /// A returned rejected verdict is a successful operation, not an error. The
     /// restricted [`ArtifactInputs`] resolver exposes only declared identities.
-    /// The concrete validator must enforce the request's token limits during
-    /// tokenization and validation; this engine owns artifact-byte bounds only.
+    /// Findings must be appended to the executor-owned
+    /// [`BoundedDiagnosticsSink`], which accounts for the verdict and all
+    /// structured diagnostic bytes. The concrete validator must enforce request
+    /// token limits during tokenization and validation.
     ///
     /// # Errors
     ///
     /// Returns an implementation-defined operational failure eligible for retry.
+    /// A sink failure is non-retryable and takes precedence even if the port also
+    /// returns an operational error.
     fn execute_validation_task(
         &mut self,
         request: ValidationTaskRequest<'_>,
         artifacts: &ArtifactInputs<'_>,
-    ) -> Result<ValidationReport, Self::Error>;
+        output: &mut BoundedDiagnosticsSink,
+    ) -> Result<ValidationVerdict, Self::Error>;
 }
 
 /// Validated aggregate storage bounds owned by one workflow executor.
@@ -500,6 +525,13 @@ pub enum WorkflowError {
         /// Actual payload discriminator.
         content: ArtifactContentKind,
     },
+    /// Artifact ownership does not match root/generated lifecycle rules.
+    ArtifactOwnershipMismatch {
+        /// Rejected artifact reference.
+        reference: ArtifactReference,
+        /// Supplied owner; specifications require `None`, generated outputs require `Some`.
+        owner: Option<WorkflowId>,
+    },
     /// An immutable artifact identity was already committed.
     DuplicateArtifact(ArtifactId),
     /// The fixed artifact store has insufficient remaining entry capacity.
@@ -555,6 +587,19 @@ pub enum WorkflowError {
         /// Declared maximum payload bytes.
         maximum: u64,
     },
+    /// Fallible reservation for contract-admissible output storage failed.
+    OutputAllocationFailed {
+        /// Workflow execution identity.
+        workflow: WorkflowId,
+        /// Producing stage.
+        stage: WorkflowStage,
+        /// Producing graph task.
+        task: TaskId,
+        /// Reserved output artifact identity.
+        artifact: ArtifactId,
+        /// Accounted payload bytes requiring storage.
+        required: u64,
+    },
     /// An operational port failure exhausted the task attempt budget.
     TaskExhausted {
         /// Workflow execution identity.
@@ -584,6 +629,7 @@ impl From<TaskGraphError> for WorkflowError {
 }
 
 impl Display for WorkflowError {
+    #[allow(clippy::too_many_lines)]
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidConfiguration(error) => {
@@ -609,6 +655,11 @@ impl Display for WorkflowError {
             Self::ArtifactContentMismatch { reference, content } => write!(
                 formatter,
                 "artifact {} reference does not match {content:?} content",
+                reference.id.get()
+            ),
+            Self::ArtifactOwnershipMismatch { reference, owner } => write!(
+                formatter,
+                "artifact {} has invalid workflow owner {owner:?}",
                 reference.id.get()
             ),
             Self::DuplicateArtifact(id) => {
@@ -660,6 +711,18 @@ impl Display for WorkflowError {
             } => write!(
                 formatter,
                 "workflow {} {stage:?} artifact {} requires {required} bytes but permits {maximum}",
+                workflow.get(),
+                artifact.get()
+            ),
+            Self::OutputAllocationFailed {
+                workflow,
+                stage,
+                artifact,
+                required,
+                ..
+            } => write!(
+                formatter,
+                "workflow {} {stage:?} artifact {} could not reserve storage for {required} bytes",
                 workflow.get(),
                 artifact.get()
             ),

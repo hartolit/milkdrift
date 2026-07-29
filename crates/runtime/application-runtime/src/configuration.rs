@@ -1,5 +1,6 @@
 //! Validated defaults and host-worker configuration for application orchestration.
 
+use std::fmt::{self, Formatter};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -27,7 +28,7 @@ const DEFAULT_HUB_SHUTDOWN_TIMEOUT_MILLISECONDS: u64 = 2_000;
 const DEFAULT_HUB_SHUTDOWN_POLL_MILLISECONDS: u64 = 10;
 
 /// Frontend-neutral Hugging Face cache and authentication overrides.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct ApplicationHubConfiguration {
     /// Optional cache root overriding environment-derived Hugging Face paths.
     pub cache_directory: Option<PathBuf>,
@@ -35,6 +36,20 @@ pub struct ApplicationHubConfiguration {
     pub access_token: Option<String>,
     /// Number of download retries after the initial attempt.
     pub maximum_retries: usize,
+}
+
+impl fmt::Debug for ApplicationHubConfiguration {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ApplicationHubConfiguration")
+            .field("cache_directory", &self.cache_directory)
+            .field(
+                "access_token",
+                &self.access_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("maximum_retries", &self.maximum_retries)
+            .finish()
+    }
 }
 
 /// User-facing defaults used only when no persisted settings exist.
@@ -161,5 +176,20 @@ impl ApplicationRuntimeConfiguration {
             text_output_record_capacity: DEFAULT_TEXT_OUTPUT_RECORD_CAPACITY,
             timing: ApplicationTiming::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ApplicationRuntimeConfiguration;
+
+    #[test]
+    fn application_configuration_debug_redacts_hub_access_token() {
+        let mut configuration = ApplicationRuntimeConfiguration::desktop("application.redb");
+        configuration.hub.access_token = Some("secret-token".to_owned());
+
+        let debug = format!("{configuration:?}");
+        assert!(!debug.contains("secret-token"));
+        assert!(debug.contains("<redacted>"));
     }
 }

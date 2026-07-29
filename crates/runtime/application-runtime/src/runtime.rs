@@ -2,7 +2,7 @@
 
 use candle_backend::CandleLlamaSource;
 use domain_contracts::{DeviceId, DeviceKind, ModelId};
-use hf_hub_adapter::{HubModelReference, ResolvedModelArtifacts};
+use hf_hub_adapter::{HubModelReference, ResolvedSafetensorsLlamaArtifacts};
 use hf_tokenizer::HfTokenizer;
 use host_runtime::{BoundedReceiver, BoundedSender, HostThread, TryReceiveError, TrySendError};
 use inference_runtime::{
@@ -41,7 +41,7 @@ pub struct ApplicationRuntime {
     preferences: ApplicationPreferences,
     pub(crate) configuration: ApplicationRuntimeConfiguration,
     pub(crate) state: ApplicationState,
-    resolved_artifacts: Option<ResolvedModelArtifacts>,
+    resolved_artifacts: Option<ResolvedSafetensorsLlamaArtifacts>,
     pub(crate) tokenizer: Option<HfTokenizer>,
     pub(crate) generation: GenerationBridge,
     pub(crate) conversation: ConversationState,
@@ -300,7 +300,10 @@ impl ApplicationRuntime {
         }
     }
 
-    fn accept_resolved_artifacts(&mut self, artifacts: ResolvedModelArtifacts) -> ApplicationEvent {
+    fn accept_resolved_artifacts(
+        &mut self,
+        artifacts: ResolvedSafetensorsLlamaArtifacts,
+    ) -> ApplicationEvent {
         let tokenizer = match HfTokenizer::from_file(&artifacts.tokenizer_path) {
             Ok(tokenizer) => tokenizer,
             Err(error) => {
@@ -442,7 +445,7 @@ impl ApplicationRuntime {
 
     fn persist_resolved(
         &mut self,
-        artifacts: &ResolvedModelArtifacts,
+        artifacts: &ResolvedSafetensorsLlamaArtifacts,
     ) -> Result<(), redb_storage::StorageError> {
         self.preferences
             .default_repository

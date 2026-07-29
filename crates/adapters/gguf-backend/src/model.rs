@@ -3,10 +3,9 @@
 use domain_contracts::{
     BackendFailureKind, BackendId, BackendSequence, CapacityExhausted, CapacityResource,
     DecodeBufferRequirements, DecodeInput, DecodeOutcome, LoadedModel, MemoryFootprint,
-    ModelDescriptor, ModelError, ModelHandle, ModelMetadata, PrefillBufferRequirements,
-    PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers,
-    SequenceConfiguration, SequenceError, SequenceId, SequencePlan, SequenceState,
-    SynchronizationError,
+    ModelDescriptor, ModelError, ModelHandle, PrefillBufferRequirements, PrefillInput,
+    PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers, SequenceConfiguration,
+    SequenceError, SequenceId, SequencePlan, SequenceState, SynchronizationError,
 };
 use llama_cpp_2::context::LlamaContext;
 use llama_cpp_2::context::params::LlamaContextParams;
@@ -128,8 +127,8 @@ impl GgufModel {
 
     /// Returns the complete inspected descriptor retained by the loaded model.
     #[must_use]
-    pub const fn descriptor(&self) -> ModelDescriptor {
-        self.descriptor
+    pub const fn descriptor(&self) -> &ModelDescriptor {
+        &self.descriptor
     }
 
     fn allocate_slot(&mut self) -> Result<u32, ModelError> {
@@ -272,8 +271,8 @@ impl LoadedModel for GgufModel {
         self.handle
     }
 
-    fn metadata(&self) -> &ModelMetadata {
-        &self.descriptor.metadata
+    fn descriptor(&self) -> &ModelDescriptor {
+        &self.descriptor
     }
 
     fn plan_sequence(

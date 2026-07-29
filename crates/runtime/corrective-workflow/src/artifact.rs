@@ -5,7 +5,7 @@ use std::num::NonZeroUsize;
 
 use super::{
     ArtifactId, ArtifactKind, ArtifactReference, ArtifactRole, NormalizedValidationReport,
-    ValidationReport, WorkflowError,
+    ValidationReport, WorkflowError, WorkflowId,
 };
 
 /// Stable discriminator for an artifact payload variant.
@@ -66,28 +66,68 @@ impl ArtifactContent {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Artifact {
     reference: ArtifactReference,
+    owner: Option<WorkflowId>,
     content: ArtifactContent,
 }
 
 impl Artifact {
-    /// Creates an artifact after validating its kind, role, and content variant.
+    /// Creates an unowned root specification artifact.
     ///
     /// # Errors
     ///
     /// Returns [`WorkflowError::ArtifactContentMismatch`] when the reference does
-    /// not describe the supplied payload variant.
+    /// not describe the supplied payload variant, or
+    /// [`WorkflowError::ArtifactOwnershipMismatch`] when the payload is generated
+    /// workflow output rather than a specification.
     pub fn new(
         reference: ArtifactReference,
         content: ArtifactContent,
     ) -> Result<Self, WorkflowError> {
+        Self::with_owner(reference, None, content)
+    }
+
+    /// Creates generated output owned by one workflow.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkflowError::ArtifactContentMismatch`] when the reference does
+    /// not describe the supplied payload variant, or
+    /// [`WorkflowError::ArtifactOwnershipMismatch`] when the payload is a shared
+    /// root specification.
+    pub fn new_owned(
+        reference: ArtifactReference,
+        owner: WorkflowId,
+        content: ArtifactContent,
+    ) -> Result<Self, WorkflowError> {
+        Self::with_owner(reference, Some(owner), content)
+    }
+
+    fn with_owner(
+        reference: ArtifactReference,
+        owner: Option<WorkflowId>,
+        content: ArtifactContent,
+    ) -> Result<Self, WorkflowError> {
         validate_content(reference, &content)?;
-        Ok(Self { reference, content })
+        validate_owner(reference, owner, &content)?;
+        Ok(Self {
+            reference,
+            owner,
+            content,
+        })
     }
 
     /// Returns the immutable graph-level reference.
     #[must_use]
     pub const fn reference(&self) -> ArtifactReference {
         self.reference
+    }
+
+    /// Returns the owning workflow for generated output.
+    ///
+    /// Root specification artifacts return `None` because they are shared inputs.
+    #[must_use]
+    pub const fn owner(&self) -> Option<WorkflowId> {
+        self.owner
     }
 
     /// Returns the immutable typed payload.
@@ -125,6 +165,7 @@ impl ArtifactStore {
     /// store is full. Existing artifacts are never overwritten.
     pub fn insert(&mut self, artifact: Artifact) -> Result<(), WorkflowError> {
         validate_content(artifact.reference, &artifact.content)?;
+        validate_owner(artifact.reference, artifact.owner, &artifact.content)?;
         let id = artifact.reference.id;
         if self.artifacts.contains_key(&id) {
             return Err(WorkflowError::DuplicateArtifact(id));
@@ -174,6 +215,13 @@ impl ArtifactStore {
     pub fn is_empty(&self) -> bool {
         self.artifacts.is_empty()
     }
+
+    pub(crate) fn remove_owned_by(&mut self, workflow: WorkflowId) -> usize {
+        let previous_len = self.artifacts.len();
+        self.artifacts
+            .retain(|_, artifact| artifact.owner != Some(workflow));
+        previous_len - self.artifacts.len()
+    }
 }
 
 /// Borrowed resolver restricted to one task's declared artifact identities.
@@ -205,6 +253,31 @@ impl<'a> ArtifactInputs<'a> {
         } else {
             None
         }
+    }
+}
+
+const fn validate_owner(
+    reference: ArtifactReference,
+    owner: Option<WorkflowId>,
+    content: &ArtifactContent,
+) -> Result<(), WorkflowError> {
+    let valid = matches!(
+        (owner, content),
+        (None, ArtifactContent::Specification(_))
+            | (
+                Some(_),
+                ArtifactContent::Draft(_)
+                    | ArtifactContent::RawValidation(_)
+                    | ArtifactContent::NormalizedDiagnostics(_)
+                    | ArtifactContent::Review(_)
+                    | ArtifactContent::Revision(_)
+                    | ArtifactContent::FinalValidation(_)
+            )
+    );
+    if valid {
+        Ok(())
+    } else {
+        Err(WorkflowError::ArtifactOwnershipMismatch { reference, owner })
     }
 }
 

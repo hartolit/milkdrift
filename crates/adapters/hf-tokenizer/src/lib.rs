@@ -105,10 +105,10 @@ impl HfTokenizer {
         })
     }
 
-    /// Returns the quarantined upstream tokenizer for cold-path inspection.
+    /// Resolves one tokenizer vocabulary spelling to a project-owned token identifier.
     #[must_use]
-    pub const fn inner(&self) -> &tokenizers::Tokenizer {
-        &self.ordinary
+    pub fn token_id(&self, token: &str) -> Option<TokenId> {
+        self.ordinary.token_to_id(token).map(TokenId::new)
     }
 
     /// Creates request-local owned streaming decode state.

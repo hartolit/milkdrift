@@ -1,8 +1,8 @@
 # Current implementation status
 
-**Status date:** 2026-07-29
-**Reviewed source baseline:** committed Phase 7 closure through `3b4541f50fcf614bc65938d448b383f507d27fcd` plus the final semantic-closure working tree
-**Execution position:** Phase 7 semantic closure is implemented at source level; rerun the exact-tree canonical gate before beginning Phase 8 GGUF parity
+**Status date:** 2026-07-30
+**Reviewed source baseline:** `6cc52de` plus the current composability-hardening working tree
+**Execution position:** Phase 7 is revalidated on the current tree; Phase 8 GGUF parity remains the next product integration and has not started
 **Canonical plan:** [LLM App Execution Plan](../agent/execution/execution-plan.md)
 **Current working context:** [Phase 8 execution context](../agent/execution/current.md)
 
@@ -20,11 +20,19 @@ The product remains CPU-only. Candle Llama is driven through the E0 generation s
 
 ## Current runtime boundaries
 
-The corrective workflow is now an independent `corrective-workflow` capability
-runtime rather than an E1 subsystem. E1 remains the frontend-neutral application
-coordinator; E0 remains the owner of local model resources and token-level
-scheduling. Hosted providers and peer nodes are not implemented and are not
-modeled as E0 backends.
+The corrective workflow is an independent `corrective-workflow` capability runtime
+rather than an E1 subsystem. Its model/validator ports now write into engine-owned
+bounded output sinks; generated artifacts carry workflow ownership, failed runs roll
+back artifacts/events, and successful artifacts have explicit release. E1 remains the
+frontend-neutral application coordinator; E0 remains the owner of local model
+resources and token-level scheduling. Hosted providers and peer nodes are not
+implemented and are not modeled as E0 backends.
+
+E0 now verifies complete loaded descriptors, numeric capability consistency,
+sequence plans against advertised limits, operation support, exact ready-state
+position/identity/capacity transitions, and full-vocabulary logits before sampling.
+This strengthens Candle/GGUF substitution at the existing local backend boundary;
+it does not make GGUF an E1 product path.
 
 The workspace now uses `domain`, `platform`, `adapters`, `runtime`, and `apps` as its physical roots. Runtime and platform roles fail closed in the architecture validator, and runtime production dependencies on platform/adapters or another runtime require an exact reviewed composition edge.
 
@@ -63,17 +71,27 @@ The source tree contains:
 
 ## Validation state
 
-On 2026-07-29, the complete canonical locked gate was recorded as passing on the original uncommitted Phase 7 working tree based on `afecb6c8f9d22d8f84d9e46f9be9d6c4fad73bea`:
+On 2026-07-30, the complete canonical locked gate passed on the uncommitted
+composability-hardening working tree based on `6cc52de`, including a rerun after the
+final status and current-context updates:
 
 ```text
 cargo run --locked --bin llm-app -- verify
 ```
 
-It covered architecture/dependency validation, formatting, workspace checks, the full test/doctest suite, strict Clippy, rustdoc, and benchmark compilation. Focused runs also passed for `context-planner`, `application-runtime`, and `desktop-slint`, including strict all-target Clippy. The Phase 7 implementation and first review fixes are now committed through `3b4541f50fcf614bc65938d448b383f507d27fcd`, but the historical gate predates both those commits as an exact committed tree and this final semantic closure.
+It covered architecture/dependency validation, formatting, workspace checks, the
+full test/doctest suite, strict Clippy, rustdoc, and benchmark compilation. Focused
+fault-injection suites additionally cover malformed descriptors, unsupported
+capabilities, over-limit sequence plans, short logits, invalid positions/usage, and
+mutable sequence state/identity/capacity. Corrective workflow tests cover bounded
+chunk/diagnostic output, non-retryable overflow, late-failure rollback, ownership,
+and explicit release. Hub/application tests prove access-token debug redaction.
 
-The exact resulting tree must therefore pass `cargo run --locked --bin llm-app -- verify` before Phase 7 is treated as fully validated input to Phase 8. Do not rewrite the historical evidence as though it validated this later tree.
-
-The graphical external-model acceptance scenario was not manually exercised in this environment. Download-free E1/Candle integration tests cover rendered prompt admission, exact usage, planning/correction, regeneration, pinned overflow, cancellation/unload/backpressure, and shutdown; presenter tests cover the chat UI mapping. Historical earlier-phase evidence remains in [execution history](../agent/execution/history.md).
+The graphical external-model acceptance scenario was not manually exercised in
+this environment. Download-free E1/Candle integration tests cover rendered prompt
+admission, exact usage, planning/correction, regeneration, pinned overflow,
+cancellation/unload/backpressure, and shutdown; presenter tests cover the chat UI
+mapping. Historical earlier-phase evidence remains in [execution history](../agent/execution/history.md).
 
 ## Known limitations
 

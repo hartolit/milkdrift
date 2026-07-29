@@ -84,6 +84,14 @@ fn fixture() -> Result<HfTokenizer, TestError> {
 }
 
 #[test]
+fn vocabulary_lookup_returns_project_owned_identifiers() -> Result<(), TestError> {
+    let tokenizer = fixture()?;
+    assert_eq!(tokenizer.token_id("hello"), Some(TokenId::new(1)));
+    assert_eq!(tokenizer.token_id("missing"), None);
+    Ok(())
+}
+
+#[test]
 fn encodes_into_caller_owned_storage() -> Result<(), TestError> {
     let tokenizer = fixture()?;
     let mut storage = [TokenId::new(0); 4];

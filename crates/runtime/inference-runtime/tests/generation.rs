@@ -17,19 +17,51 @@ use domain_contracts::{
 };
 use host_runtime::TokenOutputRecordKind;
 use inference_runtime::{
-    CommandTicket, GenerationOutcome, GenerationOutputCapacityPolicy, GenerationOutputState,
-    GenerationRequest, GenerationStopSequence, HostedRuntime, HostedRuntimeConfiguration,
-    RuntimeCommand, RuntimeEvent, RuntimeLimits, RuntimeThread, start_hosted_runtime,
+    CleanupPoll, CleanupResource, CommandTicket, FailureClass, GenerationOutcome,
+    GenerationOutputCapacityPolicy, GenerationOutputState, GenerationRequest,
+    GenerationStopSequence, HostedRuntime, HostedRuntimeConfiguration, InferenceRuntime,
+    RuntimeCommand, RuntimeError, RuntimeEvent, RuntimeLimits, RuntimeThread, start_hosted_runtime,
 };
 use sampling::SamplingConfig;
 
 const BACKEND: BackendId = BackendId::new(93);
 const MODEL: ModelId = ModelId::new(1);
+const GENERATION_OPERATIONS: CapabilitySet = CapabilitySet::PREFILL
+    .union(CapabilitySet::INCREMENTAL_DECODE)
+    .union(CapabilitySet::MULTIPLE_SEQUENCES)
+    .union(CapabilitySet::EXPLICIT_SYNCHRONIZATION);
 
 type TestResult<T = ()> = Result<T, String>;
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct ContractFaults(u16);
+
+impl ContractFaults {
+    const EMPTY: Self = Self(0);
+    const SHORT_PREFILL_LOGITS: Self = Self(1 << 0);
+    const SHORT_DECODE_LOGITS: Self = Self(1 << 1);
+    const INVALID_PREFILL_POSITION: Self = Self(1 << 2);
+    const INVALID_DECODE_POSITION: Self = Self(1 << 3);
+    const INVALID_CONSUMED_TOKENS: Self = Self(1 << 4);
+    const PREFILL_INVALID_STATE: Self = Self(1 << 5);
+    const PREFILL_MUTATED_IDENTITY: Self = Self(1 << 6);
+    const PREFILL_MUTATED_CAPACITY: Self = Self(1 << 7);
+    const DECODE_INVALID_STATE: Self = Self(1 << 8);
+    const DECODE_MUTATED_IDENTITY: Self = Self(1 << 9);
+    const DECODE_MUTATED_CAPACITY: Self = Self(1 << 10);
+
+    const fn contains(self, fault: Self) -> bool {
+        self.0 & fault.0 != 0
+    }
+}
 type HostedParts = (
     HostedRuntime<FakeSource>,
     RuntimeThread,
+    Arc<Mutex<Counters>>,
+    ModelHandle,
+);
+type SynchronousParts = (
+    InferenceRuntime<FakeLoader>,
     Arc<Mutex<Counters>>,
     ModelHandle,
 );
@@ -45,6 +77,8 @@ struct FakeSource {
     destroy_failures: u32,
     unload_failures: u32,
     logits_capacity: usize,
+    operations: CapabilitySet,
+    contract_faults: ContractFaults,
     load_gate: Option<Arc<BlockingGate>>,
     prefill_gate: Option<Arc<BlockingGate>>,
 }
@@ -61,6 +95,8 @@ impl FakeSource {
             destroy_failures: 0,
             unload_failures: 0,
             logits_capacity: 4,
+            operations: GENERATION_OPERATIONS,
+            contract_faults: ContractFaults::EMPTY,
             load_gate: None,
             prefill_gate: None,
         }
@@ -106,7 +142,7 @@ struct FakeLoader {
 
 struct FakeModel {
     handle: ModelHandle,
-    metadata: ModelMetadata,
+    descriptor: ModelDescriptor,
     source: FakeSource,
     counters: Arc<Mutex<Counters>>,
     remaining_destroy_failures: u32,
@@ -144,8 +180,8 @@ impl ModelLoader for FakeLoader {
     type Source = FakeSource;
     type Model = FakeModel;
 
-    fn inspect(&self, _source: &Self::Source) -> Result<ModelDescriptor, LoadError> {
-        Ok(descriptor())
+    fn inspect(&self, source: &Self::Source) -> Result<ModelDescriptor, LoadError> {
+        Ok(descriptor(source.operations))
     }
 
     fn plan_load(
@@ -185,7 +221,7 @@ impl ModelLoader for FakeLoader {
         drop(counters);
         Ok(FakeModel {
             handle: configuration.handle,
-            metadata: descriptor().metadata,
+            descriptor: self.inspect(source)?,
             source: source.clone(),
             counters: Arc::clone(&self.counters),
             remaining_destroy_failures: source.destroy_failures,
@@ -202,8 +238,8 @@ impl LoadedModel for FakeModel {
         self.handle
     }
 
-    fn metadata(&self) -> &ModelMetadata {
-        &self.metadata
+    fn descriptor(&self) -> &ModelDescriptor {
+        &self.descriptor
     }
 
     fn plan_sequence(
@@ -280,17 +316,63 @@ impl LoadedModel for FakeModel {
         if self.source.fail_prefill {
             return Err(SequenceError::Backend(failure(4)));
         }
-        sequence.position = input.tokens.len();
+        let consumed_position = if self
+            .source
+            .contract_faults
+            .contains(ContractFaults::INVALID_PREFILL_POSITION)
+        {
+            input.tokens.len().saturating_add(1)
+        } else {
+            input.tokens.len()
+        };
+        sequence.position = sequence.position.saturating_add(consumed_position);
         sequence.state = SequenceState::Ready;
+        if self
+            .source
+            .contract_faults
+            .contains(ContractFaults::PREFILL_MUTATED_IDENTITY)
+        {
+            sequence.id = SequenceId::new(9_999);
+        }
+        if self
+            .source
+            .contract_faults
+            .contains(ContractFaults::PREFILL_MUTATED_CAPACITY)
+        {
+            sequence.capacity = sequence.capacity.saturating_add(1);
+        }
+        if self
+            .source
+            .contract_faults
+            .contains(ContractFaults::PREFILL_INVALID_STATE)
+        {
+            sequence.state = SequenceState::Transitioning;
+        }
         write_logits(&self.source, sequence.generated, buffers.logits_mut());
         self.counters
             .lock()
             .map_err(|_| SequenceError::Backend(failure(10)))?
             .sampling_opportunities += 1;
         Ok(PrefillOutcome::Ready {
-            consumed_tokens: input.tokens.len(),
+            consumed_tokens: if self
+                .source
+                .contract_faults
+                .contains(ContractFaults::INVALID_CONSUMED_TOKENS)
+            {
+                input.tokens.len().saturating_add(1)
+            } else {
+                input.tokens.len()
+            },
             position: sequence.position,
-            logits_written: buffers.required_logits(),
+            logits_written: if self
+                .source
+                .contract_faults
+                .contains(ContractFaults::SHORT_PREFILL_LOGITS)
+            {
+                buffers.required_logits().saturating_sub(1)
+            } else {
+                buffers.required_logits()
+            },
         })
     }
 
@@ -311,8 +393,39 @@ impl LoadedModel for FakeModel {
         if self.source.fail_decode_call == Some(call) {
             return Err(SequenceError::Backend(failure(6)));
         }
-        sequence.position = sequence.position.saturating_add(1);
+        sequence.position = sequence.position.saturating_add(
+            if self
+                .source
+                .contract_faults
+                .contains(ContractFaults::INVALID_DECODE_POSITION)
+            {
+                2
+            } else {
+                1
+            },
+        );
         sequence.generated = sequence.generated.saturating_add(1);
+        if self
+            .source
+            .contract_faults
+            .contains(ContractFaults::DECODE_MUTATED_IDENTITY)
+        {
+            sequence.id = SequenceId::new(9_999);
+        }
+        if self
+            .source
+            .contract_faults
+            .contains(ContractFaults::DECODE_MUTATED_CAPACITY)
+        {
+            sequence.capacity = sequence.capacity.saturating_add(1);
+        }
+        if self
+            .source
+            .contract_faults
+            .contains(ContractFaults::DECODE_INVALID_STATE)
+        {
+            sequence.state = SequenceState::Transitioning;
+        }
         write_logits(&self.source, sequence.generated, buffers.logits_mut());
         self.counters
             .lock()
@@ -320,7 +433,15 @@ impl LoadedModel for FakeModel {
             .sampling_opportunities += 1;
         Ok(DecodeOutcome::Ready {
             position: sequence.position,
-            logits_written: buffers.required_logits(),
+            logits_written: if self
+                .source
+                .contract_faults
+                .contains(ContractFaults::SHORT_DECODE_LOGITS)
+            {
+                buffers.required_logits().saturating_sub(1)
+            } else {
+                buffers.required_logits()
+            },
         })
     }
 
@@ -860,6 +981,327 @@ fn generation_admission_requires_exact_full_vocabulary_logits() -> TestResult {
 }
 
 #[test]
+fn scheduled_generation_requires_prefill_and_incremental_decode_capabilities() -> TestResult {
+    let common = CapabilitySet::MULTIPLE_SEQUENCES.union(CapabilitySet::EXPLICIT_SYNCHRONIZATION);
+    for (operations, request_id) in [
+        (common.union(CapabilitySet::INCREMENTAL_DECODE), 83),
+        (common.union(CapabilitySet::PREFILL), 84),
+    ] {
+        let mut source = FakeSource::scripted([1; 8], 8);
+        source.operations = operations;
+        let (hosted, thread, counters, handle) = hosted(source, 8, 16)?;
+
+        let error = submit_generation_error(
+            &hosted,
+            handle,
+            request(request_id, request_id + 1_000, 4, &[], &[]),
+            CommandTicket::new(request_id),
+        )?;
+        assert_eq!(error, RuntimeError::Model(ModelError::Unsupported));
+        assert_eq!(
+            counters
+                .lock()
+                .map_err(|_| "counter mutex poisoned")?
+                .sequence_creations,
+            0
+        );
+        shutdown(hosted, thread)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn scheduled_generation_configuration_respects_advertised_limits() -> TestResult {
+    let source = FakeSource::scripted([1; 8], 8);
+    let (hosted, thread, counters, handle) = hosted(source, 8, 16)?;
+    let configurations = [
+        (
+            85,
+            SequenceConfiguration::new(
+                NonZeroU32::new(65).unwrap_or(NonZeroU32::MIN),
+                NonZeroU32::new(8).unwrap_or(NonZeroU32::MIN),
+            ),
+        ),
+        (
+            86,
+            SequenceConfiguration::new(
+                NonZeroU32::new(32).unwrap_or(NonZeroU32::MIN),
+                NonZeroU32::new(9).unwrap_or(NonZeroU32::MIN),
+            ),
+        ),
+        (
+            87,
+            SequenceConfiguration::new(
+                NonZeroU32::new(4).unwrap_or(NonZeroU32::MIN),
+                NonZeroU32::new(5).unwrap_or(NonZeroU32::MIN),
+            ),
+        ),
+    ];
+
+    for (request_id, configuration) in configurations {
+        let mut generation = request(request_id, request_id + 1_000, 1, &[], &[]);
+        generation.sequence = configuration;
+        let error =
+            submit_generation_error(&hosted, handle, generation, CommandTicket::new(request_id))?;
+        assert_eq!(error, RuntimeError::Model(ModelError::Unsupported));
+    }
+    assert_eq!(
+        counters
+            .lock()
+            .map_err(|_| "counter mutex poisoned")?
+            .sequence_creations,
+        0
+    );
+    shutdown(hosted, thread)
+}
+
+#[test]
+fn direct_prefill_and_decode_require_advertised_capabilities() -> TestResult {
+    let common = CapabilitySet::MULTIPLE_SEQUENCES.union(CapabilitySet::EXPLICIT_SYNCHRONIZATION);
+
+    let mut source = FakeSource::scripted([1; 8], 8);
+    source.operations = common.union(CapabilitySet::INCREMENTAL_DECODE);
+    let (mut runtime, counters, handle) = synchronous_runtime(&source)?;
+    let request_id = RequestId::new(88);
+    runtime
+        .start_request(
+            handle,
+            request_id,
+            SequenceId::new(888),
+            direct_sequence_configuration(),
+        )
+        .map_err(debug_error)?;
+    assert_eq!(
+        runtime.prefill(request_id, &[TokenId::new(0)], true, &mut [0.0; 4]),
+        Err(RuntimeError::Sequence(SequenceError::Unsupported))
+    );
+    assert!(!runtime.is_request_active(request_id));
+    runtime.shutdown().map_err(debug_error)?;
+    {
+        let counters = counters.lock().map_err(|_| "counter mutex poisoned")?;
+        assert_eq!(counters.prefill_calls, 0);
+        assert_eq!(counters.successful_destructions, 1);
+        assert_eq!(counters.retained_memory_bytes, 0);
+        drop(counters);
+    }
+
+    let mut source = FakeSource::scripted([1; 8], 8);
+    source.operations = common.union(CapabilitySet::PREFILL);
+    let (mut runtime, counters, handle) = synchronous_runtime(&source)?;
+    let request_id = RequestId::new(89);
+    runtime
+        .start_request(
+            handle,
+            request_id,
+            SequenceId::new(889),
+            direct_sequence_configuration(),
+        )
+        .map_err(debug_error)?;
+    runtime
+        .prefill(request_id, &[TokenId::new(0)], true, &mut [0.0; 4])
+        .map_err(debug_error)?;
+    assert_eq!(
+        runtime.decode(request_id, TokenId::new(1), &mut [0.0; 4]),
+        Err(RuntimeError::Sequence(SequenceError::Unsupported))
+    );
+    assert!(!runtime.is_request_active(request_id));
+    runtime.shutdown().map_err(debug_error)?;
+    {
+        let counters = counters.lock().map_err(|_| "counter mutex poisoned")?;
+        assert_eq!(counters.prefill_calls, 1);
+        assert_eq!(counters.decode_calls, 0);
+        assert_eq!(counters.successful_destructions, 1);
+        assert_eq!(counters.retained_memory_bytes, 0);
+        drop(counters);
+    }
+    Ok(())
+}
+
+#[test]
+fn ready_results_preserve_sequence_state_identity_and_capacity() -> TestResult {
+    let cases = [
+        (ContractFaults::PREFILL_INVALID_STATE, false, false, 110),
+        (ContractFaults::PREFILL_MUTATED_IDENTITY, false, true, 111),
+        (ContractFaults::PREFILL_MUTATED_CAPACITY, false, false, 112),
+        (ContractFaults::DECODE_INVALID_STATE, true, false, 113),
+        (ContractFaults::DECODE_MUTATED_IDENTITY, true, false, 114),
+        (ContractFaults::DECODE_MUTATED_CAPACITY, true, false, 115),
+    ];
+
+    for (fault, decode_fault, quarantine, value) in cases {
+        let mut source = FakeSource::scripted([1; 8], 8);
+        source.contract_faults = fault;
+        source.destroy_failures = u32::from(quarantine);
+        let (mut runtime, counters, handle) = synchronous_runtime(&source)?;
+        let request_id = RequestId::new(value);
+        let sequence_id = SequenceId::new(value + 1_000);
+        runtime
+            .start_request(
+                handle,
+                request_id,
+                sequence_id,
+                direct_sequence_configuration(),
+            )
+            .map_err(debug_error)?;
+        let mut logits = [0.0; 4];
+        if decode_fault {
+            runtime
+                .prefill(request_id, &[TokenId::new(0)], true, &mut logits)
+                .map_err(debug_error)?;
+        }
+        let result = if decode_fault {
+            runtime
+                .decode(request_id, TokenId::new(1), &mut logits)
+                .map(|_| ())
+        } else {
+            runtime
+                .prefill(request_id, &[TokenId::new(0)], true, &mut logits)
+                .map(|_| ())
+        };
+        assert_eq!(result, Err(RuntimeError::BackendContractViolation));
+        assert!(!runtime.is_request_active(request_id));
+
+        if quarantine {
+            let cleanup = runtime
+                .request_cleanup_state(request_id)
+                .ok_or("missing quarantined sequence")?;
+            assert_eq!(
+                cleanup.failure.primary_failure,
+                FailureClass::BackendContract
+            );
+            assert!(matches!(
+                cleanup.resource,
+                CleanupResource::Sequence {
+                    request_id: retained_request,
+                    sequence_id: retained_sequence,
+                    ..
+                } if retained_request == request_id && retained_sequence == sequence_id
+            ));
+            assert!(matches!(
+                runtime.poll_cleanup().map_err(debug_error)?,
+                CleanupPoll::Released(_)
+            ));
+        } else {
+            assert!(!runtime.is_request_cleanup_pending(request_id));
+        }
+
+        let reuse_request = RequestId::new(value + 2_000);
+        runtime
+            .start_request(
+                handle,
+                reuse_request,
+                sequence_id,
+                direct_sequence_configuration(),
+            )
+            .map_err(debug_error)?;
+        runtime
+            .cancel_request(
+                reuse_request,
+                domain_contracts::CancellationReason::UserRequested,
+            )
+            .map_err(debug_error)?;
+        runtime.shutdown().map_err(debug_error)?;
+        let counters = counters.lock().map_err(|_| "counter mutex poisoned")?;
+        assert_eq!(counters.successful_destructions, 2);
+        assert_eq!(counters.active_sequences, 0);
+        assert_eq!(counters.retained_memory_bytes, 0);
+        drop(counters);
+    }
+    Ok(())
+}
+
+#[test]
+fn short_prefill_logits_fail_before_sampling_and_cleanup_the_sequence() -> TestResult {
+    let mut source = FakeSource::scripted([3; 8], 8);
+    source.contract_faults = ContractFaults::SHORT_PREFILL_LOGITS;
+    let (hosted, thread, counters, handle) = hosted(source, 8, 16)?;
+    submit_generation(&hosted, handle, request(93, 903, 4, &[], &[]))?;
+
+    let output = collect_until_released(&hosted, RequestId::new(93), Duration::from_secs(2))?;
+    assert!(output.tokens.is_empty());
+    assert_backend_contract_failure(&output);
+    {
+        let counters = counters.lock().map_err(|_| "counter mutex poisoned")?;
+        assert_eq!(counters.prefill_calls, 1);
+        assert_eq!(counters.decode_calls, 0);
+        assert_eq!(counters.successful_destructions, 1);
+        drop(counters);
+    }
+    shutdown(hosted, thread)
+}
+
+#[test]
+fn short_decode_logits_fail_before_sampling_and_cleanup_the_sequence() -> TestResult {
+    let mut source = FakeSource::scripted([1, 3, 0, 0, 0, 0, 0, 0], 2);
+    source.contract_faults = ContractFaults::SHORT_DECODE_LOGITS;
+    let (hosted, thread, counters, handle) = hosted(source, 8, 16)?;
+    submit_generation(&hosted, handle, request(94, 904, 4, &[], &[]))?;
+
+    let output = collect_until_released(&hosted, RequestId::new(94), Duration::from_secs(2))?;
+    assert_eq!(output.tokens, vec![TokenId::new(1)]);
+    assert_backend_contract_failure(&output);
+    {
+        let counters = counters.lock().map_err(|_| "counter mutex poisoned")?;
+        assert_eq!(counters.prefill_calls, 1);
+        assert_eq!(counters.decode_calls, 1);
+        assert_eq!(counters.successful_destructions, 1);
+        drop(counters);
+    }
+    shutdown(hosted, thread)
+}
+
+#[test]
+fn invalid_prefill_and_decode_positions_fail_the_generation_contract() -> TestResult {
+    for (fault, request_id, expected_tokens) in [
+        (ContractFaults::INVALID_PREFILL_POSITION, 95, 0),
+        (ContractFaults::INVALID_DECODE_POSITION, 96, 1),
+    ] {
+        let mut source = FakeSource::scripted([1, 2, 0, 0, 0, 0, 0, 0], 2);
+        source.contract_faults = fault;
+        let (hosted, thread, counters, handle) = hosted(source, 8, 16)?;
+        submit_generation(
+            &hosted,
+            handle,
+            request(request_id, request_id + 1_000, 4, &[], &[]),
+        )?;
+
+        let output =
+            collect_until_released(&hosted, RequestId::new(request_id), Duration::from_secs(2))?;
+        assert_eq!(output.tokens.len(), expected_tokens);
+        assert_backend_contract_failure(&output);
+        assert_eq!(
+            counters
+                .lock()
+                .map_err(|_| "counter mutex poisoned")?
+                .successful_destructions,
+            1
+        );
+        shutdown(hosted, thread)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn invalid_prefill_consumed_tokens_fail_the_generation_contract() -> TestResult {
+    let mut source = FakeSource::scripted([1; 8], 8);
+    source.contract_faults = ContractFaults::INVALID_CONSUMED_TOKENS;
+    let (hosted, thread, counters, handle) = hosted(source, 8, 16)?;
+    submit_generation(&hosted, handle, request(97, 907, 4, &[], &[]))?;
+
+    let output = collect_until_released(&hosted, RequestId::new(97), Duration::from_secs(2))?;
+    assert!(output.tokens.is_empty());
+    assert_backend_contract_failure(&output);
+    assert_eq!(
+        counters
+            .lock()
+            .map_err(|_| "counter mutex poisoned")?
+            .successful_destructions,
+        1
+    );
+    shutdown(hosted, thread)
+}
+
+#[test]
 fn cancellation_queued_with_admission_is_observed_before_prefill() -> TestResult {
     let (gate, entered, release) = blocking_gate();
     let mut source = FakeSource::scripted([1; 8], 8);
@@ -1202,6 +1644,16 @@ struct CollectedOutput {
     states: Vec<GenerationOutputState>,
 }
 
+fn assert_backend_contract_failure(output: &CollectedOutput) {
+    assert!(
+        output
+            .states
+            .contains(&GenerationOutputState::Terminal(GenerationOutcome::Failed(
+                inference_runtime::RuntimeError::BackendContractViolation
+            )))
+    );
+}
+
 fn collect_until_released(
     hosted: &HostedRuntime<FakeSource>,
     request_id: RequestId,
@@ -1304,6 +1756,39 @@ fn collect_until_all_released(
         }
         std::thread::sleep(Duration::from_millis(1));
     }
+}
+
+fn synchronous_runtime(source: &FakeSource) -> TestResult<SynchronousParts> {
+    let counters = Arc::new(Mutex::new(Counters::default()));
+    let mut runtime = InferenceRuntime::new(
+        FakeLoader {
+            counters: Arc::clone(&counters),
+        },
+        RuntimeLimits::new(
+            NonZeroU32::MIN,
+            NonZeroU32::new(4).unwrap_or(NonZeroU32::MIN),
+            MemoryBudget {
+                host_bytes: 10_000,
+                device_bytes: 0,
+            },
+        ),
+    );
+    let handle = runtime
+        .load_model(MODEL, source, DeviceId::new(0), DeviceKind::Cpu)
+        .map_err(debug_error)?
+        .handle;
+    Ok((runtime, counters, handle))
+}
+
+fn direct_sequence_configuration() -> SequenceConfiguration {
+    SequenceConfiguration::new(
+        NonZeroU32::new(8).unwrap_or(NonZeroU32::MIN),
+        NonZeroU32::new(4).unwrap_or(NonZeroU32::MIN),
+    )
+}
+
+fn debug_error(error: impl core::fmt::Debug) -> String {
+    format!("{error:?}")
 }
 
 fn hosted(
@@ -1525,7 +2010,7 @@ fn write_logits(source: &FakeSource, generated: usize, logits: &mut [f32]) {
     }
 }
 
-const fn descriptor() -> ModelDescriptor {
+const fn descriptor(operations: CapabilitySet) -> ModelDescriptor {
     ModelDescriptor {
         backend: BACKEND,
         metadata: ModelMetadata {
@@ -1536,10 +2021,7 @@ const fn descriptor() -> ModelDescriptor {
             context_length: 64,
         },
         capabilities: ModelCapabilities {
-            operations: CapabilitySet::PREFILL
-                .union(CapabilitySet::INCREMENTAL_DECODE)
-                .union(CapabilitySet::MULTIPLE_SEQUENCES)
-                .union(CapabilitySet::EXPLICIT_SYNCHRONIZATION),
+            operations,
             maximum_context_tokens: 64,
             maximum_sequences: 4,
             maximum_prefill_batch: 8,

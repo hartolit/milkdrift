@@ -9,13 +9,14 @@ use std::rc::Rc;
 
 use corrective_workflow::{
     Artifact, ArtifactContent, ArtifactContentKind, ArtifactId, ArtifactInputs, ArtifactKind,
-    ArtifactReference, ArtifactRole, ArtifactStore, CorrectiveWorkflowConfiguration,
-    CorrectiveWorkflowExecutor, Diagnostic, DiagnosticLocation, DiagnosticSeverity, ModelPolicy,
-    ModelTaskExecutor, ModelTaskRequest, NormalizedValidationReport, RawDiagnostic, TaskBudget,
-    TaskId, TaskKind, ValidationReport, ValidationTaskExecutor, ValidationTaskRequest,
-    ValidationVerdict, WorkflowArtifactLimits, WorkflowBudgetClass, WorkflowConfigurationError,
-    WorkflowError, WorkflowEvent, WorkflowExecutorLimitError, WorkflowExecutorLimits, WorkflowId,
-    WorkflowOutcome, WorkflowStage, WorkflowStatus, normalize_validation_report,
+    ArtifactReference, ArtifactRole, ArtifactStore, BoundedDiagnosticsSink, BoundedTextSink,
+    CorrectiveWorkflowConfiguration, CorrectiveWorkflowExecutor, Diagnostic, DiagnosticLocation,
+    DiagnosticSeverity, ModelPolicy, ModelTaskExecutor, ModelTaskRequest,
+    NormalizedValidationReport, OutputSinkError, RawDiagnostic, TaskBudget, TaskId, TaskKind,
+    ValidationReport, ValidationTaskExecutor, ValidationTaskRequest, ValidationVerdict,
+    WorkflowArtifactLimits, WorkflowBudgetClass, WorkflowConfigurationError, WorkflowError,
+    WorkflowEvent, WorkflowExecutorLimitError, WorkflowExecutorLimits, WorkflowId, WorkflowOutcome,
+    WorkflowStage, WorkflowStatus, normalize_validation_report,
 };
 use domain_contracts::{BackendId, ModelId};
 
@@ -34,6 +35,14 @@ enum RecordedCall {
         attempt: u16,
         inputs: Vec<ArtifactId>,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RecordedEvent {
+    Started(WorkflowStage),
+    Committed(WorkflowStage),
+    RetryScheduled(WorkflowStage),
+    Completed(WorkflowStatus),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,7 +72,8 @@ impl ModelTaskExecutor for RecordingModel {
         &mut self,
         request: ModelTaskRequest<'_>,
         artifacts: &ArtifactInputs<'_>,
-    ) -> Result<String, Self::Error> {
+        output: &mut BoundedTextSink,
+    ) -> Result<(), Self::Error> {
         if request.input_artifacts != artifacts.ids()
             || request
                 .input_artifacts
@@ -79,9 +89,16 @@ impl ModelTaskExecutor for RecordingModel {
             attempt: request.attempt.number.get(),
             inputs: request.input_artifacts.to_vec(),
         });
-        self.responses
+        match self
+            .responses
             .pop_front()
             .ok_or(TestPortError("missing model response"))?
+        {
+            Ok(response) => output
+                .append(&response)
+                .map_err(|_| TestPortError("model output sink failed")),
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -98,7 +115,8 @@ impl ModelTaskExecutor for RestrictedAccessModel {
         &mut self,
         request: ModelTaskRequest<'_>,
         artifacts: &ArtifactInputs<'_>,
-    ) -> Result<String, Self::Error> {
+        output: &mut BoundedTextSink,
+    ) -> Result<(), Self::Error> {
         if request.input_artifacts != artifacts.ids()
             || request
                 .input_artifacts
@@ -113,9 +131,16 @@ impl ModelTaskExecutor for RestrictedAccessModel {
                 .borrow_mut()
                 .push(artifacts.get(undeclared).is_none());
         }
-        self.responses
+        match self
+            .responses
             .pop_front()
             .ok_or(TestPortError("missing restricted model response"))?
+        {
+            Ok(response) => output
+                .append(&response)
+                .map_err(|_| TestPortError("restricted model output sink failed")),
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -131,7 +156,8 @@ impl ValidationTaskExecutor for RecordingValidator {
         &mut self,
         request: ValidationTaskRequest<'_>,
         artifacts: &ArtifactInputs<'_>,
-    ) -> Result<ValidationReport, Self::Error> {
+        output: &mut BoundedDiagnosticsSink,
+    ) -> Result<ValidationVerdict, Self::Error> {
         if request.input_artifacts != artifacts.ids()
             || request
                 .input_artifacts
@@ -146,9 +172,21 @@ impl ValidationTaskExecutor for RecordingValidator {
             attempt: request.attempt.number.get(),
             inputs: request.input_artifacts.to_vec(),
         });
-        self.responses
+        match self
+            .responses
             .pop_front()
             .ok_or(TestPortError("missing validation response"))?
+        {
+            Ok(report) => {
+                for diagnostic in &report.diagnostics {
+                    output
+                        .append(diagnostic)
+                        .map_err(|_| TestPortError("validation output sink failed"))?;
+                }
+                Ok(report.verdict)
+            }
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -212,6 +250,86 @@ fn executor_with_limits(
         CorrectiveWorkflowExecutor::new(model, validator, limits),
         calls,
     )
+}
+
+#[test]
+fn bounded_text_sink_accepts_chunked_output_at_exact_limit() -> Result<(), Box<dyn Error>> {
+    let mut output = BoundedTextSink::new(10);
+
+    output.append("chunk")?;
+    output.append("ed")?;
+    output.append("✓")?;
+
+    assert_eq!(output.as_str(), "chunked✓");
+    assert_eq!(output.bytes_written(), 10);
+    assert_eq!(output.maximum_bytes(), 10);
+    assert_eq!(output.remaining_bytes(), 0);
+    assert_eq!(output.failure(), None);
+    Ok(())
+}
+
+#[test]
+fn bounded_text_overflow_is_atomic_sticky_and_never_truncates() -> Result<(), Box<dyn Error>> {
+    let mut output = BoundedTextSink::new(5);
+    output.append("abc")?;
+
+    let failure = OutputSinkError::CapacityExceeded {
+        required: 6,
+        maximum: 5,
+    };
+    assert_eq!(output.append("def"), Err(failure));
+    assert_eq!(output.as_str(), "abc");
+    assert_eq!(output.bytes_written(), 3);
+    assert_eq!(output.remaining_bytes(), 2);
+    assert_eq!(output.failure(), Some(failure));
+    assert_eq!(output.append("d"), Err(failure));
+    assert_eq!(output.as_str(), "abc");
+    Ok(())
+}
+
+#[test]
+fn bounded_diagnostics_account_for_verdict_structure_count_and_strings()
+-> Result<(), Box<dyn Error>> {
+    assert_eq!(
+        BoundedDiagnosticsSink::new(0).err(),
+        Some(OutputSinkError::CapacityExceeded {
+            required: 1,
+            maximum: 0,
+        })
+    );
+
+    let diagnostic = RawDiagnostic {
+        severity: DiagnosticSeverity::Error,
+        code: Some("E1".to_owned()),
+        message: "bad".to_owned(),
+        location: Some(DiagnosticLocation {
+            path: Some("src".to_owned()),
+            line: Some(2),
+            column: Some(3),
+        }),
+    };
+    let mut output = BoundedDiagnosticsSink::new(23)?;
+    output.append(&diagnostic)?;
+
+    assert_eq!(output.diagnostics(), [diagnostic]);
+    assert_eq!(output.bytes_written(), 23);
+    assert_eq!(output.remaining_bytes(), 0);
+
+    let minimal = RawDiagnostic {
+        severity: DiagnosticSeverity::Information,
+        code: None,
+        message: String::new(),
+        location: None,
+    };
+    let failure = OutputSinkError::CapacityExceeded {
+        required: 26,
+        maximum: 23,
+    };
+    assert_eq!(output.append(&minimal), Err(failure));
+    assert_eq!(output.diagnostics().len(), 1);
+    assert_eq!(output.bytes_written(), 23);
+    assert_eq!(output.failure(), Some(failure));
+    Ok(())
 }
 
 #[test]
@@ -297,6 +415,22 @@ fn canonical_workflow_uses_exact_call_order_and_input_ids() -> Result<(), Box<dy
         ]
     );
     assert_eq!(executor.artifacts().len(), 7);
+    assert_eq!(
+        executor
+            .artifacts()
+            .get(specification)
+            .and_then(Artifact::owner),
+        None
+    );
+    for id in 2_u64..=7 {
+        assert_eq!(
+            executor
+                .artifacts()
+                .get(ArtifactId::new(id))
+                .and_then(Artifact::owner),
+            Some(WorkflowId::new(1))
+        );
+    }
 
     let normalized = executor
         .artifacts()
@@ -333,21 +467,32 @@ fn canonical_workflow_uses_exact_call_order_and_input_ids() -> Result<(), Box<dy
         Some(&ArtifactContent::Revision("revision only".to_owned()))
     );
 
-    let mut stages = Vec::new();
+    let mut events = Vec::new();
     while let Some(event) = executor.poll_event() {
-        if let WorkflowEvent::StageStarted { stage, .. } = event {
-            stages.push(stage);
-        }
+        assert_eq!(event.workflow(), WorkflowId::new(1));
+        events.push(match event {
+            WorkflowEvent::StageStarted { stage, .. } => RecordedEvent::Started(stage),
+            WorkflowEvent::ArtifactCommitted { stage, .. } => RecordedEvent::Committed(stage),
+            WorkflowEvent::RetryScheduled { stage, .. } => RecordedEvent::RetryScheduled(stage),
+            WorkflowEvent::Completed { status, .. } => RecordedEvent::Completed(status),
+        });
     }
     assert_eq!(
-        stages,
+        events,
         [
-            WorkflowStage::Draft,
-            WorkflowStage::InitialValidation,
-            WorkflowStage::NormalizeDiagnostics,
-            WorkflowStage::Review,
-            WorkflowStage::Revise,
-            WorkflowStage::FinalValidation,
+            RecordedEvent::Started(WorkflowStage::Draft),
+            RecordedEvent::Committed(WorkflowStage::Draft),
+            RecordedEvent::Started(WorkflowStage::InitialValidation),
+            RecordedEvent::Committed(WorkflowStage::InitialValidation),
+            RecordedEvent::Started(WorkflowStage::NormalizeDiagnostics),
+            RecordedEvent::Committed(WorkflowStage::NormalizeDiagnostics),
+            RecordedEvent::Started(WorkflowStage::Review),
+            RecordedEvent::Committed(WorkflowStage::Review),
+            RecordedEvent::Started(WorkflowStage::Revise),
+            RecordedEvent::Committed(WorkflowStage::Revise),
+            RecordedEvent::Started(WorkflowStage::FinalValidation),
+            RecordedEvent::Committed(WorkflowStage::FinalValidation),
+            RecordedEvent::Completed(WorkflowStatus::Accepted),
         ]
     );
     Ok(())
@@ -613,6 +758,38 @@ fn artifact_store_rejects_wrong_roles_and_duplicate_ids() -> Result<(), Box<dyn 
         })
     );
 
+    let generated_reference = ArtifactReference {
+        id: ArtifactId::new(3),
+        kind: ArtifactKind::Text,
+        role: ArtifactRole::Draft,
+    };
+    assert_eq!(
+        Artifact::new(
+            generated_reference,
+            ArtifactContent::Draft("draft".to_owned())
+        ),
+        Err(WorkflowError::ArtifactOwnershipMismatch {
+            reference: generated_reference,
+            owner: None,
+        })
+    );
+    let specification_reference = ArtifactReference {
+        id: ArtifactId::new(4),
+        kind: ArtifactKind::Text,
+        role: ArtifactRole::Specification,
+    };
+    assert_eq!(
+        Artifact::new_owned(
+            specification_reference,
+            WorkflowId::new(1),
+            ArtifactContent::Specification("spec".to_owned())
+        ),
+        Err(WorkflowError::ArtifactOwnershipMismatch {
+            reference: specification_reference,
+            owner: Some(WorkflowId::new(1)),
+        })
+    );
+
     let limits = WorkflowExecutorLimits::new(2, 1, 1)?;
     let mut store = ArtifactStore::new(limits.maximum_artifacts());
     let valid_reference = ArtifactReference {
@@ -868,9 +1045,9 @@ fn queued_events_reduce_admission_capacity_before_new_side_effects() -> Result<(
 
 #[test]
 fn output_contract_is_enforced_without_commit_or_truncation() -> Result<(), Box<dyn Error>> {
-    let (mut executor, _) = executor([Ok("oversized".to_owned())], [])?;
+    let (mut executor, calls) = executor([Ok("oversized".to_owned())], [])?;
     let specification = executor.insert_specification("spec".to_owned())?;
-    let mut config = configuration(1)?;
+    let mut config = configuration(2)?;
     config.artifact_limits.draft = 4;
 
     let error = executor
@@ -891,6 +1068,93 @@ fn output_contract_is_enforced_without_commit_or_truncation() -> Result<(), Box<
     );
     assert_eq!(executor.artifacts().len(), 1);
     assert!(executor.artifacts().get(ArtifactId::new(2)).is_none());
+    assert_eq!(calls.borrow().len(), 1);
+    assert_eq!(executor.poll_event(), None);
+    Ok(())
+}
+
+#[test]
+fn validation_sink_failure_is_non_retryable_and_rolls_back_prior_output()
+-> Result<(), Box<dyn Error>> {
+    let (mut executor, calls) = executor(
+        [Ok("draft".to_owned())],
+        [Ok(ValidationReport {
+            verdict: ValidationVerdict::Rejected,
+            diagnostics: vec![RawDiagnostic {
+                severity: DiagnosticSeverity::Error,
+                code: None,
+                message: "too big".to_owned(),
+                location: None,
+            }],
+        })],
+    )?;
+    let specification = executor.insert_specification("spec".to_owned())?;
+    let mut config = configuration(2)?;
+    config.artifact_limits.raw_validation = 4;
+
+    let error = executor
+        .execute(specification, config)
+        .err()
+        .ok_or(TestPortError(
+            "validation capacity violation unexpectedly succeeded",
+        ))?;
+
+    assert_eq!(
+        error,
+        WorkflowError::OutputCapacityExceeded {
+            workflow: WorkflowId::new(1),
+            stage: WorkflowStage::InitialValidation,
+            task: TaskId::new(2),
+            artifact: ArtifactId::new(3),
+            required: 11,
+            maximum: 4,
+        }
+    );
+    assert_eq!(calls.borrow().len(), 2);
+    assert_eq!(executor.artifacts().len(), 1);
+    assert_eq!(executor.poll_event(), None);
+    Ok(())
+}
+
+#[test]
+fn normalized_diagnostics_are_bounded_before_commit() -> Result<(), Box<dyn Error>> {
+    let (mut executor, calls) = executor(
+        [Ok("draft".to_owned())],
+        [Ok(ValidationReport {
+            verdict: ValidationVerdict::Rejected,
+            diagnostics: vec![RawDiagnostic {
+                severity: DiagnosticSeverity::Error,
+                code: None,
+                message: "x".to_owned(),
+                location: None,
+            }],
+        })],
+    )?;
+    let specification = executor.insert_specification("spec".to_owned())?;
+    let mut config = configuration(1)?;
+    config.artifact_limits.normalized_diagnostics = 4;
+
+    let error = executor
+        .execute(specification, config)
+        .err()
+        .ok_or(TestPortError(
+            "normalized capacity violation unexpectedly succeeded",
+        ))?;
+
+    assert_eq!(
+        error,
+        WorkflowError::OutputCapacityExceeded {
+            workflow: WorkflowId::new(1),
+            stage: WorkflowStage::NormalizeDiagnostics,
+            task: TaskId::new(3),
+            artifact: ArtifactId::new(4),
+            required: 5,
+            maximum: 4,
+        }
+    );
+    assert_eq!(calls.borrow().len(), 2);
+    assert_eq!(executor.artifacts().len(), 1);
+    assert_eq!(executor.poll_event(), None);
     Ok(())
 }
 
@@ -987,5 +1251,144 @@ fn sequential_workflows_do_not_reuse_workflow_task_or_artifact_ids() -> Result<(
             TaskId::new(12),
         ]
     );
+    Ok(())
+}
+
+#[test]
+fn late_stage_failure_rolls_back_artifacts_and_events_without_reusing_ids()
+-> Result<(), Box<dyn Error>> {
+    let (mut executor, _) = executor(
+        [
+            Ok("failed draft".to_owned()),
+            Ok("failed review".to_owned()),
+            Ok("failed revision".to_owned()),
+            Ok("next draft".to_owned()),
+            Ok("next review".to_owned()),
+            Ok("next revision".to_owned()),
+        ],
+        [
+            Ok(report(ValidationVerdict::Passed)),
+            Err(TestPortError("late final failure")),
+            Ok(report(ValidationVerdict::Passed)),
+            Ok(report(ValidationVerdict::Passed)),
+        ],
+    )?;
+    let specification = executor.insert_specification("shared spec".to_owned())?;
+
+    let error = executor
+        .execute(specification, configuration(1)?)
+        .err()
+        .ok_or(TestPortError("late-stage workflow unexpectedly succeeded"))?;
+
+    assert_eq!(
+        error,
+        WorkflowError::TaskExhausted {
+            workflow: WorkflowId::new(1),
+            stage: WorkflowStage::FinalValidation,
+            task: TaskId::new(6),
+            attempts: 1,
+            diagnostic: "late final failure".to_owned(),
+        }
+    );
+    assert_eq!(executor.artifacts().len(), 1);
+    assert_eq!(
+        executor
+            .artifacts()
+            .get(specification)
+            .and_then(Artifact::owner),
+        None
+    );
+    for id in 2_u64..=7 {
+        assert!(executor.artifacts().get(ArtifactId::new(id)).is_none());
+    }
+    assert_eq!(executor.poll_event(), None);
+
+    let outcome = executor.execute(specification, configuration(1)?)?;
+
+    assert_eq!(outcome.workflow(), WorkflowId::new(2));
+    assert_eq!(outcome.revision(), ArtifactId::new(12));
+    assert_eq!(outcome.validation(), ArtifactId::new(13));
+    assert_eq!(executor.artifacts().len(), 7);
+    for id in 8_u64..=13 {
+        assert_eq!(
+            executor
+                .artifacts()
+                .get(ArtifactId::new(id))
+                .and_then(Artifact::owner),
+            Some(WorkflowId::new(2))
+        );
+    }
+    let mut event_count = 0_usize;
+    while let Some(event) = executor.poll_event() {
+        assert_eq!(event.workflow(), WorkflowId::new(2));
+        event_count += 1;
+    }
+    assert_eq!(event_count, 13);
+    Ok(())
+}
+
+#[test]
+fn explicit_release_preserves_specification_other_workflow_and_events() -> Result<(), Box<dyn Error>>
+{
+    let (mut executor, _) = executor(
+        [
+            Ok("draft one".to_owned()),
+            Ok("review one".to_owned()),
+            Ok("revision one".to_owned()),
+            Ok("draft two".to_owned()),
+            Ok("review two".to_owned()),
+            Ok("revision two".to_owned()),
+        ],
+        [
+            Ok(report(ValidationVerdict::Passed)),
+            Ok(report(ValidationVerdict::Passed)),
+            Ok(report(ValidationVerdict::Passed)),
+            Ok(report(ValidationVerdict::Passed)),
+        ],
+    )?;
+    let specification = executor.insert_specification("shared spec".to_owned())?;
+    let first = executor.execute(specification, configuration(1)?)?;
+    let second = executor.execute(specification, configuration(1)?)?;
+
+    assert_eq!(executor.artifacts().len(), 13);
+    assert_eq!(executor.release_workflow(first.workflow()), 6);
+    assert_eq!(executor.release_workflow(first.workflow()), 0);
+    assert_eq!(executor.release_workflow(WorkflowId::new(99)), 0);
+    assert_eq!(executor.artifacts().len(), 7);
+    assert_eq!(
+        executor
+            .artifacts()
+            .get(specification)
+            .and_then(Artifact::owner),
+        None
+    );
+    for id in 2_u64..=7 {
+        assert!(executor.artifacts().get(ArtifactId::new(id)).is_none());
+    }
+    for id in 8_u64..=13 {
+        assert_eq!(
+            executor
+                .artifacts()
+                .get(ArtifactId::new(id))
+                .and_then(Artifact::owner),
+            Some(second.workflow())
+        );
+    }
+
+    let mut first_events = 0_usize;
+    let mut second_events = 0_usize;
+    while let Some(event) = executor.poll_event() {
+        if event.workflow() == first.workflow() {
+            first_events += 1;
+        } else if event.workflow() == second.workflow() {
+            second_events += 1;
+        }
+    }
+    assert_eq!(first_events, 13);
+    assert_eq!(second_events, 13);
+
+    assert_eq!(executor.release_workflow(second.workflow()), 6);
+    assert_eq!(executor.artifacts().len(), 1);
+    assert!(executor.artifacts().get(specification).is_some());
     Ok(())
 }

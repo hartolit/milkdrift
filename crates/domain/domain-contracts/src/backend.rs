@@ -3,8 +3,7 @@
 use crate::error::{LoadError, ModelError, SequenceError, SynchronizationError};
 use crate::generation::{CancellationStatus, DecodeOutcome, FinishReason, PrefillOutcome};
 use crate::model::{
-    LoadConfiguration, LoadPlan, ModelDescriptor, ModelMetadata, SequenceConfiguration,
-    SequencePlan,
+    LoadConfiguration, LoadPlan, ModelDescriptor, SequenceConfiguration, SequencePlan,
 };
 use crate::sequence::{
     DecodeBufferRequirements, DecodeBuffers, DecodeInput, PrefillBufferRequirements,
@@ -80,8 +79,8 @@ pub trait LoadedModel {
     /// Returns the runtime handle assigned to this loaded model generation.
     fn handle(&self) -> ModelHandle;
 
-    /// Returns immutable model metadata.
-    fn metadata(&self) -> &ModelMetadata;
+    /// Returns the complete immutable descriptor retained by the loaded model.
+    fn descriptor(&self) -> &ModelDescriptor;
 
     /// Validates and reports sequence resource requirements before allocation.
     ///

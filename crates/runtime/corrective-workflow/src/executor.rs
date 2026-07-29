@@ -9,14 +9,15 @@ use task_graph::{
     validate_artifact_flow, validate_graph,
 };
 
+use super::output::{normalized_report_size, raw_report_size};
 use super::{
     Artifact, ArtifactContent, ArtifactId, ArtifactInputs, ArtifactKind, ArtifactReference,
-    ArtifactRole, ArtifactStore, CorrectiveWorkflowConfiguration, Diagnostic, DiagnosticLocation,
-    ModelPolicy, ModelTaskExecutor, ModelTaskRequest, NormalizedValidationReport, RawDiagnostic,
-    TaskAttempt, TaskId, TaskKind, ValidationReport, ValidationTaskExecutor, ValidationTaskRequest,
-    ValidationVerdict, WorkflowError, WorkflowEvent, WorkflowExecutorLimits, WorkflowId,
-    WorkflowIdentifierKind, WorkflowOutcome, WorkflowStage, WorkflowStatus,
-    normalize_validation_report,
+    ArtifactRole, ArtifactStore, BoundedDiagnosticsSink, BoundedTextSink,
+    CorrectiveWorkflowConfiguration, ModelPolicy, ModelTaskExecutor, ModelTaskRequest,
+    OutputSinkError, TaskAttempt, TaskId, TaskKind, ValidationReport, ValidationTaskExecutor,
+    ValidationTaskRequest, ValidationVerdict, WorkflowError, WorkflowEvent, WorkflowExecutorLimits,
+    WorkflowId, WorkflowIdentifierKind, WorkflowOutcome, WorkflowStage, WorkflowStatus,
+    diagnostics::normalize_validation_report_bounded,
 };
 
 const TASK_COUNT: usize = 6;
@@ -71,6 +72,15 @@ impl<M, V> CorrectiveWorkflowExecutor<M, V> {
     #[must_use]
     pub const fn artifacts(&self) -> &ArtifactStore {
         &self.artifacts
+    }
+
+    /// Releases all generated artifacts owned by one completed workflow.
+    ///
+    /// Shared specification artifacts, artifacts owned by other workflows, and
+    /// queued successful-workflow events are preserved. A return value of zero
+    /// means the workflow had no currently stored generated artifacts.
+    pub fn release_workflow(&mut self, workflow: WorkflowId) -> usize {
+        self.artifacts.remove_owned_by(workflow)
     }
 
     /// Allocates and commits one root specification artifact.
@@ -155,6 +165,11 @@ impl<M, V> CorrectiveWorkflowExecutor<M, V> {
         Ok(())
     }
 
+    fn rollback_failed_workflow(&mut self, workflow: WorkflowId) {
+        self.artifacts.remove_owned_by(workflow);
+        self.events.retain(|event| event.workflow() != workflow);
+    }
+
     fn allocate_workflow_id(&mut self) -> Result<WorkflowId, WorkflowError> {
         let value = allocate_id(&mut self.next_workflow_id, WorkflowIdentifierKind::Workflow)?;
         Ok(WorkflowId::new(value))
@@ -232,9 +247,10 @@ where
     /// # Errors
     ///
     /// Returns a typed [`WorkflowError`] for invalid configuration or root input,
-    /// checked identity exhaustion, graph/state failures, output capacity
-    /// violations, invalid committed artifacts, or terminal port exhaustion.
-    #[allow(clippy::too_many_lines)]
+    /// checked identity exhaustion, graph/state failures, output capacity or
+    /// allocation violations, invalid committed artifacts, or terminal port
+    /// exhaustion. Any failure after workflow allocation rolls back that
+    /// workflow's generated artifacts and queued events without reusing IDs.
     pub fn execute(
         &mut self,
         specification_id: ArtifactId,
@@ -244,6 +260,20 @@ where
         let specification = self.require_specification(specification_id)?;
         self.admit_execution(&configuration)?;
         let workflow = self.allocate_workflow_id()?;
+        let result = self.execute_allocated(workflow, specification, configuration);
+        if result.is_err() {
+            self.rollback_failed_workflow(workflow);
+        }
+        result
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn execute_allocated(
+        &mut self,
+        workflow: WorkflowId,
+        specification: ArtifactReference,
+        configuration: CorrectiveWorkflowConfiguration,
+    ) -> Result<WorkflowOutcome, WorkflowError> {
         let tasks = self.reserve_task_ids()?;
         let artifacts = self.reserve_output_references()?;
         let plan = CanonicalPlan::new(specification, tasks, artifacts, configuration);
@@ -411,8 +441,18 @@ where
                 input_artifacts,
             };
             let artifacts = ArtifactInputs::new(&self.artifacts, input_artifacts);
-            match self.model.execute_model_task(request, &artifacts) {
-                Ok(value) => {
+            let mut output_sink = BoundedTextSink::new(maximum_bytes);
+            let port_result = self
+                .model
+                .execute_model_task(request, &artifacts, &mut output_sink);
+            if let Some(failure) = output_sink.failure() {
+                return Err(output_sink_error(workflow, stage, attempt, output, failure));
+            }
+            match port_result {
+                Ok(()) => {
+                    let value = output_sink.finish().map_err(|failure| {
+                        output_sink_error(workflow, stage, attempt, output, failure)
+                    })?;
                     self.commit_output(
                         workflow,
                         stage,
@@ -473,9 +513,19 @@ where
                 input_artifacts,
             };
             let artifacts = ArtifactInputs::new(&self.artifacts, input_artifacts);
-            match self.validator.execute_validation_task(request, &artifacts) {
-                Ok(report) => {
-                    let verdict = report.verdict;
+            let mut output_sink = BoundedDiagnosticsSink::new(maximum_bytes)
+                .map_err(|failure| output_sink_error(workflow, stage, attempt, output, failure))?;
+            let port_result =
+                self.validator
+                    .execute_validation_task(request, &artifacts, &mut output_sink);
+            if let Some(failure) = output_sink.failure() {
+                return Err(output_sink_error(workflow, stage, attempt, output, failure));
+            }
+            match port_result {
+                Ok(verdict) => {
+                    let report = output_sink.finish(verdict).map_err(|failure| {
+                        output_sink_error(workflow, stage, attempt, output, failure)
+                    })?;
                     self.commit_output(
                         workflow,
                         stage,
@@ -521,7 +571,16 @@ where
             attempt,
         })?;
         let report = self.require_raw_validation(input)?;
-        let normalized = normalize_validation_report(report);
+        let normalized =
+            normalize_validation_report_bounded(report, maximum_bytes).map_err(|failure| {
+                output_sink_error(
+                    workflow,
+                    WorkflowStage::NormalizeDiagnostics,
+                    attempt,
+                    output,
+                    failure,
+                )
+            })?;
         self.commit_output(
             workflow,
             WorkflowStage::NormalizeDiagnostics,
@@ -599,7 +658,8 @@ where
             });
         }
         self.ensure_event_capacity()?;
-        self.artifacts.insert(Artifact::new(reference, content)?)?;
+        self.artifacts
+            .insert(Artifact::new_owned(reference, workflow, content)?)?;
         self.enqueue_event(WorkflowEvent::ArtifactCommitted {
             workflow,
             stage,
@@ -619,6 +679,7 @@ where
         let reference = artifact.reference();
         if reference.kind != ArtifactKind::Text
             || reference.role != ArtifactRole::Specification
+            || artifact.owner().is_some()
             || !matches!(artifact.content(), ArtifactContent::Specification(_))
         {
             return Err(WorkflowError::InvalidSpecification(reference));
@@ -852,71 +913,49 @@ fn allocate_id(next: &mut u64, kind: WorkflowIdentifierKind) -> Result<u64, Work
     Ok(current)
 }
 
+const fn output_sink_error(
+    workflow: WorkflowId,
+    stage: WorkflowStage,
+    attempt: TaskAttempt,
+    artifact: ArtifactReference,
+    failure: OutputSinkError,
+) -> WorkflowError {
+    match failure {
+        OutputSinkError::CapacityExceeded { required, maximum } => {
+            WorkflowError::OutputCapacityExceeded {
+                workflow,
+                stage,
+                task: attempt.task,
+                artifact: artifact.id,
+                required,
+                maximum,
+            }
+        }
+        OutputSinkError::SizeOverflow => WorkflowError::ArtifactSizeOverflow {
+            workflow,
+            stage,
+            task: attempt.task,
+            artifact: artifact.id,
+        },
+        OutputSinkError::AllocationFailed { required } => WorkflowError::OutputAllocationFailed {
+            workflow,
+            stage,
+            task: attempt.task,
+            artifact: artifact.id,
+            required,
+        },
+    }
+}
+
 fn artifact_content_size(content: &ArtifactContent) -> Option<u64> {
     match content {
         ArtifactContent::Specification(value)
         | ArtifactContent::Draft(value)
         | ArtifactContent::Review(value)
-        | ArtifactContent::Revision(value) => string_size(value),
+        | ArtifactContent::Revision(value) => u64::try_from(value.len()).ok(),
         ArtifactContent::RawValidation(report) | ArtifactContent::FinalValidation(report) => {
             raw_report_size(report)
         }
         ArtifactContent::NormalizedDiagnostics(report) => normalized_report_size(report),
     }
-}
-
-fn raw_report_size(report: &ValidationReport) -> Option<u64> {
-    report
-        .diagnostics
-        .iter()
-        .try_fold(1_u64, |total, diagnostic| {
-            checked_add(total, raw_diagnostic_size(diagnostic)?)
-        })
-}
-
-fn normalized_report_size(report: &NormalizedValidationReport) -> Option<u64> {
-    report
-        .diagnostics
-        .iter()
-        .try_fold(1_u64, |total, diagnostic| {
-            checked_add(total, diagnostic_size(diagnostic)?)
-        })
-}
-
-fn raw_diagnostic_size(diagnostic: &RawDiagnostic) -> Option<u64> {
-    let total = checked_add(1, optional_string_size(diagnostic.code.as_deref())?)?;
-    let total = checked_add(total, string_size(&diagnostic.message)?)?;
-    checked_add(total, optional_location_size(diagnostic.location.as_ref())?)
-}
-
-fn diagnostic_size(diagnostic: &Diagnostic) -> Option<u64> {
-    let total = checked_add(1, optional_string_size(diagnostic.code.as_deref())?)?;
-    let total = checked_add(total, string_size(&diagnostic.message)?)?;
-    checked_add(total, optional_location_size(diagnostic.location.as_ref())?)
-}
-
-fn optional_string_size(value: Option<&str>) -> Option<u64> {
-    let payload = value.map_or(Some(0), string_size)?;
-    checked_add(1, payload)
-}
-
-fn optional_location_size(location: Option<&DiagnosticLocation>) -> Option<u64> {
-    let Some(location) = location else {
-        return Some(1);
-    };
-    let total = checked_add(1, optional_string_size(location.path.as_deref())?)?;
-    let total = checked_add(total, optional_u32_size(location.line))?;
-    checked_add(total, optional_u32_size(location.column))
-}
-
-const fn optional_u32_size(value: Option<u32>) -> u64 {
-    if value.is_some() { 5 } else { 1 }
-}
-
-fn string_size(value: &str) -> Option<u64> {
-    u64::try_from(value.len()).ok()
-}
-
-const fn checked_add(left: u64, right: u64) -> Option<u64> {
-    left.checked_add(right)
 }

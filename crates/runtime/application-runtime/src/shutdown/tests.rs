@@ -34,7 +34,7 @@ struct TestLoader {
 
 struct TestModel {
     handle: ModelHandle,
-    metadata: ModelMetadata,
+    descriptor: ModelDescriptor,
     fail_unload: bool,
 }
 
@@ -89,7 +89,7 @@ impl ModelLoader for TestLoader {
     ) -> Result<Self::Model, LoadError> {
         Ok(TestModel {
             handle: configuration.handle,
-            metadata: self.inspect(source)?.metadata,
+            descriptor: self.inspect(source)?,
             fail_unload: self.fail_unload,
         })
     }
@@ -102,8 +102,8 @@ impl LoadedModel for TestModel {
         self.handle
     }
 
-    fn metadata(&self) -> &ModelMetadata {
-        &self.metadata
+    fn descriptor(&self) -> &ModelDescriptor {
+        &self.descriptor
     }
 
     fn plan_sequence(
@@ -113,7 +113,7 @@ impl LoadedModel for TestModel {
         Ok(SequencePlan {
             configuration: *configuration,
             expected_footprint: MemoryFootprint::default(),
-            logits_capacity: self.metadata.vocabulary_size as usize,
+            logits_capacity: self.descriptor.metadata.vocabulary_size as usize,
         })
     }
 

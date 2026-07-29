@@ -50,15 +50,32 @@ impl domain_contracts::LoadedModel for TestModel {
         )
     }
 
-    fn metadata(&self) -> &domain_contracts::ModelMetadata {
-        static METADATA: domain_contracts::ModelMetadata = domain_contracts::ModelMetadata {
-            architecture: domain_contracts::ModelArchitecture::Llama,
-            scalar_type: domain_contracts::ScalarType::F32,
-            quantization: domain_contracts::QuantizationFormat::None,
-            vocabulary_size: 16,
-            context_length: 8,
+    fn descriptor(&self) -> &domain_contracts::ModelDescriptor {
+        static DESCRIPTOR: domain_contracts::ModelDescriptor = domain_contracts::ModelDescriptor {
+            backend: domain_contracts::BackendId::new(1),
+            metadata: domain_contracts::ModelMetadata {
+                architecture: domain_contracts::ModelArchitecture::Llama,
+                scalar_type: domain_contracts::ScalarType::F32,
+                quantization: domain_contracts::QuantizationFormat::None,
+                vocabulary_size: 16,
+                context_length: 8,
+            },
+            capabilities: domain_contracts::ModelCapabilities {
+                operations: domain_contracts::CapabilitySet::PREFILL
+                    .union(domain_contracts::CapabilitySet::INCREMENTAL_DECODE),
+                maximum_context_tokens: 8,
+                maximum_sequences: 1,
+                maximum_prefill_batch: 8,
+            },
+            estimated_footprint: domain_contracts::MemoryFootprint {
+                host_weight_bytes: 0,
+                device_weight_bytes: 0,
+                host_working_bytes: 0,
+                device_working_bytes: 0,
+                cache_bytes_per_token: 0,
+            },
         };
-        &METADATA
+        &DESCRIPTOR
     }
 
     fn plan_sequence(

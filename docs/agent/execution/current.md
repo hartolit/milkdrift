@@ -1,8 +1,8 @@
 # Current execution context
 
-**Reviewed baseline:** committed Phase 7 closure through `3b4541f50fcf614bc65938d448b383f507d27fcd` plus the final semantic-closure working tree
+**Reviewed baseline:** `6cc52de` plus the current composability-hardening working tree
 **Current target:** Phase 8 — GGUF parity and native composition evidence
-**Gate state:** earlier Phase 7 validation predates the final turn-atomic/provenance closure; run the canonical locked gate on the exact resulting tree before Phase 8 work begins
+**Gate state:** the canonical locked gate passes on the exact current working tree; Phase 8 may start from this baseline
 **Canonical plan:** [execution-plan.md](execution-plan.md)
 **Current product truth:** [project implementation status](../../project/implementation-status.md)
 
@@ -26,7 +26,8 @@ verified GGUF tokenizer/model metadata
 - `context-planner` owns deterministic estimate selection and the exact-correction candidate order. E1 derives request-local planning units and `ContextEntry` views, keeps completed historical user/assistant turns atomic, pins the current user and stored pinned content, expands selected units back into records, renders, tokenizes exactly, and admits only a capacity-safe prompt.
 - Chat compatibility is closed to immutable TinyLlama Chat v1 artifact commit `fe8a4ea1ffedaf415f4da2f062534de366a451e6`; repository identity, that resolved commit, tokenizer `</s>` → ID 2, role markers, and EOS policy form one compatibility claim. Unknown or unreviewed provenance fails; direct completion remains a separate honest E1 mode.
 - Slint is a thin chat presenter. It retains the 16 ms cadence, drains at most 64 events, performs one bounded output pull, and appends one frame-batched assistant fragment while conversation ownership remains in E1.
-- E0 still exclusively owns native model resources, token scheduling, cancellation boundaries, cleanup, and unload. Hosted and peer execution remain future coarse targets above E0.
+- E0 still exclusively owns native model resources, token scheduling, cancellation boundaries, cleanup, and unload. It now verifies the complete retained descriptor, advertised numeric/capability limits, sequence-plan bounds, and every ready prefill/decode state transition before sampling. Hosted and peer execution remain future coarse targets above E0.
+- `corrective-workflow` ports produce model text and typed diagnostics through capability-owned bounded sinks. Generated artifacts are workflow-owned, failed executions roll back artifact/event visibility, and successful evidence has explicit release. This is the coarse workflow service boundary a later local/peer/hosted model-task adapter must satisfy.
 
 ## Phase 7 invariants to preserve
 
