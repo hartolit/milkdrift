@@ -78,16 +78,18 @@ pub enum ConversationRetention {
 /// Token estimate retained with one semantic record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConversationTokenEstimate {
-    /// Exact token count measured for the unwrapped semantic content.
+    /// Token count measured by encoding the unwrapped semantic content.
     Measured(u32),
-    /// Conservative count used when exact content measurement was unavailable.
+    /// Native generated-token usage for assistant text before any later re-tokenization.
+    Generated(u32),
+    /// Conservative count used when content measurement could not complete.
     Conservative(u32),
 }
 
 impl ConversationTokenEstimate {
     pub(crate) const fn tokens(self) -> u32 {
         match self {
-            Self::Measured(tokens) | Self::Conservative(tokens) => tokens,
+            Self::Measured(tokens) | Self::Generated(tokens) | Self::Conservative(tokens) => tokens,
         }
     }
 }
@@ -309,7 +311,7 @@ impl ConversationState {
             self.active_response = None;
             return;
         };
-        record.token_estimate = ConversationTokenEstimate::Measured(
+        record.token_estimate = ConversationTokenEstimate::Generated(
             u32::try_from(generated_tokens).unwrap_or(u32::MAX),
         );
         if let Some(attempt) = record.response_attempt.as_mut() {

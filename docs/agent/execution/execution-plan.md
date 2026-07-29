@@ -1280,7 +1280,7 @@ Add frontend-neutral conversation records with:
 - UTF-8 content;
 - provenance;
 - retention/pinning policy;
-- measured or conservative token estimate;
+- measured, generated-use, or conservative token estimate;
 - response-attempt terminal state where applicable.
 
 Keep UI widget types and backend-specific templates out of this domain representation.
@@ -1301,10 +1301,12 @@ The initial implementation may live as an internal E1 module. Extract a crate on
 
 Supported options must be explicit:
 
-- a known built-in renderer tied to a verified model family/profile; or
+- a known built-in renderer tied to verified immutable model artifacts/profile metadata; or
 - a resolved model chat template with a tested rendering implementation.
 
-Do not silently apply a Llama template to Gemma, Qwen, Mistral, or an unknown model.
+Repository naming alone is not compatibility evidence. A built-in profile must bind its claim
+to immutable resolved provenance or equally strong verified metadata. Do not silently apply a
+Llama template to Gemma, Qwen, Mistral, an unreviewed revision, or an unknown model.
 
 Extend artifact resolution where required, for example with tokenizer configuration or chat-template artifacts. Missing template metadata must produce a clear compatibility result rather than guessed formatting.
 
@@ -1318,17 +1320,18 @@ This renderer belongs to the current local-model path. A future hosted target ma
 
 For each request:
 
-1. derive typed context entries from conversation state;
-2. obtain or conservatively compute token estimates;
-3. reserve output tokens;
-4. run deterministic selection;
-5. render selected messages in conversation order;
-6. tokenize the final prompt;
-7. verify the actual token count against the model capacity;
-8. if estimates were insufficient, deterministically remove at least one selected non-pinned entry according to the planning policy before rendering/tokenizing again;
-9. stop correction after at most the initially selected droppable-entry count plus one render/tokenize attempts.
+1. derive typed context planning units from conversation state;
+2. keep a completed historical user/assistant turn atomic so one side cannot survive context selection without the other;
+3. obtain or conservatively compute token estimates for each unit;
+4. reserve output tokens;
+5. run deterministic selection through `context-planner` without moving chat grouping policy into the generic planner;
+6. expand selected units back into semantic records and render them in conversation order;
+7. tokenize the final prompt;
+8. verify the actual token count against the model capacity;
+9. if estimates were insufficient, deterministically remove one selected non-pinned planning unit according to the planning policy before rendering/tokenizing again;
+10. stop correction after at most the initially selected droppable-unit count plus one render/tokenize attempts.
 
-Pinned system content must either fit or produce `PinnedBudgetExceeded`. It must never be silently dropped.
+Pinned system content and the current target user must either fit or produce `PinnedBudgetExceeded`. They must never be silently dropped. Selected/dropped diagnostics remain expressed in raw conversation-record identities even when planning operates on grouped historical turns.
 
 A correction pass that produces the same selected set is a bug. If exact rendering still exceeds capacity after all droppable content has been removed, return an explicit capacity/rendering failure. Template overhead does not authorize dropping pinned semantic content or retrying indefinitely.
 
@@ -1363,6 +1366,7 @@ The frontend may display an active assistant response as it grows, then its succ
 - Context planning affects real generation input.
 - Actual token count cannot exceed model capacity.
 - Pinned content is never silently discarded.
+- Completed historical user/assistant turns are selected or dropped atomically.
 - Exact-token correction is bounded, deterministic, and cannot retry an unchanged selection.
 - Conversation history and assistant streaming are owned by E1, not duplicated in Slint.
 - `ContextEntry` is derived planner input rather than the stored conversation identity.
@@ -1370,7 +1374,7 @@ The frontend may display an active assistant response as it grows, then its succ
 - Regeneration preserves the superseded response for provenance while the active-context view uses the replacement.
 - Conversation records contain no local-backend, provider-SDK, or transport identity.
 - E0 remains the local inference engine rather than becoming a remote-service abstraction.
-- Unknown template compatibility fails explicitly.
+- Built-in chat compatibility is tied to immutable verified provenance; unknown or unreviewed revisions fail explicitly.
 
 ---
 

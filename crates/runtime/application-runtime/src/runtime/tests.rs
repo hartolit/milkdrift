@@ -18,6 +18,7 @@ use crate::{
 
 const REPOSITORY: &str = "fixture/tiny-llama";
 const CHAT_REPOSITORY: &str = "TinyLlama/TinyLlama-1.1B-Chat-v1.0";
+const CHAT_COMMIT: &str = "fe8a4ea1ffedaf415f4da2f062534de366a451e6";
 const REVISION: &str = "phase7";
 const COMMIT: &str = "fixture";
 const TEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -594,7 +595,8 @@ where
     F: FnOnce(&mut ApplicationRuntime, LoadedModel) -> TestResult,
 {
     with_runtime(configure, |runtime| {
-        let loaded = load_fixture_with(runtime, CHAT_REPOSITORY, "chat-tokenizer.json")?;
+        let loaded =
+            load_fixture_with(runtime, CHAT_REPOSITORY, CHAT_COMMIT, "chat-tokenizer.json")?;
         test(runtime, loaded)
     })
 }
@@ -638,12 +640,13 @@ const fn backpressure_test_configuration(configuration: &mut ApplicationRuntimeC
 }
 
 fn load_fixture(runtime: &mut ApplicationRuntime) -> TestResult<LoadedModel> {
-    load_fixture_with(runtime, REPOSITORY, "tokenizer.json")
+    load_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")
 }
 
 fn load_fixture_with(
     runtime: &mut ApplicationRuntime,
     repository: &str,
+    commit: &str,
     tokenizer_filename: &str,
 ) -> TestResult<LoadedModel> {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -651,7 +654,7 @@ fn load_fixture_with(
     let artifacts = ResolvedModelArtifacts {
         repository: repository.to_owned(),
         revision: REVISION.to_owned(),
-        commit: COMMIT.to_owned(),
+        commit: commit.to_owned(),
         declared_scalar_type: Some(ArtifactScalarType::F32),
         config_path: canonical(candle.join("config.json"))?,
         tokenizer_path: canonical(manifest.join("tests/fixtures").join(tokenizer_filename))?,

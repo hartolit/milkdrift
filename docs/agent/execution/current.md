@@ -1,8 +1,8 @@
 # Current execution context
 
-**Reviewed baseline:** committed Phase 7 implementation `2b03cfbd7d82ef4aee39270a1f95b81c9bfada44` plus the Phase 7 quality-closure working tree
+**Reviewed baseline:** committed Phase 7 closure through `3b4541f50fcf614bc65938d448b383f507d27fcd` plus the final semantic-closure working tree
 **Current target:** Phase 8 — GGUF parity and native composition evidence
-**Gate state:** the original Phase 7 working tree has recorded focused and canonical local validation; the post-review closure tree must run the canonical locked gate before Phase 8 work begins
+**Gate state:** earlier Phase 7 validation predates the final turn-atomic/provenance closure; run the canonical locked gate on the exact resulting tree before Phase 8 work begins
 **Canonical plan:** [execution-plan.md](execution-plan.md)
 **Current product truth:** [project implementation status](../../project/implementation-status.md)
 
@@ -23,8 +23,8 @@ verified GGUF tokenizer/model metadata
 ## Architecture entering Phase 8
 
 - `application-runtime` remains E1 and now owns in-memory raw conversation records, response-attempt provenance, regeneration/supersession, context diagnostics, prompt compatibility coordination, bounded decoded output, and model lifecycle policy.
-- `context-planner` owns deterministic estimate selection and the exact-correction candidate order. E1 derives request-local `ContextEntry` views, pins the current user and stored pinned content, renders selected records, tokenizes exactly, and admits only a capacity-safe prompt.
-- Chat compatibility is closed to `TinyLlama/TinyLlama-1.1B-Chat-v1.0`. Its role markers and EOS token 2 policy are tested together. Unknown compatibility fails; direct completion remains a separate honest E1 mode.
+- `context-planner` owns deterministic estimate selection and the exact-correction candidate order. E1 derives request-local planning units and `ContextEntry` views, keeps completed historical user/assistant turns atomic, pins the current user and stored pinned content, expands selected units back into records, renders, tokenizes exactly, and admits only a capacity-safe prompt.
+- Chat compatibility is closed to immutable TinyLlama Chat v1 artifact commit `fe8a4ea1ffedaf415f4da2f062534de366a451e6`; repository identity, that resolved commit, tokenizer `</s>` → ID 2, role markers, and EOS policy form one compatibility claim. Unknown or unreviewed provenance fails; direct completion remains a separate honest E1 mode.
 - Slint is a thin chat presenter. It retains the 16 ms cadence, drains at most 64 events, performs one bounded output pull, and appends one frame-batched assistant fragment while conversation ownership remains in E1.
 - E0 still exclusively owns native model resources, token scheduling, cancellation boundaries, cleanup, and unload. Hosted and peer execution remain future coarse targets above E0.
 
@@ -32,17 +32,18 @@ verified GGUF tokenizer/model metadata
 
 1. Raw history and the active-context view remain distinct; failed, cancelled, and superseded attempts are inspectable but excluded from ordinary future context.
 2. Regeneration preserves prior attempts and creates one replacement for the same user turn; no arbitrary branch tree is implied.
-3. Actual rendered input plus reserved output never exceeds model context, and rendered input never exceeds prefill capacity.
-4. Exact-token correction strictly removes one planner-selected non-pinned entry per retry and is bounded by the initial droppable count plus one.
-5. Pinned content is never silently dropped.
-6. Conversation records contain no Candle source, model handle, provider DTO, peer connection, or transport identity.
-7. Unknown prompt/termination compatibility fails rather than selecting a guessed family template.
-8. Direct completion remains available for models without the one supported chat profile.
-9. Assistant streaming stays bounded and pull-oriented; frontends do not drive per-token work.
-10. Conversation persistence remains out of scope until in-memory semantics stabilize.
-11. Response-attempt terminal semantics are independent from E0 cleanup/release; cleanup exhaustion cannot leave a terminal response marked as streaming.
-12. Regeneration is allowed only for the newest responded turn; a later unanswered user record blocks regeneration of older turns.
-13. Slint chat controls and transcript snapshots derive from E1 chat compatibility and canonical history rather than generic generation readiness or stale presentation state.
+3. Completed historical user/assistant turns are atomic context-planning units; neither side is retained without the other.
+4. Actual rendered input plus reserved output never exceeds model context, and rendered input never exceeds prefill capacity.
+5. Exact-token correction strictly removes one planner-selected non-pinned unit per retry and is bounded by the initial droppable-unit count plus one.
+6. Pinned content is never silently dropped.
+7. Conversation records contain no Candle source, model handle, provider DTO, peer connection, or transport identity.
+8. Built-in prompt/termination compatibility requires the reviewed immutable artifact commit and tokenizer evidence; repository naming alone is insufficient.
+9. Direct completion remains available for models without the one supported chat profile.
+10. Assistant streaming stays bounded and pull-oriented; frontends do not drive per-token work.
+11. Conversation persistence remains out of scope until in-memory semantics stabilize.
+12. Response-attempt terminal semantics are independent from E0 cleanup/release; cleanup exhaustion cannot leave a terminal response marked as streaming.
+13. Regeneration is allowed only for the newest responded turn; a later unanswered user record blocks regeneration of older turns.
+14. Slint chat controls and transcript snapshots derive from E1 chat compatibility and canonical history rather than generic generation readiness or stale presentation state.
 
 ## Phase 8 work packages
 

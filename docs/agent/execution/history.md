@@ -249,9 +249,9 @@ The next validation record should use the final preparation commit rather than t
 ## Phase 7 — real chat and context planning
 
 **Prepared:** 2026-07-29
-**Committed implementation:** `2b03cfbd7d82ef4aee39270a1f95b81c9bfada44` (`Phase 7 vibes`); the original local validation record described its pre-commit working tree based on `afecb6c8f9d22d8f84d9e46f9be9d6c4fad73bea`
+**Committed implementation:** `2b03cfbd7d82ef4aee39270a1f95b81c9bfada44` (`Phase 7 vibes`); first review fixes were committed as `8d134e38cff0c2203a1ade9714d3aa92a65b9a3a` and formatting cleanup as `3b4541f50fcf614bc65938d448b383f507d27fcd`
 **Scope:** add one honest compatible chat path, connect context planning to real generation input, and replace the Slint completion surface with E1-owned conversation behavior
-**Recorded outcome:** the original implementation working tree recorded source, download-free integration, presenter, focused strict-Clippy, and canonical locked-gate validation; the review-closure tree requires a new exact-tree gate before Phase 8
+**Recorded outcome:** the original implementation working tree recorded source, download-free integration, presenter, focused strict-Clippy, and canonical locked-gate validation; the final semantic closure still requires a new exact-tree gate before Phase 8
 
 Phase 7 retained E0 token scheduling and native resource ownership while adding frontend-neutral conversation semantics to E1. It did not add a provider/peer abstraction, persistence, general branching, or a universal Llama template.
 
@@ -259,29 +259,37 @@ Phase 7 retained E0 token scheduling and native resource ownership while adding 
 
 | Requirement | Recorded closure |
 |---|---|
-| Conversation records | E1 stores stable raw record and response-attempt identities, monotonic order, role, UTF-8 semantic content, provenance, retention, measured/conservative token estimate, terminal state, and supersession without backend/transport identity. |
+| Conversation records | E1 stores stable raw record and response-attempt identities, monotonic order, role, UTF-8 semantic content, provenance, retention, measured/generated/conservative token estimate, terminal state, and supersession without backend/transport identity. |
 | Attempt semantics | User input commits before planning/admission; assistant output is a streaming attempt. Successful unsuperseded attempts enter active context. Cancelled, failed, and superseded attempts retain partial text/provenance but remain excluded. |
-| Explicit compatibility | Only `TinyLlama/TinyLlama-1.1B-Chat-v1.0` is supported for chat, contingent on tokenizer `</s>` resolving to EOS token ID 2. Unknown compatibility returns `UnsupportedChatCompatibility`; direct completion remains available. |
+| Explicit compatibility | Chat support is limited to immutable `TinyLlama/TinyLlama-1.1B-Chat-v1.0` commit `fe8a4ea1ffedaf415f4da2f062534de366a451e6`, contingent on tokenizer `</s>` resolving to EOS token ID 2. Unknown or unreviewed provenance returns `UnsupportedChatCompatibility`; direct completion remains available. |
 | Prompt and termination | The profile renders `<|system|>`, `<|user|>`, and `<|assistant|>` records with `</s>` message boundaries and replaces caller stop policy with EOS token 2 for one assistant turn. Formatting and termination material are tested together. |
-| Context planning | E1 derives request-local `ContextEntry` values, pins the target user and stored pinned content, reserves output capacity, invokes `context-planner`, renders selected records in order, and tokenizes the actual prompt. |
-| Exact correction | `context-planner` exposes the least-preferred selected droppable entry according to its own admission policy. Every E1 retry removes exactly one such entry and attempts are bounded by the initial droppable count plus one; unchanged correction and pinned-only overflow fail explicitly. |
-| Capacity | Admission uses the smaller input allowance imposed by context-minus-output reservation and maximum prefill. Download-free E1/Candle tests assert submitted prompt usage equals exact diagnostics and remains within loaded capacity. |
+| Context planning | E1 derives request-local atomic planning units: each completed historical user/assistant pair stays together, while the target user and pinned content remain pinned. Units become `ContextEntry` values for generic `context-planner`; selected units expand back into ordered raw records for rendering and diagnostics. |
+| Exact correction | `context-planner` exposes the least-preferred selected droppable unit according to its admission policy. Every E1 retry removes exactly one whole unit and attempts are bounded by the initial droppable-unit count plus one; unchanged correction and pinned-only overflow fail explicitly. |
+| Capacity | Admission uses the smaller input allowance imposed by context-minus-output reservation and maximum prefill. Download-free E1/Candle tests assert submitted prompt usage equals exact diagnostics and remains within loaded capacity; diagnostics report the estimate for the final selected set after correction. |
 | Regeneration and clear | Regeneration preserves and supersedes prior attempts for the same user turn. Clear is rejected while a conversation response is active and removes raw history/diagnostics only after terminal state. |
 | Slint chat surface | The window now presents a transcript, message composer, send/regenerate/cancel/clear controls, context/generated usage, and model lifecycle controls. One 16 ms timer still drains at most 64 events and performs one bounded decoded-output pull; streaming crosses Slint as frame-batched fragments. |
 | Non-goals preserved | No GGUF composition, GPU, remote target, persistence, arbitrary branch tree, provider SDK, transport DTO, or broad crate extraction was introduced. |
 
 ### Post-implementation review closure
 
-The closure working tree based on `2b03cfbd7d82ef4aee39270a1f95b81c9bfada44` corrects four issues found during source review:
+The first review closure was committed as `8d134e38cff0c2203a1ade9714d3aa92a65b9a3a` and formatting cleanup followed as `3b4541f50fcf614bc65938d448b383f507d27fcd`. It corrected four issues found during source review:
 
 - response attempts become terminal when generation becomes terminal, independently from later E0 cleanup/release;
 - a committed unanswered user turn blocks regeneration of an older response instead of creating an implicit branch;
 - Slint refreshes canonical E1 history after commit-then-admission failures and terminal/cleanup lifecycle events;
 - Send/edit/regenerate controls use E1 chat compatibility rather than generic generation readiness.
 
+A final semantic review after `3b4541f50fcf614bc65938d448b383f507d27fcd` identified three remaining closure points. The resulting working tree:
+
+- groups each completed historical user/assistant pair into one E1 planning unit so context selection and exact correction cannot retain an orphan assistant or one side of a completed turn;
+- binds the built-in TinyLlama profile to immutable resolved commit `fe8a4ea1ffedaf415f4da2f062534de366a451e6` in addition to repository/tokenizer/EOS evidence;
+- distinguishes generated-token usage estimates from tokenizer-measured semantic-content counts and reports the final selected-set estimate after exact correction.
+
+These changes do not generalize `context-planner` into a chat planner: grouping remains an E1 derivation and selected/dropped diagnostics expand back to raw conversation record identities.
+
 ### Recorded validation
 
-Focused validation passed on the Phase 7 working tree:
+Focused validation passed on the original Phase 7 working tree:
 
 ```text
 cargo test -p context-planner --locked
@@ -290,14 +298,14 @@ cargo test -p desktop-slint --locked
 cargo clippy -p context-planner -p application-runtime -p desktop-slint --all-targets --locked -- -D warnings
 ```
 
-The final canonical locked gate also passed after documentation reconciliation:
+The original canonical locked gate also passed after documentation reconciliation:
 
 ```text
 cargo run --locked --bin llm-app -- verify
 ```
 
-It validated architecture/dependency policy and formatting, then passed the full workspace tests/doctests, strict Clippy, rustdoc generation, and benchmark compilation. The tree was intentionally not committed by the implementation agent. The recorded base SHA therefore identifies the parent commit, while the validation applies to the explicit uncommitted working tree described by `git status`; it is not evidence for the base commit alone.
+It validated architecture/dependency policy and formatting, then passed the full workspace tests/doctests, strict Clippy, rustdoc generation, and benchmark compilation. That historical validation predates the committed review fixes and this final semantic closure; it is not evidence for the resulting tree.
 
 The graphical application was not manually driven against the external TinyLlama repository in this environment. Download-free tests use a tokenizer fixture with the verified textual template and EOS identity plus the existing tiny Candle model to prove rendered prompt admission, exact usage, E1 attempt state, regeneration, active-clear rejection, and lifecycle integration. This proves integration semantics, not model language quality or external artifact availability.
 
-The recorded gate above predates the post-implementation review closure. After applying that closure to `2b03cfbd7d82ef4aee39270a1f95b81c9bfada44`, run `cargo run --locked --bin llm-app -- verify` on the exact resulting tree and record that result before treating Phase 7 as the validated input to Phase 8.
+Run `cargo run --locked --bin llm-app -- verify` on the exact resulting tree and record that result before treating Phase 7 as the validated input to Phase 8.

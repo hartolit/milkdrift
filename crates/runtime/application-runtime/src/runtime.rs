@@ -310,8 +310,11 @@ impl ApplicationRuntime {
                 };
             }
         };
-        let chat_compatibility =
-            crate::chat::detect_chat_compatibility(artifacts.repository.as_str(), &tokenizer);
+        let chat_compatibility = crate::chat::detect_chat_compatibility(
+            artifacts.repository.as_str(),
+            artifacts.commit.as_str(),
+            &tokenizer,
+        );
         let resolved = ResolvedModel {
             repository: artifacts.repository.clone(),
             revision: artifacts.revision.clone(),

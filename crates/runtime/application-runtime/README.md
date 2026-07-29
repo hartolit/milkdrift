@@ -14,13 +14,16 @@ definition of E1. In-memory conversation records, response-attempt provenance,
 regeneration, and context diagnostics contain no Slint, Candle source, provider SDK,
 or transport identity.
 
-Chat compatibility is deliberately closed: only
-`TinyLlama/TinyLlama-1.1B-Chat-v1.0` with tokenizer `</s>` mapped to EOS ID 2 uses
+Chat compatibility is deliberately closed: only immutable artifact commit
+`fe8a4ea1ffedaf415f4da2f062534de366a451e6` of
+`TinyLlama/TinyLlama-1.1B-Chat-v1.0`, with tokenizer `</s>` mapped to EOS ID 2, uses
 the built-in textual role renderer and matching EOS policy. Unknown compatibility returns an
 explicit error; the separate direct-completion API remains available. Request-local
-`ContextEntry` values are derived from raw conversation state, selected by
-`context-planner`, rendered in order, exactly tokenized, and corrected with a
-strictly shrinking bounded retry set before E0 admission.
+`ContextEntry` planning units are derived from raw conversation state; completed historical
+user/assistant turns are atomic units while diagnostics still expose raw record identities.
+The units are selected by `context-planner`, expanded and rendered in conversation order,
+exactly tokenized, and corrected with a strictly shrinking bounded retry set before E0
+admission.
 
 The independently stateful corrective workflow is owned by the
 `corrective-workflow` capability engine.

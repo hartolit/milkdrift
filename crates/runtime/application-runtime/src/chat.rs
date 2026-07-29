@@ -1,5 +1,7 @@
 //! Explicit local chat compatibility, context planning, and E1 conversation operations.
 
+use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use context_planner::{
@@ -20,6 +22,7 @@ use crate::{
 };
 
 const TINYLLAMA_CHAT_REPOSITORY: &str = "TinyLlama/TinyLlama-1.1B-Chat-v1.0";
+const TINYLLAMA_CHAT_COMMIT: &str = "fe8a4ea1ffedaf415f4da2f062534de366a451e6";
 const TINYLLAMA_SYSTEM_MARKER: &str = "<|system|>";
 const TINYLLAMA_USER_MARKER: &str = "<|user|>";
 const TINYLLAMA_ASSISTANT_MARKER: &str = "<|assistant|>";
@@ -68,9 +71,62 @@ struct PreparedChat {
     diagnostics: ContextDiagnostics,
 }
 
+/// One atomic context-planning unit. A completed historical user/assistant turn is
+/// selected or dropped together while raw conversation records remain independent.
+struct ContextPlanningUnit<'a> {
+    primary: &'a ConversationRecord,
+    paired_assistant: Option<&'a ConversationRecord>,
+    planning_content: Cow<'a, str>,
+    persistence: ContextPersistence,
+    estimated_tokens: u32,
+}
+
+impl<'a> ContextPlanningUnit<'a> {
+    fn new(
+        primary: &'a ConversationRecord,
+        paired_assistant: Option<&'a ConversationRecord>,
+        target_user: ConversationRecordId,
+    ) -> Self {
+        let planning_content = paired_assistant.map_or_else(
+            || Cow::Borrowed(primary.content.as_str()),
+            |assistant| {
+                let capacity = primary
+                    .content
+                    .len()
+                    .saturating_add(assistant.content.len())
+                    .saturating_add(1);
+                let mut content = String::with_capacity(capacity);
+                content.push_str(primary.content.as_str());
+                content.push('\n');
+                content.push_str(assistant.content.as_str());
+                Cow::Owned(content)
+            },
+        );
+        let persistence = unit_persistence(primary, paired_assistant, target_user);
+        let estimated_tokens = primary.token_estimate.tokens().saturating_add(
+            paired_assistant.map_or(0, |assistant| assistant.token_estimate.tokens()),
+        );
+        Self {
+            primary,
+            paired_assistant,
+            planning_content,
+            persistence,
+            estimated_tokens,
+        }
+    }
+
+    fn append_record_ids(&self, output: &mut Vec<ConversationRecordId>) {
+        output.push(self.primary.id);
+        if let Some(assistant) = self.paired_assistant {
+            output.push(assistant.id);
+        }
+    }
+}
+
 impl PromptCompatibilityProfile {
-    fn detect(repository: &str, tokenizer: &HfTokenizer) -> ChatCompatibility {
+    fn detect(repository: &str, commit: &str, tokenizer: &HfTokenizer) -> ChatCompatibility {
         if repository == TINYLLAMA_CHAT_REPOSITORY
+            && commit == TINYLLAMA_CHAT_COMMIT
             && tokenizer.inner().token_to_id(TINYLLAMA_END_OF_MESSAGE)
                 == Some(TINYLLAMA_EOS_TOKEN.get())
         {
@@ -110,29 +166,41 @@ impl PromptCompatibilityProfile {
 
     fn render(
         self,
-        records: &[&ConversationRecord],
+        units: &[ContextPlanningUnit<'_>],
         selected_indices: &[usize],
     ) -> Result<String, ApplicationError> {
         let mut prompt = String::new();
         for &index in selected_indices {
-            let record = records.get(index).ok_or_else(|| {
+            let unit = units.get(index).ok_or_else(|| {
                 ApplicationFailure::new(
                     ApplicationFailureKind::Worker,
-                    "context plan referenced an unavailable conversation record",
+                    "context plan referenced an unavailable planning unit",
                 )
             })?;
-            let marker = match (self, record.role) {
-                (Self::TinyLlamaChatV1, ConversationRole::System) => TINYLLAMA_SYSTEM_MARKER,
-                (Self::TinyLlamaChatV1, ConversationRole::User) => TINYLLAMA_USER_MARKER,
-                (Self::TinyLlamaChatV1, ConversationRole::Assistant) => TINYLLAMA_ASSISTANT_MARKER,
-            };
-            writeln!(prompt, "{marker}").map_err(render_failure)?;
-            prompt.push_str(record.content.as_str());
-            prompt.push_str(TINYLLAMA_END_OF_MESSAGE);
-            prompt.push('\n');
+            self.render_record(&mut prompt, unit.primary)?;
+            if let Some(assistant) = unit.paired_assistant {
+                self.render_record(&mut prompt, assistant)?;
+            }
         }
         writeln!(prompt, "{TINYLLAMA_ASSISTANT_MARKER}").map_err(render_failure)?;
         Ok(prompt)
+    }
+
+    fn render_record(
+        self,
+        prompt: &mut String,
+        record: &ConversationRecord,
+    ) -> Result<(), ApplicationError> {
+        let marker = match (self, record.role) {
+            (Self::TinyLlamaChatV1, ConversationRole::System) => TINYLLAMA_SYSTEM_MARKER,
+            (Self::TinyLlamaChatV1, ConversationRole::User) => TINYLLAMA_USER_MARKER,
+            (Self::TinyLlamaChatV1, ConversationRole::Assistant) => TINYLLAMA_ASSISTANT_MARKER,
+        };
+        writeln!(prompt, "{marker}").map_err(render_failure)?;
+        prompt.push_str(record.content.as_str());
+        prompt.push_str(TINYLLAMA_END_OF_MESSAGE);
+        prompt.push('\n');
+        Ok(())
     }
 }
 
@@ -309,8 +377,12 @@ impl ApplicationRuntime {
     }
 }
 
-pub fn detect_chat_compatibility(repository: &str, tokenizer: &HfTokenizer) -> ChatCompatibility {
-    PromptCompatibilityProfile::detect(repository, tokenizer)
+pub fn detect_chat_compatibility(
+    repository: &str,
+    commit: &str,
+    tokenizer: &HfTokenizer,
+) -> ChatCompatibility {
+    PromptCompatibilityProfile::detect(repository, commit, tokenizer)
 }
 
 #[expect(
@@ -349,22 +421,8 @@ fn prepare_chat(
         }
     })?;
 
-    let eligible: Vec<&ConversationRecord> = raw_records
-        .iter()
-        .filter(|record| {
-            if record.role != ConversationRole::Assistant {
-                return true;
-            }
-            let Some(attempt) = record.response_attempt.as_ref() else {
-                return false;
-            };
-            record.is_active_context() && !(regenerating && attempt.responding_to == target_user)
-        })
-        .collect();
-    let entries: Vec<ContextEntry<'_>> = eligible
-        .iter()
-        .map(|record| context_entry(record, target_user))
-        .collect();
+    let units = build_context_units(raw_records, target_user, regenerating)?;
+    let entries: Vec<ContextEntry<'_>> = units.iter().map(context_entry).collect();
     let mut ordering = vec![0_usize; entries.len()];
     let mut selected_workspace = vec![0_usize; entries.len()];
     let mut dropped_workspace = vec![0_usize; entries.len()];
@@ -378,13 +436,8 @@ fn prepare_chat(
         },
     )
     .map_err(planning_failure)?;
-    let estimated_input_tokens = planned.input_tokens();
     let mut selected = planned.selected_indices().to_vec();
-    let mut dropped: Vec<ConversationRecordId> = planned
-        .dropped_indices()
-        .iter()
-        .filter_map(|index| eligible.get(*index).map(|record| record.id))
-        .collect();
+    let mut dropped = expand_unit_record_ids(units.as_slice(), planned.dropped_indices());
     let maximum_attempts = selected
         .iter()
         .filter(|index| {
@@ -396,7 +449,7 @@ fn prepare_chat(
         .saturating_add(1);
 
     for attempt in 1..=maximum_attempts {
-        let rendered = profile.render(eligible.as_slice(), selected.as_slice())?;
+        let rendered = profile.render(units.as_slice(), selected.as_slice())?;
         match encode_text_with_policy(
             tokenizer,
             rendered.as_str(),
@@ -410,16 +463,15 @@ fn prepare_chat(
                         available: u64::from(effective_input_tokens),
                     }
                 })?;
-                let selected_ids = selected
-                    .iter()
-                    .filter_map(|index| eligible.get(*index).map(|record| record.id))
-                    .collect();
                 return Ok(PreparedChat {
                     prompt_tokens,
                     diagnostics: ContextDiagnostics {
-                        selected: selected_ids,
+                        selected: expand_unit_record_ids(units.as_slice(), selected.as_slice()),
                         dropped,
-                        estimated_input_tokens,
+                        estimated_input_tokens: selected_estimated_tokens(
+                            entries.as_slice(),
+                            selected.as_slice(),
+                        ),
                         actual_input_tokens,
                         reserved_output_tokens,
                         maximum_context_tokens,
@@ -451,54 +503,141 @@ fn prepare_chat(
         if selected.len() >= previous_length {
             return Err(ApplicationError::UnchangedContextCorrection);
         }
-        if let Some(record) = eligible.get(candidate)
-            && !dropped.contains(&record.id)
-        {
-            dropped.push(record.id);
-        }
+        let unit = units.get(candidate).ok_or_else(|| {
+            ApplicationFailure::new(
+                ApplicationFailureKind::Worker,
+                "context correction referenced an unavailable planning unit",
+            )
+        })?;
+        unit.append_record_ids(&mut dropped);
     }
 
     Err(ApplicationError::UnchangedContextCorrection)
 }
 
-fn context_entry(
-    record: &ConversationRecord,
+fn build_context_units(
+    raw_records: &[ConversationRecord],
     target_user: ConversationRecordId,
-) -> ContextEntry<'_> {
-    let persistence =
-        if record.id == target_user || record.retention == ConversationRetention::Pinned {
-            ContextPersistence::Pinned
-        } else {
-            match record.retention {
-                ConversationRetention::Pinned => ContextPersistence::Pinned,
-                ConversationRetention::Retained => ContextPersistence::Retained,
-                ConversationRetention::Ephemeral => ContextPersistence::Ephemeral,
-            }
+    regenerating: bool,
+) -> Result<Vec<ContextPlanningUnit<'_>>, ApplicationError> {
+    let mut active_assistants = BTreeMap::new();
+    for record in raw_records {
+        if record.role != ConversationRole::Assistant || !record.is_active_context() {
+            continue;
+        }
+        let Some(attempt) = record.response_attempt.as_ref() else {
+            continue;
         };
-    let role = match record.role {
+        if regenerating && attempt.responding_to == target_user {
+            continue;
+        }
+        if active_assistants
+            .insert(attempt.responding_to, record)
+            .is_some()
+        {
+            return Err(ApplicationFailure::new(
+                ApplicationFailureKind::Worker,
+                "multiple active assistant responses reference one user turn",
+            )
+            .into());
+        }
+    }
+
+    let mut units = Vec::with_capacity(raw_records.len().saturating_sub(active_assistants.len()));
+    for record in raw_records {
+        match record.role {
+            ConversationRole::Assistant => {}
+            ConversationRole::System => {
+                units.push(ContextPlanningUnit::new(record, None, target_user));
+            }
+            ConversationRole::User => {
+                let assistant = active_assistants.remove(&record.id);
+                units.push(ContextPlanningUnit::new(record, assistant, target_user));
+            }
+        }
+    }
+    if let Some((responding_to, _)) = active_assistants.first_key_value() {
+        return Err(ApplicationFailure::new(
+            ApplicationFailureKind::Worker,
+            format!(
+                "active assistant response references missing user record {}",
+                responding_to.get()
+            ),
+        )
+        .into());
+    }
+    Ok(units)
+}
+
+fn unit_persistence(
+    primary: &ConversationRecord,
+    paired_assistant: Option<&ConversationRecord>,
+    target_user: ConversationRecordId,
+) -> ContextPersistence {
+    if primary.id == target_user
+        || primary.retention == ConversationRetention::Pinned
+        || paired_assistant
+            .is_some_and(|assistant| assistant.retention == ConversationRetention::Pinned)
+    {
+        ContextPersistence::Pinned
+    } else if primary.retention == ConversationRetention::Retained
+        || paired_assistant
+            .is_some_and(|assistant| assistant.retention == ConversationRetention::Retained)
+    {
+        ContextPersistence::Retained
+    } else {
+        ContextPersistence::Ephemeral
+    }
+}
+
+fn context_entry<'unit>(unit: &'unit ContextPlanningUnit<'_>) -> ContextEntry<'unit> {
+    let role = match unit.primary.role {
         ConversationRole::System => ContextRole::System,
         ConversationRole::User => ContextRole::User,
         ConversationRole::Assistant => ContextRole::Assistant,
     };
-    let source = match record.role {
+    let source = match unit.primary.role {
         ConversationRole::System => ContextSource::Application,
         ConversationRole::User => ContextSource::User,
         ConversationRole::Assistant => ContextSource::Model,
     };
     ContextEntry {
-        id: ContextEntryId::new(record.id.get()),
-        ordinal: record.ordinal,
+        id: ContextEntryId::new(unit.primary.id.get()),
+        ordinal: unit.primary.ordinal,
         role,
         source,
-        priority: if persistence == ContextPersistence::Pinned {
+        priority: if unit.persistence == ContextPersistence::Pinned {
             PINNED_PRIORITY
         } else {
             HISTORICAL_PRIORITY
         },
-        persistence,
-        estimated_tokens: record.token_estimate.tokens(),
-        content: ContextContent::Text(record.content.as_str()),
+        persistence: unit.persistence,
+        estimated_tokens: unit.estimated_tokens,
+        content: ContextContent::Text(unit.planning_content.as_ref()),
     }
+}
+
+fn expand_unit_record_ids(
+    units: &[ContextPlanningUnit<'_>],
+    indices: &[usize],
+) -> Vec<ConversationRecordId> {
+    let mut record_ids = Vec::new();
+    for &index in indices {
+        if let Some(unit) = units.get(index) {
+            unit.append_record_ids(&mut record_ids);
+        }
+    }
+    record_ids
+}
+
+fn selected_estimated_tokens(entries: &[ContextEntry<'_>], selected: &[usize]) -> u32 {
+    selected.iter().fold(0_u32, |total, index| {
+        total.saturating_add(
+            entries
+                .get(*index)
+                .map_or(0, |entry| entry.estimated_tokens),
+        )
+    })
 }
 
 fn estimate_content(
@@ -546,15 +685,17 @@ fn render_failure(error: std::fmt::Error) -> ApplicationError {
 mod tests {
     use std::path::PathBuf;
 
+    use domain_contracts::FinishReason;
     use hf_tokenizer::HfTokenizer;
 
     use super::{
-        ChatCompatibility, PromptCompatibilityProfile, TINYLLAMA_CHAT_REPOSITORY,
-        detect_chat_compatibility, prepare_chat,
+        ChatCompatibility, PromptCompatibilityProfile, TINYLLAMA_CHAT_COMMIT,
+        TINYLLAMA_CHAT_REPOSITORY, build_context_units, detect_chat_compatibility, prepare_chat,
     };
     use crate::{
         ConversationProvenance, ConversationRecord, ConversationRecordId, ConversationRetention,
-        ConversationRole, ConversationTokenEstimate, GenerationSettings,
+        ConversationRole, ConversationTokenEstimate, GenerationSettings, ResponseAttempt,
+        ResponseAttemptId, ResponseAttemptState,
     };
 
     type TestResult = Result<(), String>;
@@ -563,11 +704,15 @@ mod tests {
     fn tinyllama_profile_formats_roles_and_owns_eos_compatibility() -> TestResult {
         let tokenizer = chat_tokenizer()?;
         assert_eq!(
-            detect_chat_compatibility(TINYLLAMA_CHAT_REPOSITORY, &tokenizer),
+            detect_chat_compatibility(TINYLLAMA_CHAT_REPOSITORY, TINYLLAMA_CHAT_COMMIT, &tokenizer),
             ChatCompatibility::Supported(PromptCompatibilityProfile::TinyLlamaChatV1)
         );
         assert_eq!(
-            detect_chat_compatibility("unknown/model", &tokenizer),
+            detect_chat_compatibility(TINYLLAMA_CHAT_REPOSITORY, "different-commit", &tokenizer),
+            ChatCompatibility::Unsupported
+        );
+        assert_eq!(
+            detect_chat_compatibility("unknown/model", TINYLLAMA_CHAT_COMMIT, &tokenizer),
             ChatCompatibility::Unsupported
         );
 
@@ -575,9 +720,10 @@ mod tests {
             record(1, ConversationRole::System, "be concise", true),
             record(2, ConversationRole::User, "hello", false),
         ];
-        let record_refs: Vec<_> = records.iter().collect();
+        let units = build_context_units(records.as_slice(), ConversationRecordId::new(2), false)
+            .map_err(|error| error.to_string())?;
         let rendered = PromptCompatibilityProfile::TinyLlamaChatV1
-            .render(record_refs.as_slice(), &[0, 1])
+            .render(units.as_slice(), &[0, 1])
             .map_err(|error| error.to_string())?;
         assert_eq!(
             rendered,
@@ -609,7 +755,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_token_correction_is_finite_and_never_drops_pinned_target() -> TestResult {
+    fn exact_token_correction_drops_completed_historical_turn_atomically() -> TestResult {
         let tokenizer = chat_tokenizer()?;
         let records = vec![
             record(
@@ -618,7 +764,7 @@ mod tests {
                 "old old old old old old old old old old old old",
                 false,
             ),
-            record(2, ConversationRole::Assistant, "answer answer", false),
+            completed_assistant(2, 1, "answer answer"),
             record(3, ConversationRole::User, "hello", false),
         ];
         let prepared = prepare_chat(
@@ -634,11 +780,21 @@ mod tests {
         .map_err(|error| error.to_string())?;
 
         assert!(prepared.diagnostics.render_attempts > 1);
+        assert_eq!(
+            prepared.diagnostics.selected,
+            [ConversationRecordId::new(3)]
+        );
         assert!(
             prepared
                 .diagnostics
-                .selected
-                .contains(&ConversationRecordId::new(3))
+                .dropped
+                .contains(&ConversationRecordId::new(1))
+        );
+        assert!(
+            prepared
+                .diagnostics
+                .dropped
+                .contains(&ConversationRecordId::new(2))
         );
         assert!(
             !prepared
@@ -648,6 +804,17 @@ mod tests {
         );
         assert!(prepared.diagnostics.actual_input_tokens + 2 <= 16);
         Ok(())
+    }
+
+    fn completed_assistant(id: u64, responding_to: u64, content: &str) -> ConversationRecord {
+        let mut record = record(id, ConversationRole::Assistant, content, false);
+        record.response_attempt = Some(ResponseAttempt {
+            id: ResponseAttemptId::new(id),
+            responding_to: ConversationRecordId::new(responding_to),
+            state: ResponseAttemptState::Completed(FinishReason::TokenLimit),
+            superseded: false,
+        });
+        record
     }
 
     fn record(id: u64, role: ConversationRole, content: &str, pinned: bool) -> ConversationRecord {

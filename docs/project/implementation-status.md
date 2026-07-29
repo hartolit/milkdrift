@@ -1,10 +1,10 @@
 # Current implementation status
 
 **Status date:** 2026-07-29
-**Reviewed source baseline:** committed Phase 7 implementation `2b03cfbd7d82ef4aee39270a1f95b81c9bfada44` plus the Phase 7 quality-closure working tree
-**Execution position:** Phase 7 review closure is implemented at source level; rerun the exact-tree canonical gate before beginning Phase 8 GGUF parity
+**Reviewed source baseline:** committed Phase 7 closure through `3b4541f50fcf614bc65938d448b383f507d27fcd` plus the final semantic-closure working tree
+**Execution position:** Phase 7 semantic closure is implemented at source level; rerun the exact-tree canonical gate before beginning Phase 8 GGUF parity
 **Canonical plan:** [LLM App Execution Plan](../agent/execution/execution-plan.md)
-**Current working context:** [Phase 7 execution context](../agent/execution/current.md)
+**Current working context:** [Phase 8 execution context](../agent/execution/current.md)
 
 This is the canonical product-level status page. Component behavior lives in the corresponding project guide; historical phase evidence lives in [execution history](../agent/execution/history.md).
 
@@ -34,10 +34,10 @@ The source tree contains:
 
 - stable E1 `GenerationSettings` for maximum new tokens, sampling controls, repetition policy, seed policy, EOS tokens, and textual stop suffixes;
 - direct-completion prompt encoding through the resolved `HfTokenizer`, with special-token behavior explicit;
-- exact `TinyLlama/TinyLlama-1.1B-Chat-v1.0` textual role rendering plus EOS token 2 termination compatibility, enabled only when tokenizer `</s>` resolves to ID 2;
-- stable frontend-neutral conversation records with raw provenance, retention, token estimates, response-attempt terminal state, and supersession;
+- exact `TinyLlama/TinyLlama-1.1B-Chat-v1.0` textual role rendering plus EOS token 2 termination compatibility, enabled only for reviewed immutable commit `fe8a4ea1ffedaf415f4da2f062534de366a451e6` when tokenizer `</s>` resolves to ID 2;
+- stable frontend-neutral conversation records with raw provenance, retention, measured/generated/conservative token estimates, response-attempt terminal state, and supersession;
 - response-attempt terminal state is committed at generation terminal rather than delayed until native cleanup release, while the E1 generation lifecycle remains active through cleanup;
-- deterministic derived `ContextEntry` planning, reserved output capacity, ordered rendering, exact tokenization, strictly shrinking bounded correction, pinned overflow, and selected/dropped diagnostics;
+- deterministic derived turn-atomic `ContextEntry` planning, reserved output capacity, ordered raw-record rendering, exact tokenization, strictly shrinking bounded correction, pinned overflow, and selected/dropped raw-record diagnostics;
 - submit, regenerate, clear, and cancel operations with active mutation rejection, unanswered-turn regeneration protection, and in-memory-only history;
 - request-local owned Hugging Face streaming decode state without full-history re-decode, with fragments appended once to E1 assistant state;
 - application-owned generation state for start, running, cancellation, terminal cleanup/exhaustion, usage, and last terminal result;
@@ -69,15 +69,15 @@ On 2026-07-29, the complete canonical locked gate was recorded as passing on the
 cargo run --locked --bin llm-app -- verify
 ```
 
-It covered architecture/dependency validation, formatting, workspace checks, the full test/doctest suite, strict Clippy, rustdoc, and benchmark compilation. Focused runs also passed for `context-planner`, `application-runtime`, and `desktop-slint`, including strict all-target Clippy. Commit `2b03cfbd7d82ef4aee39270a1f95b81c9bfada44` contains the Phase 7 implementation, but no independent GitHub status is attached to that SHA and the historical local record is not proof for the later review-closure edits.
+It covered architecture/dependency validation, formatting, workspace checks, the full test/doctest suite, strict Clippy, rustdoc, and benchmark compilation. Focused runs also passed for `context-planner`, `application-runtime`, and `desktop-slint`, including strict all-target Clippy. The Phase 7 implementation and first review fixes are now committed through `3b4541f50fcf614bc65938d448b383f507d27fcd`, but the historical gate predates both those commits as an exact committed tree and this final semantic closure.
 
-The quality-closure working tree must therefore pass `cargo run --locked --bin llm-app -- verify` on the exact final tree before Phase 7 is treated as fully validated input to Phase 8.
+The exact resulting tree must therefore pass `cargo run --locked --bin llm-app -- verify` before Phase 7 is treated as fully validated input to Phase 8. Do not rewrite the historical evidence as though it validated this later tree.
 
 The graphical external-model acceptance scenario was not manually exercised in this environment. Download-free E1/Candle integration tests cover rendered prompt admission, exact usage, planning/correction, regeneration, pinned overflow, cancellation/unload/backpressure, and shutdown; presenter tests cover the chat UI mapping. Historical earlier-phase evidence remains in [execution history](../agent/execution/history.md).
 
 ## Known limitations
 
-- Chat compatibility is intentionally limited to `TinyLlama/TinyLlama-1.1B-Chat-v1.0`; unknown model/template compatibility fails and uses no guessed fallback.
+- Chat compatibility is intentionally limited to reviewed TinyLlama Chat v1 commit `fe8a4ea1ffedaf415f4da2f062534de366a451e6`; other repositories or commits use no guessed fallback.
 - Conversation history is in memory only; persistence and arbitrary branch trees are not implemented.
 - Slint uses the stable E1 default generation settings; a configurable settings panel is not yet exposed.
 - The E1 product path is deliberately single-model even though lower E0 contracts can represent more general residency.

@@ -19,8 +19,8 @@ It currently owns:
 - terminal unload completion and bounded shutdown commands;
 - direct-completion prompt encoding;
 - frontend-neutral in-memory conversation records and response-attempt provenance;
-- explicit `TinyLlama/TinyLlama-1.1B-Chat-v1.0` prompt/termination compatibility;
-- request-local context derivation, deterministic planning, exact-token correction, and diagnostics;
+- explicit immutable-artifact `TinyLlama/TinyLlama-1.1B-Chat-v1.0` prompt/termination compatibility;
+- request-local turn-atomic context derivation, deterministic planning, exact-token correction, and diagnostics;
 - submit, regenerate, clear, and cancellation semantics for conversation turns;
 - stable application-level generation settings and translation to E0 contracts;
 - one request-local owned streaming decoder;
@@ -95,26 +95,35 @@ cold-path diagnostic.
 
 Raw `ConversationRecord` values have stable record/attempt identities, monotonic
 order, semantic role/content, provenance, retention policy, token estimate, and
-assistant terminal state. They contain no local model handle, provider DTO, peer
-connection, or transport state. Successful unsuperseded assistant attempts enter
-the default active-context view; streaming, failed, cancelled, and superseded
-attempts remain inspectable but are excluded.
+assistant terminal state. Generated assistant usage is stored as a generated-token
+estimate rather than mislabeled as an exact re-tokenization of decoded text. Records
+contain no local model handle, provider DTO, peer connection, or transport state.
+Successful unsuperseded assistant attempts enter the default active-context view;
+streaming, failed, cancelled, and superseded attempts remain inspectable but are
+excluded.
 
-For every chat request E1 derives temporary `ContextEntry` values, pins the target
-user record and stored pinned content, reserves output positions, and invokes
-`context-planner`. Selected records render in conversation order. E1 then tokenizes
-the complete rendered prompt against the smaller of model context and prefill
-capacity. Overflow removes exactly one planner-selected non-pinned entry per retry.
-Attempts are bounded by the initially selected droppable count plus one; pinned-only
-overflow returns `PinnedBudgetExceeded` and unchanged correction fails explicitly.
-The admitted exact count is exposed through `ContextDiagnostics` and generation
-usage.
+For every chat request E1 derives temporary planning units and `ContextEntry` values,
+pins the target user and stored pinned content, reserves output positions, and invokes
+`context-planner`. A completed historical user message and its active successful
+assistant response form one atomic planning unit: both records are selected or dropped
+together. This grouping remains an E1 conversation interpretation rather than changing
+the generic planner into a chat-specific algorithm. Diagnostics expand selected and
+dropped units back to raw `ConversationRecordId` values. Selected units render their
+records in conversation order. E1 then tokenizes the complete rendered prompt against
+the smaller of model context and prefill capacity. Overflow removes exactly one
+planner-selected non-pinned unit per retry. Attempts are bounded by the initially
+selected droppable-unit count plus one; pinned-only overflow returns
+`PinnedBudgetExceeded` and unchanged correction fails explicitly. The admitted exact
+count and the estimate for the final selected set are exposed through
+`ContextDiagnostics` and generation usage.
 
-The only built-in profile is `TinyLlama/TinyLlama-1.1B-Chat-v1.0`. Compatibility
-requires `</s>` to resolve to EOS token ID 2. The role markers are verified template
-text and need not each be one added token. Rendering and EOS token 2 are tested together. Unknown repositories
-or incompatible tokenizer metadata return `UnsupportedChatCompatibility`; E1 never
-applies this template to another model family.
+The only built-in profile is `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable
+artifact commit `fe8a4ea1ffedaf415f4da2f062534de366a451e6`. Compatibility also requires
+`</s>` to resolve to EOS token ID 2. The role markers are verified template text and
+need not each be one added token. Rendering and EOS token 2 are tested together.
+Unknown repositories, other commits, or incompatible tokenizer metadata return
+`UnsupportedChatCompatibility`; E1 never applies this template to another model or
+unreviewed revision.
 
 Regeneration creates a new attempt only when the newest semantic record is an
 assistant response attempt. A later committed but unanswered user record blocks
