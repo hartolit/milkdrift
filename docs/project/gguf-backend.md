@@ -2,9 +2,10 @@
 
 ## Scope
 
-`gguf-backend` is the CPU adapter for local GGUF files. It quarantines
-`llama-cpp-2`, llama.cpp native resources, GGUF metadata, and context-cache
-management behind the portable `domain-contracts` API.
+`gguf-backend` is the CPU adapter for local GGUF files and their native
+tokenizers. It quarantines `llama-cpp-2`, llama.cpp native resources, GGUF
+metadata, tokenization, and context-cache management behind portable project
+contracts.
 
 The crate does not depend on another adapter or on an engine. Compile-time
 compatibility checks live in `inference-runtime`, whose downward development
@@ -32,6 +33,12 @@ the adapter API.
 The inference registry remains the only owner of `GgufModel`. Logical
 `GgufSequence` values contain identifiers, positions, capacity, and lifecycle
 state only. They do not retain model weights.
+
+A `GgufTokenizer` separately owns a llama.cpp model loaded in vocabulary-only
+mode plus a clone of the same explicit backend-initialization token. Tokenizer
+clones share that immutable native vocabulary model and its precomputed token
+evidence through `Arc`; they do not create inference contexts or own
+`GgufModel`.
 
 ## Multiple sequences
 
@@ -72,6 +79,25 @@ The current memory estimator targets attention-based decoder models whose GGUF
 metadata supplies these dimensions. Unsupported metadata is rejected rather
 than guessed.
 
+## Content identity
+
+`Sha256Digest` is the canonical 32-byte GGUF content identity, with strict
+64-character hexadecimal parsing and bounded streaming file hashing.
+`GgufSource::new_verified` and `with_expected_digest` bind a local path to an
+expected digest.
+
+When a `GgufSource` carries an expected digest, `GgufLoader` hashes the file
+before and after every metadata inspection and before and after native model
+loading. A read error, initial mismatch, or change during either operation is a
+load failure. The descriptor, admission plan, and loaded model therefore cannot
+silently refer to different bytes at the same path. `GgufSource::new` remains an
+explicit unverified form for callers that do not supply an identity.
+
+`GgufTokenizer` always hashes before and after vocabulary loading. Its verified
+constructors also compare both observations with the required digest, and every
+successful tokenizer retains the digest of the exact bytes used for its native
+vocabulary.
+
 ## Memory admission
 
 The loader configures F16 key and value caches explicitly. Its admission plan is
@@ -92,6 +118,37 @@ Sequence plans report zero additional cache allocation because the complete
 native cache arena is created with the model context. They still report the
 required caller-owned logits capacity.
 
+## Native tokenization
+
+`GgufTokenizer` loads the GGUF through llama.cpp with
+`LlamaModelParams::with_vocab_only(true)` and implements the portable
+`tokenization::Tokenizer` and `StreamingTokenizer` contracts. Construction
+validates the vocabulary size and optional BOS/EOS identifiers, classifies
+control, user-defined, unknown, and end-of-generation tokens, and records safe
+spellings for recognized special tokens.
+
+Prompt encoding uses the lock-pinned safe `llama-cpp-2` API. That API exposes
+`str_to_token(text, AddBos)` but not llama.cpp's `parse_special` switch and
+always enables native special-token parsing. The adapter therefore checks the
+input against its vocabulary evidence before calling it:
+
+- `SpecialTokenPolicy::Allow` permits recognized special spellings;
+- `OrdinaryText` fails closed when ordinary input contains one, rather than
+  silently interpreting it as a special token;
+- `Reject` rejects the same input with its distinct portable error code.
+
+The native call always uses `AddBos::Never`. The portable beginning- and
+end-of-sequence options are then applied independently by explicitly prepending
+or appending the validated BOS or EOS token. Requesting a boundary token that
+the vocabulary does not define is an error.
+
+Decode first obtains each token's native byte piece. The stateful borrowed and
+owned streaming decoders pass those pieces through `IncrementalUtf8Decoder`,
+retain incomplete UTF-8 bytes across token boundaries, and reject an incomplete
+final stream from `finish`. With `skip_special_tokens`, control/special and
+end-of-generation tokens produce no bytes and report that they were skipped.
+All output still uses the portable bounded sink contracts.
+
 ## Execution guarantees
 
 The adapter supports:
@@ -110,6 +167,26 @@ safe wrapper updates internal vectors during decode, and llama.cpp retains its
 own native execution behavior. Project-owned output slices do not resize, but
 that is not sufficient to claim a backend-wide allocation guarantee.
 
-The first model load or context execution against a real GGUF file remains an
-integration concern for the target machine because `llama-cpp-2` builds native
-C/C++ code and requires its documented build toolchain.
+## Real GGUF execution evidence
+
+The repository commits a deterministic, real GGUF v3 model at
+`crates/runtime/inference-runtime/tests/fixtures/gguf-llama/tiny-llama-f32.gguf`.
+It is 6,144 bytes, uses F32 tensors, and contains one tiny Llama block plus a
+complete 16-token test vocabulary. The adjacent project-owned generator uses
+only the Python standard library, verifies its committed Candle source fixture
+and tensor schema, and reproduces the GGUF byte for byte.
+
+`inference-runtime` defines one generic native-backend E0 suite and instantiates
+it for both Candle and GGUF/llama.cpp. The GGUF instance performs a real native
+load and drives `RuntimeCommand::Generate` through prompt prefill and
+incremental decode. Across both instances the suite covers greedy generation,
+seeded repeatability, EOS and token-limit completion, output backpressure,
+user cancellation, sequence/workspace cleanup, model unload, empty post-unload
+accounting, runtime shutdown, and worker join.
+
+GGUF support is therefore no longer compile-only or real-load-unproven. The
+target machine still needs the native llama.cpp C/C++ build toolchain. The
+committed fixture and focused suite require no model download, but they prove
+CPU execution and lifecycle behavior only: they are not language-quality
+evidence, exercise no GPU path, and do not establish allocation-free execution.
+See the [canonical fixture and native E0 procedure](validation.md#gguf-fixture-and-shared-native-e0-suite).

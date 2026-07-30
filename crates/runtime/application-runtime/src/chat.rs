@@ -10,11 +10,11 @@ use context_planner::{
     exact_token_correction_candidate_index, plan,
 };
 use domain_contracts::{RequestId, TokenId};
-use hf_tokenizer::HfTokenizer;
-use tokenization::{SpecialTokenPolicy, TokenizationError};
+use tokenization::{SpecialTokenPolicy, TokenizationError, Tokenizer};
 
 use crate::conversation::ConversationTokenEstimate;
 use crate::generation::encode_text_with_policy;
+use crate::local::LocalTokenizer;
 use crate::{
     ApplicationActivity, ApplicationError, ApplicationFailure, ApplicationFailureKind,
     ApplicationRuntime, ConversationRecord, ConversationRecordId, ConversationRetention,
@@ -124,10 +124,10 @@ impl<'a> ContextPlanningUnit<'a> {
 }
 
 impl PromptCompatibilityProfile {
-    fn detect(repository: &str, commit: &str, tokenizer: &HfTokenizer) -> ChatCompatibility {
+    fn detect(repository: &str, commit: &str, tokenizer: &LocalTokenizer) -> ChatCompatibility {
         if repository == TINYLLAMA_CHAT_REPOSITORY
             && commit == TINYLLAMA_CHAT_COMMIT
-            && tokenizer.token_id(TINYLLAMA_END_OF_MESSAGE) == Some(TINYLLAMA_EOS_TOKEN)
+            && tokenizer.hf_token_id(TINYLLAMA_END_OF_MESSAGE) == Some(TINYLLAMA_EOS_TOKEN)
         {
             ChatCompatibility::Supported(Self::TinyLlamaChatV1)
         } else {
@@ -223,7 +223,10 @@ impl ApplicationRuntime {
             && !self.conversation.has_active_response()
             && self.tokenizer.is_some()
             && self.state.resolved().is_some_and(|resolved| {
-                matches!(resolved.chat_compatibility, ChatCompatibility::Supported(_))
+                matches!(
+                    resolved.chat_compatibility(),
+                    ChatCompatibility::Supported(_)
+                )
             })
     }
 
@@ -312,7 +315,7 @@ impl ApplicationRuntime {
 
     fn chat_prerequisites(
         &self,
-    ) -> Result<(PromptCompatibilityProfile, &HfTokenizer, u32), ApplicationError> {
+    ) -> Result<(PromptCompatibilityProfile, &LocalTokenizer, u32), ApplicationError> {
         if let Some(active) = self.state.active_generation() {
             return Err(ApplicationError::GenerationAlreadyActive(active.request_id));
         }
@@ -331,12 +334,12 @@ impl ApplicationRuntime {
             .state
             .resolved()
             .map_or(ChatCompatibility::Unsupported, |resolved| {
-                resolved.chat_compatibility
+                resolved.chat_compatibility()
             });
         let ChatCompatibility::Supported(profile) = compatibility else {
             return Err(ApplicationError::UnsupportedChatCompatibility);
         };
-        Ok((profile, tokenizer, loaded.maximum_context_tokens))
+        Ok((profile, tokenizer, loaded.maximum_context_tokens()))
     }
 
     fn start_chat_response(
@@ -358,8 +361,8 @@ impl ApplicationRuntime {
             regenerate,
             profile,
             tokenizer,
-            loaded.maximum_context_tokens,
-            loaded.maximum_prefill_batch,
+            loaded.maximum_context_tokens(),
+            loaded.maximum_prefill_batch(),
             settings.maximum_new_tokens,
         )?;
         self.conversation.ensure_response_capacity()?;
@@ -379,7 +382,7 @@ impl ApplicationRuntime {
 pub fn detect_chat_compatibility(
     repository: &str,
     commit: &str,
-    tokenizer: &HfTokenizer,
+    tokenizer: &LocalTokenizer,
 ) -> ChatCompatibility {
     PromptCompatibilityProfile::detect(repository, commit, tokenizer)
 }
@@ -389,12 +392,12 @@ pub fn detect_chat_compatibility(
     clippy::too_many_lines,
     reason = "chat preparation keeps bounded selection, correction, rendering, and exact admission visibly contiguous"
 )]
-fn prepare_chat(
+fn prepare_chat<T: Tokenizer + ?Sized>(
     raw_records: &[ConversationRecord],
     target_user: ConversationRecordId,
     regenerating: bool,
     profile: PromptCompatibilityProfile,
-    tokenizer: &HfTokenizer,
+    tokenizer: &T,
     maximum_context_tokens: u32,
     maximum_prefill_tokens: u32,
     reserved_output_tokens: u32,
@@ -639,8 +642,8 @@ fn selected_estimated_tokens(entries: &[ContextEntry<'_>], selected: &[usize]) -
     })
 }
 
-fn estimate_content(
-    tokenizer: &HfTokenizer,
+fn estimate_content<T: Tokenizer + ?Sized>(
+    tokenizer: &T,
     content: &str,
     maximum_context_tokens: u32,
 ) -> ConversationTokenEstimate {
@@ -691,6 +694,7 @@ mod tests {
         ChatCompatibility, PromptCompatibilityProfile, TINYLLAMA_CHAT_COMMIT,
         TINYLLAMA_CHAT_REPOSITORY, build_context_units, detect_chat_compatibility, prepare_chat,
     };
+    use crate::local::LocalTokenizer;
     use crate::{
         ConversationProvenance, ConversationRecord, ConversationRecordId, ConversationRetention,
         ConversationRole, ConversationTokenEstimate, GenerationSettings, ResponseAttempt,
@@ -837,9 +841,11 @@ mod tests {
         }
     }
 
-    fn chat_tokenizer() -> Result<HfTokenizer, String> {
+    fn chat_tokenizer() -> Result<LocalTokenizer, String> {
         let path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chat-tokenizer.json");
-        HfTokenizer::from_file(path).map_err(|error| error.to_string())
+        HfTokenizer::from_file(path)
+            .map(|tokenizer| LocalTokenizer::Hf(Box::new(tokenizer)))
+            .map_err(|error| error.to_string())
     }
 }

@@ -32,6 +32,76 @@ git rev-parse HEAD
 
 A successful command on a different commit is not evidence for the current tree.
 
+## GGUF fixture and shared native E0 suite
+
+The repository fixture is
+`crates/runtime/inference-runtime/tests/fixtures/gguf-llama/tiny-llama-f32.gguf`.
+It is a deterministic 6,144-byte GGUF v3 F32 Llama model with one block, a
+16-token context, and a complete 16-token test vocabulary. Its expected SHA-256
+is `c3e55952008029142e0db9cf18674657c5827b67c4c221d6beced60d7d144ac7`.
+
+The adjacent
+`crates/runtime/inference-runtime/tests/fixtures/gguf-llama/generate_gguf.py`
+uses only the Python standard library. It verifies the hashes and complete tensor
+schema of the committed Candle fixture, applies the required Q/K RoPE row
+permutation, and emits deterministic aligned GGUF v3 bytes. No network access,
+model download, or Python package installation is required.
+
+### Verify or intentionally rebuild the fixture
+
+Run the non-mutating reproducibility check from the repository root:
+
+```sh
+python3 crates/runtime/inference-runtime/tests/fixtures/gguf-llama/generate_gguf.py --check
+```
+
+`--check` regenerates the bytes in memory, compares them byte for byte with the
+committed fixture, and reports the size and SHA-256. If an intentional source
+fixture change requires rebuilding the committed GGUF, run the generator without
+`--check` and then repeat the check:
+
+```sh
+python3 crates/runtime/inference-runtime/tests/fixtures/gguf-llama/generate_gguf.py
+python3 crates/runtime/inference-runtime/tests/fixtures/gguf-llama/generate_gguf.py --check
+```
+
+### Run the focused adapter and E0 tests
+
+The tokenizer test loads a vocabulary-only llama.cpp model and exercises digest
+identity, portable encode/decode policy, independent BOS/EOS handling, special
+skipping, and borrowed/owned stateful decoder construction:
+
+```sh
+cargo test --locked -p gguf-backend --test tokenizer
+```
+
+The shared native suite is generic over the loader and runs the same contract for
+both the committed Candle and GGUF fixtures:
+
+```sh
+cargo test --locked -p inference-runtime --test native_backend_generation
+```
+
+To isolate the GGUF/llama.cpp instance while diagnosing a native failure:
+
+```sh
+cargo test --locked -p inference-runtime --test native_backend_generation \
+  gguf_runs_shared_native_backend_suite -- --exact --nocapture
+```
+
+The suite covers real model load and `RuntimeCommand::Generate`, prompt prefill,
+incremental decode, deterministic greedy output, seeded repeatability, EOS and
+token-limit completion, backpressure, cancellation, sequence/workspace cleanup,
+unload with empty accounting, terminal shutdown, and worker join. It is
+load-and-generation proof rather than compile-only coverage.
+
+These committed fixtures and focused tests require no download and make no claim
+about language quality, GPU execution, or allocation-free backend behavior. They
+also do not establish the full repository gate. Do not record a current-tree gate
+pass until the main agent runs the
+[canonical repository gate](#canonical-repository-gate) on the exact tree being
+evaluated.
+
 ## Candle real-model smoke
 
 The external Candle smoke is an opt-in integration check for the real Llama/Safetensors path through the hosted E0 worker. Ordinary workspace tests use project-authored fixtures and do not download a model.

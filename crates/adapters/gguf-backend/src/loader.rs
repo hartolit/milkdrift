@@ -13,9 +13,11 @@ use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::model::LlamaModel;
 use llama_cpp_2::model::params::LlamaModelParams;
 
+use crate::digest::{Sha256Digest, sha256_file};
 use crate::failure::{
-    CODE_CONTEXT_CREATE, CODE_METADATA_FORMAT, CODE_METADATA_OPEN, CODE_METADATA_READ,
-    CODE_MODEL_LOAD, CODE_MODEL_MISMATCH, CODE_NUMERIC_OVERFLOW, failure,
+    CODE_CONTENT_DIGEST_MISMATCH, CODE_CONTENT_DIGEST_READ, CODE_CONTEXT_CREATE,
+    CODE_METADATA_FORMAT, CODE_METADATA_OPEN, CODE_METADATA_READ, CODE_MODEL_LOAD,
+    CODE_MODEL_MISMATCH, CODE_NUMERIC_OVERFLOW, failure,
 };
 use crate::metadata::{GgufMetadata, MetadataError, inspect_metadata};
 use crate::model::GgufModel;
@@ -90,6 +92,7 @@ impl GgufLoader {
     }
 
     fn inspect_source(&self, source: &GgufSource) -> Result<InspectedSource, LoadError> {
+        let digest_before = verify_source_digest_before(self.backend, source)?;
         let metadata = inspect_metadata(source.path(), source.inspection_limits())
             .map_err(|error| metadata_load_error(self.backend, &error))?;
         let execution = source.execution();
@@ -150,6 +153,7 @@ impl GgufLoader {
             },
             estimated_footprint: footprint,
         };
+        verify_source_digest_after(self.backend, source, digest_before)?;
         Ok(InspectedSource {
             metadata,
             descriptor,
@@ -213,6 +217,7 @@ impl ModelLoader for GgufLoader {
         let plan = self.plan_inspected(source, configuration, &inspected)?;
 
         let execution = source.execution();
+        let digest_before = verify_source_digest_before(self.backend, source)?;
         let model_params = LlamaModelParams::default()
             .with_use_mmap(execution.use_mmap())
             .with_use_mlock(execution.use_mlock());
@@ -225,6 +230,7 @@ impl ModelLoader for GgufLoader {
                         CODE_MODEL_LOAD,
                     ))
                 })?;
+        verify_source_digest_after(self.backend, source, digest_before)?;
 
         let loaded_vocabulary =
             u32::try_from(model.n_vocab()).map_err(|_| model_mismatch(self.backend))?;
@@ -257,6 +263,7 @@ impl ModelLoader for GgufLoader {
             context_params,
             execution,
         )
+        .map(|model| model.with_content_digest(source.expected_digest()))
         .map_err(|_| {
             LoadError::Backend(failure(
                 self.backend,
@@ -298,5 +305,53 @@ const fn model_mismatch(backend: BackendId) -> LoadError {
         backend,
         BackendFailureKind::InvalidModel,
         CODE_MODEL_MISMATCH,
+    ))
+}
+
+fn verify_source_digest_before(
+    backend: BackendId,
+    source: &GgufSource,
+) -> Result<Option<Sha256Digest>, LoadError> {
+    let Some(expected) = source.expected_digest() else {
+        return Ok(None);
+    };
+    let actual = sha256_file(source.path()).map_err(|_| digest_read_error(backend))?;
+    if actual != expected {
+        return Err(digest_mismatch_error(backend));
+    }
+    Ok(Some(actual))
+}
+
+fn verify_source_digest_after(
+    backend: BackendId,
+    source: &GgufSource,
+    before: Option<Sha256Digest>,
+) -> Result<(), LoadError> {
+    let Some(before) = before else {
+        return Ok(());
+    };
+    let Some(expected) = source.expected_digest() else {
+        return Err(digest_mismatch_error(backend));
+    };
+    let after = sha256_file(source.path()).map_err(|_| digest_read_error(backend))?;
+    if after != before || after != expected {
+        return Err(digest_mismatch_error(backend));
+    }
+    Ok(())
+}
+
+const fn digest_read_error(backend: BackendId) -> LoadError {
+    LoadError::Backend(failure(
+        backend,
+        BackendFailureKind::InvalidModel,
+        CODE_CONTENT_DIGEST_READ,
+    ))
+}
+
+const fn digest_mismatch_error(backend: BackendId) -> LoadError {
+    LoadError::Backend(failure(
+        backend,
+        BackendFailureKind::InvalidModel,
+        CODE_CONTENT_DIGEST_MISMATCH,
     ))
 }

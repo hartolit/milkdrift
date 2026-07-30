@@ -309,3 +309,55 @@ It validated architecture/dependency policy and formatting, then passed the full
 The graphical application was not manually driven against the external TinyLlama repository in this environment. Download-free tests use a tokenizer fixture with the verified textual template and EOS identity plus the existing tiny Candle model to prove rendered prompt admission, exact usage, E1 attempt state, regeneration, active-clear rejection, and lifecycle integration. This proves integration semantics, not model language quality or external artifact availability.
 
 Run `cargo run --locked --bin llm-app -- verify` on the exact resulting tree and record that result before treating Phase 7 as the validated input to Phase 8.
+
+## Phase 8 — GGUF parity and native composition evidence
+
+**Prepared:** 2026-07-30
+**Reviewed baseline:** `797ba0f` plus the current Phase 8 working tree
+**Scope:** make GGUF a second local E0-backed product path, prove shared Candle/GGUF behavior through E1, and decide the native composition boundary
+**Recorded outcome:** Phase 8 code complete; focused validation and the canonical full locked gate passed on the exact working tree; no manual external graphical acceptance recorded
+
+Phase 8 added a model-compatible GGUF tokenizer and immutable local-file identity, ran both native backends through shared E0 and E1 behavior, exposed a closed product selector in Slint, and retained one application façade/state machine. The implementation evidence did not justify another runtime crate: E1 is still the only consumer of local production composition and no independent lifecycle or API was demonstrated.
+
+### Closure matrix
+
+| Requirement | Recorded closure |
+|---|---|
+| GGUF tokenizer | A llama.cpp vocabulary-only model implements prompt encoding, token-to-piece decoding, boundary/control-token evidence, special-token policy, and request-local stateful streaming decode through the portable tokenization contracts. No Hugging Face tokenizer is paired by vocabulary size. |
+| Immutable GGUF identity | Local resolution canonicalizes the path, hashes before and after bounded metadata inspection, and builds a verified source. Tokenizer construction hashes before and after vocabulary loading. Resolution identity, tokenizer digest, inspected metadata, E0 descriptor/capabilities, and load admission must agree; mutation after resolution is rejected. |
+| Closed local products | Public selection permits exactly Hugging Face Hub + Candle + Safetensors + CPU or local file + llama.cpp + GGUF + CPU. Backend, source, device, and format cross-products are derived rather than caller-assembled. Hosted and peer execution are excluded. |
+| Shared E0 parity | One generic test contract is instantiated for Candle and GGUF and covers load/start, prefill, greedy decode, seeded reproducibility, EOS/token limit, output backpressure, cancellation, released cleanup state, unload, empty accounting, shutdown, and worker join. |
+| Shared E1 parity | One helper drives both products through prompt encoding, direct-completion start/running/terminal/released state, decoded text, exact usage, unload, and explicit application shutdown. GGUF explicitly rejects unverified chat rather than guessing a profile. |
+| Composition decision | [ADR-0012](../decisions/0012-local-native-composition.md) keeps the public `application-runtime` façade non-generic and isolates production composition in private closed `local.rs`. Two concrete E0 workers remain monomorphized with closed static dispatch; redb remains in E1; no local runtime or `application-api` crate was created. |
+| One application state machine | Backend switching does not duplicate lifecycle, generation, conversation, context, output, unload, or shutdown semantics. E1 remains single-model even though it owns two worker endpoints. |
+| Chat compatibility | Direct completion works for both products. Built-in chat remains limited to the verified Hugging Face TinyLlama Chat v1 commit with tokenizer `</s>` mapped to EOS ID 2; GGUF remains direct-completion-only. |
+| Slint selection | The UI maps exactly two visible products into application-owned selections, displays selected/resolved/loaded identity and compatibility summaries, and chooses Chat versus Direct completion from E1 evidence. It imports no adapter source types and exposes no low-level GGUF execution controls. |
+| Existing boundaries | E0 retains native resources and token scheduling; `corrective-workflow` remains independent; hosted/peer/GPU/transport work and conversation persistence remain out of scope. |
+
+### Focused validation evidence
+
+The following focused commands passed on the reviewed working tree:
+
+```text
+cargo test --locked -p gguf-backend --test tokenizer
+cargo test --locked -p inference-runtime --test native_backend_generation
+cargo test --locked -p application-runtime
+cargo test --locked -p desktop-slint
+cargo clippy --locked -p gguf-backend -p inference-runtime -p application-runtime -p desktop-slint --all-targets -- -D warnings
+```
+
+The GGUF tokenizer target passed four digest/native-tokenizer tests; the shared E0 target passed both Candle and GGUF instantiations; `application-runtime` passed its shared direct-completion, compatibility, lifecycle, shutdown, and state coverage; `desktop-slint` passed 21 presenter tests; and strict focused Clippy completed without warnings.
+
+These tests use committed, download-free Candle and GGUF fixtures. They prove native and application integration behavior, not external artifact availability or model language quality. The desktop application was not manually exercised against external model artifacts in a graphical session.
+
+### Recorded canonical gate
+
+The complete repository gate passed on the uncommitted Phase 8 working tree based on `797ba0f90b3eac154fe44ec871f4c7bf755a06ef`:
+
+```text
+git rev-parse HEAD
+797ba0f90b3eac154fe44ec871f4c7bf755a06ef
+cargo run --locked --bin llm-app -- verify
+```
+
+It validated architecture/dependency policy, formatting, workspace checks, the complete test/doctest suite, workspace strict Clippy, rustdoc, and benchmark compilation. The gate was rerun after the final validation-status updates so this record describes the exact resulting working tree rather than an earlier Phase 8 edit.

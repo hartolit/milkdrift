@@ -5,6 +5,8 @@ use std::fmt::{self, Display, Formatter};
 use std::num::{NonZeroI32, NonZeroU32};
 use std::path::{Path, PathBuf};
 
+use crate::digest::Sha256Digest;
+
 const MAX_NATIVE_COUNT: u32 = 2_147_483_647;
 const DEFAULT_MAXIMUM_HEADER_BYTES: u64 = 512 * 1024 * 1024;
 const DEFAULT_MAXIMUM_METADATA_ENTRIES: u64 = 65_536;
@@ -199,6 +201,7 @@ pub struct GgufSource {
     path: PathBuf,
     execution: GgufExecutionConfiguration,
     inspection_limits: GgufInspectionLimits,
+    expected_digest: Option<Sha256Digest>,
 }
 
 impl GgufSource {
@@ -209,7 +212,30 @@ impl GgufSource {
             path: path.into(),
             execution,
             inspection_limits: GgufInspectionLimits::default(),
+            expected_digest: None,
         }
+    }
+
+    /// Creates a GGUF source that requires one immutable SHA-256 identity.
+    #[must_use]
+    pub fn new_verified(
+        path: impl Into<PathBuf>,
+        execution: GgufExecutionConfiguration,
+        expected_digest: Sha256Digest,
+    ) -> Self {
+        Self {
+            path: path.into(),
+            execution,
+            inspection_limits: GgufInspectionLimits::default(),
+            expected_digest: Some(expected_digest),
+        }
+    }
+
+    /// Requires this source to match one immutable SHA-256 identity.
+    #[must_use]
+    pub const fn with_expected_digest(mut self, expected_digest: Sha256Digest) -> Self {
+        self.expected_digest = Some(expected_digest);
+        self
     }
 
     /// Replaces the metadata inspection limits after validating non-zero bounds.
@@ -248,5 +274,11 @@ impl GgufSource {
     #[must_use]
     pub const fn inspection_limits(&self) -> GgufInspectionLimits {
         self.inspection_limits
+    }
+
+    /// Returns the required SHA-256 identity, or `None` for a legacy unverified source.
+    #[must_use]
+    pub const fn expected_digest(&self) -> Option<Sha256Digest> {
+        self.expected_digest
     }
 }

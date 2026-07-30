@@ -1,45 +1,68 @@
-//! Frontend-neutral application-state contract tests.
+//! Frontend-neutral application-state and closed selection contract tests.
+
+use std::path::PathBuf;
 
 use application_runtime::{
-    ApplicationActivity, ApplicationBackend, ApplicationState, ChatCompatibility, GenerationPhase,
-    GenerationSummary, LoadedModel, ResolvedModel,
+    ApplicationActivity, ApplicationBackend, ApplicationDevice, ApplicationModelFormat,
+    ApplicationQuantization, ApplicationScalarType, ApplicationSource, ApplicationState,
+    GenerationPhase, GenerationSummary, LocalModelProduct, ModelCompatibility, ModelSelection,
 };
-use domain_contracts::{
-    DeviceKind, GenerationUsage, ModelGeneration, ModelHandle, ModelId, RequestId, ScalarType,
-};
+use domain_contracts::{GenerationUsage, RequestId};
 
 #[test]
-fn resolved_selection_controls_load_admission() {
-    let state = ApplicationState::default();
-    assert_eq!(state.activity(), ApplicationActivity::Idle);
-    assert!(!state.can_load("owner/model", "main"));
+fn selection_vocabulary_exposes_only_the_two_reviewed_local_products() {
+    let hub = ModelSelection::hugging_face_safetensors(" owner/model ", " main ");
+    assert_eq!(hub.hugging_face_reference(), Some(("owner/model", "main")));
+    assert_eq!(
+        hub.product(),
+        LocalModelProduct::HuggingFaceCandleSafetensors
+    );
+    assert_eq!(hub.product().backend(), ApplicationBackend::Candle);
+    assert_eq!(hub.product().source(), ApplicationSource::HuggingFaceHub);
+    assert_eq!(hub.product().device(), ApplicationDevice::Cpu);
+    assert_eq!(hub.product().format(), ApplicationModelFormat::Safetensors);
 
-    let resolved = ResolvedModel {
-        repository: "owner/model".to_owned(),
-        revision: "main".to_owned(),
-        commit: "immutable".to_owned(),
-        vocabulary_size: 32,
-        scalar_type: Some(ScalarType::F32),
-        chat_compatibility: ChatCompatibility::Unsupported,
-    };
-    assert!(resolved.matches_selection(" owner/model ", " main "));
+    let gguf = ModelSelection::local_gguf("model.gguf");
+    assert_eq!(
+        gguf.local_path(),
+        Some(PathBuf::from("model.gguf").as_path())
+    );
+    assert_eq!(gguf.product(), LocalModelProduct::LocalLlamaCppGguf);
+    assert_eq!(gguf.product().backend(), ApplicationBackend::LlamaCpp);
+    assert_eq!(gguf.product().source(), ApplicationSource::LocalFile);
+    assert_eq!(gguf.product().device(), ApplicationDevice::Cpu);
+    assert_eq!(gguf.product().format(), ApplicationModelFormat::Gguf);
 }
 
 #[test]
-fn loaded_model_summary_retains_generation_safe_handle_and_target() {
-    let loaded = LoadedModel {
-        handle: ModelHandle::new(ModelId::new(7), ModelGeneration::new(3)),
-        vocabulary_size: 128,
-        maximum_context_tokens: 4_096,
-        maximum_prefill_batch: 512,
-        backend: ApplicationBackend::Candle,
-        device: DeviceKind::Cpu,
+fn default_state_admits_resolution_but_not_loading() {
+    let state = ApplicationState::default();
+    let hub = ModelSelection::hugging_face_safetensors("owner/model", "main");
+    let gguf = ModelSelection::local_gguf("model.gguf");
+
+    assert_eq!(state.activity(), ApplicationActivity::Idle);
+    assert!(state.can_resolve(&hub));
+    assert!(state.can_resolve(&gguf));
+    assert!(!state.can_load(&hub));
+    assert!(!state.can_load(&gguf));
+}
+
+#[test]
+fn compatibility_summary_keeps_product_specific_scalar_and_quantization() {
+    let candle = ModelCompatibility::CandleSafetensors {
+        scalar_type: Some(ApplicationScalarType::F32),
     };
-    assert_eq!(loaded.handle.generation.get(), 3);
-    assert_eq!(loaded.vocabulary_size, 128);
-    assert_eq!(loaded.maximum_context_tokens, 4_096);
-    assert_eq!(loaded.backend, ApplicationBackend::Candle);
-    assert_eq!(loaded.device, DeviceKind::Cpu);
+    assert!(candle.is_loadable());
+    assert_eq!(candle.scalar_type(), Some(ApplicationScalarType::F32));
+    assert_eq!(candle.quantization(), ApplicationQuantization::None);
+
+    let gguf = ModelCompatibility::LlamaCppGguf {
+        scalar_type: ApplicationScalarType::I8,
+        quantization: ApplicationQuantization::Gguf(7),
+    };
+    assert!(gguf.is_loadable());
+    assert_eq!(gguf.scalar_type(), Some(ApplicationScalarType::I8));
+    assert_eq!(gguf.quantization(), ApplicationQuantization::Gguf(7));
 }
 
 #[test]

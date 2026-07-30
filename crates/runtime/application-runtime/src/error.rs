@@ -81,6 +81,20 @@ pub enum ApplicationConfigurationField {
     EventCapacity,
     /// Hub command and event queue capacity.
     HubChannelCapacity,
+    /// GGUF maximum context-token default.
+    GgufMaximumContextTokens,
+    /// GGUF maximum prefill-token default.
+    GgufMaximumPrefillTokens,
+    /// GGUF micro-batch token default.
+    GgufMicroBatchTokens,
+    /// GGUF CPU thread count.
+    GgufThreads,
+    /// GGUF aggregate sequence context overflowed `u32`.
+    GgufContextCapacity,
+    /// Requested GGUF memory mapping is unsupported by this host/backend build.
+    GgufMemoryMapping,
+    /// Requested GGUF page locking is unsupported by this host/backend build.
+    GgufMemoryLocking,
     /// E0 token output capacity.
     TokenOutputCapacity,
     /// E0 token/state record capacity.
@@ -295,8 +309,8 @@ impl Display for ApplicationError {
                 "model configuration does not declare a supported floating-point scalar type",
             ),
             Self::SelectionChanged => formatter.write_str(
-                "repository or revision changed after resolution; resolve the current selection \
-                 again",
+                "the complete model selection changed after resolution; resolve the current \
+                 selection again",
             ),
             Self::TicketExhausted => formatter.write_str("command ticket space is exhausted"),
             Self::HubBusy => formatter.write_str("Hub resolver queue is full"),

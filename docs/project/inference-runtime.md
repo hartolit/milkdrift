@@ -193,22 +193,45 @@ explicit cleanup preserves the unresolved runtime allocation rather than falling
 back to an unverified implicit backend drop. The same preservation rule applies
 when client endpoints disconnect before cleanup can complete.
 
-## Candle integration
+## Shared native-backend integration
 
-Ordinary scheduler and fault-injection coverage remains backend-independent. A
-separate integration test supplies the real `CandleLlamaLoader` to the same hosted E0
-worker and uses a deterministic committed local Safetensors fixture.
-No Candle branch or model-specific exception was added to the generic scheduler.
+Ordinary scheduler and fault-injection coverage remains backend-independent.
+`tests/native_backend_generation.rs` adds one generic real-model E0 contract and
+instantiates it with both `CandleLlamaLoader` and `GgufLoader`; no backend branch
+or model-specific exception was added to the scheduler. Candle uses the
+committed tiny Safetensors model, while GGUF/llama.cpp uses the deterministic
+6,144-byte model at
+`crates/runtime/inference-runtime/tests/fixtures/gguf-llama/tiny-llama-f32.gguf`.
 
-That integration proves token-limit and EOS completion, output backpressure,
-cancellation at a backend boundary, ordered terminal/released publication, exact
-generation-workspace release, model unload, a final empty runtime/model snapshot,
-and terminal worker shutdown. Ordinary CI still performs no model download.
+For each backend, the suite performs model load and token-level
+`RuntimeCommand::Generate`, including one prompt prefill and subsequent
+incremental decode calls. It verifies:
 
-An opt-in external-model example adds the first real-file diagnostic path, repeats
-the post-unload empty-state assertion, and emits load, first-token,
-decode-throughput, cancellation, unload, and RSS observations.
-See the [Candle real-model smoke](validation.md#candle-real-model-smoke) procedure.
+- the deterministic greedy output and token-limit finish;
+- repeatable stochastic output from the same explicit seed;
+- EOS finish and ordered terminal/released publication;
+- observable output backpressure without token loss;
+- user cancellation at a backend boundary;
+- sequence destruction plus complete request, generation-workspace, and cleanup
+  accounting release;
+- model unload, an empty post-unload runtime/model snapshot, terminal shutdown,
+  and worker join.
+
+The GGUF instance is executable llama.cpp load-and-generation evidence, not a
+compile-only or metadata-parser check. The suite remains token-level; portable
+GGUF prompt encoding and stateful text decoding are verified separately by the
+`GgufTokenizer` adapter tests rather than moving tokenizer state into E0.
+
+Both native fixtures are committed and require no model download. Their tiny,
+deterministic weights validate execution and lifecycle contracts, not language
+quality. The CPU suite does not exercise a GPU path or establish an
+allocation-free backend hot path. See the
+[canonical fixture and native E0 procedure](validation.md#gguf-fixture-and-shared-native-e0-suite).
+
+An opt-in external Candle-model example repeats the post-unload empty-state
+assertion and emits load, first-token, decode-throughput, cancellation, unload,
+and RSS observations. See the
+[Candle real-model smoke](validation.md#candle-real-model-smoke) procedure.
 
 Product-level composition and unsupported capabilities are tracked in
 [implementation status](implementation-status.md); this guide remains focused on E0

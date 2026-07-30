@@ -1,14 +1,18 @@
 //! Slint-specific presentation mapping over the reusable application runtime.
 
 use std::cell::RefCell;
+use std::fmt::{self, Display, Formatter};
 use std::rc::Rc;
 use std::time::Duration;
 
 use application_runtime::{
-    ApplicationActivity, ApplicationEvent, ApplicationFailure, ApplicationOutputBatch,
-    ApplicationOutputRecordKind, ApplicationOutputState, ApplicationRuntime, ChatCompatibility,
+    ApplicationActivity, ApplicationBackend, ApplicationDevice, ApplicationEvent,
+    ApplicationFailure, ApplicationModelFormat, ApplicationOutputBatch,
+    ApplicationOutputRecordKind, ApplicationOutputState, ApplicationQuantization,
+    ApplicationRuntime, ApplicationScalarType, ApplicationSource, ChatCompatibility,
     ConversationRecord, ConversationRole, GenerationSettings, GenerationTerminalKind,
-    GenerationTerminalOutcome, ResolvedModel, ResponseAttemptState, ScalarType,
+    GenerationTerminalOutcome, ImmutableModelIdentity, LoadedModel, LocalModelProduct,
+    ModelCompatibility, ModelSelection, ResolvedModel, ResponseAttemptState,
 };
 use slint::ComponentHandle;
 
@@ -16,6 +20,9 @@ use crate::AppWindow;
 
 const UI_FRAME_MILLISECONDS: u64 = 16;
 const MAXIMUM_EVENTS_PER_FRAME: usize = 64;
+const HUGGING_FACE_SAFETENSORS_INDEX: i32 = 0;
+const LOCAL_GGUF_INDEX: i32 = 1;
+const DEFAULT_TERMINAL_TEXT: &str = "No response has completed.";
 
 /// Owns presentation-only generation state and the Slint callback bindings.
 pub struct Presenter {
@@ -32,7 +39,7 @@ impl Presenter {
         connect_submit_message(window, Rc::clone(runtime), Rc::clone(&state));
         connect_regenerate(window, Rc::clone(runtime), Rc::clone(&state));
         connect_cancel(window, Rc::clone(runtime));
-        connect_clear_conversation(window, Rc::clone(runtime));
+        connect_clear_conversation(window, Rc::clone(runtime), Rc::clone(&state));
         Self { state }
     }
 
@@ -63,7 +70,11 @@ impl Presenter {
                         apply_event(&window, event);
                     }
 
-                    let displayed_request = presentation.borrow().displayed_request;
+                    let presentation = presentation.borrow();
+                    let displayed_request = presentation.displayed_request;
+                    let refresh_conversation =
+                        refresh_conversation && presentation.allows_conversation_snapshot();
+                    drop(presentation);
                     let output = runtime_ref
                         .pull_output(|batch| collect_output_batch(&batch, displayed_request));
                     (output, refresh_conversation)
@@ -88,58 +99,142 @@ impl Presenter {
                     let runtime_ref = runtime.borrow();
                     synchronize_conversation(&window, &runtime_ref);
                 }
-                synchronize_controls(&window, &runtime.borrow());
+                let runtime_ref = runtime.borrow();
+                synchronize_controls(&window, &runtime_ref);
+                synchronize_usage(
+                    &window,
+                    &runtime_ref,
+                    presentation.borrow().displayed_request,
+                );
             },
         );
         timer
     }
 }
 
-/// Synchronizes every control and usage value from authoritative application state.
-pub fn synchronize_controls(window: &AppWindow, runtime: &ApplicationRuntime) {
-    let state = runtime.state();
-    let repository = window.get_repository().to_string();
-    let revision = window.get_revision().to_string();
-    let message = window.get_message_input().to_string();
-    let controls = control_state(
-        state.can_resolve(),
-        state.can_load(&repository, &revision),
-        runtime.can_submit_chat_message(),
-        runtime.can_regenerate_response(),
-        state.can_cancel_generation(),
-        state.can_unload(),
-        &message,
-    );
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct InvalidModelProductIndex(i32);
 
-    window.set_busy(state.activity() != ApplicationActivity::Idle);
-    window.set_can_resolve(controls.can_resolve);
-    window.set_can_load(controls.can_load);
-    window.set_can_edit_message(controls.can_edit_message);
-    window.set_can_submit_message(controls.can_submit_message);
-    window.set_can_regenerate(controls.can_regenerate);
-    window.set_can_clear_conversation(state.active_generation().is_none());
-    window.set_can_cancel(controls.can_cancel);
-    window.set_can_unload(controls.can_unload);
-
-    let usage = state
-        .active_generation()
-        .map(|summary| summary.usage)
-        .or_else(|| state.last_generation().map(|terminal| terminal.usage));
-    let (prompt_tokens, generated_tokens) = usage.map_or_else(
-        || ("0".to_owned(), "0".to_owned()),
-        |usage| {
-            (
-                usage.prompt_tokens.to_string(),
-                usage.generated_tokens.to_string(),
-            )
-        },
-    );
-    window.set_prompt_token_count(prompt_tokens.into());
-    window.set_generated_token_count(generated_tokens.into());
-
-    if let Some(terminal) = state.last_generation() {
-        window.set_terminal_text(format_terminal_outcome(&terminal.outcome).into());
+impl Display for InvalidModelProductIndex {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "unsupported model product index {}; no model operation was started",
+            self.0
+        )
     }
+}
+
+fn map_model_selection(
+    product_index: i32,
+    repository: &str,
+    revision: &str,
+    gguf_path: &str,
+) -> Result<ModelSelection, InvalidModelProductIndex> {
+    match product_index {
+        HUGGING_FACE_SAFETENSORS_INDEX => Ok(ModelSelection::hugging_face_safetensors(
+            repository, revision,
+        )),
+        LOCAL_GGUF_INDEX => Ok(ModelSelection::local_gguf(gguf_path)),
+        invalid => Err(InvalidModelProductIndex(invalid)),
+    }
+}
+
+fn selected_model(window: &AppWindow) -> Result<ModelSelection, InvalidModelProductIndex> {
+    map_model_selection(
+        window.get_model_product_index(),
+        window.get_repository().as_str(),
+        window.get_revision().as_str(),
+        window.get_gguf_path().as_str(),
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ComposerMode {
+    Unavailable,
+    Chat,
+    DirectCompletion,
+}
+
+impl ComposerMode {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Unavailable => "No model loaded",
+            Self::Chat => "Chat",
+            Self::DirectCompletion => "Direct completion",
+        }
+    }
+
+    const fn guidance(self) -> &'static str {
+        match self {
+            Self::Unavailable => "Load a model to enable generation.",
+            Self::Chat => {
+                "Verified chat compatibility: E1 owns conversation history, prompt rendering, and regeneration."
+            }
+            Self::DirectCompletion => {
+                "No verified chat profile: input is submitted as an E1 direct-completion prompt without inferred history or template semantics."
+            }
+        }
+    }
+
+    const fn input_label(self) -> &'static str {
+        match self {
+            Self::Unavailable | Self::Chat => "Message",
+            Self::DirectCompletion => "Prompt",
+        }
+    }
+
+    const fn submit_label(self) -> &'static str {
+        match self {
+            Self::Unavailable | Self::Chat => "Send",
+            Self::DirectCompletion => "Complete",
+        }
+    }
+}
+
+const fn composer_mode_from_evidence(
+    has_loaded_model: bool,
+    has_verified_chat_compatibility: bool,
+) -> ComposerMode {
+    if !has_loaded_model {
+        ComposerMode::Unavailable
+    } else if has_verified_chat_compatibility {
+        ComposerMode::Chat
+    } else {
+        ComposerMode::DirectCompletion
+    }
+}
+
+fn composer_mode(runtime: &ApplicationRuntime) -> ComposerMode {
+    let state = runtime.state();
+    let Some(loaded) = state.loaded() else {
+        return ComposerMode::Unavailable;
+    };
+    let has_verified_chat_compatibility = state.resolved().is_some_and(|resolved| {
+        resolved.selection() == loaded.selection()
+            && resolved.identity() == loaded.identity()
+            && matches!(
+                resolved.chat_compatibility(),
+                ChatCompatibility::Supported(_)
+            )
+    });
+    composer_mode_from_evidence(true, has_verified_chat_compatibility)
+}
+
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each field is one authoritative E1 admission or lifecycle flag"
+)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RuntimeAdmissions {
+    can_resolve: bool,
+    can_load: bool,
+    can_submit_chat: bool,
+    can_start_generation: bool,
+    can_regenerate: bool,
+    can_clear: bool,
+    can_cancel: bool,
+    can_unload: bool,
 }
 
 #[expect(
@@ -153,38 +248,233 @@ struct ControlState {
     can_edit_message: bool,
     can_submit_message: bool,
     can_regenerate: bool,
+    can_clear: bool,
     can_cancel: bool,
     can_unload: bool,
 }
 
-#[expect(
-    clippy::fn_params_excessive_bools,
-    reason = "the pure mapping accepts the authoritative E1 admission flags used by the controls"
-)]
-fn control_state(
-    can_resolve: bool,
-    can_load: bool,
-    can_submit_chat: bool,
-    can_regenerate: bool,
-    can_cancel: bool,
-    can_unload: bool,
-    message: &str,
-) -> ControlState {
+fn control_state(admissions: RuntimeAdmissions, mode: ComposerMode, message: &str) -> ControlState {
+    let can_edit_message = match mode {
+        ComposerMode::Unavailable => false,
+        ComposerMode::Chat => admissions.can_submit_chat,
+        ComposerMode::DirectCompletion => admissions.can_start_generation,
+    };
     ControlState {
-        can_resolve,
-        can_load,
-        can_edit_message: can_submit_chat,
-        can_submit_message: can_submit_chat && !message.trim().is_empty(),
-        can_regenerate,
-        can_cancel,
-        can_unload,
+        can_resolve: admissions.can_resolve,
+        can_load: admissions.can_load,
+        can_edit_message,
+        can_submit_message: can_edit_message && !message.trim().is_empty(),
+        can_regenerate: mode == ComposerMode::Chat && admissions.can_regenerate,
+        can_clear: admissions.can_clear,
+        can_cancel: admissions.can_cancel,
+        can_unload: admissions.can_unload,
     }
+}
+
+/// Synchronizes every control, model summary, mode, and usage value from authoritative state.
+pub fn synchronize_controls(window: &AppWindow, runtime: &ApplicationRuntime) {
+    let state = runtime.state();
+    let selection = selected_model(window);
+    let (can_resolve, can_load) = selection.as_ref().map_or((false, false), |selection| {
+        (state.can_resolve(selection), state.can_load(selection))
+    });
+    let mode = composer_mode(runtime);
+    let message = window.get_message_input().to_string();
+    let controls = control_state(
+        RuntimeAdmissions {
+            can_resolve,
+            can_load,
+            can_submit_chat: runtime.can_submit_chat_message(),
+            can_start_generation: state.can_start_generation(),
+            can_regenerate: runtime.can_regenerate_response(),
+            can_clear: state.active_generation().is_none(),
+            can_cancel: state.can_cancel_generation(),
+            can_unload: state.can_unload(),
+        },
+        mode,
+        &message,
+    );
+
+    window.set_busy(state.activity() != ApplicationActivity::Idle);
+    window.set_can_edit_selection(
+        state.activity() == ApplicationActivity::Idle && state.loaded().is_none(),
+    );
+    window.set_can_resolve(controls.can_resolve);
+    window.set_can_load(controls.can_load);
+    window.set_can_edit_message(controls.can_edit_message);
+    window.set_can_submit_message(controls.can_submit_message);
+    window.set_can_regenerate(controls.can_regenerate);
+    window.set_can_clear_conversation(controls.can_clear);
+    window.set_can_cancel(controls.can_cancel);
+    window.set_can_unload(controls.can_unload);
+    window.set_composer_mode(mode.label().into());
+    window.set_composer_guidance(mode.guidance().into());
+    window.set_composer_input_label(mode.input_label().into());
+    window.set_composer_submit_label(mode.submit_label().into());
+
+    let selected_summary = selection.as_ref().map_or_else(
+        |error| format!("Invalid selection: {error}"),
+        selected_model_summary,
+    );
+    window.set_selected_model_summary(selected_summary.into());
+    window.set_resolved_model_summary(
+        state
+            .resolved()
+            .map_or_else(|| "Not resolved.".to_owned(), resolved_model_summary)
+            .into(),
+    );
+    window.set_loaded_model_summary(
+        state
+            .loaded()
+            .map_or_else(|| "Not loaded.".to_owned(), loaded_model_summary)
+            .into(),
+    );
+}
+
+fn synchronize_usage(
+    window: &AppWindow,
+    runtime: &ApplicationRuntime,
+    displayed_request: Option<u64>,
+) {
+    let state = runtime.state();
+    let usage = state
+        .active_generation()
+        .filter(|summary| displayed_request == Some(summary.request_id.get()))
+        .map(|summary| summary.usage)
+        .or_else(|| {
+            state
+                .last_generation()
+                .filter(|terminal| displayed_request == Some(terminal.request_id.get()))
+                .map(|terminal| terminal.usage)
+        });
+    let (prompt_tokens, generated_tokens) = usage.map_or_else(
+        || ("0".to_owned(), "0".to_owned()),
+        |usage| {
+            (
+                usage.prompt_tokens.to_string(),
+                usage.generated_tokens.to_string(),
+            )
+        },
+    );
+    window.set_prompt_token_count(prompt_tokens.into());
+    window.set_generated_token_count(generated_tokens.into());
+}
+
+fn selected_model_summary(selection: &ModelSelection) -> String {
+    let product = selection.product();
+    let quantization = match product {
+        LocalModelProduct::HuggingFaceCandleSafetensors => "None",
+        LocalModelProduct::LocalLlamaCppGguf => "pending inspection",
+    };
+    format!(
+        "{} • Scalar: pending resolution • Quantization: {quantization} • Identity: pending resolution",
+        product_target_label(product)
+    )
+}
+
+fn resolved_model_summary(model: &ResolvedModel) -> String {
+    detailed_model_summary(model.product(), model.compatibility(), model.identity())
+}
+
+fn loaded_model_summary(model: &LoadedModel) -> String {
+    detailed_model_summary(model.product(), model.compatibility(), model.identity())
+}
+
+fn detailed_model_summary(
+    product: LocalModelProduct,
+    compatibility: ModelCompatibility,
+    identity: &ImmutableModelIdentity,
+) -> String {
+    let scalar = compatibility
+        .scalar_type()
+        .map_or_else(|| "Unknown".to_owned(), scalar_type_label);
+    format!(
+        "{} • Scalar: {scalar} • Quantization: {} • Identity: {}",
+        product_target_label(product),
+        quantization_label(compatibility.quantization()),
+        immutable_identity_label(identity)
+    )
+}
+
+fn product_target_label(product: LocalModelProduct) -> String {
+    format!(
+        "Backend: {} • Source: {} • Device: {} • Format: {}",
+        backend_label(product.backend()),
+        source_label(product.source()),
+        device_label(product.device()),
+        model_format_label(product.format())
+    )
+}
+
+const fn backend_label(backend: ApplicationBackend) -> &'static str {
+    match backend {
+        ApplicationBackend::Candle => "Candle",
+        ApplicationBackend::LlamaCpp => "llama.cpp",
+    }
+}
+
+const fn source_label(source: ApplicationSource) -> &'static str {
+    match source {
+        ApplicationSource::HuggingFaceHub => "Hugging Face Hub",
+        ApplicationSource::LocalFile => "Local file",
+    }
+}
+
+const fn device_label(device: ApplicationDevice) -> &'static str {
+    match device {
+        ApplicationDevice::Cpu => "CPU",
+    }
+}
+
+const fn model_format_label(format: ApplicationModelFormat) -> &'static str {
+    match format {
+        ApplicationModelFormat::Safetensors => "Safetensors",
+        ApplicationModelFormat::Gguf => "GGUF",
+    }
+}
+
+fn scalar_type_label(value: ApplicationScalarType) -> String {
+    match value {
+        ApplicationScalarType::F32 => "F32".to_owned(),
+        ApplicationScalarType::F16 => "F16".to_owned(),
+        ApplicationScalarType::Bf16 => "BF16".to_owned(),
+        ApplicationScalarType::I8 => "I8".to_owned(),
+        ApplicationScalarType::U8 => "U8".to_owned(),
+        ApplicationScalarType::Other(code) => format!("Other ({code})"),
+    }
+}
+
+fn quantization_label(value: ApplicationQuantization) -> String {
+    match value {
+        ApplicationQuantization::None => "None".to_owned(),
+        ApplicationQuantization::Int8 => "INT8".to_owned(),
+        ApplicationQuantization::Int4 => "INT4".to_owned(),
+        ApplicationQuantization::Gguf(code) => format!("GGUF type {code}"),
+        ApplicationQuantization::Other(code) => format!("Other ({code})"),
+    }
+}
+
+fn immutable_identity_label(identity: &ImmutableModelIdentity) -> String {
+    match identity {
+        ImmutableModelIdentity::HuggingFaceCommit { repository, commit } => {
+            format!("Hub commit {commit} ({repository})")
+        }
+        ImmutableModelIdentity::GgufSha256 { digest } => format!("GGUF SHA-256 {digest}"),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum TranscriptPresentation {
+    #[default]
+    Conversation,
+    DirectCompletion,
 }
 
 #[derive(Default)]
 struct PresentationState {
     displayed_request: Option<u64>,
     terminal_text: String,
+    transcript: TranscriptPresentation,
 }
 
 impl PresentationState {
@@ -193,6 +483,33 @@ impl PresentationState {
         self.terminal_text.clear();
         self.terminal_text
             .push_str("Generation submitted; waiting for admission.");
+    }
+
+    fn begin_chat_request(&mut self, request_id: u64) {
+        self.transcript = TranscriptPresentation::Conversation;
+        self.begin_request(request_id);
+    }
+
+    fn begin_direct_request(&mut self, request_id: u64, prompt: &str) -> GeneratedOutputUpdate {
+        self.transcript = TranscriptPresentation::DirectCompletion;
+        self.begin_request(request_id);
+        GeneratedOutputUpdate::Replace(format_direct_completion_transcript(prompt))
+    }
+
+    fn clear(&mut self, mode: ComposerMode) -> GeneratedOutputUpdate {
+        self.displayed_request = None;
+        self.terminal_text.clear();
+        self.terminal_text.push_str(DEFAULT_TERMINAL_TEXT);
+        self.transcript = if mode == ComposerMode::DirectCompletion {
+            TranscriptPresentation::DirectCompletion
+        } else {
+            TranscriptPresentation::Conversation
+        };
+        GeneratedOutputUpdate::Replace(String::new())
+    }
+
+    const fn allows_conversation_snapshot(&self) -> bool {
+        matches!(self.transcript, TranscriptPresentation::Conversation)
     }
 
     fn apply_delta(&mut self, delta: FrameOutputDelta) -> PresentationUpdate {
@@ -208,6 +525,10 @@ impl PresentationState {
             invalid_text_record: delta.invalid_text_record,
         }
     }
+}
+
+fn format_direct_completion_transcript(prompt: &str) -> String {
+    format!("Prompt:\n{prompt}\n\nCompletion:\n")
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -229,9 +550,9 @@ const fn replace_conversation_update(transcript: String) -> GeneratedOutputUpdat
 
 fn render_generated_output_update(window: &AppWindow, update: GeneratedOutputUpdate) {
     match update {
-        GeneratedOutputUpdate::Append(text) => window.invoke_append_assistant_text(text.into()),
+        GeneratedOutputUpdate::Append(text) => window.invoke_append_generated_text(text.into()),
         GeneratedOutputUpdate::Replace(text) => {
-            window.invoke_replace_conversation_transcript(text.into());
+            window.invoke_replace_transcript(text.into());
         }
     }
 }
@@ -373,18 +694,28 @@ fn connect_resolve(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>)
         let Some(window) = weak.upgrade() else {
             return;
         };
-        window.set_status_text(
-            "Resolving repository metadata and immutable cached artifacts…".into(),
-        );
-        let result = runtime.borrow_mut().resolve_model(
-            window.get_repository().to_string(),
-            window.get_revision().to_string(),
-        );
-        if let Err(error) = result {
-            window.set_status_text(error.to_string().into());
+        match selected_model(&window) {
+            Ok(selection) => {
+                window.set_status_text(resolution_progress_message(&selection).into());
+                if let Err(error) = runtime.borrow_mut().resolve_model(selection) {
+                    window.set_status_text(error.to_string().into());
+                }
+            }
+            Err(error) => window.set_status_text(error.to_string().into()),
         }
         synchronize_controls(&window, &runtime.borrow());
     });
+}
+
+const fn resolution_progress_message(selection: &ModelSelection) -> &'static str {
+    match selection.product() {
+        LocalModelProduct::HuggingFaceCandleSafetensors => {
+            "Resolving Hub metadata and immutable cached Safetensors artifacts…"
+        }
+        LocalModelProduct::LocalLlamaCppGguf => {
+            "Inspecting and hashing the selected local GGUF file…"
+        }
+    }
 }
 
 fn connect_load(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) {
@@ -393,12 +724,16 @@ fn connect_load(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) {
         let Some(window) = weak.upgrade() else {
             return;
         };
-        window.set_status_text("Loading model weights on the CPU runtime…".into());
-        let repository = window.get_repository().to_string();
-        let revision = window.get_revision().to_string();
-        let result = runtime.borrow_mut().load_model(&repository, &revision);
-        if let Err(error) = result {
-            window.set_status_text(error.to_string().into());
+        match selected_model(&window) {
+            Ok(selection) => {
+                window.set_status_text(
+                    format!("Loading {}.", product_target_label(selection.product())).into(),
+                );
+                if let Err(error) = runtime.borrow_mut().load_model(&selection) {
+                    window.set_status_text(error.to_string().into());
+                }
+            }
+            Err(error) => window.set_status_text(error.to_string().into()),
         }
         synchronize_controls(&window, &runtime.borrow());
     });
@@ -429,22 +764,74 @@ fn connect_submit_message(
             return;
         };
         let message = window.get_message_input().to_string();
-        let result = runtime
-            .borrow_mut()
-            .submit_user_message(&message, GenerationSettings::default());
-        match result {
-            Ok(request_id) => {
-                begin_presented_request(&window, &runtime, &presentation, request_id.get());
-                window.set_message_input("".into());
+        let mode = {
+            let runtime_ref = runtime.borrow();
+            composer_mode(&runtime_ref)
+        };
+        match mode {
+            ComposerMode::Chat => {
+                submit_chat_message(&window, &runtime, &presentation, &message);
             }
-            Err(error) => {
-                let runtime_ref = runtime.borrow();
-                synchronize_conversation(&window, &runtime_ref);
-                window.set_status_text(format!("Message could not be submitted: {error}").into());
+            ComposerMode::DirectCompletion => {
+                submit_direct_completion(&window, &runtime, &presentation, &message);
+            }
+            ComposerMode::Unavailable => {
+                window.set_status_text("Load a model before submitting input.".into());
             }
         }
         synchronize_controls(&window, &runtime.borrow());
     });
+}
+
+fn submit_chat_message(
+    window: &AppWindow,
+    runtime: &Rc<RefCell<ApplicationRuntime>>,
+    presentation: &Rc<RefCell<PresentationState>>,
+    message: &str,
+) {
+    let result = runtime
+        .borrow_mut()
+        .submit_user_message(message, GenerationSettings::default());
+    match result {
+        Ok(request_id) => {
+            begin_presented_chat_request(window, runtime, presentation, request_id.get());
+            window.set_message_input("".into());
+        }
+        Err(error) => {
+            synchronize_conversation_if_allowed(window, runtime, presentation);
+            window.set_status_text(format!("Message could not be submitted: {error}").into());
+        }
+    }
+}
+
+fn submit_direct_completion(
+    window: &AppWindow,
+    runtime: &Rc<RefCell<ApplicationRuntime>>,
+    presentation: &Rc<RefCell<PresentationState>>,
+    prompt: &str,
+) {
+    let result = runtime
+        .borrow_mut()
+        .start_generation(prompt, GenerationSettings::default());
+    match result {
+        Ok(request_id) => {
+            begin_presented_direct_request(window, presentation, request_id.get(), prompt);
+            window.set_status_text(
+                generation_submission_message(
+                    &runtime.borrow(),
+                    ComposerMode::DirectCompletion,
+                    request_id.get(),
+                )
+                .into(),
+            );
+            window.set_message_input("".into());
+        }
+        Err(error) => {
+            window.set_status_text(
+                format!("Direct completion could not be submitted: {error}").into(),
+            );
+        }
+    }
 }
 
 fn connect_regenerate(
@@ -457,12 +844,17 @@ fn connect_regenerate(
         let Some(window) = weak.upgrade() else {
             return;
         };
+        if composer_mode(&runtime.borrow()) != ComposerMode::Chat {
+            window.set_status_text("Regeneration is available only in Chat mode.".into());
+            synchronize_controls(&window, &runtime.borrow());
+            return;
+        }
         let result = runtime
             .borrow_mut()
             .regenerate_last_response(GenerationSettings::default());
         match result {
             Ok(request_id) => {
-                begin_presented_request(&window, &runtime, &presentation, request_id.get());
+                begin_presented_chat_request(&window, &runtime, &presentation, request_id.get());
             }
             Err(error) => {
                 window
@@ -473,22 +865,59 @@ fn connect_regenerate(
     });
 }
 
-fn begin_presented_request(
+fn begin_presented_chat_request(
     window: &AppWindow,
     runtime: &Rc<RefCell<ApplicationRuntime>>,
     presentation: &Rc<RefCell<PresentationState>>,
     request_id: u64,
 ) {
     let mut presentation = presentation.borrow_mut();
-    presentation.begin_request(request_id);
+    presentation.begin_chat_request(request_id);
     window.set_terminal_text(presentation.terminal_text.clone().into());
     drop(presentation);
     let runtime_ref = runtime.borrow();
     synchronize_conversation(window, &runtime_ref);
-    drop(runtime_ref);
     window.set_status_text(
-        format!("Response {request_id} submitted to TinyLlama Chat on Candle CPU.").into(),
+        generation_submission_message(&runtime_ref, ComposerMode::Chat, request_id).into(),
     );
+}
+
+fn begin_presented_direct_request(
+    window: &AppWindow,
+    presentation: &Rc<RefCell<PresentationState>>,
+    request_id: u64,
+    prompt: &str,
+) {
+    let mut presentation = presentation.borrow_mut();
+    let update = presentation.begin_direct_request(request_id, prompt);
+    render_generated_output_update(window, update);
+    window.set_terminal_text(presentation.terminal_text.clone().into());
+}
+
+fn generation_submission_message(
+    runtime: &ApplicationRuntime,
+    mode: ComposerMode,
+    request_id: u64,
+) -> String {
+    let target = runtime.state().loaded().map_or_else(
+        || "the loaded model".to_owned(),
+        |loaded| {
+            format!(
+                "{} on {}",
+                backend_label(loaded.backend()),
+                device_label(loaded.device())
+            )
+        },
+    );
+    match mode {
+        ComposerMode::Chat => format!("Chat response {request_id} submitted to {target}."),
+        ComposerMode::DirectCompletion => {
+            format!("Direct completion {request_id} submitted to {target}.")
+        }
+        ComposerMode::Unavailable => {
+            format!("Generation {request_id} submitted to {target}.")
+        }
+    }
 }
 
 fn connect_cancel(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) {
@@ -521,24 +950,50 @@ fn connect_cancel(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) 
     });
 }
 
-fn connect_clear_conversation(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) {
+fn connect_clear_conversation(
+    window: &AppWindow,
+    runtime: Rc<RefCell<ApplicationRuntime>>,
+    presentation: Rc<RefCell<PresentationState>>,
+) {
     let weak = window.as_weak();
     window.on_clear_conversation(move || {
         let Some(window) = weak.upgrade() else {
             return;
         };
-        match runtime.borrow_mut().clear_conversation() {
+        if runtime.borrow().state().active_generation().is_some() {
+            window.set_status_text(
+                "Cancel the active generation and wait for release before clearing.".into(),
+            );
+            synchronize_controls(&window, &runtime.borrow());
+            return;
+        }
+
+        let clear_result = runtime.borrow_mut().clear_conversation();
+        let mode = composer_mode(&runtime.borrow());
+        let mut presentation = presentation.borrow_mut();
+        let update = presentation.clear(mode);
+        render_generated_output_update(&window, update);
+        window.set_terminal_text(presentation.terminal_text.clone().into());
+        drop(presentation);
+
+        match clear_result {
             Ok(()) => {
-                render_generated_output_update(&window, replace_conversation_update(String::new()));
-                window.set_terminal_text("No response has completed.".into());
-                window.set_status_text("Conversation cleared.".into());
+                let message = match mode {
+                    ComposerMode::Chat => "Conversation cleared.",
+                    ComposerMode::DirectCompletion => "Direct-completion presentation cleared.",
+                    ComposerMode::Unavailable => "Presentation cleared.",
+                };
+                window.set_status_text(message.into());
             }
             Err(error) => {
-                window
-                    .set_status_text(format!("Conversation could not be cleared: {error}").into());
+                window.set_status_text(
+                    format!("Presentation cleared; E1 conversation clear failed: {error}").into(),
+                );
             }
         }
-        synchronize_controls(&window, &runtime.borrow());
+        let runtime_ref = runtime.borrow();
+        synchronize_controls(&window, &runtime_ref);
+        synchronize_usage(&window, &runtime_ref, None);
     });
 }
 
@@ -588,6 +1043,16 @@ fn synchronize_conversation(window: &AppWindow, runtime: &ApplicationRuntime) {
     render_generated_output_update(window, replace_conversation_update(transcript));
 }
 
+fn synchronize_conversation_if_allowed(
+    window: &AppWindow,
+    runtime: &Rc<RefCell<ApplicationRuntime>>,
+    presentation: &Rc<RefCell<PresentationState>>,
+) {
+    if presentation.borrow().allows_conversation_snapshot() {
+        synchronize_conversation(window, &runtime.borrow());
+    }
+}
+
 const fn event_requires_conversation_snapshot(event: &ApplicationEvent) -> bool {
     matches!(
         event,
@@ -602,17 +1067,17 @@ fn apply_event(window: &AppWindow, event: ApplicationEvent) {
         ApplicationEvent::ModelResolved {
             model,
             persistence_warning,
-        } => apply_model_resolved(window, model, persistence_warning),
+        } => apply_model_resolved(window, &model, persistence_warning),
         ApplicationEvent::ModelResolutionFailed { failure } => {
-            window.set_resolved_commit("Not resolved".into());
             window.set_status_text(format!("Model resolution failed: {failure}").into());
         }
         ApplicationEvent::ModelLoaded { model } => {
             window.set_status_text(
                 format!(
-                    "Loaded generation {} with {} vocabulary entries.",
-                    model.handle.generation.get(),
-                    model.vocabulary_size,
+                    "Loaded {} as generation {} with {} vocabulary entries.",
+                    product_target_label(model.product()),
+                    model.handle().generation.get(),
+                    model.vocabulary_size(),
                 )
                 .into(),
             );
@@ -693,62 +1158,221 @@ fn apply_event(window: &AppWindow, event: ApplicationEvent) {
 
 fn apply_model_resolved(
     window: &AppWindow,
-    model: ResolvedModel,
+    model: &ResolvedModel,
     persistence_warning: Option<ApplicationFailure>,
 ) {
-    window.set_resolved_commit(model.commit.into());
-    let scalar = model.scalar_type.map_or("unknown", scalar_type_name);
-    let chat = match model.chat_compatibility {
-        ChatCompatibility::Supported(_) => "verified TinyLlama Chat v1",
-        ChatCompatibility::Unsupported => "direct completion only; chat compatibility unknown",
+    let scalar = model
+        .compatibility()
+        .scalar_type()
+        .map_or_else(|| "unknown".to_owned(), scalar_type_label);
+    let quantization = quantization_label(model.compatibility().quantization());
+    let mode = match model.chat_compatibility() {
+        ChatCompatibility::Supported(_) => "verified Chat mode",
+        ChatCompatibility::Unsupported => "Direct completion mode; chat is not verified",
     };
-    let message = match persistence_warning {
-        Some(warning) => format!(
-            "Artifacts and tokenizer ({} tokens, {scalar}, {chat}) are ready; catalogue persistence failed: {warning}",
-            model.vocabulary_size,
-        ),
-        None => format!(
-            "Artifacts and tokenizer ({} tokens, {scalar}, {chat}) are ready for CPU loading.",
-            model.vocabulary_size,
-        ),
-    };
+    let target = product_target_label(model.product());
+    let message = persistence_warning.map_or_else(
+        || {
+            format!(
+                "Resolved {target} ({} vocabulary entries, {scalar}, {quantization}, {mode}) and ready for loading.",
+                model.vocabulary_size(),
+            )
+        },
+        |warning| {
+            format!(
+                "Resolved {target} ({} vocabulary entries, {scalar}, {quantization}, {mode}); catalogue persistence failed: {warning}",
+                model.vocabulary_size(),
+            )
+        },
+    );
     window.set_status_text(message.into());
-}
-
-const fn scalar_type_name(value: ScalarType) -> &'static str {
-    match value {
-        ScalarType::F32 => "F32",
-        ScalarType::F16 => "F16",
-        ScalarType::Bf16 => "BF16",
-        ScalarType::I8 => "I8",
-        ScalarType::U8 => "U8",
-        _ => "other",
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        CancellationMessageState, FrameOutputDelta, GeneratedOutputUpdate, PresentationState,
-        TerminalPresentation, cancellation_pending_message, control_state,
-        event_requires_conversation_snapshot, format_conversation, format_terminal_outcome,
-        output_state_message, released_terminal_message, replace_conversation_update,
+        CancellationMessageState, ComposerMode, FrameOutputDelta, GeneratedOutputUpdate,
+        HUGGING_FACE_SAFETENSORS_INDEX, InvalidModelProductIndex, LOCAL_GGUF_INDEX,
+        MAXIMUM_EVENTS_PER_FRAME, PresentationState, RuntimeAdmissions, TerminalPresentation,
+        UI_FRAME_MILLISECONDS, backend_label, cancellation_pending_message,
+        composer_mode_from_evidence, control_state, event_requires_conversation_snapshot,
+        format_conversation, format_terminal_outcome, map_model_selection, model_format_label,
+        output_state_message, product_target_label, released_terminal_message,
+        replace_conversation_update,
     };
     use application_runtime::{
-        ApplicationEvent, ApplicationFailure, ApplicationFailureKind, ApplicationOutputState,
-        ConversationProvenance, ConversationRecord, ConversationRecordId, ConversationRetention,
-        ConversationRole, ConversationTokenEstimate, GenerationTerminalKind,
-        GenerationTerminalOutcome, ResponseAttempt, ResponseAttemptId, ResponseAttemptState,
+        ApplicationBackend, ApplicationEvent, ApplicationFailure, ApplicationFailureKind,
+        ApplicationModelFormat, ApplicationOutputState, ConversationProvenance, ConversationRecord,
+        ConversationRecordId, ConversationRetention, ConversationRole, ConversationTokenEstimate,
+        GenerationTerminalKind, GenerationTerminalOutcome, LocalModelProduct, ResponseAttempt,
+        ResponseAttemptId, ResponseAttemptState,
     };
 
     #[test]
+    fn selector_maps_hub_product_to_closed_selection() -> Result<(), InvalidModelProductIndex> {
+        let selection = map_model_selection(
+            HUGGING_FACE_SAFETENSORS_INDEX,
+            " owner/model ",
+            " main ",
+            "ignored.gguf",
+        )?;
+
+        assert_eq!(
+            selection.hugging_face_reference(),
+            Some(("owner/model", "main"))
+        );
+        assert_eq!(
+            selection.product(),
+            LocalModelProduct::HuggingFaceCandleSafetensors
+        );
+        assert!(selection.local_path().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn selector_maps_local_file_product_to_closed_selection() -> Result<(), InvalidModelProductIndex>
+    {
+        let selection = map_model_selection(
+            LOCAL_GGUF_INDEX,
+            "ignored/repository",
+            "ignored-revision",
+            "/models/example.gguf",
+        )?;
+
+        assert_eq!(
+            selection.local_path(),
+            Some(std::path::Path::new("/models/example.gguf"))
+        );
+        assert_eq!(selection.product(), LocalModelProduct::LocalLlamaCppGguf);
+        assert!(selection.hugging_face_reference().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_selector_indices_fail_closed() {
+        for invalid in [-1, 2, i32::MAX] {
+            assert!(map_model_selection(invalid, "repo", "main", "model.gguf").is_err());
+        }
+    }
+
+    #[test]
+    fn target_and_format_labels_cover_both_closed_products() {
+        let hub = product_target_label(LocalModelProduct::HuggingFaceCandleSafetensors);
+        let gguf = product_target_label(LocalModelProduct::LocalLlamaCppGguf);
+
+        assert!(hub.contains("Backend: Candle"));
+        assert!(hub.contains("Source: Hugging Face Hub"));
+        assert!(hub.contains("Device: CPU"));
+        assert!(hub.contains("Format: Safetensors"));
+        assert!(gguf.contains("Backend: llama.cpp"));
+        assert!(gguf.contains("Source: Local file"));
+        assert!(gguf.contains("Device: CPU"));
+        assert!(gguf.contains("Format: GGUF"));
+        assert_eq!(backend_label(ApplicationBackend::LlamaCpp), "llama.cpp");
+        assert_eq!(model_format_label(ApplicationModelFormat::Gguf), "GGUF");
+    }
+
+    #[test]
+    fn changing_visible_selection_fields_never_reuses_the_stale_selection()
+    -> Result<(), InvalidModelProductIndex> {
+        let hub = map_model_selection(HUGGING_FACE_SAFETENSORS_INDEX, "a/model", "main", "")?;
+        let changed_repository =
+            map_model_selection(HUGGING_FACE_SAFETENSORS_INDEX, "b/model", "main", "")?;
+        let changed_revision =
+            map_model_selection(HUGGING_FACE_SAFETENSORS_INDEX, "a/model", "v2", "")?;
+        let gguf = map_model_selection(LOCAL_GGUF_INDEX, "", "", "a.gguf")?;
+        let changed_path = map_model_selection(LOCAL_GGUF_INDEX, "", "", "b.gguf")?;
+
+        assert_ne!(hub, changed_repository);
+        assert_ne!(hub, changed_revision);
+        assert_ne!(hub, gguf);
+        assert_ne!(gguf, changed_path);
+        Ok(())
+    }
+
+    #[test]
+    fn composer_mode_requires_a_loaded_model_and_verified_chat_evidence() {
+        assert_eq!(
+            composer_mode_from_evidence(false, false),
+            ComposerMode::Unavailable
+        );
+        assert_eq!(composer_mode_from_evidence(true, true), ComposerMode::Chat);
+        assert_eq!(
+            composer_mode_from_evidence(true, false),
+            ComposerMode::DirectCompletion
+        );
+    }
+
+    #[test]
+    fn direct_completion_uses_generation_admission_and_disables_regeneration() {
+        let controls = control_state(
+            RuntimeAdmissions {
+                can_start_generation: true,
+                can_regenerate: true,
+                can_clear: true,
+                can_unload: true,
+                ..RuntimeAdmissions::default()
+            },
+            ComposerMode::DirectCompletion,
+            "prompt",
+        );
+
+        assert!(controls.can_edit_message);
+        assert!(controls.can_submit_message);
+        assert!(!controls.can_regenerate);
+        assert!(controls.can_clear);
+        assert!(controls.can_unload);
+    }
+
+    #[test]
+    fn chat_controls_use_only_chat_admission() {
+        let controls = control_state(
+            RuntimeAdmissions {
+                can_submit_chat: true,
+                can_start_generation: true,
+                can_regenerate: true,
+                can_clear: true,
+                ..RuntimeAdmissions::default()
+            },
+            ComposerMode::Chat,
+            "message",
+        );
+
+        assert!(controls.can_edit_message);
+        assert!(controls.can_submit_message);
+        assert!(controls.can_regenerate);
+    }
+
+    #[test]
     fn running_generation_exposes_cancellation() {
-        let controls = control_state(false, false, false, false, true, true, "message");
+        let controls = control_state(
+            RuntimeAdmissions {
+                can_cancel: true,
+                can_unload: true,
+                ..RuntimeAdmissions::default()
+            },
+            ComposerMode::DirectCompletion,
+            "prompt",
+        );
 
         assert!(!controls.can_submit_message);
         assert!(controls.can_cancel);
         assert!(controls.can_unload);
         assert!(!controls.can_edit_message);
+    }
+
+    #[test]
+    fn message_submission_requires_nonempty_visible_input() {
+        let admissions = RuntimeAdmissions {
+            can_submit_chat: true,
+            ..RuntimeAdmissions::default()
+        };
+        let empty = control_state(admissions, ComposerMode::Chat, "  \n ");
+        let populated = control_state(admissions, ComposerMode::Chat, "Hello");
+
+        assert!(empty.can_edit_message);
+        assert!(!empty.can_submit_message);
+        assert!(populated.can_submit_message);
     }
 
     #[test]
@@ -764,42 +1388,16 @@ mod tests {
     }
 
     #[test]
-    fn message_submission_requires_nonempty_visible_input() {
-        let empty = control_state(false, false, true, false, false, true, "  \n ");
-        let populated = control_state(false, false, true, false, false, true, "Hello");
-
-        assert!(empty.can_edit_message);
-        assert!(!empty.can_submit_message);
-        assert!(populated.can_submit_message);
+    fn frame_work_remains_explicitly_bounded() {
+        assert_eq!(UI_FRAME_MILLISECONDS, 16);
+        assert_eq!(MAXIMUM_EVENTS_PER_FRAME, 64);
     }
 
     #[test]
-    fn unavailable_chat_disables_message_editing_and_submission() {
-        let controls = control_state(false, false, false, false, false, true, "Hello");
-
-        assert!(!controls.can_edit_message);
-        assert!(!controls.can_submit_message);
-        assert!(!controls.can_regenerate);
-        assert!(!controls.can_cancel);
-        assert!(controls.can_unload);
-    }
-
-    #[test]
-    fn released_response_reenables_submit_and_regeneration() {
-        let controls = control_state(false, false, true, true, false, true, "Next message");
-
-        assert!(controls.can_edit_message);
-        assert!(controls.can_submit_message);
-        assert!(controls.can_regenerate);
-        assert!(!controls.can_cancel);
-        assert!(controls.can_unload);
-    }
-
-    #[test]
-    fn text_delta_contains_only_the_new_fragment() {
+    fn text_delta_contains_only_the_new_frame_fragment() {
         let mut presentation = PresentationState {
             displayed_request: Some(7),
-            terminal_text: String::new(),
+            ..PresentationState::default()
         };
         let delta = FrameOutputDelta {
             text: "new frame text".to_owned(),
@@ -823,6 +1421,53 @@ mod tests {
             replace_conversation_update("User: hello".to_owned()),
             GeneratedOutputUpdate::Replace("User: hello".to_owned())
         );
+    }
+
+    #[test]
+    fn direct_completion_presents_one_prompt_and_completion_without_chat_roles() {
+        let mut presentation = PresentationState::default();
+        let replacement = presentation.begin_direct_request(11, "Explain Rust ownership.");
+
+        assert_eq!(
+            replacement,
+            GeneratedOutputUpdate::Replace(
+                "Prompt:\nExplain Rust ownership.\n\nCompletion:\n".to_owned()
+            )
+        );
+        assert!(!presentation.allows_conversation_snapshot());
+
+        let update = presentation.apply_delta(FrameOutputDelta {
+            text: "Ownership tracks values.".to_owned(),
+            terminal_text: Some("Generation finished.".to_owned()),
+            invalid_text_record: false,
+        });
+        assert_eq!(
+            update.output,
+            Some(GeneratedOutputUpdate::Append(
+                "Ownership tracks values.".to_owned()
+            ))
+        );
+        assert!(!presentation.allows_conversation_snapshot());
+    }
+
+    #[test]
+    fn transcript_mode_changes_only_on_explicit_presentation_actions() {
+        let mut presentation = PresentationState::default();
+        presentation.begin_direct_request(3, "prompt");
+        presentation.apply_delta(FrameOutputDelta {
+            text: String::new(),
+            terminal_text: Some("terminal".to_owned()),
+            invalid_text_record: false,
+        });
+        assert!(!presentation.allows_conversation_snapshot());
+
+        let cleared = presentation.clear(ComposerMode::DirectCompletion);
+        assert_eq!(cleared, GeneratedOutputUpdate::Replace(String::new()));
+        assert!(!presentation.allows_conversation_snapshot());
+        assert_eq!(presentation.displayed_request, None);
+
+        presentation.begin_chat_request(4);
+        assert!(presentation.allows_conversation_snapshot());
     }
 
     #[test]
@@ -853,7 +1498,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_lifecycle_events_refresh_the_conversation_snapshot() {
+    fn terminal_lifecycle_events_request_a_conversation_snapshot() {
         assert!(event_requires_conversation_snapshot(
             &ApplicationEvent::RuntimeDisconnected
         ));

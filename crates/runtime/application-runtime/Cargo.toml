@@ -11,6 +11,7 @@ publish = false
 candle-backend.workspace = true
 context-planner.workspace = true
 domain-contracts.workspace = true
+gguf-backend.workspace = true
 hf-hub-adapter.workspace = true
 hf-tokenizer.workspace = true
 host-runtime.workspace = true

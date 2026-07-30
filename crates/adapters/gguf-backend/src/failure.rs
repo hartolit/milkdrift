@@ -13,6 +13,8 @@ pub const CODE_DECODE: u32 = 8;
 pub const CODE_KV_CLEAR: u32 = 9;
 pub const CODE_MODEL_MISMATCH: u32 = 10;
 pub const CODE_SEQUENCE_SLOT: u32 = 11;
+pub const CODE_CONTENT_DIGEST_READ: u32 = 12;
+pub const CODE_CONTENT_DIGEST_MISMATCH: u32 = 13;
 
 pub const fn failure(backend: BackendId, kind: BackendFailureKind, code: u32) -> BackendFailure {
     BackendFailure::new(backend, kind, code)

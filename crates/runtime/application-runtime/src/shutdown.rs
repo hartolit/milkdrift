@@ -25,8 +25,8 @@ pub fn shutdown(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationError
     runtime.state.begin_shutdown();
 
     let mut first_error = request_hub_shutdown(runtime).err();
-    record_first_error(&mut first_error, shutdown_runtime(runtime).err());
-    record_first_error(&mut first_error, join_runtime_worker(runtime).err());
+    record_first_error(&mut first_error, shutdown_runtimes(runtime).err());
+    record_first_error(&mut first_error, join_runtime_workers(runtime).err());
     record_first_error(&mut first_error, join_hub_worker(runtime).err());
 
     first_error.map_or(Ok(()), Err)
@@ -48,19 +48,33 @@ fn request_hub_shutdown(runtime: &mut ApplicationRuntime) -> Result<(), Applicat
     }
 }
 
-fn shutdown_runtime(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationError> {
-    if !runtime.state.inference_available() {
-        return Ok(());
-    }
-    let ticket = runtime.next_ticket()?;
-    let outcome = shutdown_runtime_worker(
-        &runtime.inference,
-        ticket,
-        runtime.configuration.timing.runtime_shutdown_timeout,
-        runtime.configuration.timing.runtime_shutdown_event_poll,
-    )?;
+fn shutdown_runtimes(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationError> {
+    let candle_ticket = runtime.next_ticket()?;
+    let gguf_ticket = runtime.next_ticket()?;
+    let timeout = runtime.configuration.timing.runtime_shutdown_timeout;
+    let event_poll = runtime.configuration.timing.runtime_shutdown_event_poll;
+
+    let mut first_error = shutdown_runtime_worker(
+        runtime.local.candle_runtime(),
+        candle_ticket,
+        timeout,
+        event_poll,
+    )
+    .and_then(normalize_runtime_shutdown)
+    .err();
+    record_first_error(
+        &mut first_error,
+        shutdown_runtime_worker(
+            runtime.local.gguf_runtime(),
+            gguf_ticket,
+            timeout,
+            event_poll,
+        )
+        .and_then(normalize_runtime_shutdown)
+        .err(),
+    );
     runtime.state.disconnect_inference();
-    normalize_runtime_shutdown(outcome)
+    first_error.map_or(Ok(()), Err)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,15 +142,27 @@ fn normalize_runtime_shutdown(outcome: RuntimeShutdown) -> Result<(), Applicatio
     }
 }
 
-fn join_runtime_worker(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationError> {
-    let Some(thread) = runtime.inference_thread.take() else {
+fn join_runtime_workers(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationError> {
+    let timeout = runtime.configuration.timing.runtime_join_timeout;
+    let poll = runtime.configuration.timing.runtime_join_poll;
+    let mut first_error =
+        finish_runtime_thread(runtime.local.take_candle_thread(), timeout, poll).err();
+    record_first_error(
+        &mut first_error,
+        finish_runtime_thread(runtime.local.take_gguf_thread(), timeout, poll).err(),
+    );
+    first_error.map_or(Ok(()), Err)
+}
+
+fn finish_runtime_thread(
+    thread: Option<RuntimeThread>,
+    timeout: Duration,
+    poll: Duration,
+) -> Result<(), ApplicationError> {
+    let Some(thread) = thread else {
         return Ok(());
     };
-    wait_for_runtime_thread(
-        &thread,
-        runtime.configuration.timing.runtime_join_timeout,
-        runtime.configuration.timing.runtime_join_poll,
-    )?;
+    wait_for_runtime_thread(&thread, timeout, poll)?;
     thread.join().map_err(thread_failure)
 }
 

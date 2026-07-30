@@ -11,6 +11,7 @@ publish = false
 domain-contracts.workspace = true
 llama-cpp-2.workspace = true
 self_cell.workspace = true
+tokenization.workspace = true
 
 [lints]
 workspace = true

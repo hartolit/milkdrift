@@ -200,19 +200,25 @@ const REVIEWED_ENGINE_PRODUCTION_DEPENDENCIES: &[ReviewedDependency] = &[
         source: "application-runtime",
         target: "candle-backend",
         kind: DependencyKind::Normal,
-        justification: "the first E1 local composition constructs the supported Candle model source",
+        justification: "the closed E1 local composition constructs the supported Candle/Safetensors source",
+    },
+    ReviewedDependency {
+        source: "application-runtime",
+        target: "gguf-backend",
+        kind: DependencyKind::Normal,
+        justification: "the closed E1 local composition verifies and constructs the supported llama.cpp/GGUF source and tokenizer",
     },
     ReviewedDependency {
         source: "application-runtime",
         target: "hf-hub-adapter",
         kind: DependencyKind::Normal,
-        justification: "the first E1 local composition resolves immutable Hugging Face artifacts",
+        justification: "the closed E1 local composition resolves immutable Hugging Face artifacts for the Candle product",
     },
     ReviewedDependency {
         source: "application-runtime",
         target: "hf-tokenizer",
         kind: DependencyKind::Normal,
-        justification: "the first E1 local composition owns prompt encoding and streaming decode",
+        justification: "the closed E1 local composition owns Hugging Face prompt encoding and streaming decode",
     },
     ReviewedDependency {
         source: "application-runtime",
@@ -230,7 +236,7 @@ const REVIEWED_ENGINE_PRODUCTION_DEPENDENCIES: &[ReviewedDependency] = &[
         source: "application-runtime",
         target: "redb-storage",
         kind: DependencyKind::Normal,
-        justification: "the first E1 composition persists application preferences with redb",
+        justification: "E1 persists application preferences and the Hugging Face model catalogue with redb",
     },
 ];
 

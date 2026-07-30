@@ -4,17 +4,15 @@ A layered Rust workspace for a local-first, composable language-model system wit
 
 ## Current product state
 
-The currently composed application path uses Candle on the CPU with Hugging Face artifacts and tokenization. It can resolve, validate, load, generate direct-completion text, cancel, drain, unload, and persist the selection for one resident model through the frontend-neutral `application-runtime` façade.
+The frontend-neutral `application-runtime` (E1) exposes two closed local CPU products through `ModelSelection`: Hugging Face Hub + Candle + Safetensors, and local file + llama.cpp + GGUF. Both use the same E1 model lifecycle, direct-completion generation, cancellation, bounded output, and unload semantics for one resident model.
 
-A GGUF/llama.cpp CPU adapter also implements the lower inference compatibility boundary. It is not selectable through `application-runtime` or the Slint UI yet.
+E0 owns token-level scheduling, sampling, backend execution, cancellation boundaries, backpressure, and cleanup. E1 owns the shared lifecycle, generation, and conversation behavior, including closed Hugging Face/GGUF tokenizer and streaming-decoder dispatch. Its private local capability starts two monomorphized E0 workers and routes commands, events, and output through the one active backend.
 
-The E0 inference runtime owns local token-level scheduling, sampling, backend execution, cancellation boundaries, backpressure, and cleanup. E1 `application-runtime` exposes that loop as frontend-neutral application behavior: it encodes UTF-8 prompts, translates stable generation settings, owns request-local streaming decode state, and returns bounded pulled text/state batches. The independently stateful corrective workflow is a separate capability engine. In particular:
-
-- frontends use E1 generation APIs rather than E0 commands, logits, or sequence state;
-- tokenizer and decoded-text ownership live in E1 while sampling and token stepping remain in E0;
-- the Slint frontend exposes the complete direct-completion Phase 6 path with prompt/output/generate/cancel controls;
-- general chat rendering and conversation history follow the direct-completion slice;
-- GPU execution, hosted-provider/peer execution, remote frontend transport, and multiple application-level resident models are not supported yet.
+- Hugging Face resolution runs on the bounded Hub worker and retains an immutable commit identity.
+- Local GGUF resolution is synchronous, canonicalizes the selected path, and verifies exact bytes with SHA-256.
+- `TinyLlama/TinyLlama-1.1B-Chat-v1.0` remains the only verified chat profile; GGUF and other unverified models use honest direct completion.
+- Slint maps only E1 types and presents backend, source, device, format, scalar type, quantization, and immutable identity.
+- There is no `application-api`, hosted-provider or peer execution, GPU path, remote frontend transport, or multiple application-level resident models.
 
 See the [current implementation status](docs/project/implementation-status.md) for the exact integration matrix and validation evidence. The [execution plan](docs/agent/execution/execution-plan.md) is the active roadmap.
 The [project vision](docs/vision.md) records the longer-term research direction; it is intentionally aspirational and does not override current architecture, ADRs, or support status.
@@ -39,7 +37,7 @@ Run the current repository baseline gate with:
 cargo run --locked --bin llm-app -- verify
 ```
 
-The root binary runs the Phase 1 architecture, formatting, workspace-check, ordinary-test, Clippy, API-documentation, and benchmark-compilation gates. Ordinary tests do not select benchmark targets. CI also enforces dependency policy, local Markdown links, and the named portable targets. This runner will be replaced by the planned `xtask` only after the earlier execution-plan gates are complete.
+The root binary runs the architecture, formatting, workspace-check, ordinary-test, Clippy, API-documentation, and benchmark-compilation gates. Ordinary tests do not select benchmark targets. CI also enforces dependency policy, local Markdown links, and the named portable targets.
 
 Plain Cargo commands also work normally:
 
@@ -56,7 +54,7 @@ Run the native frontend with:
 cargo run -p desktop-slint
 ```
 
-The frontend resolves and loads the Candle CPU model, submits direct completions through E1, streams bounded decoded output, cancels active work, and unloads deterministically. Application state is stored in the platform's per-user application-data directory.
+The frontend selects either closed CPU product, resolves and loads it through E1, streams bounded decoded output, cancels active work, and unloads deterministically. Verified TinyLlama uses Chat mode; GGUF uses Direct completion mode. Normal window closure invokes E1's bounded shutdown protocol for the Hub worker and both E0 workers. Application state is stored in the platform's per-user application-data directory.
 
 Relevant guides:
 

@@ -1,19 +1,28 @@
-import { Button, HorizontalBox, LineEdit, TextEdit, VerticalBox } from "std-widgets.slint";
+import { Button, ComboBox, HorizontalBox, LineEdit, TextEdit, VerticalBox } from "std-widgets.slint";
 
 export component AppWindow inherits Window {
     title: "LLM App";
-    width: 960px;
-    height: 800px;
+    width: 1080px;
+    height: 900px;
 
+    in-out property <int> model-product-index: 0;
     in-out property <string> repository;
     in-out property <string> revision;
+    in-out property <string> gguf-path;
     in-out property <string> message-input;
+    in property <string> selected-model-summary: "No product selected.";
+    in property <string> resolved-model-summary: "Not resolved.";
+    in property <string> loaded-model-summary: "Not loaded.";
+    in property <string> composer-mode: "No model loaded";
+    in property <string> composer-guidance: "Load a model to enable generation.";
+    in property <string> composer-input-label: "Message";
+    in property <string> composer-submit-label: "Send";
     in property <string> status-text: "Ready";
     in property <string> terminal-text: "No response has completed.";
-    in property <string> resolved-commit: "Not resolved";
     in property <string> prompt-token-count: "0";
     in property <string> generated-token-count: "0";
     in property <bool> busy: false;
+    in property <bool> can-edit-selection: true;
     in property <bool> can-resolve: true;
     in property <bool> can-load: false;
     in property <bool> can-edit-message: false;
@@ -30,10 +39,10 @@ export component AppWindow inherits Window {
     callback regenerate-response();
     callback cancel-generation();
     callback clear-conversation();
-    callback append-assistant-text(string);
-    callback replace-conversation-transcript(string);
+    callback append-generated-text(string);
+    callback replace-transcript(string);
 
-    append-assistant-text(fragment) => {
+    append-generated-text(fragment) => {
         // Selection remains owned by this TextEdit. Preserve explicit scroll state per frame batch.
         let saved-viewport-x = transcript-editor.viewport-x;
         let saved-viewport-y = transcript-editor.viewport-y;
@@ -42,7 +51,7 @@ export component AppWindow inherits Window {
         transcript-editor.viewport-y = saved-viewport-y;
     }
 
-    replace-conversation-transcript(transcript) => {
+    replace-transcript(transcript) => {
         let saved-viewport-x = transcript-editor.viewport-x;
         let saved-viewport-y = transcript-editor.viewport-y;
         transcript-editor.text = transcript;
@@ -53,17 +62,17 @@ export component AppWindow inherits Window {
 
     VerticalBox {
         padding: 20px;
-        spacing: 10px;
+        spacing: 9px;
 
         HorizontalBox {
             Text {
-                text: "Local chat";
+                text: "Local model runner";
                 font-size: 26px;
                 font-weight: 700;
                 horizontal-stretch: 1;
             }
             Text {
-                text: "TinyLlama Chat v1 • Candle • CPU";
+                text: "Mode: " + root.composer-mode;
                 color: #356859;
                 font-weight: 700;
                 vertical-alignment: center;
@@ -71,23 +80,59 @@ export component AppWindow inherits Window {
         }
 
         Text {
-            text: "Chat requires the verified TinyLlama/TinyLlama-1.1B-Chat-v1.0 profile. Other resolved models remain available through E1 direct completion, but this chat surface will not guess their templates.";
+            text: root.composer-guidance;
             wrap: word-wrap;
         }
 
         HorizontalBox {
             spacing: 12px;
+            Text { text: "Product"; width: 100px; vertical-alignment: center; }
+            ComboBox {
+                model: [
+                    "Candle + Hugging Face Hub + Safetensors",
+                    "llama.cpp + local file + GGUF",
+                ];
+                current-index <=> root.model-product-index;
+                enabled: root.can-edit-selection;
+            }
+        }
+
+        if root.model-product-index == 0 : HorizontalBox {
+            spacing: 12px;
             Text { text: "Repository"; width: 100px; vertical-alignment: center; }
             LineEdit {
                 text <=> root.repository;
-                enabled: !root.busy && !root.can-unload;
+                enabled: root.can-edit-selection;
             }
             Text { text: "Revision"; width: 70px; vertical-alignment: center; }
             LineEdit {
                 text <=> root.revision;
-                enabled: !root.busy && !root.can-unload;
-                width: 180px;
+                enabled: root.can-edit-selection;
+                width: 190px;
             }
+        }
+
+        if root.model-product-index == 1 : HorizontalBox {
+            spacing: 12px;
+            Text { text: "GGUF path"; width: 100px; vertical-alignment: center; }
+            LineEdit {
+                text <=> root.gguf-path;
+                enabled: root.can-edit-selection;
+                placeholder-text: "/path/to/model.gguf";
+            }
+        }
+
+        Text {
+            text: "Selected — " + root.selected-model-summary;
+            wrap: word-wrap;
+        }
+        Text {
+            text: "Resolved — " + root.resolved-model-summary;
+            wrap: word-wrap;
+        }
+        Text {
+            text: "Loaded — " + root.loaded-model-summary;
+            wrap: word-wrap;
         }
 
         HorizontalBox {
@@ -107,41 +152,36 @@ export component AppWindow inherits Window {
                 enabled: root.can-unload;
                 clicked => { root.unload-model(); }
             }
-            Text {
-                text: "Commit: " + root.resolved-commit;
-                vertical-alignment: center;
-                horizontal-stretch: 1;
-            }
         }
 
         Rectangle { height: 1px; background: #d0d0d0; }
 
         Text {
-            text: "Conversation";
+            text: "Transcript • " + root.composer-mode;
             font-weight: 700;
         }
         transcript-editor := TextEdit {
             text: "";
             read-only: true;
             wrap: word-wrap;
-            height: 300px;
+            height: 280px;
         }
 
         Text {
-            text: "Message";
+            text: root.composer-input-label;
             font-weight: 700;
         }
         TextEdit {
             text <=> root.message-input;
             enabled: root.can-edit-message;
-            height: 100px;
+            height: 90px;
             wrap: word-wrap;
         }
 
         HorizontalBox {
             spacing: 10px;
             Button {
-                text: "Send";
+                text: root.composer-submit-label;
                 enabled: root.can-submit-message;
                 clicked => { root.submit-message(); }
             }
@@ -156,7 +196,7 @@ export component AppWindow inherits Window {
                 clicked => { root.cancel-generation(); }
             }
             Button {
-                text: "Clear conversation";
+                text: "Clear transcript";
                 enabled: root.can-clear-conversation;
                 clicked => { root.clear-conversation(); }
             }

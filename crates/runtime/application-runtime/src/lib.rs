@@ -9,7 +9,9 @@ mod error;
 mod event;
 mod generation;
 mod hub_worker;
+mod local;
 mod runtime;
+mod selection;
 mod shutdown;
 mod state;
 mod support;
@@ -17,15 +19,15 @@ mod unload;
 
 pub use chat::{ChatCompatibility, ContextDiagnostics, PromptCompatibilityProfile};
 pub use configuration::{
-    ApplicationHubConfiguration, ApplicationPreferences, ApplicationRuntimeConfiguration,
-    ApplicationTiming,
+    ApplicationGgufConfiguration, ApplicationHubConfiguration, ApplicationPreferences,
+    ApplicationRuntimeConfiguration, ApplicationTiming,
 };
 pub use conversation::{
     ConversationProvenance, ConversationRecord, ConversationRecordId, ConversationRetention,
     ConversationRole, ConversationTokenEstimate, ResponseAttempt, ResponseAttemptId,
     ResponseAttemptState,
 };
-pub use domain_contracts::ScalarType;
+
 pub use error::{
     ApplicationConfigurationField, ApplicationError, ApplicationFailure, ApplicationFailureKind,
     ApplicationWorker, GenerationSettingsField,
@@ -37,8 +39,13 @@ pub use generation::{
     GenerationTerminalKind,
 };
 pub use runtime::ApplicationRuntime;
+pub use selection::{
+    ApplicationBackend, ApplicationDevice, ApplicationModelFormat, ApplicationQuantization,
+    ApplicationScalarType, ApplicationSource, ImmutableModelIdentity, LocalModelProduct,
+    ModelCompatibility, ModelSelection, ScalarType,
+};
 pub use state::{
-    ApplicationActivity, ApplicationBackend, ApplicationState, GenerationPhase, GenerationSummary,
-    GenerationTerminal, GenerationTerminalOutcome, LoadedModel, ResolvedModel,
+    ApplicationActivity, ApplicationState, GenerationPhase, GenerationSummary, GenerationTerminal,
+    GenerationTerminalOutcome, LoadedModel, ResolvedModel,
 };
 pub use unload::ModelUnloadBehavior;

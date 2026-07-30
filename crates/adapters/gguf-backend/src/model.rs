@@ -13,6 +13,7 @@ use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::LlamaModel;
 use llama_cpp_2::token::LlamaToken;
 
+use crate::digest::Sha256Digest;
 use crate::failure::{
     CODE_BATCH_ADD, CODE_DECODE, CODE_KV_CLEAR, CODE_NUMERIC_OVERFLOW, CODE_SEQUENCE_SLOT, failure,
 };
@@ -56,6 +57,7 @@ pub struct GgufModel {
     backend: BackendId,
     handle: ModelHandle,
     descriptor: ModelDescriptor,
+    content_digest: Option<Sha256Digest>,
     execution: GgufExecutionConfiguration,
     vocabulary_size: usize,
     // Batch resources are freed before the native context and backend token.
@@ -116,6 +118,7 @@ impl GgufModel {
             backend,
             handle,
             descriptor,
+            content_digest: None,
             execution,
             vocabulary_size,
             batch,
@@ -129,6 +132,20 @@ impl GgufModel {
     #[must_use]
     pub const fn descriptor(&self) -> &ModelDescriptor {
         &self.descriptor
+    }
+
+    pub(crate) const fn with_content_digest(
+        mut self,
+        content_digest: Option<Sha256Digest>,
+    ) -> Self {
+        self.content_digest = content_digest;
+        self
+    }
+
+    /// Returns the required GGUF identity verified while loading, when supplied.
+    #[must_use]
+    pub const fn content_digest(&self) -> Option<Sha256Digest> {
+        self.content_digest
     }
 
     fn allocate_slot(&mut self) -> Result<u32, ModelError> {

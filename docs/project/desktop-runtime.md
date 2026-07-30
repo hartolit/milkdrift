@@ -3,23 +3,21 @@
 ## Scope
 
 The desktop composition owns native process concerns while delegating model
-lifecycle, direct-completion, and compatible conversation orchestration to `application-runtime`:
+lifecycle, generation, and compatible conversation orchestration to `application-runtime`:
 
-1. resolve one immutable Hugging Face model revision;
-2. cache and validate its required artifacts;
-3. load its serialized tokenizer;
-4. persist the logical repository/revision selection;
-5. load one Candle CPU model;
-6. expose E1 conversation submit/regenerate/clear, cancellation, bounded text-pull, and unload behavior;
-7. retain direct completion as an E1 API without guessing chat compatibility in the UI;
-8. keep all network, database, vendor, and UI types outside portable features.
+1. map the product controls to E1's closed `ModelSelection`;
+2. resolve immutable Hugging Face/Candle/Safetensors artifacts or a canonical, SHA-256-verified local llama.cpp/GGUF file;
+3. use the product-matched tokenizer and streaming decoder selected inside E1;
+4. load one CPU model on the selected E0 worker;
+5. expose E1 submit, regenerate, clear, cancellation, bounded text-pull, and unload behavior;
+6. use verified chat only for TinyLlama Chat v1 and direct completion for GGUF or any other unverified profile;
+7. keep network, database, backend, tokenizer, and native inference types out of Slint.
 
-Generation is composed through E1 rather than Slint callbacks. The Slint window now
-exposes a conversation transcript, message composer, send/regenerate/cancel/clear
-actions, exact context/generated usage, terminal state, and the existing model
-lifecycle controls. Chat submission succeeds only for E1's verified TinyLlama Chat v1
-profile; Send/edit/regenerate availability is derived from E1's chat-specific
-admission state rather than generic generation readiness.
+Generation is composed through E1 rather than Slint callbacks. The window selects
+one of the two E1 products and shows backend, source, device, format, scalar type,
+quantization, and immutable identity from E1 state. Verified TinyLlama exposes Chat
+mode and conversation regeneration. GGUF exposes Direct completion mode, calls
+`start_generation`, and does not infer a chat template or history semantics.
 
 See the [application runtime guide](application-runtime.md) for the complete E1 public boundary.
 
@@ -27,41 +25,43 @@ See the [application runtime guide](application-runtime.md) for the complete E1 
 
 `application-runtime` is the E1 application engine. It owns:
 
-- the bounded Hugging Face resolver worker;
-- tokenizer validation;
-- persisted application preferences and model catalogue updates;
-- exact-selection validation before loading;
-- the hosted inference-runtime endpoint;
+- the bounded Hugging Face resolver worker and synchronous local GGUF inspection;
+- immutable selection and identity validation before loading;
+- persisted application preferences and Hugging Face model catalogue updates;
+- two monomorphized, process-hosted E0 workers with one active backend;
+- closed Hugging Face/GGUF tokenizer and streaming-decoder dispatch;
 - loaded-generation and active-request state;
-- direct-completion and verified chat prompt/tokenizer/text orchestration;
-- raw conversation state, regeneration/supersession, context planning, and diagnostics;
-- explicit reject/cancel/drain unload behavior;
+- shared direct-completion, lifecycle, cancellation, and unload semantics;
+- verified TinyLlama chat, raw conversation state, regeneration/supersession, context planning, and diagnostics;
 - normalized structured events;
-- bounded worker shutdown and joins.
+- bounded shutdown commands and joins for both E0 workers and the Hub worker.
 
 Its public state and events contain application and domain values rather than
-Slint, Candle, Hugging Face, redb, or Flume types. A Slint, Tauri, CLI, or another
-native frontend can therefore drive the same use cases without duplicating
+Slint, Candle, llama.cpp/GGUF, Hugging Face, redb, or Flume types. Slint maps only
+those E1 values and never constructs a backend source. A Tauri, CLI, or another
+native frontend could drive the same in-process use cases without duplicating
 backend orchestration.
 
 `desktop-slint` owns only:
 
 - per-user application-data path selection;
 - Slint component construction;
-- callback-to-command mapping;
+- closed product-input mapping to `ModelSelection`;
+- callback-to-E1-command mapping;
+- E1 model-metadata label mapping;
 - one 16 millisecond frame cadence for bounded event draining and one decoded-output pull;
-- presentation-owned transcript formatting plus batched assistant fragment and terminal-state mapping;
+- presentation-owned chat/direct-completion transcript formatting plus batched fragment and terminal-state mapping;
 - control and usage synchronization from `ApplicationState`;
 - process exit reporting.
 
 The binary `src/main.rs` delegates directly to the Slint library entry point.
 
-A standalone browser-only Leptos application cannot execute the native Candle
-runtime directly. It would use a transport adapter to a native or remote
-`application-runtime` host. A Tauri application can invoke the same native
-engine directly from its Rust backend.
+A standalone browser-only application cannot execute either native E0 worker
+directly. It would require a future transport adapter to an E1 host; no
+`application-api` or browser transport exists today. A Tauri application can invoke
+the same native engine directly from its Rust backend.
 
-## Artifact acquisition
+## Artifact acquisition and local resolution
 
 `hf-hub-adapter` accepts a validated repository and revision, inspects repository
 metadata, and resolves:
@@ -86,22 +86,30 @@ a stale resolved model from being loaded under different UI text. The Candle
 adapter still validates every tensor's actual scalar type during loading, so
 configuration metadata is never trusted as the final authority.
 
-The adapter is synchronous by design and runs only on a dedicated cold-path host
+The adapter is synchronous by design and runs only on a dedicated cold-path Hub
 worker. Environment-derived Hugging Face cache and token configuration remains
 active unless the application explicitly overrides it.
 
+Local GGUF resolution does not use that worker. `resolve_model` synchronously
+canonicalizes the selected path, computes SHA-256 before and after bounded metadata
+inspection, rejects content changed during inspection, and builds the tokenizer from
+the same verified source. E1 retains the canonical path and digest as the complete
+selection and immutable identity. Loading reuses the verified digest and checks the
+loaded descriptor, tokenizer vocabulary, backend, and metadata against resolution
+evidence.
+
 ## Tokenizer boundary
 
-`hf-tokenizer` adapts the upstream tokenizer to the portable `tokenization`
-contracts. Initial prompt encoding writes into a generic caller-owned token sink.
-Model output uses a request-local stateful decoder because correct text fragments
-can depend on surrounding token IDs, whitespace state, and incomplete byte
-fallback sequences.
+The Hugging Face product uses `hf-tokenizer`; the GGUF product uses the tokenizer
+and stateful decoder derived from the verified GGUF source. Both implement the
+portable `tokenization` contracts. E1 keeps their closed dispatch private, writes
+initial prompt encoding into a caller-owned token sink, and owns one request-local
+streaming decoder because correct fragments can depend on surrounding token IDs,
+whitespace state, and incomplete byte fallback sequences.
 
-The adapter does not claim allocation-free execution. Upstream encoding and
-streaming decode may allocate internally; those costs remain quarantined from the
-portable feature contracts and must be measured before they enter a strict hot
-path.
+Neither adapter claims allocation-free execution. Upstream encoding and streaming
+decode may allocate internally; those costs remain quarantined from the portable
+feature contracts and must be measured before they enter a strict hot path.
 
 ## Persistence
 
@@ -151,13 +159,12 @@ allowing the generated module to set the lint level required by Slint.
 
 ## Shutdown behavior
 
-Model shutdown remains deterministic at the inference boundary:
+Local shutdown remains deterministic and bounded across both E0 endpoints:
 
-1. submit a runtime shutdown command;
-2. wait for the matching ticketed shutdown event;
-3. wait a bounded interval for the exclusively owning runtime worker to finish;
-4. join the completed worker, or detach it at process shutdown if a backend call
-   has failed to return.
+1. stop application admission and request cooperative Hub shutdown;
+2. submit distinct shutdown tickets to the Candle and GGUF workers, waiting only to each configured deadline;
+3. attempt bounded completion and join for both workers, including the inactive endpoint, even if the first reports an error;
+4. finish the Hub-worker join, or detach any worker that cannot finish because a synchronous vendor call has failed to return.
 
 All shutdown and join deadlines use checked `Instant` arithmetic and each poll or
 sleep is capped to the remaining budget. Timeout overflow is rejected as invalid
@@ -174,8 +181,8 @@ request timeout or cancellation handle. The application runtime sends a
 cooperative shutdown command and waits for a bounded interval. If an HTTP
 operation is still in flight at the deadline, its thread handle is detached and
 application exit continues; the operating system reclaims process resources.
-The runtime join uses the same bounded-exit rule because safe Rust cannot destroy
-model state while an uncooperative backend call still holds it.
+Both E0 runtime joins use the same bounded-exit rule because safe Rust cannot
+destroy model state while an uncooperative backend call still holds it.
 
 A future cancellable Hub implementation should replace only `hf-hub-adapter` and
 its worker composition. It must not alter feature, inference, storage, or

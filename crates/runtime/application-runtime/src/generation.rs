@@ -7,7 +7,7 @@ use domain_contracts::{
     CancellationReason, FinishReason, GenerationUsage, RequestId, SequenceConfiguration,
     SequenceId, TokenId, YieldReason,
 };
-use hf_tokenizer::{HfOwnedStreamingDecoder, HfTokenizer};
+
 use host_runtime::{
     OutputPullError, OutputPushError, TextOutputBatch, TextOutputConsumer,
     TextOutputInitializationError, TextOutputProducer, TextOutputRecordKind, TokenOutputBatch,
@@ -15,13 +15,14 @@ use host_runtime::{
 };
 use inference_runtime::{
     CommandTicket, GenerationOutcome, GenerationOutputCapacityPolicy, GenerationOutputState,
-    GenerationRequest, GenerationStopSequence, RuntimeCommand, RuntimeEvent, SamplingConfig,
+    GenerationRequest, GenerationStopSequence, RuntimeEvent, SamplingConfig,
 };
 use tokenization::{
     DecodeOptions, EncodeOptions, SpecialTokenPolicy, StreamingDecoder, TextBuffer, TokenBuffer,
     TokenizationError, Tokenizer,
 };
 
+use crate::local::{LocalCommand, LocalOwnedDecoder};
 use crate::{
     ApplicationConfigurationField, ApplicationError, ApplicationEvent, ApplicationFailure,
     ApplicationFailureKind, ApplicationRuntime, ApplicationRuntimeConfiguration, GenerationPhase,
@@ -251,7 +252,7 @@ pub struct GenerationBridge {
 struct GenerationSession {
     request_id: RequestId,
     admission_ticket: CommandTicket,
-    decoder: HfOwnedStreamingDecoder,
+    decoder: LocalOwnedDecoder,
     decode_storage: Vec<u8>,
     pending_text_length: usize,
     local_failure: Option<ApplicationFailure>,
@@ -329,7 +330,7 @@ impl ApplicationRuntime {
             .as_ref()
             .ok_or(ApplicationError::NoTokenizer)?;
         let prompt_tokens =
-            encode_direct_completion_prompt(tokenizer, input, loaded.maximum_context_tokens)?;
+            encode_direct_completion_prompt(tokenizer, input, loaded.maximum_context_tokens())?;
         self.start_generation_tokens(prompt_tokens, settings)
     }
 
@@ -351,12 +352,16 @@ impl ApplicationRuntime {
         if !self.state.inference_available() {
             return Err(ApplicationError::RuntimeDisconnected);
         }
-        let loaded = self.state.loaded().ok_or(ApplicationError::NoLoadedModel)?;
+        let loaded = self
+            .state
+            .loaded()
+            .cloned()
+            .ok_or(ApplicationError::NoLoadedModel)?;
         let sampling = settings.validate()?;
         if settings
             .eos_tokens
             .iter()
-            .any(|token| token.get() >= loaded.vocabulary_size)
+            .any(|token| token.get() >= loaded.vocabulary_size())
         {
             return Err(ApplicationError::InvalidGenerationSettings(
                 GenerationSettingsField::EndOfSequenceToken,
@@ -373,11 +378,11 @@ impl ApplicationRuntime {
             encode_stop_sequences(
                 tokenizer,
                 settings.stop_sequences.as_slice(),
-                loaded.maximum_context_tokens,
+                loaded.maximum_context_tokens(),
             )?
         };
         let prompt_len = prompt_tokens.len();
-        let maximum_prefill = usize::try_from(loaded.maximum_prefill_batch).unwrap_or(usize::MAX);
+        let maximum_prefill = usize::try_from(loaded.maximum_prefill_batch()).unwrap_or(usize::MAX);
         if prompt_len > maximum_prefill {
             return Err(ApplicationError::PromptTooLong {
                 required: prompt_len,
@@ -390,16 +395,16 @@ impl ApplicationRuntime {
         let required_tokens = u64::try_from(prompt_len)
             .unwrap_or(u64::MAX)
             .saturating_add(u64::from(maximum_new_tokens.get()));
-        if required_tokens > u64::from(loaded.maximum_context_tokens) {
+        if required_tokens > u64::from(loaded.maximum_context_tokens()) {
             return Err(ApplicationError::ContextCapacityExceeded {
                 required: required_tokens,
-                available: u64::from(loaded.maximum_context_tokens),
+                available: u64::from(loaded.maximum_context_tokens()),
             });
         }
         let sequence_tokens = u32::try_from(required_tokens).map_err(|_| {
             ApplicationError::ContextCapacityExceeded {
                 required: required_tokens,
-                available: u64::from(loaded.maximum_context_tokens),
+                available: u64::from(loaded.maximum_context_tokens()),
             }
         })?;
         let prompt_batch =
@@ -441,9 +446,9 @@ impl ApplicationRuntime {
             .try_reserve_exact(self.configuration.text_output_byte_capacity)
             .map_err(|error| ApplicationFailure::new(ApplicationFailureKind::Worker, error))?;
         decode_storage.resize(self.configuration.text_output_byte_capacity, 0);
-        self.submit_inference(RuntimeCommand::Generate {
+        self.submit_inference(LocalCommand::Generate {
             ticket,
-            handle: loaded.handle,
+            handle: loaded.handle(),
             request,
         })?;
         self.generation.pending.clear();
@@ -486,7 +491,7 @@ impl ApplicationRuntime {
             return Ok(());
         }
         let ticket = self.next_ticket()?;
-        self.submit_inference(RuntimeCommand::CancelRequest {
+        self.submit_inference(LocalCommand::CancelRequest {
             ticket,
             request_id,
             reason: CancellationReason::UserRequested,
@@ -697,7 +702,7 @@ impl ApplicationRuntime {
     fn pull_e0_output(&mut self) -> Result<(), ()> {
         let pending_capacity = self.generation.pending_capacity;
         let pending = &mut self.generation.pending;
-        self.inference
+        self.local
             .pull_token_output(|batch| append_token_batch(pending, pending_capacity, &batch))
             .map_err(|_| ())?
     }
@@ -911,7 +916,7 @@ impl ApplicationRuntime {
             return;
         };
         if self
-            .submit_inference(RuntimeCommand::CancelRequest {
+            .submit_inference(LocalCommand::CancelRequest {
                 ticket,
                 request_id,
                 reason: CancellationReason::ParentTask,
@@ -951,8 +956,8 @@ fn append_token_batch(
     Ok(())
 }
 
-fn encode_direct_completion_prompt(
-    tokenizer: &HfTokenizer,
+fn encode_direct_completion_prompt<T: Tokenizer + ?Sized>(
+    tokenizer: &T,
     input: &str,
     maximum_context_tokens: u32,
 ) -> Result<Box<[TokenId]>, ApplicationError> {
@@ -972,8 +977,8 @@ fn encode_direct_completion_prompt(
     })
 }
 
-fn encode_stop_sequences(
-    tokenizer: &HfTokenizer,
+fn encode_stop_sequences<T: Tokenizer + ?Sized>(
+    tokenizer: &T,
     stops: &[String],
     maximum_context_tokens: u32,
 ) -> Result<Box<[GenerationStopSequence]>, ApplicationError> {
@@ -1016,8 +1021,8 @@ fn encode_stop_sequences(
     Ok(encoded.into_boxed_slice())
 }
 
-pub fn encode_text_with_policy(
-    tokenizer: &HfTokenizer,
+pub fn encode_text_with_policy<T: Tokenizer + ?Sized>(
+    tokenizer: &T,
     text: &str,
     capacity: u32,
     special_tokens: SpecialTokenPolicy,

@@ -57,20 +57,37 @@ crates/apps/desktop-slint
 
 Each domain and runtime crate owns a coherent, independently testable responsibility. None exists merely to hold one identifier, data structure, or callback.
 
-## Production dependency edges
+## Workspace-local production dependency edges
 
 ```text
+tokenization        -> domain-contracts
+context-planner     -> domain-contracts
+sampling            -> domain-contracts
+task-graph          -> domain-contracts
 candle-backend      -> domain-contracts
-gguf-backend        -> domain-contracts
+gguf-backend        -> tokenization + domain-contracts
+hf-tokenizer        -> tokenization + domain-contracts
 host-runtime        -> domain-contracts
-hf-tokenizer        -> tokenization -> domain-contracts
-inference-runtime   -> host-runtime + domain-contracts
+inference-runtime   -> host-runtime + sampling + domain-contracts
 corrective-workflow -> task-graph + domain-contracts
-application-runtime -> inference-runtime + selected platform/adapters/domain/capability engines
-desktop-slint       -> application-runtime + slint
+application-runtime -> context-planner + tokenization + domain-contracts
+                    + candle-backend + gguf-backend
+                    + hf-hub-adapter + hf-tokenizer + redb-storage
+                    + host-runtime + inference-runtime
+desktop-slint       -> application-runtime
 ```
 
-`desktop-slint` does not import Candle, Hugging Face, redb, host channels, or inference commands directly. Slint types remain in the application crate; E1 public events expose stable application/domain values rather than vendor types.
+`application-runtime/src/local.rs` is a private internal capability boundary, not a
+workspace member. It starts two monomorphized E0 workers, owns closed local
+backend/source and tokenizer/decoder dispatch, and routes one active backend. It
+remains inside E1 because it has one consumer;
+[ADR-0012](../agent/decisions/0012-local-native-composition.md) records that
+composition decision. There is no `application-api` package.
+
+`desktop-slint` has no production import of Candle, GGUF, Hugging Face, redb, host
+channels, or inference commands. It maps E1's closed selection, state, events, and
+model metadata to Slint presentation. Slint types remain in `desktop-slint`; E1
+exposes stable application/domain values rather than vendor or UI types.
 
 Production code may not acquire an upward dependency. Platform and production adapter crates do not import runtimes or applications; production adapters do not import one another. Development dependencies are reviewed separately and may cross production direction only for an explicitly named compatibility test or benchmark.
 

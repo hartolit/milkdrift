@@ -1,18 +1,22 @@
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use domain_contracts::{CancellationReason, FinishReason, RequestId, TokenId};
 use hf_hub_adapter::{ArtifactScalarType, ResolvedSafetensorsLlamaArtifacts};
-use inference_runtime::{RuntimeCommand, RuntimeEvent};
+use inference_runtime::RuntimeEvent;
 
 use super::ApplicationRuntime;
+use crate::local::LocalCommand;
 use crate::{
-    ApplicationActivity, ApplicationError, ApplicationEvent, ApplicationOutputRecordKind,
-    ApplicationOutputState, ApplicationRuntimeConfiguration, ConversationRole, GenerationPhase,
-    GenerationSeed, GenerationSettings, GenerationSettingsField, GenerationTerminal,
-    GenerationTerminalKind, GenerationTerminalOutcome, LoadedModel, ModelUnloadBehavior,
+    ApplicationActivity, ApplicationBackend, ApplicationDevice, ApplicationError, ApplicationEvent,
+    ApplicationModelFormat, ApplicationOutputRecordKind, ApplicationOutputState,
+    ApplicationQuantization, ApplicationRuntimeConfiguration, ApplicationScalarType,
+    ApplicationSource, ConversationRole, GenerationPhase, GenerationSeed, GenerationSettings,
+    GenerationSettingsField, GenerationTerminal, GenerationTerminalKind, GenerationTerminalOutcome,
+    ImmutableModelIdentity, LoadedModel, ModelSelection, ModelUnloadBehavior, ResolvedModel,
     ResponseAttemptState,
 };
 
@@ -21,7 +25,7 @@ const CHAT_REPOSITORY: &str = "TinyLlama/TinyLlama-1.1B-Chat-v1.0";
 const CHAT_COMMIT: &str = "fe8a4ea1ffedaf415f4da2f062534de366a451e6";
 const REVISION: &str = "phase7";
 const COMMIT: &str = "fixture";
-const TEST_TIMEOUT: Duration = Duration::from_secs(5);
+const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 const TEST_POLL: Duration = Duration::from_millis(1);
 
 static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(1);
@@ -40,42 +44,37 @@ fn generation_requires_a_loaded_model() -> TestResult {
 }
 
 #[test]
-fn direct_completion_streams_text_and_releases_state() -> TestResult {
-    with_loaded_runtime(default_test_configuration, |runtime, _loaded| {
-        let request_id = runtime
-            .start_generation("prompt seed", deterministic_settings(3))
-            .map_err(application_error)?;
-        assert_eq!(
-            runtime
-                .state()
-                .active_generation()
-                .map(|summary| summary.phase),
-            Some(GenerationPhase::Starting)
-        );
+fn candle_runs_shared_e1_direct_completion_scenario() -> TestResult {
+    with_loaded_runtime(default_test_configuration, |runtime, loaded| {
+        run_shared_e1_direct_completion_scenario(
+            runtime,
+            &loaded,
+            DirectCompletionExpectation {
+                prompt: "prompt seed",
+                text: "seed seed seed",
+                prompt_tokens: 2,
+            },
+        )
+    })
+}
 
-        wait_for_generation_started(runtime, request_id)?;
+#[test]
+fn gguf_runs_shared_e1_direct_completion_scenario() -> TestResult {
+    with_loaded_gguf_runtime(default_test_configuration, |runtime, loaded| {
+        assert!(!runtime.can_submit_chat_message());
         assert_eq!(
-            runtime
-                .state()
-                .active_generation()
-                .map(|summary| summary.phase),
-            Some(GenerationPhase::Running)
+            runtime.submit_user_message("a", deterministic_settings(1)),
+            Err(ApplicationError::UnsupportedChatCompatibility)
         );
-
-        let result = collect_generation(runtime, request_id)?;
-        assert_eq!(result.text, "seed seed seed");
-        assert_eq!(
-            result.terminal.outcome,
-            GenerationTerminalOutcome::Finished(FinishReason::TokenLimit)
-        );
-        assert_eq!(result.terminal.usage.prompt_tokens, 2);
-        assert_eq!(result.terminal.usage.generated_tokens, 3);
-        assert!(result.states.contains(&ApplicationOutputState::Released(
-            GenerationTerminalKind::Finished(FinishReason::TokenLimit)
-        )));
-        assert!(runtime.state().active_generation().is_none());
-        assert_eq!(runtime.state().last_generation(), Some(&result.terminal));
-        Ok(())
+        run_shared_e1_direct_completion_scenario(
+            runtime,
+            &loaded,
+            DirectCompletionExpectation {
+                prompt: "a",
+                text: "aaa",
+                prompt_tokens: 2,
+            },
+        )
     })
 }
 
@@ -95,7 +94,7 @@ fn compatible_chat_plans_and_submits_the_rendered_prompt_with_profile_eos() -> T
         assert!(diagnostics.dropped.is_empty());
         assert!(
             diagnostics.actual_input_tokens + diagnostics.reserved_output_tokens
-                <= loaded.maximum_context_tokens
+                <= loaded.maximum_context_tokens()
         );
         assert!(diagnostics.actual_input_tokens > 1);
 
@@ -247,7 +246,7 @@ fn unanswered_committed_user_blocks_regeneration_of_the_previous_response() -> T
         let _first = collect_generation(runtime, first_request)?;
         assert!(runtime.can_regenerate_response());
 
-        let oversized_output = loaded.maximum_context_tokens.saturating_add(1);
+        let oversized_output = loaded.maximum_context_tokens().saturating_add(1);
         let second = runtime.submit_user_message(
             "second unanswered message",
             deterministic_settings(oversized_output),
@@ -515,16 +514,73 @@ fn drain_unload_allows_natural_completion_before_release() -> TestResult {
 }
 
 #[test]
+fn full_selection_change_is_rejected_after_gguf_resolution() -> TestResult {
+    with_runtime(default_test_configuration, |runtime| {
+        let path = gguf_fixture_path();
+        let (selection, _resolved) = resolve_gguf_fixture(runtime, &path)?;
+        let changed_product = ModelSelection::hugging_face_safetensors(REPOSITORY, REVISION);
+        assert_eq!(
+            runtime.load_model(&changed_product),
+            Err(ApplicationError::SelectionChanged)
+        );
+        let changed_file = ModelSelection::local_gguf(path.with_file_name("different.gguf"));
+        assert_eq!(
+            runtime.load_model(&changed_file),
+            Err(ApplicationError::SelectionChanged)
+        );
+        assert!(runtime.state().can_load(&selection));
+        Ok(())
+    })
+}
+
+#[test]
+fn gguf_mutation_after_resolution_is_rejected_by_verified_load() -> TestResult {
+    let mutable_fixture = unique_temporary_path("mutated.gguf");
+    fs::copy(gguf_fixture_path(), &mutable_fixture)
+        .map_err(|error| format!("failed to copy mutable GGUF fixture: {error}"))?;
+
+    let result = with_runtime(default_test_configuration, |runtime| {
+        let (selection, resolved) = resolve_gguf_fixture(runtime, &mutable_fixture)?;
+        let original_identity = resolved.identity().clone();
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(&mutable_fixture)
+            .map_err(|error| format!("failed to open mutable GGUF fixture: {error}"))?;
+        file.write_all(b"mutation")
+            .map_err(|error| format!("failed to mutate GGUF fixture: {error}"))?;
+        file.flush()
+            .map_err(|error| format!("failed to flush GGUF mutation: {error}"))?;
+
+        runtime.load_model(&selection).map_err(application_error)?;
+        let event = wait_for_event(runtime, |event| {
+            matches!(event, ApplicationEvent::ModelLoadFailed { .. })
+        })?;
+        assert!(matches!(event, ApplicationEvent::ModelLoadFailed { .. }));
+        assert!(runtime.state().loaded().is_none());
+        assert_eq!(
+            runtime.state().resolved().map(ResolvedModel::identity),
+            Some(&original_identity)
+        );
+        Ok(())
+    });
+
+    let cleanup = fs::remove_file(&mutable_fixture)
+        .map_err(|error| format!("failed to remove mutable GGUF fixture: {error}"));
+    result.and(cleanup)
+}
+
+#[test]
 fn application_reports_inference_worker_disconnection() -> TestResult {
     with_runtime(default_test_configuration, |runtime| {
         let ticket = runtime.next_ticket().map_err(application_error)?;
+        let available = runtime.local.activate(ApplicationBackend::Candle);
+        runtime.state.set_inference_available(available);
         runtime
-            .inference
-            .try_submit(RuntimeCommand::Shutdown { ticket })
-            .map_err(|error| format!("shutdown command rejected: {error:?}"))?;
+            .submit_inference(LocalCommand::ShutdownActive { ticket })
+            .map_err(application_error)?;
         match runtime
-            .inference
-            .receive_timeout(TEST_TIMEOUT)
+            .local
+            .receive_active_timeout(TEST_TIMEOUT)
             .map_err(|error| format!("shutdown event failed: {error:?}"))?
         {
             RuntimeEvent::Shutdown {
@@ -534,9 +590,9 @@ fn application_reports_inference_worker_disconnection() -> TestResult {
             _ => return Err("unexpected shutdown event".to_owned()),
         }
         let thread = runtime
-            .inference_thread
-            .take()
-            .ok_or_else(|| "inference thread was already absent".to_owned())?;
+            .local
+            .take_candle_thread()
+            .ok_or_else(|| "Candle inference thread was already absent".to_owned())?;
         thread
             .join()
             .map_err(|error| format!("inference worker join failed: {error:?}"))?;
@@ -561,9 +617,74 @@ fn explicit_application_shutdown_disconnects_and_joins_workers() -> TestResult {
         assert!(!runtime.state().hub_available());
         assert!(!runtime.state().inference_available());
         assert!(runtime.hub_thread.is_none());
-        assert!(runtime.inference_thread.is_none());
+        assert!(!runtime.local.candle_thread_is_present());
+        assert!(!runtime.local.gguf_thread_is_present());
         Ok(())
     })
+}
+
+#[derive(Clone, Copy)]
+struct DirectCompletionExpectation {
+    prompt: &'static str,
+    text: &'static str,
+    prompt_tokens: u64,
+}
+
+fn run_shared_e1_direct_completion_scenario(
+    runtime: &mut ApplicationRuntime,
+    loaded: &LoadedModel,
+    expected: DirectCompletionExpectation,
+) -> TestResult {
+    let request_id = runtime
+        .start_generation(expected.prompt, deterministic_settings(3))
+        .map_err(application_error)?;
+    assert_eq!(
+        runtime
+            .state()
+            .active_generation()
+            .map(|summary| summary.phase),
+        Some(GenerationPhase::Starting)
+    );
+
+    wait_for_generation_started(runtime, request_id)?;
+    assert_eq!(
+        runtime
+            .state()
+            .active_generation()
+            .map(|summary| summary.phase),
+        Some(GenerationPhase::Running)
+    );
+
+    let result = collect_generation(runtime, request_id)?;
+    assert_eq!(result.text, expected.text);
+    assert_eq!(
+        result.terminal.outcome,
+        GenerationTerminalOutcome::Finished(FinishReason::TokenLimit)
+    );
+    assert_eq!(result.terminal.usage.prompt_tokens, expected.prompt_tokens);
+    assert_eq!(result.terminal.usage.generated_tokens, 3);
+    assert!(result.states.contains(&ApplicationOutputState::Released(
+        GenerationTerminalKind::Finished(FinishReason::TokenLimit)
+    )));
+    assert!(runtime.state().active_generation().is_none());
+    assert_eq!(runtime.state().last_generation(), Some(&result.terminal));
+
+    runtime.unload_model().map_err(application_error)?;
+    let event = wait_for_event(runtime, |event| {
+        matches!(
+            event,
+            ApplicationEvent::ModelUnloaded { handle, .. } if *handle == loaded.handle()
+        )
+    })?;
+    assert!(matches!(
+        event,
+        ApplicationEvent::ModelUnloaded {
+            cancelled_requests: 0,
+            ..
+        }
+    ));
+    assert!(runtime.state().loaded().is_none());
+    Ok(())
 }
 
 struct CollectedGeneration {
@@ -585,6 +706,17 @@ where
 {
     with_runtime(configure, |runtime| {
         let loaded = load_fixture(runtime)?;
+        test(runtime, loaded)
+    })
+}
+
+fn with_loaded_gguf_runtime<C, F>(configure: C, test: F) -> TestResult
+where
+    C: FnOnce(&mut ApplicationRuntimeConfiguration),
+    F: FnOnce(&mut ApplicationRuntime, LoadedModel) -> TestResult,
+{
+    with_runtime(configure, |runtime| {
+        let loaded = load_gguf_fixture(runtime)?;
         test(runtime, loaded)
     })
 }
@@ -643,6 +775,91 @@ fn load_fixture(runtime: &mut ApplicationRuntime) -> TestResult<LoadedModel> {
     load_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")
 }
 
+fn load_gguf_fixture(runtime: &mut ApplicationRuntime) -> TestResult<LoadedModel> {
+    let path = gguf_fixture_path();
+    let (selection, _resolved) = resolve_gguf_fixture(runtime, &path)?;
+    runtime.load_model(&selection).map_err(application_error)?;
+    let event = wait_for_event(runtime, |event| {
+        matches!(
+            event,
+            ApplicationEvent::ModelLoaded { .. }
+                | ApplicationEvent::ModelLoadFailed { .. }
+                | ApplicationEvent::ModelCompatibilityFailed { .. }
+        )
+    })?;
+    match event {
+        ApplicationEvent::ModelLoaded { model } => {
+            assert_eq!(model.backend(), ApplicationBackend::LlamaCpp);
+            assert_eq!(model.source(), ApplicationSource::LocalFile);
+            assert_eq!(model.device(), ApplicationDevice::Cpu);
+            assert_eq!(model.format(), ApplicationModelFormat::Gguf);
+            assert_eq!(
+                model.compatibility().scalar_type(),
+                Some(ApplicationScalarType::F32)
+            );
+            assert_eq!(
+                model.compatibility().quantization(),
+                ApplicationQuantization::None
+            );
+            assert_eq!(model.maximum_context_tokens(), 16);
+            assert_eq!(model.maximum_prefill_batch(), 16);
+            assert_eq!(model.vocabulary_size(), 16);
+            Ok(model)
+        }
+        event => Err(format!("GGUF fixture model did not load: {event:?}")),
+    }
+}
+
+fn resolve_gguf_fixture(
+    runtime: &mut ApplicationRuntime,
+    path: &Path,
+) -> TestResult<(ModelSelection, ResolvedModel)> {
+    let selection = ModelSelection::local_gguf(path);
+    runtime
+        .resolve_model(selection.clone())
+        .map_err(application_error)?;
+    let event = wait_for_event(runtime, |event| {
+        matches!(
+            event,
+            ApplicationEvent::ModelResolved { .. } | ApplicationEvent::ModelResolutionFailed { .. }
+        )
+    })?;
+    match event {
+        ApplicationEvent::ModelResolved {
+            model,
+            persistence_warning,
+        } => {
+            assert!(persistence_warning.is_none());
+            assert_eq!(model.backend(), ApplicationBackend::LlamaCpp);
+            assert_eq!(model.source(), ApplicationSource::LocalFile);
+            assert_eq!(model.device(), ApplicationDevice::Cpu);
+            assert_eq!(model.format(), ApplicationModelFormat::Gguf);
+            assert_eq!(model.vocabulary_size(), 16);
+            assert_eq!(
+                model.compatibility().scalar_type(),
+                Some(ApplicationScalarType::F32)
+            );
+            assert_eq!(
+                model.compatibility().quantization(),
+                ApplicationQuantization::None
+            );
+            assert_eq!(
+                model.chat_compatibility(),
+                crate::ChatCompatibility::Unsupported
+            );
+            let canonical = canonical(path)?;
+            assert_eq!(model.selection().local_path(), Some(canonical.as_path()));
+            assert!(matches!(
+                model.identity(),
+                ImmutableModelIdentity::GgufSha256 { digest }
+                    if digest == "c3e55952008029142e0db9cf18674657c5827b67c4c221d6beced60d7d144ac7"
+            ));
+            Ok((selection, model))
+        }
+        event => Err(format!("GGUF fixture did not resolve: {event:?}")),
+    }
+}
+
 fn load_fixture_with(
     runtime: &mut ApplicationRuntime,
     repository: &str,
@@ -660,14 +877,15 @@ fn load_fixture_with(
         tokenizer_path: canonical(manifest.join("tests/fixtures").join(tokenizer_filename))?,
         weight_paths: vec![canonical(candle.join("model.safetensors"))?],
     };
+    let selection = ModelSelection::hugging_face_safetensors(repository, REVISION);
+    let available = runtime.local.activate(ApplicationBackend::Candle);
+    runtime.state.set_inference_available(available);
     match runtime.accept_resolved_artifacts(artifacts) {
         ApplicationEvent::ModelResolved { .. } => {}
         event => return Err(format!("unexpected fixture-resolution event: {event:?}")),
     }
 
-    runtime
-        .load_model(repository, REVISION)
-        .map_err(application_error)?;
+    runtime.load_model(&selection).map_err(application_error)?;
     let event = wait_for_event(runtime, |event| {
         matches!(
             event,
@@ -838,6 +1056,19 @@ const fn deterministic_settings(maximum_new_tokens: u32) -> GenerationSettings {
         eos_tokens: Vec::new(),
         stop_sequences: Vec::new(),
     }
+}
+
+fn gguf_fixture_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../inference-runtime/tests/fixtures/gguf-llama/tiny-llama-f32.gguf")
+}
+
+fn unique_temporary_path(label: &str) -> PathBuf {
+    let identifier = NEXT_DATABASE_ID.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "llm-app-application-runtime-{}-{identifier}-{label}",
+        std::process::id()
+    ))
 }
 
 fn unique_database_path() -> PathBuf {

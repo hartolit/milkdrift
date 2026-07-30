@@ -1,9 +1,8 @@
 //! Application-owned model unload behavior translated into E0 lifecycle policy.
 
-use domain_contracts::{DrainTimeout, UnloadPolicy};
-use inference_runtime::RuntimeCommand;
-
+use crate::local::LocalCommand;
 use crate::{ApplicationConfigurationField, ApplicationError, ApplicationRuntime};
+use domain_contracts::{DrainTimeout, UnloadPolicy};
 
 /// Frontend-neutral behavior used when releasing the resident model.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -38,9 +37,9 @@ impl ApplicationRuntime {
             .state
             .loaded()
             .ok_or(ApplicationError::NoLoadedModel)?
-            .handle;
+            .handle();
         let policy = self.unload_policy(behavior)?;
-        let command = RuntimeCommand::UnloadModel {
+        let command = LocalCommand::UnloadModel {
             ticket: self.next_ticket()?,
             handle,
             policy,

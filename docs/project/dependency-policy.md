@@ -4,7 +4,7 @@
 
 `cargo run --locked --bin llm-app -- architecture` loads the actual workspace through the typed `cargo_metadata` API. Unknown workspace locations and unresolved local path targets fail closed.
 
-Runtime and platform roles are explicit. `inference-runtime`, `corrective-workflow`, and `application-runtime` are the recognized E0, capability, and E1 packages; `host-runtime` is the only recognized package under `crates/platform`. Additional runtime or platform crates fail closed instead of inheriting authority from their directory.
+Runtime and platform roles are explicit. `inference-runtime`, `corrective-workflow`, and `application-runtime` are the recognized E0, capability, and E1 packages; `host-runtime` is the only recognized package under `crates/platform`. The private local-model capability in `application-runtime/src/local.rs` is an internal module, not another package or layer. Additional runtime or platform crates fail closed instead of inheriting authority from their directory.
 
 Normal and build dependencies first use the complete production layer matrix. Production edges from a runtime to platform/adapters or another runtime then require an exact source/target/kind review entry with a narrow composition justification. This makes concrete runtime/infrastructure coupling deliberate without requiring per-edge registration for ordinary domain dependencies.
 
@@ -18,6 +18,13 @@ The initial external policy is:
 - runtimes may use only reviewed external orchestration dependencies and no frontend toolkit;
 - apps depend on E1 in production rather than directly on E0 or adapters;
 - external and workspace-local development dependencies require separate exact review.
+
+The reviewed E1 composition edges cover Candle, GGUF, Hugging Face Hub/tokenization,
+`host-runtime`, E0, and redb. The GGUF edge is narrow: E1's private closed local
+composition verifies and constructs the llama.cpp/GGUF source and tokenizer. This
+does not authorize arbitrary adapter dependencies or a public generic backend
+surface. `desktop-slint` still has only one workspace-local production dependency,
+`application-runtime`; no `application-api` package exists.
 
 Validator unit tests cover all 64 source/target layer combinations, explicit runtime/platform classification, reviewed runtime composition edges, and external-policy failures. Integration fixtures prove that an unregistered runtime, an unregistered platform crate, and an otherwise layer-valid but unreviewed E1-to-capability edge all fail closed.
 

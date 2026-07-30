@@ -1,10 +1,14 @@
 //! Frontend-neutral application state exposed by the orchestration engine.
 
-use domain_contracts::{
-    DeviceKind, FinishReason, GenerationUsage, ModelHandle, RequestId, ScalarType,
-};
+use std::path::Path;
 
-use crate::{ApplicationFailure, ChatCompatibility};
+use domain_contracts::{FinishReason, GenerationUsage, ModelHandle, RequestId};
+
+use crate::{
+    ApplicationBackend, ApplicationDevice, ApplicationFailure, ApplicationModelFormat,
+    ApplicationSource, ChatCompatibility, ImmutableModelIdentity, LocalModelProduct,
+    ModelCompatibility, ModelSelection,
+};
 
 /// Long-running application operation currently in progress.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -22,53 +26,227 @@ pub enum ApplicationActivity {
     ShuttingDown,
 }
 
-/// Backend selected by the initial application product path.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ApplicationBackend {
-    /// Candle Llama/Safetensors backend.
-    Candle,
-}
-
 /// Validated immutable model selection available for loading.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedModel {
-    /// Hugging Face repository requested by the user.
-    pub repository: String,
-    /// Branch, tag, reference, or commit requested by the user.
-    pub revision: String,
-    /// Immutable commit used for every cached artifact.
-    pub commit: String,
-    /// Vocabulary size reported by the validated tokenizer.
-    pub vocabulary_size: u32,
-    /// Scalar type declared by the model configuration when recognized.
-    pub scalar_type: Option<ScalarType>,
-    /// Explicit prompt-rendering and termination compatibility for chat mode.
-    pub chat_compatibility: ChatCompatibility,
+    selection: ModelSelection,
+    identity: ImmutableModelIdentity,
+    vocabulary_size: u32,
+    compatibility: ModelCompatibility,
+    chat_compatibility: ChatCompatibility,
 }
 
 impl ResolvedModel {
-    /// Returns whether visible repository and revision values still address this resolution.
+    pub(crate) const fn new(
+        selection: ModelSelection,
+        identity: ImmutableModelIdentity,
+        vocabulary_size: u32,
+        compatibility: ModelCompatibility,
+        chat_compatibility: ChatCompatibility,
+    ) -> Self {
+        Self {
+            selection,
+            identity,
+            vocabulary_size,
+            compatibility,
+            chat_compatibility,
+        }
+    }
+
+    /// Returns the complete canonical selection represented by this resolution.
     #[must_use]
-    pub fn matches_selection(&self, repository: &str, revision: &str) -> bool {
-        repository.trim() == self.repository && revision.trim() == self.revision
+    pub const fn selection(&self) -> &ModelSelection {
+        &self.selection
+    }
+
+    /// Returns the fixed supported local product combination.
+    #[must_use]
+    pub const fn product(&self) -> LocalModelProduct {
+        self.selection.product()
+    }
+
+    /// Returns the concrete local backend.
+    #[must_use]
+    pub const fn backend(&self) -> ApplicationBackend {
+        self.product().backend()
+    }
+
+    /// Returns the artifact source category.
+    #[must_use]
+    pub const fn source(&self) -> ApplicationSource {
+        self.product().source()
+    }
+
+    /// Returns the execution device category.
+    #[must_use]
+    pub const fn device(&self) -> ApplicationDevice {
+        self.product().device()
+    }
+
+    /// Returns the model serialization format.
+    #[must_use]
+    pub const fn format(&self) -> ApplicationModelFormat {
+        self.product().format()
+    }
+
+    /// Returns the immutable artifact identity.
+    #[must_use]
+    pub const fn identity(&self) -> &ImmutableModelIdentity {
+        &self.identity
+    }
+
+    /// Returns the validated tokenizer vocabulary size.
+    #[must_use]
+    pub const fn vocabulary_size(&self) -> u32 {
+        self.vocabulary_size
+    }
+
+    /// Returns scalar and quantization compatibility evidence.
+    #[must_use]
+    pub const fn compatibility(&self) -> ModelCompatibility {
+        self.compatibility
+    }
+
+    /// Returns explicit prompt-rendering and termination compatibility.
+    #[must_use]
+    pub const fn chat_compatibility(&self) -> ChatCompatibility {
+        self.chat_compatibility
+    }
+
+    /// Returns whether a complete visible selection still addresses this resolution.
+    #[must_use]
+    pub fn matches_selection(&self, selection: &ModelSelection) -> bool {
+        match (&self.selection, selection) {
+            (
+                ModelSelection::HuggingFaceSafetensors {
+                    repository: resolved_repository,
+                    revision: resolved_revision,
+                },
+                ModelSelection::HuggingFaceSafetensors {
+                    repository,
+                    revision,
+                },
+            ) => repository.trim() == resolved_repository && revision.trim() == resolved_revision,
+            (
+                ModelSelection::LocalGguf {
+                    path: resolved_path,
+                },
+                ModelSelection::LocalGguf { path },
+            ) => same_canonical_path(resolved_path, path),
+            _ => false,
+        }
     }
 }
 
-/// One model generation currently owned by the inference runtime.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+fn same_canonical_path(resolved: &Path, candidate: &Path) -> bool {
+    candidate == resolved
+        || std::fs::canonicalize(candidate).is_ok_and(|canonical| canonical == resolved)
+}
+
+/// One model generation currently owned by the selected inference runtime.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoadedModel {
-    /// Generation-safe handle assigned by the inference runtime.
-    pub handle: ModelHandle,
-    /// Vocabulary size reported by the loaded model descriptor.
-    pub vocabulary_size: u32,
-    /// Maximum token positions supported by one sequence.
-    pub maximum_context_tokens: u32,
-    /// Maximum prompt tokens accepted by one prefill operation.
-    pub maximum_prefill_batch: u32,
-    /// Application-selected backend.
-    pub backend: ApplicationBackend,
-    /// Application-selected execution device category.
-    pub device: DeviceKind,
+    handle: ModelHandle,
+    selection: ModelSelection,
+    identity: ImmutableModelIdentity,
+    compatibility: ModelCompatibility,
+    vocabulary_size: u32,
+    maximum_context_tokens: u32,
+    maximum_prefill_batch: u32,
+}
+
+impl LoadedModel {
+    pub(crate) const fn new(
+        handle: ModelHandle,
+        selection: ModelSelection,
+        identity: ImmutableModelIdentity,
+        compatibility: ModelCompatibility,
+        vocabulary_size: u32,
+        maximum_context_tokens: u32,
+        maximum_prefill_batch: u32,
+    ) -> Self {
+        Self {
+            handle,
+            selection,
+            identity,
+            compatibility,
+            vocabulary_size,
+            maximum_context_tokens,
+            maximum_prefill_batch,
+        }
+    }
+
+    /// Returns the generation-safe handle assigned by E0.
+    #[must_use]
+    pub const fn handle(&self) -> ModelHandle {
+        self.handle
+    }
+
+    /// Returns the complete selection used for this loaded generation.
+    #[must_use]
+    pub const fn selection(&self) -> &ModelSelection {
+        &self.selection
+    }
+
+    /// Returns the fixed supported local product combination.
+    #[must_use]
+    pub const fn product(&self) -> LocalModelProduct {
+        self.selection.product()
+    }
+
+    /// Returns the concrete local backend.
+    #[must_use]
+    pub const fn backend(&self) -> ApplicationBackend {
+        self.product().backend()
+    }
+
+    /// Returns the artifact source category.
+    #[must_use]
+    pub const fn source(&self) -> ApplicationSource {
+        self.product().source()
+    }
+
+    /// Returns the execution device category.
+    #[must_use]
+    pub const fn device(&self) -> ApplicationDevice {
+        self.product().device()
+    }
+
+    /// Returns the model serialization format.
+    #[must_use]
+    pub const fn format(&self) -> ApplicationModelFormat {
+        self.product().format()
+    }
+
+    /// Returns the immutable artifact identity loaded by E0.
+    #[must_use]
+    pub const fn identity(&self) -> &ImmutableModelIdentity {
+        &self.identity
+    }
+
+    /// Returns scalar and quantization compatibility evidence.
+    #[must_use]
+    pub const fn compatibility(&self) -> ModelCompatibility {
+        self.compatibility
+    }
+
+    /// Returns the loaded model vocabulary size.
+    #[must_use]
+    pub const fn vocabulary_size(&self) -> u32 {
+        self.vocabulary_size
+    }
+
+    /// Returns maximum token positions supported by one sequence.
+    #[must_use]
+    pub const fn maximum_context_tokens(&self) -> u32 {
+        self.maximum_context_tokens
+    }
+
+    /// Returns maximum prompt tokens accepted by one prefill operation.
+    #[must_use]
+    pub const fn maximum_prefill_batch(&self) -> u32 {
+        self.maximum_prefill_batch
+    }
 }
 
 /// Frontend-visible phase of one direct-completion request.
@@ -160,8 +338,8 @@ impl ApplicationState {
 
     /// Returns the loaded model generation, when present.
     #[must_use]
-    pub const fn loaded(&self) -> Option<LoadedModel> {
-        self.loaded
+    pub const fn loaded(&self) -> Option<&LoadedModel> {
+        self.loaded.as_ref()
     }
 
     /// Returns the active direct-completion request, when present.
@@ -188,24 +366,25 @@ impl ApplicationState {
         self.inference_available
     }
 
-    /// Returns whether immutable artifact resolution may be started.
+    /// Returns whether immutable artifact resolution may be started for a selection.
     #[must_use]
-    pub const fn can_resolve(&self) -> bool {
+    pub fn can_resolve(&self, selection: &ModelSelection) -> bool {
         matches!(self.activity, ApplicationActivity::Idle)
-            && self.hub_available
+            && (selection.product().source() != ApplicationSource::HuggingFaceHub
+                || self.hub_available)
             && self.loaded.is_none()
             && self.generation.is_none()
     }
 
-    /// Returns whether a model may be loaded for the current visible selection.
+    /// Returns whether a model may be loaded for the complete visible selection.
     #[must_use]
-    pub fn can_load(&self, repository: &str, revision: &str) -> bool {
+    pub fn can_load(&self, selection: &ModelSelection) -> bool {
         self.activity == ApplicationActivity::Idle
             && self.inference_available
             && self.loaded.is_none()
             && self.generation.is_none()
             && self.resolved.as_ref().is_some_and(|resolved| {
-                resolved.scalar_type.is_some() && resolved.matches_selection(repository, revision)
+                resolved.compatibility.is_loadable() && resolved.matches_selection(selection)
             })
     }
 
@@ -268,12 +447,12 @@ impl ApplicationState {
         self.resolved = None;
     }
 
-    pub(crate) const fn set_loaded(&mut self, loaded: LoadedModel) {
+    pub(crate) fn set_loaded(&mut self, loaded: LoadedModel) {
         self.loaded = Some(loaded);
         self.activity = ApplicationActivity::Idle;
     }
 
-    pub(crate) const fn clear_loaded(&mut self) {
+    pub(crate) fn clear_loaded(&mut self) {
         self.loaded = None;
         self.activity = ApplicationActivity::Idle;
     }
@@ -306,5 +485,9 @@ impl ApplicationState {
 
     pub(crate) const fn disconnect_inference(&mut self) {
         self.inference_available = false;
+    }
+
+    pub(crate) const fn set_inference_available(&mut self, available: bool) {
+        self.inference_available = available;
     }
 }

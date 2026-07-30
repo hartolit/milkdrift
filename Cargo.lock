@@ -150,6 +150,7 @@ dependencies = [
  "candle-backend",
  "context-planner",
  "domain-contracts",
+ "gguf-backend",
  "hf-hub-adapter",
  "hf-tokenizer",
  "host-runtime",
@@ -2390,6 +2391,7 @@ dependencies = [
  "domain-contracts",
  "llama-cpp-2",
  "self_cell",
+ "tokenization",
 ]
 
 [[package]]
