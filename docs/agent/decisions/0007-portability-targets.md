@@ -35,4 +35,4 @@ Allocation-free behavior is a separate, path-specific property. It may be claime
 
 ## Review trigger
 
-Review when a portable crate needs a facility unavailable on either named target, when a product selects a different embedded/WebAssembly runtime, or after the approved dependency DAG replaces the temporary F1-to-F1 restriction.
+Review when a portable crate needs a facility unavailable on either named target, when a product selects a different embedded/WebAssembly runtime, or when a change to the [reviewed domain dependency DAG](0015-exact-reviewed-domain-dependency-dag.md) adds or removes a portable crate or introduces a dependency that is not supported on both named cross targets.

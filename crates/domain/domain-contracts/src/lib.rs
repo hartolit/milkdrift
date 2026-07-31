@@ -24,7 +24,7 @@ pub use generation::{
 };
 pub use identifiers::{
     ArtifactId, BackendId, DeviceId, ModelGeneration, ModelHandle, ModelId, RequestId, SequenceId,
-    TaskId, TokenId,
+    TokenId,
 };
 pub use lifecycle::{
     DrainTimeout, DrainWindow, LifecycleAction, LifecycleError, LifecycleFailurePhase,

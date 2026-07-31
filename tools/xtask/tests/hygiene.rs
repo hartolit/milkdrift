@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use llm_app::validate_repository_hygiene;
+use xtask::validate_repository_hygiene;
 
 static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -18,10 +18,8 @@ struct FixtureRepository {
 impl FixtureRepository {
     fn new(name: &str, files: &[(&str, &str)]) -> Result<Self, Box<dyn Error>> {
         let id = NEXT_FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!(
-            "llm-app-hygiene-{name}-{}-{id}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("xtask-hygiene-{name}-{}-{id}", std::process::id()));
         fs::create_dir_all(&root)?;
 
         for (relative, content) in files {
@@ -196,10 +194,55 @@ edition = \"2024\"
 }
 
 #[test]
-fn historical_and_negative_policy_text_is_allowed_without_substring_false_positives()
--> Result<(), Box<dyn Error>> {
+fn historical_names_and_superseded_adrs_do_not_bypass_scanning() -> Result<(), Box<dyn Error>> {
     let repository = FixtureRepository::new(
-        "allowed-explanations",
+        "historical-surfaces",
+        &[
+            ("Cargo.toml", BASIC_MANIFEST),
+            ("src/lib.rs", BASIC_SOURCE),
+            (
+                "docs/agent/decisions/0001-old.md",
+                "# Old decision\n\n- **Status:** Superseded\n\nHistorical command:\n```sh\npython3 old-tool.py\n```\n",
+            ),
+            (
+                "docs/history/runbook.md",
+                "Historical command:\n```sh\nhf download old/model\n```\n",
+            ),
+            (
+                "docs/agent/execution/history.md",
+                "Historical command:\n```sh\npython old-tool.py\n```\n",
+            ),
+            (
+                "docs/agent/execution/analyzer.md",
+                "Recorded command:\n```sh\npip install old-package\n```\n",
+            ),
+            (
+                "docs/agent/execution/example-cleanup-agent-brief.md",
+                "Recorded command:\n```sh\npytest\n```\n",
+            ),
+        ],
+    )?;
+    let report = validate_repository_hygiene(&repository.manifest())?;
+
+    for path in [
+        "docs/agent/decisions/0001-old.md",
+        "docs/history/runbook.md",
+        "docs/agent/execution/history.md",
+        "docs/agent/execution/analyzer.md",
+        "docs/agent/execution/example-cleanup-agent-brief.md",
+    ] {
+        assert!(report.violations().iter().any(|violation| {
+            violation.rule() == "HYGIENE-PY-INVOKE-1" && violation.path() == Some(Path::new(path))
+        }));
+    }
+    Ok(())
+}
+
+#[test]
+fn negative_policy_text_is_allowed_without_substring_false_positives() -> Result<(), Box<dyn Error>>
+{
+    let repository = FixtureRepository::new(
+        "allowed-policy",
         &[
             (
                 "Cargo.toml",
@@ -216,22 +259,6 @@ edition = \"2024\"
             (
                 "src/lib.rs",
                 "pub const PIPER: &str = \"piper\";\npub const PIPELINE: &str = \"sampling_pipeline\";\n",
-            ),
-            (
-                "docs/agent/decisions/0001-old.md",
-                "# Old decision\n\n- **Status:** Superseded\n\n```sh\npython3 old-tool.py\n```\n",
-            ),
-            (
-                "docs/agent/execution/history.md",
-                "Historical command:\n```sh\nhf download old/model\n```\n",
-            ),
-            (
-                "docs/agent/execution/analyzer.md",
-                "```sh\npip install old-package\n```\n",
-            ),
-            (
-                "docs/agent/execution/example-cleanup-agent-brief.md",
-                "```sh\npytest\n```\n",
             ),
             (
                 "docs/policy.md",
@@ -254,7 +281,7 @@ Run `cargo bench --bench sampling_pipeline` for the benchmark.
 
     assert!(
         report.is_valid(),
-        "allowed explanatory fixture violations: {:#?}",
+        "allowed policy fixture violations: {:#?}",
         report.violations()
     );
     Ok(())

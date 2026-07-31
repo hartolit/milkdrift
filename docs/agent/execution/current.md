@@ -1,15 +1,16 @@
 # Current execution context
 
-**Reviewed baseline:** `15d9e87cdaee77fd0d49247712d3c12dfb3adea2` plus the current uncommitted Candle-only cleanup tree
-**Current target:** Phase 9 — continue structural review from the validated Candle-only baseline
-**Historical entry state:** Phase 8 completed and validated its then-current dual-product tree; the Candle-only correction later superseded that composition
-**Decision state:** [ADR-0013](../decisions/0013-candle-only-local-execution.md) supersedes ADR-0012; [ADR-0014](../decisions/0014-rust-cargo-native-operational-tooling.md) defines maintained tooling
-**Final gate state:** the canonical full locked gate, policy/portability audits, clean shimmed build, and Rust-native external Hub smoke pass on the current cleanup tree
+**Status date:** 2026-08-01
+**Prior committed checkpoint:** `f0fe9c6623f1e2afd569767d903f3978e00560da` (tree `db8a9ae77f41e0e769c7434ce21a940ae33784ae`)
+**Current target:** Phase 10 — meaningful performance work may begin from the closed Phase 9 baseline
+**Phase 9 state:** complete; Candle-only correction, structural reconciliation, lifecycle hardening, tooling cleanup, and documentation closure are implemented
+**Decision state:** [ADR-0013](../decisions/0013-candle-only-local-execution.md) through [ADR-0017](../decisions/0017-stable-clippy-gate-exploratory-nursery.md) define the current composition, tooling, domain DAG, workspace, and lint policy
+**Validation state:** focused changed-package tests and the canonical locked gate pass; clean forbidden-tool, portability, policy, and link evidence is summarized in [implementation status](../../project/implementation-status.md)
 **Canonical plan:** [execution-plan.md](execution-plan.md)
 **Current product truth:** [project implementation status](../../project/implementation-status.md)
-**Historical Phase 8 evidence:** [execution history](history.md#phase-8--gguf-parity-and-native-composition-evidence)
+**Historical evidence:** [execution history](history.md)
 
-This file is the derived dense handoff for active Phase 9 work. Implementation status owns current support and validation provenance, accepted ADRs own decisions, the validation guide owns commands, and history owns closed-phase evidence. Phase 8 remains factual history, but its former product composition is not a current invariant.
+This file is the dense handoff after Phase 9 closure. Implementation status owns current support and validation summaries, accepted ADRs own decisions, the validation guide owns repeatable commands, and history owns baseline-specific evidence. CI records the tested commit and Git tree in its runtime log; a tracked document does not attempt to contain its own resulting commit SHA or tree hash.
 
 ## Current architecture
 
@@ -29,97 +30,80 @@ application-runtime (E1)
      Candle + Safetensors + CPU
 ```
 
-`ModelSelection` is a normalized Hugging Face repository plus revision. Resolution pins it to an immutable Hub commit. Resolved/loaded state derives engine, source, device, format, scalar, tokenizer vocabulary, and repository/commit identity from the actual artifacts; unsupported combinations are not public selection options.
+`ModelSelection` is a normalized Hugging Face repository plus revision. Resolution pins it to an immutable Hub commit. Resolved/loaded state derives engine, source, device, format, scalar, tokenizer vocabulary, and immutable identity from the supported artifacts; unsupported cross-products are not public selection options.
 
-Direct completion remains available for every loaded model. Chat remains limited to `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at commit `fe8a4ea1ffedaf415f4da2f062534de366a451e6` with `</s>` mapped to token ID 2. Context planning, regeneration/supersession, bounded transcript/output behavior, cancellation, cleanup retry/exhaustion, unload policy, persistence, and explicit bounded shutdown remain required.
+Direct completion remains available for every loaded model. Chat remains limited to `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at commit `fe8a4ea1ffedaf415f4da2f062534de366a451e6` with `</s>` mapped to token ID 2. GGUF, GPU execution, hosted/peer execution, browser transport, and multiple application-resident models remain deferred.
 
-GGUF is unsupported. Possible Candle-native GGUF or other quantized-format work is deferred and requires a separate reviewed implementation. GPU execution is also deferred. There is no current llama.cpp product or secondary operational toolchain.
+## Phase 9 closure
 
-## Immediate objective
+### 9.1 — Source, graph, and policy cleanup complete
 
-The Candle-only correction is closed on the current validated working tree. Continue the remaining Phase 9 reviews only from concrete evidence:
+- Candle is the sole local engine; removed llama.cpp/GGUF production and tooling paths remain absent.
+- Engine, artifact source, format, scalar, and device remain separate concepts.
+- Project-owned operational tooling is Rust/Cargo-native and the selected graph remains fail-closed.
 
-```text
-validated Candle-only baseline
-→ review the F1 dependency DAG
-→ split oversized internals only by invariant and ownership
-→ evaluate the planned xtask migration as one coherent command change
-→ review mandatory lint policy
-```
+### 9.2 — Narrow E1 composition complete
 
-Do not revive former product vocabulary, dormant variants, a second worker, backend routing, local-file selection, or compatibility scaffolding merely to make hypothetical expansion look easy.
+- `application-runtime` remains one public frontend-neutral, non-generic façade.
+- Private composition owns one `HostedRuntime<CandleLlamaSource>`, one inference thread, one Hub worker, one resolved tokenizer, request-local streaming decoders, and one resident-model lifecycle.
+- `corrective-workflow` remains an independent capability engine.
 
-## Active Phase 9 work packages
+### 9.3 — Behavior and test preservation complete
 
-### 9.1 — Reconcile source, graph, and policy (complete)
+- E0 retains exclusive resource, sequence, scheduling, cancellation, cleanup, accounting, unload, and shutdown ownership.
+- Download-free deterministic and real Candle fixtures preserve lifecycle and generation coverage.
+- E1 and Slint preserve resolution, completion, exact chat, context, cancellation, backpressure, unload, persistence, and presentation behavior.
 
-- Keep Candle as the sole local engine and keep engine, artifact source, format, and device conceptually distinct.
-- Ensure the removed native engine, adapter, fixture path, public variants, and graph entries do not remain in current source, manifests, CI, or maintained guidance.
-- Keep project-owned maintenance Rust/Cargo-native and enforce the selected graph and tracked operational surfaces through the root hygiene command.
-- Retain only native CI prerequisites with a current selected owner: `build-essential` and `cmake` for the Hub TLS dependency path, plus Slint system packages.
+### 9.4 — Documentation and validation reconciliation complete
 
-### 9.2 — Preserve the narrowed E1 composition (complete baseline)
+- Current architecture, status, workspace, component, validation, execution, and frontend guidance describe the same Candle/Hub/Safetensors/CPU product.
+- Phase 8 remains factual history rather than current support.
+- Provenance no longer requires a commit to contain its own final SHA.
 
-- Keep `application-runtime` as one public frontend-neutral, non-generic façade.
-- Keep one private `HostedRuntime<CandleLlamaSource>`, one inference thread, one Hub worker, one `HfTokenizer`, and request-local `HfOwnedStreamingDecoder` values.
-- Keep redb in E1 while it owns application preferences/catalogue semantics.
-- Do not create another runtime, public plugin registry, generic application façade, or `application-api` without a real lifecycle/consumer.
+### 9.5 — Structural reconciliation complete
 
-### 9.3 — Preserve behavior and test substitution (complete baseline)
+- The root manifest is a virtual workspace. Custom policy and composite verification live in `tools/xtask`; ordinary Cargo operations have no forwarding subcommands.
+- The exact reviewed acyclic domain DAG contains the four current F1 → F0 edges. The coarse policy can represent a justified F1 peer, but every domain edge must be explicitly registered with a rationale and the complete graph must remain acyclic.
+- `TaskId` is owned by `task-graph`; `domain-contracts` is reserved for backend/runtime crossings or stable vocabulary shared by at least two distinct domains.
+- Oversized production internals were split by responsibility: E0 runtime operations, E1 generation, task graph/artifact/state/error logic, desktop presentation, and repository tooling.
+- Stable selected Clippy lints remain mandatory under `-D warnings`; the nursery group is a separate scheduled, non-blocking exploratory report.
 
-- E0 remains backend-neutral at its contracts and exclusively owns model resources, sequences, request admission, scheduling/sampling, cancellation boundaries, cleanup quarantine, accounting, unload, and shutdown.
-- Keep deterministic E0 loaders/fault injection for backend-independent behavior and the committed Candle real fixture for production-adapter coverage.
-- Preserve E1 resolution, direct completion, exact chat, context, cancellation, backpressure, unload, persistence, worker-disconnection, and shutdown coverage.
-- Keep ordinary tests download-free; external Hub validation stays explicit and opt-in.
+### Lifecycle hardening completed before closure
 
-### 9.4 — Reconcile documentation and evidence (complete)
+- Shutdown tracks `Running`, `Stopping`, `Stopped`, and `FailedOrRetryable`; worker join handles stay owned across timeouts, and a later call retries unresolved joins instead of reporting false success.
+- Incompatible loaded models remain in private cleanup accounting through unload-submission retry, runtime disconnection, successful unload, or observable retry exhaustion.
+- Startup uses an owning rollback guard. If Hub construction/spawn fails after inference starts, E1 attempts bounded inference shutdown/join before returning the primary Hub error; a rollback timeout moves the complete owner into a private quarantine that a later startup retries.
 
-- Current architecture/status/component guides describe only Candle/Hub/Safetensors/CPU support.
-- The analyzer receives a supersession banner; its dated body remains evidence.
-- The completed Phase 8 plan/history and recovered implementation plan remain clearly historical.
-- Current validation documents use the Rust-native E1 Hub smoke and root hygiene command.
-- The canonical gate, supplemental policy/portability audits, clean shimmed build, and external Hub smoke are recorded in implementation status and execution history.
+### External-tooling cleanup completed
 
-### 9.5 — Continue later structural review only from evidence
-
-After this correction is stable, Phase 9 may still review the F1 dependency DAG, oversized internal modules, root-runner/xtask shape, and mandatory lint set. Those reviews must not block removal of a known-wrong production path or weaken the preserved lifecycle contracts.
+- Ubuntu CI retains `build-essential` and Slint development packages but no longer installs system CMake.
+- The selected non-FIPS AWS-LC path is forced through its CC builder.
+- Required CI runs the canonical gate from a fresh target with failing shims for CMake, Clang, Python/package-manager, and Python-distributed Hugging Face commands.
+- The temporary Candle cleanup agent brief was removed; hygiene applies no filename-, directory-, history-, or ADR-status whole-file bypass.
 
 ## Current invariants
 
 1. Candle is the sole local execution engine; Safetensors, Hugging Face Hub, and CPU are current format/source/device facts rather than engine aliases.
 2. E1 owns exactly one Candle inference worker/thread plus one Hub worker and permits one resident model.
-3. `ModelSelection` contains repository and revision only; immutable resolution retains the Hub commit.
-4. Public resolved/loaded facts are engine, source, device, format, scalar, tokenizer vocabulary, and immutable Hub identity derived from the supported composition.
-5. Frontends construct only application-owned selections and never construct Candle sources, Hub clients, tokenizers, devices, or E0 commands.
-6. Direct completion remains general to loaded models; chat remains tied to the exact verified TinyLlama profile.
-7. E0 owns local resources, scheduling, sampling, cancellation boundaries, backpressure, cleanup quarantine, accounting, unload, and terminal shutdown.
-8. Terminal generation and resource release remain distinct; pending/exhausted cleanup stays observable and accounted.
-9. Conversation provenance, turn-atomic planning, bounded exact correction, pinned-content rules, regeneration/supersession, and in-memory-only history remain unchanged.
-10. `corrective-workflow` remains an independent capability runtime with bounded service-port output and explicit artifact lifecycle.
-11. Explicit shutdown cooperatively stops and bounded-joins the sole E0 worker and the Hub worker; blocking `Drop` is not the normal protocol.
-12. Ordinary tests remain download-free, and maintained operational tooling is Rust/Cargo-native.
+3. Frontends construct only application-owned selections and never construct Candle sources, Hub clients, tokenizers, devices, or E0 commands.
+4. Direct completion is general to loaded models; chat is tied to the exact verified TinyLlama profile.
+5. E0 owns local resources, scheduling, sampling, cancellation boundaries, backpressure, cleanup quarantine, accounting, unload, and terminal shutdown.
+6. Terminal generation and resource release remain distinct; pending/exhausted cleanup stays observable and accounted.
+7. Explicit shutdown success means both workers were confirmed stopped; starting shutdown alone is not idempotent success.
+8. Ordinary tests remain download-free, and maintained operational tooling remains Rust/Cargo-native.
+9. The domain dependency registry is exact, justified, and acyclic; layer membership alone does not authorize a domain edge.
+10. The mandatory lint gate excludes the blanket nursery group; exploratory findings do not silently become merge blockers.
 
-## Explicit non-goals
+## Phase 10 entry
 
-- no Candle-native GGUF or other quantized-format implementation in this correction;
-- no GPU, hosted-provider, peer, browser/network transport, or multiple-resident-model path;
-- no new local execution engine;
-- no public plugin registry, dynamic dispatch in token-sensitive execution, or generic public E1 façade;
-- no speculative `application-api` or local-runtime extraction;
-- no broad E0 lifecycle rewrite, useful-test removal, or weakened architecture/capacity/cleanup policy;
-- no erasure of the recovered implementation plan, superseded ADR rationale, completed Phase 8 plan, or Phase 8 history;
-- no reuse of this validation claim after the source tree changes; rerun the exact applicable commands.
-
-## Phase 9 correction acceptance
-
-- Current source, API, UI, manifests, lockfile, CI, and current documentation agree on Candle/Hub/Safetensors/CPU.
-- E1 starts and shuts down one inference worker and one Hub worker.
-- No dead second-product public vocabulary, runtime routing, fixture, or selected dependency remains.
-- Direct completion, exact TinyLlama chat, lifecycle, backpressure, cancellation, cleanup, unload, persistence, and bounded shutdown remain covered.
-- The Rust-owned hygiene check passes and selected-graph audits show no prohibited package family.
-- Local Markdown links and dependency policy checks pass.
-- The canonical full gate and opt-in external smoke pass and are recorded with exact baseline and pinned-model provenance.
+Phase 9 is explicitly closed. Phase 10 may now add measurement coverage without reopening removed product paths or weakening lifecycle guarantees. Begin with the existing sampling benchmark gaps and controlled product-level TTFT, throughput, memory, cancellation, and unload measurements. Do not optimize from unmeasured assumptions, add hard wall-clock thresholds to shared CI, or treat the correctness-oriented external Hub smoke as a benchmark.
 
 ## Validation and recording rule
 
-Follow [project validation](../../project/validation.md). Validate focused packages and policy first. The canonical command remains `cargo run --locked --bin llm-app -- verify`; the planned xtask migration has not occurred and must not be documented as current. The cleanup checkpoint is recorded in [execution history](history.md#phase-9-checkpoint--candle-only-architecture-and-rust-native-tooling).
+Follow [project validation](../../project/validation.md). The canonical command is:
+
+```text
+cargo xtask verify
+```
+
+CI prints `HEAD` and `HEAD^{tree}` immediately before that command. Local working-tree evidence records the prior committed checkpoint plus dirty-state context; CI-attached commit and run metadata are the authoritative identity for a committed result. Historical evidence from `f0fe9c6…` or an earlier tree must not be reused as proof after source changes.

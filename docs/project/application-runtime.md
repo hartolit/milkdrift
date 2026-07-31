@@ -21,7 +21,9 @@ It currently owns:
 - stable application-level generation settings and translation to E0 contracts;
 - bounded token-to-text translation and frontend text pulls;
 - public model metadata, generation state, usage, terminal results, and cleanup events;
-- bounded shutdown and join of the inference and Hub workers.
+- transactional rollback of the already-started inference worker when Hub-worker startup fails;
+- private retention and cleanup accounting for an incompatible loaded-model handle;
+- bounded, retryable shutdown and join of the inference and Hub workers.
 
 It does not own Slint or transport presentation types, model tensors/logits/backend sequences, per-token scheduling, corrective workflow execution, provider/peer transports, or OS-specific application-data path policy.
 
@@ -121,7 +123,9 @@ ApplicationRuntime
 └── redb application persistence
 ```
 
-`local.rs` owns only the concrete Candle E0 endpoint. It has no active-backend switch, dispatch enum, dormant worker, or placeholder backend variant. [ADR-0013](../agent/decisions/0013-candle-only-local-execution.md) supersedes the former two-worker Phase 8 composition while retaining private static dispatch and the non-generic façade.
+`local.rs` owns only the concrete Candle E0 endpoint. It has no active-backend switch, dispatch enum, dormant worker, or placeholder backend variant. E1 generation is internally split by responsibility into admission, the E0/text bridge, bounded output, and settings; that source organization does not create a new layer or imply new public façade operations. [ADR-0013](../agent/decisions/0013-candle-only-local-execution.md) supersedes the former two-worker Phase 8 composition while retaining private static dispatch and the non-generic façade.
+
+Startup is a transaction across the two worker creations. Configuration, output storage, persistence, and preferences are prepared first; E1 then starts local inference and the Hub worker. If Hub startup fails after inference has started, E1 attempts bounded inference shutdown/join before returning the primary Hub startup failure. If the rollback bound expires, the complete `LocalInference` owner and timing policy remain in a private process-level cleanup quarantine; a later production startup retries one quarantined cleanup without holding the registry lock during the wait.
 
 ## Bounded output, cleanup, and unload
 
@@ -129,21 +133,28 @@ Generated token IDs remain private below E1. E1 pulls bounded E0 token/state bat
 
 Generation completion and E0 resource release remain distinct. Pulled output preserves `Terminal`, optional `CleanupPending`, optional `CleanupExhausted`, and `Released` states. E1 keeps the generation lifecycle active until release so unresolved ownership remains visible and conversation clearing stays blocked. Cleanup retry/exhaustion and accounting semantics are owned by E0 and described in [inference runtime](inference-runtime.md).
 
+A model-load receipt is likewise not equivalent to a published resident model. E1 first compares the receipt with the retained immutable resolution, scalar, backend, quantization, and tokenizer evidence. On incompatibility, public loaded state remains empty while E1 stores the exact `ModelHandle`, compatibility failure, and automatic-unload state in a private cleanup record. E0 continues to own and account for the model. E1 retries bounded unload submission, and neither submission exhaustion nor E0 cleanup exhaustion discards the handle; the record remains private and accounted until absence, inference disconnection, or confirmed worker stop permits release.
+
 The application configures E0 for one resident model and does not expose a misleading model-count setting. Multi-model application state is outside the current product boundary.
 
 ## Shutdown
 
 Normal closure must call `ApplicationRuntime::shutdown`; `Drop` does not perform an unbounded join.
 
-Shutdown:
+The private shutdown controller tracks running, stopping, stopped, and failed/retryable states. Shutdown:
 
 1. stops application admission and requests cooperative Hub shutdown;
-2. sends one ticketed shutdown command to the Candle E0 worker;
+2. sends one ticketed shutdown command to the Candle E0 worker, retaining that ticket across retries;
 3. waits only to configured checked deadlines;
 4. attempts the inference-worker join and Hub-worker join even when an earlier step reports an error;
-5. returns the first bounded command, timeout, cleanup, or join failure.
+5. takes and joins a worker handle only after the worker is observed finished;
+6. returns the first bounded command, timeout, cleanup, or join failure.
 
-An in-flight synchronous Hub operation has no upstream global cancellation handle. If it exceeds the bounded wait, the application can detach the worker and continue process exit rather than blocking indefinitely. The same safe-Rust limitation applies to an uncooperative in-process backend call that still owns model state. [ADR-0006](../agent/decisions/0006-explicit-bounded-shutdown.md) records the policy.
+If a command, worker wait, or join times out, status becomes failed/retryable and every unfinished worker handle remains owned by `ApplicationRuntime`. A later `shutdown()` call resumes the remaining stop/join work; a timeout does not detach a worker. Once both workers are confirmed stopped, shutdown becomes idempotently stopped and any private incompatible-model cleanup record can be released.
+
+Shutdown and join timeouts are validated before any worker starts as nonzero and no greater than 24 hours. Runtime deadline construction retains checked arithmetic as defense in depth, so invalid timing cannot enter the startup-cleanup quarantine.
+
+An in-flight synchronous Hub operation has no upstream global cancellation handle, and the same safe-Rust limitation applies to an uncooperative in-process backend call. The bounded call may therefore return before the worker finishes, but ownership of the handle remains available for shutdown retry. [ADR-0006](../agent/decisions/0006-explicit-bounded-shutdown.md) records the policy.
 
 ## Model execution targets
 

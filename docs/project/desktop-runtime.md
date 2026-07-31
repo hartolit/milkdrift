@@ -97,11 +97,11 @@ Local shutdown is deterministic and bounded across the current workers:
 1. stop application admission and request cooperative Hub shutdown;
 2. submit one ticketed shutdown command to the Candle E0 worker and wait only to the configured deadline;
 3. attempt bounded completion and join for the inference worker even if a prior step failed;
-4. finish the Hub-worker join, or detach a worker that cannot finish because a synchronous vendor call has not returned.
+4. attempt the bounded Hub-worker join even if an earlier step failed, retaining any unfinished join handle for a later retry.
 
-All shutdown/join deadlines use checked `Instant` arithmetic and cap each poll or sleep to the remaining budget. Timeout overflow is invalid configuration rather than a panic. Explicit `ApplicationRuntime::shutdown` is mandatory on normal closure because `Drop` performs no unbounded join; the Slint runner calls it after the window loop and also after post-startup window-construction failure. Combined Slint and shutdown failures remain visible in one `DesktopError`.
+All shutdown/join deadlines use checked `Instant` arithmetic and cap each poll or sleep to the remaining budget. Timeout overflow is invalid configuration rather than a panic. A timeout produces a failed/retryable shutdown result; it does not consume or detach an unfinished worker handle. A later `shutdown()` call resumes unresolved stop/join work, and idempotent success is reported only after both workers are confirmed stopped.
 
-The synchronous Hub client exposes cache, authentication, retry, endpoint, and progress controls but no global request timeout/cancellation handle. If an HTTP operation is still in flight at the deadline, the thread handle is detached and process exit continues. Safe Rust likewise cannot destroy model state while an uncooperative backend call holds it.
+Explicit `ApplicationRuntime::shutdown` is mandatory on normal closure because `Drop` performs no unbounded join; the Slint runner calls it after the window loop and also after post-startup window-construction failure. Combined Slint and shutdown failures remain visible in one `DesktopError`. The synchronous Hub client still has no global in-flight request cancellation handle, so an uncooperative operation can outlive one bounded wait and require another shutdown attempt; safe Rust does not force-kill that thread or destroy model state while backend code holds it.
 
 ## State location
 

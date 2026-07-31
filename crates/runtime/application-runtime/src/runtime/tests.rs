@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -7,12 +8,17 @@ use domain_contracts::{CancellationReason, FinishReason, RequestId, TokenId};
 use hf_hub_adapter::{ArtifactScalarType, ResolvedSafetensorsLlamaArtifacts};
 use inference_runtime::{RuntimeCommand, RuntimeEvent};
 
-use super::ApplicationRuntime;
+use super::{
+    ApplicationRuntime, IncompatibleModelUnload, MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS,
+};
+use crate::shutdown::ShutdownStatus;
+use crate::support::MAXIMUM_SHUTDOWN_OR_JOIN_TIMEOUT;
 use crate::{
-    ApplicationActivity, ApplicationDevice, ApplicationEngine, ApplicationError, ApplicationEvent,
+    ApplicationActivity, ApplicationConfigurationField, ApplicationDevice, ApplicationEngine,
+    ApplicationError, ApplicationEvent, ApplicationFailure, ApplicationFailureKind,
     ApplicationModelFormat, ApplicationOutputRecordKind, ApplicationOutputState,
-    ApplicationRuntimeConfiguration, ApplicationScalarType, ApplicationSource, ConversationRole,
-    GenerationPhase, GenerationSeed, GenerationSettings, GenerationSettingsField,
+    ApplicationRuntimeConfiguration, ApplicationScalarType, ApplicationSource, ApplicationWorker,
+    ConversationRole, GenerationPhase, GenerationSeed, GenerationSettings, GenerationSettingsField,
     GenerationTerminal, GenerationTerminalKind, GenerationTerminalOutcome, LoadedModel,
     ModelSelection, ModelUnloadBehavior, ResolvedModel, ResponseAttemptState,
 };
@@ -571,6 +577,100 @@ fn incompatible_scalar_evidence_unloads_without_publishing_loaded_state() -> Tes
 }
 
 #[test]
+fn incompatible_model_cleanup_retries_after_automatic_unload_submission_failure() -> TestResult {
+    with_runtime(default_test_configuration, |runtime| {
+        let (selection, _resolved) =
+            resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
+        runtime.load_model(&selection).map_err(application_error)?;
+        runtime
+            .pending_load
+            .as_mut()
+            .ok_or_else(|| "load admission evidence was not retained".to_owned())?
+            .scalar_type = ApplicationScalarType::Bf16;
+        runtime.forced_inference_busy_submissions = 1;
+
+        let event = wait_for_event(runtime, |event| {
+            matches!(event, ApplicationEvent::ModelLoadFailed { .. })
+        })?;
+        assert!(matches!(event, ApplicationEvent::ModelLoadFailed { .. }));
+        let retained = runtime
+            .incompatible_model_cleanup
+            .as_ref()
+            .ok_or_else(|| "incompatible model ownership was not retained".to_owned())?;
+        let retained_handle = retained.handle;
+        assert!(
+            retained
+                .compatibility_failure
+                .message
+                .contains("compatibility")
+        );
+        assert!(matches!(
+            retained.unload,
+            IncompatibleModelUnload::PendingSubmission { attempts: 1, .. }
+        ));
+        assert_eq!(runtime.state().activity(), ApplicationActivity::Unloading);
+        assert!(runtime.state().loaded().is_none());
+
+        let event = wait_for_event(runtime, |event| {
+            matches!(
+                event,
+                ApplicationEvent::ModelUnloaded { handle, .. } if *handle == retained_handle
+            )
+        })?;
+        assert!(matches!(event, ApplicationEvent::ModelUnloaded { .. }));
+        assert!(runtime.incompatible_model_cleanup.is_none());
+        assert_eq!(runtime.state().activity(), ApplicationActivity::Idle);
+        Ok(())
+    })
+}
+
+#[test]
+fn incompatible_model_cleanup_exhaustion_remains_accounted() -> TestResult {
+    with_runtime(default_test_configuration, |runtime| {
+        let (selection, _resolved) =
+            resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
+        runtime.load_model(&selection).map_err(application_error)?;
+        runtime
+            .pending_load
+            .as_mut()
+            .ok_or_else(|| "load admission evidence was not retained".to_owned())?
+            .scalar_type = ApplicationScalarType::Bf16;
+        runtime.forced_inference_busy_submissions =
+            usize::from(MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS);
+
+        let _initial_failure = wait_for_event(runtime, |event| {
+            matches!(event, ApplicationEvent::ModelLoadFailed { .. })
+        })?;
+        for _ in 1..MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS {
+            let _retry_failure = wait_for_event(runtime, |event| {
+                matches!(event, ApplicationEvent::ModelUnloadFailed { .. })
+            })?;
+        }
+
+        let retained = runtime
+            .incompatible_model_cleanup
+            .as_ref()
+            .ok_or_else(|| "exhausted incompatible model ownership was dropped".to_owned())?;
+        assert!(
+            retained
+                .compatibility_failure
+                .message
+                .contains("compatibility")
+        );
+        assert!(matches!(
+            retained.unload,
+            IncompatibleModelUnload::RetryExhausted {
+                attempts: MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS,
+                ..
+            }
+        ));
+        assert_eq!(runtime.state().activity(), ApplicationActivity::Unloading);
+        assert!(runtime.state().loaded().is_none());
+        Ok(())
+    })
+}
+
+#[test]
 fn application_reports_inference_worker_disconnection() -> TestResult {
     with_runtime(default_test_configuration, |runtime| {
         let ticket = runtime.next_ticket().map_err(application_error)?;
@@ -606,6 +706,126 @@ fn application_reports_inference_worker_disconnection() -> TestResult {
 }
 
 #[test]
+fn shutdown_and_join_deadline_boundaries_are_validated_before_worker_start() -> TestResult {
+    let mut maximum = ApplicationRuntimeConfiguration::desktop("unused.redb");
+    default_test_configuration(&mut maximum);
+    maximum.timing.runtime_shutdown_timeout = MAXIMUM_SHUTDOWN_OR_JOIN_TIMEOUT;
+    maximum.timing.runtime_join_timeout = MAXIMUM_SHUTDOWN_OR_JOIN_TIMEOUT;
+    maximum.timing.hub_shutdown_timeout = MAXIMUM_SHUTDOWN_OR_JOIN_TIMEOUT;
+    crate::support::validate_configuration(&maximum).map_err(application_error)?;
+
+    assert_startup_deadline_duration_rejected(Duration::ZERO)?;
+    assert_startup_deadline_duration_rejected(
+        MAXIMUM_SHUTDOWN_OR_JOIN_TIMEOUT + Duration::from_nanos(1),
+    )?;
+    assert_startup_deadline_duration_rejected(Duration::MAX)
+}
+
+#[test]
+fn forced_hub_start_failure_stops_and_joins_started_inference_worker() -> TestResult {
+    let database_path = unique_database_path();
+    let mut configuration = ApplicationRuntimeConfiguration::desktop(&database_path);
+    default_test_configuration(&mut configuration);
+    let primary = ApplicationError::Failure(ApplicationFailure::new(
+        ApplicationFailureKind::Hub,
+        "forced Hub startup failure",
+    ));
+
+    let start_result =
+        ApplicationRuntime::start_transaction(configuration, |_| Err(primary.clone()));
+    let test_result = match start_result {
+        Err(failure) => {
+            assert_eq!(failure.primary, primary);
+            assert_eq!(failure.inference_rollback, Some(Ok(())));
+            Ok(())
+        }
+        Ok(mut runtime) => {
+            runtime.shutdown().map_err(application_error)?;
+            Err("forced Hub startup failure unexpectedly succeeded".to_owned())
+        }
+    };
+
+    let cleanup_result = remove_database(&database_path);
+    test_result.and(cleanup_result)
+}
+
+#[test]
+fn failed_startup_rollback_quarantines_and_later_reaps_inference_worker() -> TestResult {
+    assert_eq!(super::startup_cleanup_quarantine_state(), (0, 0));
+    let database_path = unique_database_path();
+    let mut configuration = ApplicationRuntimeConfiguration::desktop(&database_path);
+    default_test_configuration(&mut configuration);
+    let primary = ApplicationError::Failure(ApplicationFailure::new(
+        ApplicationFailureKind::Hub,
+        "forced Hub startup failure with rollback timeout",
+    ));
+    let rollback_failure = ApplicationError::ShutdownTimeout(ApplicationWorker::Inference);
+
+    let start_result = ApplicationRuntime::start_transaction_with_rollback(
+        configuration,
+        |_| Err(primary.clone()),
+        |_local, _timing| {
+            Err(ApplicationError::ShutdownTimeout(
+                ApplicationWorker::Inference,
+            ))
+        },
+    );
+    let test_result = match start_result {
+        Err(failure) => {
+            assert_eq!(failure.primary, primary);
+            assert_eq!(failure.inference_rollback, Some(Err(rollback_failure)));
+            assert_eq!(super::startup_cleanup_quarantine_state(), (1, 1));
+
+            let reap_result = super::reap_startup_cleanup_quarantine()
+                .ok_or_else(|| "startup cleanup quarantine was unexpectedly empty".to_owned())?;
+            reap_result.map_err(application_error)?;
+            assert_eq!(super::startup_cleanup_quarantine_state(), (0, 0));
+            Ok(())
+        }
+        Ok(mut runtime) => {
+            runtime.shutdown().map_err(application_error)?;
+            Err("forced Hub startup rollback failure unexpectedly succeeded".to_owned())
+        }
+    };
+
+    let cleanup_result = remove_database(&database_path);
+    test_result.and(cleanup_result)
+}
+
+#[test]
+fn shutdown_retries_retained_worker_joins_after_timeout() -> TestResult {
+    with_runtime(default_test_configuration, |runtime| {
+        runtime.shutdown_control.forced_runtime_join_timeouts = 1;
+        runtime.shutdown_control.forced_hub_join_timeouts = 1;
+
+        assert_eq!(
+            runtime.shutdown(),
+            Err(ApplicationError::ShutdownTimeout(
+                ApplicationWorker::Inference
+            ))
+        );
+        assert_eq!(
+            runtime.shutdown_control.status,
+            ShutdownStatus::FailedOrRetryable
+        );
+        assert!(runtime.local.thread_is_present());
+        assert!(runtime.hub_thread.is_some());
+        assert_eq!(
+            runtime.state().activity(),
+            ApplicationActivity::ShuttingDown
+        );
+
+        runtime.shutdown().map_err(application_error)?;
+        assert_eq!(runtime.shutdown_control.status, ShutdownStatus::Stopped);
+        assert!(!runtime.local.thread_is_present());
+        assert!(runtime.hub_thread.is_none());
+
+        runtime.shutdown().map_err(application_error)?;
+        Ok(())
+    })
+}
+
+#[test]
 fn explicit_application_shutdown_disconnects_and_joins_worker() -> TestResult {
     with_runtime(default_test_configuration, |runtime| {
         runtime.shutdown().map_err(application_error)?;
@@ -617,6 +837,7 @@ fn explicit_application_shutdown_disconnects_and_joins_worker() -> TestResult {
         assert!(!runtime.state().inference_available());
         assert!(runtime.hub_thread.is_none());
         assert!(!runtime.local.thread_is_present());
+        assert_eq!(runtime.shutdown_control.status, ShutdownStatus::Stopped);
         Ok(())
     })
 }
@@ -746,6 +967,60 @@ where
         }
         Err(error) => Err(application_error(error)),
     }
+}
+
+fn assert_startup_deadline_duration_rejected(duration: Duration) -> TestResult {
+    assert_startup_deadline_rejected(
+        ApplicationConfigurationField::RuntimeShutdownTimeout,
+        |configuration| configuration.timing.runtime_shutdown_timeout = duration,
+    )?;
+    assert_startup_deadline_rejected(
+        ApplicationConfigurationField::RuntimeJoinTimeout,
+        |configuration| configuration.timing.runtime_join_timeout = duration,
+    )?;
+    assert_startup_deadline_rejected(
+        ApplicationConfigurationField::HubShutdownTimeout,
+        |configuration| configuration.timing.hub_shutdown_timeout = duration,
+    )
+}
+
+fn assert_startup_deadline_rejected<F>(
+    field: ApplicationConfigurationField,
+    configure: F,
+) -> TestResult
+where
+    F: FnOnce(&mut ApplicationRuntimeConfiguration),
+{
+    let database_path = unique_database_path();
+    let mut configuration = ApplicationRuntimeConfiguration::desktop(&database_path);
+    default_test_configuration(&mut configuration);
+    configure(&mut configuration);
+    let hub_started = Cell::new(false);
+
+    let start_result = ApplicationRuntime::start_transaction(configuration, |_| {
+        hub_started.set(true);
+        Err(ApplicationError::HubDisconnected)
+    });
+    let test_result = match start_result {
+        Err(failure) => {
+            assert_eq!(
+                failure.primary,
+                ApplicationError::InvalidConfiguration(field)
+            );
+            assert!(failure.inference_rollback.is_none());
+            assert!(!hub_started.get());
+            Ok(())
+        }
+        Ok(mut runtime) => {
+            runtime.shutdown().map_err(application_error)?;
+            Err(format!(
+                "overflowing startup deadline was accepted for {field:?}"
+            ))
+        }
+    };
+
+    let cleanup_result = remove_database(&database_path);
+    test_result.and(cleanup_result)
 }
 
 const fn default_test_configuration(configuration: &mut ApplicationRuntimeConfiguration) {

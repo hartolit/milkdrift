@@ -210,17 +210,24 @@ fn host_worker_shutdown_timeout_is_bounded() -> TestResult {
         let _release_result = release_receiver.recv();
     })
     .map_err(|error| error.to_string())?;
+    let mut thread = Some(thread);
 
-    let result = wait_for_host_thread(&thread, Duration::from_millis(5), Duration::from_millis(1));
+    let result = finish_host_thread(
+        &mut thread,
+        Duration::from_millis(5),
+        Duration::from_millis(1),
+    );
     assert_eq!(
         result,
         Err(ApplicationError::ShutdownTimeout(ApplicationWorker::Hub))
     );
+    assert!(thread.is_some());
 
     release_sender
         .send(())
         .map_err(|_| "timeout test worker disconnected".to_owned())?;
-    thread.join().map_err(debug_error)?;
+    finish_host_thread(&mut thread, TEST_TIMEOUT, TEST_POLL).map_err(debug_error)?;
+    assert!(thread.is_none());
     Ok(())
 }
 
@@ -230,8 +237,9 @@ fn host_worker_join_failure_is_reported() -> TestResult {
         std::panic::resume_unwind(Box::new("intentional test panic"));
     })
     .map_err(|error| error.to_string())?;
+    let mut thread = Some(thread);
 
-    let result = finish_host_thread(thread, TEST_TIMEOUT, TEST_POLL);
+    let result = finish_host_thread(&mut thread, TEST_TIMEOUT, TEST_POLL);
     assert!(matches!(
         result,
         Err(ApplicationError::Failure(ApplicationFailure {
@@ -239,6 +247,7 @@ fn host_worker_join_failure_is_reported() -> TestResult {
             ..
         }))
     ));
+    assert!(thread.is_none());
     Ok(())
 }
 

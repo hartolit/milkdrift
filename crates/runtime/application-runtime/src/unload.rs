@@ -46,15 +46,24 @@ impl ApplicationRuntime {
         handle: ModelHandle,
         behavior: ModelUnloadBehavior,
     ) -> Result<(), ApplicationError> {
+        self.submit_model_unload(handle, behavior).map(|_| ())
+    }
+
+    pub(crate) fn submit_model_unload(
+        &mut self,
+        handle: ModelHandle,
+        behavior: ModelUnloadBehavior,
+    ) -> Result<inference_runtime::CommandTicket, ApplicationError> {
         let policy = self.unload_policy(behavior)?;
+        let ticket = self.next_ticket()?;
         let command = RuntimeCommand::UnloadModel {
-            ticket: self.next_ticket()?,
+            ticket,
             handle,
             policy,
         };
         self.submit_inference(command)?;
         self.state.begin_unloading();
-        Ok(())
+        Ok(ticket)
     }
 
     fn unload_policy(

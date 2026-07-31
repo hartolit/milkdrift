@@ -1,0 +1,288 @@
+use std::env;
+use std::error::Error;
+use std::fmt;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use cargo_metadata::{Metadata, MetadataCommand};
+
+use super::invocation::{is_potential_operational_surface, scan_operational_invocations};
+use super::manifest::{is_cargo_manifest, scan_manifest, scan_selected_graph};
+
+const RULE_PYTHON_ARTIFACT: &str = "HYGIENE-PY-ARTIFACT-1";
+
+/// One actionable repository hygiene policy violation.
+#[derive(Debug, PartialEq, Eq)]
+pub struct HygieneViolation {
+    path: Option<PathBuf>,
+    line: Option<usize>,
+    rule: &'static str,
+    reason: String,
+}
+
+impl HygieneViolation {
+    pub(super) fn new(
+        path: Option<PathBuf>,
+        line: Option<usize>,
+        rule: &'static str,
+        reason: String,
+    ) -> Self {
+        Self {
+            path,
+            line,
+            rule,
+            reason,
+        }
+    }
+
+    /// Returns the stable identifier of the policy rule that was violated.
+    #[must_use]
+    pub const fn rule(&self) -> &'static str {
+        self.rule
+    }
+
+    /// Returns the repository-relative path associated with the violation, when applicable.
+    #[must_use]
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    /// Returns the one-based source line associated with the violation, when applicable.
+    #[must_use]
+    pub const fn line(&self) -> Option<usize> {
+        self.line
+    }
+
+    /// Returns the actionable reason the policy rejected the item.
+    #[must_use]
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+}
+
+impl fmt::Display for HygieneViolation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("repository hygiene violation")?;
+        if let Some(path) = &self.path {
+            write!(formatter, " at {}", path.display())?;
+            if let Some(line) = self.line {
+                write!(formatter, ":{line}")?;
+            }
+        }
+        write!(formatter, "; policy rule {}: {}", self.rule, self.reason)
+    }
+}
+
+/// The complete result of validating repository hygiene.
+#[derive(Debug, Default)]
+pub struct HygieneReport {
+    violations: Vec<HygieneViolation>,
+}
+
+impl HygieneReport {
+    pub(super) fn push(&mut self, violation: HygieneViolation) {
+        self.violations.push(violation);
+    }
+
+    /// Returns true when the repository satisfies every hygiene rule.
+    #[must_use]
+    pub const fn is_valid(&self) -> bool {
+        self.violations.is_empty()
+    }
+
+    /// Returns all hygiene violations in deterministic validation order.
+    #[must_use]
+    pub fn violations(&self) -> &[HygieneViolation] {
+        &self.violations
+    }
+}
+
+/// An error that prevented repository hygiene validation from completing.
+#[derive(Debug)]
+pub struct HygieneError {
+    message: String,
+}
+
+impl HygieneError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for HygieneError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl Error for HygieneError {}
+
+/// Validates tracked repository files, direct Cargo declarations, and the locked selected graph.
+///
+/// Tracked paths are obtained from Git. Deleted paths in an uncommitted cleanup are ignored once
+/// they no longer exist in the working tree. Cargo metadata is loaded with `--locked`, including
+/// resolved dependencies, so both dormant direct declarations and selected packages are checked.
+/// Every tracked operational surface is scanned without filename-, directory-, or ADR-status-based
+/// exemptions; negative policy prose is distinguished by the invocation parser itself.
+///
+/// # Errors
+///
+/// Returns an error if locked Cargo metadata, Git's tracked path list, or a maintained text surface
+/// cannot be read.
+pub fn validate_repository_hygiene(manifest_path: &Path) -> Result<HygieneReport, HygieneError> {
+    let metadata = load_metadata(manifest_path)?;
+    let root = metadata.workspace_root.as_std_path();
+    let tracked_paths = tracked_paths(root)?;
+    validate_hygiene(root, &tracked_paths, &metadata)
+}
+
+fn load_metadata(manifest_path: &Path) -> Result<Metadata, HygieneError> {
+    let mut command = MetadataCommand::new();
+    command
+        .manifest_path(manifest_path)
+        .other_options(vec!["--locked".to_owned()]);
+    if let Some(cargo) = env::var_os("CARGO") {
+        command.cargo_path(cargo);
+    }
+    command.exec().map_err(|error| {
+        HygieneError::new(format!("could not load locked Cargo metadata: {error}"))
+    })
+}
+
+fn tracked_paths(root: &Path) -> Result<Vec<PathBuf>, HygieneError> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["ls-files", "--cached", "-z"])
+        .output()
+        .map_err(|error| HygieneError::new(format!("could not execute git ls-files: {error}")))?;
+    if !output.status.success() {
+        return Err(HygieneError::new(format!(
+            "git ls-files failed with status {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+
+    output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            std::str::from_utf8(path)
+                .map(PathBuf::from)
+                .map_err(|error| {
+                    HygieneError::new(format!(
+                        "git reported a tracked path that is not valid UTF-8: {error}"
+                    ))
+                })
+        })
+        .collect()
+}
+
+fn validate_hygiene(
+    root: &Path,
+    tracked_paths: &[PathBuf],
+    metadata: &Metadata,
+) -> Result<HygieneReport, HygieneError> {
+    let mut report = HygieneReport::default();
+
+    for relative in tracked_paths {
+        let absolute = root.join(relative);
+        let file_metadata = match fs::symlink_metadata(&absolute) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(HygieneError::new(format!(
+                    "could not inspect tracked path {}: {error}",
+                    relative.display()
+                )));
+            }
+        };
+
+        if is_python_artifact(relative) {
+            report.push(HygieneViolation::new(
+                Some(relative.clone()),
+                None,
+                RULE_PYTHON_ARTIFACT,
+                "tracked project-owned Python, notebook, package, or environment artifacts are prohibited; replace the maintained operation with Rust/Cargo tooling and remove this file".to_owned(),
+            ));
+        }
+
+        if !file_metadata.file_type().is_file() {
+            continue;
+        }
+
+        let cargo_manifest = is_cargo_manifest(relative);
+        let operational = is_potential_operational_surface(relative);
+        if !cargo_manifest && !operational {
+            continue;
+        }
+
+        let content = fs::read_to_string(&absolute).map_err(|error| {
+            HygieneError::new(format!(
+                "could not read maintained text surface {}: {error}",
+                relative.display()
+            ))
+        })?;
+
+        if cargo_manifest {
+            scan_manifest(relative, &content, &mut report);
+        }
+        if operational {
+            scan_operational_invocations(relative, &content, &mut report);
+        }
+    }
+
+    scan_selected_graph(metadata, &mut report);
+    Ok(report)
+}
+
+fn is_python_artifact(path: &Path) -> bool {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let lower = file_name.to_ascii_lowercase();
+
+    if ["py", "pyi", "pyw", "pyx", "pxd", "pxi", "ipynb"]
+        .into_iter()
+        .any(|extension| {
+            path.extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case(extension))
+        })
+    {
+        return true;
+    }
+
+    matches!(
+        lower.as_str(),
+        "pyproject.toml"
+            | "pipfile"
+            | "pipfile.lock"
+            | "poetry.lock"
+            | "uv.lock"
+            | "setup.cfg"
+            | "tox.ini"
+            | "pytest.ini"
+            | "mypy.ini"
+            | ".mypy.ini"
+            | ".pylintrc"
+            | "ruff.toml"
+            | ".ruff.toml"
+            | ".coveragerc"
+            | ".python-version"
+            | "py.typed"
+            | "environment.yml"
+            | "environment.yaml"
+            | "conda.yml"
+            | "conda.yaml"
+    ) || (lower.starts_with("requirements")
+        && Path::new(&lower)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("txt")))
+}

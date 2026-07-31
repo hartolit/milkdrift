@@ -2,10 +2,10 @@
 
 use core::num::NonZeroU16;
 
-use domain_contracts::{BackendId, TaskId};
+use domain_contracts::BackendId;
 use task_graph::{
     ArtifactKind, GraphValidationScratch, ModelPolicy, TaskAttempt, TaskBudget, TaskDependency,
-    TaskGraph, TaskGraphError, TaskKind, TaskNode, TaskOutputContract, TaskRuntimeState,
+    TaskGraph, TaskGraphError, TaskId, TaskKind, TaskNode, TaskOutputContract, TaskRuntimeState,
     TaskStateTable, TaskStatus, validate_graph,
 };
 

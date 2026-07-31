@@ -7,10 +7,10 @@ This document owns repeatable current validation procedures. [Implementation sta
 Run from the repository root on the exact tree being evaluated:
 
 ```sh
-cargo run --locked --bin llm-app -- verify
+cargo xtask verify
 ```
 
-The runner validates architecture and repository hygiene, then checks formatting, every workspace target, ordinary tests/doctests, strict Clippy, API documentation with warnings denied, and benchmark compilation. It does not run the network-dependent external smoke.
+The `xtask` package under `tools/xtask` validates architecture and repository hygiene, then checks formatting, every workspace target, ordinary tests/doctests, mandatory Clippy, API documentation with warnings denied, and benchmark compilation. It does not run the network-dependent external smoke. The root is a virtual workspace; there is no root runner package.
 
 Use focused commands to diagnose failures without treating them as a substitute for the canonical gate:
 
@@ -24,23 +24,29 @@ cargo bench --workspace --no-run --locked
 git diff --check
 ```
 
-Record the exact source revision and whether the tree is dirty with the result. A command that passed on another commit or earlier working tree is not evidence for the current tree.
+These are direct Cargo/Git operations, not commands forwarded by `xtask`.
+
+The mandatory lint profile enables stable `clippy::all`, `clippy::pedantic`, and the workspace's explicit lints, then applies `-D warnings` to every workspace target. Clippy nursery is deliberately separate and exploratory: scheduled CI runs `cargo clippy --workspace --all-targets --locked -- -W clippy::nursery` without `-D warnings` and reports findings without making that job step blocking.
+
+Record the evaluated commit and dirty state with local results. Required CI prints the checked-out commit ID and Git tree ID immediately before invoking `cargo xtask verify`; that runtime log is the run's provenance. A tracked document is not required to contain its own resulting tree hash, because adding that hash changes the tree. A command that passed on another commit or earlier working tree is not evidence for the current tree.
+
+Required Linux CI also uses a fresh target directory and failing shims for CMake executables and the prohibited Python and Hugging Face command-line families. The non-FIPS `aws-lc` build is configured for its CC builder. A successful clean-target run therefore demonstrates that those external tools were not invoked; this procedure is not itself a claim about an unrun tree.
 
 ## Repository hygiene
 
 Run the Rust-owned tooling and selected-graph hygiene policy independently with:
 
 ```sh
-cargo run --locked --bin llm-app -- hygiene
+cargo xtask hygiene
 ```
 
-The architecture command also includes hygiene:
+Run architecture independently with:
 
 ```sh
-cargo run --locked --bin llm-app -- architecture
+cargo xtask architecture
 ```
 
-The policy examines tracked project artifacts, maintained operational surfaces, direct manifests, and locked Cargo metadata. [Dependency policy](dependency-policy.md#rust-owned-operational-hygiene) defines the boundary and historical-text exclusions.
+The architecture command does not implicitly run hygiene; the canonical verify command invokes both. Hygiene examines tracked project artifacts, maintained operational surfaces, direct manifests, and locked Cargo metadata without filename, directory, document-status, or whole-file bypasses. Any future exception must be exact, reviewed, and tested. [Dependency policy](dependency-policy.md#rust-owned-operational-hygiene) defines the boundary.
 
 ## Download-free focused validation
 
@@ -55,7 +61,7 @@ cargo test --locked -p application-runtime
 cargo test --locked -p desktop-slint
 ```
 
-The Candle E0 target covers load, descriptor validation, prompt prefill, incremental decode, greedy and seeded sampling, EOS and token limits, output backpressure, cancellation, explicit sequence cleanup/release, unload, empty post-unload accounting, shutdown, and worker join. E1 tests additionally cover immutable resolution evidence, direct completion, exact TinyLlama chat compatibility, context/regeneration behavior, decoded output, unload policies, persistence, worker disconnection, and bounded shutdown. Slint tests cover E1-only selection/state mapping and presentation behavior.
+The Candle E0 target covers load, descriptor validation, prompt prefill, incremental decode, greedy and seeded sampling, EOS and token limits, output backpressure, cancellation, explicit sequence cleanup/release, unload, empty post-unload accounting, shutdown, and worker join. E1 tests additionally cover immutable resolution evidence, direct completion, exact TinyLlama chat compatibility, context/regeneration behavior, decoded output, unload policies, private incompatible-model cleanup retention through retry/exhaustion, successful transactional rollback after Hub startup failure, retained/reaped inference ownership after rollback timeout, persistence, worker disconnection, and retryable bounded shutdown with worker-handle retention. Slint tests cover E1-only selection/state mapping and presentation behavior.
 
 These fixtures prove integration and lifecycle behavior, not model language quality, GPU execution, or strict allocation-free behavior inside upstream libraries.
 

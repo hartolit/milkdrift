@@ -16,12 +16,12 @@ pub use diagnostics::{
     Diagnostic, DiagnosticLocation, DiagnosticSeverity, NormalizedValidationReport, RawDiagnostic,
     ValidationReport, ValidationVerdict, normalize_validation_report,
 };
-pub use domain_contracts::{ArtifactId, TaskId};
+pub use domain_contracts::ArtifactId;
 pub use executor::CorrectiveWorkflowExecutor;
 pub use output::{BoundedDiagnosticsSink, BoundedTextSink, OutputSinkError};
 pub use task_graph::{
     ArtifactKind, ArtifactReference, ArtifactRole, ModelPolicy, TaskAttempt, TaskBudget,
-    TaskGraphError, TaskKind,
+    TaskGraphError, TaskId, TaskKind,
 };
 
 /// Stable identity of one corrective workflow execution.

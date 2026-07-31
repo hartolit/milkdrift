@@ -2,11 +2,11 @@
 
 use core::num::NonZeroU16;
 
-use domain_contracts::{ArtifactId, TaskId};
+use domain_contracts::ArtifactId;
 use task_graph::{
     ArtifactFlow, ArtifactKind, ArtifactReference, ArtifactRole, ModelPolicy, TaskArtifactInput,
-    TaskArtifactOutput, TaskBudget, TaskDependency, TaskGraph, TaskGraphError, TaskKind, TaskNode,
-    TaskOutputContract, validate_artifact_flow,
+    TaskArtifactOutput, TaskBudget, TaskDependency, TaskGraph, TaskGraphError, TaskId, TaskKind,
+    TaskNode, TaskOutputContract, validate_artifact_flow,
 };
 
 fn node(id: u64, kind: TaskKind, output_kind: ArtifactKind) -> Result<TaskNode, &'static str> {

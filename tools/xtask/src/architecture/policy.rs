@@ -1,38 +1,29 @@
-//! Layered workspace architecture validation.
-
-#![forbid(unsafe_code)]
-
-use std::collections::BTreeMap;
-use std::env;
-use std::error::Error;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use cargo_metadata::{Dependency, Metadata, MetadataCommand, Package};
-
-mod hygiene;
-
-pub use hygiene::{HygieneError, HygieneReport, HygieneViolation, validate_repository_hygiene};
-
-const RULE_KNOWN_LOCATION: &str = "LAYOUT-1";
-const RULE_LOCAL_TARGET: &str = "LAYOUT-2";
-const RULE_KNOWN_KIND: &str = "DEPENDENCY-KIND-1";
-const RULE_PLATFORM_ROLE: &str = "PLATFORM-ROLE-1";
-const RULE_PRODUCTION_DIRECTION: &str = "LAYER-PROD-1";
-const RULE_RUNTIME_ROLE: &str = "RUNTIME-ROLE-1";
+pub(super) const RULE_KNOWN_LOCATION: &str = "LAYOUT-1";
+pub(super) const RULE_LOCAL_TARGET: &str = "LAYOUT-2";
+pub(super) const RULE_KNOWN_KIND: &str = "DEPENDENCY-KIND-1";
+pub(super) const RULE_PLATFORM_ROLE: &str = "PLATFORM-ROLE-1";
+pub(super) const RULE_PRODUCTION_DIRECTION: &str = "LAYER-PROD-1";
+pub(super) const RULE_RUNTIME_ROLE: &str = "RUNTIME-ROLE-1";
+const RULE_DOMAIN_LOCAL_REVIEW: &str = "DOMAIN-LOCAL-PROD-1";
 const RULE_ENGINE_LOCAL_REVIEW: &str = "ENGINE-LOCAL-PROD-1";
 const RULE_LOCAL_DEV_REVIEW: &str = "DEV-LOCAL-1";
 const RULE_EXTERNAL_DEV_REVIEW: &str = "EXT-DEV-1";
-const RULE_ROOT_EXTERNAL: &str = "EXT-ROOT-PROD-1";
+const RULE_TOOLING_EXTERNAL: &str = "EXT-TOOLING-PROD-1";
 const RULE_F0_EXTERNAL: &str = "EXT-F0-PROD-1";
 const RULE_F1_EXTERNAL: &str = "EXT-F1-PROD-1";
 const RULE_ENGINE_EXTERNAL: &str = "EXT-ENGINE-PROD-1";
+const RULE_REVIEW_REGISTRY: &str = "POLICY-REVIEW-1";
+const RULE_DOMAIN_DAG: &str = "DOMAIN-DAG-1";
 
 /// A dependency layer in the workspace's production architecture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Layer {
-    /// The workspace maintenance runner.
-    Root,
+    /// The explicitly registered workspace-maintenance tooling package.
+    Tooling,
     /// F0 portable shared contracts.
     FeatureFoundation,
     /// F1 portable algorithms.
@@ -70,205 +61,120 @@ impl fmt::Display for DependencyKind {
     }
 }
 
-/// One architecture policy violation.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Violation {
-    source: String,
-    target: String,
-    dependency_kind: Option<DependencyKind>,
-    source_layer: Option<Layer>,
-    target_layer: Option<Layer>,
-    rule: &'static str,
-    reason: String,
-}
-
-impl Violation {
-    /// Returns the stable identifier of the policy rule that was violated.
-    #[must_use]
-    pub const fn rule(&self) -> &'static str {
-        self.rule
-    }
-
-    /// Returns the human-readable reason the policy rejected the item.
-    #[must_use]
-    pub fn reason(&self) -> &str {
-        &self.reason
-    }
-
-    /// Returns the source package or manifest description.
-    #[must_use]
-    pub fn source(&self) -> &str {
-        &self.source
-    }
-
-    /// Returns the dependency package or location description.
-    #[must_use]
-    pub fn target(&self) -> &str {
-        &self.target
-    }
-
-    /// Returns the dependency kind when the violation represents an edge.
-    #[must_use]
-    pub const fn dependency_kind(&self) -> Option<DependencyKind> {
-        self.dependency_kind
-    }
-}
-
-impl fmt::Display for Violation {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.dependency_kind {
-            Some(kind) => write!(
-                formatter,
-                "forbidden architecture dependency: {} ({:?}) --{}--> {} ({:?}); policy rule {}: {}",
-                self.source,
-                self.source_layer,
-                kind,
-                self.target,
-                self.target_layer,
-                self.rule,
-                self.reason
-            ),
-            None => write!(
-                formatter,
-                "architecture policy violation: {} -> {}; policy rule {}: {}",
-                self.source, self.target, self.rule, self.reason
-            ),
-        }
-    }
-}
-
-/// The complete result of validating one Cargo workspace.
-#[derive(Debug, Default)]
-pub struct ValidationReport {
-    violations: Vec<Violation>,
-}
-
-impl ValidationReport {
-    /// Returns true when the workspace satisfies every architecture rule.
-    #[must_use]
-    pub const fn is_valid(&self) -> bool {
-        self.violations.is_empty()
-    }
-
-    /// Returns all violations discovered in the workspace.
-    #[must_use]
-    pub fn violations(&self) -> &[Violation] {
-        &self.violations
-    }
-}
-
-/// An error that prevented Cargo metadata from being loaded.
-#[derive(Debug)]
-pub struct ValidationError(cargo_metadata::Error);
-
-impl fmt::Display for ValidationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "could not load locked Cargo metadata: {}",
-            self.0
-        )
-    }
-}
-
-impl Error for ValidationError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        Some(&self.0)
-    }
-}
-
-impl From<cargo_metadata::Error> for ValidationError {
-    fn from(error: cargo_metadata::Error) -> Self {
-        Self(error)
-    }
-}
-
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct ReviewedDependency {
     source: &'static str,
     target: &'static str,
     kind: DependencyKind,
-    justification: &'static str,
+    rationale: &'static str,
 }
 
+// Every production edge wholly inside the domain layer is exact, reviewed, and acyclic. The
+// coarse matrix permits future F1 peers, but this registry keeps them denied until reviewed.
+const REVIEWED_DOMAIN_PRODUCTION_DEPENDENCIES: &[ReviewedDependency] = &[
+    ReviewedDependency {
+        source: "tokenization",
+        target: "domain-contracts",
+        kind: DependencyKind::Normal,
+        rationale: "tokenization implements the shared token and caller-owned buffer contracts",
+    },
+    ReviewedDependency {
+        source: "context-planner",
+        target: "domain-contracts",
+        kind: DependencyKind::Normal,
+        rationale: "context planning consumes shared request, sequence, and token vocabulary",
+    },
+    ReviewedDependency {
+        source: "sampling",
+        target: "domain-contracts",
+        kind: DependencyKind::Normal,
+        rationale: "sampling implements shared generation and stop-policy contracts",
+    },
+    ReviewedDependency {
+        source: "task-graph",
+        target: "domain-contracts",
+        kind: DependencyKind::Normal,
+        rationale: "task graphs use shared artifact and workflow identifiers",
+    },
+];
+
 // Engine dependencies on infrastructure or another engine are exact reviewed composition edges.
-// Lower feature dependencies continue to follow the layer matrix without per-edge registration.
 const REVIEWED_ENGINE_PRODUCTION_DEPENDENCIES: &[ReviewedDependency] = &[
     ReviewedDependency {
         source: "inference-runtime",
         target: "host-runtime",
         kind: DependencyKind::Normal,
-        justification: "E0 uses the bounded host worker integration that runs its command loop",
+        rationale: "E0 uses the bounded host worker integration that runs its command loop",
     },
     ReviewedDependency {
         source: "application-runtime",
         target: "candle-backend",
         kind: DependencyKind::Normal,
-        justification: "the closed E1 local composition constructs the supported Candle/Safetensors source",
+        rationale: "the closed E1 local composition constructs the supported Candle/Safetensors source",
     },
     ReviewedDependency {
         source: "application-runtime",
         target: "hf-hub-adapter",
         kind: DependencyKind::Normal,
-        justification: "the closed E1 local composition resolves immutable Hugging Face artifacts for the Candle product",
+        rationale: "the closed E1 local composition resolves immutable Hugging Face artifacts for the Candle product",
     },
     ReviewedDependency {
         source: "application-runtime",
         target: "hf-tokenizer",
         kind: DependencyKind::Normal,
-        justification: "the closed E1 local composition owns Hugging Face prompt encoding and streaming decode",
+        rationale: "the closed E1 local composition owns Hugging Face prompt encoding and streaming decode",
     },
     ReviewedDependency {
         source: "application-runtime",
         target: "host-runtime",
         kind: DependencyKind::Normal,
-        justification: "E1 hosts bounded workers and frontend-facing output accumulation",
+        rationale: "E1 hosts bounded workers and frontend-facing output accumulation",
     },
     ReviewedDependency {
         source: "application-runtime",
         target: "inference-runtime",
         kind: DependencyKind::Normal,
-        justification: "E1 delegates current local model execution and lifecycle ownership to E0",
+        rationale: "E1 delegates current local model execution and lifecycle ownership to E0",
     },
     ReviewedDependency {
         source: "application-runtime",
         target: "redb-storage",
         kind: DependencyKind::Normal,
-        justification: "E1 persists application preferences and the Hugging Face model catalogue with redb",
+        rationale: "E1 persists application preferences and the Hugging Face model catalogue with redb",
     },
 ];
 
 // External production exceptions and all external development dependencies are exact and reviewed.
 const REVIEWED_EXTERNAL_DEPENDENCIES: &[ReviewedDependency] = &[
     ReviewedDependency {
-        source: "llm-app",
+        source: "xtask",
         target: "cargo_metadata",
         kind: DependencyKind::Normal,
-        justification: "the maintenance runner requires Cargo's typed workspace metadata API",
+        rationale: "workspace tooling requires Cargo's typed workspace metadata API",
     },
     ReviewedDependency {
         source: "sampling",
         target: "libm",
         kind: DependencyKind::Normal,
-        justification: "sampling requires reviewed portable floating-point math",
+        rationale: "sampling requires reviewed portable floating-point math",
     },
     ReviewedDependency {
         source: "domain-contracts",
         target: "stats_alloc",
         kind: DependencyKind::Development,
-        justification: "allocation contract tests measure project-owned hot paths",
+        rationale: "allocation contract tests measure project-owned hot paths",
     },
     ReviewedDependency {
         source: "sampling",
         target: "stats_alloc",
         kind: DependencyKind::Development,
-        justification: "sampling allocation tests measure the declared zero-allocation region",
+        rationale: "sampling allocation tests measure the declared zero-allocation region",
     },
     ReviewedDependency {
         source: "sampling",
         target: "criterion",
         kind: DependencyKind::Development,
-        justification: "Criterion compiles and runs the reviewed sampling benchmark",
+        rationale: "Criterion compiles and runs the reviewed sampling benchmark",
     },
 ];
 
@@ -277,227 +183,140 @@ const REVIEWED_LOCAL_DEV_DEPENDENCIES: &[ReviewedDependency] = &[ReviewedDepende
     source: "inference-runtime",
     target: "candle-backend",
     kind: DependencyKind::Development,
-    justification: "E0 compatibility tests exercise the Candle backend contract",
+    rationale: "E0 compatibility tests exercise the Candle backend contract",
 }];
 
-/// Loads locked typed Cargo metadata and validates the workspace containing `manifest_path`.
-///
-/// The nested metadata command always uses `--locked` and `--no-deps`. Direct declarations are
-/// sufficient for enforcing package boundaries and avoid conflating transitive vendor graphs with
-/// workspace architecture.
-///
-/// # Errors
-///
-/// Returns an error if Cargo cannot produce or `cargo_metadata` cannot parse locked metadata.
-pub fn validate_workspace(manifest_path: &Path) -> Result<ValidationReport, ValidationError> {
-    let mut command = MetadataCommand::new();
-    command
-        .manifest_path(manifest_path)
-        .no_deps()
-        .other_options(vec!["--locked".to_owned()]);
-    if let Some(cargo) = env::var_os("CARGO") {
-        command.cargo_path(cargo);
-    }
-
-    let metadata = command.exec()?;
-    Ok(validate_metadata(&metadata))
+pub(super) struct PolicyFailure {
+    pub(super) rule: &'static str,
+    pub(super) reason: String,
 }
 
-fn validate_metadata(metadata: &Metadata) -> ValidationReport {
-    let root = metadata.workspace_root.as_std_path();
-    let packages = metadata.workspace_packages();
-    let package_locations = packages
-        .iter()
-        .filter_map(|package| {
-            package.manifest_path.parent().map(|directory| {
-                (
-                    directory.as_std_path().to_path_buf(),
-                    (
-                        package.name.to_string(),
-                        classify_manifest(root, package.manifest_path.as_std_path()),
-                    ),
-                )
-            })
-        })
+pub(super) struct PolicyConfigurationFailure {
+    pub(super) rule: &'static str,
+    pub(super) source: String,
+    pub(super) target: String,
+    pub(super) reason: String,
+}
+
+pub(super) fn policy_configuration_failures() -> Vec<PolicyConfigurationFailure> {
+    let mut failures = Vec::new();
+    review_table_failures(
+        "domain production reviews",
+        REVIEWED_DOMAIN_PRODUCTION_DEPENDENCIES,
+        &mut failures,
+    );
+    review_table_failures(
+        "engine production reviews",
+        REVIEWED_ENGINE_PRODUCTION_DEPENDENCIES,
+        &mut failures,
+    );
+    review_table_failures(
+        "external dependency reviews",
+        REVIEWED_EXTERNAL_DEPENDENCIES,
+        &mut failures,
+    );
+    review_table_failures(
+        "local development reviews",
+        REVIEWED_LOCAL_DEV_DEPENDENCIES,
+        &mut failures,
+    );
+
+    if !reviewed_graph_is_acyclic(REVIEWED_DOMAIN_PRODUCTION_DEPENDENCIES) {
+        failures.push(PolicyConfigurationFailure {
+            rule: RULE_DOMAIN_DAG,
+            source: "domain production reviews".to_owned(),
+            target: "registered domain dependency graph".to_owned(),
+            reason: "reviewed domain production dependencies must form a directed acyclic graph"
+                .to_owned(),
+        });
+    }
+
+    failures
+}
+
+fn review_table_failures(
+    registry: &str,
+    reviewed_dependencies: &[ReviewedDependency],
+    failures: &mut Vec<PolicyConfigurationFailure>,
+) {
+    for (index, reviewed) in reviewed_dependencies.iter().enumerate() {
+        if reviewed.rationale.trim().is_empty() {
+            failures.push(PolicyConfigurationFailure {
+                rule: RULE_REVIEW_REGISTRY,
+                source: registry.to_owned(),
+                target: format!(
+                    "{} --{}--> {}",
+                    reviewed.source, reviewed.kind, reviewed.target
+                ),
+                reason: "every reviewed dependency requires a nonempty rationale".to_owned(),
+            });
+        }
+
+        if reviewed_dependencies.iter().take(index).any(|prior| {
+            prior.source == reviewed.source
+                && prior.target == reviewed.target
+                && prior.kind == reviewed.kind
+        }) {
+            failures.push(PolicyConfigurationFailure {
+                rule: RULE_REVIEW_REGISTRY,
+                source: registry.to_owned(),
+                target: format!(
+                    "{} --{}--> {}",
+                    reviewed.source, reviewed.kind, reviewed.target
+                ),
+                reason: "reviewed dependency entries must be unique by source, target, and kind"
+                    .to_owned(),
+            });
+        }
+    }
+}
+
+fn reviewed_graph_is_acyclic(reviewed_dependencies: &[ReviewedDependency]) -> bool {
+    let mut graph = BTreeMap::<&'static str, BTreeSet<&'static str>>::new();
+    for reviewed in reviewed_dependencies {
+        graph
+            .entry(reviewed.source)
+            .or_default()
+            .insert(reviewed.target);
+        graph.entry(reviewed.target).or_default();
+    }
+
+    let mut incoming = graph
+        .keys()
+        .copied()
+        .map(|package| (package, 0_usize))
         .collect::<BTreeMap<_, _>>();
-    let mut report = ValidationReport::default();
-
-    for package in packages {
-        let source_name = package.name.to_string();
-        let Some(source_layer) = classify_manifest(root, package.manifest_path.as_std_path())
-        else {
-            report
-                .violations
-                .push(unknown_package_location(package, root));
-            continue;
-        };
-
-        for dependency in &package.dependencies {
-            validate_dependency(
-                &mut report,
-                &source_name,
-                source_layer,
-                dependency,
-                &package_locations,
-            );
+    for targets in graph.values() {
+        for target in targets {
+            if let Some(count) = incoming.get_mut(target) {
+                *count += 1;
+            }
         }
     }
 
-    report
-}
-
-fn unknown_package_location(package: &Package, root: &Path) -> Violation {
-    let manifest = package.manifest_path.as_std_path();
-    let relative = manifest.strip_prefix(root).unwrap_or(manifest);
-    let package_directory = relative.parent();
-    let runtime_location = package_directory
-        .is_some_and(|directory| is_direct_child(directory, Path::new("crates/runtime")));
-    let platform_location = package_directory
-        .is_some_and(|directory| is_direct_child(directory, Path::new("crates/platform")));
-    let (rule, reason) = if runtime_location {
-        (
-            RULE_RUNTIME_ROLE,
-            "runtime crates require an explicitly classified E0, capability, or E1 role; directory placement does not grant a capability role",
-        )
-    } else if platform_location {
-        (
-            RULE_PLATFORM_ROLE,
-            "platform crates require an explicitly classified host/platform role; directory placement does not grant infrastructure authority",
-        )
-    } else {
-        (
-            RULE_KNOWN_LOCATION,
-            "workspace packages must be the root runner or an explicitly registered crate at an approved path under crates/domain, crates/platform, crates/adapters, crates/runtime, or crates/apps; unknown package names or locations never receive a fallback layer",
-        )
-    };
-
-    Violation {
-        source: package.name.to_string(),
-        target: relative.display().to_string(),
-        dependency_kind: None,
-        source_layer: None,
-        target_layer: None,
-        rule,
-        reason: reason.to_owned(),
+    let mut ready = incoming
+        .iter()
+        .filter_map(|(package, count)| (*count == 0).then_some(*package))
+        .collect::<BTreeSet<_>>();
+    let mut visited = 0_usize;
+    while let Some(package) = ready.pop_first() {
+        visited += 1;
+        if let Some(targets) = graph.get(package) {
+            for target in targets {
+                if let Some(count) = incoming.get_mut(target) {
+                    *count -= 1;
+                    if *count == 0 {
+                        ready.insert(*target);
+                    }
+                }
+            }
+        }
     }
+
+    visited == graph.len()
 }
 
-fn validate_dependency(
-    report: &mut ValidationReport,
-    source_name: &str,
-    source_layer: Layer,
-    dependency: &Dependency,
-    package_locations: &BTreeMap<PathBuf, (String, Option<Layer>)>,
-) {
-    let Some(kind) = dependency_kind(dependency.kind) else {
-        report.violations.push(Violation {
-            source: source_name.to_owned(),
-            target: dependency.name.clone(),
-            dependency_kind: None,
-            source_layer: Some(source_layer),
-            target_layer: None,
-            rule: RULE_KNOWN_KIND,
-            reason: format!(
-                "Cargo reported an unsupported dependency kind {:?}; unknown kinds fail closed",
-                dependency.kind
-            ),
-        });
-        return;
-    };
-
-    if let Some(path) = dependency.path.as_ref() {
-        validate_local_dependency(
-            report,
-            source_name,
-            source_layer,
-            kind,
-            path.as_std_path(),
-            package_locations,
-        );
-    } else if let Some(failure) = external_policy(source_name, source_layer, &dependency.name, kind)
-    {
-        report.violations.push(edge_violation(
-            source_name,
-            Some(source_layer),
-            &dependency.name,
-            None,
-            kind,
-            failure,
-        ));
-    }
-}
-
-fn validate_local_dependency(
-    report: &mut ValidationReport,
-    source_name: &str,
-    source_layer: Layer,
-    kind: DependencyKind,
-    dependency_path: &Path,
-    package_locations: &BTreeMap<PathBuf, (String, Option<Layer>)>,
-) {
-    let Some((target_name, target_layer)) = package_locations.get(dependency_path) else {
-        report.violations.push(Violation {
-            source: source_name.to_owned(),
-            target: dependency_path.display().to_string(),
-            dependency_kind: Some(kind),
-            source_layer: Some(source_layer),
-            target_layer: None,
-            rule: RULE_LOCAL_TARGET,
-            reason: "path dependencies must resolve to a recognized member of this workspace; outside, excluded, and otherwise unknown local paths fail closed".to_owned(),
-        });
-        return;
-    };
-    let Some(target_layer) = *target_layer else {
-        report.violations.push(Violation {
-            source: source_name.to_owned(),
-            target: target_name.clone(),
-            dependency_kind: Some(kind),
-            source_layer: Some(source_layer),
-            target_layer: None,
-            rule: RULE_LOCAL_TARGET,
-            reason: "the path dependency resolves to a workspace package whose location has no recognized architecture layer".to_owned(),
-        });
-        return;
-    };
-
-    let failure = match kind {
-        DependencyKind::Normal | DependencyKind::Build => local_production_policy(
-            source_name,
-            source_layer,
-            target_name,
-            target_layer,
-            kind,
-        ),
-        DependencyKind::Development => reviewed_dependency(
-            REVIEWED_LOCAL_DEV_DEPENDENCIES,
-            source_name,
-            target_name,
-            kind,
-        )
-        .map_or_else(
-            || {
-                Some(PolicyFailure {
-                    rule: RULE_LOCAL_DEV_REVIEW,
-                    reason: "workspace-local development dependencies require an explicit compatibility-test justification, even when the production matrix would allow the edge".to_owned(),
-                })
-            },
-            |_| None,
-        ),
-    };
-
-    if let Some(failure) = failure {
-        report.violations.push(edge_violation(
-            source_name,
-            Some(source_layer),
-            target_name,
-            Some(target_layer),
-            kind,
-            failure,
-        ));
-    }
-}
-
-fn local_production_policy(
+pub(super) fn local_production_policy(
     source_name: &str,
     source_layer: Layer,
     target_name: &str,
@@ -511,6 +330,24 @@ fn local_production_policy(
         });
     }
 
+    if is_domain_layer(source_layer) && is_domain_layer(target_layer) {
+        return reviewed_dependency(
+            REVIEWED_DOMAIN_PRODUCTION_DEPENDENCIES,
+            source_name,
+            target_name,
+            kind,
+        )
+        .map_or_else(
+            || {
+                Some(PolicyFailure {
+                    rule: RULE_DOMAIN_LOCAL_REVIEW,
+                    reason: "every domain-to-domain production dependency requires an exact reviewed edge with a nonempty rationale in the acyclic domain graph".to_owned(),
+                })
+            },
+            |_| None,
+        );
+    }
+
     if requires_engine_composition_review(source_layer, target_layer) {
         return reviewed_dependency(
             REVIEWED_ENGINE_PRODUCTION_DEPENDENCIES,
@@ -522,7 +359,7 @@ fn local_production_policy(
             || {
                 Some(PolicyFailure {
                     rule: RULE_ENGINE_LOCAL_REVIEW,
-                    reason: "engine dependencies on adapters or other engines require an exact reviewed composition edge with a justification".to_owned(),
+                    reason: "engine dependencies on adapters or other engines require an exact reviewed composition edge with a rationale".to_owned(),
                 })
             },
             |_| None,
@@ -530,6 +367,32 @@ fn local_production_policy(
     }
 
     None
+}
+
+pub(super) fn local_development_policy(
+    source_name: &str,
+    target_name: &str,
+    kind: DependencyKind,
+) -> Option<PolicyFailure> {
+    reviewed_dependency(
+        REVIEWED_LOCAL_DEV_DEPENDENCIES,
+        source_name,
+        target_name,
+        kind,
+    )
+    .map_or_else(
+        || {
+            Some(PolicyFailure {
+                rule: RULE_LOCAL_DEV_REVIEW,
+                reason: "workspace-local development dependencies require an explicit compatibility-test rationale, even when the production matrix would allow the edge".to_owned(),
+            })
+        },
+        |_| None,
+    )
+}
+
+const fn is_domain_layer(layer: Layer) -> bool {
+    matches!(layer, Layer::FeatureFoundation | Layer::FeatureAlgorithm)
 }
 
 const fn requires_engine_composition_review(source: Layer, target: Layer) -> bool {
@@ -545,12 +408,7 @@ const fn requires_engine_composition_review(source: Layer, target: Layer) -> boo
     )
 }
 
-struct PolicyFailure {
-    rule: &'static str,
-    reason: String,
-}
-
-fn external_policy(
+pub(super) fn external_policy(
     source_name: &str,
     source_layer: Layer,
     target_name: &str,
@@ -575,12 +433,12 @@ fn external_policy(
     }
 
     match source_layer {
-        Layer::Root => reviewed_external_or_failure(
+        Layer::Tooling => reviewed_external_or_failure(
             source_name,
             target_name,
             kind,
-            RULE_ROOT_EXTERNAL,
-            "root runner production dependencies must be explicitly reviewed tooling dependencies",
+            RULE_TOOLING_EXTERNAL,
+            "tooling production dependencies must be explicitly reviewed and tools/xtask is the only recognized tooling package",
         ),
         Layer::FeatureFoundation => reviewed_external_or_failure(
             source_name,
@@ -602,7 +460,7 @@ fn external_policy(
                 target_name,
                 kind,
                 RULE_ENGINE_EXTERNAL,
-                "engine external production dependencies require an exact justification and explicit orchestration review; frontend toolkits are prohibited",
+                "engine external production dependencies require an exact rationale and explicit orchestration review; frontend toolkits are prohibited",
             )
         }
         Layer::Adapter | Layer::Application => None,
@@ -646,29 +504,12 @@ fn reviewed_dependency<'a>(
                 && reviewed.target == target_name
                 && reviewed.kind == kind
         })
-        .filter(|reviewed| !reviewed.justification.is_empty())
+        .filter(|reviewed| !reviewed.rationale.trim().is_empty())
 }
 
-fn edge_violation(
-    source: &str,
-    source_layer: Option<Layer>,
-    target: &str,
-    target_layer: Option<Layer>,
-    dependency_kind: DependencyKind,
-    failure: PolicyFailure,
-) -> Violation {
-    Violation {
-        source: source.to_owned(),
-        target: target.to_owned(),
-        dependency_kind: Some(dependency_kind),
-        source_layer,
-        target_layer,
-        rule: failure.rule,
-        reason: failure.reason,
-    }
-}
-
-const fn dependency_kind(kind: cargo_metadata::DependencyKind) -> Option<DependencyKind> {
+pub(super) const fn dependency_kind(
+    kind: cargo_metadata::DependencyKind,
+) -> Option<DependencyKind> {
     match kind {
         cargo_metadata::DependencyKind::Normal => Some(DependencyKind::Normal),
         cargo_metadata::DependencyKind::Build => Some(DependencyKind::Build),
@@ -677,10 +518,10 @@ const fn dependency_kind(kind: cargo_metadata::DependencyKind) -> Option<Depende
     }
 }
 
-fn classify_manifest(root: &Path, manifest: &Path) -> Option<Layer> {
+pub(super) fn classify_manifest(root: &Path, manifest: &Path) -> Option<Layer> {
     let relative = manifest.strip_prefix(root).ok()?;
-    if relative == Path::new("Cargo.toml") {
-        return Some(Layer::Root);
+    if relative == Path::new("tools/xtask/Cargo.toml") {
+        return Some(Layer::Tooling);
     }
     if relative.file_name()? != "Cargo.toml" {
         return None;
@@ -712,15 +553,17 @@ fn classify_manifest(root: &Path, manifest: &Path) -> Option<Layer> {
     }
 }
 
-fn is_direct_child(path: &Path, parent: &Path) -> bool {
+pub(super) fn is_direct_child(path: &Path, parent: &Path) -> bool {
     path.strip_prefix(parent)
         .is_ok_and(|relative| relative.components().count() == 1)
 }
 
 const fn allows_production(source: Layer, target: Layer) -> bool {
     match source {
-        Layer::Root | Layer::FeatureFoundation => false,
-        Layer::FeatureAlgorithm => matches!(target, Layer::FeatureFoundation),
+        Layer::Tooling | Layer::FeatureFoundation => false,
+        Layer::FeatureAlgorithm => {
+            matches!(target, Layer::FeatureFoundation | Layer::FeatureAlgorithm)
+        }
         Layer::Adapter => matches!(target, Layer::FeatureFoundation | Layer::FeatureAlgorithm),
         Layer::EngineFoundation => matches!(
             target,
@@ -750,15 +593,17 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        DependencyKind, Layer, REVIEWED_ENGINE_PRODUCTION_DEPENDENCIES,
-        REVIEWED_EXTERNAL_DEPENDENCIES, REVIEWED_LOCAL_DEV_DEPENDENCIES, RULE_ENGINE_EXTERNAL,
+        DependencyKind, Layer, REVIEWED_DOMAIN_PRODUCTION_DEPENDENCIES,
+        REVIEWED_ENGINE_PRODUCTION_DEPENDENCIES, REVIEWED_EXTERNAL_DEPENDENCIES,
+        REVIEWED_LOCAL_DEV_DEPENDENCIES, RULE_DOMAIN_LOCAL_REVIEW, RULE_ENGINE_EXTERNAL,
         RULE_ENGINE_LOCAL_REVIEW, RULE_EXTERNAL_DEV_REVIEW, RULE_F0_EXTERNAL, RULE_F1_EXTERNAL,
-        allows_production, classify_manifest, external_policy, local_production_policy,
-        reviewed_dependency,
+        ReviewedDependency, allows_production, classify_manifest, external_policy,
+        local_production_policy, policy_configuration_failures, review_table_failures,
+        reviewed_dependency, reviewed_graph_is_acyclic,
     };
 
     const LAYERS: [Layer; 8] = [
-        Layer::Root,
+        Layer::Tooling,
         Layer::FeatureFoundation,
         Layer::FeatureAlgorithm,
         Layer::Adapter,
@@ -774,7 +619,7 @@ mod tests {
         const EXPECTED: [[bool; 8]; 8] = [
             [false, false, false, false, false, false, false, false],
             [false, false, false, false, false, false, false, false],
-            [false, true,  false, false, false, false, false, false],
+            [false, true,  true,  false, false, false, false, false],
             [false, true,  true,  false, false, false, false, false],
             [false, true,  true,  true,  false, false, false, false],
             [false, true,  true,  true,  true,  false, false, false],
@@ -794,10 +639,11 @@ mod tests {
     }
 
     #[test]
-    fn manifests_are_classified_without_runtime_fallbacks() {
+    fn manifests_classify_only_the_exact_xtask_tool() {
         let root = Path::new("/workspace");
         let cases = [
-            ("Cargo.toml", Some(Layer::Root)),
+            ("Cargo.toml", None),
+            ("tools/xtask/Cargo.toml", Some(Layer::Tooling)),
             (
                 "crates/domain/domain-contracts/Cargo.toml",
                 Some(Layer::FeatureFoundation),
@@ -835,11 +681,128 @@ mod tests {
             ("crates/experimental/new-layer/Cargo.toml", None),
             ("crates/apps/nested/too-deep/Cargo.toml", None),
             ("tools/maintenance/Cargo.toml", None),
+            ("tools/xtask/helper/Cargo.toml", None),
         ];
 
         for (relative, expected) in cases {
             assert_eq!(classify_manifest(root, &root.join(relative)), expected);
         }
+    }
+
+    #[test]
+    fn current_domain_edges_are_exactly_reviewed() {
+        const EXPECTED: [(&str, &str); 4] = [
+            ("tokenization", "domain-contracts"),
+            ("context-planner", "domain-contracts"),
+            ("sampling", "domain-contracts"),
+            ("task-graph", "domain-contracts"),
+        ];
+
+        assert_eq!(
+            REVIEWED_DOMAIN_PRODUCTION_DEPENDENCIES.len(),
+            EXPECTED.len()
+        );
+        for ((source, target), reviewed) in EXPECTED
+            .into_iter()
+            .zip(REVIEWED_DOMAIN_PRODUCTION_DEPENDENCIES)
+        {
+            assert_eq!((reviewed.source, reviewed.target), (source, target));
+            assert_eq!(reviewed.kind, DependencyKind::Normal);
+            assert!(!reviewed.rationale.trim().is_empty());
+            assert!(
+                local_production_policy(
+                    source,
+                    Layer::FeatureAlgorithm,
+                    target,
+                    Layer::FeatureFoundation,
+                    DependencyKind::Normal,
+                )
+                .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn unreviewed_f1_peer_edge_fails_after_coarse_layer_acceptance() {
+        assert!(allows_production(
+            Layer::FeatureAlgorithm,
+            Layer::FeatureAlgorithm
+        ));
+        let failure = local_production_policy(
+            "sampling",
+            Layer::FeatureAlgorithm,
+            "tokenization",
+            Layer::FeatureAlgorithm,
+            DependencyKind::Normal,
+        );
+
+        assert_eq!(
+            failure.map(|failure| failure.rule),
+            Some(RULE_DOMAIN_LOCAL_REVIEW)
+        );
+    }
+
+    #[test]
+    fn reviewed_domain_production_graph_is_acyclic() {
+        assert!(reviewed_graph_is_acyclic(
+            REVIEWED_DOMAIN_PRODUCTION_DEPENDENCIES
+        ));
+    }
+
+    #[test]
+    fn review_registry_rejects_duplicate_entries_and_empty_rationales() {
+        const INVALID: &[ReviewedDependency] = &[
+            ReviewedDependency {
+                source: "alpha",
+                target: "beta",
+                kind: DependencyKind::Normal,
+                rationale: "",
+            },
+            ReviewedDependency {
+                source: "alpha",
+                target: "beta",
+                kind: DependencyKind::Normal,
+                rationale: "duplicate",
+            },
+        ];
+        let mut failures = Vec::new();
+        review_table_failures("test reviews", INVALID, &mut failures);
+
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.reason.contains("nonempty rationale"))
+        );
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.reason.contains("must be unique"))
+        );
+    }
+
+    #[test]
+    fn cyclic_review_graph_is_rejected() {
+        const CYCLE: &[ReviewedDependency] = &[
+            ReviewedDependency {
+                source: "alpha",
+                target: "beta",
+                kind: DependencyKind::Normal,
+                rationale: "forward",
+            },
+            ReviewedDependency {
+                source: "beta",
+                target: "alpha",
+                kind: DependencyKind::Normal,
+                rationale: "backward",
+            },
+        ];
+
+        assert!(!reviewed_graph_is_acyclic(CYCLE));
+    }
+
+    #[test]
+    fn configured_review_registries_are_well_formed() {
+        assert!(policy_configuration_failures().is_empty());
     }
 
     #[test]
@@ -985,14 +948,15 @@ mod tests {
     }
 
     #[test]
-    fn reviewed_dependencies_include_inspectable_justifications() {
+    fn reviewed_dependencies_include_inspectable_rationales() {
         for policy in [
+            REVIEWED_DOMAIN_PRODUCTION_DEPENDENCIES,
             REVIEWED_EXTERNAL_DEPENDENCIES,
             REVIEWED_LOCAL_DEV_DEPENDENCIES,
             REVIEWED_ENGINE_PRODUCTION_DEPENDENCIES,
         ] {
             for reviewed in policy {
-                assert!(!reviewed.justification.is_empty());
+                assert!(!reviewed.rationale.trim().is_empty());
                 assert!(
                     reviewed_dependency(policy, reviewed.source, reviewed.target, reviewed.kind)
                         .is_some()

@@ -26,6 +26,28 @@ Concrete local composition uses one monomorphized
 exclusive ownership of model resources, sequences, scheduling, sampling,
 cancellation boundaries, cleanup, accounting, unload, and shutdown.
 
+Generation code is split internally by responsibility into admission, the E0/text
+bridge, bounded output, and settings. This is source organization inside the
+existing E1 crate, not a new layer or a claim of additional public API.
+
+## Startup and incompatible-load cleanup
+
+Startup is transactional across worker creation. If the Hub worker cannot start
+after inference has started, E1 attempts bounded inference shutdown and join
+before returning the primary Hub failure. A rollback timeout retains the complete
+inference owner in a private startup-cleanup quarantine; a later startup retries
+that cleanup instead of detaching the unresolved worker.
+
+A successful E0 load receipt is published only after immutable identity,
+descriptor, scalar, backend, quantization, and tokenizer evidence agree. If they
+do not, E1 keeps the incompatible `ModelHandle` and compatibility failure in a
+private cleanup record while E0 continues to own and account for the model. The
+public loaded-model state remains empty and the application remains unloading
+while bounded unload submission retries proceed. Submission exhaustion or E0
+cleanup exhaustion does not discard that record; it is released only after the
+model is confirmed absent or the inference worker is confirmed disconnected or
+stopped.
+
 ## Completion and chat
 
 Direct completion uses ordinary prompt-text encoding and is available for every
@@ -44,7 +66,12 @@ diagnostics retain raw record identities. Units are selected by
 `context-planner`, rendered in conversation order, exactly tokenized, and
 corrected with a strictly shrinking bounded retry set before E0 admission.
 
+## Shutdown
+
 Explicit application shutdown cooperatively stops and joins the sole E0 worker
-and the bounded Hugging Face resolver worker. The independently stateful
-corrective workflow remains owned by the `corrective-workflow` capability
-engine.
+and the bounded Hugging Face resolver worker. Its private state progresses through
+running, stopping, stopped, and failed/retryable states. A command, wait, or join
+timeout returns a bounded error but retains unfinished worker handles; a later
+`shutdown()` call retries the remaining work. A timeout does not detach either
+worker. The independently stateful corrective workflow remains owned by the
+`corrective-workflow` capability engine.

@@ -20,5 +20,8 @@ Accepted ADRs remain part of the project architecture until superseded. A supers
 - [ADR-0012: Keep local native composition private inside E1](0012-local-native-composition.md) — superseded by ADR-0013
 - [ADR-0013: Use Candle as the sole local execution engine](0013-candle-only-local-execution.md)
 - [ADR-0014: Keep project-owned operational tooling Rust/Cargo-native](0014-rust-cargo-native-operational-tooling.md)
+- [ADR-0015: Use an exact reviewed domain dependency DAG](0015-exact-reviewed-domain-dependency-dag.md)
+- [ADR-0016: Use a virtual workspace and a focused `xtask`](0016-virtual-workspace-focused-xtask.md)
+- [ADR-0017: Keep stable Clippy lints mandatory and nursery exploratory](0017-stable-clippy-gate-exploratory-nursery.md)
 
 For current applied structure, see [project architecture](../../project/architecture.md). For the reusable selectable model, see the [architecture blueprint](../../architecture.md).

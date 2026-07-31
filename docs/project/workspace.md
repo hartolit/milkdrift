@@ -6,12 +6,13 @@ This document is the concrete workspace inventory: crate placement, current memb
 
 ```text
 llm-app/
-├── Cargo.toml
-├── src/
-│   ├── lib.rs
-│   ├── main.rs
-│   └── hygiene.rs
-├── tests/
+├── .cargo/
+│   └── config.toml
+├── Cargo.toml                 virtual workspace manifest
+├── tools/
+│   └── xtask/                 custom architecture, hygiene, and verify tooling
+│       ├── src/
+│       └── tests/
 ├── docs/
 └── crates/
     ├── domain/
@@ -35,12 +36,12 @@ llm-app/
         └── desktop-slint/
 ```
 
-The root package is the native Rust maintenance runner and architecture/hygiene validator. Product execution vectors remain under `crates/apps/`.
+The root has no package target. `.cargo/config.toml` maps `cargo xtask` to the locked `tools/xtask` package; product execution vectors remain under `crates/apps/`.
 
 ## Current members
 
 ```text
-.
+tools/xtask
 crates/domain/domain-contracts
 crates/domain/tokenization
 crates/domain/context-planner
@@ -58,6 +59,17 @@ crates/apps/desktop-slint
 ```
 
 Each domain and runtime crate owns a coherent, independently testable responsibility. None exists merely to hold one identifier, data structure, or callback.
+
+## Responsibility-based source organization
+
+Several larger responsibilities are split into private or crate-internal modules without creating new workspace layers:
+
+- `task-graph` separates graph structure/validation (including its owned `TaskId`), artifact-flow validation, runtime state transitions, and errors;
+- `inference-runtime` separates admission, execution, cleanup, memory/accounting, inspection, unload, and shutdown around one `InferenceRuntime` registry;
+- E1 generation separates admission, the inference/text bridge, bounded output, and generation settings inside `application-runtime`;
+- the desktop presenter separates callback binding, control synchronization, model mapping, and bounded output/conversation presentation.
+
+These are responsibility and maintainability boundaries. Visibility remains controlled by each crate root, so the file splits do not by themselves assert new public APIs or independently deployable components.
 
 ## Workspace-local production dependency edges
 
@@ -77,6 +89,8 @@ application-runtime -> context-planner + tokenization + domain-contracts
 desktop-slint       -> application-runtime
 ```
 
+`xtask`, `hf-hub-adapter`, and `redb-storage` have no workspace-local production dependencies. `xtask` depends externally on the reviewed `cargo_metadata` crate.
+
 `application-runtime/src/local.rs` is a private internal composition boundary, not a workspace member. It owns one `HostedRuntime<CandleLlamaSource>` and one inference worker thread. E1 separately owns one bounded Hub worker, one `HfTokenizer`, request-local `HfOwnedStreamingDecoder` values, and one resident-model lifecycle. [ADR-0013](../agent/decisions/0013-candle-only-local-execution.md) records this composition. There is no `application-api` package.
 
 `desktop-slint` has no production import of Candle, Hugging Face adapter source types, redb, host channels, or inference commands. It maps E1's repository/revision selection, state, events, and model metadata to Slint presentation.
@@ -87,9 +101,9 @@ Production code may not acquire an upward dependency. Platform and production ad
 
 ## Architecture enforcement
 
-The validator uses typed Cargo metadata with the committed lockfile, fails closed on unknown workspace locations and unresolved local path targets, distinguishes dependency kinds, requires explicit runtime/platform roles, and applies the dependency rules documented in [dependency policy](dependency-policy.md).
+`cargo xtask architecture` uses typed Cargo metadata with the committed lockfile, fails closed on unknown workspace locations and unresolved local path targets, distinguishes dependency kinds, requires explicit tooling/runtime/platform roles, and applies the dependency rules documented in [dependency policy](dependency-policy.md).
 
-The accepted roots are `crates/domain`, `crates/platform`, `crates/adapters`, `crates/runtime`, and `crates/apps`. Legacy paths are not classified. Adapter packages remain direct children of `crates/adapters` until a later structural decision explicitly permits deeper grouping.
+The accepted product roots are `crates/domain`, `crates/platform`, `crates/adapters`, `crates/runtime`, and `crates/apps`; `tools/xtask` is the only accepted tooling package. Other tooling locations and legacy product paths are not classified. Adapter packages remain direct children of `crates/adapters` until a later structural decision explicitly permits deeper grouping.
 
 ## Generated-code lint boundary
 

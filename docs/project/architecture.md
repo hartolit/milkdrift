@@ -4,9 +4,11 @@ This project selects **[Model B: Layered Workspace](../architecture.md#model-b-l
 
 ## Physical layout and logical roles
 
-The repository keeps five physical categories:
+The root `Cargo.toml` is a virtual workspace manifest, not a package. `.cargo/config.toml` provides the workspace-local `cargo xtask` alias, and `tools/xtask` is the sole registered custom tooling member. Product code remains in five responsibility-based categories:
 
 ```text
+.cargo/             workspace-local Cargo configuration
+tools/xtask/        architecture, hygiene, and composite verification tooling
 crates/domain/      portable contracts and algorithms
 crates/platform/    process-host execution primitives
 crates/adapters/    external, vendor, model, and persistence integrations
@@ -34,9 +36,9 @@ E1 may coordinate capability engines and E0. Its current private local compositi
 
 ## Domain tiers
 
-`domain-contracts` is the F0 shared foundation. It owns vocabulary that genuinely crosses backend/runtime or multiple-domain boundaries: typed identities, capacities, model/sequence contracts, lifecycle transitions, and output records.
+`domain-contracts` is the F0 shared foundation. F0 inclusion requires either a backend/runtime crossing or at least two stable, distinct domain consumers. This keeps single-feature vocabulary with its owning algorithm; for example, `TaskId` belongs to `task-graph`, not `domain-contracts`.
 
-`tokenization`, `context-planner`, `sampling`, and `task-graph` are F1 algorithm crates. The currently enforced production policy permits F1 → F0 and rejects F1 → F1. This is a project constraint rather than a universal Rust rule; do not push unrelated vocabulary into F0 merely to evade the graph. Phase 9 may replace that restriction only with an explicitly reviewed acyclic graph.
+`tokenization`, `context-planner`, `sampling`, and `task-graph` are F1 algorithm crates. The validator registers every domain-to-domain production edge exactly, requires a nonempty review rationale, and verifies that the complete reviewed graph is acyclic. The current graph contains only `tokenization → domain-contracts`, `context-planner → domain-contracts`, `sampling → domain-contracts`, and `task-graph → domain-contracts`. There is no current F1 peer edge, but F1 → F1 is not universally forbidden: a future peer edge requires an exact review and must preserve the DAG. Every unreviewed domain peer fails closed.
 
 Portable domain code does not import runtimes, applications, platform implementations, vendor libraries, frontend toolkits, or filesystem/network/database/OS transport implementations. Portability claims are scoped in [portability](portability.md).
 
@@ -67,7 +69,7 @@ E1 `application-runtime` is the frontend-neutral application façade and current
 - supported scalar: F32, F16, or BF16 as validated;
 - immutable identity: repository plus resolved Hub commit.
 
-Callers cannot construct arbitrary engine/source/device/format combinations, and Candle types do not cross the public E1 boundary. Concrete local wiring stays behind private `local.rs`, with one `HostedRuntime<CandleLlamaSource>` and one inference thread. The Hub worker, `HfTokenizer`, request-local `HfOwnedStreamingDecoder`, and redb storage remain private composition details.
+Callers cannot construct arbitrary engine/source/device/format combinations, and Candle types do not cross the public E1 boundary. Concrete local wiring stays behind private `local.rs`, with one `HostedRuntime<CandleLlamaSource>` and one inference thread. The Hub worker, `HfTokenizer`, request-local `HfOwnedStreamingDecoder`, and redb storage remain private composition details. Startup is transactional across worker creation: if Hub-worker startup fails after inference startup, E1 requests bounded inference shutdown and joins the started worker before returning the Hub failure.
 
 [ADR-0013](../agent/decisions/0013-candle-only-local-execution.md) supersedes the former two-worker composition while retaining a non-generic E1 façade, private concrete composition, and static token-sensitive execution. There is no `application-api`; a transport contract requires a real separate-process or browser consumer.
 
@@ -113,9 +115,9 @@ A native Slint, Tauri, TUI/CLI, headless node, or similar process can host or ca
 
 Model and sequence values are exclusively owned by E0 rather than shared through public `Arc<Model>`-style ownership. Public handles carry identity and generation safety, not ownership of model state.
 
-Admission validates capacities and accounting before state becomes visible. Cleanup failure does not imply release: unresolved resources remain quarantined and accounted until explicit cleanup succeeds or its bounded retry policy is exhausted. Detailed behavior belongs in [inference runtime](inference-runtime.md) and [model lifecycle](lifecycle.md).
+Admission validates capacities and accounting before state becomes visible. Cleanup failure does not imply release: unresolved E0 resources remain quarantined and accounted through retry and exhaustion. If a loaded receipt is incompatible with E1's resolution/tokenizer evidence, E1 does not publish it as loaded; it privately retains the model handle and cleanup state while E0 retains ownership/accounting, including after unload-submission or E0 cleanup exhaustion. Detailed behavior belongs in [inference runtime](inference-runtime.md), [model lifecycle](lifecycle.md), and [application runtime](application-runtime.md).
 
-Explicit bounded shutdown is required for normal operation; blocking `Drop` is not the primary protocol. E1 requests Hub shutdown, sends one ticketed E0 shutdown command, and attempts bounded joins for the sole inference worker and the Hub worker. See [ADR-0006](../agent/decisions/0006-explicit-bounded-shutdown.md).
+Explicit bounded shutdown is required for normal operation; blocking `Drop` is not the primary protocol. E1 tracks running, stopping, stopped, and failed/retryable shutdown states, requests Hub shutdown, sends one ticketed E0 shutdown command, and attempts bounded joins for both workers even after an earlier error. A timeout leaves unfinished worker handles owned by E1 so a later shutdown call can retry; timeout is not worker detachment. See [ADR-0006](../agent/decisions/0006-explicit-bounded-shutdown.md).
 
 ## Current product constraints
 
@@ -130,8 +132,8 @@ The authoritative integration and validation matrix is in [implementation status
 
 ## Enforcement
 
-The architecture validator loads typed locked Cargo metadata, fails closed on unknown workspace locations and unresolved local path targets, distinguishes dependency kinds, and enforces the logical direction F0/F1 → platform/adapters → E0/capabilities → E1 → applications.
+`cargo xtask architecture` loads typed locked Cargo metadata, fails closed on unknown workspace locations and unresolved local path targets, distinguishes dependency kinds, and enforces the logical direction F0/F1 → platform/adapters → E0/capabilities → E1 → applications. `tools/xtask` is the sole tooling package recognized outside those product layers.
 
-`inference-runtime`, `corrective-workflow`, and `application-runtime` are the recognized E0, capability, and E1 packages; `host-runtime` is the only recognized platform package. Runtime production dependencies on adapters/platform or other runtimes require exact reviewed source/target/kind entries. [Dependency policy](dependency-policy.md) owns those review rules and the Rust-owned repository hygiene gate.
+`inference-runtime`, `corrective-workflow`, and `application-runtime` are the recognized E0, capability, and E1 packages; `host-runtime` is the only recognized platform package. Domain production dependencies are exact entries in the reviewed acyclic domain graph. Runtime production dependencies on adapters/platform or other runtimes likewise require exact reviewed source/target/kind entries. `cargo xtask hygiene` is the independent repository-hygiene check; `cargo xtask verify` runs both policies before the ordinary Cargo gates. [Dependency policy](dependency-policy.md) owns the review rules and hygiene boundary.
 
 Project-authored source denies unsafe code. Generated-code exceptions are narrow and contained; [workspace boundaries](workspace.md) records the current Slint generated-code lint boundary.

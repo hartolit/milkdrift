@@ -18,6 +18,7 @@ E1 owns one concrete Candle E0 worker/thread, one bounded Hub resolver worker, o
 - Direct completion is available for every successfully loaded model.
 - Chat is enabled only for `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable commit `fe8a4ea1ffedaf415f4da2f062534de366a451e6` when `</s>` resolves to token ID 2.
 - Conversation/context planning, regeneration and supersession, bounded decoded output, cancellation, cleanup retry/exhaustion, unload policy, redb-backed preferences/catalogue state, and explicit bounded shutdown remain implemented.
+- Startup rolls back an already-started inference worker if Hub-worker startup fails. An incompatible load receipt is never published as the resident model: its handle remains privately accounted through unload retry or exhaustion. Shutdown is retryable, and a timeout retains worker handles rather than detaching them.
 - Slint maps only E1-owned types and displays the derived engine, source, CPU device, Safetensors format, scalar type, and immutable Hub identity.
 
 GGUF is not supported by the current product. Possible Candle-native GGUF or other quantized-format work requires a separate reviewed implementation. GPU execution is also deferred. There is no current llama.cpp product, hosted-provider or peer execution path, browser transport, `application-api`, or multiple application-level resident models.
@@ -26,7 +27,11 @@ See the [current implementation status](docs/project/implementation-status.md) f
 
 ## Workspace
 
+The root `Cargo.toml` is a virtual workspace manifest; there is no root Rust package. Repository-defined maintenance tooling is the `xtask` member under `tools/xtask`, exposed through the alias in `.cargo/config.toml`.
+
 ```text
+.cargo/              workspace-local Cargo aliases
+tools/xtask/         architecture, hygiene, and composite verification tooling
 crates/domain/       portable contracts and algorithms
 crates/platform/     process-host threading, timing, channels, and bounded output plumbing
 crates/adapters/     Candle, tokenizer, Hub, storage, and vendor integrations
@@ -34,30 +39,32 @@ crates/runtime/      E0 inference, capability engines, and E1 application coordi
 crates/apps/         presentation and process entry points
 ```
 
-The applied structure is documented in [project architecture](docs/project/architecture.md), with exact crate edges in [workspace boundaries](docs/project/workspace.md) and enforcement in [dependency policy](docs/project/dependency-policy.md). Documentation authority and component guides are indexed in the [documentation map](docs/README.md).
+The applied structure is documented in [project architecture](docs/project/architecture.md), with exact members and crate edges in [workspace boundaries](docs/project/workspace.md) and enforcement in [dependency policy](docs/project/dependency-policy.md). Documentation authority and component guides are indexed in the [documentation map](docs/README.md).
 
 ## Validate
 
 Run the canonical locked repository gate with:
 
 ```text
-cargo run --locked --bin llm-app -- verify
+cargo xtask verify
 ```
 
-Run the Rust-owned tooling/dependency hygiene policy independently with:
+Run the two custom policy checks independently with:
 
 ```text
-cargo run --locked --bin llm-app -- hygiene
+cargo xtask architecture
+cargo xtask hygiene
 ```
 
-Ordinary workspace tests are download-free. The opt-in, network-dependent E1 Candle/Hub smoke and its exact immutable revision are documented in [project validation](docs/project/validation.md#rust-native-candle-hub-smoke).
-
-Plain Cargo commands also work normally:
+`xtask` owns only repository-specific policy and the composite gate. Ordinary Cargo operations are direct rather than forwarded through custom subcommands:
 
 ```text
 cargo check --workspace --all-targets --locked
 cargo test --workspace --locked
+cargo bench --locked -p sampling --bench sampling_pipeline
 ```
+
+Ordinary workspace tests are download-free. The opt-in, network-dependent E1 Candle/Hub smoke and its exact immutable revision are documented in [project validation](docs/project/validation.md#rust-native-candle-hub-smoke).
 
 ## Slint frontend
 

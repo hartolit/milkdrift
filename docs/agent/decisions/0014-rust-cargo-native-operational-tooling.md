@@ -7,11 +7,11 @@
 
 The removed GGUF path introduced a project-owned Python fixture generator, and the external Candle validation runbook required the Python-distributed Hugging Face CLI plus external digest tooling. Those requirements were not part of the Rust application architecture, were not exercised by Cargo's selected graph, and created an additional language environment for maintained build, test, validation, and release work.
 
-The repository already owns artifact resolution in `hf-hub-adapter` and repository maintenance in a Rust Cargo package. Operational policy should match those ownership boundaries and prevent an incidental fixture or command from silently reintroducing Python or a removed native engine.
+The repository already owns artifact resolution in `hf-hub-adapter` and repository maintenance in the Rust Cargo package at `tools/xtask`. Operational policy should match those ownership boundaries and prevent an incidental fixture or command from silently reintroducing Python or a removed native engine.
 
 ## Decision
 
-Project-owned operational tooling is implemented in Rust and invoked through Cargo. Maintained project workflows must not require a Python runtime, Python package manager, Python-distributed CLI, notebook environment, or embedded Python runtime.
+Project-owned operational tooling is implemented in Rust and invoked through Cargo. Custom repository policy and composite verification live in `tools/xtask`; ordinary one-step operations use Cargo directly, as specified by [ADR-0016](0016-virtual-workspace-focused-xtask.md). Maintained project workflows must not require a Python runtime, Python package manager, Python-distributed CLI, notebook environment, or embedded Python runtime.
 
 The enforced project boundary includes:
 
@@ -25,7 +25,9 @@ Within that boundary, the repository does not contain or invoke `python`, `pytho
 
 Upstream Rust dependencies are not rejected merely because their source repositories contain optional Python examples, bindings, or development tooling that Cargo neither selects nor invokes. The policy governs this repository's selected build, runtime, and maintained operational path.
 
-A Rust-owned repository hygiene check enforces the boundary. It rejects conventional tracked Python artifacts, maintained operational invocations, prohibited direct manifest dependencies, and forbidden packages in Cargo metadata. Narrow exclusions may permit explanatory text in superseded ADRs, preserved execution history, and dated analysis; exclusions do not permit executable or maintained operational commands.
+The Rust-owned hygiene check in `tools/xtask` enforces the boundary across every Git-tracked maintained surface, direct Cargo declarations, and the locked selected dependency graph. Maintained surfaces are scanned without filename-, directory-, historical-purpose-, or document-status-based bypasses; superseded ADRs and execution history do not receive blanket exclusions. The scanner distinguishes negative explanatory policy prose from an operational invocation by content semantics rather than by where the text appears.
+
+Any future exception must identify the exact artifact, invocation, declaration, or selected package; state a narrow rationale and scope; receive explicit review; and include tests proving both the intended allowance and rejection of nearby forbidden cases. Wildcard filename, directory, document-status, or history exemptions are not acceptable.
 
 Where supported cleanly, `cargo-deny` adds exact package bans as defense in depth. Bans remain narrow and evidence-based rather than rejecting general Rust build dependencies that have valid independent owners.
 
@@ -42,7 +44,7 @@ External Hugging Face smoke validation runs through Cargo and reuses E1's produc
 
 ## Consequences
 
-- The repository has one maintained implementation language and command entry point for operational tooling: Rust through Cargo.
+- The repository has one maintained implementation language for operational tooling: Rust through Cargo; custom policy and composite verification are owned by `tools/xtask`.
 - Fixture-based tests remain download-free; external model validation remains explicit, opt-in, network-dependent, and production-path based.
 - Historical documents may explain former Python and llama.cpp use without becoming executable guidance.
 - CI and contributor setup no longer install Python or llama.cpp-specific tooling for project commands.
@@ -51,4 +53,4 @@ External Hugging Face smoke validation runs through Cargo and reuses E1's produc
 
 ## Review trigger
 
-A proposal to add any project-owned non-Rust operational requirement must be reviewed through a new ADR that identifies the owner, selected build/runtime path, reproducibility and security implications, CI/toolchain cost, and why a Rust/Cargo implementation is insufficient. Upstream optional files that remain unselected do not trigger review.
+A proposal to add any project-owned non-Rust operational requirement must be reviewed through a new ADR that identifies the owner, selected build/runtime path, reproducibility and security implications, CI/toolchain cost, and why a Rust/Cargo implementation is insufficient. A proposed hygiene exception must additionally be exact, reviewed, and covered by positive and negative policy tests; path or document status cannot supply the exception. Upstream optional files that remain unselected do not trigger review.

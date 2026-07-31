@@ -20,16 +20,49 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - name: Install selected native and Slint build dependencies
+      - name: Install selected native compiler and Slint dependencies
         run: |
           sudo apt-get update
-          # The selected hf-hub TLS path builds aws-lc and still requires build-essential and CMake.
+          # The selected non-FIPS aws-lc path uses its CC builder; build-essential supplies the native compiler.
           # The remaining development libraries are Slint windowing/font integration packages.
-          sudo apt-get install --yes build-essential cmake libfontconfig1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
+          sudo apt-get install --yes build-essential libfontconfig1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
       - name: Verify committed lockfile
         run: cargo metadata --locked --format-version 1 --no-deps > /dev/null
-      - name: Run canonical Rust quality gate
-        run: cargo run --locked --bin llm-app -- verify
+      - name: Run canonical gate from a clean target with forbidden-tool shims
+        env:
+          AWS_LC_SYS_CMAKE_BUILDER: "0"
+          AWS_LC_SYS_USE_SYSTEM: "0"
+          CARGO_TARGET_DIR: ${{ runner.temp }}/llm-app-clean-quality-target
+        run: |
+          set -eu
+
+          shim_dir="${RUNNER_TEMP}/llm-app-failing-shims"
+          rm -rf "${CARGO_TARGET_DIR}" "${shim_dir}"
+          mkdir -p "${shim_dir}"
+
+          cat > "${shim_dir}/fail" <<'EOF'
+          #!/bin/sh
+          printf '%s\n' "unexpected external tool invocation: $0" >&2
+          exit 86
+          EOF
+          chmod 755 "${shim_dir}/fail"
+
+          for tool in cmake cmake3 clang clang++ python python3 python-config python3-config pip pip3 pipx uv conda poetry pytest maturin hf huggingface-cli; do
+            ln -s fail "${shim_dir}/${tool}"
+          done
+
+          export CMAKE="${shim_dir}/cmake"
+          export PYTHON="${shim_dir}/python"
+          export PYTHON3="${shim_dir}/python3"
+          export PATH="${shim_dir}:${PATH}"
+
+          git rev-parse HEAD
+          git rev-parse 'HEAD^{tree}'
+          cargo xtask verify
+      - name: Report exploratory Clippy nursery findings
+        if: github.event_name == 'schedule'
+        continue-on-error: true
+        run: cargo clippy --workspace --all-targets --locked -- -W clippy::nursery
       - name: Check portable crates for WebAssembly
         run: cargo check --locked --target wasm32-unknown-unknown --lib -p domain-contracts -p tokenization -p context-planner -p sampling -p task-graph
       - name: Check portable crates for embedded no_std

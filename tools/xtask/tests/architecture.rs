@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use llm_app::validate_workspace;
+use xtask::validate_workspace;
 
 static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -21,7 +21,7 @@ impl FixtureWorkspace {
             .join(name);
         let id = NEXT_FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
-            "llm-app-architecture-{name}-{}-{id}",
+            "xtask-architecture-{name}-{}-{id}",
             std::process::id()
         ));
         copy_fixture(&source, &root)?;
@@ -60,9 +60,15 @@ fn copy_fixture(source: &Path, destination: &Path) -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
+fn workspace_manifest() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("Cargo.toml")
+}
+
 #[test]
 fn actual_workspace_satisfies_architecture_policy() -> Result<(), Box<dyn Error>> {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+    let manifest = workspace_manifest();
     let report = validate_workspace(&manifest)?;
 
     assert!(
@@ -86,7 +92,7 @@ fn forbidden_actual_manifest_edge_reports_rule_and_reason() -> Result<(), Box<dy
     assert_eq!(violation.rule(), "LAYER-PROD-1");
     assert_eq!(
         violation.dependency_kind(),
-        Some(llm_app::DependencyKind::Normal)
+        Some(xtask::DependencyKind::Normal)
     );
     assert!(violation.reason().contains("8-layer production direction"));
     let rendered = violation.to_string();
@@ -114,6 +120,24 @@ fn unknown_workspace_location_fails_closed() -> Result<(), Box<dyn Error>> {
             .reason()
             .contains("never receive a fallback layer")
     );
+    Ok(())
+}
+
+#[test]
+fn unknown_tooling_package_fails_closed() -> Result<(), Box<dyn Error>> {
+    let fixture = FixtureWorkspace::new("unknown-tool")?;
+    let report = validate_workspace(&fixture.manifest())?;
+    let Some(violation) = report
+        .violations()
+        .iter()
+        .find(|violation| violation.source() == "release-tool")
+    else {
+        return Err("fixture's unknown tooling package was accepted".into());
+    };
+
+    assert_eq!(violation.rule(), "LAYOUT-1");
+    assert!(violation.target().contains("tools/release"));
+    assert!(violation.reason().contains("unknown tools fail closed"));
     Ok(())
 }
 
@@ -175,5 +199,27 @@ fn unreviewed_runtime_edge_fails_closed() -> Result<(), Box<dyn Error>> {
             .reason()
             .contains("exact reviewed composition edge")
     );
+    Ok(())
+}
+
+#[test]
+fn unreviewed_domain_peer_edge_fails_closed() -> Result<(), Box<dyn Error>> {
+    let fixture = FixtureWorkspace::new("unreviewed-domain-edge")?;
+    let report = validate_workspace(&fixture.manifest())?;
+    let Some(violation) = report
+        .violations()
+        .iter()
+        .find(|violation| violation.source() == "sampling" && violation.target() == "tokenization")
+    else {
+        return Err("fixture's unreviewed F1 -> F1 edge was accepted".into());
+    };
+
+    assert_eq!(violation.rule(), "DOMAIN-LOCAL-PROD-1");
+    assert_eq!(
+        violation.dependency_kind(),
+        Some(xtask::DependencyKind::Normal)
+    );
+    assert!(violation.reason().contains("exact reviewed edge"));
+    assert!(violation.reason().contains("acyclic domain graph"));
     Ok(())
 }

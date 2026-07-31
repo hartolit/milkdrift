@@ -4,10 +4,10 @@
 
 Optimization changes require before-and-after measurements on the same host with the same toolchain and benchmark configuration. Absolute timing varies with CPU frequency, thermal state, operating-system scheduling, compiler version, and background work, so local results are evidence rather than portable pass/fail thresholds.
 
-Allocation tests remain deterministic enforcement gates. Statistical benchmarks are invoked separately because they require an optimized build and sustained host execution:
+Allocation tests remain deterministic enforcement gates. The canonical `cargo xtask verify` command compiles benchmark targets without running their statistical measurements. Run the sampling benchmark as a direct Cargo operation because ordinary Cargo commands are not forwarded through `xtask`:
 
 ```text
-cargo run --locked --bin llm-app -- benchmark
+cargo bench --locked -p sampling --bench sampling_pipeline
 ```
 
 ## Sampling pipeline

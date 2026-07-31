@@ -365,11 +365,11 @@ It validated architecture/dependency policy, formatting, workspace checks, the c
 ## Phase 9 checkpoint — Candle-only architecture and Rust-native tooling
 
 - **Prepared:** 2026-07-31
-- **Final reviewed baseline:** `15d9e87cdaee77fd0d49247712d3c12dfb3adea2` plus the uncommitted cleanup working tree
+- **Recorded artifact:** commit `f0fe9c6623f1e2afd569767d903f3978e00560da`, tree `db8a9ae77f41e0e769c7434ce21a940ae33784ae`
 - **Scope:** remove the accidental llama.cpp/GGUF product path and project-owned Python tooling while preserving Candle application and backend-neutral E0 behavior
-- **Recorded outcome:** correction complete; canonical, policy, portability, clean-build, and external-model validation passed; no manual graphical acceptance recorded
+- **Recorded outcome:** Candle-only correction checkpoint complete; canonical, policy, portability, clean-build, and external-model validation passed; no manual graphical acceptance recorded
 
-The first baseline observation saw `d7d03e46c0239d4be8c34e8a5e16959fb5bd46c3` with only the user-provided cleanup brief untracked. During execution, `main` advanced to `15d9e87cdaee77fd0d49247712d3c12dfb3adea2`; that commit's only change was tracking the same brief. No product source changed in that transition. All final evidence below applies to `15d9e87` plus the dirty cleanup tree.
+The first baseline observation saw `d7d03e46c0239d4be8c34e8a5e16959fb5bd46c3` with only the user-provided cleanup brief untracked. During execution, `main` advanced to `15d9e87cdaee77fd0d49247712d3c12dfb3adea2`; that commit's only change was tracking the same brief. The cleanup was validated as a working tree based on that commit and was subsequently committed as `f0fe9c6…`, whose stable Git tree is `db8a9ae…`. The recorded artifact, rather than an impossible self-referential SHA embedded before commit, is the durable checkpoint identity.
 
 [ADR-0013](../decisions/0013-candle-only-local-execution.md) supersedes ADR-0012 for current architecture, while retaining the historical Phase 8 record above. [ADR-0014](../decisions/0014-rust-cargo-native-operational-tooling.md) defines the maintained tooling boundary.
 
@@ -426,3 +426,40 @@ LLM_APP_CANDLE_HUB_SMOKE=1 cargo run --locked -p application-runtime --example c
 It resolved the exact Hub commit, loaded Candle/F32 on CPU with a 32,000-token vocabulary, generated eight tokens, observed terminal and released token-limit state, unloaded with no cancellation, explicitly shut down both workers, and removed its temporary redb workspace. This proves one pinned integration path, not language quality or broad model compatibility.
 
 No manual graphical desktop session was performed. Candle-native GGUF/quantized loading and GPU execution remain separate reviewed future work.
+
+## Phase 9 closure — structural reconciliation and lifecycle hardening
+
+- **Prepared:** 2026-08-01
+- **Input checkpoint:** commit `f0fe9c6623f1e2afd569767d903f3978e00560da`, tree `db8a9ae77f41e0e769c7434ce21a940ae33784ae`
+- **Scope:** complete work package 9.5, correct reviewed E1 ownership failures, remove stale native-tool prerequisites, and reconcile current documentation
+- **Recorded outcome:** Phase 9 complete; Phase 10 is the next plan phase
+
+The closure was developed and locally validated as a working tree based on the committed Candle-only checkpoint. Required CI prints the resulting commit and `HEAD^{tree}` immediately before the canonical gate, so committed provenance lives in the CI run rather than requiring this history entry to predict the SHA or tree that contains itself.
+
+### Closure matrix
+
+| Requirement | Recorded closure |
+|---|---|
+| Retryable shutdown ownership | E1 tracks running, stopping, stopped, and failed/retryable outcomes. Inference and Hub join handles remain owned after a timeout; later shutdown calls retry unresolved joins and return idempotent success only after both workers are confirmed stopped. |
+| Rejected-model ownership | Compatibility rejection retains the native model handle, compatibility failure, and unload state privately through bounded submission retry, successful unload, proven runtime disconnection, or observable exhaustion. Fault tests cover recovery and retained exhaustion. |
+| Transactional startup | An owning startup guard retains the already-started inference worker until Hub startup commits. Forced Hub failure attempts bounded inference shutdown/join before returning the primary Hub error; rollback timeout quarantines the complete owner for a later bounded reap rather than detaching it. |
+| Domain DAG | ADR-0015 registers the exact four current F1 → F0 edges, rejects every unreviewed domain edge, validates registry rationales/uniqueness/acyclicity, moves `TaskId` to `task-graph`, and defines the shared-foundation inclusion rule. |
+| Internal responsibilities | E0 runtime operations, E1 generation, task graph/artifact/state/error logic, desktop presentation, architecture policy, and hygiene parsing were split into private responsibility modules without introducing product layers or breaking public façades. |
+| Workspace tooling | ADR-0016 makes the root a virtual workspace and moves custom architecture, hygiene, and composite verification to `tools/xtask`. Pass-through commands for one-step Cargo operations were removed. |
+| Lint policy | ADR-0017 keeps stable selected Clippy policy mandatory under `-D warnings`; the blanket nursery group is reported separately and non-blocking. |
+| Native prerequisites | Ubuntu CI no longer installs system CMake. The non-FIPS AWS-LC path uses its CC builder, and the required canonical gate starts from a fresh target with failing external-tool shims. |
+| Hygiene/docs | The temporary cleanup brief and broad historical filename exemption were removed. Current status, architecture, validation, workspace, component, plan, and handoff documents agree that Phase 9 is closed. |
+
+### Validation evidence
+
+The canonical closure command passed on the resulting working tree:
+
+```text
+cargo xtask verify
+```
+
+The same gate passed from a fresh target with fail-fast shims covering the removed or prohibited external tool families and with non-FIPS AWS-LC forced to its CC builder. Focused changed-package suites passed, including 37 `application-runtime` unit tests plus 3 integration tests, 51 `inference-runtime` tests, 19 desktop presenter tests, 11 `task-graph` tests, 26 corrective-workflow tests, and the xtask unit/integration policy suites.
+
+Both named portability targets passed for all five domain crates. Locked cargo-deny policy, offline local-link checking, architecture/hygiene checks, and `git diff --check` also passed. The scheduled nursery command is informational and is not part of this acceptance gate.
+
+The network-dependent E1 Hub smoke was not rerun for this structural closure. Its prior success remains evidence for the committed Candle-only checkpoint only, not for this exact working tree. No manual graphical desktop session was performed.

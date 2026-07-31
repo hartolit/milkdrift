@@ -12,16 +12,65 @@ use inference_runtime::{
 };
 
 use crate::hub_worker::HubCommand;
+use crate::local::LocalInference;
 use crate::support::thread_failure;
 use crate::{
-    ApplicationActivity, ApplicationError, ApplicationFailure, ApplicationFailureKind,
-    ApplicationRuntime, ApplicationWorker,
+    ApplicationError, ApplicationFailure, ApplicationFailureKind, ApplicationRuntime,
+    ApplicationTiming, ApplicationWorker,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShutdownStatus {
+    Running,
+    Stopping,
+    Stopped,
+    FailedOrRetryable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InferenceShutdownState {
+    Running,
+    Awaiting(CommandTicket),
+    StopObserved,
+}
+
+pub struct ShutdownControl {
+    pub(crate) status: ShutdownStatus,
+    hub_stop_requested: bool,
+    inference: InferenceShutdownState,
+    #[cfg(test)]
+    pub(crate) forced_runtime_join_timeouts: usize,
+    #[cfg(test)]
+    pub(crate) forced_hub_join_timeouts: usize,
+}
+
+impl Default for ShutdownControl {
+    fn default() -> Self {
+        Self {
+            status: ShutdownStatus::Running,
+            hub_stop_requested: false,
+            inference: InferenceShutdownState::Running,
+            #[cfg(test)]
+            forced_runtime_join_timeouts: 0,
+            #[cfg(test)]
+            forced_hub_join_timeouts: 0,
+        }
+    }
+}
+
 pub fn shutdown(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationError> {
-    if runtime.state.activity() == ApplicationActivity::ShuttingDown {
+    if runtime.shutdown_control.status == ShutdownStatus::Stopped {
         return Ok(());
     }
+    if runtime.shutdown_control.status == ShutdownStatus::FailedOrRetryable
+        && workers_confirmed_stopped(runtime)
+    {
+        runtime.shutdown_control.status = ShutdownStatus::Stopped;
+        runtime.release_incompatible_model_cleanup();
+        return Ok(());
+    }
+
+    runtime.shutdown_control.status = ShutdownStatus::Stopping;
     runtime.state.begin_shutdown();
 
     let mut first_error = request_hub_shutdown(runtime).err();
@@ -29,11 +78,42 @@ pub fn shutdown(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationError
     record_first_error(&mut first_error, join_runtime_worker(runtime).err());
     record_first_error(&mut first_error, join_hub_worker(runtime).err());
 
-    first_error.map_or(Ok(()), Err)
+    let stopped = workers_confirmed_stopped(runtime);
+    if stopped {
+        runtime.release_incompatible_model_cleanup();
+    }
+    match first_error {
+        None if stopped => {
+            runtime.shutdown_control.status = ShutdownStatus::Stopped;
+            Ok(())
+        }
+        Some(error) => {
+            runtime.shutdown_control.status = ShutdownStatus::FailedOrRetryable;
+            Err(error)
+        }
+        None => {
+            runtime.shutdown_control.status = ShutdownStatus::FailedOrRetryable;
+            let worker = if runtime.local.thread_is_present() {
+                ApplicationWorker::Inference
+            } else {
+                ApplicationWorker::Hub
+            };
+            Err(ApplicationError::ShutdownTimeout(worker))
+        }
+    }
+}
+
+const fn workers_confirmed_stopped(runtime: &ApplicationRuntime) -> bool {
+    !runtime.local.thread_is_present() && runtime.hub_thread.is_none()
 }
 
 fn request_hub_shutdown(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationError> {
+    if runtime.hub_thread.is_none() || runtime.shutdown_control.hub_stop_requested {
+        runtime.state.disconnect_hub();
+        return Ok(());
+    }
     if !runtime.state.hub_available() {
+        runtime.shutdown_control.hub_stop_requested = true;
         return Ok(());
     }
     match runtime.hub_commands.send_timeout(
@@ -41,6 +121,7 @@ fn request_hub_shutdown(runtime: &mut ApplicationRuntime) -> Result<(), Applicat
         runtime.configuration.timing.hub_command_shutdown_timeout,
     ) {
         Ok(()) | Err(SendTimeoutError::Disconnected(_)) => {
+            runtime.shutdown_control.hub_stop_requested = true;
             runtime.state.disconnect_hub();
             Ok(())
         }
@@ -49,16 +130,56 @@ fn request_hub_shutdown(runtime: &mut ApplicationRuntime) -> Result<(), Applicat
 }
 
 fn shutdown_runtime(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationError> {
-    let ticket = runtime.next_ticket()?;
-    let result = shutdown_runtime_worker(
+    if !runtime.local.thread_is_present() {
+        runtime.shutdown_control.inference = InferenceShutdownState::StopObserved;
+        runtime.state.disconnect_inference();
+        runtime.release_incompatible_model_cleanup();
+        return Ok(());
+    }
+
+    let deadline = checked_deadline(
+        runtime.configuration.timing.runtime_shutdown_timeout,
+        crate::ApplicationConfigurationField::RuntimeShutdownTimeout,
+    )?;
+    let ticket = match runtime.shutdown_control.inference {
+        InferenceShutdownState::Running => {
+            while runtime.local.runtime().try_receive().is_ok() {}
+            let ticket = runtime.next_ticket()?;
+            match request_runtime_shutdown_until(runtime.local.runtime(), ticket, deadline)? {
+                RuntimeShutdownRequest::Disconnected => {
+                    runtime.shutdown_control.inference = InferenceShutdownState::StopObserved;
+                    runtime.state.disconnect_inference();
+                    runtime.release_incompatible_model_cleanup();
+                    return Ok(());
+                }
+                RuntimeShutdownRequest::Submitted => {
+                    runtime.shutdown_control.inference = InferenceShutdownState::Awaiting(ticket);
+                    runtime.state.disconnect_inference();
+                    ticket
+                }
+            }
+        }
+        InferenceShutdownState::Awaiting(ticket) => ticket,
+        InferenceShutdownState::StopObserved => return Ok(()),
+    };
+
+    let outcome = await_runtime_shutdown_until(
         runtime.local.runtime(),
         ticket,
-        runtime.configuration.timing.runtime_shutdown_timeout,
+        deadline,
         runtime.configuration.timing.runtime_shutdown_event_poll,
-    )
-    .and_then(normalize_runtime_shutdown);
-    runtime.state.disconnect_inference();
-    result
+    )?;
+    runtime.shutdown_control.inference = InferenceShutdownState::StopObserved;
+    if matches!(outcome, RuntimeShutdown::Disconnected) {
+        runtime.release_incompatible_model_cleanup();
+    }
+    normalize_runtime_shutdown(outcome)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RuntimeShutdownRequest {
+    Disconnected,
+    Submitted,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,12 +199,25 @@ fn shutdown_runtime_worker<S>(
         timeout,
         crate::ApplicationConfigurationField::RuntimeShutdownTimeout,
     )?;
+    match request_runtime_shutdown_until(runtime, ticket, deadline)? {
+        RuntimeShutdownRequest::Disconnected => Ok(RuntimeShutdown::Disconnected),
+        RuntimeShutdownRequest::Submitted => {
+            await_runtime_shutdown_until(runtime, ticket, deadline, event_poll)
+        }
+    }
+}
+
+fn request_runtime_shutdown_until<S>(
+    runtime: &HostedRuntime<S>,
+    ticket: CommandTicket,
+    deadline: Instant,
+) -> Result<RuntimeShutdownRequest, ApplicationError> {
     let mut pending = RuntimeCommand::Shutdown { ticket };
     loop {
         match runtime.try_submit(pending) {
-            Ok(()) => break,
+            Ok(()) => return Ok(RuntimeShutdownRequest::Submitted),
             Err(inference_runtime::RuntimeSubmitError::Disconnected(_)) => {
-                return Ok(RuntimeShutdown::Disconnected);
+                return Ok(RuntimeShutdownRequest::Disconnected);
             }
             Err(inference_runtime::RuntimeSubmitError::Full(command)) => {
                 if remaining_until(deadline).is_none() {
@@ -94,7 +228,14 @@ fn shutdown_runtime_worker<S>(
             }
         }
     }
+}
 
+fn await_runtime_shutdown_until<S>(
+    runtime: &HostedRuntime<S>,
+    ticket: CommandTicket,
+    deadline: Instant,
+    event_poll: Duration,
+) -> Result<RuntimeShutdown, ApplicationError> {
     loop {
         let remaining = remaining_until(deadline).ok_or(ApplicationError::ShutdownTimeout(
             ApplicationWorker::Inference,
@@ -127,43 +268,102 @@ fn normalize_runtime_shutdown(outcome: RuntimeShutdown) -> Result<(), Applicatio
 }
 
 fn join_runtime_worker(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationError> {
-    finish_runtime_thread(
-        runtime.local.take_thread(),
-        runtime.configuration.timing.runtime_join_timeout,
-        runtime.configuration.timing.runtime_join_poll,
-    )
+    if !runtime.local.thread_is_present() {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if runtime.shutdown_control.forced_runtime_join_timeouts > 0 {
+        runtime.shutdown_control.forced_runtime_join_timeouts -= 1;
+        return Err(ApplicationError::ShutdownTimeout(
+            ApplicationWorker::Inference,
+        ));
+    }
+
+    let timeout = runtime.configuration.timing.runtime_join_timeout;
+    let poll = runtime.configuration.timing.runtime_join_poll;
+    let result = finish_runtime_thread(runtime.local.thread_slot(), timeout, poll);
+    if !runtime.local.thread_is_present() {
+        runtime.shutdown_control.inference = InferenceShutdownState::StopObserved;
+        runtime.state.disconnect_inference();
+        runtime.release_incompatible_model_cleanup();
+    }
+    result
 }
 
 fn finish_runtime_thread(
-    thread: Option<RuntimeThread>,
+    thread: &mut Option<RuntimeThread>,
     timeout: Duration,
     poll: Duration,
 ) -> Result<(), ApplicationError> {
-    let Some(thread) = thread else {
+    let Some(pending) = thread.as_ref() else {
         return Ok(());
     };
-    wait_for_runtime_thread(&thread, timeout, poll)?;
-    thread.join().map_err(thread_failure)
+    wait_for_runtime_thread(pending, timeout, poll)?;
+    let Some(finished) = thread.take() else {
+        return Ok(());
+    };
+    finished.join().map_err(thread_failure)
 }
 
 fn join_hub_worker(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationError> {
-    let Some(thread) = runtime.hub_thread.take() else {
+    if runtime.hub_thread.is_none() {
         return Ok(());
-    };
-    finish_host_thread(
-        thread,
+    }
+    #[cfg(test)]
+    if runtime.shutdown_control.forced_hub_join_timeouts > 0 {
+        runtime.shutdown_control.forced_hub_join_timeouts -= 1;
+        return Err(ApplicationError::ShutdownTimeout(ApplicationWorker::Hub));
+    }
+
+    let result = finish_host_thread(
+        &mut runtime.hub_thread,
         runtime.configuration.timing.hub_shutdown_timeout,
         runtime.configuration.timing.hub_shutdown_poll,
-    )
+    );
+    if runtime.hub_thread.is_none() {
+        runtime.shutdown_control.hub_stop_requested = true;
+        runtime.state.disconnect_hub();
+    }
+    result
 }
 
 fn finish_host_thread(
-    thread: HostThread<()>,
+    thread: &mut Option<HostThread<()>>,
     timeout: Duration,
     poll: Duration,
 ) -> Result<(), ApplicationError> {
-    wait_for_host_thread(&thread, timeout, poll)?;
-    thread.join().map_err(thread_failure)
+    let Some(pending) = thread.as_ref() else {
+        return Ok(());
+    };
+    wait_for_host_thread(pending, timeout, poll)?;
+    let Some(finished) = thread.take() else {
+        return Ok(());
+    };
+    finished.join().map_err(thread_failure)
+}
+
+pub fn rollback_started_inference(
+    local: &mut LocalInference,
+    timing: ApplicationTiming,
+) -> Result<(), ApplicationError> {
+    let mut first_error = shutdown_runtime_worker(
+        local.runtime(),
+        CommandTicket::new(1),
+        timing.runtime_shutdown_timeout,
+        timing.runtime_shutdown_event_poll,
+    )
+    .and_then(normalize_runtime_shutdown)
+    .err();
+    record_first_error(
+        &mut first_error,
+        finish_runtime_thread(
+            local.thread_slot(),
+            timing.runtime_join_timeout,
+            timing.runtime_join_poll,
+        )
+        .err(),
+    );
+    first_error.map_or(Ok(()), Err)
 }
 
 fn wait_for_runtime_thread(

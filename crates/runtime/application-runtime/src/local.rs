@@ -74,11 +74,15 @@ impl LocalInference {
         &self.runtime
     }
 
+    pub(crate) const fn thread_slot(&mut self) -> &mut Option<RuntimeThread> {
+        &mut self.thread
+    }
+
+    #[cfg(test)]
     pub(crate) const fn take_thread(&mut self) -> Option<RuntimeThread> {
         self.thread.take()
     }
 
-    #[cfg(test)]
     pub(crate) const fn thread_is_present(&self) -> bool {
         self.thread.is_some()
     }

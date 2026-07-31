@@ -33,7 +33,6 @@ define_id!(
     "Identity of one model-specific inference sequence."
 );
 define_id!(RequestId, "Identity of one generation request.");
-define_id!(TaskId, "Identity of one orchestration task.");
 define_id!(
     ArtifactId,
     "Identity of one immutable model or workflow artifact."

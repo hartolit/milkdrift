@@ -1,5 +1,7 @@
 //! Frontend-neutral application orchestration over bounded host workers.
 
+use std::sync::{Mutex, MutexGuard};
+
 use candle_backend::CandleLlamaSource;
 use domain_contracts::{DeviceId, ModelHandle, ModelId, QuantizationFormat};
 use hf_hub_adapter::{HubModelReference, ResolvedSafetensorsLlamaArtifacts};
@@ -22,13 +24,14 @@ use crate::support::{
 use crate::{
     ApplicationActivity, ApplicationError, ApplicationEvent, ApplicationFailure,
     ApplicationFailureKind, ApplicationPreferences, ApplicationRuntimeConfiguration,
-    ApplicationScalarType, ApplicationState, ContextDiagnostics, ImmutableModelIdentity,
-    LoadedModel, ModelSelection, ResolvedModel,
+    ApplicationScalarType, ApplicationState, ApplicationTiming, ApplicationWorker,
+    ContextDiagnostics, ImmutableModelIdentity, LoadedModel, ModelSelection, ResolvedModel,
 };
 
 const MODEL_ID: ModelId = ModelId::new(1);
 const CPU_DEVICE: DeviceId = DeviceId::new(0);
 const INITIAL_COMMAND_TICKET: u64 = 1;
+const MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS: u8 = 3;
 
 /// Frontend-neutral owner of model acquisition, persistence, lifecycle, and generation workers.
 pub struct ApplicationRuntime {
@@ -48,12 +51,174 @@ pub struct ApplicationRuntime {
     pub(crate) conversation: ConversationState,
     pub(crate) context_diagnostics: Option<ContextDiagnostics>,
     next_ticket: u64,
+    pub(crate) shutdown_control: crate::shutdown::ShutdownControl,
+    incompatible_model_cleanup: Option<IncompatibleModelCleanup>,
+    #[cfg(test)]
+    forced_inference_busy_submissions: usize,
 }
 
 #[derive(Clone, Copy)]
 struct LoadAdmission {
     ticket: CommandTicket,
     scalar_type: ApplicationScalarType,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct IncompatibleModelCleanup {
+    handle: ModelHandle,
+    compatibility_failure: ApplicationFailure,
+    unload: IncompatibleModelUnload,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum IncompatibleModelUnload {
+    PendingSubmission {
+        attempts: u8,
+        last_failure: Option<ApplicationFailure>,
+    },
+    Submitted {
+        ticket: CommandTicket,
+        last_failure: Option<ApplicationFailure>,
+        retry_exhausted: bool,
+    },
+    RetryExhausted {
+        attempts: u8,
+        last_failure: ApplicationFailure,
+    },
+}
+
+type StartupInferenceRollback =
+    fn(&mut LocalInference, ApplicationTiming) -> Result<(), ApplicationError>;
+
+struct QuarantinedStartupInference {
+    local: LocalInference,
+    timing: ApplicationTiming,
+}
+
+static STARTUP_CLEANUP_QUARANTINE: Mutex<Vec<QuarantinedStartupInference>> = Mutex::new(Vec::new());
+
+fn lock_startup_cleanup_quarantine() -> MutexGuard<'static, Vec<QuarantinedStartupInference>> {
+    match STARTUP_CLEANUP_QUARANTINE.lock() {
+        Ok(quarantine) => quarantine,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn quarantine_startup_inference(local: LocalInference, timing: ApplicationTiming) {
+    lock_startup_cleanup_quarantine().push(QuarantinedStartupInference { local, timing });
+}
+
+fn reap_startup_cleanup_quarantine() -> Option<Result<(), ApplicationError>> {
+    let mut quarantined = lock_startup_cleanup_quarantine().pop()?;
+    let mut result =
+        crate::shutdown::rollback_started_inference(&mut quarantined.local, quarantined.timing);
+    let unresolved = quarantined.local.thread_is_present();
+    if unresolved && result.is_ok() {
+        result = Err(ApplicationError::ShutdownTimeout(
+            ApplicationWorker::Inference,
+        ));
+    }
+    if unresolved {
+        lock_startup_cleanup_quarantine().push(quarantined);
+    }
+    Some(result)
+}
+
+#[cfg(test)]
+fn startup_cleanup_quarantine_state() -> (usize, usize) {
+    let quarantine = lock_startup_cleanup_quarantine();
+    let retained_threads = quarantine
+        .iter()
+        .filter(|entry| entry.local.thread_is_present())
+        .count();
+    (quarantine.len(), retained_threads)
+}
+
+struct StartupRollbackGuard {
+    local: Option<LocalInference>,
+    timing: ApplicationTiming,
+    rollback: StartupInferenceRollback,
+}
+
+impl StartupRollbackGuard {
+    const fn new(
+        local: LocalInference,
+        timing: ApplicationTiming,
+        rollback: StartupInferenceRollback,
+    ) -> Self {
+        Self {
+            local: Some(local),
+            timing,
+            rollback,
+        }
+    }
+
+    fn commit(mut self) -> Result<LocalInference, ApplicationError> {
+        self.local.take().ok_or_else(|| {
+            ApplicationFailure::new(
+                ApplicationFailureKind::Worker,
+                "inference startup rollback guard was already disarmed",
+            )
+            .into()
+        })
+    }
+
+    fn rollback(mut self) -> Result<(), ApplicationError> {
+        self.rollback_inner()
+    }
+
+    fn rollback_inner(&mut self) -> Result<(), ApplicationError> {
+        let Some(local) = self.local.as_mut() else {
+            return Ok(());
+        };
+        let mut result = (self.rollback)(local, self.timing);
+        let unresolved = local.thread_is_present();
+        if unresolved && result.is_ok() {
+            result = Err(ApplicationError::ShutdownTimeout(
+                ApplicationWorker::Inference,
+            ));
+        }
+
+        if unresolved {
+            if let Some(local) = self.local.take() {
+                quarantine_startup_inference(local, self.timing);
+            }
+        } else {
+            self.local = None;
+        }
+        result
+    }
+}
+
+impl Drop for StartupRollbackGuard {
+    fn drop(&mut self) {
+        let _rollback_result = self.rollback_inner();
+    }
+}
+
+struct StartupFailure {
+    primary: ApplicationError,
+    inference_rollback: Option<Result<(), ApplicationError>>,
+}
+
+impl StartupFailure {
+    fn into_primary(self) -> ApplicationError {
+        let Self {
+            primary,
+            inference_rollback,
+        } = self;
+        drop(inference_rollback);
+        primary
+    }
+}
+
+impl From<ApplicationError> for StartupFailure {
+    fn from(primary: ApplicationError) -> Self {
+        Self {
+            primary,
+            inference_rollback: None,
+        }
+    }
 }
 
 impl ApplicationRuntime {
@@ -65,6 +230,42 @@ impl ApplicationRuntime {
     /// storage cannot be allocated, storage cannot be opened or read, or a worker cannot be
     /// started.
     pub fn start(configuration: ApplicationRuntimeConfiguration) -> Result<Self, ApplicationError> {
+        #[cfg(not(test))]
+        let _startup_cleanup_reap = reap_startup_cleanup_quarantine();
+
+        Self::start_transaction(configuration, |configuration| {
+            start_hub_worker(
+                hub_configuration(&configuration.hub),
+                configuration.hub_channel_capacity,
+                configuration.timing.hub_worker_poll,
+                configuration.timing.hub_event_send_timeout,
+            )
+        })
+        .map_err(StartupFailure::into_primary)
+    }
+
+    fn start_transaction<F>(
+        configuration: ApplicationRuntimeConfiguration,
+        start_hub: F,
+    ) -> Result<Self, StartupFailure>
+    where
+        F: FnOnce(&ApplicationRuntimeConfiguration) -> Result<HubWorker, ApplicationError>,
+    {
+        Self::start_transaction_with_rollback(
+            configuration,
+            start_hub,
+            crate::shutdown::rollback_started_inference,
+        )
+    }
+
+    fn start_transaction_with_rollback<F>(
+        configuration: ApplicationRuntimeConfiguration,
+        start_hub: F,
+        rollback: StartupInferenceRollback,
+    ) -> Result<Self, StartupFailure>
+    where
+        F: FnOnce(&ApplicationRuntimeConfiguration) -> Result<HubWorker, ApplicationError>,
+    {
         validate_configuration(&configuration)?;
         let generation = GenerationBridge::new(&configuration)?;
         let storage = RedbStorage::open(&configuration.database_path).map_err(storage_failure)?;
@@ -75,16 +276,22 @@ impl ApplicationRuntime {
         validate_preferences(&preferences)?;
 
         let local = create_runtime(&preferences, &configuration)?;
+        let local_guard = StartupRollbackGuard::new(local, configuration.timing, rollback);
         let HubWorker {
             commands: hub_commands,
             events: hub_results,
             thread: hub_thread,
-        } = start_hub_worker(
-            hub_configuration(&configuration.hub),
-            configuration.hub_channel_capacity,
-            configuration.timing.hub_worker_poll,
-            configuration.timing.hub_event_send_timeout,
-        )?;
+        } = match start_hub(&configuration) {
+            Ok(worker) => worker,
+            Err(primary) => {
+                let inference_rollback = Some(local_guard.rollback());
+                return Err(StartupFailure {
+                    primary,
+                    inference_rollback,
+                });
+            }
+        };
+        let local = local_guard.commit()?;
 
         Ok(Self {
             local,
@@ -103,6 +310,10 @@ impl ApplicationRuntime {
             conversation: ConversationState::default(),
             context_diagnostics: None,
             next_ticket: INITIAL_COMMAND_TICKET,
+            shutdown_control: crate::shutdown::ShutdownControl::default(),
+            incompatible_model_cleanup: None,
+            #[cfg(test)]
+            forced_inference_busy_submissions: 0,
         })
     }
 
@@ -226,6 +437,7 @@ impl ApplicationRuntime {
                 Err(inference_runtime::RuntimeReceiveError::Timeout) => {}
                 Err(inference_runtime::RuntimeReceiveError::Disconnected) => {
                     self.state.disconnect_inference();
+                    self.release_incompatible_model_cleanup();
                     self.handle_generation_runtime_disconnected();
                     if matches!(
                         self.state.activity(),
@@ -236,6 +448,9 @@ impl ApplicationRuntime {
                     return Some(ApplicationEvent::RuntimeDisconnected);
                 }
             }
+        }
+        if let Some(event) = self.retry_incompatible_model_cleanup() {
+            return Some(event);
         }
         self.pump_generation_event()
     }
@@ -271,11 +486,18 @@ impl ApplicationRuntime {
         &mut self,
         command: RuntimeCommand<CandleLlamaSource>,
     ) -> Result<(), ApplicationError> {
+        #[cfg(test)]
+        if self.forced_inference_busy_submissions > 0 {
+            self.forced_inference_busy_submissions -= 1;
+            return Err(ApplicationError::RuntimeBusy);
+        }
+
         match self.local.submit(command) {
             Ok(()) => Ok(()),
             Err(LocalSubmitError::Full) => Err(ApplicationError::RuntimeBusy),
             Err(LocalSubmitError::Disconnected) => {
                 self.state.disconnect_inference();
+                self.release_incompatible_model_cleanup();
                 Err(ApplicationError::RuntimeDisconnected)
             }
         }
@@ -386,7 +608,9 @@ impl ApplicationRuntime {
             RuntimeEvent::ModelLoaded { ticket, result } => {
                 Some(self.process_model_loaded(*ticket, *result))
             }
-            RuntimeEvent::ModelUnload { result, .. } => Some(self.process_model_unload(*result)),
+            RuntimeEvent::ModelUnload { ticket, result } => {
+                Some(self.process_model_unload(*ticket, *result))
+            }
             RuntimeEvent::GenerationAdmitted { .. }
             | RuntimeEvent::GenerationCancellationRequested { .. } => {
                 self.process_generation_runtime_event(event)
@@ -483,23 +707,160 @@ impl ApplicationRuntime {
             kind: ApplicationFailureKind::Inference,
             message: "resolved identity, descriptor, and tokenizer compatibility evidence differ; deterministic unload was requested".to_owned(),
         };
-        let unload_result = self.request_model_unload(handle, crate::ModelUnloadBehavior::Drain);
-        if let Err(error) = unload_result {
-            self.state.set_idle();
-            return ApplicationEvent::ModelLoadFailed {
-                failure: ApplicationFailure {
-                    kind: ApplicationFailureKind::Inference,
-                    message: format!("{failure}; automatic unload failed: {error}"),
-                },
-            };
+        self.incompatible_model_cleanup = Some(IncompatibleModelCleanup {
+            handle,
+            compatibility_failure: failure.clone(),
+            unload: IncompatibleModelUnload::PendingSubmission {
+                attempts: 0,
+                last_failure: None,
+            },
+        });
+        self.state.begin_unloading();
+
+        match self.try_submit_incompatible_model_unload() {
+            Ok(()) => ApplicationEvent::ModelCompatibilityFailed { failure },
+            Err(error) => {
+                if self.incompatible_model_cleanup.is_none() {
+                    self.state.set_idle();
+                }
+                ApplicationEvent::ModelLoadFailed {
+                    failure: Self::incompatible_unload_submission_failure(
+                        &failure,
+                        &error,
+                        self.incompatible_unload_retry_exhausted(),
+                    ),
+                }
+            }
         }
-        ApplicationEvent::ModelCompatibilityFailed { failure }
+    }
+
+    fn retry_incompatible_model_cleanup(&mut self) -> Option<ApplicationEvent> {
+        if !matches!(
+            self.incompatible_model_cleanup
+                .as_ref()
+                .map(|cleanup| &cleanup.unload),
+            Some(IncompatibleModelUnload::PendingSubmission { .. })
+        ) {
+            return None;
+        }
+        let compatibility_failure = self
+            .incompatible_model_cleanup
+            .as_ref()
+            .map(|cleanup| cleanup.compatibility_failure.clone())?;
+
+        match self.try_submit_incompatible_model_unload() {
+            Ok(()) => None,
+            Err(_error) if self.incompatible_model_cleanup.is_none() => {
+                if self.state.activity() == ApplicationActivity::Unloading {
+                    self.state.set_idle();
+                }
+                Some(ApplicationEvent::RuntimeDisconnected)
+            }
+            Err(error) => Some(ApplicationEvent::ModelUnloadFailed {
+                failure: Self::incompatible_unload_submission_failure(
+                    &compatibility_failure,
+                    &error,
+                    self.incompatible_unload_retry_exhausted(),
+                ),
+            }),
+        }
+    }
+
+    fn try_submit_incompatible_model_unload(&mut self) -> Result<(), ApplicationError> {
+        let Some((handle, attempts)) =
+            self.incompatible_model_cleanup
+                .as_ref()
+                .and_then(|cleanup| match &cleanup.unload {
+                    IncompatibleModelUnload::PendingSubmission { attempts, .. } => {
+                        Some((cleanup.handle, *attempts))
+                    }
+                    IncompatibleModelUnload::Submitted { .. }
+                    | IncompatibleModelUnload::RetryExhausted { .. } => None,
+                })
+        else {
+            return Ok(());
+        };
+        let attempt = attempts.saturating_add(1);
+
+        match self.submit_model_unload(handle, crate::ModelUnloadBehavior::Drain) {
+            Ok(ticket) => {
+                if let Some(cleanup) = self.incompatible_model_cleanup.as_mut() {
+                    cleanup.unload = IncompatibleModelUnload::Submitted {
+                        ticket,
+                        last_failure: None,
+                        retry_exhausted: false,
+                    };
+                }
+                Ok(())
+            }
+            Err(error) => {
+                if let Some(cleanup) = self.incompatible_model_cleanup.as_mut() {
+                    let failure = ApplicationFailure {
+                        kind: ApplicationFailureKind::Inference,
+                        message: format!(
+                            "automatic incompatible-model unload submission attempt {attempt}/{MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS} failed: {error}"
+                        ),
+                    };
+                    cleanup.unload = if attempt >= MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS {
+                        IncompatibleModelUnload::RetryExhausted {
+                            attempts: attempt,
+                            last_failure: failure,
+                        }
+                    } else {
+                        IncompatibleModelUnload::PendingSubmission {
+                            attempts: attempt,
+                            last_failure: Some(failure),
+                        }
+                    };
+                    self.state.begin_unloading();
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn incompatible_unload_retry_exhausted(&self) -> bool {
+        matches!(
+            self.incompatible_model_cleanup
+                .as_ref()
+                .map(|cleanup| &cleanup.unload),
+            Some(IncompatibleModelUnload::RetryExhausted { .. })
+        )
+    }
+
+    fn incompatible_unload_submission_failure(
+        compatibility_failure: &ApplicationFailure,
+        error: &ApplicationError,
+        exhausted: bool,
+    ) -> ApplicationFailure {
+        let disposition = if exhausted {
+            "automatic unload submission retries are exhausted; private model ownership remains retained"
+        } else {
+            "automatic unload submission will be retried"
+        };
+        ApplicationFailure {
+            kind: ApplicationFailureKind::Inference,
+            message: format!("{compatibility_failure}; {disposition}: {error}"),
+        }
     }
 
     fn process_model_unload(
         &mut self,
+        ticket: CommandTicket,
         result: Result<inference_runtime::UnloadReceipt, inference_runtime::RuntimeError>,
     ) -> ApplicationEvent {
+        let incompatible_ticket = self
+            .incompatible_model_cleanup
+            .as_ref()
+            .and_then(|cleanup| match &cleanup.unload {
+                IncompatibleModelUnload::Submitted { ticket, .. } => Some(*ticket),
+                IncompatibleModelUnload::PendingSubmission { .. }
+                | IncompatibleModelUnload::RetryExhausted { .. } => None,
+            });
+        if incompatible_ticket == Some(ticket) {
+            return self.process_incompatible_model_unload(ticket, result);
+        }
+
         match result {
             Ok(receipt) => match receipt.status {
                 UnloadStatus::Draining => ApplicationEvent::ModelDraining {
@@ -524,6 +885,74 @@ impl ApplicationRuntime {
                 }
             }
         }
+    }
+
+    fn process_incompatible_model_unload(
+        &mut self,
+        ticket: CommandTicket,
+        result: Result<inference_runtime::UnloadReceipt, inference_runtime::RuntimeError>,
+    ) -> ApplicationEvent {
+        let expected_handle = self
+            .incompatible_model_cleanup
+            .as_ref()
+            .map(|cleanup| cleanup.handle);
+        match result {
+            Ok(receipt) if expected_handle != Some(receipt.handle) => {
+                let failure = ApplicationFailure {
+                    kind: ApplicationFailureKind::Inference,
+                    message:
+                        "automatic incompatible-model unload returned a different model handle"
+                            .to_owned(),
+                };
+                self.record_incompatible_unload_failure(ticket, failure, false)
+            }
+            Ok(receipt) => match receipt.status {
+                UnloadStatus::Draining => ApplicationEvent::ModelDraining {
+                    handle: receipt.handle,
+                },
+                UnloadStatus::AlreadyAbsent | UnloadStatus::Unloaded => {
+                    self.release_incompatible_model_cleanup();
+                    self.state.clear_loaded();
+                    ApplicationEvent::ModelUnloaded {
+                        handle: receipt.handle,
+                        cancelled_requests: receipt.cancelled_requests,
+                    }
+                }
+            },
+            Err(error) => {
+                let retry_exhausted = matches!(
+                    error,
+                    inference_runtime::RuntimeError::CleanupRetryExhausted(_)
+                );
+                let failure = ApplicationFailure::from_debug(
+                    ApplicationFailureKind::Inference,
+                    "automatic incompatible-model unload failed",
+                    error,
+                );
+                self.record_incompatible_unload_failure(ticket, failure, retry_exhausted)
+            }
+        }
+    }
+
+    fn record_incompatible_unload_failure(
+        &mut self,
+        ticket: CommandTicket,
+        failure: ApplicationFailure,
+        retry_exhausted: bool,
+    ) -> ApplicationEvent {
+        if let Some(cleanup) = self.incompatible_model_cleanup.as_mut() {
+            cleanup.unload = IncompatibleModelUnload::Submitted {
+                ticket,
+                last_failure: Some(failure.clone()),
+                retry_exhausted,
+            };
+            self.state.begin_unloading();
+        }
+        ApplicationEvent::ModelUnloadFailed { failure }
+    }
+
+    pub(crate) fn release_incompatible_model_cleanup(&mut self) {
+        self.incompatible_model_cleanup = None;
     }
 
     fn persist_resolved(

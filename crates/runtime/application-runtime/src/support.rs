@@ -17,6 +17,8 @@ use crate::{
     ApplicationScalarType, ApplicationTiming,
 };
 
+pub const MAXIMUM_SHUTDOWN_OR_JOIN_TIMEOUT: Duration = Duration::from_hours(24);
+
 pub fn hub_configuration(configuration: &ApplicationHubConfiguration) -> HubClientConfiguration {
     HubClientConfiguration {
         cache_directory: configuration.cache_directory.clone(),
@@ -247,6 +249,26 @@ fn validate_timing(timing: &ApplicationTiming) -> Result<(), ApplicationError> {
     ];
     for (duration, field) in fields {
         if duration.is_zero() {
+            return Err(ApplicationError::InvalidConfiguration(field));
+        }
+    }
+
+    let deadline_fields = [
+        (
+            timing.runtime_shutdown_timeout,
+            ApplicationConfigurationField::RuntimeShutdownTimeout,
+        ),
+        (
+            timing.runtime_join_timeout,
+            ApplicationConfigurationField::RuntimeJoinTimeout,
+        ),
+        (
+            timing.hub_shutdown_timeout,
+            ApplicationConfigurationField::HubShutdownTimeout,
+        ),
+    ];
+    for (duration, field) in deadline_fields {
+        if duration > MAXIMUM_SHUTDOWN_OR_JOIN_TIMEOUT {
             return Err(ApplicationError::InvalidConfiguration(field));
         }
     }
