@@ -2,8 +2,11 @@
 
 **Intended repository path:** `docs/agent/execution/execution-plan.md`
 **Companion analysis:** `docs/agent/execution/analyzer.md`
-**Plan status:** Active execution baseline
+**Plan status:** Active execution baseline; Phase 9 amended by ADR-0013 and ADR-0014
 **Prepared:** 2026-07-22
+**Current amendment:** 2026-07-31
+
+> **Current-use notice.** Phases 0–8 below are preserved as the specifications that produced their historical results. In particular, completed Phase 8 accurately records the former dual-product experiment; it does not define current support. [ADR-0013](../decisions/0013-candle-only-local-execution.md) supersedes that composition and [ADR-0014](../decisions/0014-rust-cargo-native-operational-tooling.md) governs maintained tooling. Use the amended Phase 9 and later sections for current execution.
 
 ## 1. Purpose
 
@@ -22,7 +25,7 @@ truthful documentation
     -> application-runtime generation façade
     -> usable Slint interface
     -> chat/context integration
-    -> GGUF parity and composition cleanup
+    -> historical Phase 8 GGUF parity (later superseded)
     -> architectural simplification
     -> system benchmarks
     -> GPU support
@@ -59,9 +62,9 @@ The current repository has a strong low-level foundation:
 - Slint is a thin frontend;
 - package-local tests and Criterion benchmarks follow Cargo conventions.
 
-The first integrated prompt-to-stream generation loop now exists through E0, E1, and Slint. The immediate problem is semantic integration: turn a proven direct completion into conversation behavior without binding conversation state to Candle/local execution, duplicating application state in frontends, or collapsing context planning and model-specific rendering into one catch-all runtime.
+The integrated prompt-to-stream and exact TinyLlama conversation loops now exist through E0, E1, and Slint. Phase 8 historically proved a second local product, but that experiment bundled engine, format, source, and device into an accidental product axis and duplicated E1 worker/tooling ownership. ADR-0013 supersedes that shape: Candle is the sole local engine, with immutable Hugging Face Hub Safetensors on CPU as the current composition.
 
-The pre-Phase 7 architecture closure also extracted `corrective-workflow`, adopted the `domain`/`platform`/`adapters`/`runtime`/`apps` physical taxonomy, and made runtime/platform roles and runtime composition edges fail closed. Phase 7 builds on those boundaries rather than reopening them without new evidence.
+The architecture closure also extracted `corrective-workflow`, adopted the `domain`/`platform`/`adapters`/`runtime`/`apps` physical taxonomy, and made runtime/platform roles and runtime composition edges fail closed. Active Phase 9 restores a small Candle baseline, Rust-owned operational tooling, and truthful documentation before continuing any evidence-driven DAG/module/tooling review.
 
 ## 3. Decisions this plan makes
 
@@ -94,11 +97,11 @@ The first real model slice may use an explicitly labelled direct-completion prom
 
 After the generation loop works, add model-compatible prompt rendering and conversation context. Do not hardcode one vendor template while claiming general chat support.
 
-### 3.5 Candle CPU is the first product target
+### 3.5 Candle CPU is the current local product target
 
-The existing native application is already composed around Candle, Hugging Face artifacts, and the Hugging Face tokenizer. Use that path to prove the first slice. Then run the same application-level generation contract against GGUF.
+The native application is composed around Candle, immutable Hugging Face Hub artifacts, Safetensors, and the Hugging Face tokenizer. Candle is the sole current local execution engine. A new model format or device does not by itself justify another engine or E0 ownership architecture.
 
-GPU support is deferred until CPU correctness, cancellation, output backpressure, and system benchmarks exist.
+GPU support and Candle-native GGUF/quantized loading are separate deferred work. Neither is part of the current product.
 
 ### 3.6 Keep folder movement out of the first vertical slice
 
@@ -120,7 +123,7 @@ The first streamed generation milestone is complete. From Phase 7 onward, do not
 
 - hosted-provider, peer-routing, or browser transport implementation during Phase 7;
 - a general workflow system, long-term-memory system, or tool/permission framework as part of chat integration;
-- GGUF product selection before Phase 8 proves tokenizer/generation parity;
+- a second local engine, unsupported model format, or local-file product without a separate reviewed decision;
 - multi-model residency in the application façade;
 - GPU execution before its explicit device/build/test phase;
 - new model architecture families;
@@ -162,8 +165,8 @@ Every work package should follow these rules.
 | 5 | `application-runtime` exposes generation cleanly | Frontend-neutral integration tests pass |
 | 6 | Slint is a usable streamed-completion product | User can generate, cancel, unload, and close safely |
 | 7 | Conversation/context behavior is real | Budgeting, rendering, history, and stop tests pass |
-| 8 | GGUF reaches behavioral parity | Shared generation suite passes for Candle and GGUF |
-| 9 | Architecture is simplified using integration evidence | Dependency policy, modules, façade, and tooling are coherent |
+| 8 | Historical GGUF parity experiment completed | Historical shared-suite evidence remains in Phase 8 history; current support is superseded by ADR-0013 |
+| 9 | Candle-only architecture and tooling are reconciled, then simplification continues from evidence | One-worker E1, Rust-owned hygiene, truthful docs, preserved behavior, and exact-tree validation |
 | 10 | Performance is measured end to end | TTFT, throughput, memory, cancellation, unload baselines exist |
 | 11 | GPU execution is added without weakening CPU behavior | Device matrix and fallback tests pass |
 
@@ -1380,6 +1383,8 @@ The frontend may display an active assistant response as it grows, then its succ
 
 # Phase 8 — Reach GGUF parity and clean up native composition
 
+> **Completed historical specification.** This section remains unchanged as the factual plan that produced the Phase 8 evidence. Its dual-product requirements are not current invariants; ADR-0013 supersedes them for Phase 9 and current support.
+
 ## Objective
 
 Make the second backend usable through the same application behavior and use that pressure to define the right composition boundary.
@@ -1463,99 +1468,67 @@ Only after parity is proven, add a backend/source selector and accurately show t
 
 ---
 
-# Phase 9 — Simplify the architecture using integration evidence
+# Phase 9 — Reconcile and simplify the architecture using integration evidence
 
 ## Objective
 
-Address structural concerns after the product loop has exposed which boundaries are real.
+Remove the accidental dual-engine/tooling architecture while preserving the behavior proven by earlier phases. Establish a coherent Candle/Hub/Safetensors/CPU baseline, then continue structural simplification only where integration evidence justifies it.
 
-## Work package 9.1 — Replace the absolute F1 rule with an approved DAG
+## Work package 9.1 — Restore one local execution composition
 
-Review actual dependencies needed by tokenization, context planning, sampling, task graph, prompt rendering, and workflows.
-
-Adopt these principles:
-
-- the graph must remain acyclic;
-- one feature may depend on another when the lower feature genuinely owns a stable concept;
-- shared F0 types must cross a real engine/backend boundary or have multiple stable consumers;
-- unrelated domain vocabulary must not be pushed into `domain-contracts` merely to satisfy a tier table;
-- dependency direction is reviewed explicitly.
-
-Consider, but do not automatically perform, a split such as:
-
-```text
-foundation-types
-inference-contracts
-```
-
-Only split if current `domain-contracts` changes for unrelated reasons often enough to justify it.
+- Apply ADR-0013: Candle is the sole local execution engine.
+- Keep engine, artifact source, model format, scalar, and device as separate facts.
+- Remove the former native adapter/product, local-file identity/configuration, active-backend routing, dormant worker, placeholder variants, and product-specific UI branches.
+- Keep `ModelSelection` as Hugging Face repository plus revision and retain the resolved immutable Hub commit.
+- Defer Candle-native GGUF/quantization and GPU support to separately reviewed work.
 
 ## Work package 9.2 — Narrow `application-runtime`
 
-- keep the extracted `corrective-workflow` capability outside E1 and do not re-export its internals from the application façade;
-- make generation/model lifecycle the primary documented façade;
-- separate local-model composition if Phase 8 justified it;
-- keep new stateful capability engines outside E1 when their lifecycle/reuse boundary is independently proven.
+- Keep the extracted `corrective-workflow` capability outside E1 and do not re-export its internals.
+- Keep generation/model lifecycle as the primary façade while retaining application-owned conversation/context semantics.
+- Compose one `HostedRuntime<CandleLlamaSource>`, one inference thread, one Hub worker, one concrete Hugging Face tokenizer, and request-local concrete streaming decoders.
+- Keep redb in E1 while it owns application preferences/catalogue state.
+- Do not create another runtime, generic public façade, plugin registry, or `application-api` without an independently proven lifecycle and consumer.
 
-## Work package 9.3 — Split oversized modules internally
+## Work package 9.3 — Preserve behavior through the right tests
 
-Candidate splits:
+- Keep E0 backend-neutral at its contracts and statically dispatched in token-sensitive production execution.
+- Retain deterministic loaders/fault injection for scheduler, transaction, cancellation, backpressure, cleanup, unload, and shutdown behavior.
+- Retain the committed Candle real fixture for download-free production-adapter E0 coverage.
+- Preserve E1 immutable resolution, direct completion, exact TinyLlama chat, context planning, regeneration, persistence, unload, disconnection, and bounded shutdown tests.
+- Keep Slint as an E1-only presentation adapter.
 
-```text
-task-graph/
-  graph.rs
-  validation.rs
-  artifact_flow.rs
-  attempt.rs
-  state.rs
-  error.rs
+## Work package 9.4 — Reconcile operational tooling, CI, and documentation
 
-inference-runtime/runtime/
-  model_registry.rs
-  request_registry.rs
-  generation.rs
-  transaction.rs
-  operations.rs
-  shutdown.rs
-```
+- Apply ADR-0014: project-owned operational tooling is Rust/Cargo-native.
+- Use the root Rust hygiene command to reject prohibited tracked artifacts, maintained invocations, direct manifest declarations, and selected graph packages.
+- Replace external artifact preparation with the opt-in E1 Candle/Hub Cargo example; ordinary tests remain download-free.
+- Keep `build-essential` and `cmake` for the selected Hub TLS dependency path and the documented Slint system packages; remove compiler packages that belonged only to the former engine.
+- Reconcile current architecture, status, component, validation, execution, and frontend documentation while preserving Phase 8 history and the recovered plan as historical.
+- Keep `cargo run --locked --bin llm-app -- verify` as the canonical gate until a separate complete xtask migration updates code, CI, and every command together.
 
-Use `pub(crate)` or `pub(super)` for internal helpers rather than accidental broad `pub` visibility.
+## Work package 9.5 — Continue structural review after the correction
 
-## Work package 9.4 — Convert the maintenance runner to `xtask`
+Review the F1 dependency policy, `domain-contracts` inclusion rule, oversized modules, root-runner/xtask shape, and mandatory lint set only after the corrected baseline is validated.
 
-After the product path is stable:
-
-```text
-Cargo.toml                  virtual workspace
-tools/xtask/Cargo.toml
-tools/xtask/src/main.rs
-.cargo/config.toml
-```
-
-Recommended aliases:
-
-```toml
-[alias]
-xtask = "run -p xtask --"
-bench-sampling = "bench -p sampling --bench sampling_pipeline"
-```
-
-Keep custom Rust code for architecture validation and other repository-specific logic. Use Cargo directly for ordinary `fmt`, `check`, `test`, `clippy`, and simple benchmark selection.
-
-Remove the misleading product-like root binary name.
-
-## Work package 9.5 — Review lint policy
-
-Keep strong lints, but review whether every `clippy::nursery` warning should block CI across toolchain upgrades. Prefer an explicit stable set for mandatory policy and enable exploratory lints without necessarily denying them.
+- The graph must remain acyclic and dependency direction explicit.
+- Split modules by invariant/ownership, not line count.
+- Split `domain-contracts` only with measured unrelated change pressure.
+- Use Cargo directly for ordinary operations; keep custom Rust only where it adds repository-specific policy.
+- Do not let follow-up restructuring weaken lifecycle, capacity, cleanup, portability, or strict lint gates.
 
 ## Acceptance criteria
 
-- Architecture rules describe a real DAG rather than a purity diagram.
-- `domain-contracts` has a clear inclusion rule.
-- E1 has a narrow, coherent public API.
-- Large modules are split by invariant/responsibility, not arbitrary line count.
-- `cargo xtask architecture` enforces the current policy.
-- Simple commands are no longer needlessly reimplemented.
+- Candle is the sole local engine; current source is immutable Hugging Face Hub Safetensors on CPU.
+- E1 owns one inference worker/thread plus one Hub worker and one resident model.
+- `ModelSelection` is repository plus revision; resolved/loaded facts derive engine, source, device, format, scalar, tokenizer vocabulary, and immutable Hub commit.
+- No dead second-product API, routing, worker, UI, fixture, manifest, lockfile, or selected-graph path remains.
+- Direct completion, exact TinyLlama chat, context/regeneration, backpressure, cancellation, cleanup retry/exhaustion, unload, persistence, and bounded shutdown remain covered.
+- Ordinary tests are download-free; the external E1 smoke is explicit, Rust-native, exact-revision, and opt-in.
+- Repository hygiene, architecture, local links, and dependency policy pass.
+- Current documents describe the corrected tree; completed Phase 8 plan/history remain clearly historical.
+- The final canonical gate and external smoke are recorded only after they actually run on the exact tree.
+- Any later DAG/module/xtask/lint change remains a separate evidence-driven review rather than a compatibility condition for the removed architecture.
 
 ---
 
@@ -1607,7 +1580,7 @@ It may depend on public runtime/application APIs and controlled fixtures. Measur
 - model load/unload latency;
 - peak/resident memory;
 - repeated load/generate/unload stability;
-- Candle versus GGUF on comparable models where meaningful.
+- Candle behavior across controlled scalar types, prompt sizes, context lengths, and any later reviewed quantization/device configurations.
 
 ## Work package 10.3 — Separate CI compilation from controlled baselines
 
@@ -1660,8 +1633,7 @@ Select explicit targets, for example:
 
 - Candle CPU;
 - Candle CUDA on supported Linux/Windows environments;
-- Candle Metal where supported;
-- llama.cpp GPU offload options where the chosen crate/build supports them.
+- Candle Metal where supported.
 
 Do not expose a generic “GPU” option without identifying backend and device kind.
 
@@ -1717,7 +1689,7 @@ This track begins only after application conversation semantics and the local
 composition boundary are stable enough to expose a coarse model-execution seam.
 It does not turn E0 into a network/provider abstraction.
 
-This is not Phase 12 and it does not depend on GPU support. It may begin when conversation semantics are stable and a real second execution/deployment need proves the coarse seam; GGUF/composition work in Phases 8–9 is likely to provide useful evidence, but Phase 11 is not a prerequisite.
+This is not Phase 12 and it does not depend on GPU support. It may begin when conversation semantics are stable and a real second execution/deployment need proves the coarse seam; Phase 11 is not a prerequisite.
 
 Define one application-facing execution contract for:
 
@@ -1787,7 +1759,7 @@ Limited parallel work is safe:
 Unsafe parallel work:
 
 - building the UI generation state machine before E1 owns it;
-- implementing GGUF UI selection before tokenizer and generation parity;
+- exposing an unsupported model format or device in the UI before compatibility and generation evidence;
 - introducing GPU features before explicit feature-matrix CI;
 - moving all crates while generation integration is changing dependencies;
 - extracting application crates before a second composition proves the seam.
@@ -1849,15 +1821,15 @@ The first product milestone is complete only when all of the following are true:
 - a documented real-model smoke path is reproducible;
 - baseline TTFT, throughput, cancellation, memory, and unload observations exist.
 
-This milestone does **not** require GGUF UI parity, general chat templates, multiple resident models, remote clients, or GPU support.
+This milestone does **not** require another model format, general chat templates, multiple resident models, remote clients, or GPU support.
 
 # 15. Traceability from `analyzer.md`
 
 | Analyzer finding | Addressed in |
 |---|---|
 | Central generation loop absent | Phases 3–6 |
-| `application-runtime` is a valid façade but concrete/growing | Architecture closure and Phases 5, 8, 9 |
-| Candle/HF/redb lock-in at E1 | Phase 8 composition review |
+| `application-runtime` is a valid façade but concrete/growing | Architecture closure and Phases 5, 8, 9; ADR-0013 removes duplicate local composition |
+| Candle/HF/redb composition at E1 | Phase 8 historical review and Phase 9 one-consumer correction |
 | Corrective workflow dominates E1 | Architecture closure extraction; Phase 9 keeps E1 narrow |
 | Single-model state conflicts with `maximum_models` | Phase 5.6 |
 | Model-load cleanup bypass | Phase 2.1 |
@@ -1920,16 +1892,14 @@ crates/
     host-runtime
   adapters/
     candle-backend
-    gguf-backend
     hf-hub
     hf-tokenizer
     redb-storage
-    # optional GGUF tokenizer adapter if required
   runtime/
     inference-runtime
     corrective-workflow
     application-runtime
-    # native-runtime only if Phase 8 proves the split
+    # local-model runtime only if a future independent lifecycle/consumer proves the split
   apps/
     desktop-slint
     # optional CLI used to prove frontend reuse
@@ -1954,7 +1924,7 @@ When trade-offs arise, use this order:
 5. reproducible tests and CI;
 6. understandable module and dependency structure;
 7. measured performance;
-8. additional backends and devices;
+8. additional model formats, execution targets, and devices;
 9. speculative generality.
 
 The project should preserve its strong low-level discipline, but every new abstraction must now justify itself against a running generation loop.

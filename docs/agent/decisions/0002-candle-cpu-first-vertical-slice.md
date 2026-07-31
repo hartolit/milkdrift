@@ -26,3 +26,5 @@ Use the Candle CPU composition to prove the first complete prompt-to-stream gene
 ## Review trigger
 
 Review after the Candle CPU real-model smoke path streams output and reliably cancels, unloads, and shuts down, or earlier if Candle cannot provide the semantics required by the backend-independent generation contract.
+
+[ADR-0013](0013-candle-only-local-execution.md) records the review outcome: it affirms the Candle CPU-first direction and replaces this ADR's anticipated llama.cpp/GGUF product-parity progression with Candle as the sole local execution engine.

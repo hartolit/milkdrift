@@ -10,6 +10,10 @@ use std::path::{Path, PathBuf};
 
 use cargo_metadata::{Dependency, Metadata, MetadataCommand, Package};
 
+mod hygiene;
+
+pub use hygiene::{HygieneError, HygieneReport, HygieneViolation, validate_repository_hygiene};
+
 const RULE_KNOWN_LOCATION: &str = "LAYOUT-1";
 const RULE_LOCAL_TARGET: &str = "LAYOUT-2";
 const RULE_KNOWN_KIND: &str = "DEPENDENCY-KIND-1";
@@ -204,12 +208,6 @@ const REVIEWED_ENGINE_PRODUCTION_DEPENDENCIES: &[ReviewedDependency] = &[
     },
     ReviewedDependency {
         source: "application-runtime",
-        target: "gguf-backend",
-        kind: DependencyKind::Normal,
-        justification: "the closed E1 local composition verifies and constructs the supported llama.cpp/GGUF source and tokenizer",
-    },
-    ReviewedDependency {
-        source: "application-runtime",
         target: "hf-hub-adapter",
         kind: DependencyKind::Normal,
         justification: "the closed E1 local composition resolves immutable Hugging Face artifacts for the Candle product",
@@ -275,20 +273,12 @@ const REVIEWED_EXTERNAL_DEPENDENCIES: &[ReviewedDependency] = &[
 ];
 
 // Workspace-local development edges are reviewed independently from production direction.
-const REVIEWED_LOCAL_DEV_DEPENDENCIES: &[ReviewedDependency] = &[
-    ReviewedDependency {
-        source: "inference-runtime",
-        target: "candle-backend",
-        kind: DependencyKind::Development,
-        justification: "E0 compatibility tests exercise the Candle backend contract",
-    },
-    ReviewedDependency {
-        source: "inference-runtime",
-        target: "gguf-backend",
-        kind: DependencyKind::Development,
-        justification: "E0 compatibility tests exercise the GGUF backend contract",
-    },
-];
+const REVIEWED_LOCAL_DEV_DEPENDENCIES: &[ReviewedDependency] = &[ReviewedDependency {
+    source: "inference-runtime",
+    target: "candle-backend",
+    kind: DependencyKind::Development,
+    justification: "E0 compatibility tests exercise the Candle backend contract",
+}];
 
 /// Loads locked typed Cargo metadata and validates the workspace containing `manifest_path`.
 ///

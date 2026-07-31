@@ -14,7 +14,6 @@ sampling.workspace = true
 
 [dev-dependencies]
 candle-backend.workspace = true
-gguf-backend.workspace = true
 
 [lints]
 workspace = true

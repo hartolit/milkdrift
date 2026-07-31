@@ -20,4 +20,4 @@ The upstream cache cannot be cleared in place without constructing a replacement
 - one or more Safetensors shards
 - F32, F16, and BF16 source weight types; BF16 CPU execution is upcast to F32
 
-CUDA, Metal, quantized GGUF, model downloading, and tokenizer integration remain separate adapters.
+Model downloading and tokenizer integration remain separate adapters. CUDA and Metal are deferred Candle device work. GGUF and other quantized formats are unsupported today; if pursued, they require separate reviewed Candle-native format work under this adapter rather than another local execution engine.

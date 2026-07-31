@@ -8,16 +8,17 @@ use std::io;
 use std::path::Path;
 use std::process::{Command, ExitCode, ExitStatus};
 
-use llm_app::validate_workspace;
+use llm_app::{validate_repository_hygiene, validate_workspace};
 
 const HELP: &str = "\
 llm-app workspace runner
 
 USAGE:
-    cargo run --bin llm-app -- <command>
+    cargo run --locked --bin llm-app -- <command>
 
 COMMANDS:
-    architecture    Validate workspace dependency and external crate policy
+    architecture    Validate workspace architecture and repository hygiene
+    hygiene         Validate tracked tooling and the selected dependency graph
     benchmark       Measure the sampling hot path
     benchmark-check Compile workspace benchmarks without running them
     check           Compile every workspace target
@@ -26,7 +27,7 @@ COMMANDS:
     fmt             Format the workspace
     fmt-check       Verify formatting without modifying files
     clippy          Lint every workspace target
-    verify          Run the complete Phase 1 quality gate
+    verify          Run the canonical workspace quality gate
     help            Print this message
 ";
 
@@ -54,7 +55,8 @@ fn execute() -> io::Result<ExitCode> {
             print!("{HELP}");
             return Ok(ExitCode::SUCCESS);
         }
-        "architecture" => validate_architecture(),
+        "architecture" => validate_architecture_and_hygiene(),
+        "hygiene" => validate_hygiene(),
         "benchmark" => run_cargo(&[
             "bench",
             "-p",
@@ -79,7 +81,7 @@ fn execute() -> io::Result<ExitCode> {
             "warnings",
         ]),
         "verify" => {
-            if !validate_architecture()? {
+            if !validate_architecture_and_hygiene()? {
                 return Ok(ExitCode::FAILURE);
             }
             run_sequence(&[
@@ -130,12 +132,16 @@ fn run_cargo(arguments: &[&str]) -> io::Result<bool> {
         ));
     };
     let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
-    let status = Command::new(cargo)
+    let mut command = Command::new(cargo);
+    command
         .arg(subcommand)
         .arg("--manifest-path")
         .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
-        .args(options)
-        .status()?;
+        .args(options);
+    if *subcommand == "doc" {
+        command.env("RUSTDOCFLAGS", "-D warnings");
+    }
+    let status = command.status()?;
     let success = status.success();
 
     report_status(arguments, status);
@@ -154,6 +160,12 @@ fn report_status(arguments: &[&str], status: ExitStatus) {
     }
 }
 
+fn validate_architecture_and_hygiene() -> io::Result<bool> {
+    let architecture_valid = validate_architecture()?;
+    let hygiene_valid = validate_hygiene()?;
+    Ok(architecture_valid && hygiene_valid)
+}
+
 fn validate_architecture() -> io::Result<bool> {
     let manifest = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"));
     let report = validate_workspace(manifest).map_err(io::Error::other)?;
@@ -163,6 +175,20 @@ fn validate_architecture() -> io::Result<bool> {
     }
     if report.is_valid() {
         println!("workspace architecture and dependency policy are valid");
+    }
+
+    Ok(report.is_valid())
+}
+
+fn validate_hygiene() -> io::Result<bool> {
+    let manifest = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"));
+    let report = validate_repository_hygiene(manifest).map_err(io::Error::other)?;
+
+    for violation in report.violations() {
+        eprintln!("{violation}");
+    }
+    if report.is_valid() {
+        println!("repository hygiene policy is valid");
     }
 
     Ok(report.is_valid())

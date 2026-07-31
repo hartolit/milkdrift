@@ -1,7 +1,8 @@
 # ADR-0012: Keep local native composition private inside E1
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0013](0013-candle-only-local-execution.md)
 - **Date:** 2026-07-30
+- **Superseded:** 2026-07-31
 
 ## Context
 
@@ -43,3 +44,5 @@ Keep `application-runtime` as the public, frontend-neutral, non-generic E1 faça
 ## Review trigger
 
 Review this decision during Phase 9 if local composition starts changing independently from E1 application behavior, gains another real consumer, or obscures E1's model lifecycle and generation semantics. Any extraction should produce an independently coherent capability rather than a second application coordinator. Also review if a real transported frontend establishes requirements for an `application-api` boundary.
+
+The Candle-only architectural correction triggered this review. [ADR-0013](0013-candle-only-local-execution.md) replaces the two-worker/two-product composition while retaining the non-generic E1 façade, private concrete composition, and static token-sensitive execution.

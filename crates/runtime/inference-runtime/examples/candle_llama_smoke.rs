@@ -1,4 +1,4 @@
-//! Opt-in real-model Candle Llama smoke and diagnostic measurement path.
+//! Opt-in E0 diagnostic for already-resolved local Candle Llama artifacts.
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -23,7 +23,7 @@ use inference_runtime::{
 use sampling::SamplingConfig;
 
 const MODEL_REPOSITORY: &str = "neubla/tiny-random-LlamaForCausalLM";
-const MODEL_REVISION: &str = "39ca1f8a1fc940377c5cb49a21aff73bb99b52f5";
+const MODEL_REVISION: &str = "1c81a3fba044af78df253edc66bdbab183184932";
 const EXPECTED_ARCHITECTURE: &str = "LlamaForCausalLM/Llama";
 const MAXIMUM_SEQUENCE_TOKENS: u32 = 64;
 const MAXIMUM_PREFILL_TOKENS: u32 = 32;

@@ -4,40 +4,53 @@ A layered Rust workspace for a local-first, composable language-model system wit
 
 ## Current product state
 
-The frontend-neutral `application-runtime` (E1) exposes two closed local CPU products through `ModelSelection`: Hugging Face Hub + Candle + Safetensors, and local file + llama.cpp + GGUF. Both use the same E1 model lifecycle, direct-completion generation, cancellation, bounded output, and unload semantics for one resident model.
+The current local product uses one coherent composition:
 
-E0 owns token-level scheduling, sampling, backend execution, cancellation boundaries, backpressure, and cleanup. E1 owns the shared lifecycle, generation, and conversation behavior, including closed Hugging Face/GGUF tokenizer and streaming-decoder dispatch. Its private local capability starts two monomorphized E0 workers and routes commands, events, and output through the one active backend.
+- **execution engine:** Candle;
+- **artifact source:** immutable Hugging Face Hub revisions;
+- **model format:** Safetensors;
+- **device:** CPU.
 
-- Hugging Face resolution runs on the bounded Hub worker and retains an immutable commit identity.
-- Local GGUF resolution is synchronous, canonicalizes the selected path, and verifies exact bytes with SHA-256.
-- `TinyLlama/TinyLlama-1.1B-Chat-v1.0` remains the only verified chat profile; GGUF and other unverified models use honest direct completion.
-- Slint maps only E1 types and presents backend, source, device, format, scalar type, quantization, and immutable identity.
-- There is no `application-api`, hosted-provider or peer execution, GPU path, remote frontend transport, or multiple application-level resident models.
+`application-runtime` (E1) is the frontend-neutral façade. `ModelSelection` contains a Hugging Face repository and requested revision. Resolution pins that selection to an immutable Hub commit, loads the matching Hugging Face tokenizer, and reports application-owned engine, source, device, format, scalar, vocabulary, and commit facts. Callers cannot assemble unsupported combinations.
 
-See the [current implementation status](docs/project/implementation-status.md) for the exact integration matrix and validation evidence. The [execution plan](docs/agent/execution/execution-plan.md) is the active roadmap.
-The [project vision](docs/vision.md) records the longer-term research direction; it is intentionally aspirational and does not override current architecture, ADRs, or support status.
+E1 owns one concrete Candle E0 worker/thread, one bounded Hub resolver worker, one resident-model lifecycle, and the concrete Hugging Face tokenizer/streaming-decoder path. E0 owns loaded model resources, sequences, request admission, token scheduling, sampling, cancellation boundaries, output backpressure, cleanup quarantine, accounting, unload, and shutdown.
+
+- Direct completion is available for every successfully loaded model.
+- Chat is enabled only for `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable commit `fe8a4ea1ffedaf415f4da2f062534de366a451e6` when `</s>` resolves to token ID 2.
+- Conversation/context planning, regeneration and supersession, bounded decoded output, cancellation, cleanup retry/exhaustion, unload policy, redb-backed preferences/catalogue state, and explicit bounded shutdown remain implemented.
+- Slint maps only E1-owned types and displays the derived engine, source, CPU device, Safetensors format, scalar type, and immutable Hub identity.
+
+GGUF is not supported by the current product. Possible Candle-native GGUF or other quantized-format work requires a separate reviewed implementation. GPU execution is also deferred. There is no current llama.cpp product, hosted-provider or peer execution path, browser transport, `application-api`, or multiple application-level resident models.
+
+See the [current implementation status](docs/project/implementation-status.md) for the exact support and validation state. The [execution plan](docs/agent/execution/execution-plan.md) is the active roadmap, and the [project vision](docs/vision.md) is intentionally aspirational rather than a support claim.
 
 ## Workspace
 
 ```text
 crates/domain/       portable contracts and algorithms
 crates/platform/     process-host threading, timing, channels, and bounded output plumbing
-crates/adapters/     model, tokenizer, storage, network, and vendor integrations
+crates/adapters/     Candle, tokenizer, Hub, storage, and vendor integrations
 crates/runtime/      E0 inference, capability engines, and E1 application coordination
 crates/apps/         presentation and process entry points
 ```
 
-The applied system structure is documented in [project architecture](docs/project/architecture.md), with enforcement details in [dependency policy](docs/project/dependency-policy.md). Documentation authority and all component guides are indexed in [the documentation map](docs/README.md).
+The applied structure is documented in [project architecture](docs/project/architecture.md), with exact crate edges in [workspace boundaries](docs/project/workspace.md) and enforcement in [dependency policy](docs/project/dependency-policy.md). Documentation authority and component guides are indexed in the [documentation map](docs/README.md).
 
 ## Validate
 
-Run the current repository baseline gate with:
+Run the canonical locked repository gate with:
 
 ```text
 cargo run --locked --bin llm-app -- verify
 ```
 
-The root binary runs the architecture, formatting, workspace-check, ordinary-test, Clippy, API-documentation, and benchmark-compilation gates. Ordinary tests do not select benchmark targets. CI also enforces dependency policy, local Markdown links, and the named portable targets.
+Run the Rust-owned tooling/dependency hygiene policy independently with:
+
+```text
+cargo run --locked --bin llm-app -- hygiene
+```
+
+Ordinary workspace tests are download-free. The opt-in, network-dependent E1 Candle/Hub smoke and its exact immutable revision are documented in [project validation](docs/project/validation.md#rust-native-candle-hub-smoke).
 
 Plain Cargo commands also work normally:
 
@@ -51,17 +64,17 @@ cargo test --workspace --locked
 Run the native frontend with:
 
 ```text
-cargo run -p desktop-slint
+cargo run --locked -p desktop-slint
 ```
 
-The frontend selects either closed CPU product, resolves and loads it through E1, streams bounded decoded output, cancels active work, and unloads deterministically. Verified TinyLlama uses Chat mode; GGUF uses Direct completion mode. Normal window closure invokes E1's bounded shutdown protocol for the Hub worker and both E0 workers. Application state is stored in the platform's per-user application-data directory.
+The frontend accepts a Hugging Face repository and revision, resolves and loads the immutable Candle/Safetensors CPU model through E1, streams bounded decoded output, supports cancellation and deterministic unload, and calls E1's bounded shutdown protocol for the inference and Hub workers on normal closure. Verified TinyLlama uses Chat mode; every other loaded model uses honest Direct completion mode. Application state is stored in the platform's per-user application-data directory.
 
 Relevant guides:
 
 - [Application runtime](docs/project/application-runtime.md)
 - [Desktop runtime](docs/project/desktop-runtime.md)
 - [Candle backend](docs/project/candle-backend.md)
-- [GGUF backend](docs/project/gguf-backend.md)
+- [Validation](docs/project/validation.md)
 
 ## License
 

@@ -1,16 +1,16 @@
-//! One shared real-model E0 generation contract instantiated for Candle and GGUF.
+//! Download-free Candle real-fixture coverage for E0 generation and lifecycle.
 
-use std::num::{NonZeroI32, NonZeroU32, NonZeroU64, NonZeroUsize};
+use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use candle_backend::{CandleLlamaLoader, CandleLlamaSource, CandleScalarType};
 use domain_contracts::{
     BackendId, CancellationReason, CapabilitySet, DeviceId, DeviceKind, FinishReason, MemoryBudget,
-    MemoryFootprint, ModelArchitecture, ModelHandle, ModelId, ModelLoader, RequestId, ScalarType,
+    MemoryFootprint, ModelArchitecture, ModelHandle, ModelId, RequestId, ScalarType,
     SequenceConfiguration, SequenceId, TokenId, UnloadPolicy, YieldReason,
 };
-use gguf_backend::{GgufBackendRuntime, GgufExecutionConfiguration, GgufLoader, GgufSource};
+
 use host_runtime::TokenOutputRecordKind;
 use inference_runtime::{
     CommandTicket, GenerationOutcome, GenerationOutputCapacityPolicy, GenerationOutputState,
@@ -20,7 +20,6 @@ use inference_runtime::{
 use sampling::SamplingConfig;
 
 const CANDLE_BACKEND: BackendId = BackendId::new(41);
-const GGUF_BACKEND: BackendId = BackendId::new(42);
 const MODEL: ModelId = ModelId::new(7);
 const VOCABULARY_SIZE: u32 = 16;
 const CONTEXT_LENGTH: u32 = 16;
@@ -37,115 +36,13 @@ const REQUIRED_GENERATION_OPERATIONS: CapabilitySet =
     CapabilitySet::PREFILL.union(CapabilitySet::INCREMENTAL_DECODE);
 
 type TestResult<T = ()> = Result<T, String>;
-
-type BackendSource<B> = <<B as NativeBackend>::Loader as ModelLoader>::Source;
-
-trait NativeBackend {
-    type Loader: ModelLoader + Send + 'static;
-
-    fn name(&self) -> &'static str;
-    fn backend_id(&self) -> BackendId;
-    fn loader(&self) -> Self::Loader;
-    fn source(&self) -> TestResult<BackendSource<Self>>;
-}
-
-struct CandleBackend;
-
-impl NativeBackend for CandleBackend {
-    type Loader = CandleLlamaLoader;
-
-    fn name(&self) -> &'static str {
-        "Candle"
-    }
-
-    fn backend_id(&self) -> BackendId {
-        CANDLE_BACKEND
-    }
-
-    fn loader(&self) -> Self::Loader {
-        CandleLlamaLoader::new(CANDLE_BACKEND)
-    }
-
-    fn source(&self) -> TestResult<CandleLlamaSource> {
-        let directory = fixture_directory("candle-llama");
-        CandleLlamaSource::new(
-            directory.join("config.json"),
-            vec![directory.join("model.safetensors")],
-            CandleScalarType::F32,
-        )
-        .map_err(|error| error.to_string())
-    }
-}
-
-struct GgufBackend {
-    runtime: GgufBackendRuntime,
-}
-
-impl NativeBackend for GgufBackend {
-    type Loader = GgufLoader;
-
-    fn name(&self) -> &'static str {
-        "GGUF/llama.cpp"
-    }
-
-    fn backend_id(&self) -> BackendId {
-        GGUF_BACKEND
-    }
-
-    fn loader(&self) -> Self::Loader {
-        GgufLoader::new(GGUF_BACKEND, self.runtime.clone())
-    }
-
-    fn source(&self) -> TestResult<GgufSource> {
-        let execution = GgufExecutionConfiguration::new(
-            nonzero_u32(CONTEXT_LENGTH)?,
-            nonzero_u32(8)?,
-            nonzero_u32(8)?,
-            NonZeroU32::MIN,
-            nonzero_i32(1)?,
-            nonzero_i32(1)?,
-        )
-        .map_err(|error| error.to_string())?
-        .with_mmap(false);
-        Ok(GgufSource::new(
-            fixture_directory("gguf-llama").join("tiny-llama-f32.gguf"),
-            execution,
-        ))
-    }
-}
+type CandleRuntime = HostedRuntime<CandleLlamaSource>;
 
 #[test]
-fn candle_runs_shared_native_backend_suite() -> TestResult {
-    run_shared_native_backend_suite(&CandleBackend)
-}
-
-#[test]
-fn gguf_runs_shared_native_backend_suite() -> TestResult {
-    // llama.cpp permits one process-level initialization. This token remains
-    // alive while every loader/model scenario in the GGUF suite runs.
-    let runtime = GgufBackendRuntime::initialize().map_err(|error| error.to_string())?;
-    run_shared_native_backend_suite(&GgufBackend { runtime })
-}
-
-fn run_shared_native_backend_suite<B>(backend: &B) -> TestResult
-where
-    B: NativeBackend,
-    BackendSource<B>: Send + 'static,
-{
-    run_generation_lifecycle_scenario(backend)
-        .map_err(|error| format!("{} lifecycle scenario: {error}", backend.name()))?;
-    run_backpressure_and_cancellation_scenario(backend)
-        .map_err(|error| format!("{} backpressure scenario: {error}", backend.name()))
-}
-
-fn run_generation_lifecycle_scenario<B>(backend: &B) -> TestResult
-where
-    B: NativeBackend,
-    BackendSource<B>: Send + 'static,
-{
-    let (hosted, thread) = hosted_runtime(backend.loader(), 16, 64)?;
-    let loaded = load_model(&hosted, backend.source()?)?;
-    assert_loaded_fixture(&loaded, backend.backend_id());
+fn candle_fixture_covers_generation_sampling_eos_and_lifecycle() -> TestResult {
+    let (hosted, thread) = hosted_runtime(16, 64)?;
+    let loaded = load_model(&hosted, candle_fixture_source()?)?;
+    assert_loaded_fixture(&loaded);
     let handle = loaded.handle;
 
     // Three generated tokens require one prompt prefill and two incremental
@@ -220,14 +117,11 @@ where
     shutdown(hosted, thread)
 }
 
-fn run_backpressure_and_cancellation_scenario<B>(backend: &B) -> TestResult
-where
-    B: NativeBackend,
-    BackendSource<B>: Send + 'static,
-{
-    let (hosted, thread) = hosted_runtime(backend.loader(), 1, 64)?;
-    let loaded = load_model(&hosted, backend.source()?)?;
-    assert_loaded_fixture(&loaded, backend.backend_id());
+#[test]
+fn candle_fixture_covers_output_backpressure_and_cancellation() -> TestResult {
+    let (hosted, thread) = hosted_runtime(1, 64)?;
+    let loaded = load_model(&hosted, candle_fixture_source()?)?;
+    assert_loaded_fixture(&loaded);
     let handle = loaded.handle;
 
     let backpressured = generation_request(10, 110, 4, SamplingConfig::greedy(), 23, Box::new([]))?;
@@ -265,15 +159,20 @@ where
     shutdown(hosted, thread)
 }
 
-fn hosted_runtime<L>(
-    loader: L,
+fn candle_fixture_source() -> TestResult<CandleLlamaSource> {
+    let directory = candle_fixture_directory();
+    CandleLlamaSource::new(
+        directory.join("config.json"),
+        vec![directory.join("model.safetensors")],
+        CandleScalarType::F32,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn hosted_runtime(
     token_capacity: usize,
     record_capacity: usize,
-) -> TestResult<(HostedRuntime<L::Source>, RuntimeThread)>
-where
-    L: ModelLoader + Send + 'static,
-    L::Source: Send + 'static,
-{
+) -> TestResult<(CandleRuntime, RuntimeThread)> {
     let configuration =
         HostedRuntimeConfiguration::new(nonzero_usize(8)?, nonzero_usize(8)?, NonZeroU64::MIN)
             .with_token_output_capacity(
@@ -281,7 +180,7 @@ where
                 nonzero_usize(record_capacity)?,
             );
     start_hosted_runtime(
-        loader,
+        CandleLlamaLoader::new(CANDLE_BACKEND),
         RuntimeLimits::new(
             NonZeroU32::MIN,
             NonZeroU32::MIN,
@@ -295,7 +194,7 @@ where
     .map_err(|error| error.to_string())
 }
 
-fn load_model<S>(hosted: &HostedRuntime<S>, source: S) -> TestResult<LoadReceipt> {
+fn load_model(hosted: &CandleRuntime, source: CandleLlamaSource) -> TestResult<LoadReceipt> {
     hosted
         .try_submit(RuntimeCommand::LoadModel {
             ticket: LOAD_TICKET,
@@ -323,9 +222,9 @@ fn load_model<S>(hosted: &HostedRuntime<S>, source: S) -> TestResult<LoadReceipt
     }
 }
 
-fn assert_loaded_fixture(loaded: &LoadReceipt, backend: BackendId) {
+fn assert_loaded_fixture(loaded: &LoadReceipt) {
     let descriptor = loaded.descriptor;
-    assert_eq!(descriptor.backend, backend);
+    assert_eq!(descriptor.backend, CANDLE_BACKEND);
     assert_eq!(descriptor.metadata.architecture, ModelArchitecture::Llama);
     assert_eq!(descriptor.metadata.scalar_type, ScalarType::F32);
     assert_eq!(descriptor.metadata.vocabulary_size, VOCABULARY_SIZE);
@@ -342,8 +241,8 @@ fn assert_loaded_fixture(loaded: &LoadReceipt, backend: BackendId) {
     assert_ne!(loaded.reserved_footprint, MemoryFootprint::default());
 }
 
-fn submit_generation<S>(
-    hosted: &HostedRuntime<S>,
+fn submit_generation(
+    hosted: &CandleRuntime,
     handle: ModelHandle,
     ticket: CommandTicket,
     request: &GenerationRequest,
@@ -382,8 +281,8 @@ fn submit_generation<S>(
     }
 }
 
-fn request_cancellation<S>(
-    hosted: &HostedRuntime<S>,
+fn request_cancellation(
+    hosted: &CandleRuntime,
     request_id: RequestId,
     ticket: CommandTicket,
 ) -> TestResult {
@@ -453,8 +352,8 @@ struct CollectedOutput {
     states: Vec<GenerationOutputState>,
 }
 
-fn pull_output<S>(
-    hosted: &HostedRuntime<S>,
+fn pull_output(
+    hosted: &CandleRuntime,
     request_id: RequestId,
     output: &mut CollectedOutput,
 ) -> TestResult {
@@ -477,8 +376,8 @@ fn pull_output<S>(
         .map_err(|error| format!("output pull failed: {error:?}"))
 }
 
-fn collect_until_backpressure<S>(
-    hosted: &HostedRuntime<S>,
+fn collect_until_backpressure(
+    hosted: &CandleRuntime,
     request_id: RequestId,
     timeout: Duration,
 ) -> TestResult<CollectedOutput> {
@@ -509,8 +408,8 @@ fn collect_until_backpressure<S>(
     }
 }
 
-fn collect_until_released<S>(
-    hosted: &HostedRuntime<S>,
+fn collect_until_released(
+    hosted: &CandleRuntime,
     request_id: RequestId,
     timeout: Duration,
     mut output: CollectedOutput,
@@ -571,8 +470,8 @@ fn assert_output_backpressure(output: &CollectedOutput) {
     );
 }
 
-fn assert_released_snapshot<S>(
-    hosted: &HostedRuntime<S>,
+fn assert_released_snapshot(
+    hosted: &CandleRuntime,
     handle: ModelHandle,
     ticket: CommandTicket,
 ) -> TestResult {
@@ -616,7 +515,7 @@ fn assert_released_snapshot<S>(
     }
 }
 
-fn unload_model<S>(hosted: &HostedRuntime<S>, handle: ModelHandle) -> TestResult {
+fn unload_model(hosted: &CandleRuntime, handle: ModelHandle) -> TestResult {
     hosted
         .try_submit(RuntimeCommand::UnloadModel {
             ticket: UNLOAD_TICKET,
@@ -646,7 +545,7 @@ fn unload_model<S>(hosted: &HostedRuntime<S>, handle: ModelHandle) -> TestResult
     }
 }
 
-fn assert_unloaded_snapshot<S>(hosted: &HostedRuntime<S>) -> TestResult {
+fn assert_unloaded_snapshot(hosted: &CandleRuntime) -> TestResult {
     hosted
         .try_submit(RuntimeCommand::Snapshot {
             ticket: UNLOADED_SNAPSHOT_TICKET,
@@ -688,7 +587,7 @@ fn assert_unloaded_snapshot<S>(hosted: &HostedRuntime<S>) -> TestResult {
     clippy::needless_pass_by_value,
     reason = "the helper owns both runtime endpoints through worker join"
 )]
-fn shutdown<S>(hosted: HostedRuntime<S>, thread: RuntimeThread) -> TestResult {
+fn shutdown(hosted: CandleRuntime, thread: RuntimeThread) -> TestResult {
     hosted
         .try_submit(RuntimeCommand::Shutdown {
             ticket: SHUTDOWN_TICKET,
@@ -718,10 +617,8 @@ fn shutdown<S>(hosted: HostedRuntime<S>, thread: RuntimeThread) -> TestResult {
     thread.join().map_err(|error| error.to_string())
 }
 
-fn fixture_directory(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(name)
+fn candle_fixture_directory() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/candle-llama")
 }
 
 fn deadline(timeout: Duration) -> TestResult<Instant> {
@@ -732,10 +629,6 @@ fn deadline(timeout: Duration) -> TestResult<Instant> {
 
 fn nonzero_u32(value: u32) -> TestResult<NonZeroU32> {
     NonZeroU32::new(value).ok_or_else(|| "value must be a non-zero u32".into())
-}
-
-fn nonzero_i32(value: i32) -> TestResult<NonZeroI32> {
-    NonZeroI32::new(value).ok_or_else(|| "value must be a non-zero i32".into())
 }
 
 fn nonzero_usize(value: usize) -> TestResult<NonZeroUsize> {

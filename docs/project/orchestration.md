@@ -144,7 +144,7 @@ artifacts.
 The `corrective-workflow` engine is separately composable from
 `ApplicationRuntime` and the hosted local inference lifecycle. This permits deterministic
 validator and model-service implementations to be selected without exposing
-Candle, GGUF, compiler-process, channel, or UI types through the public workflow
+Candle, compiler-process, channel, or UI types through the public workflow
 contract.
 
 A model-task port should delegate complete generation through the selected model

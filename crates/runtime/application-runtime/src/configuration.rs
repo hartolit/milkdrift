@@ -26,10 +26,6 @@ const DEFAULT_RUNTIME_JOIN_TIMEOUT_MILLISECONDS: u64 = 2_000;
 const DEFAULT_RUNTIME_JOIN_POLL_MILLISECONDS: u64 = 10;
 const DEFAULT_HUB_SHUTDOWN_TIMEOUT_MILLISECONDS: u64 = 2_000;
 const DEFAULT_HUB_SHUTDOWN_POLL_MILLISECONDS: u64 = 10;
-const DEFAULT_GGUF_MAXIMUM_CONTEXT_TOKENS: u32 = 4_096;
-const DEFAULT_GGUF_MAXIMUM_PREFILL_TOKENS: u32 = 512;
-const DEFAULT_GGUF_MICRO_BATCH_TOKENS: u32 = 128;
-const DEFAULT_GGUF_THREADS: u32 = 1;
 
 /// Frontend-neutral Hugging Face cache and authentication overrides.
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -53,40 +49,6 @@ impl fmt::Debug for ApplicationHubConfiguration {
             )
             .field("maximum_retries", &self.maximum_retries)
             .finish()
-    }
-}
-
-/// Application-owned low-level defaults for local llama.cpp/GGUF execution.
-///
-/// Frontends select a GGUF file but do not need to supply these backend tuning
-/// values. E1 validates them and caps the effective context and batch sizes by
-/// immutable model metadata during resolution.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ApplicationGgufConfiguration {
-    /// Maximum context tokens retained per sequence before the model metadata cap.
-    pub maximum_context_tokens: u32,
-    /// Maximum prompt tokens admitted in one prefill before the context cap.
-    pub maximum_prefill_tokens: u32,
-    /// Maximum physical llama.cpp micro-batch token count.
-    pub micro_batch_tokens: u32,
-    /// CPU thread count used for prompt and incremental decoding.
-    pub threads: u32,
-    /// Whether llama.cpp should memory-map GGUF weights.
-    pub use_mmap: bool,
-    /// Whether llama.cpp should lock model pages in host memory.
-    pub use_mlock: bool,
-}
-
-impl Default for ApplicationGgufConfiguration {
-    fn default() -> Self {
-        Self {
-            maximum_context_tokens: DEFAULT_GGUF_MAXIMUM_CONTEXT_TOKENS,
-            maximum_prefill_tokens: DEFAULT_GGUF_MAXIMUM_PREFILL_TOKENS,
-            micro_batch_tokens: DEFAULT_GGUF_MICRO_BATCH_TOKENS,
-            threads: DEFAULT_GGUF_THREADS,
-            use_mmap: false,
-            use_mlock: false,
-        }
     }
 }
 
@@ -176,8 +138,6 @@ pub struct ApplicationRuntimeConfiguration {
     pub hub: ApplicationHubConfiguration,
     /// Settings used only when no persisted record exists.
     pub defaults: ApplicationPreferences,
-    /// Application-owned local llama.cpp/GGUF execution defaults.
-    pub gguf: ApplicationGgufConfiguration,
     /// Maximum concurrently active inference requests.
     pub maximum_requests: u32,
     /// Maximum queued inference commands.
@@ -206,7 +166,6 @@ impl ApplicationRuntimeConfiguration {
             database_path: database_path.into(),
             hub: ApplicationHubConfiguration::default(),
             defaults: ApplicationPreferences::default(),
-            gguf: ApplicationGgufConfiguration::default(),
             maximum_requests: DEFAULT_MAXIMUM_REQUESTS,
             command_capacity: DEFAULT_COMMAND_CAPACITY,
             event_capacity: DEFAULT_EVENT_CAPACITY,
@@ -223,8 +182,6 @@ impl ApplicationRuntimeConfiguration {
 #[cfg(test)]
 mod tests {
     use super::ApplicationRuntimeConfiguration;
-    use crate::support::validate_configuration;
-    use crate::{ApplicationConfigurationField, ApplicationError};
 
     #[test]
     fn application_configuration_debug_redacts_hub_access_token() {
@@ -234,38 +191,5 @@ mod tests {
         let debug = format!("{configuration:?}");
         assert!(!debug.contains("secret-token"));
         assert!(debug.contains("<redacted>"));
-    }
-
-    #[test]
-    fn gguf_execution_defaults_are_bounded_and_validated_by_e1() {
-        let configuration = ApplicationRuntimeConfiguration::desktop("application.redb");
-        assert_eq!(validate_configuration(&configuration), Ok(()));
-        assert!(configuration.gguf.maximum_context_tokens > 0);
-        assert!(configuration.gguf.maximum_prefill_tokens > 0);
-        assert!(configuration.gguf.micro_batch_tokens > 0);
-        assert!(configuration.gguf.threads > 0);
-        assert!(!configuration.gguf.use_mlock);
-    }
-
-    #[test]
-    fn invalid_gguf_execution_defaults_are_rejected_before_worker_start() {
-        let mut configuration = ApplicationRuntimeConfiguration::desktop("application.redb");
-        configuration.gguf.micro_batch_tokens =
-            configuration.gguf.maximum_prefill_tokens.saturating_add(1);
-        assert_eq!(
-            validate_configuration(&configuration),
-            Err(ApplicationError::InvalidConfiguration(
-                ApplicationConfigurationField::GgufMicroBatchTokens
-            ))
-        );
-
-        configuration.gguf.micro_batch_tokens = 1;
-        configuration.gguf.maximum_context_tokens = 0;
-        assert_eq!(
-            validate_configuration(&configuration),
-            Err(ApplicationError::InvalidConfiguration(
-                ApplicationConfigurationField::GgufMaximumContextTokens
-            ))
-        );
     }
 }

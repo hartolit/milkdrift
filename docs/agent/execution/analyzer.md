@@ -1,3 +1,5 @@
+> **Dated analysis — superseded for current architecture (2026-07-31).** This report describes the 2026-07-22 snapshot that preceded the completed generation/chat work and the later Phase 8 dual-product experiment. Its body is preserved unchanged as historical analysis, not current support or implementation guidance. For current truth use [ADR-0013](../decisions/0013-candle-only-local-execution.md), [ADR-0014](../decisions/0014-rust-cargo-native-operational-tooling.md), [project architecture](../../project/architecture.md), [implementation status](../../project/implementation-status.md), and [current execution context](current.md).
+
 # Repository Architecture and Project-Structure Analysis
 
 **Repository reviewed:** `llm-app copy`  

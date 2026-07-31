@@ -1,6 +1,6 @@
 # Validation
 
-This document owns repeatable project validation procedures. [Implementation status](implementation-status.md) records whether the current source baseline has passed the required gates; [execution history](../agent/execution/history.md) preserves older run evidence.
+This document owns repeatable current validation procedures. [Implementation status](implementation-status.md) records which commands have evidence on the current working tree; [execution history](../agent/execution/history.md) preserves older, baseline-specific results.
 
 ## Canonical repository gate
 
@@ -10,7 +10,9 @@ Run from the repository root on the exact tree being evaluated:
 cargo run --locked --bin llm-app -- verify
 ```
 
-Use focused commands to diagnose a failure without treating them as a substitute for the canonical gate:
+The runner validates architecture and repository hygiene, then checks formatting, every workspace target, ordinary tests/doctests, strict Clippy, API documentation with warnings denied, and benchmark compilation. It does not run the network-dependent external smoke.
+
+Use focused commands to diagnose failures without treating them as a substitute for the canonical gate:
 
 ```sh
 cargo fmt --all -- --check
@@ -22,180 +24,94 @@ cargo bench --workspace --no-run --locked
 git diff --check
 ```
 
-Dependency/supply-chain gates are documented in [dependency policy](dependency-policy.md). Cross-target checks are documented in [portability](portability.md). Performance measurements have separate methodology in [performance evidence](performance.md).
+Record the exact source revision and whether the tree is dirty with the result. A command that passed on another commit or earlier working tree is not evidence for the current tree.
 
-For validation evidence, record the exact source revision:
+## Repository hygiene
+
+Run the Rust-owned tooling and selected-graph hygiene policy independently with:
 
 ```sh
-git rev-parse HEAD
+cargo run --locked --bin llm-app -- hygiene
 ```
 
-A successful command on a different commit is not evidence for the current tree.
-
-## GGUF fixture and shared native E0 suite
-
-The repository fixture is
-`crates/runtime/inference-runtime/tests/fixtures/gguf-llama/tiny-llama-f32.gguf`.
-It is a deterministic 6,144-byte GGUF v3 F32 Llama model with one block, a
-16-token context, and a complete 16-token test vocabulary. Its expected SHA-256
-is `c3e55952008029142e0db9cf18674657c5827b67c4c221d6beced60d7d144ac7`.
-
-The adjacent
-`crates/runtime/inference-runtime/tests/fixtures/gguf-llama/generate_gguf.py`
-uses only the Python standard library. It verifies the hashes and complete tensor
-schema of the committed Candle fixture, applies the required Q/K RoPE row
-permutation, and emits deterministic aligned GGUF v3 bytes. No network access,
-model download, or Python package installation is required.
-
-### Verify or intentionally rebuild the fixture
-
-Run the non-mutating reproducibility check from the repository root:
+The architecture command also includes hygiene:
 
 ```sh
-python3 crates/runtime/inference-runtime/tests/fixtures/gguf-llama/generate_gguf.py --check
+cargo run --locked --bin llm-app -- architecture
 ```
 
-`--check` regenerates the bytes in memory, compares them byte for byte with the
-committed fixture, and reports the size and SHA-256. If an intentional source
-fixture change requires rebuilding the committed GGUF, run the generator without
-`--check` and then repeat the check:
+The policy examines tracked project artifacts, maintained operational surfaces, direct manifests, and locked Cargo metadata. [Dependency policy](dependency-policy.md#rust-owned-operational-hygiene) defines the boundary and historical-text exclusions.
+
+## Download-free focused validation
+
+Ordinary tests and the canonical gate do not resolve or download external models. The repository commits a tiny deterministic Candle/Safetensors fixture for real-adapter E0 coverage; deterministic loaders cover backend-independent failure paths.
+
+Useful focused commands are:
 
 ```sh
-python3 crates/runtime/inference-runtime/tests/fixtures/gguf-llama/generate_gguf.py
-python3 crates/runtime/inference-runtime/tests/fixtures/gguf-llama/generate_gguf.py --check
-```
-
-### Run the focused adapter and E0 tests
-
-The tokenizer test loads a vocabulary-only llama.cpp model and exercises digest
-identity, portable encode/decode policy, independent BOS/EOS handling, special
-skipping, and borrowed/owned stateful decoder construction:
-
-```sh
-cargo test --locked -p gguf-backend --test tokenizer
-```
-
-The shared native suite is generic over the loader and runs the same contract for
-both the committed Candle and GGUF fixtures:
-
-```sh
+cargo test --locked -p candle-backend
 cargo test --locked -p inference-runtime --test native_backend_generation
+cargo test --locked -p application-runtime
+cargo test --locked -p desktop-slint
 ```
 
-To isolate the GGUF/llama.cpp instance while diagnosing a native failure:
+The Candle E0 target covers load, descriptor validation, prompt prefill, incremental decode, greedy and seeded sampling, EOS and token limits, output backpressure, cancellation, explicit sequence cleanup/release, unload, empty post-unload accounting, shutdown, and worker join. E1 tests additionally cover immutable resolution evidence, direct completion, exact TinyLlama chat compatibility, context/regeneration behavior, decoded output, unload policies, persistence, worker disconnection, and bounded shutdown. Slint tests cover E1-only selection/state mapping and presentation behavior.
+
+These fixtures prove integration and lifecycle behavior, not model language quality, GPU execution, or strict allocation-free behavior inside upstream libraries.
+
+## Rust-native Candle Hub smoke
+
+The external smoke is explicit, opt-in, network/cache dependent, and implemented as an `application-runtime` Rust example. It reuses production Hub resolution, tokenizer loading, E1 lifecycle, E0 scheduling, and Candle execution; no separate downloader or model-conversion workflow is maintained.
+
+Run exactly:
 
 ```sh
-cargo test --locked -p inference-runtime --test native_backend_generation \
-  gguf_runs_shared_native_backend_suite -- --exact --nocapture
+LLM_APP_CANDLE_HUB_SMOKE=1 cargo run --locked -p application-runtime --example candle_hub_smoke
 ```
 
-The suite covers real model load and `RuntimeCommand::Generate`, prompt prefill,
-incremental decode, deterministic greedy output, seeded repeatability, EOS and
-token-limit completion, backpressure, cancellation, sequence/workspace cleanup,
-unload with empty accounting, terminal shutdown, and worker join. It is
-load-and-generation proof rather than compile-only coverage.
-
-These committed fixtures and focused tests require no download and make no claim
-about language quality, GPU execution, or allocation-free backend behavior. They
-also do not establish the full repository gate. Do not record a current-tree gate
-pass until the main agent runs the
-[canonical repository gate](#canonical-repository-gate) on the exact tree being
-evaluated.
-
-## Candle real-model smoke
-
-The external Candle smoke is an opt-in integration check for the real Llama/Safetensors path through the hosted E0 worker. Ordinary workspace tests use project-authored fixtures and do not download a model.
-
-### Pinned fixture
+### Exact pinned model
 
 | Field | Required value |
 |---|---|
 | Repository | `neubla/tiny-random-LlamaForCausalLM` |
-| Revision | `39ca1f8a1fc940377c5cb49a21aff73bb99b52f5` |
-| Expected architecture | Hugging Face `LlamaForCausalLM`; runtime `ModelArchitecture::Llama` |
-| Scalar type | F32 |
-| Required files | `config.json`, `model.safetensors` |
-| `model.safetensors` SHA-256 | `49c20f32c6c597480fcaec5df2f86c645eabea765cbea1e67886dbae45e5c992` |
+| Requested revision and expected immutable commit | `1c81a3fba044af78df253edc66bdbab183184932` |
+| Expected engine/source/device/format | Candle / Hugging Face Hub / CPU / Safetensors |
+| Expected scalar | F32 |
+| Required artifacts | `config.json`, `tokenizer.json`, and `model.safetensors` (or a supported Safetensors index layout) |
 
-The fixture is a tiny random model. It validates execution and lifecycle integration, not language quality.
+Use the full pinned revision. The model is intentionally tiny and random; successful output validates resolution, identity, execution, lifecycle, and cleanup rather than language quality.
 
-Downloaded model files are local validation inputs, not repository fixtures. Store them in ignored `.phase4/` storage and do not commit the config, weights, or machine-specific transcript.
+### Network, cache, and authentication
 
-### Download the exact revision
+- Resolution may perform HTTPS/DNS requests to `huggingface.co` and may populate the local Hugging Face cache. Transient network or service failures can make the smoke fail without invalidating download-free tests.
+- `HF_HOME` selects the cache root used by the upstream Rust Hub client. When unset, the client uses its environment-derived default. The directory must be writable and have enough space. A fully cached exact revision may avoid artifact downloads, but repository resolution still follows the adapter's configured Hub behavior.
+- `HF_TOKEN` supplies authentication when required; the public fixture normally permits anonymous access. Token values are redacted from diagnostics. Use an authorized token for access-controlled repositories without printing or committing it.
+- If `HF_HUB_OFFLINE` is set, the exact revision and required artifacts must already be cached. Unset it when network resolution is required.
 
-Install the Hugging Face `hf` CLI, then run:
+The example creates a temporary redb workspace, resolves the exact repository/revision on the production Hub worker, verifies the immutable commit and derived Candle/Hub/CPU/Safetensors/F32 facts, loads one model, runs an eight-token bounded direct completion, observes terminal and released state, unloads, explicitly shuts down both workers, and removes the temporary workspace.
 
-```sh
-MODEL_DIR="$PWD/.phase4/tiny-random-llama"
-MODEL_REVISION="39ca1f8a1fc940377c5cb49a21aff73bb99b52f5"
+Compilation of the example performs no network access. The opt-in environment value must equal `1`; otherwise the executable exits with configuration guidance.
 
-mkdir -p "$MODEL_DIR"
-hf download neubla/tiny-random-LlamaForCausalLM \
-  config.json model.safetensors \
-  --revision "$MODEL_REVISION" \
-  --local-dir "$MODEL_DIR"
+Record the complete output, revision, and dirty state when this smoke is used as release evidence. A cached artifact, successful resolution, or successful load alone is not the complete smoke.
 
-printf '%s  %s\n' \
-  '49c20f32c6c597480fcaec5df2f86c645eabea765cbea1e67886dbae45e5c992' \
-  "$MODEL_DIR/model.safetensors" \
-  | sha256sum --check --strict -
-```
+## Dependency, link, and graph audits
 
-On a platform without `sha256sum`, use an equivalent SHA-256 tool and compare the complete digest. Use the full pinned revision; do not replace it with `main` or an abbreviated web-interface hash.
-
-### Run the smoke
-
-The default prompt is token IDs `1,2,3`. A different non-empty comma-separated sequence may be supplied, up to 32 prompt tokens.
+Run the locked policy and local Markdown checks with:
 
 ```sh
-export LLM_APP_CANDLE_MODEL_DIR="$MODEL_DIR"
-export LLM_APP_CANDLE_MODEL_REVISION="$MODEL_REVISION"
-export LLM_APP_CANDLE_PROMPT_TOKENS="1,2,3"
-
-cargo run --locked \
-  -p inference-runtime \
-  --example candle_llama_smoke
+cargo deny --workspace --locked check advisories bans licenses sources
+lychee --config lychee.toml --offline '**/*.md'
 ```
 
-The example drives this lifecycle through the hosted E0 worker:
+Useful graph/audit reports are:
 
-```text
-load pinned local Llama
-→ admit token-level generation
-→ prefill, sample, and incrementally decode eight tokens
-→ publish terminal and released records
-→ admit a second request
-→ force one-token output backpressure
-→ cancel between backend calls
-→ publish Released(Cancelled(UserRequested))
-→ verify request/workspace/cleanup accounting is empty
-→ unload the model
-→ verify loaded-model, request, workspace, cleanup, memory, and model-list state is empty
-→ shut down and join the worker
+```sh
+cargo metadata --locked --format-version 1
+cargo tree --workspace --locked
+cargo tree -d --locked
+cargo tree -e features --locked
 ```
 
-The caller only pulls bounded output to relieve backpressure. It never drives backend prefill or decode one token at a time.
+Duplicate versions are an audit input, not an automatic failure. Interpret the selected graph against [dependency policy](dependency-policy.md).
 
-### Expected diagnostic output
-
-A successful run reports:
-
-- exact repository, revision, and expected architecture;
-- prompt token count and generated token IDs;
-- model load duration;
-- time to first generated token;
-- decode throughput after the first token;
-- cancellation latency;
-- model unload duration;
-- process RSS before load, after load, at first generated token, and after unload.
-
-RSS is read from `/proc/self/status`. Non-Linux platforms report it as unavailable rather than failing the lifecycle smoke. RSS observations are diagnostic evidence, not portable benchmark thresholds or proof of allocator release.
-
-### Failure classification
-
-The executable separates failures into:
-
-- `configuration error` — missing environment variables, wrong pinned revision, missing files, invalid token syntax, or an oversized prompt;
-- `runtime error` — adapter inspection/load failure, descriptor mismatch, generation admission/execution failure, missing terminal/release records, retained accounting, unload failure, non-empty post-unload state, or worker shutdown failure.
-
-A successful download alone does not validate the integration. Record the complete smoke output together with `git rev-parse HEAD` so the evidence is tied to one source revision.
+Cross-target checks are documented in [portability](portability.md). Performance measurements have separate methodology in [performance evidence](performance.md). Current Ubuntu system prerequisites are documented in [dependency policy](dependency-policy.md#linux-ci-prerequisites).

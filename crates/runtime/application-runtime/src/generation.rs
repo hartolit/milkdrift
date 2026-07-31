@@ -15,19 +15,19 @@ use host_runtime::{
 };
 use inference_runtime::{
     CommandTicket, GenerationOutcome, GenerationOutputCapacityPolicy, GenerationOutputState,
-    GenerationRequest, GenerationStopSequence, RuntimeEvent, SamplingConfig,
+    GenerationRequest, GenerationStopSequence, RuntimeCommand, RuntimeEvent, SamplingConfig,
 };
 use tokenization::{
     DecodeOptions, EncodeOptions, SpecialTokenPolicy, StreamingDecoder, TextBuffer, TokenBuffer,
     TokenizationError, Tokenizer,
 };
 
-use crate::local::{LocalCommand, LocalOwnedDecoder};
 use crate::{
     ApplicationConfigurationField, ApplicationError, ApplicationEvent, ApplicationFailure,
     ApplicationFailureKind, ApplicationRuntime, ApplicationRuntimeConfiguration, GenerationPhase,
     GenerationSettingsField, GenerationSummary, GenerationTerminal, GenerationTerminalOutcome,
 };
+use hf_tokenizer::HfOwnedStreamingDecoder;
 
 const FIRST_STOP_SEQUENCE_CODE: u32 = 1;
 const INTERNAL_SCHEDULER_QUANTUM: NonZeroU32 = NonZeroU32::MIN;
@@ -252,7 +252,7 @@ pub struct GenerationBridge {
 struct GenerationSession {
     request_id: RequestId,
     admission_ticket: CommandTicket,
-    decoder: LocalOwnedDecoder,
+    decoder: HfOwnedStreamingDecoder,
     decode_storage: Vec<u8>,
     pending_text_length: usize,
     local_failure: Option<ApplicationFailure>,
@@ -446,7 +446,7 @@ impl ApplicationRuntime {
             .try_reserve_exact(self.configuration.text_output_byte_capacity)
             .map_err(|error| ApplicationFailure::new(ApplicationFailureKind::Worker, error))?;
         decode_storage.resize(self.configuration.text_output_byte_capacity, 0);
-        self.submit_inference(LocalCommand::Generate {
+        self.submit_inference(RuntimeCommand::Generate {
             ticket,
             handle: loaded.handle(),
             request,
@@ -491,7 +491,7 @@ impl ApplicationRuntime {
             return Ok(());
         }
         let ticket = self.next_ticket()?;
-        self.submit_inference(LocalCommand::CancelRequest {
+        self.submit_inference(RuntimeCommand::CancelRequest {
             ticket,
             request_id,
             reason: CancellationReason::UserRequested,
@@ -916,7 +916,7 @@ impl ApplicationRuntime {
             return;
         };
         if self
-            .submit_inference(LocalCommand::CancelRequest {
+            .submit_inference(RuntimeCommand::CancelRequest {
                 ticket,
                 request_id,
                 reason: CancellationReason::ParentTask,

@@ -52,9 +52,10 @@ boundaries, and usage reporting remain explicit capabilities. Uniformity must no
 be manufactured by pretending every target behaves the same.
 
 Concrete Candle/Hugging Face/redb composition may remain in E1 while it is the
-only production composition. A local composition split should occur when GGUF, a
-second deployment, or remote execution reveals the actual seam. Do not introduce
-a speculative generic service graph first.
+only production composition. A local composition split should occur only when a
+second deployment, consumer, or materially different execution target reveals the
+actual seam. A new model format or device alone does not prove another composition
+owner. Do not introduce a speculative generic service graph first.
 
 ## Rejected alternatives
 
@@ -77,4 +78,7 @@ a speculative generic service graph first.
 
 Review this decision when the first hosted-provider or peer execution target is
 implemented, when capability engines appear to require direct dependencies on one
-another, or when concrete local composition still dominates E1 after GGUF parity.
+another, or when concrete local composition dominates E1 after a real second
+consumer/deployment establishes an independent seam.
+
+[ADR-0013](0013-candle-only-local-execution.md) records the Phase 8 composition review outcome: duplicate local execution was removed, while the private one-consumer Candle composition remains in E1.

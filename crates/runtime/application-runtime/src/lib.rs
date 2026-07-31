@@ -19,8 +19,8 @@ mod unload;
 
 pub use chat::{ChatCompatibility, ContextDiagnostics, PromptCompatibilityProfile};
 pub use configuration::{
-    ApplicationGgufConfiguration, ApplicationHubConfiguration, ApplicationPreferences,
-    ApplicationRuntimeConfiguration, ApplicationTiming,
+    ApplicationHubConfiguration, ApplicationPreferences, ApplicationRuntimeConfiguration,
+    ApplicationTiming,
 };
 pub use conversation::{
     ConversationProvenance, ConversationRecord, ConversationRecordId, ConversationRetention,
@@ -40,9 +40,8 @@ pub use generation::{
 };
 pub use runtime::ApplicationRuntime;
 pub use selection::{
-    ApplicationBackend, ApplicationDevice, ApplicationModelFormat, ApplicationQuantization,
-    ApplicationScalarType, ApplicationSource, ImmutableModelIdentity, LocalModelProduct,
-    ModelCompatibility, ModelSelection, ScalarType,
+    ApplicationDevice, ApplicationEngine, ApplicationModelFormat, ApplicationScalarType,
+    ApplicationSource, ImmutableModelIdentity, ModelSelection,
 };
 pub use state::{
     ApplicationActivity, ApplicationState, GenerationPhase, GenerationSummary, GenerationTerminal,

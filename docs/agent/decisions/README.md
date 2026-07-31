@@ -17,6 +17,8 @@ Accepted ADRs remain part of the project architecture until superseded. A supers
 - [ADR-0009: Adopt domain, platform, adapter, runtime, and app roots](0009-workspace-physical-taxonomy.md)
 - [ADR-0010: Verify backend contracts at E0](0010-verify-backend-contracts-at-e0.md)
 - [ADR-0011: Bound workflow output at the service port](0011-bound-workflow-output-at-the-port.md)
-- [ADR-0012: Keep local native composition private inside E1](0012-local-native-composition.md)
+- [ADR-0012: Keep local native composition private inside E1](0012-local-native-composition.md) — superseded by ADR-0013
+- [ADR-0013: Use Candle as the sole local execution engine](0013-candle-only-local-execution.md)
+- [ADR-0014: Keep project-owned operational tooling Rust/Cargo-native](0014-rust-cargo-native-operational-tooling.md)
 
 For current applied structure, see [project architecture](../../project/architecture.md). For the reusable selectable model, see the [architecture blueprint](../../architecture.md).

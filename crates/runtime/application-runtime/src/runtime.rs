@@ -1,32 +1,29 @@
 //! Frontend-neutral application orchestration over bounded host workers.
 
 use candle_backend::CandleLlamaSource;
-use domain_contracts::{DeviceId, ModelId};
+use domain_contracts::{DeviceId, ModelHandle, ModelId, QuantizationFormat};
 use hf_hub_adapter::{HubModelReference, ResolvedSafetensorsLlamaArtifacts};
 use hf_tokenizer::HfTokenizer;
 use host_runtime::{BoundedReceiver, BoundedSender, HostThread, TryReceiveError, TrySendError};
-use inference_runtime::{CommandTicket, RuntimeEvent, UnloadStatus};
+use inference_runtime::{CommandTicket, RuntimeCommand, RuntimeEvent, UnloadStatus};
 use redb_storage::{ModelRecord, RedbStorage};
 use tokenization::Tokenizer;
 
 use crate::conversation::ConversationState;
 use crate::generation::GenerationBridge;
 use crate::hub_worker::{HubCommand, HubEvent, HubWorker, start_hub_worker};
-use crate::local::{
-    LocalCommand, LocalInference, LocalModelSource, LocalSubmitError, LocalTokenizer,
-    ResolvedGgufArtifacts,
-};
+use crate::local::{CANDLE_BACKEND_ID, LocalInference, LocalSubmitError};
 use crate::support::{
-    application_preferences, application_quantization, application_scalar_type, candle_scalar_type,
-    create_runtime, domain_scalar_type, hub_configuration, hub_failure, model_source_failure,
-    storage_failure, stored_scalar_type, stored_settings, unix_milliseconds,
-    validate_configuration, validate_preferences,
+    application_preferences, application_scalar_type, candle_scalar_type, create_runtime,
+    domain_scalar_type, hub_configuration, hub_failure, model_source_failure, storage_failure,
+    stored_scalar_type, stored_settings, unix_milliseconds, validate_configuration,
+    validate_preferences,
 };
 use crate::{
-    ApplicationActivity, ApplicationBackend, ApplicationError, ApplicationEvent,
-    ApplicationFailure, ApplicationFailureKind, ApplicationPreferences,
-    ApplicationRuntimeConfiguration, ApplicationState, ChatCompatibility, ContextDiagnostics,
-    ImmutableModelIdentity, LoadedModel, ModelCompatibility, ModelSelection, ResolvedModel,
+    ApplicationActivity, ApplicationError, ApplicationEvent, ApplicationFailure,
+    ApplicationFailureKind, ApplicationPreferences, ApplicationRuntimeConfiguration,
+    ApplicationScalarType, ApplicationState, ContextDiagnostics, ImmutableModelIdentity,
+    LoadedModel, ModelSelection, ResolvedModel,
 };
 
 const MODEL_ID: ModelId = ModelId::new(1);
@@ -43,26 +40,20 @@ pub struct ApplicationRuntime {
     preferences: ApplicationPreferences,
     pub(crate) configuration: ApplicationRuntimeConfiguration,
     pub(crate) state: ApplicationState,
-    resolved_artifacts: Option<ResolvedArtifacts>,
+    resolved_artifacts: Option<ResolvedSafetensorsLlamaArtifacts>,
     pending_hub_selection: Option<ModelSelection>,
     pending_load: Option<LoadAdmission>,
-    pending_event: Option<ApplicationEvent>,
-    pub(crate) tokenizer: Option<LocalTokenizer>,
+    pub(crate) tokenizer: Option<HfTokenizer>,
     pub(crate) generation: GenerationBridge,
     pub(crate) conversation: ConversationState,
     pub(crate) context_diagnostics: Option<ContextDiagnostics>,
     next_ticket: u64,
 }
 
-enum ResolvedArtifacts {
-    Candle(ResolvedSafetensorsLlamaArtifacts),
-    Gguf(ResolvedGgufArtifacts),
-}
-
 #[derive(Clone, Copy)]
-enum LoadAdmission {
-    Candle,
-    Gguf { digest: gguf_backend::Sha256Digest },
+struct LoadAdmission {
+    ticket: CommandTicket,
+    scalar_type: ApplicationScalarType,
 }
 
 impl ApplicationRuntime {
@@ -107,7 +98,6 @@ impl ApplicationRuntime {
             resolved_artifacts: None,
             pending_hub_selection: None,
             pending_load: None,
-            pending_event: None,
             tokenizer: None,
             generation,
             conversation: ConversationState::default(),
@@ -128,44 +118,20 @@ impl ApplicationRuntime {
         &self.state
     }
 
-    /// Starts immutable artifact and tokenizer resolution for one complete local selection.
+    /// Starts immutable Hugging Face artifact and tokenizer resolution.
     ///
-    /// Hub resolution remains asynchronous on its bounded worker. Local GGUF resolution is a
-    /// synchronous cold-path inspection whose result is published by [`Self::poll_event`].
+    /// Resolution remains asynchronous on the bounded Hub worker.
     ///
     /// # Errors
     ///
-    /// Returns an error when another operation or model is active, a Hub selection is invalid,
-    /// or the required worker is busy or disconnected.
+    /// Returns an error when another operation or model is active, the Hub selection is invalid,
+    /// or the Hub worker is busy or disconnected.
     pub fn resolve_model(&mut self, selection: ModelSelection) -> Result<(), ApplicationError> {
         self.require_idle()?;
         if self.state.loaded().is_some() {
             return Err(ApplicationError::ModelAlreadyLoaded);
         }
-
-        match selection {
-            ModelSelection::HuggingFaceSafetensors {
-                repository,
-                revision,
-            } => self.resolve_hugging_face(repository, revision),
-            ModelSelection::LocalGguf { path } => {
-                let inference_available = self.local.activate(ApplicationBackend::LlamaCpp);
-                self.state.set_inference_available(inference_available);
-                self.clear_resolution();
-                self.state.begin_resolving();
-                let result = self.local.resolve_gguf(
-                    &path,
-                    &self.configuration.gguf,
-                    self.configuration.maximum_requests,
-                );
-                let event = match result {
-                    Ok((artifacts, tokenizer)) => self.accept_resolved_gguf(artifacts, tokenizer),
-                    Err(failure) => self.reject_resolution(failure),
-                };
-                self.pending_event = Some(event);
-                Ok(())
-            }
-        }
+        self.resolve_hugging_face(selection)
     }
 
     /// Loads the exact complete selection retained by immutable resolution.
@@ -190,54 +156,31 @@ impl ApplicationRuntime {
         if !resolved.matches_selection(selection) {
             return Err(ApplicationError::SelectionChanged);
         }
-        if self.local.active_backend() != Some(resolved.backend()) {
-            return Err(ApplicationError::SelectionChanged);
-        }
-
-        let (source, admission) = match self
+        let scalar_type = resolved
+            .scalar_type()
+            .ok_or(ApplicationError::UnknownScalarType)?;
+        let artifacts = self
             .resolved_artifacts
             .as_ref()
-            .ok_or(ApplicationError::NoResolvedModel)?
-        {
-            ResolvedArtifacts::Candle(artifacts)
-                if resolved.backend() == ApplicationBackend::Candle =>
-            {
-                let scalar_type = resolved
-                    .compatibility()
-                    .scalar_type()
-                    .and_then(candle_scalar_type)
-                    .ok_or(ApplicationError::UnknownScalarType)?;
-                let source = CandleLlamaSource::new(
-                    artifacts.config_path.clone(),
-                    artifacts.weight_paths.clone(),
-                    scalar_type,
-                )
-                .map_err(model_source_failure)?;
-                (LocalModelSource::Candle(source), LoadAdmission::Candle)
-            }
-            ResolvedArtifacts::Gguf(artifacts)
-                if resolved.backend() == ApplicationBackend::LlamaCpp =>
-            {
-                (
-                    LocalModelSource::Gguf(artifacts.source()),
-                    LoadAdmission::Gguf {
-                        digest: artifacts.digest(),
-                    },
-                )
-            }
-            ResolvedArtifacts::Candle(_) | ResolvedArtifacts::Gguf(_) => {
-                return Err(ApplicationError::SelectionChanged);
-            }
-        };
-
-        let command = LocalCommand::LoadModel {
-            ticket: self.next_ticket()?,
+            .ok_or(ApplicationError::NoResolvedModel)?;
+        let source = CandleLlamaSource::new(
+            artifacts.config_path.clone(),
+            artifacts.weight_paths.clone(),
+            candle_scalar_type(scalar_type),
+        )
+        .map_err(model_source_failure)?;
+        let ticket = self.next_ticket()?;
+        self.submit_inference(RuntimeCommand::LoadModel {
+            ticket,
             model_id: MODEL_ID,
             source,
             device: CPU_DEVICE,
-        };
-        self.submit_inference(command)?;
-        self.pending_load = Some(admission);
+            device_kind: domain_contracts::DeviceKind::Cpu,
+        })?;
+        self.pending_load = Some(LoadAdmission {
+            ticket,
+            scalar_type,
+        });
         self.state.begin_loading();
         Ok(())
     }
@@ -256,12 +199,9 @@ impl ApplicationRuntime {
         self.unload_model_with_behavior(crate::ModelUnloadBehavior::Drain)
     }
 
-    /// Processes at most one pending application, Hub, or active inference event without blocking.
+    /// Processes at most one pending Hub or inference event without blocking.
     #[must_use]
     pub fn poll_event(&mut self) -> Option<ApplicationEvent> {
-        if let Some(event) = self.pending_event.take() {
-            return Some(event);
-        }
         if let Some(event) = self.take_generation_event() {
             return Some(event);
         }
@@ -329,7 +269,7 @@ impl ApplicationRuntime {
 
     pub(crate) fn submit_inference(
         &mut self,
-        command: LocalCommand,
+        command: RuntimeCommand<CandleLlamaSource>,
     ) -> Result<(), ApplicationError> {
         match self.local.submit(command) {
             Ok(()) => Ok(()),
@@ -338,27 +278,16 @@ impl ApplicationRuntime {
                 self.state.disconnect_inference();
                 Err(ApplicationError::RuntimeDisconnected)
             }
-            Err(LocalSubmitError::NoActiveBackend | LocalSubmitError::BackendMismatch) => {
-                Err(ApplicationFailure::new(
-                    ApplicationFailureKind::Worker,
-                    "local inference dispatch did not match the active resolved product",
-                )
-                .into())
-            }
         }
     }
 
-    fn resolve_hugging_face(
-        &mut self,
-        repository: String,
-        revision: String,
-    ) -> Result<(), ApplicationError> {
+    fn resolve_hugging_face(&mut self, selection: ModelSelection) -> Result<(), ApplicationError> {
         if !self.state.hub_available() {
             return Err(ApplicationError::HubDisconnected);
         }
+        let (repository, revision) = selection.into_parts();
         let reference = HubModelReference::new(repository, revision).map_err(hub_failure)?;
-        let normalized =
-            ModelSelection::hugging_face_safetensors(reference.repository(), reference.revision());
+        let normalized = ModelSelection::new(reference.repository(), reference.revision());
         match self.hub_commands.try_send(HubCommand::Resolve(reference)) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => return Err(ApplicationError::HubBusy),
@@ -367,8 +296,6 @@ impl ApplicationRuntime {
                 return Err(ApplicationError::HubDisconnected);
             }
         }
-        let inference_available = self.local.activate(ApplicationBackend::Candle);
-        self.state.set_inference_available(inference_available);
         self.clear_resolution();
         self.pending_hub_selection = Some(normalized);
         self.state.begin_resolving();
@@ -392,10 +319,8 @@ impl ApplicationRuntime {
         &mut self,
         artifacts: ResolvedSafetensorsLlamaArtifacts,
     ) -> ApplicationEvent {
-        let artifact_selection = ModelSelection::hugging_face_safetensors(
-            artifacts.repository.clone(),
-            artifacts.revision.clone(),
-        );
+        let artifact_selection =
+            ModelSelection::new(artifacts.repository.clone(), artifacts.revision.clone());
         if self
             .pending_hub_selection
             .as_ref()
@@ -409,7 +334,7 @@ impl ApplicationRuntime {
         self.pending_hub_selection = None;
 
         let tokenizer = match HfTokenizer::from_file(&artifacts.tokenizer_path) {
-            Ok(tokenizer) => LocalTokenizer::Hf(Box::new(tokenizer)),
+            Ok(tokenizer) => tokenizer,
             Err(error) => {
                 return self.reject_resolution(ApplicationFailure::new(
                     ApplicationFailureKind::Tokenizer,
@@ -422,65 +347,23 @@ impl ApplicationRuntime {
             artifacts.commit.as_str(),
             &tokenizer,
         );
-        let compatibility = ModelCompatibility::CandleSafetensors {
-            scalar_type: artifacts.declared_scalar_type.map(domain_scalar_type),
-        };
         let resolved = ResolvedModel::new(
             artifact_selection,
-            ImmutableModelIdentity::HuggingFaceCommit {
-                repository: artifacts.repository.clone(),
-                commit: artifacts.commit.clone(),
-            },
+            ImmutableModelIdentity::new(artifacts.repository.clone(), artifacts.commit.clone()),
             tokenizer.vocabulary_size(),
-            compatibility,
+            artifacts.declared_scalar_type.map(domain_scalar_type),
             chat_compatibility,
         );
         let persistence_warning = self
             .persist_resolved(&artifacts)
             .err()
             .map(|error| ApplicationFailure::new(ApplicationFailureKind::Storage, error));
-        self.resolved_artifacts = Some(ResolvedArtifacts::Candle(artifacts));
+        self.resolved_artifacts = Some(artifacts);
         self.tokenizer = Some(tokenizer);
         self.state.set_resolved(resolved.clone());
         ApplicationEvent::ModelResolved {
             model: resolved,
             persistence_warning,
-        }
-    }
-
-    fn accept_resolved_gguf(
-        &mut self,
-        artifacts: ResolvedGgufArtifacts,
-        tokenizer: LocalTokenizer,
-    ) -> ApplicationEvent {
-        let metadata = artifacts.metadata();
-        if tokenizer.backend() != ApplicationBackend::LlamaCpp
-            || tokenizer.vocabulary_size() != metadata.vocabulary_size()
-            || tokenizer.gguf_digest() != Some(artifacts.digest())
-        {
-            return self.reject_resolution(ApplicationFailure::new(
-                ApplicationFailureKind::Tokenizer,
-                "GGUF metadata, tokenizer vocabulary, and exact content digest are incompatible",
-            ));
-        }
-        let resolved = ResolvedModel::new(
-            ModelSelection::local_gguf(artifacts.path()),
-            ImmutableModelIdentity::GgufSha256 {
-                digest: artifacts.digest().to_string(),
-            },
-            tokenizer.vocabulary_size(),
-            ModelCompatibility::LlamaCppGguf {
-                scalar_type: application_scalar_type(metadata.scalar_type()),
-                quantization: application_quantization(metadata.quantization()),
-            },
-            ChatCompatibility::Unsupported,
-        );
-        self.resolved_artifacts = Some(ResolvedArtifacts::Gguf(artifacts));
-        self.tokenizer = Some(tokenizer);
-        self.state.set_resolved(resolved.clone());
-        ApplicationEvent::ModelResolved {
-            model: resolved,
-            persistence_warning: None,
         }
     }
 
@@ -500,7 +383,9 @@ impl ApplicationRuntime {
 
     fn process_runtime_event(&mut self, event: &RuntimeEvent) -> Option<ApplicationEvent> {
         match event {
-            RuntimeEvent::ModelLoaded { result, .. } => Some(self.process_model_loaded(*result)),
+            RuntimeEvent::ModelLoaded { ticket, result } => {
+                Some(self.process_model_loaded(*ticket, *result))
+            }
             RuntimeEvent::ModelUnload { result, .. } => Some(self.process_model_unload(*result)),
             RuntimeEvent::GenerationAdmitted { .. }
             | RuntimeEvent::GenerationCancellationRequested { .. } => {
@@ -517,6 +402,7 @@ impl ApplicationRuntime {
 
     fn process_model_loaded(
         &mut self,
+        ticket: CommandTicket,
         result: Result<inference_runtime::LoadReceipt, inference_runtime::RuntimeError>,
     ) -> ApplicationEvent {
         let admission = self.pending_load.take();
@@ -534,79 +420,62 @@ impl ApplicationRuntime {
             }
         };
         let Some(resolved) = self.state.resolved().cloned() else {
-            self.state.set_idle();
-            return ApplicationEvent::ModelLoadFailed {
-                failure: ApplicationFailure::new(
-                    ApplicationFailureKind::Inference,
-                    "model load completed without retained immutable resolution evidence",
-                ),
-            };
+            return self.reject_incompatible_model(receipt.handle);
         };
-
         let descriptor = receipt.descriptor;
-        let loaded_compatibility = match resolved.backend() {
-            ApplicationBackend::Candle => ModelCompatibility::CandleSafetensors {
-                scalar_type: Some(application_scalar_type(descriptor.metadata.scalar_type)),
-            },
-            ApplicationBackend::LlamaCpp => ModelCompatibility::LlamaCppGguf {
-                scalar_type: application_scalar_type(descriptor.metadata.scalar_type),
-                quantization: application_quantization(descriptor.metadata.quantization),
-            },
+        let Some(scalar_type) = application_scalar_type(descriptor.metadata.scalar_type) else {
+            return self.reject_incompatible_model(receipt.handle);
         };
+        if !self.loaded_compatibility_matches(admission, ticket, &receipt, &resolved, scalar_type) {
+            return self.reject_incompatible_model(receipt.handle);
+        }
         let loaded = LoadedModel::new(
             receipt.handle,
             resolved.selection().clone(),
             resolved.identity().clone(),
-            loaded_compatibility,
+            scalar_type,
             descriptor.metadata.vocabulary_size,
             descriptor.capabilities.maximum_context_tokens,
             descriptor.capabilities.maximum_prefill_batch,
         );
         self.state.set_loaded(loaded.clone());
-
-        if !self.loaded_compatibility_matches(admission, &receipt, &resolved) {
-            return self.reject_incompatible_model();
-        }
         ApplicationEvent::ModelLoaded { model: loaded }
     }
 
     fn loaded_compatibility_matches(
         &self,
         admission: Option<LoadAdmission>,
+        ticket: CommandTicket,
         receipt: &inference_runtime::LoadReceipt,
         resolved: &ResolvedModel,
+        scalar_type: ApplicationScalarType,
     ) -> bool {
-        let descriptor = receipt.descriptor;
+        let Some(admission) = admission else {
+            return false;
+        };
         let Some(tokenizer) = self.tokenizer.as_ref() else {
             return false;
         };
-        if tokenizer.vocabulary_size() != descriptor.metadata.vocabulary_size
-            || tokenizer.backend() != resolved.backend()
-        {
+        let Some(artifacts) = self.resolved_artifacts.as_ref() else {
             return false;
-        }
+        };
+        let descriptor = receipt.descriptor;
+        let artifact_selection = ModelSelection::new(&artifacts.repository, &artifacts.revision);
+        let artifact_scalar = artifacts.declared_scalar_type.map(domain_scalar_type);
 
-        match (admission, self.resolved_artifacts.as_ref()) {
-            (Some(LoadAdmission::Candle), Some(ResolvedArtifacts::Candle(_))) => true,
-            (Some(LoadAdmission::Gguf { digest }), Some(ResolvedArtifacts::Gguf(artifacts))) => {
-                let identity_matches = matches!(
-                    resolved.identity(),
-                    ImmutableModelIdentity::GgufSha256 { digest: resolved_digest }
-                        if resolved_digest == &digest.to_string()
-                );
-                digest == artifacts.digest()
-                    && tokenizer.gguf_digest() == Some(digest)
-                    && identity_matches
-                    && artifacts.matches_descriptor(&descriptor)
-            }
-            (None, _)
-            | (Some(LoadAdmission::Candle), Some(ResolvedArtifacts::Gguf(_)))
-            | (Some(LoadAdmission::Gguf { .. }), Some(ResolvedArtifacts::Candle(_)))
-            | (_, None) => false,
-        }
+        admission.ticket == ticket
+            && admission.scalar_type == scalar_type
+            && resolved.scalar_type() == Some(scalar_type)
+            && artifact_scalar == Some(scalar_type)
+            && resolved.selection() == &artifact_selection
+            && resolved.identity().repository() == artifacts.repository
+            && resolved.identity().commit() == artifacts.commit
+            && descriptor.backend == CANDLE_BACKEND_ID
+            && descriptor.metadata.quantization == QuantizationFormat::None
+            && tokenizer.vocabulary_size() == descriptor.metadata.vocabulary_size
     }
 
-    fn reject_incompatible_model(&mut self) -> ApplicationEvent {
+    fn reject_incompatible_model(&mut self, handle: ModelHandle) -> ApplicationEvent {
         self.state.clear_resolved();
         self.resolved_artifacts = None;
         self.tokenizer = None;
@@ -614,7 +483,8 @@ impl ApplicationRuntime {
             kind: ApplicationFailureKind::Inference,
             message: "resolved identity, descriptor, and tokenizer compatibility evidence differ; deterministic unload was requested".to_owned(),
         };
-        if let Err(error) = self.unload_model_with_behavior(crate::ModelUnloadBehavior::Drain) {
+        let unload_result = self.request_model_unload(handle, crate::ModelUnloadBehavior::Drain);
+        if let Err(error) = unload_result {
             self.state.set_idle();
             return ApplicationEvent::ModelLoadFailed {
                 failure: ApplicationFailure {

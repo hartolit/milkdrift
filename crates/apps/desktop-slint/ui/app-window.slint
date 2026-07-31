@@ -1,16 +1,14 @@
-import { Button, ComboBox, HorizontalBox, LineEdit, TextEdit, VerticalBox } from "std-widgets.slint";
+import { Button, HorizontalBox, LineEdit, TextEdit, VerticalBox } from "std-widgets.slint";
 
 export component AppWindow inherits Window {
     title: "LLM App";
     width: 1080px;
     height: 900px;
 
-    in-out property <int> model-product-index: 0;
     in-out property <string> repository;
     in-out property <string> revision;
-    in-out property <string> gguf-path;
     in-out property <string> message-input;
-    in property <string> selected-model-summary: "No product selected.";
+    in property <string> selected-model-summary: "No model selected.";
     in property <string> resolved-model-summary: "Not resolved.";
     in property <string> loaded-model-summary: "Not loaded.";
     in property <string> composer-mode: "No model loaded";
@@ -86,19 +84,6 @@ export component AppWindow inherits Window {
 
         HorizontalBox {
             spacing: 12px;
-            Text { text: "Product"; width: 100px; vertical-alignment: center; }
-            ComboBox {
-                model: [
-                    "Candle + Hugging Face Hub + Safetensors",
-                    "llama.cpp + local file + GGUF",
-                ];
-                current-index <=> root.model-product-index;
-                enabled: root.can-edit-selection;
-            }
-        }
-
-        if root.model-product-index == 0 : HorizontalBox {
-            spacing: 12px;
             Text { text: "Repository"; width: 100px; vertical-alignment: center; }
             LineEdit {
                 text <=> root.repository;
@@ -109,16 +94,6 @@ export component AppWindow inherits Window {
                 text <=> root.revision;
                 enabled: root.can-edit-selection;
                 width: 190px;
-            }
-        }
-
-        if root.model-product-index == 1 : HorizontalBox {
-            spacing: 12px;
-            Text { text: "GGUF path"; width: 100px; vertical-alignment: center; }
-            LineEdit {
-                text <=> root.gguf-path;
-                enabled: root.can-edit-selection;
-                placeholder-text: "/path/to/model.gguf";
             }
         }
 

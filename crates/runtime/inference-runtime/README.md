@@ -10,6 +10,12 @@ The hosted worker alternates bounded command handling, one fair generation oppor
 
 Generated token IDs and ordered terminal state use `host-runtime`'s preallocated pull accumulator. Full output capacity yields without another backend step. Cleanup failure publishes pending and, when applicable, exhausted state while preserving the original terminal classification. Cleanup uses a configurable total-attempt limit and never retries a successfully released or exhausted resource automatically.
 
-Phase 4 adds an ordinary download-free integration test that drives the real `CandleLlamaLoader` through this same E0 scheduler for token-limit and EOS completion, backpressure, cancellation, release, unload, a final empty runtime/model snapshot, and shutdown. The opt-in `candle_llama_smoke` example exercises a pinned local model and emits diagnostic lifecycle timings and RSS checkpoints.
+## Test coverage
+
+`tests/native_backend_generation.rs` contains ordinary, download-free Candle real-fixture tests. They drive `CandleLlamaLoader` through the hosted E0 scheduler and cover model load, deterministic greedy and seeded sampling, EOS and token-limit completion, output backpressure, cancellation, sequence cleanup and release, unload, empty post-unload state, shutdown, and worker join. Deterministic test loaders in `tests/generation.rs`, `tests/runtime.rs`, and `tests/fault_injection.rs` retain backend-independent E0 contract and failure-path coverage without requiring a native model implementation.
+
+## Opt-in local diagnostic
+
+The `candle_llama_smoke` example is an E0 lifecycle and performance diagnostic for already-resolved local Candle Llama artifacts. It performs no network or Hugging Face resolution. Rust-native external-model smoke resolution belongs to the E1 `application-runtime`, which can reuse its production artifact resolver before exercising Candle through E0; keeping that responsibility above this crate preserves E0's network-free boundary.
 
 See the [inference runtime guide](../../../docs/project/inference-runtime.md) for lifecycle, accounting, cancellation, output, and cleanup semantics.

@@ -1,18 +1,16 @@
 //! Slint-specific presentation mapping over the reusable application runtime.
 
 use std::cell::RefCell;
-use std::fmt::{self, Display, Formatter};
 use std::rc::Rc;
 use std::time::Duration;
 
 use application_runtime::{
-    ApplicationActivity, ApplicationBackend, ApplicationDevice, ApplicationEvent,
+    ApplicationActivity, ApplicationDevice, ApplicationEngine, ApplicationEvent,
     ApplicationFailure, ApplicationModelFormat, ApplicationOutputBatch,
-    ApplicationOutputRecordKind, ApplicationOutputState, ApplicationQuantization,
-    ApplicationRuntime, ApplicationScalarType, ApplicationSource, ChatCompatibility,
-    ConversationRecord, ConversationRole, GenerationSettings, GenerationTerminalKind,
-    GenerationTerminalOutcome, ImmutableModelIdentity, LoadedModel, LocalModelProduct,
-    ModelCompatibility, ModelSelection, ResolvedModel, ResponseAttemptState,
+    ApplicationOutputRecordKind, ApplicationOutputState, ApplicationRuntime, ApplicationScalarType,
+    ApplicationSource, ChatCompatibility, ConversationRecord, ConversationRole, GenerationSettings,
+    GenerationTerminalKind, GenerationTerminalOutcome, ImmutableModelIdentity, LoadedModel,
+    ModelSelection, ResolvedModel, ResponseAttemptState,
 };
 use slint::ComponentHandle;
 
@@ -20,8 +18,6 @@ use crate::AppWindow;
 
 const UI_FRAME_MILLISECONDS: u64 = 16;
 const MAXIMUM_EVENTS_PER_FRAME: usize = 64;
-const HUGGING_FACE_SAFETENSORS_INDEX: i32 = 0;
-const LOCAL_GGUF_INDEX: i32 = 1;
 const DEFAULT_TERMINAL_TEXT: &str = "No response has completed.";
 
 /// Owns presentation-only generation state and the Slint callback bindings.
@@ -112,40 +108,14 @@ impl Presenter {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct InvalidModelProductIndex(i32);
-
-impl Display for InvalidModelProductIndex {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "unsupported model product index {}; no model operation was started",
-            self.0
-        )
-    }
+fn map_model_selection(repository: &str, revision: &str) -> ModelSelection {
+    ModelSelection::new(repository, revision)
 }
 
-fn map_model_selection(
-    product_index: i32,
-    repository: &str,
-    revision: &str,
-    gguf_path: &str,
-) -> Result<ModelSelection, InvalidModelProductIndex> {
-    match product_index {
-        HUGGING_FACE_SAFETENSORS_INDEX => Ok(ModelSelection::hugging_face_safetensors(
-            repository, revision,
-        )),
-        LOCAL_GGUF_INDEX => Ok(ModelSelection::local_gguf(gguf_path)),
-        invalid => Err(InvalidModelProductIndex(invalid)),
-    }
-}
-
-fn selected_model(window: &AppWindow) -> Result<ModelSelection, InvalidModelProductIndex> {
+fn selected_model(window: &AppWindow) -> ModelSelection {
     map_model_selection(
-        window.get_model_product_index(),
         window.get_repository().as_str(),
         window.get_revision().as_str(),
-        window.get_gguf_path().as_str(),
     )
 }
 
@@ -275,9 +245,8 @@ fn control_state(admissions: RuntimeAdmissions, mode: ComposerMode, message: &st
 pub fn synchronize_controls(window: &AppWindow, runtime: &ApplicationRuntime) {
     let state = runtime.state();
     let selection = selected_model(window);
-    let (can_resolve, can_load) = selection.as_ref().map_or((false, false), |selection| {
-        (state.can_resolve(selection), state.can_load(selection))
-    });
+    let can_resolve = state.can_resolve(&selection);
+    let can_load = state.can_load(&selection);
     let mode = composer_mode(runtime);
     let message = window.get_message_input().to_string();
     let controls = control_state(
@@ -312,11 +281,7 @@ pub fn synchronize_controls(window: &AppWindow, runtime: &ApplicationRuntime) {
     window.set_composer_input_label(mode.input_label().into());
     window.set_composer_submit_label(mode.submit_label().into());
 
-    let selected_summary = selection.as_ref().map_or_else(
-        |error| format!("Invalid selection: {error}"),
-        selected_model_summary,
-    );
-    window.set_selected_model_summary(selected_summary.into());
+    window.set_selected_model_summary(selected_model_summary(&selection).into());
     window.set_resolved_model_summary(
         state
             .resolved()
@@ -361,62 +326,85 @@ fn synchronize_usage(
 }
 
 fn selected_model_summary(selection: &ModelSelection) -> String {
-    let product = selection.product();
-    let quantization = match product {
-        LocalModelProduct::HuggingFaceCandleSafetensors => "None",
-        LocalModelProduct::LocalLlamaCppGguf => "pending inspection",
-    };
     format!(
-        "{} • Scalar: pending resolution • Quantization: {quantization} • Identity: pending resolution",
-        product_target_label(product)
+        "{} • Repository: {} • Revision: {} • Scalar: pending resolution • Identity: pending resolution",
+        current_model_target_label(),
+        selection.repository(),
+        selection.revision(),
     )
 }
 
 fn resolved_model_summary(model: &ResolvedModel) -> String {
-    detailed_model_summary(model.product(), model.compatibility(), model.identity())
+    detailed_model_summary(
+        model.engine(),
+        model.source(),
+        model.device(),
+        model.format(),
+        model.scalar_type(),
+        model.identity(),
+    )
 }
 
 fn loaded_model_summary(model: &LoadedModel) -> String {
-    detailed_model_summary(model.product(), model.compatibility(), model.identity())
+    detailed_model_summary(
+        model.engine(),
+        model.source(),
+        model.device(),
+        model.format(),
+        Some(model.scalar_type()),
+        model.identity(),
+    )
 }
 
 fn detailed_model_summary(
-    product: LocalModelProduct,
-    compatibility: ModelCompatibility,
+    engine: ApplicationEngine,
+    source: ApplicationSource,
+    device: ApplicationDevice,
+    format: ApplicationModelFormat,
+    scalar_type: Option<ApplicationScalarType>,
     identity: &ImmutableModelIdentity,
 ) -> String {
-    let scalar = compatibility
-        .scalar_type()
-        .map_or_else(|| "Unknown".to_owned(), scalar_type_label);
+    let scalar = scalar_type.map_or("Unknown", scalar_type_label);
     format!(
-        "{} • Scalar: {scalar} • Quantization: {} • Identity: {}",
-        product_target_label(product),
-        quantization_label(compatibility.quantization()),
+        "{} • Scalar: {scalar} • Identity: {}",
+        model_target_label(engine, source, device, format),
         immutable_identity_label(identity)
     )
 }
 
-fn product_target_label(product: LocalModelProduct) -> String {
-    format!(
-        "Backend: {} • Source: {} • Device: {} • Format: {}",
-        backend_label(product.backend()),
-        source_label(product.source()),
-        device_label(product.device()),
-        model_format_label(product.format())
+fn current_model_target_label() -> String {
+    model_target_label(
+        ApplicationEngine::Candle,
+        ApplicationSource::HuggingFaceHub,
+        ApplicationDevice::Cpu,
+        ApplicationModelFormat::Safetensors,
     )
 }
 
-const fn backend_label(backend: ApplicationBackend) -> &'static str {
-    match backend {
-        ApplicationBackend::Candle => "Candle",
-        ApplicationBackend::LlamaCpp => "llama.cpp",
+fn model_target_label(
+    engine: ApplicationEngine,
+    source: ApplicationSource,
+    device: ApplicationDevice,
+    format: ApplicationModelFormat,
+) -> String {
+    format!(
+        "Engine: {} • Source: {} • Device: {} • Format: {}",
+        engine_label(engine),
+        source_label(source),
+        device_label(device),
+        model_format_label(format)
+    )
+}
+
+const fn engine_label(engine: ApplicationEngine) -> &'static str {
+    match engine {
+        ApplicationEngine::Candle => "Candle",
     }
 }
 
 const fn source_label(source: ApplicationSource) -> &'static str {
     match source {
         ApplicationSource::HuggingFaceHub => "Hugging Face Hub",
-        ApplicationSource::LocalFile => "Local file",
     }
 }
 
@@ -429,38 +417,23 @@ const fn device_label(device: ApplicationDevice) -> &'static str {
 const fn model_format_label(format: ApplicationModelFormat) -> &'static str {
     match format {
         ApplicationModelFormat::Safetensors => "Safetensors",
-        ApplicationModelFormat::Gguf => "GGUF",
     }
 }
 
-fn scalar_type_label(value: ApplicationScalarType) -> String {
+const fn scalar_type_label(value: ApplicationScalarType) -> &'static str {
     match value {
-        ApplicationScalarType::F32 => "F32".to_owned(),
-        ApplicationScalarType::F16 => "F16".to_owned(),
-        ApplicationScalarType::Bf16 => "BF16".to_owned(),
-        ApplicationScalarType::I8 => "I8".to_owned(),
-        ApplicationScalarType::U8 => "U8".to_owned(),
-        ApplicationScalarType::Other(code) => format!("Other ({code})"),
-    }
-}
-
-fn quantization_label(value: ApplicationQuantization) -> String {
-    match value {
-        ApplicationQuantization::None => "None".to_owned(),
-        ApplicationQuantization::Int8 => "INT8".to_owned(),
-        ApplicationQuantization::Int4 => "INT4".to_owned(),
-        ApplicationQuantization::Gguf(code) => format!("GGUF type {code}"),
-        ApplicationQuantization::Other(code) => format!("Other ({code})"),
+        ApplicationScalarType::F32 => "F32",
+        ApplicationScalarType::F16 => "F16",
+        ApplicationScalarType::Bf16 => "BF16",
     }
 }
 
 fn immutable_identity_label(identity: &ImmutableModelIdentity) -> String {
-    match identity {
-        ImmutableModelIdentity::HuggingFaceCommit { repository, commit } => {
-            format!("Hub commit {commit} ({repository})")
-        }
-        ImmutableModelIdentity::GgufSha256 { digest } => format!("GGUF SHA-256 {digest}"),
-    }
+    format!(
+        "Hub commit {} ({})",
+        identity.commit(),
+        identity.repository()
+    )
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -694,28 +667,17 @@ fn connect_resolve(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>)
         let Some(window) = weak.upgrade() else {
             return;
         };
-        match selected_model(&window) {
-            Ok(selection) => {
-                window.set_status_text(resolution_progress_message(&selection).into());
-                if let Err(error) = runtime.borrow_mut().resolve_model(selection) {
-                    window.set_status_text(error.to_string().into());
-                }
-            }
-            Err(error) => window.set_status_text(error.to_string().into()),
+        let selection = selected_model(&window);
+        window.set_status_text(resolution_progress_message().into());
+        if let Err(error) = runtime.borrow_mut().resolve_model(selection) {
+            window.set_status_text(error.to_string().into());
         }
         synchronize_controls(&window, &runtime.borrow());
     });
 }
 
-const fn resolution_progress_message(selection: &ModelSelection) -> &'static str {
-    match selection.product() {
-        LocalModelProduct::HuggingFaceCandleSafetensors => {
-            "Resolving Hub metadata and immutable cached Safetensors artifacts…"
-        }
-        LocalModelProduct::LocalLlamaCppGguf => {
-            "Inspecting and hashing the selected local GGUF file…"
-        }
-    }
+const fn resolution_progress_message() -> &'static str {
+    "Resolving Hub metadata and immutable cached Safetensors artifacts…"
 }
 
 fn connect_load(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) {
@@ -724,16 +686,10 @@ fn connect_load(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) {
         let Some(window) = weak.upgrade() else {
             return;
         };
-        match selected_model(&window) {
-            Ok(selection) => {
-                window.set_status_text(
-                    format!("Loading {}.", product_target_label(selection.product())).into(),
-                );
-                if let Err(error) = runtime.borrow_mut().load_model(&selection) {
-                    window.set_status_text(error.to_string().into());
-                }
-            }
-            Err(error) => window.set_status_text(error.to_string().into()),
+        let selection = selected_model(&window);
+        window.set_status_text(format!("Loading {}.", current_model_target_label()).into());
+        if let Err(error) = runtime.borrow_mut().load_model(&selection) {
+            window.set_status_text(error.to_string().into());
         }
         synchronize_controls(&window, &runtime.borrow());
     });
@@ -904,7 +860,7 @@ fn generation_submission_message(
         |loaded| {
             format!(
                 "{} on {}",
-                backend_label(loaded.backend()),
+                engine_label(loaded.engine()),
                 device_label(loaded.device())
             )
         },
@@ -1075,7 +1031,12 @@ fn apply_event(window: &AppWindow, event: ApplicationEvent) {
             window.set_status_text(
                 format!(
                     "Loaded {} as generation {} with {} vocabulary entries.",
-                    product_target_label(model.product()),
+                    model_target_label(
+                        model.engine(),
+                        model.source(),
+                        model.device(),
+                        model.format(),
+                    ),
                     model.handle().generation.get(),
                     model.vocabulary_size(),
                 )
@@ -1161,26 +1122,27 @@ fn apply_model_resolved(
     model: &ResolvedModel,
     persistence_warning: Option<ApplicationFailure>,
 ) {
-    let scalar = model
-        .compatibility()
-        .scalar_type()
-        .map_or_else(|| "unknown".to_owned(), scalar_type_label);
-    let quantization = quantization_label(model.compatibility().quantization());
+    let scalar = model.scalar_type().map_or("unknown", scalar_type_label);
     let mode = match model.chat_compatibility() {
         ChatCompatibility::Supported(_) => "verified Chat mode",
         ChatCompatibility::Unsupported => "Direct completion mode; chat is not verified",
     };
-    let target = product_target_label(model.product());
+    let target = model_target_label(
+        model.engine(),
+        model.source(),
+        model.device(),
+        model.format(),
+    );
     let message = persistence_warning.map_or_else(
         || {
             format!(
-                "Resolved {target} ({} vocabulary entries, {scalar}, {quantization}, {mode}) and ready for loading.",
+                "Resolved {target} ({} vocabulary entries, {scalar}, {mode}) and ready for loading.",
                 model.vocabulary_size(),
             )
         },
         |warning| {
             format!(
-                "Resolved {target} ({} vocabulary entries, {scalar}, {quantization}, {mode}); catalogue persistence failed: {warning}",
+                "Resolved {target} ({} vocabulary entries, {scalar}, {mode}); catalogue persistence failed: {warning}",
                 model.vocabulary_size(),
             )
         },
@@ -1192,102 +1154,56 @@ fn apply_model_resolved(
 mod tests {
     use super::{
         CancellationMessageState, ComposerMode, FrameOutputDelta, GeneratedOutputUpdate,
-        HUGGING_FACE_SAFETENSORS_INDEX, InvalidModelProductIndex, LOCAL_GGUF_INDEX,
         MAXIMUM_EVENTS_PER_FRAME, PresentationState, RuntimeAdmissions, TerminalPresentation,
-        UI_FRAME_MILLISECONDS, backend_label, cancellation_pending_message,
-        composer_mode_from_evidence, control_state, event_requires_conversation_snapshot,
-        format_conversation, format_terminal_outcome, map_model_selection, model_format_label,
-        output_state_message, product_target_label, released_terminal_message,
-        replace_conversation_update,
+        UI_FRAME_MILLISECONDS, cancellation_pending_message, composer_mode_from_evidence,
+        control_state, event_requires_conversation_snapshot, format_conversation,
+        format_terminal_outcome, map_model_selection, model_target_label, output_state_message,
+        released_terminal_message, replace_conversation_update, selected_model_summary,
     };
     use application_runtime::{
-        ApplicationBackend, ApplicationEvent, ApplicationFailure, ApplicationFailureKind,
-        ApplicationModelFormat, ApplicationOutputState, ConversationProvenance, ConversationRecord,
-        ConversationRecordId, ConversationRetention, ConversationRole, ConversationTokenEstimate,
-        GenerationTerminalKind, GenerationTerminalOutcome, LocalModelProduct, ResponseAttempt,
-        ResponseAttemptId, ResponseAttemptState,
+        ApplicationDevice, ApplicationEngine, ApplicationEvent, ApplicationFailure,
+        ApplicationFailureKind, ApplicationModelFormat, ApplicationOutputState, ApplicationSource,
+        ConversationProvenance, ConversationRecord, ConversationRecordId, ConversationRetention,
+        ConversationRole, ConversationTokenEstimate, GenerationTerminalKind,
+        GenerationTerminalOutcome, ResponseAttempt, ResponseAttemptId, ResponseAttemptState,
     };
 
     #[test]
-    fn selector_maps_hub_product_to_closed_selection() -> Result<(), InvalidModelProductIndex> {
-        let selection = map_model_selection(
-            HUGGING_FACE_SAFETENSORS_INDEX,
-            " owner/model ",
-            " main ",
-            "ignored.gguf",
-        )?;
+    fn repository_and_revision_map_to_model_selection() {
+        let selection = map_model_selection(" owner/model ", " main ");
 
-        assert_eq!(
-            selection.hugging_face_reference(),
-            Some(("owner/model", "main"))
+        assert_eq!(selection.repository(), "owner/model");
+        assert_eq!(selection.revision(), "main");
+
+        let summary = selected_model_summary(&selection);
+        assert!(summary.contains("Engine: Candle"));
+        assert!(summary.contains("Repository: owner/model"));
+        assert!(summary.contains("Revision: main"));
+    }
+
+    #[test]
+    fn target_summary_reports_orthogonal_current_facts() {
+        let target = model_target_label(
+            ApplicationEngine::Candle,
+            ApplicationSource::HuggingFaceHub,
+            ApplicationDevice::Cpu,
+            ApplicationModelFormat::Safetensors,
         );
-        assert_eq!(
-            selection.product(),
-            LocalModelProduct::HuggingFaceCandleSafetensors
-        );
-        assert!(selection.local_path().is_none());
-        Ok(())
+
+        assert!(target.contains("Engine: Candle"));
+        assert!(target.contains("Source: Hugging Face Hub"));
+        assert!(target.contains("Device: CPU"));
+        assert!(target.contains("Format: Safetensors"));
     }
 
     #[test]
-    fn selector_maps_local_file_product_to_closed_selection() -> Result<(), InvalidModelProductIndex>
-    {
-        let selection = map_model_selection(
-            LOCAL_GGUF_INDEX,
-            "ignored/repository",
-            "ignored-revision",
-            "/models/example.gguf",
-        )?;
+    fn changing_visible_selection_fields_never_reuses_the_stale_selection() {
+        let selection = map_model_selection("a/model", "main");
+        let changed_repository = map_model_selection("b/model", "main");
+        let changed_revision = map_model_selection("a/model", "v2");
 
-        assert_eq!(
-            selection.local_path(),
-            Some(std::path::Path::new("/models/example.gguf"))
-        );
-        assert_eq!(selection.product(), LocalModelProduct::LocalLlamaCppGguf);
-        assert!(selection.hugging_face_reference().is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn invalid_selector_indices_fail_closed() {
-        for invalid in [-1, 2, i32::MAX] {
-            assert!(map_model_selection(invalid, "repo", "main", "model.gguf").is_err());
-        }
-    }
-
-    #[test]
-    fn target_and_format_labels_cover_both_closed_products() {
-        let hub = product_target_label(LocalModelProduct::HuggingFaceCandleSafetensors);
-        let gguf = product_target_label(LocalModelProduct::LocalLlamaCppGguf);
-
-        assert!(hub.contains("Backend: Candle"));
-        assert!(hub.contains("Source: Hugging Face Hub"));
-        assert!(hub.contains("Device: CPU"));
-        assert!(hub.contains("Format: Safetensors"));
-        assert!(gguf.contains("Backend: llama.cpp"));
-        assert!(gguf.contains("Source: Local file"));
-        assert!(gguf.contains("Device: CPU"));
-        assert!(gguf.contains("Format: GGUF"));
-        assert_eq!(backend_label(ApplicationBackend::LlamaCpp), "llama.cpp");
-        assert_eq!(model_format_label(ApplicationModelFormat::Gguf), "GGUF");
-    }
-
-    #[test]
-    fn changing_visible_selection_fields_never_reuses_the_stale_selection()
-    -> Result<(), InvalidModelProductIndex> {
-        let hub = map_model_selection(HUGGING_FACE_SAFETENSORS_INDEX, "a/model", "main", "")?;
-        let changed_repository =
-            map_model_selection(HUGGING_FACE_SAFETENSORS_INDEX, "b/model", "main", "")?;
-        let changed_revision =
-            map_model_selection(HUGGING_FACE_SAFETENSORS_INDEX, "a/model", "v2", "")?;
-        let gguf = map_model_selection(LOCAL_GGUF_INDEX, "", "", "a.gguf")?;
-        let changed_path = map_model_selection(LOCAL_GGUF_INDEX, "", "", "b.gguf")?;
-
-        assert_ne!(hub, changed_repository);
-        assert_ne!(hub, changed_revision);
-        assert_ne!(hub, gguf);
-        assert_ne!(gguf, changed_path);
-        Ok(())
+        assert_ne!(selection, changed_repository);
+        assert_ne!(selection, changed_revision);
     }
 
     #[test]

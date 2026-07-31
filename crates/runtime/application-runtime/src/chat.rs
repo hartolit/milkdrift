@@ -10,11 +10,11 @@ use context_planner::{
     exact_token_correction_candidate_index, plan,
 };
 use domain_contracts::{RequestId, TokenId};
+use hf_tokenizer::HfTokenizer;
 use tokenization::{SpecialTokenPolicy, TokenizationError, Tokenizer};
 
 use crate::conversation::ConversationTokenEstimate;
 use crate::generation::encode_text_with_policy;
-use crate::local::LocalTokenizer;
 use crate::{
     ApplicationActivity, ApplicationError, ApplicationFailure, ApplicationFailureKind,
     ApplicationRuntime, ConversationRecord, ConversationRecordId, ConversationRetention,
@@ -124,10 +124,10 @@ impl<'a> ContextPlanningUnit<'a> {
 }
 
 impl PromptCompatibilityProfile {
-    fn detect(repository: &str, commit: &str, tokenizer: &LocalTokenizer) -> ChatCompatibility {
+    fn detect(repository: &str, commit: &str, tokenizer: &HfTokenizer) -> ChatCompatibility {
         if repository == TINYLLAMA_CHAT_REPOSITORY
             && commit == TINYLLAMA_CHAT_COMMIT
-            && tokenizer.hf_token_id(TINYLLAMA_END_OF_MESSAGE) == Some(TINYLLAMA_EOS_TOKEN)
+            && tokenizer.token_id(TINYLLAMA_END_OF_MESSAGE) == Some(TINYLLAMA_EOS_TOKEN)
         {
             ChatCompatibility::Supported(Self::TinyLlamaChatV1)
         } else {
@@ -315,7 +315,7 @@ impl ApplicationRuntime {
 
     fn chat_prerequisites(
         &self,
-    ) -> Result<(PromptCompatibilityProfile, &LocalTokenizer, u32), ApplicationError> {
+    ) -> Result<(PromptCompatibilityProfile, &HfTokenizer, u32), ApplicationError> {
         if let Some(active) = self.state.active_generation() {
             return Err(ApplicationError::GenerationAlreadyActive(active.request_id));
         }
@@ -382,7 +382,7 @@ impl ApplicationRuntime {
 pub fn detect_chat_compatibility(
     repository: &str,
     commit: &str,
-    tokenizer: &LocalTokenizer,
+    tokenizer: &HfTokenizer,
 ) -> ChatCompatibility {
     PromptCompatibilityProfile::detect(repository, commit, tokenizer)
 }
@@ -694,7 +694,7 @@ mod tests {
         ChatCompatibility, PromptCompatibilityProfile, TINYLLAMA_CHAT_COMMIT,
         TINYLLAMA_CHAT_REPOSITORY, build_context_units, detect_chat_compatibility, prepare_chat,
     };
-    use crate::local::LocalTokenizer;
+
     use crate::{
         ConversationProvenance, ConversationRecord, ConversationRecordId, ConversationRetention,
         ConversationRole, ConversationTokenEstimate, GenerationSettings, ResponseAttempt,
@@ -841,11 +841,9 @@ mod tests {
         }
     }
 
-    fn chat_tokenizer() -> Result<LocalTokenizer, String> {
+    fn chat_tokenizer() -> Result<HfTokenizer, String> {
         let path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chat-tokenizer.json");
-        HfTokenizer::from_file(path)
-            .map(|tokenizer| LocalTokenizer::Hf(Box::new(tokenizer)))
-            .map_err(|error| error.to_string())
+        HfTokenizer::from_file(path).map_err(|error| error.to_string())
     }
 }

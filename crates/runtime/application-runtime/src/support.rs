@@ -4,7 +4,7 @@ use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use candle_backend::CandleScalarType;
-use domain_contracts::{MemoryBudget, QuantizationFormat};
+use domain_contracts::MemoryBudget;
 use hf_hub_adapter::{ArtifactScalarType, HubClientConfiguration};
 use host_runtime::ThreadPanicked;
 use inference_runtime::{HostedRuntimeConfiguration, RuntimeLimits};
@@ -13,8 +13,8 @@ use redb_storage::{ApplicationSettings, StoredScalarType};
 use crate::local::LocalInference;
 use crate::{
     ApplicationConfigurationField, ApplicationError, ApplicationFailure, ApplicationFailureKind,
-    ApplicationHubConfiguration, ApplicationPreferences, ApplicationQuantization,
-    ApplicationRuntimeConfiguration, ApplicationScalarType, ApplicationTiming,
+    ApplicationHubConfiguration, ApplicationPreferences, ApplicationRuntimeConfiguration,
+    ApplicationScalarType, ApplicationTiming,
 };
 
 pub fn hub_configuration(configuration: &ApplicationHubConfiguration) -> HubClientConfiguration {
@@ -64,7 +64,7 @@ pub fn create_runtime(
     );
     let hosted = HostedRuntimeConfiguration::new(command_capacity, event_capacity, poll)
         .with_token_output_capacity(token_output_capacity, token_output_record_capacity);
-    LocalInference::start(limits, hosted, &configuration.gguf)
+    LocalInference::start(limits, hosted)
 }
 
 pub fn validate_configuration(
@@ -86,44 +86,6 @@ pub fn validate_configuration(
         &configuration.hub_channel_capacity,
         ApplicationConfigurationField::HubChannelCapacity,
     )?;
-    validate_non_zero(
-        &configuration.gguf.maximum_context_tokens,
-        ApplicationConfigurationField::GgufMaximumContextTokens,
-    )?;
-    validate_non_zero(
-        &configuration.gguf.maximum_prefill_tokens,
-        ApplicationConfigurationField::GgufMaximumPrefillTokens,
-    )?;
-    validate_non_zero(
-        &configuration.gguf.micro_batch_tokens,
-        ApplicationConfigurationField::GgufMicroBatchTokens,
-    )?;
-    validate_non_zero(
-        &configuration.gguf.threads,
-        ApplicationConfigurationField::GgufThreads,
-    )?;
-    if configuration.gguf.micro_batch_tokens > configuration.gguf.maximum_prefill_tokens {
-        return Err(ApplicationError::InvalidConfiguration(
-            ApplicationConfigurationField::GgufMicroBatchTokens,
-        ));
-    }
-    if configuration.gguf.threads > i32::MAX as u32 {
-        return Err(ApplicationError::InvalidConfiguration(
-            ApplicationConfigurationField::GgufThreads,
-        ));
-    }
-    if configuration.maximum_requests > i32::MAX as u32 {
-        return Err(ApplicationError::InvalidConfiguration(
-            ApplicationConfigurationField::MaximumRequests,
-        ));
-    }
-    configuration
-        .gguf
-        .maximum_context_tokens
-        .checked_mul(configuration.maximum_requests)
-        .ok_or(ApplicationError::InvalidConfiguration(
-            ApplicationConfigurationField::GgufContextCapacity,
-        ))?;
     validate_non_zero(
         &configuration.token_output_capacity,
         ApplicationConfigurationField::TokenOutputCapacity,
@@ -189,37 +151,22 @@ pub const fn domain_scalar_type(value: ArtifactScalarType) -> ApplicationScalarT
     }
 }
 
-pub const fn candle_scalar_type(value: ApplicationScalarType) -> Option<CandleScalarType> {
+pub const fn candle_scalar_type(value: ApplicationScalarType) -> CandleScalarType {
     match value {
-        ApplicationScalarType::F32 => Some(CandleScalarType::F32),
-        ApplicationScalarType::F16 => Some(CandleScalarType::F16),
-        ApplicationScalarType::Bf16 => Some(CandleScalarType::Bf16),
-        ApplicationScalarType::I8 | ApplicationScalarType::U8 | ApplicationScalarType::Other(_) => {
-            None
-        }
+        ApplicationScalarType::F32 => CandleScalarType::F32,
+        ApplicationScalarType::F16 => CandleScalarType::F16,
+        ApplicationScalarType::Bf16 => CandleScalarType::Bf16,
     }
 }
 
-pub const fn application_scalar_type(value: domain_contracts::ScalarType) -> ApplicationScalarType {
+pub const fn application_scalar_type(
+    value: domain_contracts::ScalarType,
+) -> Option<ApplicationScalarType> {
     match value {
-        domain_contracts::ScalarType::F32 => ApplicationScalarType::F32,
-        domain_contracts::ScalarType::F16 => ApplicationScalarType::F16,
-        domain_contracts::ScalarType::Bf16 => ApplicationScalarType::Bf16,
-        domain_contracts::ScalarType::I8 => ApplicationScalarType::I8,
-        domain_contracts::ScalarType::U8 => ApplicationScalarType::U8,
-        domain_contracts::ScalarType::Other(code) => ApplicationScalarType::Other(code),
-        _ => ApplicationScalarType::Other(u16::MAX),
-    }
-}
-
-pub const fn application_quantization(value: QuantizationFormat) -> ApplicationQuantization {
-    match value {
-        QuantizationFormat::None => ApplicationQuantization::None,
-        QuantizationFormat::Int8 => ApplicationQuantization::Int8,
-        QuantizationFormat::Int4 => ApplicationQuantization::Int4,
-        QuantizationFormat::Gguf(code) => ApplicationQuantization::Gguf(code),
-        QuantizationFormat::Other(code) => ApplicationQuantization::Other(code),
-        _ => ApplicationQuantization::Other(u16::MAX),
+        domain_contracts::ScalarType::F32 => Some(ApplicationScalarType::F32),
+        domain_contracts::ScalarType::F16 => Some(ApplicationScalarType::F16),
+        domain_contracts::ScalarType::Bf16 => Some(ApplicationScalarType::Bf16),
+        _ => None,
     }
 }
 

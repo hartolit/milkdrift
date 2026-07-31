@@ -5,9 +5,9 @@
 
 ## Context
 
-`inference-runtime` supports statically dispatched model backends through portable contracts. Candle and GGUF can both satisfy those Rust traits, but trait conformance alone does not prove that a loaded model agrees with its admitted plan or that each backend step preserves the sequence invariants E0 relies on.
+`inference-runtime` supports statically dispatched model backends through portable contracts. During Phase 8, Candle and GGUF both satisfied those Rust traits, demonstrating that trait conformance alone does not prove that a loaded model agrees with its admitted plan or that each backend step preserves the sequence invariants E0 relies on.
 
-Accepting partial logits, contradictory positions, mutable sequence identity, or capabilities that disagree with numeric limits would let one adapter silently change scheduler behavior. That becomes more dangerous as the application composes a second backend through the same E0 path.
+Accepting partial logits, contradictory positions, mutable sequence identity, or capabilities that disagree with numeric limits would let an adapter silently change scheduler behavior. The Phase 8 second-backend composition made that risk concrete; the verification rule remains valid after the later production-engine cleanup.
 
 ## Decision
 
@@ -33,9 +33,10 @@ Static dispatch remains below E0. These checks do not introduce a dynamic backen
 ## Consequences
 
 - A backend that satisfies the traits but contradicts its descriptor fails explicitly before invalid state reaches sampling or application code.
-- Candle and GGUF share stronger executable conformance requirements without dynamic dispatch in token-sensitive paths.
-- Fault-injection tests can characterize the boundary independently from native libraries.
-- Adding a backend requires accurate descriptors and receipts; this is intentional integration work rather than incidental trust.
+- Candle and deterministic test loaders share stronger executable conformance requirements without dynamic dispatch in token-sensitive paths.
+- Fault-injection tests characterize the boundary independently from native libraries.
+- Any future implementation requires accurate descriptors and receipts; this is intentional integration work rather than incidental trust.
+- [ADR-0013](0013-candle-only-local-execution.md) later removed the Phase 8 second production engine without weakening this E0 verification boundary.
 
 ## Review trigger
 

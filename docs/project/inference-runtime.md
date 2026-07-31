@@ -193,46 +193,24 @@ explicit cleanup preserves the unresolved runtime allocation rather than falling
 back to an unverified implicit backend drop. The same preservation rule applies
 when client endpoints disconnect before cleanup can complete.
 
-## Shared native-backend integration
+## Production Candle integration and backend-independent tests
 
-Ordinary scheduler and fault-injection coverage remains backend-independent.
-`tests/native_backend_generation.rs` adds one generic real-model E0 contract and
-instantiates it with both `CandleLlamaLoader` and `GgufLoader`; no backend branch
-or model-specific exception was added to the scheduler. Candle uses the
-committed tiny Safetensors model, while GGUF/llama.cpp uses the deterministic
-6,144-byte model at
-`crates/runtime/inference-runtime/tests/fixtures/gguf-llama/tiny-llama-f32.gguf`.
+Ordinary scheduler and fault-injection coverage remains backend-independent. Deterministic test loaders in `tests/generation.rs`, `tests/runtime.rs`, and `tests/fault_injection.rs` exercise transaction rollback, descriptor/receipt verification, sampling, fairness, cancellation, output backpressure, cleanup retry/exhaustion, unload, accounting, disconnection, and shutdown without requiring another production engine.
 
-For each backend, the suite performs model load and token-level
-`RuntimeCommand::Generate`, including one prompt prefill and subsequent
-incremental decode calls. It verifies:
+`tests/native_backend_generation.rs` is the download-free real-adapter E0 contract. It drives the committed tiny Safetensors fixture through `CandleLlamaLoader` and the hosted scheduler. The two tests cover:
 
-- the deterministic greedy output and token-limit finish;
-- repeatable stochastic output from the same explicit seed;
+- model inspection, admission, load, and descriptor verification;
+- prompt prefill and incremental decode through `RuntimeCommand::Generate`;
+- deterministic greedy output and token-limit finish;
+- repeatable seeded sampling;
 - EOS finish and ordered terminal/released publication;
 - observable output backpressure without token loss;
 - user cancellation at a backend boundary;
-- sequence destruction plus complete request, generation-workspace, and cleanup
-  accounting release;
-- model unload, an empty post-unload runtime/model snapshot, terminal shutdown,
-  and worker join.
+- sequence destruction plus complete request, generation-workspace, cleanup, and memory accounting release;
+- model unload, an empty post-unload runtime/model snapshot, terminal shutdown, and worker join.
 
-The GGUF instance is executable llama.cpp load-and-generation evidence, not a
-compile-only or metadata-parser check. The suite remains token-level; portable
-GGUF prompt encoding and stateful text decoding are verified separately by the
-`GgufTokenizer` adapter tests rather than moving tokenizer state into E0.
+The fixture requires no network access and validates execution and lifecycle contracts rather than language quality. The CPU suite does not exercise a GPU path or establish an allocation-free Candle hot path. See [download-free focused validation](validation.md#download-free-focused-validation).
 
-Both native fixtures are committed and require no model download. Their tiny,
-deterministic weights validate execution and lifecycle contracts, not language
-quality. The CPU suite does not exercise a GPU path or establish an
-allocation-free backend hot path. See the
-[canonical fixture and native E0 procedure](validation.md#gguf-fixture-and-shared-native-e0-suite).
+External artifact resolution belongs to E1 rather than E0. The opt-in [Rust-native Candle/Hub smoke](validation.md#rust-native-candle-hub-smoke) resolves an exact immutable Hub revision through the production Hub worker and then exercises E1, E0, and Candle. The E0-only `candle_llama_smoke` example remains a local diagnostic for artifacts that are already resolved; it performs no network or Hub work.
 
-An opt-in external Candle-model example repeats the post-unload empty-state
-assertion and emits load, first-token, decode-throughput, cancellation, unload,
-and RSS observations. See the
-[Candle real-model smoke](validation.md#candle-real-model-smoke) procedure.
-
-Product-level composition and unsupported capabilities are tracked in
-[implementation status](implementation-status.md); this guide remains focused on E0
-behavior rather than roadmap sequencing.
+Product-level composition and unsupported capabilities are tracked in [implementation status](implementation-status.md); this guide remains focused on E0 behavior rather than roadmap sequencing.

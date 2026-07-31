@@ -48,8 +48,6 @@ pub enum QuantizationFormat {
     Int8,
     /// Generic signed 4-bit quantization.
     Int4,
-    /// GGUF-defined quantization code.
-    Gguf(u16),
     /// Backend-defined quantization code.
     Other(u16),
 }

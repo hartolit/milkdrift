@@ -8,6 +8,10 @@ The risk is not that E1 exists. The risk is that every capability above inferenc
 
 This document records that risk and the architectural direction to prefer if it materializes. It is not an execution plan and does not require a refactor now.
 
+## Current resolution of the former dual-backend pressure
+
+[ADR-0013](decisions/0013-candle-only-local-execution.md) removed the former second local engine and its duplicate worker/routing surface. E1 now owns one private Candle worker composition plus one Hub worker. That subtraction is the current answer to the concrete pressure that existed after Phase 8; this warning must not be read as a reason to recreate a second engine or extract another runtime preemptively.
+
 ## What `application-runtime` should be
 
 `application-runtime` should remain the frontend-neutral application façade.
@@ -79,7 +83,7 @@ A subsystem should live in `application-runtime` when E1 genuinely owns its appl
 | Cancellation and unload policy | `application-runtime` |
 | Application state/events | `application-runtime` |
 | Explicit shutdown | `application-runtime` |
-| Candle/GGUF construction | native composition or adapter |
+| Candle source/model construction | private native composition and `candle-backend` |
 | Hugging Face resolution implementation | adapter/native composition |
 | redb implementation | adapter/native composition |
 | Context selection algorithm | `context-planner` |
@@ -95,9 +99,9 @@ E1 may coordinate them. It should not automatically implement them.
 
 ## Concrete composition is the likely pressure point
 
-The current runtime contains concrete Candle, Hugging Face, redb, and host-runtime types. That is acceptable while there is one real production composition.
+The current runtime contains concrete Candle, Hugging Face, redb, and host-runtime types. That is acceptable while there is one real production composition and one consumer.
 
-Once Candle and GGUF both reach the application layer, or when a remote execution target becomes real, the project will have enough evidence to decide where concrete local wiring belongs.
+A new model format or device does not by itself establish another engine or composition owner. Reconsider extraction only when a real second deployment/consumer or materially different execution target reveals an independently coherent lifecycle and API.
 
 If E1 is still dominated by local model infrastructure at that point, prefer a coarse split similar to:
 
@@ -109,14 +113,14 @@ application-runtime
     lifecycle policy
 
 local-model capability
-    Candle/GGUF selection and E0 composition
+    Candle/E0 composition
     Hugging Face integration
     host worker construction
 ```
 
 Persistence can receive its own coarse replacement boundary if another store/deployment proves that need. Do not move unrelated infrastructure into one new catch-all merely to make E1 look smaller.
 
-Do not create this layer only for symmetry. A second working backend should reveal the actual common boundary.
+Do not create this layer only for symmetry. A real second consumer, deployment, or execution kind should reveal the actual common boundary.
 
 Remote providers and peer nodes create a different seam. They should satisfy a coarse model-execution boundary above E0; they should not be inserted below E0 as if a hosted API owned local tensors and sequences.
 
@@ -226,7 +230,7 @@ application-runtime
         ├── context-planner
         ├── other proven capability engines
         └── model execution
-              ├── local -> inference-runtime -> Candle/GGUF
+              ├── local -> inference-runtime -> Candle
               ├── peer  -> peer transport
               └── hosted -> provider adapter
 ```

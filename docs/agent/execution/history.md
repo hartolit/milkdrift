@@ -361,3 +361,68 @@ cargo run --locked --bin llm-app -- verify
 ```
 
 It validated architecture/dependency policy, formatting, workspace checks, the complete test/doctest suite, workspace strict Clippy, rustdoc, and benchmark compilation. The gate was rerun after the final validation-status updates so this record describes the exact resulting working tree rather than an earlier Phase 8 edit.
+
+## Phase 9 checkpoint — Candle-only architecture and Rust-native tooling
+
+- **Prepared:** 2026-07-31
+- **Final reviewed baseline:** `15d9e87cdaee77fd0d49247712d3c12dfb3adea2` plus the uncommitted cleanup working tree
+- **Scope:** remove the accidental llama.cpp/GGUF product path and project-owned Python tooling while preserving Candle application and backend-neutral E0 behavior
+- **Recorded outcome:** correction complete; canonical, policy, portability, clean-build, and external-model validation passed; no manual graphical acceptance recorded
+
+The first baseline observation saw `d7d03e46c0239d4be8c34e8a5e16959fb5bd46c3` with only the user-provided cleanup brief untracked. During execution, `main` advanced to `15d9e87cdaee77fd0d49247712d3c12dfb3adea2`; that commit's only change was tracking the same brief. No product source changed in that transition. All final evidence below applies to `15d9e87` plus the dirty cleanup tree.
+
+[ADR-0013](../decisions/0013-candle-only-local-execution.md) supersedes ADR-0012 for current architecture, while retaining the historical Phase 8 record above. [ADR-0014](../decisions/0014-rust-cargo-native-operational-tooling.md) defines the maintained tooling boundary.
+
+### Closure matrix
+
+| Requirement | Recorded closure |
+|---|---|
+| Sole local engine | E1 owns one `HostedRuntime<CandleLlamaSource>`, one inference worker/thread, one Hub worker, one Hugging Face tokenizer path, and request-local streaming decoders. Active-backend routing and the dormant second worker are gone. |
+| Public vocabulary | `ModelSelection` is normalized repository/revision data. Resolved/loaded state reports orthogonal Candle, Hub, CPU, Safetensors, scalar, vocabulary, and immutable commit evidence. GGUF path/configuration/digest, quantization, product, and llama.cpp variants are gone. |
+| Dependencies and fixtures | `crates/adapters/gguf-backend`, the GGUF binary/README/generator fixture, workspace edges, validator entries, `llama-cpp-2`, its sys crate, `self_cell`, and path-only native build dependencies were removed. Cargo regenerated the lockfile. |
+| Preserved behavior | Candle real-fixture tests and deterministic E0 loaders retain load, sampling, EOS/token limit, backpressure, cancellation, cleanup, unload, shutdown, and join coverage. E1 retains direct completion, exact TinyLlama chat, context/regeneration, persistence, unload policies, disconnection, and bounded shutdown coverage. |
+| Desktop | Slint exposes repository/revision only. The product selector, GGUF path, and backend-specific branches are gone; Chat versus Direct completion still derives from E1 compatibility evidence. |
+| Rust-native operations | The root hygiene validator rejects tracked operational Python artifacts/invocations, prohibited manifest declarations, and removed/Python-runtime packages in the selected graph. Exact cargo-deny bans provide defense in depth. |
+| External smoke | `application-runtime/examples/candle_hub_smoke.rs` resolves through the production Hub worker and drives E1/Candle resolution, load, direct completion, release, unload, and shutdown through Cargo. |
+| CI prerequisites | Linux CI removed Clang/libclang. `build-essential` and CMake remain for selected native dependencies, and the font/XCB/XKB development packages remain owned by Slint. |
+| Documentation | Current architecture, status, workspace, component, validation, execution, and crate guides describe Candle/Hub/Safetensors/CPU. The deleted GGUF guide is gone; dated analysis, recovered plans, superseded ADRs, and Phase 8 history remain explicitly historical. |
+
+### Validation evidence
+
+The canonical gate passed after the final source and documentation reconciliation:
+
+```text
+cargo run --locked --bin llm-app -- verify
+```
+
+That gate passed architecture, repository hygiene, formatting, all-target workspace checking, all ordinary tests/doctests, strict workspace Clippy, rustdoc with warnings denied, and workspace benchmark compilation. Focused `application-runtime` coverage now includes 31 unit tests, including persistence across restart and scalar-mismatch unload, plus 3 state integration tests. `desktop-slint` passed 19 presenter tests, and the Candle E0 target passed its 2 real-fixture lifecycle scenarios.
+
+Supplemental gates also passed:
+
+```text
+cargo fmt --all -- --check
+cargo check --workspace --all-targets --locked
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --locked
+cargo bench --workspace --no-run --locked
+cargo check --locked --target wasm32-unknown-unknown --lib -p domain-contracts -p tokenization -p context-planner -p sampling -p task-graph
+cargo check --locked --target thumbv7em-none-eabihf --lib -p domain-contracts -p tokenization -p context-planner -p sampling -p task-graph
+cargo deny --workspace --locked check advisories bans licenses sources
+lychee --config lychee.toml --offline '**/*.md'
+git diff --check
+```
+
+Locked metadata, duplicate-tree, feature-tree, lockfile, and selected-package audits found no removed engine, Python runtime/binding, or `self_cell` package. Because the change is intentionally unstaged, raw `git ls-files` still names the deleted Python generator from the index; `git ls-files --deleted` identifies it and the path is absent from the working tree. The Rust hygiene command treats missing deleted paths correctly and passes.
+
+A fresh target-directory all-target build and full test compilation passed with failing shims first in `PATH` for the prohibited Python runtimes/package tools, the Python-distributed Hugging Face CLIs, and `clang`/`clang++`. No shim was invoked. The clean build exercised CMake and other retained native owners. This was a local clean-target proof, not a fresh Ubuntu 24.04 package-image run.
+
+The first E1 external-smoke attempt used the historical Phase 4 model revision and failed correctly because that commit does not contain the `tokenizer.json` required by production E1. The maintained smoke was repinned to the repository's immutable commit `1c81a3fba044af78df253edc66bdbab183184932`, then passed:
+
+```text
+LLM_APP_CANDLE_HUB_SMOKE=1 cargo run --locked -p application-runtime --example candle_hub_smoke
+```
+
+It resolved the exact Hub commit, loaded Candle/F32 on CPU with a 32,000-token vocabulary, generated eight tokens, observed terminal and released token-limit state, unloaded with no cancellation, explicitly shut down both workers, and removed its temporary redb workspace. This proves one pinned integration path, not language quality or broad model compatibility.
+
+No manual graphical desktop session was performed. Candle-native GGUF/quantized loading and GPU execution remain separate reviewed future work.

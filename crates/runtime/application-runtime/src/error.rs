@@ -81,20 +81,6 @@ pub enum ApplicationConfigurationField {
     EventCapacity,
     /// Hub command and event queue capacity.
     HubChannelCapacity,
-    /// GGUF maximum context-token default.
-    GgufMaximumContextTokens,
-    /// GGUF maximum prefill-token default.
-    GgufMaximumPrefillTokens,
-    /// GGUF micro-batch token default.
-    GgufMicroBatchTokens,
-    /// GGUF CPU thread count.
-    GgufThreads,
-    /// GGUF aggregate sequence context overflowed `u32`.
-    GgufContextCapacity,
-    /// Requested GGUF memory mapping is unsupported by this host/backend build.
-    GgufMemoryMapping,
-    /// Requested GGUF page locking is unsupported by this host/backend build.
-    GgufMemoryLocking,
     /// E0 token output capacity.
     TokenOutputCapacity,
     /// E0 token/state record capacity.

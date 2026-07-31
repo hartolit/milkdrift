@@ -1,13 +1,11 @@
 //! Frontend-neutral application state exposed by the orchestration engine.
 
-use std::path::Path;
-
 use domain_contracts::{FinishReason, GenerationUsage, ModelHandle, RequestId};
 
 use crate::{
-    ApplicationBackend, ApplicationDevice, ApplicationFailure, ApplicationModelFormat,
-    ApplicationSource, ChatCompatibility, ImmutableModelIdentity, LocalModelProduct,
-    ModelCompatibility, ModelSelection,
+    ApplicationDevice, ApplicationEngine, ApplicationFailure, ApplicationModelFormat,
+    ApplicationScalarType, ApplicationSource, ChatCompatibility, ImmutableModelIdentity,
+    ModelSelection,
 };
 
 /// Long-running application operation currently in progress.
@@ -32,7 +30,7 @@ pub struct ResolvedModel {
     selection: ModelSelection,
     identity: ImmutableModelIdentity,
     vocabulary_size: u32,
-    compatibility: ModelCompatibility,
+    scalar_type: Option<ApplicationScalarType>,
     chat_compatibility: ChatCompatibility,
 }
 
@@ -41,52 +39,46 @@ impl ResolvedModel {
         selection: ModelSelection,
         identity: ImmutableModelIdentity,
         vocabulary_size: u32,
-        compatibility: ModelCompatibility,
+        scalar_type: Option<ApplicationScalarType>,
         chat_compatibility: ChatCompatibility,
     ) -> Self {
         Self {
             selection,
             identity,
             vocabulary_size,
-            compatibility,
+            scalar_type,
             chat_compatibility,
         }
     }
 
-    /// Returns the complete canonical selection represented by this resolution.
+    /// Returns the normalized selection represented by this resolution.
     #[must_use]
     pub const fn selection(&self) -> &ModelSelection {
         &self.selection
     }
 
-    /// Returns the fixed supported local product combination.
+    /// Returns the local execution engine.
     #[must_use]
-    pub const fn product(&self) -> LocalModelProduct {
-        self.selection.product()
-    }
-
-    /// Returns the concrete local backend.
-    #[must_use]
-    pub const fn backend(&self) -> ApplicationBackend {
-        self.product().backend()
+    pub const fn engine(&self) -> ApplicationEngine {
+        ApplicationEngine::Candle
     }
 
     /// Returns the artifact source category.
     #[must_use]
     pub const fn source(&self) -> ApplicationSource {
-        self.product().source()
+        ApplicationSource::HuggingFaceHub
     }
 
     /// Returns the execution device category.
     #[must_use]
     pub const fn device(&self) -> ApplicationDevice {
-        self.product().device()
+        ApplicationDevice::Cpu
     }
 
     /// Returns the model serialization format.
     #[must_use]
     pub const fn format(&self) -> ApplicationModelFormat {
-        self.product().format()
+        ApplicationModelFormat::Safetensors
     }
 
     /// Returns the immutable artifact identity.
@@ -101,10 +93,16 @@ impl ResolvedModel {
         self.vocabulary_size
     }
 
-    /// Returns scalar and quantization compatibility evidence.
+    /// Returns the scalar type declared by immutable model configuration, when supported.
     #[must_use]
-    pub const fn compatibility(&self) -> ModelCompatibility {
-        self.compatibility
+    pub const fn scalar_type(&self) -> Option<ApplicationScalarType> {
+        self.scalar_type
+    }
+
+    /// Returns whether this resolution contains sufficient evidence for loading.
+    #[must_use]
+    pub const fn is_loadable(&self) -> bool {
+        self.scalar_type.is_some()
     }
 
     /// Returns explicit prompt-rendering and termination compatibility.
@@ -116,40 +114,17 @@ impl ResolvedModel {
     /// Returns whether a complete visible selection still addresses this resolution.
     #[must_use]
     pub fn matches_selection(&self, selection: &ModelSelection) -> bool {
-        match (&self.selection, selection) {
-            (
-                ModelSelection::HuggingFaceSafetensors {
-                    repository: resolved_repository,
-                    revision: resolved_revision,
-                },
-                ModelSelection::HuggingFaceSafetensors {
-                    repository,
-                    revision,
-                },
-            ) => repository.trim() == resolved_repository && revision.trim() == resolved_revision,
-            (
-                ModelSelection::LocalGguf {
-                    path: resolved_path,
-                },
-                ModelSelection::LocalGguf { path },
-            ) => same_canonical_path(resolved_path, path),
-            _ => false,
-        }
+        &self.selection == selection
     }
 }
 
-fn same_canonical_path(resolved: &Path, candidate: &Path) -> bool {
-    candidate == resolved
-        || std::fs::canonicalize(candidate).is_ok_and(|canonical| canonical == resolved)
-}
-
-/// One model generation currently owned by the selected inference runtime.
+/// One model generation currently owned by the local inference runtime.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoadedModel {
     handle: ModelHandle,
     selection: ModelSelection,
     identity: ImmutableModelIdentity,
-    compatibility: ModelCompatibility,
+    scalar_type: ApplicationScalarType,
     vocabulary_size: u32,
     maximum_context_tokens: u32,
     maximum_prefill_batch: u32,
@@ -160,7 +135,7 @@ impl LoadedModel {
         handle: ModelHandle,
         selection: ModelSelection,
         identity: ImmutableModelIdentity,
-        compatibility: ModelCompatibility,
+        scalar_type: ApplicationScalarType,
         vocabulary_size: u32,
         maximum_context_tokens: u32,
         maximum_prefill_batch: u32,
@@ -169,7 +144,7 @@ impl LoadedModel {
             handle,
             selection,
             identity,
-            compatibility,
+            scalar_type,
             vocabulary_size,
             maximum_context_tokens,
             maximum_prefill_batch,
@@ -188,34 +163,28 @@ impl LoadedModel {
         &self.selection
     }
 
-    /// Returns the fixed supported local product combination.
+    /// Returns the local execution engine.
     #[must_use]
-    pub const fn product(&self) -> LocalModelProduct {
-        self.selection.product()
-    }
-
-    /// Returns the concrete local backend.
-    #[must_use]
-    pub const fn backend(&self) -> ApplicationBackend {
-        self.product().backend()
+    pub const fn engine(&self) -> ApplicationEngine {
+        ApplicationEngine::Candle
     }
 
     /// Returns the artifact source category.
     #[must_use]
     pub const fn source(&self) -> ApplicationSource {
-        self.product().source()
+        ApplicationSource::HuggingFaceHub
     }
 
     /// Returns the execution device category.
     #[must_use]
     pub const fn device(&self) -> ApplicationDevice {
-        self.product().device()
+        ApplicationDevice::Cpu
     }
 
     /// Returns the model serialization format.
     #[must_use]
     pub const fn format(&self) -> ApplicationModelFormat {
-        self.product().format()
+        ApplicationModelFormat::Safetensors
     }
 
     /// Returns the immutable artifact identity loaded by E0.
@@ -224,10 +193,10 @@ impl LoadedModel {
         &self.identity
     }
 
-    /// Returns scalar and quantization compatibility evidence.
+    /// Returns the scalar type validated against the loaded E0 descriptor.
     #[must_use]
-    pub const fn compatibility(&self) -> ModelCompatibility {
-        self.compatibility
+    pub const fn scalar_type(&self) -> ApplicationScalarType {
+        self.scalar_type
     }
 
     /// Returns the loaded model vocabulary size.
@@ -368,10 +337,9 @@ impl ApplicationState {
 
     /// Returns whether immutable artifact resolution may be started for a selection.
     #[must_use]
-    pub fn can_resolve(&self, selection: &ModelSelection) -> bool {
+    pub const fn can_resolve(&self, _selection: &ModelSelection) -> bool {
         matches!(self.activity, ApplicationActivity::Idle)
-            && (selection.product().source() != ApplicationSource::HuggingFaceHub
-                || self.hub_available)
+            && self.hub_available
             && self.loaded.is_none()
             && self.generation.is_none()
     }
@@ -384,7 +352,7 @@ impl ApplicationState {
             && self.loaded.is_none()
             && self.generation.is_none()
             && self.resolved.as_ref().is_some_and(|resolved| {
-                resolved.compatibility.is_loadable() && resolved.matches_selection(selection)
+                resolved.is_loadable() && resolved.matches_selection(selection)
             })
     }
 
@@ -485,9 +453,5 @@ impl ApplicationState {
 
     pub(crate) const fn disconnect_inference(&mut self) {
         self.inference_available = false;
-    }
-
-    pub(crate) const fn set_inference_available(&mut self, available: bool) {
-        self.inference_available = available;
     }
 }

@@ -15,7 +15,6 @@ This directory owns current llm-app-specific reference material. Reusable engine
 | What does the native frontend own? | [Desktop runtime](desktop-runtime.md) |
 | What are lifecycle and cleanup guarantees? | [Model lifecycle](lifecycle.md) |
 | How does the Candle adapter behave? | [Candle backend](candle-backend.md) |
-| How does the GGUF adapter behave? | [GGUF backend](gguf-backend.md) |
 | How does corrective workflow execution behave? | [Corrective workflow](orchestration.md) |
 | What performance evidence exists? | [Performance evidence](performance.md) |
 | What dependency and supply-chain policy is enforced? | [Dependency policy](dependency-policy.md) |
@@ -25,10 +24,12 @@ A document may restate a small boundary when needed locally, but changing facts 
 
 ## Architecture and state
 
-- [Project architecture](architecture.md) applies the reusable [architecture principles](../architecture.md) to llm-app and records the current F0/F1, E0/capability/E1, execution-target, backend, and frontend model.
+- [Project architecture](architecture.md) applies the reusable [architecture principles](../architecture.md) to llm-app and records the current F0/F1, E0/capability/E1, execution-target, adapter, and frontend model.
 - [Workspace boundaries](workspace.md) is the concrete crate inventory and dependency graph.
 - [Implementation status](implementation-status.md) is the only product-level support matrix and validation-state page.
-- Accepted project decisions are indexed in [architecture decisions](../agent/decisions/README.md).
+- Accepted and superseded project decisions are indexed in [architecture decisions](../agent/decisions/README.md).
+
+The current local product is Candle with immutable Hugging Face Hub Safetensors on CPU. GGUF and GPU execution are unsupported; possible Candle-native quantized-format and device work is deferred to separately reviewed changes.
 
 ## Runtime and frontend
 
@@ -40,12 +41,11 @@ A document may restate a small boundary when needed locally, but changing facts 
 
 These guides describe current behavior, ownership, failure semantics, and public boundaries. Roadmap sequencing belongs in the execution plan rather than these guides.
 
-## Backends
+## Local execution adapter
 
 - [Candle backend](candle-backend.md)
-- [GGUF backend](gguf-backend.md)
 
-Backend documents own backend-specific capabilities, limitations, native-resource behavior, and compatibility semantics. Product availability belongs in implementation status.
+The adapter guide owns Candle-specific capabilities, limitations, resource behavior, and compatibility semantics. Product availability belongs in implementation status.
 
 ## Engineering and operations
 
@@ -58,4 +58,6 @@ Procedures and measurements stay close to the domain that owns them. The status 
 
 ## Historical material
 
-The [recovered implementation plan](implementation-plan.md) is retained as historical source material. It is not the active roadmap. The dense working set is [current execution context](../agent/execution/current.md), closed execution-phase evidence is consolidated in [execution history](../agent/execution/history.md), and the active program remains the [execution plan](../agent/execution/execution-plan.md).
+The [recovered implementation plan](implementation-plan.md) is retained as clearly marked historical source material and is not the active roadmap. Completed Phase 8 plan text and [Phase 8 history](../agent/execution/history.md#phase-8--gguf-parity-and-native-composition-evidence) remain factual evidence for the former dual-product tree; [ADR-0013](../agent/decisions/0013-candle-only-local-execution.md) supersedes that composition for current work.
+
+The dense working set is [current execution context](../agent/execution/current.md), closed execution-phase evidence is consolidated in [execution history](../agent/execution/history.md), and the active program remains the [execution plan](../agent/execution/execution-plan.md).

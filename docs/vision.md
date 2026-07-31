@@ -10,7 +10,7 @@ The model's context is one of the most valuable resources in the entire system. 
 
 That is the idea underneath this project.
 
-Not just another local LLM interface, and not an attempt to reimplement everything that Candle, llama.cpp, or other inference engines already do well. I want to build the foundations for a local AI system where inference, tools, context, and the computer itself can eventually fit together much more naturally.
+Not just another local LLM interface, and not an attempt to reimplement everything that Candle or other inference libraries already do well. I want to build the foundations for a local AI system where inference, tools, context, and the computer itself can eventually fit together much more naturally.
 
 For now, it starts as an inference app. That is intentional.
 
@@ -110,7 +110,7 @@ This is where the project starts becoming more ambitious.
 
 I don't really want to build an application where the UI is the product and the inference engine is the interesting part underneath. I want the system around the model to become interesting too.
 
-The inference backend should eventually be replaceable. Candle might be right for one path, llama.cpp for another, and something else might make more sense later. The project should own the behavior that matters above those implementations: lifecycle, context, memory, tools, permissions, state, orchestration, and the way the AI experiences the rest of the machine.
+The local execution implementation should remain replaceable when a real requirement and evidence justify replacement, but replaceability does not require maintaining multiple engines in advance. Candle is the sole current local engine; new model formats, quantization, or devices should first be treated as Candle capabilities rather than assumed reasons for a second runtime. The project should own the behavior that matters above execution: lifecycle, context, memory, tools, permissions, state, orchestration, and the way the AI experiences the rest of the machine.
 
 That is also how I think about `application-runtime`. Its purpose is not to become a giant desktop backend. It is the reusable layer where application behavior can exist without belonging to Slint, a terminal, a web page, or a particular inference implementation. The presentation should sit above it; model execution should sit below it.
 

@@ -2,9 +2,9 @@
 
 ## Scope
 
-`crates/adapters/candle-backend` is the Candle CPU reference implementation of the `domain-contracts` backend boundary. It supports unquantized Hugging Face Llama configuration files and one or more Safetensors weight shards on the CPU.
+`crates/adapters/candle-backend` is the sole current local execution adapter. It implements the `domain-contracts` backend boundary for unquantized Hugging Face Llama configuration files and one or more Safetensors weight shards on CPU.
 
-The adapter owns all Candle types. No Candle tensor, device, model, cache, or error type crosses into a domain crate.
+The adapter owns every Candle type. No Candle tensor, device, model, cache, or error crosses into a domain crate or E1's public application API. Artifact download and tokenizer integration remain separate adapters composed by E1.
 
 ## Lifecycle
 
@@ -15,7 +15,7 @@ The loader performs four cold-path operations:
 3. reserve the largest shard as transient loading headroom;
 4. load Safetensors into Candle and construct the Llama model.
 
-The loaded model exclusively owns weights. Each sequence owns an independent Candle cache, position, fixed token capacity, and token staging allocation. Sequences do not retain or clone the loaded model. Successful explicit destruction marks the sequence `SequenceState::Finished` before its value is dropped, preventing accidental post-destruction reuse.
+The loaded model exclusively owns weights. Each sequence owns an independent Candle cache, position, fixed token capacity, and token staging allocation. Sequences do not retain or clone the loaded model. Successful explicit destruction marks the sequence `SequenceState::Finished` before drop, preventing post-destruction reuse.
 
 The compatibility test executes:
 
@@ -34,35 +34,40 @@ inspect
 
 ## Generation semantics
 
-The adapter preserves the backend-independent F32 logits contract for every scalar type it advertises. F32 and F16 sources execute in their native scalar type. Candle 0.11 CPU matmul does not support BF16 operands, so BF16 source weights are validated as BF16 and upcast to F32 at load time. Admission accounts for the expanded resident weights and F32 sequence cache. Returned vocabulary logits are normalized to F32 before copying into the caller-owned slice. Capacity and layout validation occur before sampling.
+The adapter preserves the backend-independent F32 logits contract for every scalar type it advertises. F32 and F16 sources execute in their native scalar type. Candle 0.11 CPU matmul does not support BF16 operands, so BF16 source weights are validated as BF16 and upcast to F32 at load time. Admission accounts for expanded resident weights and F32 sequence cache. Vocabulary logits are normalized to F32 before copying into the caller-owned slice.
 
-The deterministic compatibility fixture assigns distinguishable token embeddings and LM-head rows while keeping the transformer residual path stable. Tests therefore verify all of the following as semantic facts rather than only successful calls:
+The deterministic fixture assigns distinguishable token embeddings and LM-head rows while keeping the transformer residual path stable. Tests verify that:
 
-- prefill consumes the complete prompt and reports the next absolute position;
-- the returned prefill logits belong to the final prompt position;
-- each decode call consumes exactly one selected token and increments position once;
-- independent sequence caches do not alter each other's progression;
-- cancelled decode leaves the sequence position unchanged;
+- prefill consumes the complete prompt and returns final-position logits;
+- each decode consumes one selected token and increments position exactly once;
+- independent sequence caches do not alter each other;
+- cancelled decode leaves position unchanged;
 - logits contain exactly one full vocabulary for F32, F16, and BF16 sources;
-- successful explicit destruction transitions each sequence to `Finished`;
-- explicit sequence destruction and model unload remain valid after generation.
+- successful destruction transitions each sequence to `Finished`;
+- explicit destruction and model unload remain valid after generation.
 
-`inference-runtime/tests/candle_generation.rs` additionally drives the actual `CandleLlamaLoader` through the hosted E0 scheduler. It covers token-limit and EOS completion, one-token output backpressure, cancellation between backend calls, terminal/released publication, accounting release, unload, a final empty post-unload snapshot, and worker shutdown.
+`inference-runtime/tests/native_backend_generation.rs` drives `CandleLlamaLoader` through the hosted E0 scheduler. It covers token-limit and EOS completion, seeded repeatability, one-token output backpressure, cancellation between backend calls, terminal/released publication, accounting release, unload, an empty post-unload snapshot, shutdown, and worker join.
 
-The opt-in external-model procedure is documented under [project validation](validation.md#candle-real-model-smoke). External smoke weights are downloaded into ignored `.phase4/` storage and are not committed.
+The opt-in external-model procedure is the E1 [Rust-native Candle/Hub smoke](validation.md#rust-native-candle-hub-smoke). It resolves the exact immutable artifact through `hf-hub-adapter`; ordinary adapter/runtime tests remain download-free.
 
 ## Allocation capability
 
 The adapter intentionally does not advertise `CapabilitySet::ALLOCATION_FREE_HOT_PATH`.
 
-The upstream Candle 0.11 Llama implementation concatenates KV-cache tensors as tokens are appended and constructs intermediate tensors during forward passes. Claiming strict allocation-free execution would therefore be false even though the adapter itself pre-reserves token staging and writes logits into caller-owned slices.
+The upstream Candle 0.11 Llama implementation concatenates KV-cache tensors as tokens are appended and constructs intermediate tensors during forward passes. Claiming strict allocation-free execution would be false even though the adapter pre-reserves token staging and writes logits into caller-owned slices.
 
-A later engine may use this capability as an admission requirement. A future strict backend must use pre-allocated KV-cache and execution arenas before it sets the bit.
+A future strict implementation must use preallocated KV-cache and execution arenas before setting that capability.
 
 ## Sequence reset capability
 
-The adapter intentionally does not advertise `CapabilitySet::SEQUENCE_RESET`. Candle's upstream Llama cache does not expose a way to clear its private KV and mask state in place. Replacing the cache would allocate and would violate the `LoadedModel::reset_sequence` contract. The adapter therefore returns `SequenceError::Unsupported`; callers must destroy and recreate the sequence at a cold lifecycle boundary.
+The adapter intentionally does not advertise `CapabilitySet::SEQUENCE_RESET`. Candle's upstream Llama cache does not expose a way to clear private KV and mask state in place. Replacing the cache would allocate and violate the reset contract. Callers destroy and recreate the sequence at a cold lifecycle boundary.
 
 ## Failure containment
 
 Candle failures are translated into allocation-free `BackendFailure` values with stable categories and numeric codes. Candle's upstream Llama loader uses an internal panic for a malformed layer, so model construction is isolated behind `catch_unwind` at the cold adapter boundary and converted into an invalid-model load failure.
+
+## Deferred format and device work
+
+The current adapter supports CPU, Hugging Face Llama configuration, unquantized Safetensors shards, and F32/F16/BF16 source weights under the behavior above.
+
+GGUF and other quantized formats are not currently supported. If added, they remain Candle-native format work under this execution adapter and require reviewed model-family compatibility, tokenizer provenance, artifact identity, quantization, lifecycle, and test evidence. CUDA and Metal are likewise deferred device work; neither format nor device support is a reason by itself to introduce another local execution engine.
