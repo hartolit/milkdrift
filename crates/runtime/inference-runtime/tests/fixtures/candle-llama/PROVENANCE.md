@@ -2,11 +2,13 @@
 
 ## Purpose and ownership
 
-This fixture is project-authored synthetic test data for download-free Candle execution and E0 lifecycle integration. It is not trained, does not measure language quality, and is not a performance model.
+This fixture is project-authored synthetic test data for download-free Candle execution and E0 lifecycle integration. It is not trained, does not measure language quality, and is not a product-performance model.
 
 No external base-model weights, tokenizer assets, training data, model download, or externally derived tensor values were used. The fixture and its generator are licensed under the repository's Apache-2.0 license.
 
-The fixture remains here because `native_backend_generation.rs` is its only committed consumer. It must not be copied or promoted to a shared fixture location until a second real consumer exists and sharing avoids duplication.
+The E0 integration test `native_backend_generation.rs` remains the fixture's primary owner. `application-runtime` tests already canonicalize and load these same files for E1 completion, chat, output, cancellation, and unload coverage. The `runtime-benchmarks` package is an additional consumer: its synthetic baseline and Criterion targets reference this directory in place through a path anchored at `CARGO_MANIFEST_DIR`; they do not copy or regenerate the files. Before runner or Criterion setup, the benchmark recomputes and verifies both exact SHA-256 values using `sha2` 0.11. It uses the fixture only for controlled synthetic integration, hosted-E0 boundary, and lifecycle measurements, never as evidence of real-product performance.
+
+The fixture remains beside its E0 integration owner because that test defines the compatibility assertions and the reviewed Cargo-native generator below defines the bytes. Moving the files into the outer benchmark observer would invert ownership without removing duplication—the additional E1 and benchmark consumers already read the owned fixture in place. A future shared location would still require a clearer ownership benefit, not merely a consumer count.
 
 ## Deterministic generation
 

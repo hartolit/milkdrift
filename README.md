@@ -32,6 +32,7 @@ The root `Cargo.toml` is a virtual workspace manifest; there is no root Rust pac
 ```text
 .cargo/              workspace-local Cargo aliases
 tools/xtask/         architecture, hygiene, and composite verification tooling
+benchmarks/runtime/  non-production E0/E1 measurement observer
 crates/domain/       portable contracts and algorithms
 crates/platform/     process-host threading, timing, channels, and bounded output plumbing
 crates/adapters/     Candle, tokenizer, Hub, storage, and vendor integrations

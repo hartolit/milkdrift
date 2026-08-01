@@ -1,6 +1,6 @@
 # Workspace boundaries
 
-This document is the concrete workspace inventory: crate placement, current members, production dependency edges, and generated-code lint boundaries. Architectural rationale and layer responsibilities live in [project architecture](architecture.md).
+This document is the concrete workspace inventory: crate placement, current members, production and observer dependency edges, and generated-code lint boundaries. Architectural rationale and layer responsibilities live in [project architecture](architecture.md).
 
 ## Physical layout
 
@@ -14,7 +14,7 @@ llm-app/
 │       ├── src/
 │       └── tests/
 ├── benchmarks/
-│   └── runtime/               future cross-crate harness; not yet created
+│   └── runtime/               runtime-benchmarks non-production measurement observer
 ├── docs/
 └── crates/
     ├── domain/
@@ -44,6 +44,7 @@ The root has no package target. `.cargo/config.toml` maps `cargo xtask` to the l
 
 ```text
 tools/xtask
+benchmarks/runtime
 crates/domain/domain-contracts
 crates/domain/tokenization
 crates/domain/context-planner
@@ -62,7 +63,7 @@ crates/apps/desktop-slint
 
 Each domain and runtime crate owns a coherent, independently testable responsibility. None exists merely to hold one identifier, data structure, or callback.
 
-`benchmarks/runtime` is intentionally absent from the current member list. Phase 10 will add it as `runtime-benchmarks` only with the first real cross-crate/system harness. It is the sole recognized package path under `benchmarks/`; unknown benchmark manifests fail closed.
+`benchmarks/runtime` is the root-workspace member whose package name is `runtime-benchmarks`. It is the sole recognized package path under `benchmarks/` and has the explicit non-production benchmark-observer role. It shares the root `Cargo.lock` and root `target`, declares `publish = false`, and has no nested workspace, nested lockfile, build script, Cargo custom-build target, or build dependencies. No other workspace package has an incoming dependency edge to `runtime-benchmarks` of any kind; unknown benchmark manifests fail closed.
 
 ## Responsibility-based source organization
 
@@ -95,7 +96,26 @@ desktop-slint       -> application-runtime
 
 `xtask`, `hf-hub-adapter`, and `redb-storage` have no workspace-local production dependencies. `xtask` depends externally on the reviewed `cargo_metadata` crate.
 
-The future `runtime-benchmarks` package is outside the production graph. It may depend only on exact reviewed public production APIs required by implemented measurements. No production, tooling, test, or application package may depend on it, including through development or build dependencies. Its exact outgoing edges will be registered with the harness rather than pre-authorized.
+### Non-production observer dependency edges
+
+The complete dependency set for `runtime-benchmarks` is:
+
+```text
+workspace-local normal:
+  runtime-benchmarks -> application-runtime
+  runtime-benchmarks -> candle-backend
+  runtime-benchmarks -> domain-contracts
+  runtime-benchmarks -> host-runtime
+  runtime-benchmarks -> inference-runtime
+external normal:
+  runtime-benchmarks -> serde
+  runtime-benchmarks -> serde_json
+  runtime-benchmarks -> sha2
+external development:
+  runtime-benchmarks -> criterion
+```
+
+These are measurement-observer edges outside the production graph even where Cargo classifies them as `normal`: the package consumes reviewed public production APIs but is never part of product execution or composition. It has no build dependencies and no incoming normal, build, or development edge from any production, tooling, test, or application package.
 
 `application-runtime/src/local.rs` is a private internal composition boundary, not a workspace member. It owns one `HostedRuntime<CandleLlamaSource>` and one inference worker thread. E1 separately owns one bounded Hub worker, one `HfTokenizer`, request-local `HfOwnedStreamingDecoder` values, and one resident-model lifecycle. [ADR-0013](../agent/decisions/0013-candle-only-local-execution.md) records this composition. There is no `application-api` package.
 
@@ -109,9 +129,9 @@ Production code may not acquire an upward dependency. Platform and production ad
 
 `cargo xtask architecture` uses typed Cargo metadata with the committed lockfile, fails closed on unknown workspace locations and unresolved local path targets, distinguishes dependency kinds, requires explicit tooling/runtime/platform roles, and applies the dependency rules documented in [dependency policy](dependency-policy.md).
 
-The accepted product roots are `crates/domain`, `crates/platform`, `crates/adapters`, `crates/runtime`, and `crates/apps`; `tools/xtask` is the only accepted tooling package. `benchmarks/runtime` is the only reserved benchmark package path and is not a current member. Other benchmark/tooling locations and legacy product paths are not classified. Adapter packages remain direct children of `crates/adapters` until a later structural decision explicitly permits deeper grouping.
+The accepted product roots are `crates/domain`, `crates/platform`, `crates/adapters`, `crates/runtime`, and `crates/apps`; `tools/xtask` is the only accepted tooling package. `benchmarks/runtime` is the only recognized benchmark member and is classified separately from every product layer. Other benchmark/tooling locations and legacy product paths are not classified. Adapter packages remain direct children of `crates/adapters` until a later structural decision explicitly permits deeper grouping.
 
-When Phase 10 creates `benchmarks/runtime`, its path and manifest must be added to root `workspace.members` in the same change before any Cargo command targets that manifest. It uses the root `Cargo.lock` and root `target`, declares `publish = false`, and has no nested workspace, nested lockfile, custom build target, or `build.rs`. A shared benchmark-support package requires two real consumers and a separate ownership review.
+The registered `benchmarks/runtime` manifest is governed by the root workspace, committed root `Cargo.lock`, and shared root `target`; Cargo commands for it run from the repository root. Architecture and hygiene enforce the exact package name `runtime-benchmarks`, `publish = false`, absence of a nested workspace or lockfile, absence of a Cargo custom-build target or `build.rs`, exact reviewed outgoing dependencies, and the prohibition on reverse dependencies. A separate shared benchmark-support package still requires two real consumers and an ownership review.
 
 ## Generated-code lint boundary
 

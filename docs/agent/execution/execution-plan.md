@@ -2,11 +2,11 @@
 
 **Intended repository path:** `docs/agent/execution/execution-plan.md`
 **Companion analysis:** `docs/agent/execution/analyzer.md`
-**Plan status:** Active execution baseline; pre-Phase 10 closure complete and Phase 10 next
+**Plan status:** Active execution baseline; Phase 10 repository acceptance complete with controlled synthetic/component evidence; external product measurement outstanding
 **Prepared:** 2026-07-22
 **Current amendment:** 2026-08-01
 
-> **Current-use notice.** Phases 0–8 below are preserved as the specifications that produced their historical results. In particular, completed Phase 8 accurately records the former dual-product experiment; it does not define current support. [ADR-0013](../decisions/0013-candle-only-local-execution.md) through [ADR-0017](../decisions/0017-stable-clippy-gate-exploratory-nursery.md) govern the completed Candle-only Phase 9 architecture. The amended [ADR-0006](../decisions/0006-explicit-bounded-shutdown.md) and [ADR-0018](../decisions/0018-benchmark-and-model-fixture-policy.md) govern the completed pre-Phase 10 lifecycle, benchmark-layout, artifact, and fixture closure. Phase 10 has not started; it is the next implementation phase.
+> **Current-use notice.** Phases 0–8 below are preserved as the specifications that produced their historical results. In particular, completed Phase 8 accurately records the former dual-product experiment; it does not define current support. [ADR-0013](../decisions/0013-candle-only-local-execution.md) through [ADR-0017](../decisions/0017-stable-clippy-gate-exploratory-nursery.md) govern the completed Candle-only Phase 9 architecture. The amended [ADR-0006](../decisions/0006-explicit-bounded-shutdown.md) and [ADR-0018](../decisions/0018-benchmark-and-model-fixture-policy.md) govern the completed pre-Phase 10 lifecycle, benchmark-layout, artifact, and fixture closure. Phase 10 repository acceptance is complete. The compiled opt-in real-product mode has not been executed; controlled synthetic results must not be presented as a product baseline.
 
 ## 1. Purpose
 
@@ -66,6 +66,8 @@ The integrated prompt-to-stream and exact TinyLlama conversation loops now exist
 
 The architecture closure also extracted `corrective-workflow`, adopted the `domain`/`platform`/`adapters`/`runtime`/`apps` physical taxonomy, and made runtime/platform roles and runtime composition edges fail closed. Phase 9 restored a small Candle baseline, hardened lifecycle ownership, adopted an exact domain DAG, split mixed-responsibility internals, moved custom maintenance policy to `tools/xtask`, separated mandatory and exploratory lints, and reconciled current documentation. That phase is closed.
 
+Phase 10 now adds one expanded crate-local sampling benchmark and the sole outer `benchmarks/runtime` package. It measures controlled production boundaries without changing a production public API or implementation, adding an optimization, or expanding the supported product matrix.
+
 ## 3. Decisions this plan makes
 
 These decisions remove ambiguity for implementation agents. They remain revisable through an ADR when evidence contradicts them.
@@ -117,7 +119,7 @@ The first vertical slice kept F1 peers isolated while responsibilities stabilize
 
 A benchmark for one stable crate-owned operation remains in that crate's conventional `benches/` directory and is created only with a real production-code measurement that answers a named question. No placeholder benchmark directories are created.
 
-Cross-crate E0/E1 and product-level measurements belong in the future exact root-workspace package `benchmarks/runtime` (`runtime-benchmarks`). The package is a non-production outer consumer of exact reviewed public production APIs; production packages never depend on it. ADR-0018 owns workspace, artifact, and fixture policy.
+Cross-crate E0/E1 and product-level measurements belong in the exact root-workspace package `benchmarks/runtime` (`runtime-benchmarks`). The package is a non-production outer consumer of exact reviewed public production APIs; production packages never depend on it. ADR-0018 owns workspace, artifact, and fixture policy.
 
 ## 4. Scope guardrails
 
@@ -169,7 +171,7 @@ Every work package should follow these rules.
 | 7 | Conversation/context behavior is real | Budgeting, rendering, history, and stop tests pass |
 | 8 | Historical GGUF parity experiment completed | Historical shared-suite evidence remains in Phase 8 history; current support is superseded by ADR-0013 |
 | 9 | Candle-only architecture, lifecycle ownership, domain DAG, workspace tooling, modules, and lint policy are reconciled | One-worker E1, retained/retryable joins, reviewed DAG, virtual workspace/xtask, Rust-owned hygiene, stable mandatory lints, truthful docs, and exact-tree validation |
-| 10 | Performance is measured end to end | TTFT, throughput, memory, cancellation, unload baselines exist |
+| 10 | A controlled performance program is implemented | Sampling boundaries, separated system/component harnesses, lifecycle/accounting/RSS evidence, reproducible metadata, exact-tree validation, and an honestly recorded external-product evidence state exist without timing gates |
 | 11 | GPU execution is added without weakening CPU behavior | Device matrix and fallback tests pass |
 
 ---
@@ -249,98 +251,82 @@ Remove the accidental dual-engine/tooling architecture while preserving behavior
 
 # Phase 10 — Build a meaningful performance program
 
-**Status:** Not started; next implementation phase.
+**Status:** Repository acceptance complete on 2026-08-02 with focused package validation, controlled synthetic/component evidence, full benchmark compilation, and canonical/policy/hygiene validation. The pinned opt-in E1 real-product mode compiled but was not executed, so external product evidence remains outstanding and no product baseline is claimed.
 
 ## Objective
 
-Measure product behavior before applying low-level optimization doctrine.
+Establish controlled, reproducible component and runtime measurement surfaces before changing production code for performance. Keep correctness/lifecycle evidence, synthetic comparative timing, and real-product timing as explicitly different evidence classes.
 
-## Work package 10.1 — Expand the existing sampling benchmark
+## Work package 10.1 — Expand the existing sampling benchmark (implemented)
 
-This is the mandatory component measurement. Keep it in `crates/domain/sampling/benches/` and execute the production sampler. Cover:
-
-- greedy;
-- default top-k/top-p;
-- min-p;
-- repetition penalty with varied histories;
-- approximately 8k, 32k, and 128k vocabularies;
-- sampler-only timing with setup outside measurement;
-- full restore-plus-sample pipeline as a separately named benchmark;
-- stop matching.
-
-Every case states the regression or performance question it answers. The benchmark name must make clear whether input restoration is inside the measured region.
-
-Tokenizer encode/streaming-decode, context-planner, output-accumulator, and isolated Candle prefill/decode microbenchmarks are conditional rather than checklist requirements. Before adding any one of them, document:
-
-1. the named question;
-2. why the cross-crate system measurement cannot answer it;
-3. the stable production operation being measured;
-4. the setup excluded from the measured region.
-
-Create its crate-local `benches/` directory only in the same change as that justified benchmark. Do not implement a benchmark-only copy of production logic.
-
-## Work package 10.2 — Add one cross-crate runtime/system harness
-
-Create exactly the dedicated root-workspace package:
+The crate-local `crates/domain/sampling/benches/sampling_pipeline.rs` target now executes the public production sampler across the explicit Cartesian matrix:
 
 ```text
-benchmarks/runtime
+{sample_only,restore_and_sample}
+    × {greedy, default top-k/top-p, min-p, varied repetition histories}
+    × {8,192, 32,768, 131,072 vocabulary entries}
 ```
 
-The package name is `runtime-benchmarks`. Add the exact root member and manifest in the same change before running Cargo. It uses the root lockfile and target directory, declares `publish = false`, has no build script, and depends only on exact reviewed public production APIs and controlled fixtures. No production package depends on it.
+`sample_only` restores mutable logits before timing; `restore_and_sample` includes that restoration in the measured boundary. Fixture construction, allocation, capacity reservation, and sampler construction remain outside both boundaries. Three separately named stop-matching cases execute the public suffix matcher for token hit, last-pattern hit, and miss behavior. Every target states its question, measured region, excluded setup, and evidence limitations.
 
-The mandatory harness measures the current Candle CPU product path sufficiently to answer:
+## Work package 10.2 — Separate the system package and harness roles (implemented)
 
-- time to first token;
-- steady-state decode throughput;
-- prompt prefill throughput where it can be separated honestly;
-- output backpressure behavior;
-- cancellation latency;
-- model load and unload latency;
-- repeated load/generate/unload stability.
+The exact sole benchmark package is `benchmarks/runtime` with package name `runtime-benchmarks`. It is an outer, non-production workspace consumer using the root lockfile and root target, `publish = false`, no build script, and only exact reviewed dependencies. Its external normal dependencies are `serde`, `serde_json`, and `sha2` 0.11; the latter verifies exact fixture hashes before runner or Criterion setup. No production package depends on it.
 
-Do not add GPU, GGUF, hosted, peer, browser, workflow, memory-system, or multi-model variants. Real-model runs follow ADR-0018: explicit external identifier, immutable revision, local cache or explicit local artifact path, opt-in execution, no ordinary-CI download, and no repository redistribution.
+Its roles are deliberately separate:
 
-## Work package 10.3 — Record reproducible environment, lifecycle, and memory evidence
+- `src/bin/baseline.rs` is the normal bounded runner. Default synthetic mode drives public hosted E0 lifecycle/accounting paths and fresh download-free E1 start/shutdown cycles. The separately pinned `real-product` mode drives public E1 APIs only with mandatory `--allow-network` and an existing cache under shared root `target/` or outside the repository; it rejects `HF_HUB_OFFLINE=1` because public E1 still performs immutable Hub metadata resolution.
+- `benches/runtime.rs` is a Criterion component-regression target for hosted checked prefill and one incremental decode boundary. It is not the system runner and does not claim E1 or product throughput.
+- Neither surface applies wall-clock pass/fail thresholds. Hard bounds stop hangs; lifecycle, identity, accounting, output, or cleanup mismatches fail.
 
-Every controlled baseline records:
+No GPU, GGUF, second engine, hosted-provider, peer, browser, workflow, memory-system, or multi-model variant was added.
 
-- commit and Git tree;
-- Rust/Cargo/LLVM and Criterion versions;
-- target triple and build profile/features;
-- CPU model, core/thread policy, OS/kernel, power mode, and relevant environment controls;
-- model identifier, immutable revision or synthetic-fixture hash;
-- prompt/context sizes and generation settings;
-- warm-up/sample configuration.
+## Work package 10.3 — Measure controlled memory and lifecycle behavior (implemented)
 
-Measure controlled cancellation and load/unload lifecycle behavior plus host memory before load, after load, during generation, after unload, and across repetition. State the memory observation method and its limitations; do not claim native allocation freedom from Rust allocator evidence.
+Synthetic E0 cycles measure worker start, model load, checked prompt prefill, generation submission to first public token, a labelled short post-first-token proxy, controlled output-backpressure hold/recovery, cancellation acknowledgement/terminal/release, model unload, and shutdown/join. Public runtime/model accounting and sampled process RSS are recorded at named checkpoints before load, after load, during/released generation paths, and after unload. Fresh download-free E1 start/shutdown cycles independently cover application lifecycle without Hub resolution.
 
-Shared CI compiles all benchmark targets and catches API drift. It does not run statistical measurements or enforce wall-clock thresholds. Raw Criterion data, generated reports, caches, profiles, and dumps remain under the shared root `target`; only curated summaries enter canonical documentation.
+The final corrected release synthetic run with one warmup and three recorded samples completed successfully. All nine generation operations observed matching `Terminal` and `Released` states with no pending or exhausted cleanup, each cancellation emitted two tokens, unload ended with exact zero model/request/workspace/cleanup/maintenance accounting, and workers shut down and joined cleanly.
 
-## Work package 10.4 — Optimize only measured bottlenecks
+RSS is sampled process-wide from Linux `/proc` when available. It is not allocation counting, per-model ownership, native-resource attribution, device memory, or proof that an allocator returned pages to the operating system. Public E0 accounting remains distinct from RSS.
 
-Optimization is a later Phase 10 change, not part of harness establishment. Use the system/component evidence plus profiling or generated-code inspection before adding:
+## Work package 10.4 — Review and defer conditional candidates (implemented)
 
-- `#[inline(always)]`;
-- custom unsafe code;
-- manual SIMD;
-- alternative collections;
-- lock-free structures;
-- data-layout rewrites;
-- custom allocators.
+Tokenizer encode/streaming-decode, context-planner, output-accumulator, and isolated Candle microbenchmarks were reviewed as conditional candidates and deferred. No candidate had both a named unresolved question and a demonstrated reason the implemented public E0/system surfaces were insufficient. No placeholder benchmark directory or benchmark-only production-logic copy was created.
 
-Preserve the existing zero-allocation project-owned hot-path goal where it is already useful, but report upstream adapter allocations honestly.
+The hosted prefill/decode Criterion targets in `runtime-benchmarks` measure public E0 command/event boundaries; they are not isolated Candle kernel microbenchmarks.
 
-## Acceptance criteria
+## Work package 10.5 — Stabilize metadata and output (implemented)
 
-- The existing sampling benchmark is expanded and its measured regions are named precisely.
-- One `benchmarks/runtime` harness measures TTFT, decode throughput, controlled lifecycle, and memory behavior through public production APIs.
-- Environment and artifact identity are reproducible.
-- Conditional microbenchmarks exist only with a named question and a documented reason the system harness is insufficient.
-- The package uses root workspace/lock/target ownership, `publish = false`, no build script, and no incoming production dependency.
-- Raw generated output and model caches remain untracked under root `target` or outside the repository.
-- Shared CI compiles but does not time-gate the suite.
-- Any optimization change cites a same-environment baseline and resulting measurement.
+The normal runner emits one versioned serde JSON record to stdout and progress/compact summaries to stderr. The record includes Git commit/tree/dirty state, toolchain and native target, profile/features, OS/kernel/CPU topology and selected thread controls, exact fixture or pinned product identity, workload/settings, cache/network policy, warmup/sample counts, lifecycle durations, public accounting, and RSS observations. It excludes generated text/token IDs, environment-wide dumps, credentials, and secrets.
+
+Focused unit coverage exercises bounded CLI/network/cache policy, exact SHA-256 fixture identity and JSON, toolchain metadata, CPU topology, and `/proc` RSS parsing. The report itself uses typed serde records with an explicit schema version. The runner writes no result file itself; captured JSON, Criterion output, caches, profiles, and dumps remain under the root `target` or outside the repository, while only curated summaries enter canonical documentation.
+
+## Work package 10.6 — Make no speculative optimization (implemented)
+
+Phase 10 changed no production public API or production implementation and applied no performance optimization. It added no unsafe code, inline mandate, SIMD, custom allocator, lock-free structure, collection/layout rewrite, GPU path, GGUF path, second engine, or unsupported product axis. The measurements establish investigation surfaces; they do not justify a production change by themselves.
+
+## Recorded implementation evidence
+
+The implementation began from clean `HEAD` `f61a0fadd2311a53e1bce55094f886e3465b0c95`, tree `1bee6fa25f8b4819ac68d02cc10324f0f1848e9e`; only root `./target/` was present. `cargo xtask verify` passed before edits. That baseline gate is starting-tree evidence, not validation of the Phase 10 diff.
+
+Focused validation passed for locked metadata; the required package-level check, test, and strict Clippy commands for `sampling` and `runtime-benchmarks`; and `cargo test --locked -p xtask`. The runtime package had 15 passing tests, and the xtask suite had 32 total tests: 14 unit and 18 integration tests; doc tests contained no cases.
+
+Selected Criterion estimate intervals from the controlled synthetic/component runs were:
+
+| Target | Selected interval |
+|---|---:|
+| `e0_hosted_checked_prefill/4_tokens` | `[5.0955, 5.1104] ms` |
+| `e0_hosted_incremental_decode/1_token_after_2_token_prefill` | `[5.0474, 5.0890] ms` |
+| `sample_only/default_top_k_top_p/32768` | `[77.211, 77.228] µs` |
+| `restore_and_sample/default_top_k_top_p/32768` | `[78.288, 78.302] µs` |
+
+Exactly these four Criterion targets were statistically executed; all remaining sampling-matrix and stop-matching targets are compile-only evidence. These are synthetic fixture/component measurements, not a product-model baseline, model-quality result, production steady-state throughput claim, or shared-CI threshold.
+
+## Acceptance criteria and open external evidence
+
+All six work packages and repository acceptance criteria passed. Final evidence includes locked workspace benchmark compilation, canonical `cargo xtask verify`, locked cargo-deny policy, offline link checking, `git diff --check`, and root-target/generated-artifact hygiene. The first canonical attempt found only an oversized `xtask` policy-test helper; splitting that helper without relaxing policy made focused strict Clippy and the complete canonical rerun pass.
+
+The immutable real-product mode was compiled but not run. A future authorized run requires `--allow-network`, rejects `HF_HUB_OFFLINE=1`, and requires an existing cache under shared root `target/` or outside the repository. Its output is not inferred or fabricated. Phase 10 repository acceptance is complete with controlled synthetic lifecycle/component evidence, while the current-tree external product baseline remains explicitly outstanding.
 
 ---
 

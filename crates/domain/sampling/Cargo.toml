@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Deterministic zero-allocation logit sampling and stop matching"
+readme = "README.md"
 publish = false
 
 [dependencies]

@@ -10,7 +10,15 @@ Normal and build dependencies first use the complete production layer matrix. Ev
 
 Production edges from a runtime to platform/adapters or another runtime likewise require an exact review entry with a narrow composition justification. Development dependencies are reviewed separately because compatibility tests and benchmarks may need edges that production code must not acquire.
 
-The future `benchmarks/runtime` (`runtime-benchmarks`) package has its own non-production observer role. It may depend inward only on exact reviewed public production APIs needed by implemented measurements. No production, tooling, test, or application package may depend on it through normal, build, or development edges. The pre-Phase 10 benchmark registry is intentionally empty; Phase 10 adds only the edges the real harness consumes. Unknown package paths under `benchmarks/`, benchmark build dependencies, and custom build targets fail closed.
+The root-workspace member `benchmarks/runtime`, named `runtime-benchmarks`, has its own non-production measurement-observer role. It uses the root `Cargo.lock` and shared root `target`, declares `publish = false`, and has no nested workspace or lockfile, build script, Cargo custom-build target, or build dependencies. Its exact reviewed dependency registry is:
+
+- workspace-local normal: `application-runtime`, `candle-backend`, `domain-contracts`, `host-runtime`, and `inference-runtime`;
+- external normal: `serde`, `serde_json`, and `sha2` 0.11;
+- external development: `criterion`.
+
+`sha2` is limited to recomputing and checking the exact reviewed synthetic-fixture hashes before either normal-runner or Criterion setup.
+
+Cargo's `normal` label does not place these observer edges in the production graph. No production, tooling, test, or application package may depend on `runtime-benchmarks` through a normal, build, or development edge. Unknown package paths under `benchmarks/`, unreviewed benchmark dependencies, benchmark build dependencies, and custom-build targets fail closed.
 
 The current external policy is:
 
@@ -41,7 +49,7 @@ Repository artifact rules additionally reject:
 - a nested `Cargo.lock` or `build.rs` under `benchmarks/`;
 - tracked benchmark/criterion result trees, generated reports, flamegraphs, profiler output, heap dumps, and package-local result directories;
 - tracked model/download cache directories;
-- an unregistered `benchmarks/runtime/Cargo.toml` or any unknown benchmark manifest.
+- a `benchmarks/runtime/Cargo.toml` that is not registered in root `workspace.members`, or any unknown benchmark manifest.
 
 The root `.gitignore` uses `target/` so Cargo output is ignored at every repository depth, but project commands still share the root `target` through ordinary workspace behavior or an explicit root `CARGO_TARGET_DIR`. Raw Criterion/profiler data and model caches remain there or outside the repository. Curated conclusions belong in canonical documentation rather than generated result trees.
 
@@ -53,9 +61,9 @@ There is no filename-, directory-, document-status-, or whole-file bypass for a 
 
 A committed model fixture must have a reviewed provenance record with origin/redistribution basis, architecture, scalar type, deterministic generation method, exact sizes and SHA-256 hashes, license, and test scope. Small size or synthetic-looking tensors are not ownership evidence.
 
-Project-owned synthetic fixtures are generated through Rust/Cargo-native tooling without external base-model weights, tokenizer assets, network access, or training data. They remain with their sole consumer until two real consumers justify shared ownership. If provenance or redistribution permission cannot be established, the bytes are replaced rather than reused or expanded.
+Project-owned synthetic fixtures are generated through Rust/Cargo-native tooling without external base-model weights, tokenizer assets, network access, or training data. They remain beside their integration owner and governed generator until multiple real consumers plus a clearer shared ownership boundary justify relocation. The E0 integration test remains the Candle fixture's primary owner; `application-runtime` tests already load the files for E1 coverage, and the current `runtime-benchmarks` observer is an additional consumer. Both additional consumers reference the bytes in place without copying them, so relocation would not remove duplication. The benchmark recomputes the exact hashes before setup and uses the fixture only for synthetic integration and lifecycle measurements, not product performance. If provenance or redistribution permission cannot be established, the bytes are replaced rather than reused or expanded.
 
-Real-model measurements name an external identifier and immutable revision, use an opt-in local cache or explicit artifact path, perform no ordinary-CI download, and do not redistribute model/tokenizer files through the repository. Download availability alone is not redistribution permission. See [ADR-0018](../agent/decisions/0018-benchmark-and-model-fixture-policy.md).
+Real-model measurements name an external identifier and immutable revision, use an opt-in local cache or explicit artifact path, perform no ordinary-CI download, and do not redistribute model/tokenizer files through the repository. The current `runtime-benchmarks` real-product mode fixes `neubla/tiny-random-LlamaForCausalLM` at immutable revision `1c81a3fba044af78df253edc66bdbab183184932`. Because the public E1 resolver always performs immutable Hub metadata resolution, the mode requires explicit `--allow-network` and rejects `HF_HUB_OFFLINE=1`. It also requires an existing `--cache-dir` whose canonical location is under shared root `target/` or outside the repository; source-tree cache paths are rejected. Download availability alone is not redistribution permission. See [ADR-0018](../agent/decisions/0018-benchmark-and-model-fixture-policy.md).
 
 ## Supply-chain policy
 

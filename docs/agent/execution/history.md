@@ -490,3 +490,68 @@ The execution began from clean `main` after fetching `origin/main`; local and re
 Focused E0, E1, replacement-fixture, and `xtask` policy suites passed during implementation. The generator was run twice and produced identical hashes. The final canonical, Clippy, architecture, hygiene, dependency, link, whitespace, status, and root-target checks are execution-report evidence for the resulting diff; this history entry does not predict the commit/tree that will contain itself.
 
 The external Hub smoke and manual graphical desktop session were not run because this closure changed no external-model or presentation behavior. No statistical benchmark was run and no Phase 10 performance result was recorded.
+
+## Phase 10 implementation — controlled sampling and runtime measurement
+
+- **Prepared:** 2026-08-01
+- **Clean input checkpoint:** `HEAD` `f61a0fadd2311a53e1bce55094f886e3465b0c95`, tree `1bee6fa25f8b4819ac68d02cc10324f0f1848e9e`
+- **Start state:** source/index clean; only root `./target/` present; baseline `cargo xtask verify` passed before edits
+- **Scope:** implement work packages 10.1–10.6 without changing production behavior or optimizing from assumptions
+- **Recorded outcome:** Phase 10 repository acceptance complete with focused and canonical validation plus controlled synthetic/component evidence; external product evidence outstanding
+
+The starting canonical pass belongs to the clean input checkpoint and is not evidence for the Phase 10 diff. This entry records the implemented measurement surfaces and evidence available at the documentation point; it does not promote synthetic fixture measurements into a product baseline.
+
+### Closure matrix
+
+| Work package | Recorded implementation |
+|---|---|
+| 10.1 — Sampling | Expanded the existing crate-local production-sampler target into an explicit `sample_only`/`restore_and_sample` matrix over greedy, default top-k/top-p, min-p, varied repetition histories, and 8,192/32,768/131,072 vocabularies. Added separately named public stop-matching token-hit, last-pattern-hit, and miss cases. Measured regions and excluded setup are explicit. |
+| 10.2 — System package/harness separation | Added the sole `benchmarks/runtime` package, named `runtime-benchmarks`, as a non-production outer consumer with root workspace/lock/target ownership, `publish = false`, no build script, exact reviewed dependencies, and no incoming production edge. External normal dependencies are `serde`, `serde_json`, and `sha2` 0.11. Its normal `baseline` binary is separate from its Criterion hosted-E0 prefill/decode target; real-product execution requires `--allow-network`, rejects `HF_HUB_OFFLINE=1`, and permits an existing cache only under shared root `target/` or outside the repository. |
+| 10.3 — Memory/lifecycle | Added bounded download-free synthetic E0 start/load/prefill/first-token/proxy/backpressure/cancellation/unload/shutdown cycles with public accounting and sampled RSS, plus matching fresh E1 start/shutdown cycles. Added a separately pinned opt-in E1 real-product mode. |
+| 10.4 — Conditional candidates | Reviewed tokenizer encode/streaming-decode, context-planner, output-accumulator, and isolated Candle microbenchmarks and deferred them because no candidate established both a named unresolved question and system-harness insufficiency. No placeholder target or copied production logic was added. |
+| 10.5 — Metadata/output | Added a versioned stable serde JSON report, compact stderr progress/summary, Git/toolchain/target/host/fixture/workload metadata, typed lifecycle/accounting/RSS records, exact pre-setup fixture SHA-256 verification, and safe CLI/cache/fixture/metadata/CPU-topology/`/proc` tests. Generated outputs remain under root `target` or outside the repository. |
+| 10.6 — No speculative optimization | Changed no production public API or production implementation and added no optimization, unsafe code, GPU, GGUF/quantized path, second engine, hosted-provider/peer/browser path, multi-model variant, timing threshold, custom allocator, SIMD, lock-free structure, or collection/data-layout rewrite. |
+
+### Focused validation evidence
+
+The following focused evidence passed after implementation:
+
+- `cargo metadata --locked --format-version 1 --no-deps`;
+- the required package-level `cargo check`, `cargo test`, and strict `cargo clippy` commands for `sampling`;
+- the required package-level `cargo check`, `cargo test`, and strict `cargo clippy` commands for `runtime-benchmarks`, with 15 tests passing;
+- `cargo test --locked -p xtask`, with 32 total tests passing: 14 unit and 18 integration tests; doc tests contained no cases.
+
+The normal runner was then executed in release synthetic mode with one warmup and three recorded samples:
+
+```text
+cargo run --release --locked -p runtime-benchmarks --bin baseline -- \
+  --mode synthetic --warmup 1 --cycles 3
+```
+
+The final corrected run succeeded. All nine generation operations across the three recorded cycles observed matching `Terminal` and `Released` states with no pending or exhausted cleanup; every cancellation emitted two tokens. After every release accounting returned to model-only state, model unload ended with exact zero model/request/workspace/cleanup/maintenance accounting, shutdown/join was clean, and the paired download-free E1 start/shutdown cycles completed cleanly.
+
+Selected Criterion estimate intervals were:
+
+| Target | Selected interval |
+|---|---:|
+| `e0_hosted_checked_prefill/4_tokens` | `[5.0955, 5.1104] ms` |
+| `e0_hosted_incremental_decode/1_token_after_2_token_prefill` | `[5.0474, 5.0890] ms` |
+| `sample_only/default_top_k_top_p/32768` | `[77.211, 77.228] µs` |
+| `restore_and_sample/default_top_k_top_p/32768` | `[78.288, 78.302] µs` |
+
+Exactly these four Criterion targets were statistically executed; every other sampling-matrix and stop-matching target is compile-only evidence. These are deterministic synthetic fixture/component results. They do not establish product-model latency, model quality, broad compatibility, representative production steady-state throughput, allocation freedom, native-resource attribution, or a shared-CI performance threshold.
+
+### Final acceptance and external evidence
+
+The pinned E1 real-product mode compiled but was not executed. The public E1 resolver requires Hub metadata resolution, so a future authorized run must pass `--allow-network`, reject `HF_HUB_OFFLINE=1`, and use an existing cache under shared root `target/` or outside the repository. No product output or measurement is inferred or fabricated; current-tree external product evidence remains outstanding.
+
+Final repository evidence passed:
+
+- `cargo bench --workspace --no-run --locked`;
+- `cargo xtask verify` after one initial strict-Clippy finding in an oversized `xtask` benchmark-policy test helper was fixed by splitting the helper without relaxing policy;
+- `cargo deny --workspace --locked check advisories bans licenses sources`, with configured duplicate-version warnings and all checks successful;
+- `lychee --config lychee.toml --offline '**/*.md'` with zero errors;
+- `git diff --check`;
+- root-target and generated-artifact hygiene, with only `./target` present.
+
+Portability commands were not rerun because no portable production library source or dependency changed; the `sampling` changes are benchmark/documentation/readme-metadata only. Phase 10 repository acceptance is complete. Product-performance evidence remains partial until an authorized pinned E1 run is recorded, and Phase 11 is not activated by this result.

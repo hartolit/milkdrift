@@ -1,0 +1,28 @@
+[package]
+name = "runtime-benchmarks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Controlled E0 and E1 runtime baseline and component benchmarks"
+publish = false
+
+[dependencies]
+application-runtime.workspace = true
+candle-backend.workspace = true
+domain-contracts.workspace = true
+host-runtime.workspace = true
+inference-runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "runtime"
+harness = false
+
+[lints]
+workspace = true

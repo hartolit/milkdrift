@@ -5472,6 +5472,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "runtime-benchmarks"
+version = "0.1.0"
+dependencies = [
+ "application-runtime",
+ "candle-backend",
+ "criterion",
+ "domain-contracts",
+ "host-runtime",
+ "inference-runtime",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -4,12 +4,12 @@ This project selects **[Model B: Layered Workspace](../architecture.md#model-b-l
 
 ## Physical layout and logical roles
 
-The root `Cargo.toml` is a virtual workspace manifest, not a package. `.cargo/config.toml` provides the workspace-local `cargo xtask` alias, and `tools/xtask` is the sole registered custom tooling member. Product code remains in five responsibility-based categories. The future `benchmarks/runtime` package is a separately classified non-production observer and is not present before Phase 10:
+The root `Cargo.toml` is a virtual workspace manifest, not a package. `.cargo/config.toml` provides the workspace-local `cargo xtask` alias, and `tools/xtask` is the sole registered custom tooling member. Product code remains in five responsibility-based categories. The root-workspace member `benchmarks/runtime`, whose package name is `runtime-benchmarks`, is separately classified as a non-production measurement observer:
 
 ```text
 .cargo/             workspace-local Cargo configuration
 tools/xtask/        architecture, hygiene, and composite verification tooling
-benchmarks/runtime/ future cross-crate measurement package; not yet created
+benchmarks/runtime/ cross-crate E0/E1 baseline and component measurement observer
 crates/domain/      portable contracts and algorithms
 crates/platform/    process-host execution primitives
 crates/adapters/    external, vendor, model, and persistence integrations
@@ -35,7 +35,9 @@ capability engines     inference-runtime (E0 local inference)
 
 E1 may coordinate capability engines and E0. Its current private local composition owns one monomorphized Candle E0 worker/thread, one bounded Hub resolver worker, one concrete Hugging Face tokenizer path, and request-local Hugging Face streaming decoders. A capability engine may use E0, platform services, adapters, and domain code when its own lifecycle requires them. Neither capability engines nor E0 depend on E1. Applications depend on E1 rather than reconstructing application state machines.
 
-The future `runtime-benchmarks` package sits outside the product graph and depends inward on exact reviewed public production APIs. No production, tooling, test, or application package may depend on it. Directory placement alone does not authorize another benchmark package, and benchmark helpers do not become public product APIs merely to ease measurement.
+`runtime-benchmarks` sits outside the product graph and depends inward on exact reviewed public production APIs. Its workspace-local normal edges are exactly `application-runtime`, `candle-backend`, `domain-contracts`, `host-runtime`, and `inference-runtime`; its external normal edges are exactly `serde`, `serde_json`, and `sha2` 0.11; and its sole development edge is external `criterion`. These remain observer edges rather than production-composition edges despite Cargo's `normal` classification. No production, tooling, test, or application package may depend on `runtime-benchmarks` through any dependency kind.
+
+The package is an exact root member, uses the committed root `Cargo.lock` and shared root `target`, declares `publish = false`, and has no build script, Cargo custom-build target, or build dependencies. Directory placement alone does not authorize another benchmark package, and benchmark helpers do not become public product APIs merely to ease measurement.
 
 ## Domain tiers
 
@@ -135,7 +137,7 @@ The authoritative integration and validation matrix is in [implementation status
 
 ## Enforcement
 
-`cargo xtask architecture` loads typed locked Cargo metadata, fails closed on unknown workspace locations and unresolved local path targets, distinguishes dependency kinds, and enforces the logical direction F0/F1 → platform/adapters → E0/capabilities → E1 → applications. `tools/xtask` is the sole tooling package, and `benchmarks/runtime` is the sole recognized future benchmark role outside those product layers.
+`cargo xtask architecture` loads typed locked Cargo metadata, fails closed on unknown workspace locations and unresolved local path targets, distinguishes dependency kinds, and enforces the logical direction F0/F1 → platform/adapters → E0/capabilities → E1 → applications. `tools/xtask` is the sole tooling package, and `benchmarks/runtime` is the sole recognized benchmark role outside those product layers.
 
 `inference-runtime`, `corrective-workflow`, and `application-runtime` are the recognized E0, capability, and E1 packages; `host-runtime` is the only recognized platform package. Domain production dependencies are exact entries in the reviewed acyclic domain graph. Runtime production dependencies on adapters/platform or other runtimes likewise require exact reviewed source/target/kind entries. `cargo xtask hygiene` is the independent repository-hygiene check; `cargo xtask verify` runs both policies before the ordinary Cargo gates. [Dependency policy](dependency-policy.md) owns the review rules and hygiene boundary.
 

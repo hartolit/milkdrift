@@ -1,28 +1,28 @@
 # Current execution context
 
-**Status date:** 2026-08-01
-**Prior committed checkpoint:** `3942a19b97d347fd238c451d2b0a2fcbea287873` (tree `be069879fea9531799038c5189c9edb3007ebf72`)
-**Current target:** Phase 10 implementation is next; the pre-Phase 10 closure is complete
-**Phase 9 state:** complete and preserved as history
-**Pre-Phase 10 state:** terminal shutdown semantics, benchmark architecture/hygiene, and fixture provenance policy are implemented; no Phase 10 benchmark suite or result exists
-**Decision state:** amended [ADR-0006](../decisions/0006-explicit-bounded-shutdown.md) defines retryable versus terminal shutdown; [ADR-0018](../decisions/0018-benchmark-and-model-fixture-policy.md) defines benchmark and fixture policy
-**Validation state:** the clean starting tree passed the canonical gate; focused E0/E1 lifecycle and `xtask` policy suites pass on this closure working tree; final exact-tree evidence belongs in the execution report or CI log
+**Status date:** 2026-08-02
+**Clean implementation start:** `HEAD` `f61a0fadd2311a53e1bce55094f886e3465b0c95`, tree `1bee6fa25f8b4819ac68d02cc10324f0f1848e9e`
+**Start-state evidence:** source/index clean; only root `./target/` present; `cargo xtask verify` passed before edits
+**Current target:** Phase 10 repository acceptance is complete; Phase 11 is not active
+**Implementation state:** Phase 10 work packages 10.1–10.6 are implemented and accepted
+**Evidence state:** focused checks, selected measurements, full benchmark compilation, canonical verification, dependency policy, offline links, whitespace, and target hygiene passed
+**External-product state:** pinned opt-in E1 real-product mode compiled but was not executed; no external product baseline is claimed
 **Canonical plan:** [execution-plan.md](execution-plan.md)
 **Current product truth:** [project implementation status](../../project/implementation-status.md)
 **Historical evidence:** [execution history](history.md)
 
-This file is the dense handoff after the pre-Phase 10 closure. Implementation status owns current support and validation summaries, accepted ADRs own decisions, the validation guide owns repeatable commands, and history owns baseline-specific evidence. CI records the tested commit and Git tree in its runtime log; a tracked document does not attempt to contain its own resulting commit SHA or tree hash.
+This is the dense handoff for the accepted Phase 10 benchmark program. It distinguishes the clean starting-tree gate, final validation on the implementation diff, controlled synthetic/component evidence, and still-outstanding external product evidence. The pre-edit canonical pass is not reused as proof for the Phase 10 diff.
 
-## Current architecture
+## Product boundary remains unchanged
 
-The supported local composition is exactly:
+The supported product is still one CPU-only local composition:
 
 ```text
 Slint or another native frontend
         ↓
 application-runtime (E1)
         ├── one bounded Hugging Face Hub worker
-        ├── one concrete Hugging Face tokenizer/decoder path
+        ├── one Hugging Face tokenizer/decoder path
         ├── redb application persistence
         └── one Candle E0 worker/thread
                     ↓
@@ -31,84 +31,88 @@ application-runtime (E1)
      Candle + Safetensors + CPU
 ```
 
-`ModelSelection` is a normalized Hugging Face repository plus revision. Resolution pins it to an immutable Hub commit. Resolved/loaded state derives engine, source, device, format, scalar, tokenizer vocabulary, and immutable identity from the supported artifacts; unsupported cross-products are not public selection options.
+`ModelSelection` remains a normalized Hugging Face repository/revision pinned to an immutable Hub commit. Direct completion remains available to loaded models; built-in chat remains limited to `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at commit `fe8a4ea1ffedaf415f4da2f062534de366a451e6` with `</s>` token ID 2.
 
-Direct completion remains available for every loaded model. Chat remains limited to `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at commit `fe8a4ea1ffedaf415f4da2f062534de366a451e6` with `</s>` mapped to token ID 2. GGUF, GPU execution, hosted/peer execution, browser transport, and multiple application-resident models remain deferred.
+Phase 10 changed no production public API or production implementation. It added no optimization, unsafe code, GPU, GGUF/quantized path, second engine, hosted-provider/peer/browser path, multi-model residency, or other product axis.
 
-## Phase 9 closure
+## Implemented Phase 10 surfaces
 
-### 9.1 — Source, graph, and policy cleanup complete
+### 10.1 — Sampling component benchmark
 
-- Candle is the sole local engine; removed llama.cpp/GGUF production and tooling paths remain absent.
-- Engine, artifact source, format, scalar, and device remain separate concepts.
-- Project-owned operational tooling is Rust/Cargo-native and the selected graph remains fail-closed.
+`crates/domain/sampling/benches/sampling_pipeline.rs` now runs the public sampler over an explicit matrix:
 
-### 9.2 — Narrow E1 composition complete
+- boundaries: `sample_only` and `restore_and_sample`;
+- cases: greedy, default top-k/top-p, min-p, and varied repetition histories;
+- vocabulary sizes: 8,192, 32,768, and 131,072;
+- stop matching: token hit, last-pattern hit, and miss.
 
-- `application-runtime` remains one public frontend-neutral, non-generic façade.
-- Private composition owns one `HostedRuntime<CandleLlamaSource>`, one inference thread, one Hub worker, one resolved tokenizer, request-local streaming decoders, and one resident-model lifecycle.
-- `corrective-workflow` remains an independent capability engine.
+`sample_only` restores mutable logits before timing. `restore_and_sample` includes restoration. Target documentation states the question, included/excluded work, and evidence limits; setup and capacity allocation stay outside the measured loop.
 
-### 9.3 — Behavior and test preservation complete
+### 10.2–10.5 — Sole system package and separated harness roles
 
-- E0 retains exclusive resource, sequence, scheduling, cancellation, cleanup, accounting, unload, and shutdown ownership.
-- Download-free deterministic loaders and the newly generated synthetic Candle fixture preserve lifecycle and generation coverage.
-- E1 and Slint preserve resolution, completion, exact chat, context, cancellation, backpressure, unload, persistence, and presentation behavior.
+The only root benchmark package is `benchmarks/runtime` (`runtime-benchmarks`). It is an outer non-production consumer, uses the root workspace/lock/target, is non-publishable, has no build script, and has no incoming production dependency. Its external normal dependencies are exactly `serde`, `serde_json`, and `sha2` 0.11; `sha2` recomputes the committed fixture hashes before normal-runner or Criterion setup.
 
-### 9.4 — Documentation and validation reconciliation complete
+| Surface | Role and current evidence | Explicit limitation |
+|---|---|---|
+| Normal `baseline` binary, synthetic mode | Bounded download-free public-E0 start/load/prefill/generation/backpressure/cancellation/unload/shutdown cycles, runtime/model accounting, process RSS, and matching fresh E1 start/shutdown cycles | Synthetic integration/lifecycle evidence, not product-model performance or quality |
+| Normal `baseline` binary, real-product mode | Pinned public-E1 path for `neubla/tiny-random-LlamaForCausalLM` commit `1c81a3fba044af78df253edc66bdbab183184932`; requires `--allow-network` plus an existing cache under shared root `target/` or outside the repository and rejects `HF_HUB_OFFLINE=1` | Compiled only; not executed; no current product baseline |
+| Criterion `runtime` target | Hosted public-E0 checked-prefill and incremental-decode command/event boundaries against the deterministic fixture | Component-regression evidence, not E1 latency, full generation throughput, RSS, or an allocation count |
+| Stable report/metadata/RSS code | Versioned serde JSON to stdout, progress/summary to stderr, typed lifecycle/accounting records, Git/toolchain/target/host/workload identity, exact SHA-256 fixture verification, and tested CLI/cache/fixture/toolchain/CPU/`/proc` paths | No environment-wide dump, token IDs/text, secret capture, native-resource attribution, or result-file writer |
 
-- Current architecture, status, workspace, component, validation, execution, and frontend guidance describe the same Candle/Hub/Safetensors/CPU product.
-- Phase 8 remains factual history rather than current support.
-- Provenance no longer requires a commit to contain its own final SHA.
+Tokenizer encode/streaming-decode, context-planner, output-accumulator, and isolated Candle microbenchmarks were reviewed and deferred. None had both a named unresolved question and evidence that the implemented public E0/system surfaces were insufficient. No placeholder benchmark directory or copied production logic was added.
 
-### 9.5 — Structural reconciliation complete
+### 10.3 — Controlled lifecycle and memory evidence
 
-- The root manifest is a virtual workspace. Custom policy and composite verification live in `tools/xtask`; ordinary Cargo operations have no forwarding subcommands.
-- The exact reviewed acyclic domain DAG contains the four current F1 → F0 edges. The coarse policy can represent a justified F1 peer, but every domain edge must be explicitly registered with a rationale and the complete graph must remain acyclic.
-- `TaskId` is owned by `task-graph`; `domain-contracts` is reserved for backend/runtime crossings or stable vocabulary shared by at least two distinct domains.
-- Oversized production internals were split by responsibility: E0 runtime operations, E1 generation, task graph/artifact/state/error logic, desktop presentation, and repository tooling.
-- Stable selected Clippy lints remain mandatory under `-D warnings`; the nursery group is a separate scheduled, non-blocking exploratory report.
-
-### Lifecycle hardening completed before closure
-
-- The superseded Phase 9 implementation tracked a combined failed/retryable state; the pre-Phase 10 correction below separates retryable joins from terminal E0 cleanup failure.
-- Incompatible loaded models remain in private cleanup accounting through unload-submission retry, runtime disconnection, successful unload, or observable retry exhaustion.
-- Startup uses an owning rollback guard. If Hub construction/spawn fails after inference starts, E1 attempts bounded inference shutdown/join before returning the primary Hub error; a rollback timeout moves the complete owner into a private quarantine that a later startup retries.
-
-### External-tooling cleanup completed
-
-- Ubuntu CI retains `build-essential` and Slint development packages but no longer installs system CMake.
-- The selected non-FIPS AWS-LC path is forced through its CC builder.
-- Required CI runs the canonical gate from a fresh target with failing shims for CMake, Clang, Python/package-manager, and Python-distributed Hugging Face commands.
-- The temporary Candle cleanup agent brief was removed; hygiene applies no filename-, directory-, history-, or ADR-status whole-file bypass.
-
-## Current invariants
-
-1. Candle is the sole local execution engine; Safetensors, Hugging Face Hub, and CPU are current format/source/device facts rather than engine aliases.
-2. E1 owns exactly one Candle inference worker/thread plus one Hub worker and permits one resident model.
-3. Frontends construct only application-owned selections and never construct Candle sources, Hub clients, tokenizers, devices, or E0 commands.
-4. Direct completion is general to loaded models; chat is tied to the exact verified TinyLlama profile.
-5. E0 owns local resources, scheduling, sampling, cancellation boundaries, backpressure, cleanup quarantine, accounting, unload, and terminal shutdown.
-6. Terminal generation and resource release remain distinct; pending/exhausted cleanup stays observable and accounted.
-7. Explicit shutdown success requires observed clean E0 completion and confirmed worker joins; terminal cleanup failure remains sticky after worker exit, while a join timeout remains retryable.
-8. Ordinary tests remain download-free, and maintained operational tooling remains Rust/Cargo-native.
-9. The domain dependency registry is exact, justified, and acyclic; layer membership alone does not authorize a domain edge.
-10. The mandatory lint gate excludes the blanket nursery group; exploratory findings do not silently become merge blockers.
-11. Component benchmarks are real crate-local targets; future cross-crate/system measurement belongs only in `benchmarks/runtime` as an outer non-production consumer.
-12. Committed model fixtures require explicit provenance; real-model measurements are opt-in, immutable-revision, cache/local-path based, and never ordinary-CI downloads or repository redistribution.
-
-## Phase 10 entry
-
-The pre-Phase 10 lifecycle correction is complete, benchmark layout and fixture policies are established, and Phase 10 implementation is the next operation. No Phase 10 performance result has been recorded.
-
-Phase 10 must expand the existing sampling benchmark, add one `benchmarks/runtime` system harness, record reproducible environment metadata, and measure controlled lifecycle/memory behavior. Tokenizer, context-planner, output-accumulator, and isolated Candle microbenchmarks remain conditional on a named question and an explanation of why the system harness is insufficient. Do not optimize from unmeasured assumptions, add hard wall-clock thresholds to shared CI, or treat the correctness-oriented external Hub smoke as a benchmark.
-
-## Validation and recording rule
-
-Follow [project validation](../../project/validation.md). The canonical command is:
+The release synthetic run used one warmup and three recorded samples:
 
 ```text
-cargo xtask verify
+cargo run --release --locked -p runtime-benchmarks --bin baseline -- \
+  --mode synthetic --warmup 1 --cycles 3
 ```
 
-CI prints `HEAD` and `HEAD^{tree}` immediately before that command. Local working-tree evidence records the prior committed checkpoint plus dirty-state context; CI-attached commit and run metadata are the authoritative identity for a committed result. Historical evidence from `3942a19…` or an earlier tree must not be reused as proof after source changes.
+The final corrected run completed successfully. All nine generation operations across the three recorded cycles reached matching `Terminal` and `Released` states with no pending or exhausted cleanup; every cancellation emitted two tokens. Every release returned accounting to model-only state, model unload ended with exact zero model/request/workspace/cleanup/maintenance accounting, E0 shutdown/join was clean, and the paired download-free E1 start/shutdown cycles were clean.
+
+RSS is a sampled process-wide Linux `/proc` observation when available. It includes the executable, workers, mappings, allocator caches, and unrelated process-resident state; it can miss transient peaks and cannot attribute Candle/native/device allocations. Public E0 accounting is deterministic ownership/admission evidence and is intentionally reported separately from RSS.
+
+### 10.6 — No speculative optimization
+
+No measured result was used to justify a production change. There is no new inline mandate, custom allocator, SIMD, unsafe block, lock-free structure, collection/data-layout rewrite, or timing threshold. Shared CI is intended to compile the targets and catch API drift, not enforce wall-clock performance.
+
+## Focused validation already recorded
+
+The following evidence passed after implementation:
+
+- `cargo metadata --locked --format-version 1 --no-deps`;
+- the required package-level `cargo check`, `cargo test`, and strict `cargo clippy` command set for `sampling`;
+- the required package-level `cargo check`, `cargo test`, and strict `cargo clippy` command set for `runtime-benchmarks`—15 tests passed;
+- `cargo test --locked -p xtask`—32 total tests passed (14 unit and 18 integration tests; doc tests contained no cases).
+
+Selected Criterion estimate intervals were:
+
+| Target | Selected interval |
+|---|---:|
+| `e0_hosted_checked_prefill/4_tokens` | `[5.0955, 5.1104] ms` |
+| `e0_hosted_incremental_decode/1_token_after_2_token_prefill` | `[5.0474, 5.0890] ms` |
+| `sample_only/default_top_k_top_p/32768` | `[77.211, 77.228] µs` |
+| `restore_and_sample/default_top_k_top_p/32768` | `[78.288, 78.302] µs` |
+
+Exactly these four Criterion targets were statistically executed; every other sampling matrix target and all stop-matching targets are compile-only evidence. The intervals are controlled synthetic/component evidence only. They are not a production model baseline, language-quality result, broad compatibility claim, representative steady-state serving result, or shared-CI threshold.
+
+## External evidence not taken
+
+The immutable real-product mode was compiled but not run. The current public E1 resolver requires Hub metadata resolution, so any future run must use `--allow-network`, reject `HF_HUB_OFFLINE=1`, and supply an existing cache whose canonical path is under shared root `target/` or outside the repository. No output, latency, throughput, lifecycle result, or product comparison has been inferred; no current product baseline exists.
+
+## Final acceptance evidence
+
+The exact Phase 10 diff passed:
+
+- `cargo bench --workspace --no-run --locked`;
+- `cargo xtask verify`, including architecture, hygiene, workspace tests, strict Clippy, documentation, and benchmark compilation;
+- `cargo deny --workspace --locked check advisories bans licenses sources` (configured duplicate-version warnings only; all four checks passed);
+- `lychee --config lychee.toml --offline '**/*.md'` with zero errors;
+- `git diff --check`;
+- repeated target-directory checks showing only root `./target`.
+
+The first final canonical attempt exposed an oversized `xtask` benchmark-policy test helper. The helper was split by responsibility without weakening policy; focused strict `xtask` Clippy and the complete canonical rerun then passed.
+
+No portability command was required because no portable production library source or dependency changed: `sampling` changes are its benchmark, component guide, and package readme metadata only. Phase 10 repository acceptance is **complete**. The external real-product measurement remains an explicit evidence gap rather than a hidden acceptance claim; Phase 11 is not activated by this closure.

@@ -1,0 +1,177 @@
+//! Download-free `ApplicationRuntime` start and clean shutdown cycles.
+
+use std::path::Path;
+use std::time::{Duration, Instant};
+
+use application_runtime::{
+    ApplicationActivity, ApplicationRuntime, ApplicationRuntimeConfiguration,
+};
+
+use crate::error::{BenchmarkError, BenchmarkResult};
+use crate::memory::process_memory;
+use crate::report::{ApplicationStartupCycle, LifecycleCycleSet, duration_ns};
+use crate::workspace::OutputWorkspace;
+
+use super::shutdown_for_cleanup;
+
+const POLL_INTERVAL: Duration = Duration::from_millis(1);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+
+pub(crate) fn run_startup_cycles(
+    warmup_cycles: u32,
+    sample_cycles: u32,
+) -> BenchmarkResult<LifecycleCycleSet> {
+    let mut workspace = OutputWorkspace::create("application-startup")?;
+    let result = run_in_workspace(&workspace, warmup_cycles, sample_cycles);
+    let cleanup = workspace.cleanup();
+    match result {
+        Ok(cycles) => {
+            cleanup?;
+            Ok(cycles)
+        }
+        Err(error) => Err(error.with_cleanup(cleanup)),
+    }
+}
+
+fn run_in_workspace(
+    workspace: &OutputWorkspace,
+    warmup_cycles: u32,
+    sample_cycles: u32,
+) -> BenchmarkResult<LifecycleCycleSet> {
+    let cache = workspace.internal_cache_directory()?;
+    let mut warmups = Vec::new();
+    let mut samples = Vec::new();
+    warmups
+        .try_reserve_exact(usize_from_u32(warmup_cycles)?)
+        .map_err(|error| {
+            BenchmarkError::new(format!("startup warmup allocation failed: {error}"))
+        })?;
+    samples
+        .try_reserve_exact(usize_from_u32(sample_cycles)?)
+        .map_err(|error| {
+            BenchmarkError::new(format!("startup sample allocation failed: {error}"))
+        })?;
+    for ordinal in 1..=warmup_cycles {
+        warmups.push(run_cycle(
+            workspace.database_path("warmup", ordinal),
+            &cache,
+            ordinal,
+        )?);
+    }
+    for ordinal in 1..=sample_cycles {
+        samples.push(run_cycle(
+            workspace.database_path("sample", ordinal),
+            &cache,
+            ordinal,
+        )?);
+    }
+    Ok(LifecycleCycleSet { warmups, samples })
+}
+
+fn run_cycle(
+    database_path: std::path::PathBuf,
+    cache_directory: &Path,
+    ordinal: u32,
+) -> BenchmarkResult<ApplicationStartupCycle> {
+    let rss_before_start = process_memory()?;
+    let configuration = application_configuration(database_path, cache_directory);
+    let started = Instant::now();
+    let mut runtime = ApplicationRuntime::start(configuration).map_err(|error| {
+        BenchmarkError::new(format!(
+            "download-free ApplicationRuntime start failed: {error}"
+        ))
+    })?;
+    let start_elapsed = started.elapsed();
+    let result = finish_cycle(&mut runtime, ordinal, start_elapsed, rss_before_start);
+    match result {
+        Ok(cycle) => {
+            drop(runtime);
+            Ok(cycle)
+        }
+        Err(error) => Err(error.with_cleanup(shutdown_for_cleanup(&mut runtime))),
+    }
+}
+
+fn finish_cycle(
+    runtime: &mut ApplicationRuntime,
+    ordinal: u32,
+    start_elapsed: Duration,
+    rss_before_start: crate::memory::ProcessMemory,
+) -> BenchmarkResult<ApplicationStartupCycle> {
+    validate_started(runtime)?;
+    let rss_after_start = process_memory()?;
+    let shutdown_started = Instant::now();
+    runtime.shutdown().map_err(|error| {
+        BenchmarkError::new(format!(
+            "download-free ApplicationRuntime shutdown failed: {error}"
+        ))
+    })?;
+    let shutdown_elapsed = shutdown_started.elapsed();
+    validate_stopped(runtime)?;
+    let rss_after_shutdown = process_memory()?;
+    Ok(ApplicationStartupCycle {
+        ordinal,
+        start_ns: duration_ns(start_elapsed),
+        shutdown_ns: duration_ns(shutdown_elapsed),
+        rss_before_start,
+        rss_after_start,
+        rss_after_shutdown,
+    })
+}
+
+fn application_configuration(
+    database_path: std::path::PathBuf,
+    cache_directory: &Path,
+) -> ApplicationRuntimeConfiguration {
+    let mut configuration = ApplicationRuntimeConfiguration::desktop(database_path);
+    configuration.hub.cache_directory = Some(cache_directory.to_path_buf());
+    configuration.hub.maximum_retries = 0;
+    configuration.timing.runtime_poll = POLL_INTERVAL;
+    configuration.timing.hub_worker_poll = POLL_INTERVAL;
+    configuration.timing.hub_event_send_timeout = Duration::from_secs(1);
+    configuration.timing.hub_command_shutdown_timeout = SHUTDOWN_TIMEOUT;
+    configuration.timing.runtime_shutdown_timeout = SHUTDOWN_TIMEOUT;
+    configuration.timing.runtime_shutdown_event_poll = POLL_INTERVAL;
+    configuration.timing.runtime_join_timeout = SHUTDOWN_TIMEOUT;
+    configuration.timing.runtime_join_poll = POLL_INTERVAL;
+    configuration.timing.hub_shutdown_timeout = SHUTDOWN_TIMEOUT;
+    configuration.timing.hub_shutdown_poll = POLL_INTERVAL;
+    configuration
+}
+
+fn validate_started(runtime: &ApplicationRuntime) -> BenchmarkResult {
+    let state = runtime.state();
+    if state.activity() != ApplicationActivity::Idle
+        || !state.hub_available()
+        || !state.inference_available()
+        || state.resolved().is_some()
+        || state.loaded().is_some()
+        || state.active_generation().is_some()
+        || state.last_generation().is_some()
+    {
+        return Err(BenchmarkError::new(
+            "download-free ApplicationRuntime start returned non-clean initial state",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_stopped(runtime: &ApplicationRuntime) -> BenchmarkResult {
+    let state = runtime.state();
+    if state.activity() != ApplicationActivity::ShuttingDown
+        || state.hub_available()
+        || state.inference_available()
+        || state.loaded().is_some()
+        || state.active_generation().is_some()
+    {
+        return Err(BenchmarkError::new(
+            "ApplicationRuntime shutdown returned without terminal worker state",
+        ));
+    }
+    Ok(())
+}
+
+fn usize_from_u32(value: u32) -> BenchmarkResult<usize> {
+    usize::try_from(value)
+        .map_err(|_| BenchmarkError::new("cycle count conversion to usize failed"))
+}

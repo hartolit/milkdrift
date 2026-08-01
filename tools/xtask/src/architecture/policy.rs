@@ -185,11 +185,66 @@ const REVIEWED_EXTERNAL_DEPENDENCIES: &[ReviewedDependency] = &[
         kind: DependencyKind::Development,
         rationale: "Criterion compiles and runs the reviewed sampling benchmark",
     },
+    ReviewedDependency {
+        source: "runtime-benchmarks",
+        target: "serde",
+        kind: DependencyKind::Normal,
+        rationale: "the controlled baseline runner serializes a stable typed measurement record",
+    },
+    ReviewedDependency {
+        source: "runtime-benchmarks",
+        target: "serde_json",
+        kind: DependencyKind::Normal,
+        rationale: "the controlled baseline runner emits its stable measurement record as JSON",
+    },
+    ReviewedDependency {
+        source: "runtime-benchmarks",
+        target: "sha2",
+        kind: DependencyKind::Normal,
+        rationale: "the benchmark harness verifies the exact reviewed synthetic fixture identity before timing",
+    },
+    ReviewedDependency {
+        source: "runtime-benchmarks",
+        target: "criterion",
+        kind: DependencyKind::Development,
+        rationale: "Criterion runs repeatable hosted E0 prefill and incremental-decode measurements",
+    },
 ];
 
-// Benchmark edges are added only with a real measurement and an exact rationale. The empty
-// pre-Phase 10 registry intentionally authorizes no speculative dependency.
-const REVIEWED_BENCHMARK_DEPENDENCIES: &[ReviewedDependency] = &[];
+// The benchmark observer consumes only the public boundaries exercised by implemented system and
+// component-like measurements. No product or tooling package may depend back on this package.
+const REVIEWED_BENCHMARK_DEPENDENCIES: &[ReviewedDependency] = &[
+    ReviewedDependency {
+        source: "runtime-benchmarks",
+        target: "application-runtime",
+        kind: DependencyKind::Normal,
+        rationale: "the baseline runner measures opt-in E1 product lifecycle and download-free application startup and shutdown through the public facade",
+    },
+    ReviewedDependency {
+        source: "runtime-benchmarks",
+        target: "candle-backend",
+        kind: DependencyKind::Normal,
+        rationale: "the synthetic harness constructs the reviewed Candle Llama source and loader for the committed fixture",
+    },
+    ReviewedDependency {
+        source: "runtime-benchmarks",
+        target: "domain-contracts",
+        kind: DependencyKind::Normal,
+        rationale: "the synthetic harness supplies public model, request, sequence, device, cancellation, and accounting vocabulary to E0",
+    },
+    ReviewedDependency {
+        source: "runtime-benchmarks",
+        target: "host-runtime",
+        kind: DependencyKind::Normal,
+        rationale: "the synthetic harness interprets public pull-boundary token ranges and state records",
+    },
+    ReviewedDependency {
+        source: "runtime-benchmarks",
+        target: "inference-runtime",
+        kind: DependencyKind::Normal,
+        rationale: "the synthetic and Criterion harnesses measure hosted E0 lifecycle, snapshots, prefill, decode, cancellation, backpressure, unload, and shutdown",
+    },
+];
 
 // Workspace-local development edges are reviewed independently from production direction.
 const REVIEWED_LOCAL_DEV_DEPENDENCIES: &[ReviewedDependency] = &[ReviewedDependency {
@@ -697,12 +752,12 @@ mod tests {
         DependencyKind, Layer, REVIEWED_BENCHMARK_DEPENDENCIES,
         REVIEWED_DOMAIN_PRODUCTION_DEPENDENCIES, REVIEWED_ENGINE_PRODUCTION_DEPENDENCIES,
         REVIEWED_EXTERNAL_DEPENDENCIES, REVIEWED_LOCAL_DEV_DEPENDENCIES, RULE_BENCHMARK_BUILD,
-        RULE_BENCHMARK_LOCAL_REVIEW, RULE_BENCHMARK_REVERSE, RULE_DOMAIN_LOCAL_REVIEW,
-        RULE_ENGINE_EXTERNAL, RULE_ENGINE_LOCAL_REVIEW, RULE_EXTERNAL_DEV_REVIEW, RULE_F0_EXTERNAL,
-        RULE_F1_EXTERNAL, ReviewedDependency, allows_production, classify_manifest,
-        external_policy, local_dependency_policy, local_production_policy,
-        policy_configuration_failures, review_table_failures, reviewed_dependency,
-        reviewed_graph_is_acyclic,
+        RULE_BENCHMARK_EXTERNAL_REVIEW, RULE_BENCHMARK_LOCAL_REVIEW, RULE_BENCHMARK_REVERSE,
+        RULE_DOMAIN_LOCAL_REVIEW, RULE_ENGINE_EXTERNAL, RULE_ENGINE_LOCAL_REVIEW,
+        RULE_EXTERNAL_DEV_REVIEW, RULE_F0_EXTERNAL, RULE_F1_EXTERNAL, ReviewedDependency,
+        allows_production, classify_manifest, external_policy, local_dependency_policy,
+        local_production_policy, policy_configuration_failures, review_table_failures,
+        reviewed_dependency, reviewed_graph_is_acyclic,
     };
 
     const LAYERS: [Layer; 9] = [
@@ -800,6 +855,12 @@ mod tests {
 
     #[test]
     fn benchmark_edges_are_outer_only_and_require_exact_review() {
+        assert_benchmark_reverse_edges();
+        assert_benchmark_local_edges();
+        assert_benchmark_external_edges();
+    }
+
+    fn assert_benchmark_reverse_edges() {
         for source in LAYERS {
             if source == Layer::Benchmark {
                 continue;
@@ -822,11 +883,40 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn assert_benchmark_local_edges() {
+        const EXPECTED: [(&str, Layer); 5] = [
+            ("application-runtime", Layer::EngineApplication),
+            ("candle-backend", Layer::Adapter),
+            ("domain-contracts", Layer::FeatureFoundation),
+            ("host-runtime", Layer::Adapter),
+            ("inference-runtime", Layer::EngineFoundation),
+        ];
 
         assert!(allows_production(
             Layer::Benchmark,
             Layer::EngineApplication
         ));
+        assert_eq!(REVIEWED_BENCHMARK_DEPENDENCIES.len(), EXPECTED.len());
+        for ((target, layer), reviewed) in EXPECTED.into_iter().zip(REVIEWED_BENCHMARK_DEPENDENCIES)
+        {
+            assert_eq!(reviewed.source, "runtime-benchmarks");
+            assert_eq!(reviewed.target, target);
+            assert_eq!(reviewed.kind, DependencyKind::Normal);
+            assert!(!reviewed.rationale.trim().is_empty());
+            assert!(
+                local_dependency_policy(
+                    "runtime-benchmarks",
+                    Layer::Benchmark,
+                    target,
+                    layer,
+                    DependencyKind::Normal,
+                )
+                .is_none()
+            );
+        }
+
         assert_eq!(
             local_dependency_policy(
                 "runtime-benchmarks",
@@ -849,7 +939,60 @@ mod tests {
             .map(|failure| failure.rule),
             Some(RULE_BENCHMARK_BUILD)
         );
-        assert!(REVIEWED_BENCHMARK_DEPENDENCIES.is_empty());
+        assert_eq!(
+            local_dependency_policy(
+                "runtime-benchmarks",
+                Layer::Benchmark,
+                "sampling",
+                Layer::FeatureAlgorithm,
+                DependencyKind::Normal,
+            )
+            .map(|failure| failure.rule),
+            Some(RULE_BENCHMARK_LOCAL_REVIEW)
+        );
+    }
+
+    fn assert_benchmark_external_edges() {
+        for dependency in ["serde", "serde_json", "sha2"] {
+            assert!(
+                external_policy(
+                    "runtime-benchmarks",
+                    Layer::Benchmark,
+                    dependency,
+                    DependencyKind::Normal,
+                )
+                .is_none()
+            );
+        }
+        assert!(
+            external_policy(
+                "runtime-benchmarks",
+                Layer::Benchmark,
+                "criterion",
+                DependencyKind::Development,
+            )
+            .is_none()
+        );
+        assert_eq!(
+            external_policy(
+                "runtime-benchmarks",
+                Layer::Benchmark,
+                "stats_alloc",
+                DependencyKind::Development,
+            )
+            .map(|failure| failure.rule),
+            Some(RULE_BENCHMARK_EXTERNAL_REVIEW)
+        );
+        assert_eq!(
+            external_policy(
+                "runtime-benchmarks",
+                Layer::Benchmark,
+                "criterion",
+                DependencyKind::Build,
+            )
+            .map(|failure| failure.rule),
+            Some(RULE_BENCHMARK_BUILD)
+        );
     }
 
     #[test]
