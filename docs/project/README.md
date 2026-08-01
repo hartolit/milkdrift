@@ -1,12 +1,12 @@
-# llm-app project documentation
+# Milkdrift project documentation
 
-This directory owns current llm-app-specific reference material. Reusable engineering doctrine lives one level above; agent-facing decisions, current execution context, plans, and historical closure evidence live under `../agent/`.
+This directory owns current Milkdrift-specific reference material. Reusable engineering doctrine lives one level above; agent-facing decisions, current execution context, plans, and historical closure evidence live under `../agent/`.
 
 ## Canonical ownership
 
 | Question | Canonical document |
 |---|---|
-| What architecture does llm-app apply now? | [Project architecture](architecture.md) |
+| What architecture does Milkdrift apply now? | [Project architecture](architecture.md) |
 | What crates and dependency edges exist? | [Workspace boundaries](workspace.md) |
 | What works in the current product tree? | [Implementation status](implementation-status.md) |
 | How is the repository validated? | [Validation](validation.md) |

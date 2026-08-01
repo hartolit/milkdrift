@@ -1,4 +1,4 @@
-# llm-app
+# Milkdrift
 
 A layered Rust workspace for a local-first, composable language-model system with explicit inference ownership, context planning, workflows, persistence, and replaceable frontends.
 
@@ -85,9 +85,8 @@ Relevant guides:
 
 ## License
 
-Project-authored source is available under either of:
+Milkdrift project-authored source code and documentation are licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE) for attribution. The license permits commercial use, including paid inference, modification, redistribution, proprietary integrations, and products or services built using Milkdrift, subject to its terms.
 
-- [Apache License 2.0](LICENSE-APACHE)
-- [MIT License](LICENSE-MIT)
+The Milkdrift name, logo, and related brand assets are governed separately by the [trademark policy](TRADEMARKS.md) and are not licensed under Apache-2.0.
 
-Third-party dependencies retain their own terms; the reviewed policy and Slint licensing note are documented in the [dependency policy](docs/project/dependency-policy.md).
+Third-party dependencies retain their own license terms. Slint licensing, attribution, and distribution obligations remain documented in the [dependency policy](docs/project/dependency-policy.md).

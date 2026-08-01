@@ -1865,9 +1865,14 @@ The exact result depends on evidence gathered during integration, but a likely s
 ```text
 Cargo.toml                        # virtual workspace
 .cargo/config.toml
-LICENSE-MIT
-LICENSE-APACHE
+LICENSE
+NOTICE
+TRADEMARKS.md
+CONTRIBUTING.md
 deny.toml
+
+branding/
+  README.md
 
 docs/
   README.md

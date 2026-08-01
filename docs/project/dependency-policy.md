@@ -41,7 +41,7 @@ There is no filename-, directory-, document-status-, or whole-file bypass for a 
 
 `deny.toml` configures `cargo-deny` to check the full workspace for advisories, licenses, registry/Git sources, duplicate versions, and narrow exact package bans. Duplicate versions are warnings and an audit input, not an automatic requirement to collapse semantically distinct dependency trees. Cargo-deny 0.20 reports workspace-inherited declarations as wildcards even though versions/paths are centralized in the root manifest, so its wildcard lint is allowed; the typed architecture validator independently rejects unreviewed local paths and portable external dependencies.
 
-The project source is available under `MIT OR Apache-2.0`; canonical texts are in `LICENSE-MIT` and `LICENSE-APACHE`. Slint dependencies are reviewed under `LicenseRef-Slint-Royalty-free-2.0`; distribution must continue to satisfy Slint's attribution and license terms.
+Milkdrift project-authored source code and documentation are licensed under `Apache-2.0`; the canonical text is in [`LICENSE`](../../LICENSE), with attribution in [`NOTICE`](../../NOTICE). Third-party dependencies retain their own license terms. In particular, Slint remains reviewed under `LicenseRef-Slint-Royalty-free-2.0` and is not relicensed by Milkdrift's Apache license. Distributed applications must continue to satisfy Slint's applicable attribution, licensing, and distribution requirements.
 
 Only the crates.io registry is accepted by default. A Git dependency or alternate registry requires an explicit policy change and review.
 

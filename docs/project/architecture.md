@@ -1,6 +1,6 @@
-# llm-app project architecture
+# Milkdrift project architecture
 
-This project selects **[Model B: Layered Workspace](../architecture.md#model-b-layered-workspace)** from the reusable architecture blueprint. This document specializes that model for llm-app. Accepted [ADRs](../agent/decisions/README.md) record decision rationale; [workspace boundaries](workspace.md) owns the exact crate inventory and dependency edges.
+This project selects **[Model B: Layered Workspace](../architecture.md#model-b-layered-workspace)** from the reusable architecture blueprint. This document specializes that model for Milkdrift. Accepted [ADRs](../agent/decisions/README.md) record decision rationale; [workspace boundaries](workspace.md) owns the exact crate inventory and dependency edges.
 
 ## Physical layout and logical roles
 
