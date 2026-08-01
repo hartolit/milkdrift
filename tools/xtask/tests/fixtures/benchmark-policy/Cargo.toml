@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "crates/domain/domain-contracts",
+    "benchmarks/runtime",
+]
+resolver = "3"

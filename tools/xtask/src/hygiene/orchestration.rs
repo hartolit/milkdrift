@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -12,6 +13,14 @@ use super::invocation::{is_potential_operational_surface, scan_operational_invoc
 use super::manifest::{is_cargo_manifest, scan_manifest, scan_selected_graph};
 
 const RULE_PYTHON_ARTIFACT: &str = "HYGIENE-PY-ARTIFACT-1";
+const RULE_TARGET_ARTIFACT: &str = "HYGIENE-TARGET-1";
+const RULE_BENCHMARK_LOCKFILE: &str = "HYGIENE-BENCHMARK-LOCK-1";
+const RULE_BENCHMARK_OUTPUT: &str = "HYGIENE-BENCHMARK-OUTPUT-1";
+const RULE_MODEL_CACHE: &str = "HYGIENE-MODEL-CACHE-1";
+const RULE_BENCHMARK_BUILD: &str = "HYGIENE-BENCHMARK-BUILD-1";
+const RULE_BENCHMARK_MEMBER: &str = "HYGIENE-BENCHMARK-MEMBER-1";
+const RULE_BENCHMARK_LAYOUT: &str = "HYGIENE-BENCHMARK-LAYOUT-1";
+const BENCHMARK_MANIFEST: &str = "benchmarks/runtime/Cargo.toml";
 
 /// One actionable repository hygiene policy violation.
 #[derive(Debug, PartialEq, Eq)]
@@ -190,6 +199,18 @@ fn validate_hygiene(
     metadata: &Metadata,
 ) -> Result<HygieneReport, HygieneError> {
     let mut report = HygieneReport::default();
+    let workspace_manifests = metadata
+        .workspace_packages()
+        .iter()
+        .filter_map(|package| {
+            package
+                .manifest_path
+                .as_std_path()
+                .strip_prefix(root)
+                .ok()
+                .map(Path::to_path_buf)
+        })
+        .collect::<BTreeSet<_>>();
 
     for relative in tracked_paths {
         let absolute = root.join(relative);
@@ -203,6 +224,8 @@ fn validate_hygiene(
                 )));
             }
         };
+
+        scan_tracked_path(relative, &workspace_manifests, &mut report);
 
         if is_python_artifact(relative) {
             report.push(HygieneViolation::new(
@@ -240,6 +263,108 @@ fn validate_hygiene(
 
     scan_selected_graph(metadata, &mut report);
     Ok(report)
+}
+
+fn scan_tracked_path(
+    path: &Path,
+    workspace_manifests: &BTreeSet<PathBuf>,
+    report: &mut HygieneReport,
+) {
+    if has_component(path, "target") {
+        report.push(HygieneViolation::new(
+            Some(path.to_path_buf()),
+            None,
+            RULE_TARGET_ARTIFACT,
+            "tracked paths cannot contain a component named target; all Cargo output belongs under the ignored root target directory".to_owned(),
+        ));
+    }
+
+    let benchmark_path = path.starts_with(Path::new("benchmarks"));
+    let file_name = path.file_name().and_then(|name| name.to_str());
+    if benchmark_path && file_name == Some("Cargo.lock") {
+        report.push(HygieneViolation::new(
+            Some(path.to_path_buf()),
+            None,
+            RULE_BENCHMARK_LOCKFILE,
+            "benchmark packages are root-workspace members and must use the root Cargo.lock"
+                .to_owned(),
+        ));
+    }
+    if benchmark_path && file_name == Some("build.rs") {
+        report.push(HygieneViolation::new(
+            Some(path.to_path_buf()),
+            None,
+            RULE_BENCHMARK_BUILD,
+            "benchmark packages cannot contain build.rs; generation, downloads, measurement, and machine probing must remain explicit runtime operations".to_owned(),
+        ));
+    }
+    if benchmark_path && file_name == Some("Cargo.toml") {
+        if path == Path::new(BENCHMARK_MANIFEST) {
+            if !workspace_manifests.contains(path) {
+                report.push(HygieneViolation::new(
+                    Some(path.to_path_buf()),
+                    None,
+                    RULE_BENCHMARK_MEMBER,
+                    "benchmarks/runtime must be registered in the root workspace before Cargo is run for that package".to_owned(),
+                ));
+            }
+        } else {
+            report.push(HygieneViolation::new(
+                Some(path.to_path_buf()),
+                None,
+                RULE_BENCHMARK_LAYOUT,
+                "benchmarks/runtime is the only recognized cross-crate benchmark package; unknown benchmark manifests fail closed".to_owned(),
+            ));
+        }
+    }
+
+    if [
+        "criterion",
+        "results",
+        "generated-report",
+        "generated-reports",
+        "flamegraph",
+        "flamegraphs",
+        "profiler-output",
+        "profiler-outputs",
+        "heap-dumps",
+    ]
+    .into_iter()
+    .any(|component| has_component(path, component))
+    {
+        report.push(HygieneViolation::new(
+            Some(path.to_path_buf()),
+            None,
+            RULE_BENCHMARK_OUTPUT,
+            "generated benchmark, Criterion, flamegraph, profiler, and heap-dump trees are not repository artifacts; keep raw output under the root target directory".to_owned(),
+        ));
+    }
+
+    if [
+        ".cache",
+        "cache",
+        "model-cache",
+        "model-caches",
+        "downloaded-model",
+        "downloaded-models",
+        "huggingface-cache",
+        "hf-cache",
+    ]
+    .into_iter()
+    .any(|component| has_component(path, component))
+    {
+        report.push(HygieneViolation::new(
+            Some(path.to_path_buf()),
+            None,
+            RULE_MODEL_CACHE,
+            "downloaded model and benchmark caches must remain external or under the ignored root target directory".to_owned(),
+        ));
+    }
+}
+
+fn has_component(path: &Path, expected: &str) -> bool {
+    path.components()
+        .any(|component| component.as_os_str() == expected)
 }
 
 fn is_python_artifact(path: &Path) -> bool {

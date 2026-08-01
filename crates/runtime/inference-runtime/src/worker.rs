@@ -114,7 +114,7 @@ struct PendingUnload {
 #[derive(Clone, Copy)]
 enum WorkerStop {
     DropRuntime,
-    PreserveRuntime,
+    RetainUntilProcessExit,
 }
 
 /// Join handle for the exclusively owning runtime worker.
@@ -381,9 +381,19 @@ fn finish_worker<L>(runtime: InferenceRuntime<L>, stop: WorkerStop)
 where
     L: ModelLoader,
 {
-    if matches!(stop, WorkerStop::PreserveRuntime) {
-        std::mem::forget(runtime);
+    if matches!(stop, WorkerStop::RetainUntilProcessExit) {
+        retain_until_process_exit(runtime);
     }
+}
+
+fn retain_until_process_exit<L>(runtime: InferenceRuntime<L>)
+where
+    L: ModelLoader,
+{
+    // Explicit cleanup is exhausted while backend ownership remains. Avoid an
+    // unverified implicit backend drop; process termination is the reclamation
+    // boundary for this deliberately abandoned allocation.
+    std::mem::forget(runtime);
 }
 
 fn shutdown_after_disconnect<L>(mut runtime: InferenceRuntime<L>)
@@ -391,10 +401,9 @@ where
     L: ModelLoader,
 {
     if runtime.shutdown().is_err() && runtime.owns_backend_resources() {
-        // The worker endpoint is gone, so no caller can drive or inspect further
-        // cleanup. Preserve native ownership rather than invoking an unverified
-        // implicit drop after explicit cleanup has failed.
-        std::mem::forget(runtime);
+        // No endpoint remains to observe or retry cleanup, so apply the same
+        // fail-closed process-lifetime retention policy as ticketed shutdown.
+        retain_until_process_exit(runtime);
     }
 }
 
@@ -669,7 +678,7 @@ where
                 }
             }
             let stop = if result.is_err() && runtime.owns_backend_resources() {
-                WorkerStop::PreserveRuntime
+                WorkerStop::RetainUntilProcessExit
             } else {
                 WorkerStop::DropRuntime
             };

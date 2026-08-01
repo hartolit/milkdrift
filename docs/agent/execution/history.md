@@ -463,3 +463,30 @@ The same gate passed from a fresh target with fail-fast shims covering the remov
 Both named portability targets passed for all five domain crates. Locked cargo-deny policy, offline local-link checking, architecture/hygiene checks, and `git diff --check` also passed. The scheduled nursery command is informational and is not part of this acceptance gate.
 
 The network-dependent E1 Hub smoke was not rerun for this structural closure. Its prior success remains evidence for the committed Candle-only checkpoint only, not for this exact working tree. No manual graphical desktop session was performed.
+
+## Pre-Phase 10 closure — terminal shutdown and measurement policy
+
+- **Prepared:** 2026-08-01
+- **Input checkpoint:** commit `3942a19b97d347fd238c451d2b0a2fcbea287873`, tree `be069879fea9531799038c5189c9edb3007ebf72`
+- **Scope:** correct terminal shutdown semantics, establish benchmark/workspace hygiene, replace provenance-uncertain model-fixture bytes, and amend Phase 10
+- **Recorded outcome:** pre-Phase 10 closure complete; Phase 10 remains not started and is the next operation
+
+The execution began from clean `main` after fetching `origin/main`; local and remote were identical. Only root `./target` existed, and the clean starting tree passed `cargo xtask verify` before editing.
+
+### Closure matrix
+
+| Requirement | Recorded closure |
+|---|---|
+| Terminal E0 disposition | `WorkerStop::PreserveRuntime` became `RetainUntilProcessExit`. Cleanup exhaustion still publishes `CleanupRetryExhausted`, deliberately forgets the runtime, terminates the worker, and relies on process exit rather than unverified implicit backend destruction. |
+| E1 shutdown state | Running, stopping, clean stop, retryable failure, and terminal failure are distinct. Join timeout retains handles and can later succeed; terminal E0 failure is retained independently from handles and is returned by every later shutdown call. |
+| Deterministic lifecycle coverage | Tiny mock resources cover clean idempotence, retryable joins, structured cleanup exhaustion, skipped model drop, sticky application failure, ordinary-unload zero accounting, and endpoint abandonment/disconnection. |
+| Benchmark architecture | Crate-owned measurements remain in real crate-local `benches/` targets. Future cross-crate/system work is reserved for exact package `benchmarks/runtime` (`runtime-benchmarks`) as an outer consumer of reviewed public APIs. No package or suite was created. |
+| Workspace/artifact hygiene | Root `target/` is ignored recursively. Architecture and hygiene reject unknown benchmark paths, reverse dependencies, publishable/custom-build benchmark packages, unregistered manifests, nested benchmark locks/build scripts, tracked target/result trees, and model caches. |
+| Fixture provenance | The prior files' synthetic structure was technically verified, but authorship/redistribution provenance was not established. Newly generated project-owned F32 Llama bytes replaced them; the Rust/Cargo generator and old/new hashes are recorded beside the fixture. |
+| Phase 10 plan | Mandatory scope is sampling expansion, one system harness, reproducible environment metadata, and controlled lifecycle/memory measurement. Other listed microbenchmarks are conditional on a named question and system-harness insufficiency. |
+
+### Focused validation evidence
+
+Focused E0, E1, replacement-fixture, and `xtask` policy suites passed during implementation. The generator was run twice and produced identical hashes. The final canonical, Clippy, architecture, hygiene, dependency, link, whitespace, status, and root-target checks are execution-report evidence for the resulting diff; this history entry does not predict the commit/tree that will contain itself.
+
+The external Hub smoke and manual graphical desktop session were not run because this closure changed no external-model or presentation behavior. No statistical benchmark was run and no Phase 10 performance result was recorded.

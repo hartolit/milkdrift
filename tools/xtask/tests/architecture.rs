@@ -31,6 +31,15 @@ impl FixtureWorkspace {
     fn manifest(&self) -> PathBuf {
         self.root.join("Cargo.toml")
     }
+
+    fn write(&self, relative: &str, content: &str) -> Result<(), Box<dyn Error>> {
+        let path = self.root.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, content)?;
+        Ok(())
+    }
 }
 
 impl Drop for FixtureWorkspace {
@@ -94,7 +103,7 @@ fn forbidden_actual_manifest_edge_reports_rule_and_reason() -> Result<(), Box<dy
         violation.dependency_kind(),
         Some(xtask::DependencyKind::Normal)
     );
-    assert!(violation.reason().contains("8-layer production direction"));
+    assert!(violation.reason().contains("9-role workspace dependency"));
     let rendered = violation.to_string();
     assert!(rendered.contains("policy rule LAYER-PROD-1"));
     assert!(rendered.contains("normal and build dependencies"));
@@ -138,6 +147,54 @@ fn unknown_tooling_package_fails_closed() -> Result<(), Box<dyn Error>> {
     assert_eq!(violation.rule(), "LAYOUT-1");
     assert!(violation.target().contains("tools/release"));
     assert!(violation.reason().contains("unknown tools fail closed"));
+    Ok(())
+}
+
+#[test]
+fn unknown_benchmark_package_fails_closed() -> Result<(), Box<dyn Error>> {
+    let fixture = FixtureWorkspace::new("unknown-benchmark")?;
+    let report = validate_workspace(&fixture.manifest())?;
+    let Some(violation) = report
+        .violations()
+        .iter()
+        .find(|violation| violation.source() == "experimental-benchmarks")
+    else {
+        return Err("fixture's unknown benchmark package was accepted".into());
+    };
+
+    assert_eq!(violation.rule(), "BENCHMARK-ROLE-1");
+    assert!(violation.target().contains("benchmarks/experimental"));
+    assert!(
+        violation
+            .reason()
+            .contains("unknown benchmark package paths fail closed")
+    );
+    Ok(())
+}
+
+#[test]
+fn benchmark_package_properties_and_reverse_edges_fail_closed() -> Result<(), Box<dyn Error>> {
+    let fixture = FixtureWorkspace::new("benchmark-policy")?;
+    fixture.write("benchmarks/runtime/build.rs", "fn main() {}\n")?;
+    let report = validate_workspace(&fixture.manifest())?;
+
+    for rule in ["BENCHMARK-PUBLISH-1", "BENCHMARK-BUILD-1"] {
+        assert!(report.violations().iter().any(|violation| {
+            violation.source() == "runtime-benchmarks" && violation.rule() == rule
+        }));
+    }
+    let Some(reverse) = report.violations().iter().find(|violation| {
+        violation.source() == "domain-contracts"
+            && violation.target() == "runtime-benchmarks"
+            && violation.rule() == "BENCHMARK-REVERSE-1"
+    }) else {
+        return Err("fixture's production-to-benchmark edge was accepted".into());
+    };
+    assert_eq!(
+        reverse.dependency_kind(),
+        Some(xtask::DependencyKind::Development)
+    );
+    assert!(reverse.reason().contains("outer consumer only"));
     Ok(())
 }
 

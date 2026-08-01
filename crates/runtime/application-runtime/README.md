@@ -69,9 +69,11 @@ corrected with a strictly shrinking bounded retry set before E0 admission.
 ## Shutdown
 
 Explicit application shutdown cooperatively stops and joins the sole E0 worker
-and the bounded Hugging Face resolver worker. Its private state progresses through
-running, stopping, stopped, and failed/retryable states. A command, wait, or join
-timeout returns a bounded error but retains unfinished worker handles; a later
-`shutdown()` call retries the remaining work. A timeout does not detach either
-worker. The independently stateful corrective workflow remains owned by the
+and the bounded Hugging Face resolver worker. Its private state distinguishes
+running, stopping, clean stop, retryable failure, and terminal failure. A command,
+wait, or join timeout retains unfinished worker handles; a later `shutdown()` can
+complete cleanly after the E0 shutdown succeeds. E0 cleanup exhaustion is terminal:
+the structured failure remains sticky after worker exit/join, and process exit is
+the reclamation boundary for the deliberately retained runtime allocation. The
+independently stateful corrective workflow remains owned by the
 `corrective-workflow` capability engine.

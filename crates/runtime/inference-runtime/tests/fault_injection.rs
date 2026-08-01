@@ -590,6 +590,27 @@ fn repeated_sequence_cleanup_failure_exhausts_without_releasing_accounting() -> 
 }
 
 #[test]
+fn ordinary_unload_releases_all_runtime_ownership_and_accounting() -> TestResult {
+    let counts = Rc::new(CleanupCounts::default());
+    let mut runtime = runtime(Faults::default(), Rc::clone(&counts));
+    let loaded = load(&mut runtime).map_err(debug_error)?;
+    start(&mut runtime, loaded.handle, 10, 100).map_err(debug_error)?;
+
+    let receipt = runtime
+        .unload_model(
+            loaded.handle,
+            UnloadPolicy::CancelActive,
+            MonotonicMillis::new(0),
+        )
+        .map_err(debug_error)?;
+    assert_eq!(receipt.cancelled_requests, 1);
+    assert_eq!(counts.sequence_destructions.get(), 1);
+    assert_eq!(counts.model_cleanups.get(), 1);
+    assert_empty(&runtime);
+    Ok(())
+}
+
+#[test]
 fn normal_model_unload_failure_uses_the_bounded_cleanup_state_machine() -> TestResult {
     let counts = Rc::new(CleanupCounts::default());
     let mut runtime =

@@ -2,11 +2,11 @@
 
 **Intended repository path:** `docs/agent/execution/execution-plan.md`
 **Companion analysis:** `docs/agent/execution/analyzer.md`
-**Plan status:** Active execution baseline; Phase 9 complete and Phase 10 next
+**Plan status:** Active execution baseline; pre-Phase 10 closure complete and Phase 10 next
 **Prepared:** 2026-07-22
 **Current amendment:** 2026-08-01
 
-> **Current-use notice.** Phases 0–8 below are preserved as the specifications that produced their historical results. In particular, completed Phase 8 accurately records the former dual-product experiment; it does not define current support. [ADR-0013](../decisions/0013-candle-only-local-execution.md) and [ADR-0014](../decisions/0014-rust-cargo-native-operational-tooling.md) govern the Candle-only and Rust-owned correction. [ADR-0015](../decisions/0015-exact-reviewed-domain-dependency-dag.md), [ADR-0016](../decisions/0016-virtual-workspace-focused-xtask.md), and [ADR-0017](../decisions/0017-stable-clippy-gate-exploratory-nursery.md) close the remaining Phase 9 structural work. Phase 10 is the next active implementation phase.
+> **Current-use notice.** Phases 0–8 below are preserved as the specifications that produced their historical results. In particular, completed Phase 8 accurately records the former dual-product experiment; it does not define current support. [ADR-0013](../decisions/0013-candle-only-local-execution.md) through [ADR-0017](../decisions/0017-stable-clippy-gate-exploratory-nursery.md) govern the completed Candle-only Phase 9 architecture. The amended [ADR-0006](../decisions/0006-explicit-bounded-shutdown.md) and [ADR-0018](../decisions/0018-benchmark-and-model-fixture-policy.md) govern the completed pre-Phase 10 lifecycle, benchmark-layout, artifact, and fixture closure. Phase 10 has not started; it is the next implementation phase.
 
 ## 1. Purpose
 
@@ -113,9 +113,11 @@ That constraint ended after the Phase 6 product milestone. The workspace now use
 
 The first vertical slice kept F1 peers isolated while responsibilities stabilized. Phase 9 replaced that temporary universal ban with the exact reviewed acyclic policy in ADR-0015. Every domain production edge now requires a source/target/kind rationale, and `domain-contracts` inclusion requires a real backend/runtime crossing or stable use by at least two distinct domains.
 
-### 3.8 Component benchmarks remain with their crates
+### 3.8 Separate component and cross-crate measurements
 
-`crates/domain/sampling/benches/sampling_pipeline.rs` is correctly located. Cross-crate and end-to-end benchmarks should be added as a dedicated benchmark workspace package after the generation path exists.
+A benchmark for one stable crate-owned operation remains in that crate's conventional `benches/` directory and is created only with a real production-code measurement that answers a named question. No placeholder benchmark directories are created.
+
+Cross-crate E0/E1 and product-level measurements belong in the future exact root-workspace package `benchmarks/runtime` (`runtime-benchmarks`). The package is a non-production outer consumer of exact reviewed public production APIs; production packages never depend on it. ADR-0018 owns workspace, artifact, and fixture policy.
 
 ## 4. Scope guardrails
 
@@ -1531,17 +1533,27 @@ Remove the accidental dual-engine/tooling architecture while preserving behavior
 
 ---
 
+# Pre-Phase 10 closure — lifecycle, benchmark architecture, and fixture policy
+
+**Status:** Complete on 2026-08-01. This closure establishes the baseline for Phase 10 but records no Phase 10 measurement.
+
+- E0 names failed-cleanup disposition `RetainUntilProcessExit`: after structured cleanup exhaustion it deliberately forgets the runtime, terminates the worker, and relies on process exit for reclamation rather than invoking unverified implicit backend destruction.
+- E1 distinguishes running, stopping, cleanly stopped, retryable failure, and sticky terminal failure. Join timeout remains retryable; a retained E0 cleanup failure or unproven endpoint disconnection can never become success merely because handles are absent.
+- Component benchmark placement, the future exact `benchmarks/runtime` package role, root workspace/lock/target ownership, dependency direction, and generated-artifact policy are established by ADR-0018 and fail-closed tooling tests.
+- The prior Candle fixture provenance was not sufficiently established. Its bytes were replaced by a Rust/Cargo-generated deterministic synthetic fixture with explicit hashes, architecture, licensing, and non-claims.
+- No `benchmarks/runtime` package, placeholder `benches/` directory, Phase 10 harness, performance optimization, or performance result was added.
+
 # Phase 10 — Build a meaningful performance program
+
+**Status:** Not started; next implementation phase.
 
 ## Objective
 
 Measure product behavior before applying low-level optimization doctrine.
 
-## Work package 10.1 — Expand component benchmarks
+## Work package 10.1 — Expand the existing sampling benchmark
 
-Keep component benchmarks beside their crates.
-
-For sampling, cover:
+This is the mandatory component measurement. Keep it in `crates/domain/sampling/benches/` and execute the production sampler. Cover:
 
 - greedy;
 - default top-k/top-p;
@@ -1552,53 +1564,58 @@ For sampling, cover:
 - full restore-plus-sample pipeline as a separately named benchmark;
 - stop matching.
 
-Add appropriate component benchmarks for:
+Every case states the regression or performance question it answers. The benchmark name must make clear whether input restoration is inside the measured region.
 
-- tokenizer encode;
-- streaming decode;
-- context planning;
-- output accumulator push/pull;
-- backend prefill;
-- backend decode.
+Tokenizer encode/streaming-decode, context-planner, output-accumulator, and isolated Candle prefill/decode microbenchmarks are conditional rather than checklist requirements. Before adding any one of them, document:
 
-## Work package 10.2 — Add a cross-crate benchmark package
+1. the named question;
+2. why the cross-crate system measurement cannot answer it;
+3. the stable production operation being measured;
+4. the setup excluded from the measured region.
 
-Create a dedicated workspace member such as:
+Create its crate-local `benches/` directory only in the same change as that justified benchmark. Do not implement a benchmark-only copy of production logic.
+
+## Work package 10.2 — Add one cross-crate runtime/system harness
+
+Create exactly the dedicated root-workspace package:
 
 ```text
 benchmarks/runtime
 ```
 
-It may depend on public runtime/application APIs and controlled fixtures. Measure:
+The package name is `runtime-benchmarks`. Add the exact root member and manifest in the same change before running Cargo. It uses the root lockfile and target directory, declares `publish = false`, has no build script, and depends only on exact reviewed public production APIs and controlled fixtures. No production package depends on it.
+
+The mandatory harness measures the current Candle CPU product path sufficiently to answer:
 
 - time to first token;
-- steady-state tokens per second;
-- prompt prefill throughput;
-- cancellation latency;
+- steady-state decode throughput;
+- prompt prefill throughput where it can be separated honestly;
 - output backpressure behavior;
-- model load/unload latency;
-- peak/resident memory;
-- repeated load/generate/unload stability;
-- Candle behavior across controlled scalar types, prompt sizes, context lengths, and any later reviewed quantization/device configurations.
+- cancellation latency;
+- model load and unload latency;
+- repeated load/generate/unload stability.
 
-## Work package 10.3 — Separate CI compilation from controlled baselines
+Do not add GPU, GGUF, hosted, peer, browser, workflow, memory-system, or multi-model variants. Real-model runs follow ADR-0018: explicit external identifier, immutable revision, local cache or explicit local artifact path, opt-in execution, no ordinary-CI download, and no repository redistribution.
 
-Shared CI should compile benchmarks and catch API breakage. Stable performance baselines should run on named controlled hardware with:
+## Work package 10.3 — Record reproducible environment, lifecycle, and memory evidence
 
-- CPU/GPU model;
-- OS/kernel;
-- power mode;
-- thread count;
-- model/revision;
-- prompt length;
-- generation settings;
-- build profile and features.
+Every controlled baseline records:
 
-Do not fail ordinary CI because a shared runner was temporarily slower.
+- commit and Git tree;
+- Rust/Cargo/LLVM and Criterion versions;
+- target triple and build profile/features;
+- CPU model, core/thread policy, OS/kernel, power mode, and relevant environment controls;
+- model identifier, immutable revision or synthetic-fixture hash;
+- prompt/context sizes and generation settings;
+- warm-up/sample configuration.
+
+Measure controlled cancellation and load/unload lifecycle behavior plus host memory before load, after load, during generation, after unload, and across repetition. State the memory observation method and its limitations; do not claim native allocation freedom from Rust allocator evidence.
+
+Shared CI compiles all benchmark targets and catches API drift. It does not run statistical measurements or enforce wall-clock thresholds. Raw Criterion data, generated reports, caches, profiles, and dumps remain under the shared root `target`; only curated summaries enter canonical documentation.
 
 ## Work package 10.4 — Optimize only measured bottlenecks
 
-Use profiling and generated-code inspection before adding:
+Optimization is a later Phase 10 change, not part of harness establishment. Use the system/component evidence plus profiling or generated-code inspection before adding:
 
 - `#[inline(always)]`;
 - custom unsafe code;
@@ -1612,11 +1629,14 @@ Preserve the existing zero-allocation project-owned hot-path goal where it is al
 
 ## Acceptance criteria
 
-- Benchmarks distinguish component and system behavior.
-- The sampling benchmark name states whether input restoration is measured.
-- TTFT and decode throughput exist for the real product path.
-- Memory returns to an expected range after unload.
-- Optimization changes cite a baseline and resulting measurement.
+- The existing sampling benchmark is expanded and its measured regions are named precisely.
+- One `benchmarks/runtime` harness measures TTFT, decode throughput, controlled lifecycle, and memory behavior through public production APIs.
+- Environment and artifact identity are reproducible.
+- Conditional microbenchmarks exist only with a named question and a documented reason the system harness is insufficient.
+- The package uses root workspace/lock/target ownership, `publish = false`, no build script, and no incoming production dependency.
+- Raw generated output and model caches remain untracked under root `target` or outside the repository.
+- Shared CI compiles but does not time-gate the suite.
+- Any optimization change cites a same-environment baseline and resulting measurement.
 
 ---
 

@@ -10,6 +10,8 @@ Normal and build dependencies first use the complete production layer matrix. Ev
 
 Production edges from a runtime to platform/adapters or another runtime likewise require an exact review entry with a narrow composition justification. Development dependencies are reviewed separately because compatibility tests and benchmarks may need edges that production code must not acquire.
 
+The future `benchmarks/runtime` (`runtime-benchmarks`) package has its own non-production observer role. It may depend inward only on exact reviewed public production APIs needed by implemented measurements. No production, tooling, test, or application package may depend on it through normal, build, or development edges. The pre-Phase 10 benchmark registry is intentionally empty; Phase 10 adds only the edges the real harness consumes. Unknown package paths under `benchmarks/`, benchmark build dependencies, and custom build targets fail closed.
+
 The current external policy is:
 
 - F0 production code has no external dependencies;
@@ -33,9 +35,27 @@ cargo xtask hygiene
 
 The check inspects Git-tracked artifacts and operational text surfaces, direct Cargo declarations, and the locked selected dependency graph. It rejects tracked project-owned secondary-language tooling artifacts, maintained operational invocations outside the Rust/Cargo path, prohibited direct manifest packages, and selected packages from the removed native-engine or embedded-runtime families.
 
+Repository artifact rules additionally reject:
+
+- any tracked path component named `target`;
+- a nested `Cargo.lock` or `build.rs` under `benchmarks/`;
+- tracked benchmark/criterion result trees, generated reports, flamegraphs, profiler output, heap dumps, and package-local result directories;
+- tracked model/download cache directories;
+- an unregistered `benchmarks/runtime/Cargo.toml` or any unknown benchmark manifest.
+
+The root `.gitignore` uses `target/` so Cargo output is ignored at every repository depth, but project commands still share the root `target` through ordinary workspace behavior or an explicit root `CARGO_TARGET_DIR`. Raw Criterion/profiler data and model caches remain there or outside the repository. Curated conclusions belong in canonical documentation rather than generated result trees.
+
 There is no filename-, directory-, document-status-, or whole-file bypass for a tracked operational surface. Historical names, execution-history locations, and superseded ADR status do not exempt content. Negative policy examples are accepted only when the parser can identify them as prohibitions rather than instructions. Any future exception must be exact, narrowly reviewed, and covered by tests; a broad path or status exemption is not acceptable.
 
 `cargo xtask architecture` does not implicitly run hygiene. The canonical `cargo xtask verify` command runs architecture and hygiene in sequence before format/build/test/lint/documentation/benchmark compilation. [ADR-0014](../agent/decisions/0014-rust-cargo-native-operational-tooling.md) owns the rationale and policy boundary.
+
+## Model fixture and external artifact policy
+
+A committed model fixture must have a reviewed provenance record with origin/redistribution basis, architecture, scalar type, deterministic generation method, exact sizes and SHA-256 hashes, license, and test scope. Small size or synthetic-looking tensors are not ownership evidence.
+
+Project-owned synthetic fixtures are generated through Rust/Cargo-native tooling without external base-model weights, tokenizer assets, network access, or training data. They remain with their sole consumer until two real consumers justify shared ownership. If provenance or redistribution permission cannot be established, the bytes are replaced rather than reused or expanded.
+
+Real-model measurements name an external identifier and immutable revision, use an opt-in local cache or explicit artifact path, perform no ordinary-CI download, and do not redistribute model/tokenizer files through the repository. Download availability alone is not redistribution permission. See [ADR-0018](../agent/decisions/0018-benchmark-and-model-fixture-policy.md).
 
 ## Supply-chain policy
 

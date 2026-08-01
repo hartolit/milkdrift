@@ -23,7 +23,7 @@ It currently owns:
 - public model metadata, generation state, usage, terminal results, and cleanup events;
 - transactional rollback of the already-started inference worker when Hub-worker startup fails;
 - private retention and cleanup accounting for an incompatible loaded-model handle;
-- bounded, retryable shutdown and join of the inference and Hub workers.
+- bounded shutdown with retryable joins and retained terminal inference failure.
 
 It does not own Slint or transport presentation types, model tensors/logits/backend sequences, per-token scheduling, corrective workflow execution, provider/peer transports, or OS-specific application-data path policy.
 
@@ -141,20 +141,23 @@ The application configures E0 for one resident model and does not expose a misle
 
 Normal closure must call `ApplicationRuntime::shutdown`; `Drop` does not perform an unbounded join.
 
-The private shutdown controller tracks running, stopping, stopped, and failed/retryable states. Shutdown:
+The private shutdown controller tracks running, stopping, cleanly stopped, retryable failure, and terminal failure. Shutdown:
 
 1. stops application admission and requests cooperative Hub shutdown;
 2. sends one ticketed shutdown command to the Candle E0 worker, retaining that ticket across retries;
 3. waits only to configured checked deadlines;
 4. attempts the inference-worker join and Hub-worker join even when an earlier step reports an error;
 5. takes and joins a worker handle only after the worker is observed finished;
-6. returns the first bounded command, timeout, cleanup, or join failure.
+6. independently retains any terminal inference shutdown failure while continuing joins;
+7. returns a retained terminal failure in preference to treating handle absence as cleanup success, otherwise returns the first bounded retryable failure.
 
-If a command, worker wait, or join times out, status becomes failed/retryable and every unfinished worker handle remains owned by `ApplicationRuntime`. A later `shutdown()` call resumes the remaining stop/join work; a timeout does not detach a worker. Once both workers are confirmed stopped, shutdown becomes idempotently stopped and any private incompatible-model cleanup record can be released.
+If command submission, event wait, or worker join times out, status becomes retryable failure and every unfinished worker handle remains owned by `ApplicationRuntime`. A later `shutdown()` resumes the remaining stop/join work; a timeout does not detach a worker and may later become clean success when the E0 result was successful.
+
+If E0 returns a shutdown failure, the E0 worker terminates after publishing that result. When cleanup is exhausted and backend resources remain, E0 deliberately retains its runtime allocation until process exit. E1 stores the structured `RuntimeError` as terminal state independently from the join handle, joins the worker normally when possible, and returns the normalized failure on every later shutdown call. A missing handle or endpoint disconnection cannot overwrite that terminal state or establish clean completion. Clean idempotent success requires both observed clean E0 shutdown and confirmed joins.
 
 Shutdown and join timeouts are validated before any worker starts as nonzero and no greater than 24 hours. Runtime deadline construction retains checked arithmetic as defense in depth, so invalid timing cannot enter the startup-cleanup quarantine.
 
-An in-flight synchronous Hub operation has no upstream global cancellation handle, and the same safe-Rust limitation applies to an uncooperative in-process backend call. The bounded call may therefore return before the worker finishes, but ownership of the handle remains available for shutdown retry. [ADR-0006](../agent/decisions/0006-explicit-bounded-shutdown.md) records the policy.
+An in-flight synchronous Hub operation has no upstream global cancellation handle, and the same safe-Rust limitation applies to an uncooperative in-process backend call. The bounded call may therefore return before the worker finishes, but ownership of the handle remains available for shutdown retry. After explicit backend cleanup exhaustion, process termination—not ordinary Rust drop—is the retained allocation's reclamation boundary. [ADR-0006](../agent/decisions/0006-explicit-bounded-shutdown.md) records the policy.
 
 ## Model execution targets
 

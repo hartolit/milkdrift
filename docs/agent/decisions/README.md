@@ -23,5 +23,6 @@ Accepted ADRs remain part of the project architecture until superseded. A supers
 - [ADR-0015: Use an exact reviewed domain dependency DAG](0015-exact-reviewed-domain-dependency-dag.md)
 - [ADR-0016: Use a virtual workspace and a focused `xtask`](0016-virtual-workspace-focused-xtask.md)
 - [ADR-0017: Keep stable Clippy lints mandatory and nursery exploratory](0017-stable-clippy-gate-exploratory-nursery.md)
+- [ADR-0018: Separate benchmark roles and govern measurement artifacts](0018-benchmark-and-model-fixture-policy.md)
 
 For current applied structure, see [project architecture](../../project/architecture.md). For the reusable selectable model, see the [architecture blueprint](../../architecture.md).

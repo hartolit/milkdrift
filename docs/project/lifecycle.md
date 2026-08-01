@@ -57,6 +57,16 @@ as proof that backend resources or request-owned host storage have already been
 released.
 
 Shutdown consumes only the finite remaining cleanup budget. It returns
-`CleanupRetryExhausted` if a resource remains. Endpoint disconnection has an
-explicit fail-closed policy: unresolved native ownership is retained rather than
-being passed to an undocumented implicit `Drop` cleanup path.
+`CleanupRetryExhausted` if a resource remains. The hosted worker then applies
+`RetainUntilProcessExit`: it deliberately forgets the complete runtime, exits, and
+can be joined, while process termination remains the reclamation boundary for the
+abandoned allocation. This outcome is terminal and cannot be retried because no
+runtime owner remains. Endpoint disconnection applies the same fail-closed policy:
+unresolved native ownership is retained rather than being passed to an
+undocumented implicit `Drop` cleanup path.
+
+E1 retains a structured terminal shutdown failure independently from its worker
+join handle. A join timeout is retryable and can later complete cleanly when E0
+shutdown succeeded. A terminal E0 cleanup failure remains an error after the
+worker has exited and after its handle is joined; a repeated application shutdown
+must not convert it into success.

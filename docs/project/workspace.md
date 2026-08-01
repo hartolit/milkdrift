@@ -13,6 +13,8 @@ llm-app/
 │   └── xtask/                 custom architecture, hygiene, and verify tooling
 │       ├── src/
 │       └── tests/
+├── benchmarks/
+│   └── runtime/               future cross-crate harness; not yet created
 ├── docs/
 └── crates/
     ├── domain/
@@ -60,6 +62,8 @@ crates/apps/desktop-slint
 
 Each domain and runtime crate owns a coherent, independently testable responsibility. None exists merely to hold one identifier, data structure, or callback.
 
+`benchmarks/runtime` is intentionally absent from the current member list. Phase 10 will add it as `runtime-benchmarks` only with the first real cross-crate/system harness. It is the sole recognized package path under `benchmarks/`; unknown benchmark manifests fail closed.
+
 ## Responsibility-based source organization
 
 Several larger responsibilities are split into private or crate-internal modules without creating new workspace layers:
@@ -91,6 +95,8 @@ desktop-slint       -> application-runtime
 
 `xtask`, `hf-hub-adapter`, and `redb-storage` have no workspace-local production dependencies. `xtask` depends externally on the reviewed `cargo_metadata` crate.
 
+The future `runtime-benchmarks` package is outside the production graph. It may depend only on exact reviewed public production APIs required by implemented measurements. No production, tooling, test, or application package may depend on it, including through development or build dependencies. Its exact outgoing edges will be registered with the harness rather than pre-authorized.
+
 `application-runtime/src/local.rs` is a private internal composition boundary, not a workspace member. It owns one `HostedRuntime<CandleLlamaSource>` and one inference worker thread. E1 separately owns one bounded Hub worker, one `HfTokenizer`, request-local `HfOwnedStreamingDecoder` values, and one resident-model lifecycle. [ADR-0013](../agent/decisions/0013-candle-only-local-execution.md) records this composition. There is no `application-api` package.
 
 `desktop-slint` has no production import of Candle, Hugging Face adapter source types, redb, host channels, or inference commands. It maps E1's repository/revision selection, state, events, and model metadata to Slint presentation.
@@ -103,7 +109,9 @@ Production code may not acquire an upward dependency. Platform and production ad
 
 `cargo xtask architecture` uses typed Cargo metadata with the committed lockfile, fails closed on unknown workspace locations and unresolved local path targets, distinguishes dependency kinds, requires explicit tooling/runtime/platform roles, and applies the dependency rules documented in [dependency policy](dependency-policy.md).
 
-The accepted product roots are `crates/domain`, `crates/platform`, `crates/adapters`, `crates/runtime`, and `crates/apps`; `tools/xtask` is the only accepted tooling package. Other tooling locations and legacy product paths are not classified. Adapter packages remain direct children of `crates/adapters` until a later structural decision explicitly permits deeper grouping.
+The accepted product roots are `crates/domain`, `crates/platform`, `crates/adapters`, `crates/runtime`, and `crates/apps`; `tools/xtask` is the only accepted tooling package. `benchmarks/runtime` is the only reserved benchmark package path and is not a current member. Other benchmark/tooling locations and legacy product paths are not classified. Adapter packages remain direct children of `crates/adapters` until a later structural decision explicitly permits deeper grouping.
+
+When Phase 10 creates `benchmarks/runtime`, its path and manifest must be added to root `workspace.members` in the same change before any Cargo command targets that manifest. It uses the root `Cargo.lock` and root `target`, declares `publish = false`, and has no nested workspace, nested lockfile, custom build target, or `build.rs`. A shared benchmark-support package requires two real consumers and a separate ownership review.
 
 ## Generated-code lint boundary
 

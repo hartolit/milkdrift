@@ -46,11 +46,11 @@ Run architecture independently with:
 cargo xtask architecture
 ```
 
-The architecture command does not implicitly run hygiene; the canonical verify command invokes both. Hygiene examines tracked project artifacts, maintained operational surfaces, direct manifests, and locked Cargo metadata without filename, directory, document-status, or whole-file bypasses. Any future exception must be exact, reviewed, and tested. [Dependency policy](dependency-policy.md#rust-owned-operational-hygiene) defines the boundary.
+The architecture command does not implicitly run hygiene; the canonical verify command invokes both. Hygiene examines tracked project artifacts, maintained operational surfaces, direct manifests, and locked Cargo metadata without filename, directory, document-status, or whole-file bypasses. It also rejects tracked nested `target` components, benchmark lockfiles/build scripts/generated output, model caches, unregistered `benchmarks/runtime`, and unknown benchmark manifests. Any future exception must be exact, reviewed, and tested. [Dependency policy](dependency-policy.md#rust-owned-operational-hygiene) defines the boundary.
 
 ## Download-free focused validation
 
-Ordinary tests and the canonical gate do not resolve or download external models. The repository commits a tiny deterministic Candle/Safetensors fixture for real-adapter E0 coverage; deterministic loaders cover backend-independent failure paths.
+Ordinary tests and the canonical gate do not resolve or download external models. The repository commits a project-generated deterministic Candle/Safetensors fixture for real-adapter E0 coverage; deterministic loaders cover backend-independent failure paths. The fixture's generator, tensor construction, licensing, exact sizes/hashes, replacement audit, and integration-only scope are recorded in its [provenance document](../../crates/runtime/inference-runtime/tests/fixtures/candle-llama/PROVENANCE.md).
 
 Useful focused commands are:
 
@@ -63,7 +63,30 @@ cargo test --locked -p desktop-slint
 
 The Candle E0 target covers load, descriptor validation, prompt prefill, incremental decode, greedy and seeded sampling, EOS and token limits, output backpressure, cancellation, explicit sequence cleanup/release, unload, empty post-unload accounting, shutdown, and worker join. E1 tests additionally cover immutable resolution evidence, direct completion, exact TinyLlama chat compatibility, context/regeneration behavior, decoded output, unload policies, private incompatible-model cleanup retention through retry/exhaustion, successful transactional rollback after Hub startup failure, retained/reaped inference ownership after rollback timeout, persistence, worker disconnection, and retryable bounded shutdown with worker-handle retention. Slint tests cover E1-only selection/state mapping and presentation behavior.
 
-These fixtures prove integration and lifecycle behavior, not model language quality, GPU execution, or strict allocation-free behavior inside upstream libraries.
+These fixtures prove integration and lifecycle behavior, not model language quality, real-model performance, GPU execution, or strict allocation-free behavior inside upstream libraries.
+
+Fixture regeneration is an explicit source-maintenance operation, not an ordinary test:
+
+```text
+cargo test --locked -p candle-backend --test generate_synthetic_fixture -- --ignored --exact regenerate_committed_candle_fixture
+```
+
+Run it only when intentionally replacing the committed fixture, then review both generated files and update the provenance hashes in the same change. The generator performs no network access and uses no external model or tokenizer assets.
+
+## Benchmark authoring and validation
+
+A crate-local `benches/` directory is added only with a real component benchmark that states its question and runs production code. Cross-crate/system measurement is reserved for `benchmarks/runtime`, which does not yet exist.
+
+When Phase 10 creates that package, use this order:
+
+1. add the exact `benchmarks/runtime` member to root `Cargo.toml`;
+2. create `benchmarks/runtime/Cargo.toml` with package name `runtime-benchmarks`, `publish = false`, no nested workspace, and no build target;
+3. add only exact reviewed dependencies required by the implemented harness;
+4. only then run Cargo from the repository root so the root lockfile and shared target remain authoritative.
+
+Do not invoke Cargo directly against an unregistered benchmark manifest. Shared CI compiles benchmark targets through the canonical workspace gate but does not execute statistical measurements or enforce wall-clock thresholds. Raw Criterion/report/profile/cache output remains under the root `target`; curated summaries belong in [performance evidence](performance.md).
+
+Real-model performance runs are opt-in and require an explicit external identifier, immutable revision, existing local cache or explicit artifact path, and no repository redistribution. No Phase 10 performance result exists yet.
 
 ## Rust-native Candle Hub smoke
 

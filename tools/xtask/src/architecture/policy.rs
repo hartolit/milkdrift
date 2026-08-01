@@ -8,6 +8,13 @@ pub(super) const RULE_KNOWN_KIND: &str = "DEPENDENCY-KIND-1";
 pub(super) const RULE_PLATFORM_ROLE: &str = "PLATFORM-ROLE-1";
 pub(super) const RULE_PRODUCTION_DIRECTION: &str = "LAYER-PROD-1";
 pub(super) const RULE_RUNTIME_ROLE: &str = "RUNTIME-ROLE-1";
+pub(super) const RULE_BENCHMARK_ROLE: &str = "BENCHMARK-ROLE-1";
+pub(super) const RULE_BENCHMARK_PACKAGE: &str = "BENCHMARK-PACKAGE-1";
+pub(super) const RULE_BENCHMARK_PUBLISH: &str = "BENCHMARK-PUBLISH-1";
+pub(super) const RULE_BENCHMARK_BUILD: &str = "BENCHMARK-BUILD-1";
+const RULE_BENCHMARK_REVERSE: &str = "BENCHMARK-REVERSE-1";
+const RULE_BENCHMARK_LOCAL_REVIEW: &str = "BENCHMARK-LOCAL-1";
+const RULE_BENCHMARK_EXTERNAL_REVIEW: &str = "EXT-BENCHMARK-1";
 const RULE_DOMAIN_LOCAL_REVIEW: &str = "DOMAIN-LOCAL-PROD-1";
 const RULE_ENGINE_LOCAL_REVIEW: &str = "ENGINE-LOCAL-PROD-1";
 const RULE_LOCAL_DEV_REVIEW: &str = "DEV-LOCAL-1";
@@ -19,11 +26,13 @@ const RULE_ENGINE_EXTERNAL: &str = "EXT-ENGINE-PROD-1";
 const RULE_REVIEW_REGISTRY: &str = "POLICY-REVIEW-1";
 const RULE_DOMAIN_DAG: &str = "DOMAIN-DAG-1";
 
-/// A dependency layer in the workspace's production architecture.
+/// A package role in the workspace architecture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Layer {
     /// The explicitly registered workspace-maintenance tooling package.
     Tooling,
+    /// A non-production measurement package that consumes public production APIs.
+    Benchmark,
     /// F0 portable shared contracts.
     FeatureFoundation,
     /// F1 portable algorithms.
@@ -178,6 +187,10 @@ const REVIEWED_EXTERNAL_DEPENDENCIES: &[ReviewedDependency] = &[
     },
 ];
 
+// Benchmark edges are added only with a real measurement and an exact rationale. The empty
+// pre-Phase 10 registry intentionally authorizes no speculative dependency.
+const REVIEWED_BENCHMARK_DEPENDENCIES: &[ReviewedDependency] = &[];
+
 // Workspace-local development edges are reviewed independently from production direction.
 const REVIEWED_LOCAL_DEV_DEPENDENCIES: &[ReviewedDependency] = &[ReviewedDependency {
     source: "inference-runtime",
@@ -213,6 +226,11 @@ pub(super) fn policy_configuration_failures() -> Vec<PolicyConfigurationFailure>
     review_table_failures(
         "external dependency reviews",
         REVIEWED_EXTERNAL_DEPENDENCIES,
+        &mut failures,
+    );
+    review_table_failures(
+        "benchmark dependency reviews",
+        REVIEWED_BENCHMARK_DEPENDENCIES,
         &mut failures,
     );
     review_table_failures(
@@ -316,6 +334,53 @@ fn reviewed_graph_is_acyclic(reviewed_dependencies: &[ReviewedDependency]) -> bo
     visited == graph.len()
 }
 
+pub(super) fn local_dependency_policy(
+    source_name: &str,
+    source_layer: Layer,
+    target_name: &str,
+    target_layer: Layer,
+    kind: DependencyKind,
+) -> Option<PolicyFailure> {
+    if target_layer == Layer::Benchmark {
+        return Some(PolicyFailure {
+            rule: RULE_BENCHMARK_REVERSE,
+            reason: "production, tooling, and test packages cannot depend on benchmark packages; benchmark code is an outer consumer only".to_owned(),
+        });
+    }
+    if source_layer == Layer::Benchmark {
+        if kind == DependencyKind::Build {
+            return Some(PolicyFailure {
+                rule: RULE_BENCHMARK_BUILD,
+                reason:
+                    "benchmark packages cannot use build dependencies or custom build-time behavior"
+                        .to_owned(),
+            });
+        }
+        return reviewed_dependency(
+            REVIEWED_BENCHMARK_DEPENDENCIES,
+            source_name,
+            target_name,
+            kind,
+        )
+        .map_or_else(
+            || {
+                Some(PolicyFailure {
+                    rule: RULE_BENCHMARK_LOCAL_REVIEW,
+                    reason: "benchmark packages may consume only exact reviewed public production APIs needed by an implemented measurement".to_owned(),
+                })
+            },
+            |_| None,
+        );
+    }
+
+    match kind {
+        DependencyKind::Normal | DependencyKind::Build => {
+            local_production_policy(source_name, source_layer, target_name, target_layer, kind)
+        }
+        DependencyKind::Development => local_development_policy(source_name, target_name, kind),
+    }
+}
+
 pub(super) fn local_production_policy(
     source_name: &str,
     source_layer: Layer,
@@ -326,7 +391,7 @@ pub(super) fn local_production_policy(
     if !allows_production(source_layer, target_layer) {
         return Some(PolicyFailure {
             rule: RULE_PRODUCTION_DIRECTION,
-            reason: "normal and build dependencies must follow the declared 8-layer production direction matrix".to_owned(),
+            reason: "normal and build dependencies must follow the declared 9-role workspace dependency matrix".to_owned(),
         });
     }
 
@@ -414,6 +479,23 @@ pub(super) fn external_policy(
     target_name: &str,
     kind: DependencyKind,
 ) -> Option<PolicyFailure> {
+    if source_layer == Layer::Benchmark {
+        if kind == DependencyKind::Build {
+            return Some(PolicyFailure {
+                rule: RULE_BENCHMARK_BUILD,
+                reason:
+                    "benchmark packages cannot use build dependencies or custom build-time behavior"
+                        .to_owned(),
+            });
+        }
+        return reviewed_external_or_failure(
+            source_name,
+            target_name,
+            kind,
+            RULE_BENCHMARK_EXTERNAL_REVIEW,
+            "benchmark external dependencies require an exact review tied to an implemented measurement",
+        );
+    }
     if kind == DependencyKind::Development {
         return reviewed_dependency(
             REVIEWED_EXTERNAL_DEPENDENCIES,
@@ -464,6 +546,13 @@ pub(super) fn external_policy(
             )
         }
         Layer::Adapter | Layer::Application => None,
+        Layer::Benchmark => reviewed_external_or_failure(
+            source_name,
+            target_name,
+            kind,
+            RULE_BENCHMARK_EXTERNAL_REVIEW,
+            "benchmark external dependencies require an exact review tied to an implemented measurement",
+        ),
     }
 }
 
@@ -523,6 +612,9 @@ pub(super) fn classify_manifest(root: &Path, manifest: &Path) -> Option<Layer> {
     if relative == Path::new("tools/xtask/Cargo.toml") {
         return Some(Layer::Tooling);
     }
+    if relative == Path::new("benchmarks/runtime/Cargo.toml") {
+        return Some(Layer::Benchmark);
+    }
     if relative.file_name()? != "Cargo.toml" {
         return None;
     }
@@ -561,6 +653,15 @@ pub(super) fn is_direct_child(path: &Path, parent: &Path) -> bool {
 const fn allows_production(source: Layer, target: Layer) -> bool {
     match source {
         Layer::Tooling | Layer::FeatureFoundation => false,
+        Layer::Benchmark => matches!(
+            target,
+            Layer::FeatureFoundation
+                | Layer::FeatureAlgorithm
+                | Layer::Adapter
+                | Layer::EngineFoundation
+                | Layer::EngineCapability
+                | Layer::EngineApplication
+        ),
         Layer::FeatureAlgorithm => {
             matches!(target, Layer::FeatureFoundation | Layer::FeatureAlgorithm)
         }
@@ -593,17 +694,20 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        DependencyKind, Layer, REVIEWED_DOMAIN_PRODUCTION_DEPENDENCIES,
-        REVIEWED_ENGINE_PRODUCTION_DEPENDENCIES, REVIEWED_EXTERNAL_DEPENDENCIES,
-        REVIEWED_LOCAL_DEV_DEPENDENCIES, RULE_DOMAIN_LOCAL_REVIEW, RULE_ENGINE_EXTERNAL,
-        RULE_ENGINE_LOCAL_REVIEW, RULE_EXTERNAL_DEV_REVIEW, RULE_F0_EXTERNAL, RULE_F1_EXTERNAL,
-        ReviewedDependency, allows_production, classify_manifest, external_policy,
-        local_production_policy, policy_configuration_failures, review_table_failures,
-        reviewed_dependency, reviewed_graph_is_acyclic,
+        DependencyKind, Layer, REVIEWED_BENCHMARK_DEPENDENCIES,
+        REVIEWED_DOMAIN_PRODUCTION_DEPENDENCIES, REVIEWED_ENGINE_PRODUCTION_DEPENDENCIES,
+        REVIEWED_EXTERNAL_DEPENDENCIES, REVIEWED_LOCAL_DEV_DEPENDENCIES, RULE_BENCHMARK_BUILD,
+        RULE_BENCHMARK_LOCAL_REVIEW, RULE_BENCHMARK_REVERSE, RULE_DOMAIN_LOCAL_REVIEW,
+        RULE_ENGINE_EXTERNAL, RULE_ENGINE_LOCAL_REVIEW, RULE_EXTERNAL_DEV_REVIEW, RULE_F0_EXTERNAL,
+        RULE_F1_EXTERNAL, ReviewedDependency, allows_production, classify_manifest,
+        external_policy, local_dependency_policy, local_production_policy,
+        policy_configuration_failures, review_table_failures, reviewed_dependency,
+        reviewed_graph_is_acyclic,
     };
 
-    const LAYERS: [Layer; 8] = [
+    const LAYERS: [Layer; 9] = [
         Layer::Tooling,
+        Layer::Benchmark,
         Layer::FeatureFoundation,
         Layer::FeatureAlgorithm,
         Layer::Adapter,
@@ -614,17 +718,18 @@ mod tests {
     ];
 
     #[test]
-    fn complete_eight_by_eight_production_layer_matrix_matches_policy() {
+    fn complete_nine_by_nine_workspace_role_matrix_matches_policy() {
         #[rustfmt::skip]
-        const EXPECTED: [[bool; 8]; 8] = [
-            [false, false, false, false, false, false, false, false],
-            [false, false, false, false, false, false, false, false],
-            [false, true,  true,  false, false, false, false, false],
-            [false, true,  true,  false, false, false, false, false],
-            [false, true,  true,  true,  false, false, false, false],
-            [false, true,  true,  true,  true,  false, false, false],
-            [false, true,  true,  true,  true,  true,  false, false],
-            [false, false, false, false, false, false, true,  false],
+        const EXPECTED: [[bool; 9]; 9] = [
+            [false, false, false, false, false, false, false, false, false],
+            [false, false, true,  true,  true,  true,  true,  true,  false],
+            [false, false, false, false, false, false, false, false, false],
+            [false, false, true,  true,  false, false, false, false, false],
+            [false, false, true,  true,  false, false, false, false, false],
+            [false, false, true,  true,  true,  false, false, false, false],
+            [false, false, true,  true,  true,  true,  false, false, false],
+            [false, false, true,  true,  true,  true,  true,  false, false],
+            [false, false, false, false, false, false, false, true,  false],
         ];
 
         for (source, expected_targets) in LAYERS.into_iter().zip(EXPECTED) {
@@ -644,6 +749,10 @@ mod tests {
         let cases = [
             ("Cargo.toml", None),
             ("tools/xtask/Cargo.toml", Some(Layer::Tooling)),
+            ("benchmarks/runtime/Cargo.toml", Some(Layer::Benchmark)),
+            ("benchmarks/experimental/Cargo.toml", None),
+            ("benchmarks/runtime/helper/Cargo.toml", None),
+            ("benchmarks/Cargo.toml", None),
             (
                 "crates/domain/domain-contracts/Cargo.toml",
                 Some(Layer::FeatureFoundation),
@@ -687,6 +796,60 @@ mod tests {
         for (relative, expected) in cases {
             assert_eq!(classify_manifest(root, &root.join(relative)), expected);
         }
+    }
+
+    #[test]
+    fn benchmark_edges_are_outer_only_and_require_exact_review() {
+        for source in LAYERS {
+            if source == Layer::Benchmark {
+                continue;
+            }
+            for kind in [
+                DependencyKind::Normal,
+                DependencyKind::Build,
+                DependencyKind::Development,
+            ] {
+                let failure = local_dependency_policy(
+                    "production-package",
+                    source,
+                    "runtime-benchmarks",
+                    Layer::Benchmark,
+                    kind,
+                );
+                assert_eq!(
+                    failure.map(|failure| failure.rule),
+                    Some(RULE_BENCHMARK_REVERSE)
+                );
+            }
+        }
+
+        assert!(allows_production(
+            Layer::Benchmark,
+            Layer::EngineApplication
+        ));
+        assert_eq!(
+            local_dependency_policy(
+                "runtime-benchmarks",
+                Layer::Benchmark,
+                "application-runtime",
+                Layer::EngineApplication,
+                DependencyKind::Development,
+            )
+            .map(|failure| failure.rule),
+            Some(RULE_BENCHMARK_LOCAL_REVIEW)
+        );
+        assert_eq!(
+            local_dependency_policy(
+                "runtime-benchmarks",
+                Layer::Benchmark,
+                "application-runtime",
+                Layer::EngineApplication,
+                DependencyKind::Build,
+            )
+            .map(|failure| failure.rule),
+            Some(RULE_BENCHMARK_BUILD)
+        );
+        assert!(REVIEWED_BENCHMARK_DEPENDENCIES.is_empty());
     }
 
     #[test]
@@ -950,6 +1113,7 @@ mod tests {
     #[test]
     fn reviewed_dependencies_include_inspectable_rationales() {
         for policy in [
+            REVIEWED_BENCHMARK_DEPENDENCIES,
             REVIEWED_DOMAIN_PRODUCTION_DEPENDENCIES,
             REVIEWED_EXTERNAL_DEPENDENCIES,
             REVIEWED_LOCAL_DEV_DEPENDENCIES,

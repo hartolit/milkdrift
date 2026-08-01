@@ -436,6 +436,7 @@ impl ApplicationRuntime {
                 Ok(event) => return self.process_runtime_event(&event),
                 Err(inference_runtime::RuntimeReceiveError::Timeout) => {}
                 Err(inference_runtime::RuntimeReceiveError::Disconnected) => {
+                    self.shutdown_control.record_inference_disconnect();
                     self.state.disconnect_inference();
                     self.release_incompatible_model_cleanup();
                     self.handle_generation_runtime_disconnected();
@@ -459,7 +460,8 @@ impl ApplicationRuntime {
     ///
     /// # Errors
     ///
-    /// Returns the first worker command, timeout, join, or inference shutdown failure encountered.
+    /// Returns a retained terminal inference shutdown failure when present; otherwise returns the
+    /// first worker command, timeout, or join failure encountered.
     pub fn shutdown(&mut self) -> Result<(), ApplicationError> {
         crate::shutdown::shutdown(self)
     }
@@ -496,6 +498,7 @@ impl ApplicationRuntime {
             Ok(()) => Ok(()),
             Err(LocalSubmitError::Full) => Err(ApplicationError::RuntimeBusy),
             Err(LocalSubmitError::Disconnected) => {
+                self.shutdown_control.record_inference_disconnect();
                 self.state.disconnect_inference();
                 self.release_incompatible_model_cleanup();
                 Err(ApplicationError::RuntimeDisconnected)

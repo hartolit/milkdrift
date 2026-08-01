@@ -1,5 +1,6 @@
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use domain_contracts::{
@@ -30,12 +31,20 @@ struct TestSource;
 
 struct TestLoader {
     fail_unload: bool,
+    counts: Arc<TestCounts>,
+}
+
+#[derive(Default)]
+struct TestCounts {
+    model_drops: AtomicUsize,
+    unload_attempts: AtomicUsize,
 }
 
 struct TestModel {
     handle: ModelHandle,
     descriptor: ModelDescriptor,
     fail_unload: bool,
+    counts: Arc<TestCounts>,
 }
 
 struct TestSequence {
@@ -91,7 +100,14 @@ impl ModelLoader for TestLoader {
             handle: configuration.handle,
             descriptor: self.inspect(source)?,
             fail_unload: self.fail_unload,
+            counts: Arc::clone(&self.counts),
         })
+    }
+}
+
+impl Drop for TestModel {
+    fn drop(&mut self) {
+        self.counts.model_drops.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -180,6 +196,7 @@ impl LoadedModel for TestModel {
     }
 
     fn prepare_unload(&mut self) -> Result<(), SynchronizationError> {
+        self.counts.unload_attempts.fetch_add(1, Ordering::SeqCst);
         if self.fail_unload {
             Err(SynchronizationError::Backend(backend_failure()))
         } else {
@@ -189,7 +206,7 @@ impl LoadedModel for TestModel {
 }
 
 #[test]
-fn disconnected_inference_worker_is_a_successful_shutdown() -> TestResult {
+fn endpoint_disconnection_does_not_independently_prove_clean_shutdown() -> TestResult {
     let (runtime, thread) = test_runtime(false)?;
     let first = shutdown_runtime_worker(&runtime, CommandTicket::new(1), TEST_TIMEOUT, TEST_POLL)
         .map_err(debug_error)?;
@@ -199,7 +216,10 @@ fn disconnected_inference_worker_is_a_successful_shutdown() -> TestResult {
     let second = shutdown_runtime_worker(&runtime, CommandTicket::new(2), TEST_TIMEOUT, TEST_POLL)
         .map_err(debug_error)?;
     assert_eq!(second, RuntimeShutdown::Disconnected);
-    assert_eq!(normalize_runtime_shutdown(second), Ok(()));
+    assert_eq!(
+        normalize_runtime_shutdown(second),
+        Err(ApplicationError::RuntimeDisconnected)
+    );
     Ok(())
 }
 
@@ -270,8 +290,8 @@ fn shutdown_cancels_active_request_and_unloads_model() -> TestResult {
 }
 
 #[test]
-fn failed_cleanup_shutdown_stops_worker_without_dropping_client() -> TestResult {
-    let (runtime, thread) = test_runtime(true)?;
+fn failed_cleanup_shutdown_retains_runtime_until_process_exit() -> TestResult {
+    let (runtime, thread, counts) = test_runtime_with_counts(true)?;
     let _loaded = load_model(&runtime, 20)?;
 
     let outcome =
@@ -305,6 +325,22 @@ fn failed_cleanup_shutdown_stops_worker_without_dropping_client() -> TestResult 
     ));
 
     thread.join().map_err(debug_error)?;
+    drop(runtime);
+    assert_eq!(counts.unload_attempts.load(Ordering::SeqCst), 3);
+    assert_eq!(counts.model_drops.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[test]
+fn endpoint_disconnection_retains_failed_cleanup_until_process_exit() -> TestResult {
+    let (runtime, thread, counts) = test_runtime_with_counts(true)?;
+    let _loaded = load_model(&runtime, 30)?;
+
+    drop(runtime);
+    thread.join().map_err(debug_error)?;
+
+    assert_eq!(counts.unload_attempts.load(Ordering::SeqCst), 3);
+    assert_eq!(counts.model_drops.load(Ordering::SeqCst), 0);
     Ok(())
 }
 
@@ -322,6 +358,13 @@ fn deadline_overflow_is_rejected_as_invalid_configuration() {
 }
 
 fn test_runtime(fail_unload: bool) -> Result<(HostedRuntime<TestSource>, RuntimeThread), String> {
+    let (runtime, thread, _counts) = test_runtime_with_counts(fail_unload)?;
+    Ok((runtime, thread))
+}
+
+fn test_runtime_with_counts(
+    fail_unload: bool,
+) -> Result<(HostedRuntime<TestSource>, RuntimeThread, Arc<TestCounts>), String> {
     let limits = RuntimeLimits::new(
         NonZeroU32::MIN,
         NonZeroU32::MIN,
@@ -335,8 +378,17 @@ fn test_runtime(fail_unload: bool) -> Result<(HostedRuntime<TestSource>, Runtime
         NonZeroUsize::new(4).unwrap_or(NonZeroUsize::MIN),
         NonZeroU64::MIN,
     );
-    start_hosted_runtime(TestLoader { fail_unload }, limits, configuration)
-        .map_err(|error| error.to_string())
+    let counts = Arc::new(TestCounts::default());
+    let (runtime, thread) = start_hosted_runtime(
+        TestLoader {
+            fail_unload,
+            counts: Arc::clone(&counts),
+        },
+        limits,
+        configuration,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok((runtime, thread, counts))
 }
 
 fn load_model(runtime: &HostedRuntime<TestSource>, ticket: u64) -> Result<LoadReceipt, String> {

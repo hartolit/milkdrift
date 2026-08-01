@@ -12,7 +12,7 @@ Generated token IDs and ordered terminal state use `host-runtime`'s preallocated
 
 ## Test coverage
 
-`tests/native_backend_generation.rs` contains ordinary, download-free Candle real-fixture tests. They drive `CandleLlamaLoader` through the hosted E0 scheduler and cover model load, deterministic greedy and seeded sampling, EOS and token-limit completion, output backpressure, cancellation, sequence cleanup and release, unload, empty post-unload state, shutdown, and worker join. Deterministic test loaders in `tests/generation.rs`, `tests/runtime.rs`, and `tests/fault_injection.rs` retain backend-independent E0 contract and failure-path coverage without requiring a native model implementation.
+`tests/native_backend_generation.rs` contains ordinary, download-free Candle tests over the project-generated synthetic fixture documented in `tests/fixtures/candle-llama/PROVENANCE.md`. They drive `CandleLlamaLoader` through the hosted E0 scheduler and cover model load, deterministic greedy and seeded sampling, EOS and token-limit completion, output backpressure, cancellation, sequence cleanup and release, unload, empty post-unload state, shutdown, and worker join. Deterministic test loaders in `tests/generation.rs`, `tests/runtime.rs`, and `tests/fault_injection.rs` retain backend-independent E0 contract and failure-path coverage without requiring a native model implementation.
 
 ## Opt-in local diagnostic
 

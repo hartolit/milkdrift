@@ -188,16 +188,19 @@ The worker sends exactly one shutdown result and terminates after that event is
 delivered.
 
 Shutdown consumes the remaining finite retry budget. If ownership still remains,
-it returns `CleanupRetryExhausted` and does not report successful shutdown. Failed
-explicit cleanup preserves the unresolved runtime allocation rather than falling
-back to an unverified implicit backend drop. The same preservation rule applies
-when client endpoints disconnect before cleanup can complete.
+it returns `CleanupRetryExhausted` and does not report successful shutdown. The
+worker disposition is `RetainUntilProcessExit`: after the structured result is
+published, the complete runtime is deliberately forgotten and the worker exits.
+This is terminal failure, not a cleanup retry. No owner remains to inspect or retry
+the retained allocation, and process termination is its reclamation boundary.
+The same fail-closed retention rule applies when client endpoints disconnect before
+cleanup can complete, although no endpoint remains to receive the result.
 
 ## Production Candle integration and backend-independent tests
 
 Ordinary scheduler and fault-injection coverage remains backend-independent. Deterministic test loaders in `tests/generation.rs`, `tests/runtime.rs`, and `tests/fault_injection.rs` exercise transaction rollback, descriptor/receipt verification, sampling, fairness, cancellation, output backpressure, cleanup retry/exhaustion, unload, accounting, disconnection, and shutdown without requiring another production engine.
 
-`tests/native_backend_generation.rs` is the download-free real-adapter E0 contract. It drives the committed tiny Safetensors fixture through `CandleLlamaLoader` and the hosted scheduler. The two tests cover:
+`tests/native_backend_generation.rs` is the download-free real-adapter E0 contract. It drives the committed project-generated synthetic Safetensors fixture through `CandleLlamaLoader` and the hosted scheduler. The fixture uses no external weights or tokenizer assets; its deterministic Rust/Cargo generator, tensor construction, Apache-2.0 licensing, exact sizes/hashes, provenance audit, and integration-only scope are recorded in [`tests/fixtures/candle-llama/PROVENANCE.md`](../../crates/runtime/inference-runtime/tests/fixtures/candle-llama/PROVENANCE.md). The two tests cover:
 
 - model inspection, admission, load, and descriptor verification;
 - prompt prefill and incremental decode through `RuntimeCommand::Generate`;

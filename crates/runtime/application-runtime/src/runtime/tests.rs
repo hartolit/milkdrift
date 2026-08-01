@@ -6,7 +6,10 @@ use std::time::{Duration, Instant};
 
 use domain_contracts::{CancellationReason, FinishReason, RequestId, TokenId};
 use hf_hub_adapter::{ArtifactScalarType, ResolvedSafetensorsLlamaArtifacts};
-use inference_runtime::{RuntimeCommand, RuntimeEvent};
+use inference_runtime::{
+    CleanupFailureReport, CleanupResource, CleanupRetryState, FailureClass, RuntimeCommand,
+    RuntimeError, RuntimeEvent, RuntimeOperation,
+};
 
 use super::{
     ApplicationRuntime, IncompatibleModelUnload, MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS,
@@ -30,6 +33,22 @@ const REVISION: &str = "phase7";
 const COMMIT: &str = "fixture";
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 const TEST_POLL: Duration = Duration::from_millis(1);
+
+const fn terminal_cleanup_failure() -> RuntimeError {
+    RuntimeError::CleanupRetryExhausted(CleanupRetryState {
+        resource: CleanupResource::Model {
+            model_id: domain_contracts::ModelId::new(1),
+        },
+        failure: CleanupFailureReport::new(
+            RuntimeOperation::Shutdown,
+            FailureClass::Shutdown,
+            RuntimeOperation::ModelUnload,
+            FailureClass::Synchronization,
+        ),
+        attempts: 3,
+        maximum_attempts: 3,
+    })
+}
 
 static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -671,8 +690,12 @@ fn incompatible_model_cleanup_exhaustion_remains_accounted() -> TestResult {
 }
 
 #[test]
-fn application_reports_inference_worker_disconnection() -> TestResult {
-    with_runtime(default_test_configuration, |runtime| {
+fn application_retains_inference_worker_disconnection_as_terminal() -> TestResult {
+    let database_path = unique_database_path();
+    let test_result = (|| {
+        let mut configuration = ApplicationRuntimeConfiguration::desktop(&database_path);
+        default_test_configuration(&mut configuration);
+        let mut runtime = ApplicationRuntime::start(configuration).map_err(application_error)?;
         let ticket = runtime.next_ticket().map_err(application_error)?;
         runtime
             .submit_inference(RuntimeCommand::Shutdown { ticket })
@@ -696,13 +719,28 @@ fn application_reports_inference_worker_disconnection() -> TestResult {
             .join()
             .map_err(|error| format!("inference worker join failed: {error:?}"))?;
 
-        let event = wait_for_event(runtime, |event| {
+        let event = wait_for_event(&mut runtime, |event| {
             matches!(event, ApplicationEvent::RuntimeDisconnected)
         })?;
         assert_eq!(event, ApplicationEvent::RuntimeDisconnected);
         assert!(!runtime.state().inference_available());
+        assert_eq!(
+            runtime.shutdown(),
+            Err(ApplicationError::RuntimeDisconnected)
+        );
+        assert_eq!(
+            runtime.shutdown_control.status,
+            ShutdownStatus::TerminalFailure
+        );
+        assert_eq!(
+            runtime.shutdown(),
+            Err(ApplicationError::RuntimeDisconnected)
+        );
         Ok(())
-    })
+    })();
+
+    let cleanup_result = remove_database(&database_path);
+    test_result.and(cleanup_result)
 }
 
 #[test]
@@ -806,7 +844,7 @@ fn shutdown_retries_retained_worker_joins_after_timeout() -> TestResult {
         );
         assert_eq!(
             runtime.shutdown_control.status,
-            ShutdownStatus::FailedOrRetryable
+            ShutdownStatus::RetryableFailure
         );
         assert!(runtime.local.thread_is_present());
         assert!(runtime.hub_thread.is_some());
@@ -826,6 +864,48 @@ fn shutdown_retries_retained_worker_joins_after_timeout() -> TestResult {
 }
 
 #[test]
+fn terminal_cleanup_failure_remains_sticky_after_worker_join() -> TestResult {
+    let database_path = unique_database_path();
+    let test_result = (|| {
+        let mut configuration = ApplicationRuntimeConfiguration::desktop(&database_path);
+        default_test_configuration(&mut configuration);
+        let mut runtime = ApplicationRuntime::start(configuration).map_err(application_error)?;
+        runtime.shutdown_control.forced_runtime_shutdown_failure = Some(terminal_cleanup_failure());
+        runtime.shutdown_control.forced_runtime_join_timeouts = 1;
+
+        let first_error = match runtime.shutdown() {
+            Ok(()) => return Err("terminal cleanup failure was reported as success".to_owned()),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            &first_error,
+            ApplicationError::Failure(ApplicationFailure {
+                kind: ApplicationFailureKind::Inference,
+                message,
+            }) if message.contains("CleanupRetryExhausted")
+        ));
+        assert_eq!(
+            runtime.shutdown_control.status,
+            ShutdownStatus::TerminalFailure
+        );
+        assert!(runtime.local.thread_is_present());
+
+        assert_eq!(runtime.shutdown(), Err(first_error.clone()));
+        assert_eq!(
+            runtime.shutdown_control.status,
+            ShutdownStatus::TerminalFailure
+        );
+        assert!(!runtime.local.thread_is_present());
+        assert!(runtime.hub_thread.is_none());
+        assert_eq!(runtime.shutdown(), Err(first_error));
+        Ok(())
+    })();
+
+    let cleanup_result = remove_database(&database_path);
+    test_result.and(cleanup_result)
+}
+
+#[test]
 fn explicit_application_shutdown_disconnects_and_joins_worker() -> TestResult {
     with_runtime(default_test_configuration, |runtime| {
         runtime.shutdown().map_err(application_error)?;
@@ -837,6 +917,8 @@ fn explicit_application_shutdown_disconnects_and_joins_worker() -> TestResult {
         assert!(!runtime.state().inference_available());
         assert!(runtime.hub_thread.is_none());
         assert!(!runtime.local.thread_is_present());
+        assert_eq!(runtime.shutdown_control.status, ShutdownStatus::Stopped);
+        runtime.shutdown().map_err(application_error)?;
         assert_eq!(runtime.shutdown_control.status, ShutdownStatus::Stopped);
         Ok(())
     })

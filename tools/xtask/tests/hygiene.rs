@@ -239,6 +239,124 @@ fn historical_names_and_superseded_adrs_do_not_bypass_scanning() -> Result<(), B
 }
 
 #[test]
+fn tracked_build_and_benchmark_artifacts_fail_closed() -> Result<(), Box<dyn Error>> {
+    let repository = FixtureRepository::new(
+        "generated-artifacts",
+        &[
+            ("Cargo.toml", BASIC_MANIFEST),
+            ("src/lib.rs", BASIC_SOURCE),
+            ("target/debug/output", "generated\n"),
+            ("crates/domain/sampling/target/report", "generated\n"),
+            ("benchmarks/runtime/Cargo.lock", "version = 4\n"),
+            ("benchmarks/runtime/results/report.json", "{}\n"),
+            ("benchmarks/runtime/model-cache/blob", "cached\n"),
+            ("benchmarks/runtime/.cache/hub/blob", "cached\n"),
+            ("benchmarks/runtime/build.rs", "fn main() {}\n"),
+        ],
+    )?;
+    let report = validate_repository_hygiene(&repository.manifest())?;
+
+    for (path, rule) in [
+        ("target/debug/output", "HYGIENE-TARGET-1"),
+        ("crates/domain/sampling/target/report", "HYGIENE-TARGET-1"),
+        ("benchmarks/runtime/Cargo.lock", "HYGIENE-BENCHMARK-LOCK-1"),
+        (
+            "benchmarks/runtime/results/report.json",
+            "HYGIENE-BENCHMARK-OUTPUT-1",
+        ),
+        (
+            "benchmarks/runtime/model-cache/blob",
+            "HYGIENE-MODEL-CACHE-1",
+        ),
+        (
+            "benchmarks/runtime/.cache/hub/blob",
+            "HYGIENE-MODEL-CACHE-1",
+        ),
+        ("benchmarks/runtime/build.rs", "HYGIENE-BENCHMARK-BUILD-1"),
+    ] {
+        assert!(report.violations().iter().any(|violation| {
+            violation.path() == Some(Path::new(path)) && violation.rule() == rule
+        }));
+    }
+    Ok(())
+}
+
+#[test]
+fn benchmark_manifests_must_be_known_root_workspace_members() -> Result<(), Box<dyn Error>> {
+    let repository = FixtureRepository::new(
+        "benchmark-membership",
+        &[
+            ("Cargo.toml", BASIC_MANIFEST),
+            ("src/lib.rs", BASIC_SOURCE),
+            (
+                "benchmarks/runtime/Cargo.toml",
+                "[package]\nname = \"runtime-benchmarks\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n",
+            ),
+            (
+                "benchmarks/experimental/Cargo.toml",
+                "[package]\nname = \"experimental-benchmarks\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n",
+            ),
+        ],
+    )?;
+    let report = validate_repository_hygiene(&repository.manifest())?;
+
+    assert!(report.violations().iter().any(|violation| {
+        violation.path() == Some(Path::new("benchmarks/runtime/Cargo.toml"))
+            && violation.rule() == "HYGIENE-BENCHMARK-MEMBER-1"
+    }));
+    assert!(report.violations().iter().any(|violation| {
+        violation.path() == Some(Path::new("benchmarks/experimental/Cargo.toml"))
+            && violation.rule() == "HYGIENE-BENCHMARK-LAYOUT-1"
+    }));
+    Ok(())
+}
+
+#[test]
+fn nearby_source_and_fixture_paths_remain_allowed() -> Result<(), Box<dyn Error>> {
+    let repository = FixtureRepository::new(
+        "allowed-artifact-neighbors",
+        &[
+            ("Cargo.toml", BASIC_MANIFEST),
+            ("src/lib.rs", BASIC_SOURCE),
+            ("docs/target.md", "documentation\n"),
+            ("benches/generated_cases.rs", "pub fn cases() {}\n"),
+            ("fixtures/model-cache-key.txt", "key\n"),
+            ("crates/apps/desktop-slint/build.rs", "fn main() {}\n"),
+            (
+                "crates/runtime/inference-runtime/tests/fixtures/model.safetensors",
+                "synthetic fixture\n",
+            ),
+        ],
+    )?;
+    let report = validate_repository_hygiene(&repository.manifest())?;
+
+    assert!(
+        report.is_valid(),
+        "allowed artifact-neighbor violations: {:#?}",
+        report.violations()
+    );
+    Ok(())
+}
+
+#[test]
+fn repository_ignores_target_directories_at_every_depth() -> Result<(), Box<dyn Error>> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for path in [
+        "target/debug/output",
+        "crates/domain/sampling/target/debug/output",
+        "benchmarks/runtime/target/criterion/report",
+    ] {
+        run(
+            Command::new("git")
+                .args(["check-ignore", "--quiet", path])
+                .current_dir(&root),
+            "check recursive target ignore policy",
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
 fn negative_policy_text_is_allowed_without_substring_false_positives() -> Result<(), Box<dyn Error>>
 {
     let repository = FixtureRepository::new(

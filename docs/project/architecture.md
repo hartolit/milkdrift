@@ -4,11 +4,12 @@ This project selects **[Model B: Layered Workspace](../architecture.md#model-b-l
 
 ## Physical layout and logical roles
 
-The root `Cargo.toml` is a virtual workspace manifest, not a package. `.cargo/config.toml` provides the workspace-local `cargo xtask` alias, and `tools/xtask` is the sole registered custom tooling member. Product code remains in five responsibility-based categories:
+The root `Cargo.toml` is a virtual workspace manifest, not a package. `.cargo/config.toml` provides the workspace-local `cargo xtask` alias, and `tools/xtask` is the sole registered custom tooling member. Product code remains in five responsibility-based categories. The future `benchmarks/runtime` package is a separately classified non-production observer and is not present before Phase 10:
 
 ```text
 .cargo/             workspace-local Cargo configuration
 tools/xtask/        architecture, hygiene, and composite verification tooling
+benchmarks/runtime/ future cross-crate measurement package; not yet created
 crates/domain/      portable contracts and algorithms
 crates/platform/    process-host execution primitives
 crates/adapters/    external, vendor, model, and persistence integrations
@@ -33,6 +34,8 @@ capability engines     inference-runtime (E0 local inference)
 ```
 
 E1 may coordinate capability engines and E0. Its current private local composition owns one monomorphized Candle E0 worker/thread, one bounded Hub resolver worker, one concrete Hugging Face tokenizer path, and request-local Hugging Face streaming decoders. A capability engine may use E0, platform services, adapters, and domain code when its own lifecycle requires them. Neither capability engines nor E0 depend on E1. Applications depend on E1 rather than reconstructing application state machines.
+
+The future `runtime-benchmarks` package sits outside the product graph and depends inward on exact reviewed public production APIs. No production, tooling, test, or application package may depend on it. Directory placement alone does not authorize another benchmark package, and benchmark helpers do not become public product APIs merely to ease measurement.
 
 ## Domain tiers
 
@@ -117,7 +120,7 @@ Model and sequence values are exclusively owned by E0 rather than shared through
 
 Admission validates capacities and accounting before state becomes visible. Cleanup failure does not imply release: unresolved E0 resources remain quarantined and accounted through retry and exhaustion. If a loaded receipt is incompatible with E1's resolution/tokenizer evidence, E1 does not publish it as loaded; it privately retains the model handle and cleanup state while E0 retains ownership/accounting, including after unload-submission or E0 cleanup exhaustion. Detailed behavior belongs in [inference runtime](inference-runtime.md), [model lifecycle](lifecycle.md), and [application runtime](application-runtime.md).
 
-Explicit bounded shutdown is required for normal operation; blocking `Drop` is not the primary protocol. E1 tracks running, stopping, stopped, and failed/retryable shutdown states, requests Hub shutdown, sends one ticketed E0 shutdown command, and attempts bounded joins for both workers even after an earlier error. A timeout leaves unfinished worker handles owned by E1 so a later shutdown call can retry; timeout is not worker detachment. See [ADR-0006](../agent/decisions/0006-explicit-bounded-shutdown.md).
+Explicit bounded shutdown is required for normal operation; blocking `Drop` is not the primary protocol. E1 distinguishes running, stopping, cleanly stopped, retryable failure, and terminal failure. A timeout leaves unfinished worker handles owned by E1 so a later shutdown call can retry and may complete cleanly. In contrast, E0 cleanup exhaustion is terminal: E0 publishes the structured failure, deliberately retains the runtime allocation until process exit rather than invoking unverified backend destruction, and terminates. E1 retains that failure independently from the join handle and never infers clean success from handle absence. See [ADR-0006](../agent/decisions/0006-explicit-bounded-shutdown.md).
 
 ## Current product constraints
 
@@ -132,7 +135,7 @@ The authoritative integration and validation matrix is in [implementation status
 
 ## Enforcement
 
-`cargo xtask architecture` loads typed locked Cargo metadata, fails closed on unknown workspace locations and unresolved local path targets, distinguishes dependency kinds, and enforces the logical direction F0/F1 → platform/adapters → E0/capabilities → E1 → applications. `tools/xtask` is the sole tooling package recognized outside those product layers.
+`cargo xtask architecture` loads typed locked Cargo metadata, fails closed on unknown workspace locations and unresolved local path targets, distinguishes dependency kinds, and enforces the logical direction F0/F1 → platform/adapters → E0/capabilities → E1 → applications. `tools/xtask` is the sole tooling package, and `benchmarks/runtime` is the sole recognized future benchmark role outside those product layers.
 
 `inference-runtime`, `corrective-workflow`, and `application-runtime` are the recognized E0, capability, and E1 packages; `host-runtime` is the only recognized platform package. Domain production dependencies are exact entries in the reviewed acyclic domain graph. Runtime production dependencies on adapters/platform or other runtimes likewise require exact reviewed source/target/kind entries. `cargo xtask hygiene` is the independent repository-hygiene check; `cargo xtask verify` runs both policies before the ordinary Cargo gates. [Dependency policy](dependency-policy.md) owns the review rules and hygiene boundary.
 

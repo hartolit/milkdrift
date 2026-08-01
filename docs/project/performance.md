@@ -10,6 +10,37 @@ Allocation tests remain deterministic enforcement gates. The canonical `cargo xt
 cargo bench --locked -p sampling --bench sampling_pipeline
 ```
 
+## Benchmark placement and repository artifacts
+
+A benchmark for one stable crate-owned operation lives in that crate's conventional `benches/` directory. Create the directory only with a real benchmark that executes production code and answers a named performance or regression question. Do not create placeholder benchmark directories or add a component measurement merely because a crate appears in a plan checklist.
+
+Cross-crate E0/E1 and product-level measurements belong only in the future root-workspace package `benchmarks/runtime` (`runtime-benchmarks`). That package is not present and Phase 10 has not started. When created, it:
+
+- is registered in root `workspace.members` before Cargo is run against its manifest;
+- uses the root `Cargo.lock` and root `target`;
+- declares `publish = false` and no custom build target or `build.rs`;
+- depends only on exact reviewed public production APIs;
+- receives no dependency from a production/tooling/test/application package.
+
+A shared benchmark-support package requires at least two implemented consumers and a clear owner. Benchmark convenience is not a reason to expose speculative public production APIs.
+
+Raw Criterion samples/HTML, generated reports, flamegraphs, profiler output, heap dumps, compiler intermediates, and model caches belong under the shared root `target` directory or outside the repository. They are not committed. Curated environment and baseline summaries belong in this document or another explicitly designated canonical path.
+
+Build scripts are not measurement tooling. They must not access the network, download models, run benchmarks, generate results, probe runtime performance metadata, or write into the source tree; benchmark packages have no build script at all.
+
+## Phase 10 entry scope
+
+The mandatory Phase 10 measurements are:
+
+1. expansion of the existing sampling benchmark;
+2. one cross-crate runtime/system harness;
+3. reproducible environment and artifact metadata;
+4. controlled lifecycle and host-memory measurements.
+
+Tokenizer encode/streaming-decode, context-planner, output-accumulator, and isolated Candle prefill/decode microbenchmarks are conditional. Before implementation, each must name its question and explain why the system harness is insufficient.
+
+Real-model measurements use an explicit external model identifier and immutable revision, an existing local cache or explicit local artifact path, and opt-in execution. Ordinary CI performs no model download, and model/tokenizer files are not redistributed through this repository. The committed synthetic Candle fixture is for execution/lifecycle integration, not model-quality or real-model performance measurement.
+
 ## Sampling pipeline
 
 `crates/domain/sampling/benches/sampling_pipeline.rs` measures the production `Sampler::sample` implementation with the default sampling policy and 32,768 logits. Each iteration restores the mutable logit slice, performs top-k selection, probability filtering, and random selection, and returns the selected sample to a compiler black box.
@@ -50,8 +81,8 @@ This allocator observes Rust global-allocator traffic. It does not observe nativ
 
 ## Current product measurements
 
-Historical Candle smoke measurements are preserved in [execution history](../agent/execution/history.md) and apply only to their named baseline. They are not current-tree performance evidence.
+No Phase 10 performance result has been recorded. Historical Candle smoke measurements are preserved in [execution history](../agent/execution/history.md) and apply only to their named baseline. They are not current-tree performance evidence.
 
-The active Rust-native E1 smoke in [validation](validation.md#rust-native-candle-hub-smoke) is a correctness/lifecycle check, not a stable benchmark. A future controlled performance program should measure the current Candle path's time to first token, prefill/decode throughput, cancellation latency, load/unload duration, and host memory with the exact repository, immutable revision, prompt, settings, toolchain, and hardware recorded.
+The active Rust-native E1 smoke in [validation](validation.md#rust-native-candle-hub-smoke) is a correctness/lifecycle check, not a stable benchmark. Phase 10 must measure the current Candle path's time to first token, prefill/decode throughput, cancellation latency, load/unload duration, repeated lifecycle stability, and host memory with the exact repository, immutable revision or fixture hash, prompt, settings, toolchain, hardware, OS/kernel, build profile, and environment controls recorded.
 
 There is no current second local engine or GPU path to compare. Future Candle-native format, quantization, or device work must establish its own controlled baseline rather than inheriting CPU/Safetensors measurements.

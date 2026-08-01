@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use cargo_metadata::{Dependency, Metadata, MetadataCommand, Package};
 
 use super::policy::{
-    DependencyKind, Layer, PolicyFailure, RULE_KNOWN_KIND, RULE_KNOWN_LOCATION, RULE_LOCAL_TARGET,
-    RULE_PLATFORM_ROLE, RULE_RUNTIME_ROLE, classify_manifest, dependency_kind, external_policy,
-    is_direct_child, local_development_policy, local_production_policy,
-    policy_configuration_failures,
+    DependencyKind, Layer, PolicyFailure, RULE_BENCHMARK_BUILD, RULE_BENCHMARK_PACKAGE,
+    RULE_BENCHMARK_PUBLISH, RULE_BENCHMARK_ROLE, RULE_KNOWN_KIND, RULE_KNOWN_LOCATION,
+    RULE_LOCAL_TARGET, RULE_PLATFORM_ROLE, RULE_RUNTIME_ROLE, classify_manifest, dependency_kind,
+    external_policy, is_direct_child, local_dependency_policy, policy_configuration_failures,
 };
 use super::report::{ValidationError, ValidationReport, Violation};
 
@@ -73,6 +73,9 @@ fn validate_metadata(metadata: &Metadata) -> ValidationReport {
             report.push(unknown_package_location(package, root));
             continue;
         };
+        if source_layer == Layer::Benchmark {
+            validate_benchmark_package(&mut report, package, source_layer);
+        }
 
         for dependency in &package.dependencies {
             validate_dependency(
@@ -98,6 +101,8 @@ fn unknown_package_location(package: &Package, root: &Path) -> Violation {
         .is_some_and(|directory| is_direct_child(directory, Path::new("crates/platform")));
     let tooling_location =
         package_directory.is_some_and(|directory| directory.starts_with("tools"));
+    let benchmark_location =
+        package_directory.is_some_and(|directory| directory.starts_with("benchmarks"));
     let (rule, reason) = if runtime_location {
         (
             RULE_RUNTIME_ROLE,
@@ -112,6 +117,11 @@ fn unknown_package_location(package: &Package, root: &Path) -> Violation {
         (
             RULE_KNOWN_LOCATION,
             "tools/xtask is the only classified tooling package; unknown tools fail closed and require an explicit architecture review",
+        )
+    } else if benchmark_location {
+        (
+            RULE_BENCHMARK_ROLE,
+            "benchmarks/runtime is the only recognized cross-crate measurement package; unknown benchmark package paths fail closed",
         )
     } else {
         (
@@ -129,6 +139,50 @@ fn unknown_package_location(package: &Package, root: &Path) -> Violation {
         rule,
         reason.to_owned(),
     )
+}
+
+fn validate_benchmark_package(report: &mut ValidationReport, package: &Package, layer: Layer) {
+    if package.name != "runtime-benchmarks" {
+        report.push(Violation::new(
+            package.name.to_string(),
+            package.manifest_path.to_string(),
+            None,
+            Some(layer),
+            None,
+            RULE_BENCHMARK_PACKAGE,
+            "the package at benchmarks/runtime must be named runtime-benchmarks".to_owned(),
+        ));
+    }
+    if package
+        .publish
+        .as_ref()
+        .is_none_or(|registries| !registries.is_empty())
+    {
+        report.push(Violation::new(
+            package.name.to_string(),
+            package.manifest_path.to_string(),
+            None,
+            Some(layer),
+            None,
+            RULE_BENCHMARK_PUBLISH,
+            "benchmark packages must declare publish = false".to_owned(),
+        ));
+    }
+    if package
+        .targets
+        .iter()
+        .any(cargo_metadata::Target::is_custom_build)
+    {
+        report.push(Violation::new(
+            package.name.to_string(),
+            package.manifest_path.to_string(),
+            None,
+            Some(layer),
+            None,
+            RULE_BENCHMARK_BUILD,
+            "benchmark packages cannot declare a custom build target or build.rs".to_owned(),
+        ));
+    }
 }
 
 fn validate_dependency(
@@ -209,12 +263,8 @@ fn validate_local_dependency(
         return;
     };
 
-    let failure = match kind {
-        DependencyKind::Normal | DependencyKind::Build => {
-            local_production_policy(source_name, source_layer, target_name, target_layer, kind)
-        }
-        DependencyKind::Development => local_development_policy(source_name, target_name, kind),
-    };
+    let failure =
+        local_dependency_policy(source_name, source_layer, target_name, target_layer, kind);
 
     if let Some(failure) = failure {
         report.push(edge_violation(

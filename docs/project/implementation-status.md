@@ -1,11 +1,11 @@
 # Current implementation status
 
 **Status date:** 2026-08-01
-**Prior committed checkpoint:** `f0fe9c6623f1e2afd569767d903f3978e00560da` (tree `db8a9ae77f41e0e769c7434ce21a940ae33784ae`)
-**Current validation scope:** Phase 9 closure working tree based on that checkpoint; CI records the resulting commit and tree externally at runtime
+**Prior committed checkpoint:** `3942a19b97d347fd238c451d2b0a2fcbea287873` (tree `be069879fea9531799038c5189c9edb3007ebf72`)
+**Current validation scope:** pre-Phase 10 lifecycle, benchmark-policy, hygiene, and synthetic-fixture closure based on that clean checkpoint
 **Toolchain observed:** Rust/Cargo 1.96.1; host `x86_64-unknown-linux-gnu`
-**Execution position:** Phase 9 is closed; Phase 10 measurement work is next
-**Validation state:** canonical, focused lifecycle, clean forbidden-tool, portability, dependency-policy, and local-link checks pass; the network-dependent external Hub smoke was not rerun for this structural closure
+**Execution position:** pre-Phase 10 closure is complete; Phase 10 implementation is next and has not started
+**Validation state:** the starting tree passed the canonical gate; focused E0/E1 and `xtask` policy suites pass on the closure working tree; final command evidence is reported against the exact resulting diff rather than predicted here
 **Canonical plan:** [LLM App Execution Plan](../agent/execution/execution-plan.md)
 **Current working context:** [post-Phase 9 execution context](../agent/execution/current.md)
 
@@ -42,11 +42,27 @@ The lifecycle corrections now provide these guarantees:
 
 - startup owns partially created inference state in a rollback guard, attempts bounded shutdown/join if later Hub startup fails, preserves the primary Hub error, and quarantines any unresolved rollback owner for a later bounded reap;
 - a rejected incompatible model remains privately accounted with its handle, compatibility failure, and unload state through successful cleanup, proven runtime disconnection, or observable bounded retry exhaustion;
-- shutdown distinguishes running, stopping, stopped, and failed/retryable outcomes;
-- inference and Hub join handles remain in their owners after a wait timeout, so a later `shutdown()` retries unresolved joins;
-- idempotent shutdown success means both workers were confirmed stopped, not merely that a prior attempt began.
+- shutdown distinguishes running, stopping, cleanly stopped, retryable failure, and terminal failure;
+- inference and Hub join handles remain in their owners after a wait timeout, so a later `shutdown()` retries unresolved joins and may complete cleanly;
+- E0 cleanup exhaustion is terminal: the worker reports the structured failure, retains the runtime allocation until process exit instead of invoking unverified implicit backend destruction, and can still be joined;
+- E1 retains that terminal failure after the inference handle is joined, so later shutdown calls return the same failure rather than inferring success from absent handles;
+- an endpoint disconnection without already observed clean completion does not independently establish clean shutdown.
 
-## Phase 9 structural closure
+## Pre-Phase 10 architecture closure
+
+[ADR-0018](../agent/decisions/0018-benchmark-and-model-fixture-policy.md) establishes measurement ownership without adding a Phase 10 package or suite:
+
+- one crate-owned operation is measured only by a real benchmark in that crate's conventional `benches/` directory;
+- future cross-crate E0/E1 and product measurements live only in `benchmarks/runtime` (`runtime-benchmarks`) as a non-production outer consumer of exact reviewed public APIs;
+- future benchmark packages use the root workspace, lockfile, and target directory, declare `publish = false`, have no build script, and cannot receive production dependencies;
+- tracked nested targets, benchmark lockfiles/build scripts/generated result trees, and model caches fail hygiene checks;
+- raw Criterion/profiler data remains under root `target`, while curated summaries belong in canonical performance documentation.
+
+The prior committed Candle fixture had technically synthetic structure but insufficient recorded authorship and redistribution provenance. It was replaced by a newly generated deterministic F32 Llama fixture produced by project-owned Cargo/Rust tooling without external model or tokenizer assets. Exact old/new sizes, SHA-256 hashes, licensing, tensor construction, and scope are recorded in its [provenance file](../../crates/runtime/inference-runtime/tests/fixtures/candle-llama/PROVENANCE.md).
+
+No Phase 10 performance result has been recorded.
+
+## Phase 9 structural closure (historical baseline)
 
 The root `Cargo.toml` is now a virtual workspace. `tools/xtask` owns custom architecture/hygiene policy and the canonical composite `cargo xtask verify` command. One-step checking, testing, formatting, linting, documentation, and benchmarking use Cargo directly; forwarding subcommands were removed.
 
@@ -79,23 +95,19 @@ Required CI runs the canonical gate from a fresh target directory with fail-fast
 
 ## Current validation evidence
 
-The following completed successfully on the Phase 9 closure working tree based on the prior `f0fe9c6…` checkpoint:
+The clean starting checkpoint `3942a19…` matched freshly fetched `origin/main`, had tree `be06987…`, and passed `cargo xtask verify` before editing. The following focused closure checks then passed on the working tree:
 
 | Command/evidence | Observed result |
 |---|---|
-| `cargo xtask verify` | Passed architecture, hygiene, formatting, all-target workspace checking, ordinary tests/doctests, mandatory Clippy, strict rustdoc, and benchmark compilation |
-| Fresh-target `cargo xtask verify` with failing CMake/Clang/Python/package-manager/Hugging Face CLI shims and non-FIPS AWS-LC CC-builder selection | Passed; no shim was invoked |
-| Focused `application-runtime` tests | Passed 37 unit tests, 3 integration tests, and doctests, including successful startup rollback, retained/reaped ownership after rollback timeout, pre-worker deadline-bound validation, incompatible-cleanup submission failure/exhaustion, and retryable shutdown joins |
-| Focused `inference-runtime`, `task-graph`, `corrective-workflow`, `desktop-slint`, and `xtask` suites | Passed after responsibility-based source splits and `TaskId` ownership migration |
-| Named portability checks for the five portable crates on `wasm32-unknown-unknown` and `thumbv7em-none-eabihf` | Passed |
-| `cargo deny --workspace --locked check advisories bans licenses sources` | Passed; configured duplicate-version findings remain audit warnings |
-| `lychee --config lychee.toml --offline '**/*.md'` | Passed with no local-link errors |
-| Locked metadata, dependency-tree, lockfile, architecture, and hygiene audits | Passed; no removed engine or prohibited Python runtime/binding package is selected |
-| `git diff --check` | Passed |
+| `cargo test --locked -p inference-runtime` | Passed 52 tests/doctests, including deterministic ordinary-unload zero accounting |
+| `cargo test --locked -p application-runtime` | Passed 42 tests/doctests, including retryable joins, sticky terminal cleanup failure, model-drop suppression, and endpoint abandonment/disconnection |
+| `cargo test --locked -p xtask` | Passed 32 unit/integration/doc tests covering benchmark role, reverse edges, package properties, recursive target ignore, root membership, and generated/cache artifact rejection |
+| Explicit Cargo-native fixture generation, repeated twice | Both runs succeeded and produced identical 360-byte config and 4,800-byte Safetensors hashes recorded in the fixture provenance document |
+| `cargo test --locked -p inference-runtime --test native_backend_generation` | Passed both download-free real-adapter lifecycle scenarios against the replacement synthetic fixture |
 
-The opt-in Rust-native external Hub smoke last passed at the prior Candle cleanup checkpoint against `neubla/tiny-random-LlamaForCausalLM` commit `1c81a3fba044af78df253edc66bdbab183184932`. It was not rerun for this structural/lifecycle closure, so that older network result is not presented as exact-tree evidence. Ordinary validation remains download-free.
+The final canonical, policy, link, formatting, and focused Clippy commands remain acceptance requirements in [validation](validation.md); their exact outcomes belong in the execution report or CI log for the resulting diff. This document does not predict a commit or Git tree containing itself.
 
-No manual graphical desktop acceptance session was performed.
+The opt-in Rust-native external Hub smoke was not rerun. It is a network/cache-dependent correctness check, not Phase 10 performance evidence. No manual graphical desktop acceptance session was performed.
 
 ## Known limitations and next work
 
@@ -104,13 +116,13 @@ No manual graphical desktop acceptance session was performed.
 - Chat compatibility is limited to the exact reviewed TinyLlama repository, immutable commit, and tokenizer/EOS evidence.
 - Conversation history is in memory only; persistence and arbitrary branch trees are not implemented.
 - Slint uses E1's default generation settings; no settings panel is exposed.
-- The tiny Candle fixture proves integration rather than language quality.
+- The project-generated tiny Candle fixture proves integration/lifecycle behavior rather than language quality or performance.
 - Strict allocation-free Candle or Hugging Face tokenization/decoding is not claimed because upstream libraries allocate internally.
 - GGUF/quantized loading is unsupported. Possible future work must be Candle-native and separately reviewed.
 - GPU, hosted-provider, peer, remote/browser transport, multiple-model residency, and `application-api` are not implemented.
 - The prior external Hub smoke proves one pinned tiny random model path; it does not establish broad model compatibility or current-tree network behavior.
 
-Phase 10 may now begin with measured sampling, tokenizer, context, output, backend, and end-to-end Candle baselines. It must not treat the correctness smoke as a benchmark or optimize from unmeasured assumptions.
+Phase 10 is the next operation but has not started. Its mandatory scope is the existing sampling-benchmark expansion, one `benchmarks/runtime` system harness, reproducible environment metadata, and controlled lifecycle/memory measurements. Tokenizer, context-planner, output-accumulator, and isolated Candle microbenchmarks are conditional on a named question and a documented reason the system harness is insufficient.
 
 ## Historical context
 
