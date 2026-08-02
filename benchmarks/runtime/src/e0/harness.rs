@@ -1,51 +1,74 @@
-//! Bounded hosted-runtime command, snapshot, shutdown, and join ownership.
+//! Shared hosted-E0 worker, transport, cleanup, and bounded-join ownership.
 
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use candle_backend::{CandleLlamaLoader, CandleLlamaSource};
-use domain_contracts::{BackendId, MemoryBudget, MemoryFootprint, ModelLifecycleState};
+use domain_contracts::{BackendId, MemoryBudget, ModelHandle, ModelId, RequestId, SequenceId};
 use inference_runtime::{
     CommandTicket, HostedRuntime, HostedRuntimeConfiguration, RuntimeCommand, RuntimeEvent,
-    RuntimeLimits, RuntimeSnapshot, RuntimeThread, ShutdownReceipt, start_hosted_runtime,
+    RuntimeLimits, RuntimeThread, ShutdownReceipt, start_hosted_runtime,
 };
 
 use crate::error::{BenchmarkError, BenchmarkResult};
-use crate::memory::process_memory;
-use crate::report::{
-    MemoryFootprintRecord, ModelAccounting, RuntimeAccounting, ShutdownMeasurement,
-    SnapshotCheckpoint, duration_ns,
-};
 
 pub(super) const CANDLE_BACKEND: BackendId = BackendId::new(10_001);
+
+pub(super) const FIXTURE_MODEL_ID: ModelId = ModelId::new(7);
 const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
 const JOIN_TIMEOUT: Duration = Duration::from_secs(10);
 const WAIT_INTERVAL: Duration = Duration::from_millis(1);
+const COMMAND_CAPACITY: usize = 16;
+const EVENT_CAPACITY: usize = 16;
+static RETAINED_WORKERS: Mutex<Vec<RuntimeThread>> = Mutex::new(Vec::new());
 
 pub(super) type CandleRuntime = HostedRuntime<CandleLlamaSource>;
 
-pub(super) struct E0Harness {
-    pub(super) runtime: CandleRuntime,
+/// Raw shutdown timing returned before normal-runner report conversion.
+#[derive(Clone, Copy, Debug)]
+#[doc(hidden)]
+pub struct ShutdownDurations {
+    /// Shutdown submission through the matching shutdown event.
+    pub event: Duration,
+    /// Time spent waiting for completion and joining after the event phase.
+    pub join: Duration,
+    /// Complete shutdown submission through successful join.
+    pub total: Duration,
+}
+
+/// One returned event and only its hosted submission-to-matching-event duration.
+pub(super) struct TimedEvent {
+    pub(super) event: RuntimeEvent,
+    pub(super) elapsed: Duration,
+}
+
+/// Concrete benchmark-only owner for one hosted Candle E0 worker.
+///
+/// Both the normal runner and Criterion target use this owner. It has no `Drop`
+/// cleanup contract; every call site must pass its result through [`Self::finish`].
+#[doc(hidden)]
+pub struct HostedE0Harness {
+    runtime: Option<CandleRuntime>,
     thread: Option<RuntimeThread>,
+    loaded_model: Option<ModelHandle>,
     next_ticket: u64,
+    next_request: u64,
 }
 
-pub(super) struct CapturedSnapshot {
-    pub(super) raw: RuntimeSnapshot,
-    pub(super) models: Vec<inference_runtime::ModelSnapshot>,
-    pub(super) record: SnapshotCheckpoint,
-}
-
-impl E0Harness {
-    pub(super) fn start() -> BenchmarkResult<(Self, Duration)> {
+impl HostedE0Harness {
+    pub(crate) fn start(
+        token_output_capacity: usize,
+        token_output_record_capacity: usize,
+    ) -> BenchmarkResult<(Self, Duration)> {
         let configuration = HostedRuntimeConfiguration::new(
-            nonzero_usize(16, "command capacity")?,
-            nonzero_usize(16, "event capacity")?,
+            nonzero_usize(COMMAND_CAPACITY, "command capacity")?,
+            nonzero_usize(EVENT_CAPACITY, "event capacity")?,
             NonZeroU64::MIN,
         )
         .with_token_output_capacity(
-            NonZeroUsize::MIN,
-            nonzero_usize(128, "token output record capacity")?,
+            nonzero_usize(token_output_capacity, "token output capacity")?,
+            nonzero_usize(token_output_record_capacity, "token output record capacity")?,
         );
         let limits = RuntimeLimits::new(
             NonZeroU32::MIN,
@@ -65,12 +88,20 @@ impl E0Harness {
         let elapsed = started.elapsed();
         Ok((
             Self {
-                runtime,
+                runtime: Some(runtime),
                 thread: Some(thread),
+                loaded_model: None,
                 next_ticket: 1,
+                next_request: 1,
             },
             elapsed,
         ))
+    }
+
+    pub(super) fn runtime(&self) -> BenchmarkResult<&CandleRuntime> {
+        self.runtime
+            .as_ref()
+            .ok_or_else(|| BenchmarkError::new("hosted E0 endpoint is no longer available"))
     }
 
     pub(super) fn ticket(&mut self) -> BenchmarkResult<CommandTicket> {
@@ -82,12 +113,21 @@ impl E0Harness {
         Ok(ticket)
     }
 
+    pub(super) fn request_identity(&mut self) -> BenchmarkResult<(RequestId, SequenceId)> {
+        let value = self.next_request;
+        self.next_request = self
+            .next_request
+            .checked_add(1)
+            .ok_or_else(|| BenchmarkError::new("E0 request identity exhausted"))?;
+        Ok((RequestId::new(value), SequenceId::new(value)))
+    }
+
     pub(super) fn submit(
         &self,
         command: RuntimeCommand<CandleLlamaSource>,
         operation: &str,
     ) -> BenchmarkResult {
-        self.runtime.try_submit(command).map_err(|error| {
+        self.runtime()?.try_submit(command).map_err(|error| {
             BenchmarkError::new(format!("{operation} command was rejected: {error:?}"))
         })
     }
@@ -98,81 +138,158 @@ impl E0Harness {
         operation: &str,
     ) -> BenchmarkResult<RuntimeEvent> {
         let event = self
-            .runtime
+            .runtime()?
             .receive_timeout(EVENT_TIMEOUT)
             .map_err(|error| {
                 BenchmarkError::new(format!(
                     "{operation} event did not arrive within the operational timeout: {error:?}"
                 ))
             })?;
-        if event.ticket() != ticket {
-            return Err(BenchmarkError::new(format!(
-                "{operation} returned ticket {}, expected {}",
-                event.ticket().get(),
-                ticket.get()
-            )));
-        }
+        validate_ticket(&event, ticket, operation)?;
         Ok(event)
     }
 
-    pub(super) fn snapshot(
-        &mut self,
-        checkpoint: &'static str,
-    ) -> BenchmarkResult<CapturedSnapshot> {
-        let ticket = self.ticket()?;
-        self.submit(RuntimeCommand::Snapshot { ticket }, "runtime snapshot")?;
-        let event = self.receive(ticket, "runtime snapshot")?;
-        let RuntimeEvent::Snapshot {
-            runtime, models, ..
-        } = event
-        else {
-            return Err(BenchmarkError::new(
-                "runtime snapshot command returned a non-snapshot event",
-            ));
-        };
-        validate_no_cleanup_failure(&runtime, &models, checkpoint)?;
-        let model_records = models.iter().map(model_accounting).collect();
-        let record = SnapshotCheckpoint {
-            checkpoint,
-            process_memory: process_memory()?,
-            runtime: runtime_accounting(runtime),
-            models: model_records,
-        };
-        Ok(CapturedSnapshot {
-            raw: runtime,
-            models,
-            record,
-        })
+    pub(super) fn timed_exchange(
+        &self,
+        ticket: CommandTicket,
+        command: RuntimeCommand<CandleLlamaSource>,
+        operation: &str,
+    ) -> BenchmarkResult<TimedEvent> {
+        let started = Instant::now();
+        self.submit(command, operation)?;
+        let event = self.receive(ticket, operation)?;
+        let elapsed = started.elapsed();
+        Ok(TimedEvent { event, elapsed })
     }
 
-    pub(super) fn shutdown(
-        &mut self,
-        require_previously_clean: bool,
-    ) -> BenchmarkResult<ShutdownMeasurement> {
-        let ticket = self.ticket()?;
+    pub(super) fn record_loaded_model(&mut self, handle: ModelHandle) -> BenchmarkResult {
+        if self.loaded_model.replace(handle).is_some() {
+            return Err(BenchmarkError::new(
+                "hosted E0 harness observed a second resident model",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn loaded_model(&self) -> BenchmarkResult<ModelHandle> {
+        self.loaded_model
+            .ok_or_else(|| BenchmarkError::new("hosted E0 fixture model is not loaded"))
+    }
+
+    pub(super) fn record_unloaded_model(&mut self, handle: ModelHandle) -> BenchmarkResult {
+        if self.loaded_model != Some(handle) {
+            return Err(BenchmarkError::new(
+                "hosted E0 unload did not match the tracked model",
+            ));
+        }
+        self.loaded_model = None;
+        Ok(())
+    }
+
+    /// Combines a scenario result with unload, shutdown, endpoint release, and join.
+    ///
+    /// Successful scenarios unload a still-resident fixture before requiring a
+    /// previously-clean shutdown receipt. Failed scenarios skip reject-if-busy
+    /// unload and let E0's terminal shutdown path clean active ownership. Cleanup
+    /// failures are appended without replacing the scenario failure.
+    #[doc(hidden)]
+    pub fn finish<T>(
+        mut self,
+        primary: BenchmarkResult<T>,
+    ) -> BenchmarkResult<(T, ShutdownDurations)> {
+        let (value, mut failure) = match primary {
+            Ok(value) => (Some(value), None),
+            Err(error) => (None, Some(error)),
+        };
+
+        if failure.is_none()
+            && self.loaded_model.is_some()
+            && let Err(error) = super::lifecycle::unload_loaded_model(&mut self)
+        {
+            append_failure(&mut failure, error);
+        }
+
+        let require_previously_clean = failure.is_none();
+        let shutdown = match self.shutdown(require_previously_clean) {
+            Ok(durations) => Some(durations),
+            Err(error) => {
+                append_failure(&mut failure, error);
+                None
+            }
+        };
+
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        match (value, shutdown) {
+            (Some(value), Some(shutdown)) => Ok((value, shutdown)),
+            _ => Err(BenchmarkError::new(
+                "hosted E0 finalization lost a successful value or shutdown timing",
+            )),
+        }
+    }
+
+    fn shutdown(&mut self, require_previously_clean: bool) -> BenchmarkResult<ShutdownDurations> {
+        let ticket = self.ticket();
         let total_started = Instant::now();
-        let event_result = self
-            .submit(RuntimeCommand::Shutdown { ticket }, "runtime shutdown")
-            .and_then(|()| self.receive(ticket, "runtime shutdown"));
+        let event_result = ticket.and_then(|ticket| {
+            self.submit(RuntimeCommand::Shutdown { ticket }, "runtime shutdown")?;
+            self.receive_shutdown(ticket, !require_previously_clean)
+        });
         let event_elapsed = total_started.elapsed();
         let event_validation = event_result
             .and_then(|event| validate_shutdown_event(&event, require_previously_clean));
 
+        drop(self.runtime.take());
         let join_started = Instant::now();
         let join_result = self.join_worker(join_started);
+        if join_result.is_err() && self.thread.is_some() {
+            self.retain_unjoined_worker();
+        }
         let join_elapsed = join_started.elapsed();
-        let measurement = ShutdownMeasurement {
-            event_ns: duration_ns(event_elapsed),
-            join_ns: duration_ns(join_elapsed),
-            total_ns: duration_ns(total_started.elapsed()),
+        let durations = ShutdownDurations {
+            event: event_elapsed,
+            join: join_elapsed,
+            total: total_started.elapsed(),
         };
 
         match event_validation {
             Ok(()) => {
                 join_result?;
-                Ok(measurement)
+                Ok(durations)
             }
             Err(error) => Err(error.with_cleanup(join_result)),
+        }
+    }
+
+    fn receive_shutdown(
+        &self,
+        ticket: CommandTicket,
+        tolerate_pending_events: bool,
+    ) -> BenchmarkResult<RuntimeEvent> {
+        if !tolerate_pending_events {
+            return self.receive(ticket, "runtime shutdown");
+        }
+        let deadline = Instant::now()
+            .checked_add(EVENT_TIMEOUT)
+            .ok_or_else(|| BenchmarkError::new("runtime shutdown deadline overflowed"))?;
+        loop {
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .filter(|duration| !duration.is_zero())
+                .ok_or_else(|| {
+                    BenchmarkError::new(
+                        "runtime shutdown event did not arrive within the operational timeout",
+                    )
+                })?;
+            let event = self.runtime()?.receive_timeout(remaining).map_err(|error| {
+                BenchmarkError::new(format!(
+                    "runtime shutdown event did not arrive within the operational timeout: {error:?}"
+                ))
+            })?;
+            if event.ticket() == ticket {
+                return Ok(event);
+            }
         }
     }
 
@@ -194,7 +311,7 @@ impl E0Harness {
                 .filter(|duration| !duration.is_zero())
                 .ok_or_else(|| {
                     BenchmarkError::new(
-                        "runtime worker did not finish within the operational join timeout",
+                        "runtime worker did not finish within the operational join timeout; its handle is retained until process exit",
                     )
                 })?;
             std::thread::sleep(WAIT_INTERVAL.min(remaining));
@@ -207,30 +324,28 @@ impl E0Harness {
             .join()
             .map_err(|error| BenchmarkError::new(format!("runtime worker join failed: {error}")))
     }
+
+    fn retain_unjoined_worker(&mut self) {
+        let Some(thread) = self.thread.take() else {
+            return;
+        };
+        let mut retained = RETAINED_WORKERS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        retained.push(thread);
+    }
 }
 
-fn nonzero_usize(value: usize, label: &str) -> BenchmarkResult<NonZeroUsize> {
-    NonZeroUsize::new(value).ok_or_else(|| BenchmarkError::new(format!("{label} must be non-zero")))
-}
-
-fn validate_no_cleanup_failure(
-    runtime: &RuntimeSnapshot,
-    models: &[inference_runtime::ModelSnapshot],
-    checkpoint: &str,
+fn validate_ticket(
+    event: &RuntimeEvent,
+    ticket: CommandTicket,
+    operation: &str,
 ) -> BenchmarkResult {
-    if runtime.pending_cleanup_models != 0
-        || runtime.pending_cleanup_sequences != 0
-        || runtime.exhausted_cleanup_models != 0
-        || runtime.exhausted_cleanup_sequences != 0
-        || runtime.maintenance_error.is_some()
-        || models.iter().any(|model| {
-            model.pending_cleanup_sequences != 0
-                || model.exhausted_cleanup_sequences != 0
-                || model.degraded
-        })
-    {
+    if event.ticket() != ticket {
         return Err(BenchmarkError::new(format!(
-            "{checkpoint} snapshot contains pending, exhausted, degraded, or failed cleanup accounting"
+            "{operation} returned ticket {}, expected {}",
+            event.ticket().get(),
+            ticket.get()
         )));
     }
     Ok(())
@@ -264,55 +379,13 @@ fn validate_clean_shutdown_receipt(receipt: ShutdownReceipt) -> BenchmarkResult 
     Ok(())
 }
 
-fn runtime_accounting(snapshot: RuntimeSnapshot) -> RuntimeAccounting {
-    RuntimeAccounting {
-        loaded_models: snapshot.loaded_models,
-        active_requests: snapshot.active_requests,
-        reserved_footprint: footprint(snapshot.reserved_footprint),
-        generation_workspaces: snapshot.generation_workspaces,
-        reserved_generation_workspace: footprint(snapshot.reserved_generation_workspace),
-        pending_cleanup_models: snapshot.pending_cleanup_models,
-        pending_cleanup_sequences: snapshot.pending_cleanup_sequences,
-        exhausted_cleanup_models: snapshot.exhausted_cleanup_models,
-        exhausted_cleanup_sequences: snapshot.exhausted_cleanup_sequences,
-        last_cleanup_present: snapshot.last_cleanup.is_some(),
-        maintenance_error_present: snapshot.maintenance_error.is_some(),
-        shutting_down: snapshot.shutting_down,
-    }
+fn append_failure(failure: &mut Option<BenchmarkError>, cleanup: BenchmarkError) {
+    *failure = Some(match failure.take() {
+        Some(primary) => primary.with_cleanup(Err(cleanup)),
+        None => cleanup,
+    });
 }
 
-fn model_accounting(snapshot: &inference_runtime::ModelSnapshot) -> ModelAccounting {
-    ModelAccounting {
-        model_id: snapshot.handle.id.get(),
-        generation: snapshot.handle.generation.get(),
-        lifecycle: lifecycle_label(snapshot.lifecycle),
-        reserved_footprint: footprint(snapshot.reserved_footprint),
-        active_requests: snapshot.active_requests,
-        pending_cleanup_sequences: snapshot.pending_cleanup_sequences,
-        exhausted_cleanup_sequences: snapshot.exhausted_cleanup_sequences,
-        degraded: snapshot.degraded,
-    }
-}
-
-const fn lifecycle_label(state: ModelLifecycleState) -> &'static str {
-    match state {
-        ModelLifecycleState::Absent => "absent",
-        ModelLifecycleState::Loading => "loading",
-        ModelLifecycleState::Ready => "ready",
-        ModelLifecycleState::Active { .. } => "active",
-        ModelLifecycleState::Draining { .. } => "draining",
-        ModelLifecycleState::Cancelling { .. } => "cancelling",
-        ModelLifecycleState::Unloading => "unloading",
-        ModelLifecycleState::Failed { .. } => "failed",
-    }
-}
-
-pub(super) const fn footprint(value: MemoryFootprint) -> MemoryFootprintRecord {
-    MemoryFootprintRecord {
-        host_weight_bytes: value.host_weight_bytes,
-        device_weight_bytes: value.device_weight_bytes,
-        host_working_bytes: value.host_working_bytes,
-        device_working_bytes: value.device_working_bytes,
-        cache_bytes_per_token: value.cache_bytes_per_token,
-    }
+fn nonzero_usize(value: usize, label: &str) -> BenchmarkResult<NonZeroUsize> {
+    NonZeroUsize::new(value).ok_or_else(|| BenchmarkError::new(format!("{label} must be non-zero")))
 }

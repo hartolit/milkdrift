@@ -1,22 +1,20 @@
-//! Stable typed JSON records shared by both normal-runner modes.
+//! Typed JSON report schema, separate from benchmark execution state.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::cli::Mode;
-use crate::error::{BenchmarkError, BenchmarkResult};
 use crate::fixture::FixtureIdentity;
 use crate::memory::ProcessMemory;
 
-pub(crate) const SCHEMA_VERSION: u32 = 1;
+pub(crate) const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Serialize)]
 pub(crate) struct BaselineReport {
     pub(crate) schema_version: u32,
     pub(crate) metadata: RunMetadata,
-    pub(crate) results: Results,
+    pub(crate) results: BaselineResults,
 }
 
 #[derive(Serialize)]
@@ -24,9 +22,8 @@ pub(crate) struct RunMetadata {
     pub(crate) git: GitMetadata,
     pub(crate) toolchain: ToolchainMetadata,
     pub(crate) system: SystemMetadata,
-    pub(crate) model: ModelMetadata,
+    pub(crate) fixture: SyntheticFixtureMetadata,
     pub(crate) workload: WorkloadMetadata,
-    pub(crate) execution_policy: ExecutionPolicy,
 }
 
 #[derive(Serialize)]
@@ -41,10 +38,8 @@ pub(crate) struct ToolchainMetadata {
     pub(crate) rust_version: String,
     pub(crate) cargo_version: String,
     pub(crate) llvm_version: Option<String>,
-    pub(crate) criterion_version: &'static str,
-    pub(crate) target_triple: String,
+    pub(crate) rustc_host: String,
     pub(crate) build_profile: &'static str,
-    pub(crate) enabled_features: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -55,88 +50,49 @@ pub(crate) struct SystemMetadata {
     pub(crate) physical_cpu_count: Option<usize>,
     pub(crate) logical_cpu_count: Option<usize>,
     pub(crate) total_memory_bytes: Option<u64>,
-    pub(crate) thread_environment: BTreeMap<String, Option<String>>,
+    pub(crate) thread_environment: BTreeMap<String, String>,
 }
 
 #[derive(Serialize)]
-pub(crate) struct ModelMetadata {
-    pub(crate) identity: String,
-    pub(crate) repository: Option<String>,
-    pub(crate) revision: String,
+pub(crate) struct SyntheticFixtureMetadata {
+    pub(crate) identity: FixtureIdentity,
+    pub(crate) backend: &'static str,
     pub(crate) architecture: &'static str,
     pub(crate) format: &'static str,
     pub(crate) scalar_type: &'static str,
     pub(crate) vocabulary_size: u32,
     pub(crate) context_capacity: u32,
-    pub(crate) fixture: Option<FixtureIdentity>,
 }
 
 #[derive(Serialize)]
 pub(crate) struct WorkloadMetadata {
-    pub(crate) mode: Mode,
     pub(crate) warmup_cycles: u32,
     pub(crate) sample_cycles: u32,
-    pub(crate) application_runtime_startup_warmup_cycles: u32,
-    pub(crate) application_runtime_startup_sample_cycles: u32,
-    pub(crate) prompt_token_count: u64,
-    pub(crate) checked_prefill_prompt_token_count: Option<u32>,
-    pub(crate) generation_token_count: u32,
+    pub(crate) checked_prefill_prompt_tokens: u32,
+    pub(crate) generation_prompt_tokens: u32,
+    pub(crate) first_token_generation_limit: u32,
     pub(crate) post_first_token_window: u32,
-    pub(crate) sampling: SamplingMetadata,
+    pub(crate) backpressure_generation_limit: u32,
+    pub(crate) backpressure_hold_milliseconds: u64,
+    pub(crate) cancellation_generation_limit: u32,
+    pub(crate) cancellation_hold_milliseconds: u64,
+    pub(crate) sampling_strategy: &'static str,
 }
 
 #[derive(Serialize)]
-pub(crate) struct SamplingMetadata {
-    pub(crate) policy: &'static str,
-    pub(crate) temperature: f32,
-    pub(crate) top_k: u32,
-    pub(crate) top_p: f32,
-    pub(crate) min_p: f32,
-    pub(crate) repetition_penalty: f32,
-    pub(crate) repetition_window: u32,
-    pub(crate) seed: u64,
-    pub(crate) eos_token_count: usize,
-    pub(crate) stop_sequence_count: usize,
-}
-
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "these independent booleans are stable machine-readable JSON policy facts"
-)]
-#[derive(Serialize)]
-pub(crate) struct ExecutionPolicy {
-    pub(crate) network_allowed: bool,
-    pub(crate) hugging_face_offline: bool,
-    pub(crate) cache_directory: Option<String>,
-    pub(crate) operational_timeouts_are_thresholds: bool,
-    pub(crate) result_files_written_by_runner: bool,
+pub(crate) struct BaselineResults {
+    pub(crate) synthetic_e0: CycleSet<SyntheticCycle>,
+    pub(crate) application_lifecycle: CycleSet<ApplicationLifecycleCycle>,
 }
 
 #[derive(Serialize)]
-#[serde(tag = "mode", rename_all = "kebab-case")]
-pub(crate) enum Results {
-    Synthetic {
-        warmups: Vec<SyntheticCycle>,
-        samples: Vec<SyntheticCycle>,
-        application_runtime_startup: LifecycleCycleSet,
-        summary: Box<SyntheticSummary>,
-    },
-    RealProduct {
-        warmups: Vec<RealProductCycle>,
-        samples: Vec<RealProductCycle>,
-        summary: Box<RealProductSummary>,
-    },
+pub(crate) struct CycleSet<T> {
+    pub(crate) warmups: Vec<T>,
+    pub(crate) samples: Vec<T>,
 }
 
 #[derive(Serialize)]
-pub(crate) struct LifecycleCycleSet {
-    pub(crate) warmups: Vec<ApplicationStartupCycle>,
-    pub(crate) samples: Vec<ApplicationStartupCycle>,
-}
-
-#[derive(Serialize)]
-pub(crate) struct ApplicationStartupCycle {
-    pub(crate) ordinal: u32,
+pub(crate) struct ApplicationLifecycleCycle {
     pub(crate) start_ns: u64,
     pub(crate) shutdown_ns: u64,
     pub(crate) rss_before_start: ProcessMemory,
@@ -146,48 +102,27 @@ pub(crate) struct ApplicationStartupCycle {
 
 #[derive(Serialize)]
 pub(crate) struct SyntheticCycle {
-    pub(crate) ordinal: u32,
     pub(crate) e0_start_ns: u64,
     pub(crate) model_load_ns: u64,
-    pub(crate) checked_prefill: ThroughputMeasurement,
+    pub(crate) checked_prefill_ns: u64,
     pub(crate) first_token_ns: u64,
-    pub(crate) post_first_token_proxy: ProxyThroughputMeasurement,
+    pub(crate) post_first_token_proxy_ns: u64,
     pub(crate) backpressure: BackpressureMeasurement,
     pub(crate) cancellation: CancellationMeasurement,
     pub(crate) model_unload_ns: u64,
     pub(crate) shutdown: ShutdownMeasurement,
-    pub(crate) generations: SyntheticGenerationEvidence,
     pub(crate) snapshots: Vec<SnapshotCheckpoint>,
-}
-
-#[derive(Serialize)]
-pub(crate) struct ThroughputMeasurement {
-    pub(crate) duration_ns: u64,
-    pub(crate) token_count: u32,
-    pub(crate) tokens_per_second: Option<f64>,
-}
-
-#[derive(Serialize)]
-pub(crate) struct ProxyThroughputMeasurement {
-    pub(crate) label: &'static str,
-    pub(crate) duration_ns: u64,
-    pub(crate) token_count: u32,
-    pub(crate) tokens_per_second: Option<f64>,
 }
 
 #[derive(Serialize)]
 pub(crate) struct BackpressureMeasurement {
     pub(crate) controlled_hold_ns: u64,
     pub(crate) recovery_to_next_token_ns: u64,
-    pub(crate) output_backpressure_observed: bool,
 }
 
-#[expect(
-    clippy::struct_field_names,
-    reason = "nanosecond suffixes are required stable JSON unit annotations"
-)]
 #[derive(Serialize)]
 pub(crate) struct CancellationMeasurement {
+    pub(crate) generated_tokens: u32,
     pub(crate) acknowledgement_ns: u64,
     pub(crate) terminal_ns: u64,
     pub(crate) released_ns: u64,
@@ -195,29 +130,13 @@ pub(crate) struct CancellationMeasurement {
 
 #[expect(
     clippy::struct_field_names,
-    reason = "nanosecond suffixes are required stable JSON unit annotations"
+    reason = "nanosecond suffixes are explicit serialized units"
 )]
 #[derive(Serialize)]
 pub(crate) struct ShutdownMeasurement {
     pub(crate) event_ns: u64,
     pub(crate) join_ns: u64,
     pub(crate) total_ns: u64,
-}
-
-#[derive(Serialize)]
-pub(crate) struct SyntheticGenerationEvidence {
-    pub(crate) first_token_and_proxy: GenerationValidation,
-    pub(crate) backpressure: GenerationValidation,
-    pub(crate) cancellation: GenerationValidation,
-}
-
-#[derive(Serialize)]
-pub(crate) struct GenerationValidation {
-    pub(crate) generated_token_count: u32,
-    pub(crate) terminal: &'static str,
-    pub(crate) released: &'static str,
-    pub(crate) cleanup_pending_observed: bool,
-    pub(crate) cleanup_exhausted_observed: bool,
 }
 
 #[derive(Serialize)]
@@ -265,173 +184,6 @@ pub(crate) struct ModelAccounting {
     pub(crate) degraded: bool,
 }
 
-#[derive(Serialize)]
-pub(crate) struct RealProductCycle {
-    pub(crate) ordinal: u32,
-    pub(crate) application_start_ns: u64,
-    pub(crate) resolution_or_download_ns: u64,
-    pub(crate) model_load_ns: u64,
-    pub(crate) first_decoded_output: FirstDecodedOutputMeasurement,
-    pub(crate) post_first_generated_token_proxy: Option<ProxyThroughputMeasurement>,
-    pub(crate) generation: RealGenerationEvidence,
-    pub(crate) model_unload_ns: u64,
-    pub(crate) application_shutdown_ns: u64,
-    pub(crate) model: RealModelEvidence,
-    pub(crate) process_memory: RealProcessMemory,
-}
-
-#[derive(Serialize)]
-pub(crate) struct FirstDecodedOutputMeasurement {
-    pub(crate) duration_ns: u64,
-    pub(crate) first_fragment_bytes: usize,
-    pub(crate) usage_at_observation: UsageRecord,
-}
-
-#[derive(Clone, Copy, Serialize)]
-pub(crate) struct UsageRecord {
-    pub(crate) prompt_tokens: u64,
-    pub(crate) generated_tokens: u64,
-}
-
-#[derive(Serialize)]
-pub(crate) struct RealGenerationEvidence {
-    pub(crate) decoded_byte_count: usize,
-    pub(crate) decoded_text_record_count: u32,
-    pub(crate) terminal: &'static str,
-    pub(crate) released: &'static str,
-    pub(crate) terminal_usage: UsageRecord,
-    pub(crate) cleanup_pending_observed: bool,
-    pub(crate) cleanup_exhausted_observed: bool,
-}
-
-#[derive(Serialize)]
-pub(crate) struct RealModelEvidence {
-    pub(crate) repository: String,
-    pub(crate) requested_revision: String,
-    pub(crate) immutable_commit: String,
-    pub(crate) engine: &'static str,
-    pub(crate) source: &'static str,
-    pub(crate) device: &'static str,
-    pub(crate) format: &'static str,
-    pub(crate) scalar_type: &'static str,
-    pub(crate) vocabulary_size: u32,
-    pub(crate) maximum_context_tokens: u32,
-    pub(crate) maximum_prefill_batch: u32,
-}
-
-#[derive(Serialize)]
-pub(crate) struct RealProcessMemory {
-    pub(crate) before_start: ProcessMemory,
-    pub(crate) after_start: ProcessMemory,
-    pub(crate) after_resolution: ProcessMemory,
-    pub(crate) after_load: ProcessMemory,
-    pub(crate) after_generation_release: ProcessMemory,
-    pub(crate) after_unload: ProcessMemory,
-    pub(crate) after_shutdown: ProcessMemory,
-}
-
-#[expect(
-    clippy::struct_field_names,
-    reason = "nanosecond suffixes are required stable JSON unit annotations"
-)]
-#[derive(Serialize)]
-pub(crate) struct SyntheticSummary {
-    pub(crate) model_load_ns: MetricSummary,
-    pub(crate) checked_prefill_ns: MetricSummary,
-    pub(crate) first_token_ns: MetricSummary,
-    pub(crate) post_first_token_proxy_ns: MetricSummary,
-    pub(crate) backpressure_recovery_ns: MetricSummary,
-    pub(crate) cancellation_terminal_ns: MetricSummary,
-    pub(crate) model_unload_ns: MetricSummary,
-    pub(crate) e0_shutdown_total_ns: MetricSummary,
-    pub(crate) application_start_ns: MetricSummary,
-    pub(crate) application_shutdown_ns: MetricSummary,
-}
-
-#[expect(
-    clippy::struct_field_names,
-    reason = "nanosecond suffixes are required stable JSON unit annotations"
-)]
-#[derive(Serialize)]
-pub(crate) struct RealProductSummary {
-    pub(crate) application_start_ns: MetricSummary,
-    pub(crate) resolution_or_download_ns: MetricSummary,
-    pub(crate) model_load_ns: MetricSummary,
-    pub(crate) first_decoded_output_ns: MetricSummary,
-    pub(crate) model_unload_ns: MetricSummary,
-    pub(crate) application_shutdown_ns: MetricSummary,
-}
-
-#[derive(Serialize)]
-pub(crate) struct MetricSummary {
-    pub(crate) sample_count: usize,
-    pub(crate) minimum: u64,
-    pub(crate) median: u64,
-    pub(crate) maximum: u64,
-    pub(crate) arithmetic_mean: u64,
-}
-
 pub(crate) fn duration_ns(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
-}
-
-pub(crate) fn throughput(token_count: u32, duration: Duration) -> Option<f64> {
-    let seconds = duration.as_secs_f64();
-    if seconds > 0.0 {
-        Some(f64::from(token_count) / seconds)
-    } else {
-        None
-    }
-}
-
-pub(crate) fn metric_summary(
-    values: impl IntoIterator<Item = u64>,
-) -> BenchmarkResult<MetricSummary> {
-    let mut values = values.into_iter().collect::<Vec<_>>();
-    if values.is_empty() {
-        return Err(BenchmarkError::new(
-            "cannot summarize an empty normal-sample set",
-        ));
-    }
-    values.sort_unstable();
-    let sample_count = values.len();
-    let minimum = values
-        .first()
-        .copied()
-        .ok_or_else(|| BenchmarkError::new("summary minimum disappeared"))?;
-    let maximum = values
-        .last()
-        .copied()
-        .ok_or_else(|| BenchmarkError::new("summary maximum disappeared"))?;
-    let middle = sample_count / 2;
-    let median = if sample_count % 2 == 0 {
-        let lower = values
-            .get(middle.saturating_sub(1))
-            .copied()
-            .ok_or_else(|| BenchmarkError::new("summary lower median disappeared"))?;
-        let upper = values
-            .get(middle)
-            .copied()
-            .ok_or_else(|| BenchmarkError::new("summary upper median disappeared"))?;
-        lower.saturating_add(upper) / 2
-    } else {
-        values
-            .get(middle)
-            .copied()
-            .ok_or_else(|| BenchmarkError::new("summary median disappeared"))?
-    };
-    let sum = values.iter().fold(0_u128, |total, value| {
-        total.saturating_add(u128::from(*value))
-    });
-    let divisor = u128::try_from(sample_count)
-        .map_err(|_| BenchmarkError::new("summary sample count conversion failed"))?;
-    let mean = sum / divisor;
-    let arithmetic_mean = u64::try_from(mean).unwrap_or(u64::MAX);
-    Ok(MetricSummary {
-        sample_count,
-        minimum,
-        median,
-        maximum,
-        arithmetic_mean,
-    })
 }

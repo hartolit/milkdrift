@@ -8,9 +8,7 @@ use crate::error::{BenchmarkError, BenchmarkResult};
 use crate::memory::{cpu_information, total_memory_bytes};
 use crate::report::{GitMetadata, SystemMetadata, ToolchainMetadata};
 
-const CRITERION_VERSION: &str = "0.8.2";
-const THREAD_ENVIRONMENT_VARIABLES: [&str; 10] = [
-    "CARGO_BUILD_JOBS",
+const RUNTIME_THREAD_ENVIRONMENT_VARIABLES: [&str; 8] = [
     "RAYON_NUM_THREADS",
     "OMP_NUM_THREADS",
     "OMP_THREAD_LIMIT",
@@ -18,7 +16,6 @@ const THREAD_ENVIRONMENT_VARIABLES: [&str; 10] = [
     "OPENBLAS_NUM_THREADS",
     "VECLIB_MAXIMUM_THREADS",
     "NUMEXPR_NUM_THREADS",
-    "RUST_TEST_THREADS",
     "CANDLE_NUM_THREADS",
 ];
 
@@ -34,10 +31,6 @@ pub(crate) fn collect(repository_root: &Path) -> BenchmarkResult<EnvironmentMeta
     let rustc_host = parse_keyed_line(&rustc_verbose, "host")
         .ok_or_else(|| BenchmarkError::new("rustc --version --verbose did not report host"))?;
     let llvm_version = parse_keyed_line(&rustc_verbose, "LLVM version");
-    let target_triple = match option_env!("TARGET") {
-        Some(target) => target.to_owned(),
-        None => rustc_host,
-    };
     let cargo_version = command_stdout("cargo", &["--version"], None)?;
     let kernel = command_stdout("uname", &["-sr"], None)?;
     let (cpu_model, physical_cpu_count) = cpu_information()?;
@@ -55,10 +48,8 @@ pub(crate) fn collect(repository_root: &Path) -> BenchmarkResult<EnvironmentMeta
             rust_version,
             cargo_version,
             llvm_version,
-            criterion_version: CRITERION_VERSION,
-            target_triple,
+            rustc_host,
             build_profile: build_profile(),
-            enabled_features: Vec::new(),
         },
         system: SystemMetadata {
             os: std::env::consts::OS,
@@ -138,10 +129,16 @@ fn parse_keyed_line(input: &str, key: &str) -> Option<String> {
     })
 }
 
-fn thread_environment() -> BTreeMap<String, Option<String>> {
-    THREAD_ENVIRONMENT_VARIABLES
+fn thread_environment() -> BTreeMap<String, String> {
+    RUNTIME_THREAD_ENVIRONMENT_VARIABLES
         .into_iter()
-        .map(|name| (name.to_owned(), std::env::var(name).ok()))
+        .filter_map(|name| match std::env::var(name) {
+            Ok(value) => Some((name.to_owned(), value)),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                Some((name.to_owned(), "<non-unicode>".to_owned()))
+            }
+            Err(std::env::VarError::NotPresent) => None,
+        })
         .collect()
 }
 

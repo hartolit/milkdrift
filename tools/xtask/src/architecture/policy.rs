@@ -218,7 +218,7 @@ const REVIEWED_BENCHMARK_DEPENDENCIES: &[ReviewedDependency] = &[
         source: "runtime-benchmarks",
         target: "application-runtime",
         kind: DependencyKind::Normal,
-        rationale: "the baseline runner measures opt-in E1 product lifecycle and download-free application startup and shutdown through the public facade",
+        rationale: "the baseline runner measures download-free E1 worker startup and bounded shutdown through the public application facade",
     },
     ReviewedDependency {
         source: "runtime-benchmarks",

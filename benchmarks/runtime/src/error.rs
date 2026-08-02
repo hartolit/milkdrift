@@ -1,9 +1,9 @@
-//! Error vocabulary for the benchmark harness.
+//! Error vocabulary for the benchmark observer.
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
-/// One actionable benchmark configuration, execution, or validation failure.
+/// One actionable benchmark configuration, execution, validation, or cleanup failure.
 #[derive(Debug)]
 pub struct BenchmarkError {
     message: String,
@@ -35,4 +35,21 @@ impl Display for BenchmarkError {
 
 impl Error for BenchmarkError {}
 
-pub(crate) type BenchmarkResult<T = ()> = Result<T, BenchmarkError>;
+/// Result type shared by the normal runner and Criterion support.
+#[doc(hidden)]
+pub type BenchmarkResult<T = ()> = Result<T, BenchmarkError>;
+
+#[cfg(test)]
+mod tests {
+    use super::BenchmarkError;
+
+    #[test]
+    fn cleanup_failure_is_appended_without_replacing_the_primary_error() {
+        let error = BenchmarkError::new("primary scenario failed")
+            .with_cleanup(Err(BenchmarkError::new("bounded cleanup failed")));
+        assert_eq!(
+            error.to_string(),
+            "primary scenario failed; cleanup also failed: bounded cleanup failed"
+        );
+    }
+}
