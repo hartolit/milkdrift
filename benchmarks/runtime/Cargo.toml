@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Controlled E0 benchmarks and download-free E1 lifecycle measurements"
+description = "Controlled runtime benchmarks and explicit E1 product baselines"
 publish = false
 
 [dependencies]

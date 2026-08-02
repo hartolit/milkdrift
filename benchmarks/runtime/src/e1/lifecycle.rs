@@ -12,7 +12,7 @@ use crate::memory::process_memory;
 use crate::report::{ApplicationLifecycleCycle, CycleSet, duration_ns};
 use crate::workspace::TemporaryWorkspace;
 
-use super::shutdown_for_cleanup;
+use super::cleanup_runtime_after_failure;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(1);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -82,22 +82,8 @@ fn run_cycle(
     let result = finish_cycle(&mut runtime, start_elapsed, rss_before_start);
     match result {
         Ok(cycle) => Ok(cycle),
-        Err(error) => match shutdown_for_cleanup(&mut runtime) {
-            Ok(()) => Err(error),
-            Err(cleanup_error) => {
-                let cleanup_error = BenchmarkError::new(format!(
-                    "{cleanup_error}; failed ApplicationRuntime owner retained until process exit"
-                ));
-                let combined = error.with_cleanup(Err(cleanup_error));
-                retain_failed_runtime_until_process_exit(runtime);
-                Err(combined)
-            }
-        },
+        Err(error) => Err(cleanup_runtime_after_failure(runtime, error)),
     }
-}
-
-fn retain_failed_runtime_until_process_exit(runtime: ApplicationRuntime) {
-    std::mem::forget(runtime);
 }
 
 fn finish_cycle(

@@ -1,7 +1,9 @@
-//! Controlled download-free runtime baselines and shared Criterion support.
+//! Controlled runtime baselines and shared Criterion support.
 //!
-//! The normal runner writes exactly one typed JSON document to stdout. Human
+//! Each normal runner writes exactly one typed JSON document to stdout. Human
 //! progress and summaries use stderr so callers may redirect stdout directly.
+//! The synthetic runner is download-free; the separate external runner requires
+//! explicit network authorization and an explicit cache path.
 
 #![forbid(unsafe_code)]
 
@@ -11,6 +13,7 @@ mod cli;
 pub mod e0;
 mod e1;
 mod error;
+mod external;
 mod fixture;
 mod memory;
 mod metadata;
@@ -29,6 +32,7 @@ use report::{
     BaselineReport, BaselineResults, RunMetadata, SCHEMA_VERSION, SyntheticFixtureMetadata,
     WorkloadMetadata,
 };
+use serde::Serialize;
 use workspace::repository_root;
 
 /// Runs the bounded baseline command line, writing JSON only to stdout.
@@ -39,15 +43,34 @@ use workspace::repository_root;
 /// lifecycle execution, accounting validation, cleanup, or serialization fails.
 pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), BenchmarkError> {
     match cli::parse(arguments)? {
-        Action::Help => write_help(),
+        Action::Help => write_help(cli::HELP),
         Action::Run(configuration) => run_configuration(configuration),
     }
 }
 
-fn write_help() -> BenchmarkResult {
+/// Runs the explicit external CPU baseline, writing JSON only to stdout.
+///
+/// # Errors
+///
+/// Returns an actionable error when opt-in/cache policy, environment collection,
+/// exact model identity, lifecycle execution, cleanup, or serialization fails.
+pub fn run_external_baseline(
+    arguments: impl IntoIterator<Item = OsString>,
+) -> Result<(), BenchmarkError> {
+    match external::parse(arguments)? {
+        external::Action::Help => write_help(external::HELP),
+        external::Action::Run(configuration) => {
+            let report = external::run_configuration(&configuration)?;
+            external::print_human_summary(&report);
+            write_json(&report)
+        }
+    }
+}
+
+fn write_help(help: &str) -> BenchmarkResult {
     let stdout = io::stdout();
     let mut lock = stdout.lock();
-    lock.write_all(cli::HELP.as_bytes())
+    lock.write_all(help.as_bytes())
         .map_err(|error| BenchmarkError::new(format!("could not write help: {error}")))
 }
 
@@ -149,7 +172,7 @@ fn metric_median(values: impl IntoIterator<Item = u64>) -> BenchmarkResult<u64> 
     }
 }
 
-fn write_json(report: &BaselineReport) -> BenchmarkResult {
+fn write_json(report: &(impl Serialize + ?Sized)) -> BenchmarkResult {
     let stdout = io::stdout();
     let mut lock = stdout.lock();
     serde_json::to_writer(&mut lock, report).map_err(|error| {

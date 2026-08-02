@@ -1,8 +1,9 @@
 # Runtime benchmarks
 
-`runtime-benchmarks` is the sole non-production cross-crate measurement package. It observes reviewed public production APIs and has two current surfaces:
+`runtime-benchmarks` is the sole non-production cross-crate measurement package. It observes reviewed public production APIs and has three current surfaces:
 
 - the normal `baseline` binary runs bounded, download-free synthetic hosted-E0 scenarios plus fresh E1 startup/shutdown cycles;
+- the separate `external-baseline` binary is the sole opt-in external E1 CPU product-baseline path;
 - `benches/runtime.rs` runs two hosted-E0 Criterion submission-to-event measurements.
 
 Operational timeouts stop hangs; they are not performance thresholds. Fixture, identity, output, lifecycle, cleanup, accounting, or join mismatches fail. A slow valid sample does not.
@@ -44,6 +45,24 @@ cargo run --release --locked \
 
 The runner writes one schema-versioned JSON document to stdout and progress plus a compact summary to stderr. It excludes generated text, token IDs, credentials, secrets, and broad environment dumps.
 
+## Run the external CPU baseline
+
+The external binary fixes `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`; callers cannot substitute either identity. It requires explicit network authorization and an already-existing canonical cache beneath the repository-root `target/` or outside the repository. It never reads a default global Hub cache implicitly.
+
+```text
+mkdir -p target/phase10-external-cache target/phase10-evidence
+cargo build --release --locked \
+  -p runtime-benchmarks \
+  --bin external-baseline
+
+target/release/external-baseline \
+  --allow-network \
+  --cache-dir target/phase10-external-cache \
+  > target/phase10-evidence/external.json
+```
+
+Build first, then execute the binary directly so no compiler process overlaps model residency. Stdout contains one external-schema JSON report; progress and the compact summary use stderr. Ordinary tests and CI compile this path but never execute it or access the network. Resource preflight, cache policy, and canonical evidence procedure are in [validation](../../docs/project/validation.md#external-cpu-product-baseline); curated results live only in [performance evidence](../../docs/project/performance.md#external-product-evidence).
+
 ## Run focused Criterion targets
 
 ```text
@@ -66,6 +85,6 @@ Temporary redb state for E1 lifecycle checks is created beneath root `target` an
 
 ## Evidence limits
 
-The synthetic fixture proves deterministic integration and lifecycle behavior, not model quality, product-model speed, representative scale, production serving throughput, allocation freedom, or GPU/device behavior. E1 cycles cover startup and bounded shutdown without Hub resolution, model loading, or generation.
+The synthetic fixture proves deterministic integration and lifecycle behavior, not model quality, product-model speed, representative scale, production serving throughput, allocation freedom, or GPU/device behavior. Synthetic E1 cycles cover startup and bounded shutdown without Hub resolution, model loading, or generation.
 
-The CLI contract is synthetic-only; product/network options are intentionally rejected. The canonical external-evidence status and future requirement are in [performance evidence](../../docs/project/performance.md#external-product-evidence).
+The normal `baseline` CLI remains synthetic-only and rejects product/network options. The external binary has a separate opt-in, report schema, and evidence contract; one local CPU/model observation does not establish model quality, serving capacity, cross-host performance, GPU capability, or an optimization threshold. Canonical interpretation is in [performance evidence](../../docs/project/performance.md#external-product-evidence).

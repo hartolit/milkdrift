@@ -210,19 +210,42 @@ cargo test --locked -p candle-backend --test generate_synthetic_fixture -- --ign
 
 Run it only when intentionally replacing the fixture, then review generated files and update provenance hashes in the same change.
 
-## Rust-native Candle Hub smoke
+## External CPU product baseline
 
-No external performance invocation is currently defined. See [performance evidence](performance.md#external-product-evidence) for the canonical status; compilation cannot satisfy the external baseline prerequisite.
+`runtime-benchmarks` owns the sole current external E1 orchestration path. The external binary fixes `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`; repository and revision overrides are rejected. The pinned revision's [model-card metadata](https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/raw/fe8a4ea1ffedaf415f4da2f062534de366a451e6/README.md) declares `apache-2.0`. Record that upstream declaration and source without making a broader legal conclusion.
 
-The existing opt-in E1 Hub smoke remains a correctness/lifecycle procedure, not a performance baseline:
+This procedure is the only ordinary exception to the download-free rule, and it requires explicit authorization to contact Hugging Face for that exact model/revision. Shared CI and ordinary tests compile the binary but never execute it, contact the network, require its cache, or load TinyLlama.
+
+Before building or acquiring artifacts, confirm no compiler, benchmark, or model process is consuming substantial resources and require approximately 12 GiB available host memory plus 8 GiB free disk for the root target/cache:
 
 ```sh
-LLM_APP_CANDLE_HUB_SMOKE=1 cargo run --locked -p application-runtime --example candle_hub_smoke
+export CARGO_TARGET_DIR="$(git rev-parse --show-toplevel)/target"
+free -h
+df -h "$(git rev-parse --show-toplevel)/target"
+ps -eo pid,comm,rss --sort=-rss | head -20
 ```
 
-It uses `neubla/tiny-random-LlamaForCausalLM` at immutable revision `1c81a3fba044af78df253edc66bdbab183184932`. Running it may access `huggingface.co`, populate the local Hub cache, and use `HF_TOKEN` if required. Never run it without explicit network authorization, never print or commit credentials, and never redistribute cache artifacts.
+Stop rather than running when either capacity bound is not met. Use one Cargo process and one model process at a time. Do not run `cargo clean`.
 
-A future external performance baseline needs its own narrow reviewed opt-in procedure and must actually execute resolution, load, decoded generation, release, unload, and shutdown against an exact model/revision. Successful compilation, cache presence, resolution, or historical smoke output alone is insufficient.
+Create an explicit cache and evidence directory beneath the ignored repository-root target. The cache must already exist when the binary starts. It may instead be an existing canonical directory outside the repository, but any cache inside the repository and outside its root `target/` is rejected. The runner configures this exact cache and does not implicitly use a default global Hugging Face cache.
+
+```sh
+mkdir -p target/phase10-external-cache
+mkdir -p target/phase10-evidence
+
+cargo build --release --locked \
+    -p runtime-benchmarks \
+    --bin external-baseline
+
+target/release/external-baseline \
+    --allow-network \
+    --cache-dir target/phase10-external-cache \
+    > target/phase10-evidence/external.json
+```
+
+When `CARGO_TARGET_DIR` differs, execute `external-baseline` from that configured root target rather than creating a nested package target. Build first and execute the binary directly so no compiler overlaps model residency. The executable writes no result file itself: stdout is exactly one structured report, stderr carries progress/concise diagnostics, and the redirect above owns the ignored raw artifact.
+
+Before treating a run as evidence, verify the report and surrounding Git commands agree on a clean commit/tree, exact model/commit, compatible-chat success, one warmup plus three sequential 32-token direct completions, clean release, zero-cancellation unload, and successful bounded shutdown. Record whether the explicit cache was empty or populated before resolution; do not call the interval pure download or pure cache lookup without that observation. Exact measured values belong only in [performance evidence](performance.md#external-product-evidence).
 
 ## Dependency, link, and graph audits
 

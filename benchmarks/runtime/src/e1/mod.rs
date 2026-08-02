@@ -60,6 +60,23 @@ fn shutdown_for_cleanup(runtime: &mut ApplicationRuntime) -> BenchmarkResult {
     })
 }
 
+pub(crate) fn cleanup_runtime_after_failure(
+    mut runtime: ApplicationRuntime,
+    primary: BenchmarkError,
+) -> BenchmarkError {
+    match shutdown_for_cleanup(&mut runtime) {
+        Ok(()) => primary,
+        Err(cleanup_error) => {
+            let cleanup_error = BenchmarkError::new(format!(
+                "{cleanup_error}; failed ApplicationRuntime owner retained until process exit"
+            ));
+            let combined = primary.with_cleanup(Err(cleanup_error));
+            std::mem::forget(runtime);
+            combined
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use application_runtime::{ApplicationError, ApplicationWorker};

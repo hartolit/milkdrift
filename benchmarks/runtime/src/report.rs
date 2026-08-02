@@ -9,12 +9,211 @@ use crate::fixture::FixtureIdentity;
 use crate::memory::ProcessMemory;
 
 pub(crate) const SCHEMA_VERSION: u32 = 2;
+pub(crate) const EXTERNAL_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Serialize)]
 pub(crate) struct BaselineReport {
     pub(crate) schema_version: u32,
     pub(crate) metadata: RunMetadata,
     pub(crate) results: BaselineResults,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ExternalBaselineReport {
+    pub(crate) schema_version: u32,
+    pub(crate) provenance: ExternalProvenance,
+    pub(crate) model: ExternalModelMetadata,
+    pub(crate) workload: ExternalWorkloadMetadata,
+    pub(crate) results: ExternalResults,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ExternalProvenance {
+    pub(crate) git: GitMetadata,
+    pub(crate) toolchain: ToolchainMetadata,
+    pub(crate) system: SystemMetadata,
+    pub(crate) command_mode: &'static str,
+    pub(crate) network_authorized: bool,
+    pub(crate) cache_location: &'static str,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ExternalModelMetadata {
+    pub(crate) repository: &'static str,
+    pub(crate) requested_revision: &'static str,
+    pub(crate) resolved_commit: String,
+    pub(crate) upstream_declared_license: &'static str,
+    pub(crate) license_metadata_source: &'static str,
+    pub(crate) engine: &'static str,
+    pub(crate) source: &'static str,
+    pub(crate) device: &'static str,
+    pub(crate) format: &'static str,
+    pub(crate) architecture: &'static str,
+    pub(crate) scalar_type: &'static str,
+    pub(crate) vocabulary_size: u32,
+    pub(crate) maximum_context_tokens: u32,
+    pub(crate) maximum_prefill_batch: u32,
+    pub(crate) cache_state_before_resolution: &'static str,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ExternalWorkloadMetadata {
+    pub(crate) chat_compatibility: ChatWorkloadMetadata,
+    pub(crate) direct_completion: DirectCompletionWorkloadMetadata,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ChatWorkloadMetadata {
+    pub(crate) message_identifier: &'static str,
+    pub(crate) message_sha256: String,
+    pub(crate) message_bytes: u64,
+    pub(crate) maximum_new_tokens: u32,
+    pub(crate) sampling: SamplingMetadata,
+    pub(crate) termination_policy: &'static str,
+}
+
+#[derive(Serialize)]
+pub(crate) struct DirectCompletionWorkloadMetadata {
+    pub(crate) prompt_identifier: &'static str,
+    pub(crate) prompt_sha256: String,
+    pub(crate) prompt_bytes: u64,
+    pub(crate) warmup_count: u32,
+    pub(crate) sample_count: u32,
+    pub(crate) maximum_new_tokens: u32,
+    pub(crate) sampling: SamplingMetadata,
+    pub(crate) eos_tokens: &'static str,
+    pub(crate) textual_stop_sequences: &'static str,
+}
+
+#[derive(Clone, Copy, Serialize)]
+pub(crate) struct SamplingMetadata {
+    pub(crate) temperature: f32,
+    pub(crate) top_k: u32,
+    pub(crate) top_p: f32,
+    pub(crate) min_p: f32,
+    pub(crate) repetition_penalty: f32,
+    pub(crate) repetition_window: u32,
+    pub(crate) fixed_seed: u64,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ExternalResults {
+    pub(crate) application_startup_ns: u64,
+    pub(crate) resolution_ns: u64,
+    pub(crate) load_ns: u64,
+    pub(crate) chat_compatibility: ChatProofResult,
+    pub(crate) direct_completion: DirectCompletionResults,
+    pub(crate) unload: ExternalUnloadResult,
+    pub(crate) shutdown: ExternalShutdownResult,
+    pub(crate) memory: ExternalMemoryCheckpoints,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ChatProofResult {
+    pub(crate) decoded_byte_count: u64,
+    pub(crate) prompt_tokens: u64,
+    pub(crate) generated_tokens: u64,
+    pub(crate) terminal_kind: &'static str,
+    pub(crate) outcome_match: GenerationOutcomeMatch,
+    pub(crate) conversation: ConversationProof,
+}
+
+#[derive(Serialize)]
+pub(crate) struct GenerationOutcomeMatch {
+    pub(crate) terminal_state_matched: bool,
+    pub(crate) released_state_matched: bool,
+    pub(crate) terminal_event_matched: bool,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ConversationProof {
+    pub(crate) validated: bool,
+    pub(crate) cleared: bool,
+}
+
+#[derive(Serialize)]
+pub(crate) struct DirectCompletionResults {
+    pub(crate) warmup: DirectCompletionWarmupResult,
+    pub(crate) samples: Vec<DirectCompletionSample>,
+    pub(crate) summary: DirectCompletionSummary,
+}
+
+#[derive(Serialize)]
+pub(crate) struct DirectCompletionWarmupResult {
+    pub(crate) decoded_byte_count: u64,
+    pub(crate) prompt_tokens: u64,
+    pub(crate) generated_tokens: u64,
+    pub(crate) terminal_kind: &'static str,
+    pub(crate) clean_release: bool,
+}
+
+#[derive(Serialize)]
+pub(crate) struct DirectCompletionSample {
+    pub(crate) ordinal: u32,
+    pub(crate) submission_to_generation_started_ns: u64,
+    pub(crate) submission_to_first_decoded_output_ns: u64,
+    pub(crate) submission_to_terminal_event_ns: u64,
+    pub(crate) submission_to_release_ns: u64,
+    pub(crate) prompt_tokens: u64,
+    pub(crate) generated_tokens: u64,
+    pub(crate) decoded_byte_count: u64,
+    pub(crate) terminal_kind: &'static str,
+    pub(crate) terminal_state_matched: bool,
+    pub(crate) released_state_matched: bool,
+    pub(crate) terminal_event_matched: bool,
+    pub(crate) effective_generated_tokens_per_second: f64,
+    pub(crate) process_memory_after_release: ProcessMemory,
+}
+
+#[derive(Serialize)]
+pub(crate) struct DirectCompletionSummary {
+    pub(crate) sample_count: u32,
+    pub(crate) median_submission_to_generation_started_ns: u64,
+    pub(crate) median_submission_to_first_decoded_output_ns: u64,
+    pub(crate) median_submission_to_terminal_event_ns: u64,
+    pub(crate) median_submission_to_release_ns: u64,
+    pub(crate) median_effective_generated_tokens_per_second: f64,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ExternalUnloadResult {
+    pub(crate) duration_ns: u64,
+    pub(crate) cancelled_requests: u32,
+    pub(crate) loaded_model_absent: bool,
+    pub(crate) active_generation_absent: bool,
+    pub(crate) runtime_connected: bool,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ExternalShutdownResult {
+    pub(crate) duration_ns: u64,
+    pub(crate) shutdown_returned_cleanly: bool,
+    pub(crate) workers: ShutdownWorkerState,
+    pub(crate) ownership: ShutdownOwnershipState,
+    pub(crate) temporary_workspace_removed: bool,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ShutdownWorkerState {
+    pub(crate) hub_unavailable: bool,
+    pub(crate) inference_unavailable: bool,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ShutdownOwnershipState {
+    pub(crate) loaded_model_absent: bool,
+    pub(crate) active_generation_absent: bool,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ExternalMemoryCheckpoints {
+    pub(crate) before_application_start: ProcessMemory,
+    pub(crate) after_application_start: ProcessMemory,
+    pub(crate) after_resolution: ProcessMemory,
+    pub(crate) after_load: ProcessMemory,
+    pub(crate) after_warmup_release: ProcessMemory,
+    pub(crate) after_unload: ProcessMemory,
+    pub(crate) after_shutdown: ProcessMemory,
 }
 
 #[derive(Serialize)]
