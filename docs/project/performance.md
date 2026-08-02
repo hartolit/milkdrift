@@ -25,6 +25,8 @@ The implemented Cartesian product is:
 
 This yields 48 sampling targets: two timing boundaries, eight cases, and three vocabulary sizes. Every target uses deterministic pseudo-random logits bounded to `[-8, 8]`, sampler seed 29, one prepared `Sampler`, and caller-owned logits, indices, seen-token state, and history. Fixture construction, allocation, sampler construction, and capacity reservation occur before measurement; each iteration reuses those capacities. `Throughput::Elements` means one vocabulary-sized logit set per sample, not generated tokens.
 
+`crates/domain/sampling/tests/benchmark_matrix.rs` and the Criterion target include the same crate-local `benches/support/mod.rs` case table and fixture builders. The ordinary test executes every case once at all three vocabulary sizes and every stop case once, checks result structure and token bounds, and does not invoke Criterion statistics or timing.
+
 ### Timing boundaries
 
 | Prefix | Question | Exact timed boundary |

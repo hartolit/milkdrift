@@ -26,6 +26,17 @@ git diff --check
 
 These are direct Cargo/Git operations, not commands forwarded by `xtask`.
 
+### Portable domain focused checks
+
+The `domain-contracts` allocation target is a harness-free executable so process startup and libtest activity cannot overlap its separate prefill and decode allocator regions. The sampling matrix test shares its case definitions and fixture builders with Criterion but executes each combination only once:
+
+```sh
+cargo test --locked -p domain-contracts --test allocation
+cargo test --release --locked -p domain-contracts --test allocation
+cargo test --locked -p sampling --test benchmark_matrix
+cargo bench --locked -p sampling --bench sampling_pipeline --no-run
+```
+
 The mandatory lint profile enables stable `clippy::all`, `clippy::pedantic`, and the workspace's explicit lints, then applies `-D warnings` to every workspace target. Clippy nursery is deliberately separate and exploratory: scheduled CI runs `cargo clippy --workspace --all-targets --locked -- -W clippy::nursery` without `-D warnings` and reports findings without making that job step blocking.
 
 Record the evaluated commit and dirty state with local results. Required CI prints the checked-out commit ID and Git tree ID immediately before invoking `cargo xtask verify`; that runtime log is the run's provenance. A tracked document is not required to contain its own resulting tree hash, because adding that hash changes the tree. A command that passed on another commit or earlier working tree is not evidence for the current tree.

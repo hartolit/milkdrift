@@ -12,5 +12,10 @@ publish = false
 [dev-dependencies]
 stats_alloc.workspace = true
 
+[[test]]
+name = "allocation"
+path = "tests/allocation.rs"
+harness = false
+
 [lints]
 workspace = true
