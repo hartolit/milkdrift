@@ -50,12 +50,12 @@ ADRs, applied project architecture, current status, or an active phase specifica
 ### Project decisions and execution memory
 
 - [Architecture decisions](agent/decisions/README.md) record why important project choices were made and when they should be revisited.
-- [Current execution context](agent/execution/current.md) is the dense handoff for the phase being worked now.
+- [Current execution context](agent/execution/current.md) is the concise handoff for the repository’s immediate state and next action.
 - [Execution plan](agent/execution/execution-plan.md) owns the ordered roadmap and phase gates.
 - [Architecture analysis](agent/execution/analyzer.md) preserves the analysis that motivated that program.
-- [Execution history](agent/execution/history.md) preserves completed-phase evidence and measurements.
+- [Execution history](agent/execution/history.md) preserves chronology and closed-tree acceptance provenance; exact curated timing results live in [performance evidence](project/performance.md).
 
-`current.md` is intentionally mutable and compact enough to read before implementation. It may repeat selected current facts for operational clarity, but every repeated fact should point back to the document that owns it.
+`current.md` is intentionally mutable and compact enough to read before implementation. It may repeat only the immediate facts needed for handoff, and each repeated fact should point back to its canonical owner.
 
 ### Current project reference
 

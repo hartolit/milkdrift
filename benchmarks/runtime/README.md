@@ -1,49 +1,37 @@
 # Runtime benchmarks
 
-`runtime-benchmarks` is a non-production observer for bounded runtime evidence. It has two surfaces:
+`runtime-benchmarks` is the sole non-production cross-crate measurement package. It observes reviewed public production APIs and has two current surfaces:
 
-- the normal `baseline` runner exercises deterministic hosted E0 scenarios plus separate download-free E1 startup/shutdown cycles;
-- `benches/runtime.rs` uses Criterion for two hosted E0 submission-to-event boundaries.
+- the normal `baseline` binary runs bounded, download-free synthetic hosted-E0 scenarios plus fresh E1 startup/shutdown cycles;
+- `benches/runtime.rs` runs two hosted-E0 Criterion submission-to-event measurements.
 
-Operational timeouts stop hangs; they are not performance thresholds. A lifecycle, fixture, output, cleanup, accounting, or join mismatch fails the run. A slow valid sample does not.
+Operational timeouts stop hangs; they are not performance thresholds. Fixture, identity, output, lifecycle, cleanup, accounting, or join mismatches fail. A slow valid sample does not.
 
-## Package boundary
+Canonical methodology, environment, curated results, RSS interpretation, and limitations live in [Phase 10 performance evidence](../../docs/project/performance.md). Repository-wide procedures live in [validation](../../docs/project/validation.md).
 
-The package is an outer workspace consumer of public production APIs. Production, application, tooling, and test packages do not depend on it. Benchmark support remains inside this unpublished package and is exposed only as the narrow `runtime_benchmarks::e0` seam required by the separate Cargo benchmark crate.
+## Package contract
 
-The normal runner and Criterion target use the same concrete Candle hosted-E0 worker owner, ticket allocation, event matching, fixture-load validation, direct request lifecycle, unload, shutdown, and bounded join implementation. No benchmark helper is exposed through `application-runtime` or `inference-runtime`.
+- Run Cargo from the repository root with the committed root `Cargo.lock`.
+- Use only the root `target/`; never create `benchmarks/runtime/Cargo.lock`, `benchmarks/runtime/target`, or a source-tree results/cache directory.
+- Production, application, tooling, and test packages do not depend on this package.
+- Benchmark support remains private to this package; no helper is added to a production public API solely for measurement.
+- The committed Candle fixture is referenced in place and its byte sizes, hashes, parsed configuration, and loaded descriptor are verified before measurement.
 
-The deterministic fixture is referenced from `crates/runtime/inference-runtime/tests/fixtures/candle-llama`; it is not copied. Verification checks regular files, exact byte sizes, recomputed SHA-256 values, parsed configuration, and the loaded public descriptor before measurements are accepted.
-
-## Module map
+## Test and compile
 
 ```text
-src/
-├── cli.rs              bounded single-mode command line
-├── fixture.rs          fixture identity, hashing, parsing, and source construction
-├── e0/
-│   ├── harness.rs      hosted worker, tickets/events, model tracking, cleanup, join
-│   ├── lifecycle.rs    load, direct request, prefill/decode, completion, unload
-│   ├── generation.rs   scheduled generation and public-output observation
-│   ├── observation.rs  snapshots, accounting validation, report conversion
-│   └── synthetic.rs    normal-runner scenario ordering and timing assembly
-├── e1/
-│   ├── mod.rs          typed bounded application-shutdown cleanup policy
-│   └── lifecycle.rs    download-free application start/shutdown cycles
-├── memory.rs           sampled process RSS and host-memory parsing
-├── metadata.rs         allowlisted process/toolchain metadata
-├── report.rs           JSON schema only
-└── workspace.rs        temporary state under root target/
-
-benches/runtime.rs       Criterion target selection and duration accumulation only
+cargo check --locked -p runtime-benchmarks --all-targets
+cargo test --locked -p runtime-benchmarks
+cargo clippy --locked -p runtime-benchmarks --all-targets -- -D warnings
+cargo bench --workspace --no-run --locked
 ```
+
+These commands compile the current benchmark targets without claiming a product baseline.
 
 ## Run the synthetic baseline
 
-From the repository root:
-
 ```text
-mkdir -p target/runtime-benchmarks
+mkdir -p target/phase10-evidence
 cargo run --release --locked \
   -p runtime-benchmarks \
   --bin baseline \
@@ -51,23 +39,12 @@ cargo run --release --locked \
   --mode synthetic \
   --warmup 1 \
   --cycles 3 \
-  > target/runtime-benchmarks/synthetic.json
+  > target/phase10-evidence/synthetic.json
 ```
 
-`--mode synthetic` is optional but is the only accepted mode. Warmup and sample counts must be non-zero and are bounded by the CLI.
+The runner writes one schema-versioned JSON document to stdout and progress plus a compact summary to stderr. It excludes generated text, token IDs, credentials, secrets, and broad environment dumps.
 
-The runner writes one typed JSON document to stdout and progress/a compact summary to stderr. It emits no generated text, token IDs, secrets, broad environment dump, or model-cache contents.
-
-## Compile and run Criterion
-
-Compile the package target without executing measurements:
-
-```text
-cargo check --locked -p runtime-benchmarks --all-targets
-cargo bench --workspace --no-run --locked
-```
-
-Run only a focused target when measurement is intended:
+## Run focused Criterion targets
 
 ```text
 cargo bench --locked \
@@ -81,37 +58,14 @@ cargo bench --locked \
   -- e0_hosted_incremental_decode/1_token_after_2_token_prefill
 ```
 
-Criterion has no regression threshold. Its raw samples and reports are local generated artifacts.
-
-## Measurement boundaries
-
-| Surface | Timed | Excluded and still required |
-|---|---|---|
-| E0 worker start | `start_hosted_runtime` through returned endpoint/thread handles. | Fixture verification and the first readiness snapshot. |
-| Model load | `LoadModel` submission through matching `ModelLoaded`. | Source construction; descriptor and accounting validation. |
-| Checked prefill | `Prefill` submission through matching `PrefillCompleted`. | Model/request setup, prompt/logits allocation, outcome/usage validation, request completion. |
-| First public token | `Generate` submission through admission receipt/validation and the first token observed at `pull_token_output`. | Request construction. |
-| Post-first proxy | First public-token observation through four additional public tokens. | Completion through matching `Terminal` and `Released`; this is a short synthetic proxy, not steady state. |
-| Backpressure | A separately recorded fixed no-pull hold, then the freeing pull and its output-backpressure validation through observation of the next token. | Active snapshot validation plus eventual terminal/release and clean-accounting validation. |
-| Cancellation | `CancelRequest` submission to separate acknowledgement, `Terminal`, and `Released` observations. | Progress precondition, outcome validation, and exact release accounting. |
-| Model unload | `UnloadModel(RejectIfBusy)` submission through matching successful unload. | All request releases and the empty post-unload snapshot. |
-| E0 shutdown | `Shutdown` submission through matching event and successful bounded join; event and join portions remain separate. | A clean receipt and no retained worker handle. |
-| E1 lifecycle | Separate `ApplicationRuntime::start` and `shutdown` calls through their successful returns. | Clean initial/terminal state checks and temporary-workspace removal. No resolution, load, or generation occurs. |
-| Criterion prefill | `Prefill` submission through matching `PrefillCompleted`. | All setup, semantic validation, completion, unload, shutdown, and join. |
-| Criterion decode | `Decode` submission through matching `DecodeCompleted` after an untimed two-token setup prefill. | Request/setup prefill, semantic validation, completion, unload, shutdown, and join. |
-
-Criterion accumulates only the returned submission-to-event duration. The vocabulary-sized logits vector is allocated once per target and moved back from each completion event for reuse.
+Criterion has no repository regression threshold. Raw samples and reports are local generated artifacts; only curated values belong in [performance evidence](../../docs/project/performance.md).
 
 ## Artifacts and temporary state
 
-Use the root `Cargo.lock` and root `target/` only. Do not create `benchmarks/runtime/Cargo.lock`, `benchmarks/runtime/target`, or a source-tree results/cache directory.
-
-Temporary redb files and the empty cache directory needed for download-free E1 startup are created under `target/runtime-benchmarks` and removed where possible. Criterion uses Cargo/Criterion output under root `target`. Generated JSON, Criterion data, profiles, heap dumps, and caches are not committed.
+Temporary redb state for E1 lifecycle checks is created beneath root `target` and removed where possible. Captured JSON, Criterion data/HTML, profiles, heap dumps, and caches remain beneath root `target` or outside the repository and are not committed.
 
 ## Evidence limits
 
-Synthetic E0 results are deterministic integration evidence for the tiny project-authored fixture. They do not establish model quality, product-model performance, representative vocabulary/context scale, production serving throughput, GPU/device behavior, or allocation freedom.
+The synthetic fixture proves deterministic integration and lifecycle behavior, not model quality, product-model speed, representative scale, production serving throughput, allocation freedom, or GPU/device behavior. E1 cycles cover startup and bounded shutdown without Hub resolution, model loading, or generation.
 
-E1 lifecycle cycles prove only repeated frontend-neutral worker startup and bounded shutdown without Hub resolution. The former real-product benchmark mode was removed because it was network-dependent, large, and never executed; future product evidence should be added only as a narrow opt-in path that is actually exercised and does not duplicate the existing external smoke.
-
-`RuntimeSnapshot` accounting is deterministic runtime ownership/admission data. `/proc/self/status` RSS and high-water marks are sampled process-wide observations. RSS includes the executable, workers, stacks, libraries, allocator retention, mappings, and earlier cycles; sampling can miss transient peaks and cannot attribute Candle/native or device resources. Runtime accounting and RSS remain separate in the report.
+The CLI contract is synthetic-only; product/network options are intentionally rejected. The canonical external-evidence status and future requirement are in [performance evidence](../../docs/project/performance.md#external-product-evidence).

@@ -1,8 +1,8 @@
 # Execution history
 
-This file is the chronological closure record for completed execution work. It preserves phase-specific rationale, acceptance evidence, measurements, and validation provenance without making each closed phase a separate top-level document.
+This file is the chronological closure record for completed execution work. It preserves phase-specific rationale, corrections, and closed-tree acceptance provenance without making each closed phase a separate top-level document.
 
-For current product truth, use [implementation status](../../project/implementation-status.md). For repeatable commands, use [validation](../../project/validation.md). Historical results below apply only to the baseline named in each entry.
+For current product truth, use [implementation status](../../project/implementation-status.md). For repeatable commands, use [validation](../../project/validation.md). Exact current benchmark methodology and curated intervals live in [performance evidence](../../project/performance.md). Historical results below apply only to the baseline named in each entry.
 
 ## Phase 3 — backend-independent generation kernel
 
@@ -97,35 +97,9 @@ The recorded run included architecture/dependency validation, formatting, worksp
 
 ### Recorded external smoke
 
-The model file passed this SHA-256 check:
+The Phase 4 baseline executed one pinned tiny-random Llama model through E0, generated eight tokens, exercised cancellation and unload, and exited cleanly. Its exact model identity, timing, RSS observations, and interpretation now live in the canonical [historical performance evidence](../../project/performance.md#historical-phase-4-external-smoke); this entry retains only chronology.
 
-```text
-49c20f32c6c597480fcaec5df2f86c645eabea765cbea1e67886dbae45e5c992
-```
-
-| Field | Recorded value |
-|---|---|
-| Repository | `neubla/tiny-random-LlamaForCausalLM` |
-| Revision | `39ca1f8a1fc940377c5cb49a21aff73bb99b52f5` |
-| Expected architecture | `LlamaForCausalLM` / runtime `Llama` |
-| Prompt token IDs | `1,2,3` |
-| Generated token IDs | `18568, 1727, 8705, 3598, 27426, 4496, 998, 16911` |
-
-| Measurement | Recorded result |
-|---|---:|
-| Model load duration | 0.005661 s |
-| Time to first generated token | 0.060969 s |
-| Decode throughput | 21.954 tokens/s |
-| Cancellation latency | 0.045297 s |
-| Model unload duration | 0.000380 s |
-| RSS before load | 4,636 KiB |
-| RSS after load | 11,116 KiB |
-| RSS during generation | 14,088 KiB |
-| RSS after unload | 10,412 KiB |
-
-Elevated post-unload RSS was not treated as retained model ownership because allocators may keep freed pages for reuse. The ownership evidence was released records, empty accounting, an empty post-unload snapshot, successful worker shutdown, and clean process exit.
-
-The repeatable external-model procedure now lives in [project validation](../../project/validation.md); this section retains only the historical evidence.
+The repeatable external-model procedure now lives in [project validation](../../project/validation.md#rust-native-candle-hub-smoke).
 
 ### Historical boundary at closure
 
@@ -491,67 +465,38 @@ Focused E0, E1, replacement-fixture, and `xtask` policy suites passed during imp
 
 The external Hub smoke and manual graphical desktop session were not run because this closure changed no external-model or presentation behavior. No statistical benchmark was run and no Phase 10 performance result was recorded.
 
-## Phase 10 implementation — controlled sampling and runtime measurement
+## Phase 10 — repository infrastructure and synthetic acceptance
 
-- **Prepared:** 2026-08-01
-- **Clean input checkpoint:** `HEAD` `f61a0fadd2311a53e1bce55094f886e3465b0c95`, tree `1bee6fa25f8b4819ac68d02cc10324f0f1848e9e`
-- **Start state:** source/index clean; only root `./target/` present; baseline `cargo xtask verify` passed before edits
-- **Scope:** implement work packages 10.1–10.6 without changing production behavior or optimizing from assumptions
-- **Recorded outcome:** Phase 10 repository acceptance complete with focused and canonical validation plus controlled synthetic/component evidence; external product evidence outstanding
+- **Original implementation commit:** `62a342e9a5720110f3ddf42fca8e7d6c34aa3ee8`, tree `3512426c40628eeec57eb282a648533f24a6f4d2`
+- **Allocation/matrix correction:** `148f0fea16f40cd77a934549da2488c370f7c066`, tree `08a5fa1d26a6dbded2154d19ec788c98ef905537`
+- **Benchmark simplification:** `f883d645e94c1c08e78d86d5dd1f2b627e28148c`, tree `08049138843252e128e08e7513a92739b8c39cc6`
+- **Accepted code-under-test (Commit A):** `efcd36e320a97d61d3f982619fee182410c514df`, tree `f80c5d6c746376df81d7ac8e7281ac9736e44d88`
+- **Recorded outcome:** Phase 10 repository infrastructure and synthetic acceptance complete; external real-product baseline outstanding; Phase 11 not active
 
-The starting canonical pass belongs to the clean input checkpoint and is not evidence for the Phase 10 diff. This entry records the implemented measurement surfaces and evidence available at the documentation point; it does not promote synthetic fixture measurements into a product baseline.
+### Correction chronology
 
-### Closure matrix
+The original Phase 10 commit was documented as accepted, but fresh GitHub CI failed the `domain-contracts` allocation test. That invalidated the original completion claim; the original commit did not pass an exact-tree acceptance gate.
 
-| Work package | Recorded implementation |
-|---|---|
-| 10.1 — Sampling | Expanded the existing crate-local production-sampler target into an explicit `sample_only`/`restore_and_sample` matrix over greedy, default top-k/top-p, min-p, varied repetition histories, and 8,192/32,768/131,072 vocabularies. Added separately named public stop-matching token-hit, last-pattern-hit, and miss cases. Measured regions and excluded setup are explicit. |
-| 10.2 — System package/harness separation | Added the sole `benchmarks/runtime` package, named `runtime-benchmarks`, as a non-production outer consumer with root workspace/lock/target ownership, `publish = false`, no build script, exact reviewed dependencies, and no incoming production edge. External normal dependencies are `serde`, `serde_json`, and `sha2` 0.11. Its normal `baseline` binary is separate from its Criterion hosted-E0 prefill/decode target; real-product execution requires `--allow-network`, rejects `HF_HUB_OFFLINE=1`, and permits an existing cache only under shared root `target/` or outside the repository. |
-| 10.3 — Memory/lifecycle | Added bounded download-free synthetic E0 start/load/prefill/first-token/proxy/backpressure/cancellation/unload/shutdown cycles with public accounting and sampled RSS, plus matching fresh E1 start/shutdown cycles. Added a separately pinned opt-in E1 real-product mode. |
-| 10.4 — Conditional candidates | Reviewed tokenizer encode/streaming-decode, context-planner, output-accumulator, and isolated Candle microbenchmarks and deferred them because no candidate established both a named unresolved question and system-harness insufficiency. No placeholder target or copied production logic was added. |
-| 10.5 — Metadata/output | Added a versioned stable serde JSON report, compact stderr progress/summary, Git/toolchain/target/host/fixture/workload metadata, typed lifecycle/accounting/RSS records, exact pre-setup fixture SHA-256 verification, and safe CLI/cache/fixture/metadata/CPU-topology/`/proc` tests. Generated outputs remain under root `target` or outside the repository. |
-| 10.6 — No speculative optimization | Changed no production public API or production implementation and added no optimization, unsafe code, GPU, GGUF/quantized path, second engine, hosted-provider/peer/browser path, multi-model variant, timing threshold, custom allocator, SIMD, lock-free structure, or collection/data-layout rewrite. |
+The allocation check was subsequently isolated as a deterministic harness-free executable, and the sampling cases were shared with an ordinary one-shot matrix test. The runtime benchmark implementation was then simplified by responsibility, and its large unexecuted real-product mode was removed. Final acceptance therefore depends only on the later clean Commit A gate below, not on the original claim or its earlier dirty-tree measurements.
 
-### Focused validation evidence
+### Commit A exact-tree acceptance
 
-The following focused evidence passed after implementation:
+Commit A was clean before validation and remained clean after generated output was confined to root `target/`. A fresh dedicated target was used. The complete local procedure in [validation](../../project/validation.md#phase-10-exact-tree-acceptance) passed, including:
 
-- `cargo metadata --locked --format-version 1 --no-deps`;
-- the required package-level `cargo check`, `cargo test`, and strict `cargo clippy` commands for `sampling`;
-- the required package-level `cargo check`, `cargo test`, and strict `cargo clippy` commands for `runtime-benchmarks`, with 15 tests passing;
-- `cargo test --locked -p xtask`, with 32 total tests passing: 14 unit and 18 integration tests; doc tests contained no cases.
+- the isolated domain allocation gate, full domain/sampling/runtime/xtask suites, and one-shot sampling matrix;
+- strict workspace Clippy, complete benchmark compilation, and the canonical architecture/hygiene/repository gate;
+- locked dependency policy, offline Markdown links, and whitespace checks;
+- both named portable-domain targets;
+- root-target, nested-lock, package-target, and source-tree artifact hygiene.
 
-The normal runner was then executed in release synthetic mode with one warmup and three recorded samples:
+This is local exact-tree evidence. No remote GitHub CI success is claimed for Commit A without a separately observed run.
 
-```text
-cargo run --release --locked -p runtime-benchmarks --bin baseline -- \
-  --mode synthetic --warmup 1 --cycles 3
-```
+### Commit A measurements
 
-The final corrected run succeeded. All nine generation operations across the three recorded cycles observed matching `Terminal` and `Released` states with no pending or exhausted cleanup; every cancellation emitted two tokens. After every release accounting returned to model-only state, model unload ended with exact zero model/request/workspace/cleanup/maintenance accounting, shutdown/join was clean, and the paired download-free E1 start/shutdown cycles completed cleanly.
+The bounded release synthetic baseline and exactly four focused Criterion targets were executed on the clean Commit A tree. The synthetic cycles returned every released request to model-only accounting and every unload to exact empty accounting, with clean shutdown/join and no pending or exhausted cleanup. The exact environment, intervals, RSS observations, selected targets, and limitations are canonical in [performance evidence](../../project/performance.md#commit-a-controlled-baseline); they are intentionally not copied here.
 
-Selected Criterion estimate intervals were:
+No external model was executed and no network access was authorized. The removed real-product mode supplies no compile-only evidence. An actually executed exact-model/revision product baseline remains a prerequisite before Phase 11.
 
-| Target | Selected interval |
-|---|---:|
-| `e0_hosted_checked_prefill/4_tokens` | `[5.0955, 5.1104] ms` |
-| `e0_hosted_incremental_decode/1_token_after_2_token_prefill` | `[5.0474, 5.0890] ms` |
-| `sample_only/default_top_k_top_p/32768` | `[77.211, 77.228] µs` |
-| `restore_and_sample/default_top_k_top_p/32768` | `[78.288, 78.302] µs` |
+### Evidence-document workflow
 
-Exactly these four Criterion targets were statistically executed; every other sampling-matrix and stop-matching target is compile-only evidence. These are deterministic synthetic fixture/component results. They do not establish product-model latency, model quality, broad compatibility, representative production steady-state throughput, allocation freedom, native-resource attribution, or a shared-CI performance threshold.
-
-### Final acceptance and external evidence
-
-The pinned E1 real-product mode compiled but was not executed. The public E1 resolver requires Hub metadata resolution, so a future authorized run must pass `--allow-network`, reject `HF_HUB_OFFLINE=1`, and use an existing cache under shared root `target/` or outside the repository. No product output or measurement is inferred or fabricated; current-tree external product evidence remains outstanding.
-
-Final repository evidence passed:
-
-- `cargo bench --workspace --no-run --locked`;
-- `cargo xtask verify` after one initial strict-Clippy finding in an oversized `xtask` benchmark-policy test helper was fixed by splitting the helper without relaxing policy;
-- `cargo deny --workspace --locked check advisories bans licenses sources`, with configured duplicate-version warnings and all checks successful;
-- `lychee --config lychee.toml --offline '**/*.md'` with zero errors;
-- `git diff --check`;
-- root-target and generated-artifact hygiene, with only `./target` present.
-
-Portability commands were not rerun because no portable production library source or dependency changed; the `sampling` changes are benchmark/documentation/readme-metadata only. Phase 10 repository acceptance is complete. Product-performance evidence remains partial until an authorized pinned E1 run is recorded, and Phase 11 is not activated by this result.
+A separate documentation-only Commit B records the curated evidence and canonical ownership changes. Commit A remains the executable tree measured because Commit B changes no executable source, manifest, lockfile, fixture, or configuration. Commit B’s identity and post-commit local gate are recorded by the closure report rather than predicted by this tracked file.

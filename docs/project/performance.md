@@ -1,287 +1,239 @@
-# Phase 10 performance evidence
+# Performance evidence
 
-## Evidence policy and boundaries
+This document is the canonical owner of evidence classes, benchmark methodology, measured boundaries, controlled environments, curated timing and memory results, limitations, and interpretation. Repeatable commands live in [validation](validation.md); package-local usage lives in [`benchmarks/runtime/README.md`](../../benchmarks/runtime/README.md); chronology lives in [execution history](../agent/execution/history.md).
 
-Phase 10 establishes reproducible evidence; it does not set portable pass/fail timing thresholds. Absolute timing varies with CPU frequency, thermal state, operating-system scheduling, compiler version, and background work. Compare changes on the same host with the same toolchain, profile, fixture, workload, and benchmark configuration. Hard harness timeouts stop hangs only. Lifecycle, identity, accounting, cleanup, or output mismatches fail a run; slow measurements do not.
+## Evidence policy
 
-No performance optimization was made in Phase 10. The implemented work is measurement and regression infrastructure only.
+Phase 10 created measurement and regression infrastructure; it made no production optimization and defines no portable wall-clock pass/fail threshold. Absolute timing varies with CPU frequency, thermals, scheduler activity, compiler version, and background work. Comparisons require the same host, toolchain, profile, fixture, workload, and benchmark configuration.
 
-| Evidence class | Implemented harness | Boundary and use | Not claimed |
+Hard harness timeouts stop hangs only. Lifecycle, fixture, identity, output, cleanup, accounting, or join mismatches fail a run; elapsed time alone does not.
+
+| Evidence class | Current surface | What it establishes | What it does not establish |
 |---|---|---|---|
-| Sampling component | `crates/domain/sampling/benches/sampling_pipeline.rs` | Criterion measurements around public sampling and stop-matching calls using caller-owned, preallocated storage. | E0/E1 latency, model decode throughput, product performance, or native/device allocation behavior. |
-| Hosted E0 component-like | `benchmarks/runtime/benches/runtime.rs` | Criterion measurements from public hosted command submission through the matching E0 completion event. This intentionally includes bounded transport, dispatch, Candle execution, event publication, and receive. | Raw Candle kernel timing, E1/product latency, full-generation throughput, RSS, or allocation attribution. |
-| Synthetic system/integration | `benchmarks/runtime/src/bin/baseline.rs`, default mode | Bounded, download-free public E0 lifecycle/output measurements plus repeated download-free E1 startup/shutdown, accounting, cleanup, and sampled process RSS. | Product-model speed or quality, production steady state, isolated allocator behavior, or device-memory attribution. |
-| Real-product system/integration | The same normal runner with `--mode real-product` | Opt-in public E1 resolution, loading, decoded output, usage, unload, shutdown, and RSS for one exact immutable model pin. | A model survey, production serving load, quality evaluation, or isolated allocation evidence. |
+| Deterministic allocation | Harness-free `domain-contracts` allocation executable and the sampling allocator test | Project-global allocator behavior within the named preallocated regions | Candle/native/driver/OS/device allocation behavior |
+| Sampling component | `crates/domain/sampling/benches/sampling_pipeline.rs` | Comparative timing of public sampling and stop matching with caller-owned prepared storage | E0/E1 latency, product throughput, or allocation attribution |
+| Hosted E0 component-like | `benchmarks/runtime/benches/runtime.rs` | Public command submission through matching completion event, including bounded transport and dispatch | Raw Candle kernel timing, E1/product latency, RSS, or full-generation throughput |
+| Synthetic system/integration | `benchmarks/runtime` normal `baseline` binary | Download-free hosted-E0 lifecycle/output/accounting/RSS observations and fresh E1 start/shutdown cycles | Product-model speed or quality, representative scale, steady-state serving, or device memory |
+| Compile-only | Workspace benchmark compilation | Target/API compatibility | Runtime correctness or performance |
+| External real-product | Not currently implemented in `runtime-benchmarks` | Nothing on the current tree | No current product baseline may be inferred |
 
-Criterion targets are comparative statistical component evidence. The normal runner is system/integration evidence and emits bounded per-cycle measurements rather than Criterion distributions.
+## Sampling methodology
 
-## Sampling component matrix
+### Matrix and correctness coverage
 
 The implemented Cartesian product is:
 
 ```text
-{sample_only,restore_and_sample}/<case>/{8192,32768,131072}
+{sample_only, restore_and_sample}
+  × {eight policy/history cases}
+  × {8,192, 32,768, 131,072 logits}
 ```
 
-This yields 48 sampling targets: two timing boundaries, eight cases, and three vocabulary sizes. Every target uses deterministic pseudo-random logits bounded to `[-8, 8]`, sampler seed 29, one prepared `Sampler`, and caller-owned logits, indices, seen-token state, and history. Fixture construction, allocation, sampler construction, and capacity reservation occur before measurement; each iteration reuses those capacities. `Throughput::Elements` means one vocabulary-sized logit set per sample, not generated tokens.
+That produces 48 statistical sampling targets plus three stop-matching targets. `crates/domain/sampling/tests/benchmark_matrix.rs` shares the case definitions and fixture builders with Criterion and executes every combination once for correctness without running statistics.
 
-`crates/domain/sampling/tests/benchmark_matrix.rs` and the Criterion target include the same crate-local `benches/support/mod.rs` case table and fixture builders. The ordinary test executes every case once at all three vocabulary sizes and every stop case once, checks result structure and token bounds, and does not invoke Criterion statistics or timing.
+The eight sampling cases are:
 
-### Timing boundaries
+- `greedy`;
+- `default_top_k_top_p`;
+- `min_p_0_05_full_vocabulary`;
+- `repetition_disabled_history_256`;
+- `repetition_enabled_empty`;
+- `repetition_short_unique_8`;
+- `repetition_medium_unique_64`;
+- `repetition_repeated_heavy_256`.
 
-| Prefix | Question | Exact timed boundary |
-|---|---|---|
-| `sample_only/<case>/<vocabulary>` | What does the production sampling call cost after mutable logits are ready? | The baseline-to-working-logit copy completes before `Instant::now`. Timing includes public workspace-view construction, `Sampler::sample`, result checking, and `black_box`. |
-| `restore_and_sample/<case>/<vocabulary>` | What does a caller pay when it must restore the logit buffer that sampling overwrites? | `Instant::now` precedes the baseline-to-working-logit copy. Timing includes that copy and the complete `sample_only` boundary. |
+The three stop targets are token hit, a four-token last-pattern hit among eight patterns, and an eight-pattern miss, each with a 128-token generated history.
 
-### Cases and questions
+Each sampling fixture uses deterministic pseudo-random logits bounded to `[-8, 8]`, seed 29, one prepared `Sampler`, and caller-owned logits, indices, repetition state, and history. Fixture construction, allocation, sampler construction, and capacity reservation occur before measurement. `Throughput::Elements` means one vocabulary-sized logit set, not generated tokens.
 
-Each case below is implemented at 8,192, 32,768, and 131,072 logits under both timing boundaries.
+### Sampling boundaries
 
-| Case segment | Question | Configuration and history |
-|---|---|---|
-| `greedy` | How does deterministic highest-logit selection scale with vocabulary size? | `SamplingConfig::greedy()`; empty history. |
-| `default_top_k_top_p` | What is the component cost of the application default top-k/top-p policy? | `SamplingConfig::default()`; currently top-k 40 and top-p 0.95; empty history. |
-| `min_p_0_05_full_vocabulary` | What does min-p filtering cost when top-k does not pre-truncate the vocabulary? | Default temperature, top-k 0, top-p 1.0, min-p 0.05; empty history. |
-| `repetition_disabled_history_256` | Does a long supplied history remain a cheap baseline when repetition penalty is disabled? | Default policy with penalty 1.0 and full-history convention; 256 entries cycling over four token IDs. |
-| `repetition_enabled_empty` | What fixed cost appears when repetition processing is enabled but history is empty? | Default top-k/top-p, penalty 1.1, full-history convention; empty history. |
-| `repetition_short_unique_8` | What does penalizing a short distinct-token history cost? | Same enabled policy; eight distinct token IDs. |
-| `repetition_medium_unique_64` | How does the enabled path change at a 64-token history? | Same enabled policy; 64 distinct token IDs. |
-| `repetition_repeated_heavy_256` | What does scanning a longer duplicate-heavy history cost? | Same enabled policy; 256 entries cycling over four token IDs. |
-
-Fixed target storage is:
-
-| Vocabulary | Three sampler slices: logits, indices, seen state | Untimed baseline logits | Maximum history |
-|---:|---:|---:|---:|
-| 8,192 | 96 KiB | 32 KiB | 256 `TokenId` values |
-| 32,768 | 384 KiB | 128 KiB | 256 `TokenId` values |
-| 131,072 | 1.5 MiB | 512 KiB | 256 `TokenId` values |
-
-The measured loops call no allocation API and perform no per-iteration clone, but Criterion does not count allocator events. `crates/domain/sampling/tests/allocation.rs` remains the deterministic Rust-global-allocator gate over 64 preallocated sampling calls with repetition enabled. It does not observe Candle, native-library, driver, operating-system, or device allocations.
-
-### Stop matching
-
-All inputs are caller-owned and prepared outside timing. Only public `match_stop_suffix` plus `black_box` is timed.
-
-| Target | Question and input |
+| Prefix | Exact timed boundary |
 |---|---|
-| `stop_matching/token_hit/1_pattern_generated_128` | What is the one-token stop cost when the sole configured sequence matches? The generated history has 128 tokens and one one-token pattern. |
-| `stop_matching/pattern_hit_last/8_patterns_generated_128` | What is suffix-match cost when a four-token match is last among eight patterns? Seven misses precede the hit. |
-| `stop_matching/pattern_miss/8_patterns_generated_128` | What is the no-match scan cost across eight patterns and 128 generated tokens? |
+| `sample_only/<case>/<vocabulary>` | Baseline-to-working-logit restoration finishes before timing. The public workspace view, `Sampler::sample`, result checking, and `black_box` are timed. |
+| `restore_and_sample/<case>/<vocabulary>` | Timing begins before baseline-to-working-logit restoration and includes the complete `sample_only` boundary. |
+| `stop_matching/...` | Only public `match_stop_suffix` plus `black_box` is timed; inputs are prepared before timing. |
 
-These are statistical component-regression targets only. They do not establish allocation freedom, E0/E1 behavior, or product throughput.
+The measured loops invoke no allocation API and reuse capacities, but Criterion is not an allocator counter. The sampling allocation test remains the deterministic gate for 64 preallocated calls with repetition enabled.
 
-## Runtime normal-runner contracts
+## Runtime methodology
 
-### Synthetic mode
+### Synthetic normal runner
 
-Default and recorded settings are one warmup cycle followed by three sample cycles. Warmup records remain in JSON for lifecycle auditability but are excluded from summary statistics. Both counts must be non-zero; the CLI bounds warmups to 10 and samples to 20.
+The recorded workload uses one warmup cycle and three sample cycles. Warmups remain in the JSON report for auditability but are excluded from the curated intervals below.
 
-Each cycle starts a fresh hosted E0 worker, verifies and loads the fixture once, runs a separately checked prefill and three bounded generation scenarios, unloads, performs ticketed shutdown, waits for worker completion, and joins. Any `CleanupPending`, `CleanupExhausted`, degraded model, maintenance error, residual request/workspace, unexpected shutdown cleanup, or failed join invalidates the cycle.
+Each hosted-E0 cycle starts a fresh worker, verifies and loads the deterministic fixture, runs checked prefill and three generation scenarios, unloads, performs ticketed shutdown, waits for completion, and joins. Any pending or exhausted cleanup, degraded model, maintenance error, residual request/workspace, unexpected shutdown cleanup, or failed join invalidates the cycle.
 
-| Metric/question | Exact measured boundary | Setup, validation, or interpretation outside timing |
+| Measurement | Exact boundary and required interpretation |
+|---|---|
+| E0 worker start | `start_hosted_runtime` through returned client/thread handles; the readiness snapshot follows outside timing. |
+| Model load | `LoadModel` submission through matching `ModelLoaded`; source construction precedes timing and validation follows it. |
+| Checked prefill | `Prefill` submission through matching `PrefillCompleted` for four prompt tokens; model/request setup and logits allocation are excluded. |
+| Submission to first token | `Generate` submission through first token observed at public `pull_token_output`; request construction is excluded. |
+| Post-first proxy | First public-token observation through four additional public tokens; this short synthetic window is not steady-state throughput. |
+| Backpressure | A separately recorded fixed 100 ms no-pull hold, then the freeing pull through observation of the next token; eventual terminal/release and clean accounting are mandatory. |
+| Cancellation | `CancelRequest` submission to separate acknowledgement, observable cancellation terminal state, and observable release; progress is established first. |
+| Model unload | `UnloadModel(RejectIfBusy)` submission through successful unload after all requests release; the post-unload snapshot must be empty. |
+| E0 shutdown | `Shutdown` submission through matching event and successful join; event, join, and total durations are recorded. |
+| E1 lifecycle | Separate `ApplicationRuntime::start` and bounded `shutdown` calls on fresh download-free instances; no Hub resolution, model load, or generation occurs. |
+
+Each E0 cycle records public runtime/model accounting and Linux process memory at eight checkpoints. Each E1 cycle records process memory before start, after start, and after shutdown.
+
+### Hosted E0 Criterion targets
+
+The runtime Criterion group uses a 500 ms warmup, a two-second measurement window, 10 samples, and no regression threshold.
+
+| Target | Timed | Excluded |
 |---|---|---|
-| E0 worker start | `start_hosted_runtime` call through returned client and thread handles. | An immediate `before-load` snapshot is an untimed readiness/accounting handshake. |
-| Model load | Immediately before public `RuntimeCommand::LoadModel` submission through matching `ModelLoaded`. | Source construction and fixture checks precede timing; descriptor and accounting checks follow it. |
-| Hosted checked prefill | Immediately before public `RuntimeCommand::Prefill` submission through matching `PrefillCompleted`; throughput is four consumed prompt tokens. | Load, request/sequence creation, prompt ownership, and vocabulary-sized logits allocation are outside timing. Logits, checked outcome/usage, completion, release, and accounting are then validated. |
-| Submission to first token at pull | Immediately before public `RuntimeCommand::Generate` submission through the first generated token observed at `HostedRuntime::pull_token_output`. | Request construction is outside timing. Admission and token/output identities are checked; pull capacity one makes the first public observation unambiguous. |
-| Four-token post-first proxy | First-token observation at the public pull boundary through four additional observed tokens. | This is a synthetic short-window integration proxy, explicitly **not production steady state**. Matching `Terminal` and `Released` remain mandatory outside the window. |
-| Backpressure hold and recovery | A fixed 100 ms no-pull hold is recorded separately. Recovery begins immediately before the pull that frees the full one-token accumulator and ends when the next token is observed at a later public pull. | The hold is controlled setup, not a threshold. The run requires `Yielded(OutputBackpressure)`, a during-backpressure snapshot, token-limit `Terminal`, `Released`, and clean accounting. |
-| Cancellation | One start immediately before public `CancelRequest` submission; independent durations end at the matching acknowledgement, observable cancellation `Terminal` at pull, and observable `Released`. | An untimed first token proves progress, then a short no-pull hold keeps the request active. Non-zero partial generation and `Cancelled(UserRequested)` terminal states are required. |
-| Model unload | Immediately before `UnloadModel(RejectIfBusy)` submission through `ModelUnload(Unloaded)`. | All requests must be released, cancellation count must be zero, and the post-unload snapshot must be exactly empty. |
-| E0 shutdown and join | Total begins immediately before `Shutdown` submission and ends after successful worker join; event and post-event join portions are also recorded. | A clean receipt unloads zero models and cancels zero requests. |
-| Download-free E1 start | `ApplicationRuntime::start` through returned runtime, using a unique temporary redb file and starting both production workers without Hub resolution. | Clean idle initial state is mandatory. |
-| Download-free E1 shutdown | `ApplicationRuntime::shutdown` through successful bounded worker shutdown/join. | Terminal worker state is validated and the temporary workspace is deleted. |
+| `e0_hosted_checked_prefill/4_tokens` | Public `Prefill` submission through matching `PrefillCompleted`, including bounded transport, E0 dispatch/checking, Candle execution, event publication, and receive | Fixture/source construction, worker start, load, request/sequence/prompt/logits setup, semantic validation, completion, unload, shutdown, and join |
+| `e0_hosted_incremental_decode/1_token_after_2_token_prefill` | Public `Decode` submission through matching `DecodeCompleted` after a prepared two-token prefix | Request/sequence creation, setup prefill, token/logits setup, semantic validation, completion, and lifecycle setup/teardown |
 
-Each E0 cycle records paired public `RuntimeSnapshot` accounting and process memory before load, after load, after checked-prefill release, after first-token/proxy release, during backpressure, after backpressure release, after cancellation release, and after unload. Each download-free E1 startup cycle records process memory before start, after start, and after shutdown.
+`iter_custom` accumulates only the named boundary. The vocabulary-sized logits vector is allocated before measurement and returned from each event for reuse. Internal Candle tensor/cache work contributes elapsed time but is not attributed.
 
-The E1 startup/shutdown lifecycle uses the same warmup/sample counts as E0 but fresh `ApplicationRuntime` instances. Together these repeated cycles answer whether load/generate/release/unload/shutdown restores deterministic ownership state; they are not a long-running soak test.
+### Fixture, output, and artifact contract
 
-### Deterministic fixture identity and provenance
+The runtime harness references the project-authored deterministic fixture under `crates/runtime/inference-runtime/tests/fixtures/candle-llama` without copying it. Before setup it verifies regular files, exact byte sizes, recomputed SHA-256 values, parsed configuration, and the loaded public descriptor.
 
-The runtime harness references, without copying, `crates/runtime/inference-runtime/tests/fixtures/candle-llama`, anchored from `CARGO_MANIFEST_DIR`. It is project-authored deterministic synthetic integration data documented by its `PROVENANCE.md`; it contains no trained or externally sourced model weights.
-
-| File | Exact size | Required SHA-256 |
+| File | Size | Required SHA-256 |
 |---|---:|---|
 | `config.json` | 360 bytes | `052b5c325859dc723ed0825f711950cbff112a140239953273cebacdb36afdd0` |
 | `model.safetensors` | 4,800 bytes | `cc4798af93488b4fb2ae0548c2b28ace600521732b52023a7786c3227d72d672` |
 
-Before normal-runner or Criterion setup, shared fixture verification checks presence, regular-file status, exact byte sizes, recomputed SHA-256 using `sha2` 0.11, and parsed configuration fields. The loaded public descriptor must then report Candle / Llama / Safetensors / unquantized F32 / vocabulary 16 / context 16.
+The fixture is Candle / Llama / Safetensors / unquantized F32 with vocabulary and context capacity 16. It contains no trained or externally sourced weights and proves integration only.
 
-This fixture proves execution and lifecycle integration only. It is not evidence of model quality, real-product performance, representative vocabulary/context scale, production steady-state throughput, or device/native-memory behavior.
+The runner writes one schema-versioned JSON document to stdout and compact progress/summary information to stderr. It records allowlisted Git, toolchain, host, workload, fixture, lifecycle, accounting, and process-memory data; it excludes generated text/token IDs, credentials, secrets, and broad environment dumps.
 
-### Hosted E0 Criterion targets
+Raw JSON, Criterion reports, profiles, caches, and compiler output remain beneath root `target` or outside the repository. The runner writes no result file itself.
 
-`benchmarks/runtime/benches/runtime.rs` implements two targets with a 500 ms warmup, two-second measurement window, 10 samples, and no regression threshold.
+## Commit A controlled baseline
 
-| Target | Question | Timed in | Timed out |
-|---|---|---|---|
-| `e0_hosted_checked_prefill/4_tokens` | Did hosted checked-prefill submission-to-event cost regress for the deterministic four-token input? | `try_submit(Prefill)` through receipt and ticket matching of `PrefillCompleted`, including bounded transport, E0 dispatch/checking, Candle execution, event publication, and receive. | Fixture/source construction, worker start, model load, request/sequence and prompt creation, logits allocation, result validation, request completion, unload, shutdown, and join. |
-| `e0_hosted_incremental_decode/1_token_after_2_token_prefill` | Did one hosted incremental decode regress after a prepared two-token prefix? | `try_submit(Decode)` through receipt and ticket matching of `DecodeCompleted`, with the same hosted transport/dispatch/event boundary. | Request/sequence creation, two-token setup prefill, token and logits setup, completion, and all lifecycle setup/teardown. |
+### Exact code-under-test identity
 
-`iter_custom` accumulates only the named boundary. The vocabulary-sized logits vector is allocated before measurement and returned from each event for reuse. Model load and worker start occur once per target. Candle tensor allocation or KV/cache growth that occurs inside the boundary contributes elapsed time, but the benchmark has no allocator instrumentation or RSS sampling and cannot attribute that work.
-
-### Pinned real-product mode — implemented, not executed
-
-The E1 normal-runner mode hardcodes and verifies:
-
-- repository: `neubla/tiny-random-LlamaForCausalLM`;
-- immutable revision: `1c81a3fba044af78df253edc66bdbab183184932`;
-- Candle / Hugging Face Hub / CPU / Safetensors / F32;
-- prompt `Hello`, deterministic top-k-1 generation, seed 39, eight generated tokens, and a four-token post-first public-usage window.
-
-There are no repository, revision, or model-substitution flags. `--cache-dir PATH` is mandatory and must be an existing directory whose canonical location is under shared root `target/` or outside the repository; source-tree cache locations are rejected. Public E1 always performs immutable Hub metadata resolution, so `--allow-network` is mandatory and `HF_HUB_OFFLINE=1` is rejected as contradictory.
-
-| Metric/question | Exact measured boundary |
+| Field | Value |
 |---|---|
-| Application start | `ApplicationRuntime::start` through returned runtime. |
-| E1 resolution/cache/download | Immediately before `resolve_model` through `ApplicationEvent::ModelResolved`, separate from model load. A network-enabled first warmup may include download and remains recorded rather than being mislabeled cached performance. |
-| Candle model load | Immediately before `load_model` through `ApplicationEvent::ModelLoaded`, after resolution. |
-| First decoded output and usage | Immediately before `start_generation("Hello", …)` through the first non-empty decoded fragment at public `pull_output`. Only byte count and public prompt/generated usage are recorded, never text or token IDs. |
-| Post-first proxy | First decoded-output observation through the fixed four-token public usage window when observable; a shorter remainder is labeled if generation ends first. This is not steady state. |
-| Normal generation/release | Eight-token top-k-1 completion requiring matching text-output `Terminal`, text-output `Released`, `GenerationFinished`, non-zero decoded bytes, exact usage, and no cleanup-pending event. |
-| Unload | Immediately before `unload_model_with_behavior(RejectIfBusy)` through `ModelUnloaded` with zero cancellations. |
-| Application shutdown | `ApplicationRuntime::shutdown` through successful bounded worker shutdown/join. |
+| Commit A | `efcd36e320a97d61d3f982619fee182410c514df` |
+| Commit A tree | `f80c5d6c746376df81d7ac8e7281ac9736e44d88` |
+| Working tree during validation and measurement | Clean; generated output existed only beneath ignored root `target/` |
+| Dedicated Cargo target | `target/phase10-final` |
+| Captured synthetic report | `target/phase10-evidence/synthetic.json` |
 
-RSS would be sampled before/after start, resolution, load, released generation, unload, and shutdown. **This mode was compiled but not run for the recorded baseline.** Any future run requires explicit network authorization and an allowed existing cache. Therefore this document reports no E1 real-model timing, memory result, output, or product baseline.
+The follow-on evidence commit (Commit B) changes Markdown only. These measurements therefore apply directly to Commit A’s executable tree; they are not represented as a fresh measurement of Commit B. Commit B’s post-commit repository gate is separate validation evidence.
 
-## Actually executed release baseline
-
-### Environment and workload
-
-The final corrected normal synthetic baseline and the four selected Criterion targets were executed after the harness hardening described in this change, with the identity below. The working tree was **dirty** at measurement time; the recorded `HEAD`/tree identify the committed base while the final report and diff identify the uncommitted Phase 10 source.
+### Controlled environment and workload
 
 | Field | Recorded value |
 |---|---|
-| Git `HEAD` | `f61a0fadd2311a53e1bce55094f886e3465b0c95` |
-| Git `HEAD^{tree}` | `1bee6fa25f8b4819ac68d02cc10324f0f1848e9e` |
-| Working tree | dirty |
 | Rust / Cargo / LLVM / Criterion | `rustc 1.96.1`; `cargo 1.96.1`; LLVM `22.1.2`; Criterion `0.8.2` |
-| Target / profiles / features | `x86_64-unknown-linux-gnu`; synthetic runner `release`; Criterion targets Cargo `bench` (optimized); no package features (`[]`) |
-| OS / kernel | Linux; `7.1.4-arch1-1` |
+| Host target | `x86_64-unknown-linux-gnu` |
+| Profiles | Synthetic runner `release`; Criterion Cargo `bench` optimized profile |
+| OS / kernel | Linux / `7.1.4-arch1-1` |
 | CPU | AMD Ryzen 9 5950X; 16 physical cores; 32 logical CPUs |
-| RAM | 33,556,652,032 bytes |
-| Runtime cycles | warmup 1; samples 3 |
-| Download-free E1 startup cycles | warmup 1; samples 3 |
-| Synthetic generation | greedy; seed 17; prompt 2 tokens; generate 6 tokens |
-| Checked prefill / post-first window | 4 prompt tokens; 4 generated tokens |
+| RAM | 33,556,660,224 bytes |
+| Thread controls | All eight allowlisted runtime thread-control variables were unset |
+| Synthetic cycles | 1 warmup; 3 recorded samples |
+| Fixture | Project-authored deterministic Candle/Llama/Safetensors/F32 fixture; vocabulary/context 16 |
+| Generation workload | Greedy; two-token prompt; six-token first-token scenario; four-token post-first window |
+| Checked prefill | Four prompt tokens |
+| Backpressure | Four-token generation limit; fixed 100 ms no-pull hold |
+| Cancellation | Twelve-token limit; fixed 25 ms pre-cancel hold; two generated tokens observed in every sample |
 
-All recorded thread-control environment variables were unset: `CARGO_BUILD_JOBS`, `RAYON_NUM_THREADS`, `OMP_NUM_THREADS`, `OMP_THREAD_LIMIT`, `MKL_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `VECLIB_MAXIMUM_THREADS`, `NUMEXPR_NUM_THREADS`, `RUST_TEST_THREADS`, and `CANDLE_NUM_THREADS`.
+### Synthetic timing results
 
-### Synthetic normal-runner results
+Intervals are the minimum and maximum of the three recorded sample cycles. Medians are the middle recorded values after ordering.
 
-Intervals are the minimum and maximum of the three recorded samples; medians are the recorded three-sample medians.
-
-| Measurement | Sample interval | Median / throughput evidence |
+| Measurement | Sample interval | Median / derived evidence |
 |---|---:|---:|
-| E0 worker start | 33.571–41.041 µs | 35.651 µs; samples `41.041`, `33.571`, `35.651` µs |
-| Model load | 0.087352–0.091073 ms | 0.088252 ms |
-| Checked four-token prefill | 5.342635–5.534649 ms | 5.526169 ms |
-| Checked-prefill throughput | 722.720–748.694 prompt tokens/s | 723.829 prompt tokens/s |
-| Submission to first token at pull | 5.922168–5.983590 ms | 5.979990 ms |
-| Four-token post-first proxy | 21.103904–21.171285 ms | 21.110794 ms |
-| Post-first proxy throughput | 188.935–189.538 tokens/s | 189.477 tokens/s |
-| Controlled no-pull hold | 100.060398–100.061698 ms | samples `100.060588`, `100.060398`, `100.061698` ms; controlled setup, no threshold |
-| Backpressure recovery to next token | 1.056394–1.058274 ms | 1.057325 ms |
-| Cancellation to observable `Terminal` | 1.058995–1.060235 ms | 1.060145 ms |
-| Cancellation to observable `Released` | 1.059035–1.060275 ms | 1.060185 ms; samples `1.060185`, `1.059035`, `1.060275` ms |
-| Model unload | 0.016280–0.016371 ms | 0.016330 ms |
-| Clean E0 shutdown and join | 0.034441–0.036590 ms | 0.034721 ms |
-| Download-free `ApplicationRuntime` start | 35.173612–37.534997 ms | 37.154378 ms |
-| Download-free `ApplicationRuntime` shutdown | 0.056301–1.092955 ms | 1.082565 ms; samples `0.056301`, `1.082565`, `1.092955` ms |
+| E0 worker start | 24.270–26.901 µs | 26.161 µs |
+| Model load | 0.095222–0.103892 ms | 0.098103 ms |
+| Checked four-token prefill | 5.123713–5.233256 ms | 5.138244 ms |
+| Checked-prefill throughput | 764.343–780.684 prompt tokens/s | 778.476 prompt tokens/s |
+| Submission to first token at pull | 5.900052–5.911632 ms | 5.904922 ms |
+| Four-token post-first proxy | 20.005891–20.056412 ms | 20.052802 ms |
+| Post-first proxy throughput | 199.437–199.941 tokens/s | 199.473 tokens/s |
+| Controlled no-pull hold | 100.044964–100.059085 ms | 100.058516 ms; controlled setup, not a threshold |
+| Backpressure recovery to next token | 1.057125–1.058826 ms | 1.057425 ms |
+| Cancellation acknowledgement | 1.058355–1.058845 ms | 1.058476 ms |
+| Cancellation to observable terminal state | 1.058545–1.058975 ms | 1.058616 ms |
+| Cancellation to observable release | 1.058585–1.059015 ms | 1.058646 ms |
+| Model unload | 12.870–17.551 µs | 17.360 µs |
+| Clean E0 shutdown and join | 32.041–49.351 µs | 35.251 µs |
+| Download-free `ApplicationRuntime` start | 35.612696–53.880535 ms | 47.204385 ms |
+| Download-free `ApplicationRuntime` shutdown | 0.048151–1.089336 ms | 1.081216 ms |
 
-The low first E1 shutdown sample is retained rather than hidden. The four-token post-first result is explicitly a short synthetic integration proxy, **not production steady-state throughput**. All nine generation operations across the three cycles reached observable matching `Terminal` and `Released` states with no pending or exhausted cleanup; every cancellation emitted two tokens.
+The low first E1 shutdown sample is retained rather than hidden. The post-first result remains a short synthetic integration proxy, not representative steady state.
+
+All nine generation operations across the three sample cycles reached matching terminal and released states. Every cancellation produced two tokens. No sample snapshot contained pending/exhausted cleanup or a maintenance error.
 
 ### Deterministic accounting and sampled RSS
 
-After load, public E0 accounting reported 4,800 host weight bytes, 4,800 host working bytes, and 64 cache bytes per token. During output backpressure it reported one active request and one generation workspace, 4,800 host weight bytes, 6,320 host working bytes, 128 cache bytes per token, and a 240-host-byte generation workspace. After every `Released` record, accounting returned to the model-only state. After every unload, all accounting fields were exactly zero with no model, request, generation workspace, pending/exhausted cleanup, or maintenance error.
+After load, public E0 accounting reported 4,800 host weight bytes, 4,800 host working bytes, and 64 cache bytes per token. During output backpressure it reported one active request, one generation workspace, 4,800 host weight bytes, 6,320 host working bytes, 128 cache bytes per token, and a 240-host-byte generation workspace.
 
-Recorded `VmRSS` trends, in sample-cycle order, were:
+After each checked-prefill, first-token/proxy, backpressure, and cancellation release, accounting exactly matched the model-only after-load state. After every unload, model/request/workspace/cleanup/maintenance accounting and all reserved footprints were exactly zero, with no loaded model.
+
+Recorded Linux `VmRSS` values, in sample-cycle order, were:
 
 | Checkpoint | Sample 1 | Sample 2 | Sample 3 |
 |---|---:|---:|---:|
-| E0 before load | 8,654,848 bytes | 8,671,232 bytes | 8,675,328 bytes |
-| E0 during backpressure | 8,671,232 bytes | 8,675,328 bytes | 8,679,424 bytes |
-| E0 after unload | 8,671,232 bytes | 8,675,328 bytes | 8,679,424 bytes |
-| E1 before application start | 13,107,200 bytes | 13,164,544 bytes | 13,172,736 bytes |
-| E1 after application shutdown | 13,164,544 bytes | 13,172,736 bytes | 13,176,832 bytes |
+| E0 before load | 7,864,320 bytes | 7,876,608 bytes | 7,888,896 bytes |
+| E0 during backpressure | 7,876,608 bytes | 7,880,704 bytes | 7,892,992 bytes |
+| E0 after unload | 7,876,608 bytes | 7,888,896 bytes | 7,892,992 bytes |
+| E1 before application start | 11,988,992 bytes | 12,046,336 bytes | 12,058,624 bytes |
+| E1 after application shutdown | 12,046,336 bytes | 12,058,624 bytes | 12,062,720 bytes |
 
-The non-decreasing RSS after exact runtime-accounting cleanup is consistent with allocator and operating-system page retention; it is not evidence that E0 still owns a model or request, and these three samples alone do not establish a leak.
+RSS comes from sampled Linux `/proc/self/status` `VmRSS`; the report also records `VmHWM`. These values are process-wide and include executable pages, workers, stacks, libraries, mappings, allocator arenas/caches, warmups, and prior cycles. Sampling can miss transient peaks, and `VmHWM` is monotonic. Neither value attributes Candle/native resources or device memory.
 
-Linux RSS comes from sampled `/proc/self/status` `VmRSS`; `VmHWM` is also recorded. Both are process-wide rather than per-model. They include executable pages, stacks, workers, allocator arenas/caches, mappings, libraries, filesystem effects, warmups, and prior cycles. Sampling can miss transient peaks, while `VmHWM` is monotonic for the process. Neither value identifies Candle/native allocations or device memory. On non-Linux systems these fields are `null`.
+The small non-decreasing RSS trend after exact accounting cleanup is consistent with allocator and operating-system page retention. Three samples do not establish a leak. Public runtime accounting is deterministic ownership/admission evidence and is intentionally distinct from OS residency.
 
-Public `RuntimeSnapshot` accounting is deterministic admission/ownership accounting and can include planned or reserved footprints. It is intentionally separate from OS residency: a change in one does not imply an equal change in the other. Neither runtime harness installs an allocation-counting global allocator.
+### Focused Criterion results
 
-### Actually executed Criterion results
+Exactly these four targets were statistically executed on Commit A. Every other sampling matrix target and all stop-matching targets were compile-only for this baseline; correctness was covered by the one-shot matrix test.
 
-| Target | Criterion-reported time interval | Throughput interval | Samples and outliers |
+| Target | Criterion time interval | Throughput interval | Samples and outliers |
 |---|---:|---:|---|
-| Runtime hosted prefill, 4 tokens (`e0_hosted_checked_prefill/4_tokens`) | [5.0955, 5.1104] ms | [782.71, 785.00] elem/s | 10 samples; no outliers reported |
-| Runtime hosted decode after two-token prefill (`e0_hosted_incremental_decode/1_token_after_2_token_prefill`) | [5.0474, 5.0890] ms | [196.50, 198.12] elem/s | 10 samples; 1 high severe outlier |
-| Sampling `sample_only/default_top_k_top_p/32768` | [77.211, 77.228] µs | [424.30, 424.39] Melem/s | 100 samples; 6 outliers (3 low mild, 2 high mild, 1 high severe) |
-| Sampling `restore_and_sample/default_top_k_top_p/32768` | [78.288, 78.302] µs | [418.48, 418.56] Melem/s | 100 samples; 9 outliers (3 low mild, 4 high mild, 2 high severe) |
+| `e0_hosted_checked_prefill/4_tokens` | [5.1632, 5.1720] ms | [773.40, 774.71] elem/s | 10 samples; no outliers reported |
+| `e0_hosted_incremental_decode/1_token_after_2_token_prefill` | [5.0015, 5.0872] ms | [196.57, 199.94] elem/s | 10 samples; no outliers reported |
+| `sample_only/default_top_k_top_p/32768` | [78.075, 78.313] µs | [418.42, 419.70] Melem/s | 100 samples; 12 outliers: 2 low mild, 2 high mild, 8 high severe |
+| `restore_and_sample/default_top_k_top_p/32768` | [81.265, 81.287] µs | [403.11, 403.22] Melem/s | 100 samples; 5 outliers: 1 low mild, 4 high mild |
 
-Exactly these four Criterion targets were statistically executed. Every other sampling case/size/boundary and all three stop-matching targets compiled but were **not statistically executed** for this baseline. No result is inferred or invented for those targets.
+These intervals are local comparative evidence, not shared-CI thresholds or product-model latency/throughput.
 
-## Historical sampling baseline — 2026-07-22
+## Historical Phase 4 external smoke
 
-This is preserved as historical evidence from the pre-matrix, restoration-inclusive default-policy benchmark at 32,768 logits. It is not a current-tree Phase 10 matrix result.
+This section preserves curated product-path observations from the 2026-07-25 Phase 4 baseline. It is historical evidence for that older tree, not a current-tree Phase 10 external baseline.
 
-Environment:
+| Field | Historical value |
+|---|---|
+| Repository | `neubla/tiny-random-LlamaForCausalLM` |
+| Revision | `39ca1f8a1fc940377c5cb49a21aff73bb99b52f5` |
+| Expected architecture | `LlamaForCausalLM` / runtime `Llama` |
+| Model SHA-256 | `49c20f32c6c597480fcaec5df2f86c645eabea765cbea1e67886dbae45e5c992` |
+| Observed generation | Eight tokens through the pinned E0 path |
 
-- CPU: AMD Ryzen 9 5950X, 16 cores and 32 hardware threads;
-- target: `x86_64-unknown-linux-gnu`;
-- compiler: Rust 1.96.1, LLVM 22.1.2;
-- profile: Cargo `bench` optimized profile;
-- Criterion: 0.8.2, 100 measured samples.
+| Measurement | Historical result |
+|---|---:|
+| Model load duration | 0.005661 s |
+| Time to first generated token | 0.060969 s |
+| Decode throughput | 21.954 tokens/s |
+| Cancellation latency | 0.045297 s |
+| Model unload duration | 0.000380 s |
+| RSS before load | 4,636 KiB |
+| RSS after load | 11,116 KiB |
+| RSS during generation | 14,088 KiB |
+| RSS after unload | 10,412 KiB |
 
-The prepared sampler reserved 128 KiB each for mutable F32 logits, U32 candidate indices, and U32 repetition epoch state: 384 KiB total, excluding history. Repetition penalty was one, so the epoch table was not mutated; active mutable storage was 256 KiB for logits and indices. A separate 128 KiB baseline slice restored overwritten logits inside the measured boundary. All vectors were allocated before measurement.
+Elevated post-unload RSS was not treated as retained model ownership because allocator page retention can outlive resource release. The historical ownership evidence was released records, empty accounting, an empty post-unload snapshot, successful worker shutdown, and clean process exit.
 
-Observed interval:
+## External product evidence
 
-```text
-time:       80.726 µs to 82.028 µs per sample
-throughput: 399.48 Melem/s to 405.92 Melem/s
-```
+The original Phase 10 benchmark implementation included a network-dependent real-product mode, but it was never executed and was subsequently removed during benchmark simplification. The current CLI intentionally rejects its former product/network options.
 
-Six measurements were classified as high outliers. No source optimization is justified from this historical baseline alone; a proposed change must be compared under equivalent conditions and should include profiler evidence identifying the cost.
+No network access was authorized for the Commit A closure. No external model was resolved, loaded, or measured, and no product output, latency, throughput, lifecycle, or memory baseline is claimed. The historical E1 Hub smoke is correctness evidence for an older checkpoint, not current performance evidence.
 
-## Metadata, output, and artifact policy
+External product evidence remains a prerequisite before Phase 11. A future path must be narrow, opt-in, exact-model/revision, cache-safe, actually executed through public E1 behavior, and documented here only after observation.
 
-The normal runner serializes exactly one stable schema-versioned serde JSON document to **stdout** and writes progress plus a compact human summary to **stderr**. It never emits generated token IDs, decoded text, environment-wide values, access tokens, or other secrets. Only the fixed thread-control variables listed above are recorded.
+## Interpretation and deferred work
 
-Metadata includes Git `HEAD`, `HEAD^{tree}`, and a dirty boolean without dirty file names; Rust/Cargo/LLVM/Criterion details; target, profile, and features; OS/kernel/CPU/core/RAM facts; fixed thread environment; fixture or immutable product identity; workload and sampling settings; and effective cache/network policy.
-
-The runner writes no result file itself. Download-free temporary redb/cache state is created below root `target/runtime-benchmarks` and deleted. Captured JSON, Criterion samples/HTML, reports, flamegraphs, profiler data, heap dumps, compiler intermediates, and model caches must remain under root `target`; generated output must never be written into source directories. Criterion uses `target/criterion`.
-
-Representative commands, not executed while editing this document:
-
-```text
-mkdir -p target/runtime-benchmarks
-cargo run --release --locked -p runtime-benchmarks --bin baseline -- \
-  --mode synthetic --warmup 1 --cycles 3 \
-  > target/runtime-benchmarks/synthetic.json
-cargo bench --locked -p sampling --bench sampling_pipeline
-cargo bench --locked -p runtime-benchmarks --bench runtime
-```
-
-For the pinned E1 mode, use an existing explicit cache under shared root `target/` or outside the repository, ensure `HF_HUB_OFFLINE` is not `1`, and opt into network access unmistakably:
-
-```text
-mkdir -p target/runtime-benchmarks/hf-cache
-cargo run --release --locked -p runtime-benchmarks --bin baseline -- \
-  --mode real-product --cache-dir target/runtime-benchmarks/hf-cache \
-  --allow-network --warmup 1 --cycles 3
-```
-
-## Deferred candidates
-
-These candidates remain deliberately unimplemented because no current evidence supports a separate benchmark or optimization decision:
-
-- tokenizer encode: no identified implementation decision or representative profile;
-- owned streaming decode: a stable public seam exists, but there is no measured bottleneck or current decision;
-- context planner: no supported scale question or implementation decision;
-- bounded output accumulator: token and text variants exist, and the system backpressure path answers the current question;
-- isolated raw Candle prefill/decode: hosted E0 Criterion isolates the needed regression boundary without private access or duplicated fixture setup.
-
-A future benchmark must name the decision it supports and explain why existing component or system evidence is insufficient. The recorded baseline, including its outliers, led to no optimization.
+- No production optimization is justified by this single local baseline.
+- Tokenizer encode/streaming decode, context planning, output accumulation, and isolated Candle kernels remain deferred until a named decision and profile show that current surfaces are insufficient.
+- Synthetic timings are useful for regression investigation, lifecycle confidence, and harness comparison—not product claims.
+- A proposed optimization should compare equivalent before/after trees on this controlled host and include a profile or other evidence identifying the cost.
