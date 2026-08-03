@@ -5,14 +5,16 @@ use application_runtime::{
     ConversationRole, ConversationTokenEstimate, GenerationTerminalKind, GenerationTerminalOutcome,
     ResponseAttempt, ResponseAttemptId, ResponseAttemptState,
 };
+use slint::Model;
 
 use super::callbacks::{
     CancellationMessageState, cancellation_pending_message, event_requires_conversation_snapshot,
 };
 use super::controls::{RuntimeAdmissions, control_state};
+use super::devices::{DeviceChoice, DeviceSelectorModel};
 use super::model::{
-    ComposerMode, composer_mode_from_evidence, map_model_selection, model_target_label,
-    selected_model_summary,
+    ComposerMode, artifact_target_label, composer_mode_from_evidence, device_label,
+    loaded_model_target_label, map_model_selection, selected_model_summary,
 };
 use super::output::{
     FrameOutputDelta, GeneratedOutputUpdate, PresentationState, TerminalPresentation,
@@ -28,25 +30,128 @@ fn repository_and_revision_map_to_model_selection() {
     assert_eq!(selection.repository(), "owner/model");
     assert_eq!(selection.revision(), "main");
 
-    let summary = selected_model_summary(&selection);
+    let summary = selected_model_summary(&selection, ApplicationDevice::Cpu, true);
     assert!(summary.contains("Engine: Candle"));
     assert!(summary.contains("Repository: owner/model"));
     assert!(summary.contains("Revision: main"));
 }
 
 #[test]
-fn target_summary_reports_orthogonal_current_facts() {
-    let target = model_target_label(
+fn resolved_artifact_target_reports_only_artifact_facts() {
+    let target = artifact_target_label(
         ApplicationEngine::Candle,
         ApplicationSource::HuggingFaceHub,
-        ApplicationDevice::Cpu,
         ApplicationModelFormat::Safetensors,
     );
 
     assert!(target.contains("Engine: Candle"));
     assert!(target.contains("Source: Hugging Face Hub"));
-    assert!(target.contains("Device: CPU"));
     assert!(target.contains("Format: Safetensors"));
+    assert!(!target.contains("device"));
+    assert!(!target.contains("CPU"));
+    assert!(!target.contains("CUDA"));
+}
+
+#[test]
+fn device_labels_are_owned_and_stable_for_cpu_and_cuda_ordinals() {
+    assert_eq!(device_label(ApplicationDevice::Cpu), "CPU");
+    assert_eq!(
+        device_label(ApplicationDevice::Cuda { ordinal: 7 }),
+        "CUDA 7"
+    );
+}
+
+#[test]
+fn checked_device_indices_map_to_the_rust_owned_e1_order() {
+    let mut selector = DeviceSelectorModel::default();
+    selector.synchronize_choices(&[
+        DeviceChoice::new(ApplicationDevice::Cpu, "CPU", true),
+        DeviceChoice::new(ApplicationDevice::Cuda { ordinal: 0 }, "CUDA 0", true),
+        DeviceChoice::new(ApplicationDevice::Cuda { ordinal: 4 }, "CUDA 4", true),
+    ]);
+
+    assert_eq!(selector.device_at_checked_index(-1), None);
+    assert_eq!(
+        selector.device_at_checked_index(0),
+        Some(ApplicationDevice::Cpu)
+    );
+    assert_eq!(
+        selector.device_at_checked_index(1),
+        Some(ApplicationDevice::Cuda { ordinal: 0 })
+    );
+    assert_eq!(
+        selector.device_at_checked_index(2),
+        Some(ApplicationDevice::Cuda { ordinal: 4 })
+    );
+    assert_eq!(selector.device_at_checked_index(3), None);
+}
+
+#[test]
+fn unavailable_selected_cuda_row_is_retained_at_its_stable_index() {
+    let mut selector = DeviceSelectorModel::default();
+    selector.synchronize_choices(&[
+        DeviceChoice::new(ApplicationDevice::Cpu, "CPU", true),
+        DeviceChoice::new(
+            ApplicationDevice::Cuda { ordinal: 2 },
+            "CUDA 2 — Test GPU",
+            true,
+        ),
+    ]);
+    let labels = selector.slint_model();
+
+    selector.synchronize_choices(&[
+        DeviceChoice::new(ApplicationDevice::Cpu, "CPU", true),
+        DeviceChoice::new(ApplicationDevice::Cuda { ordinal: 2 }, "CUDA 2", false),
+    ]);
+
+    assert_eq!(labels, selector.slint_model());
+    assert_eq!(labels.row_count(), 2);
+    assert_eq!(
+        labels.row_data(1).map(|label| label.to_string()),
+        Some("CUDA 2 (unavailable)".to_owned())
+    );
+    assert_eq!(
+        selector.device_at_checked_index(1),
+        Some(ApplicationDevice::Cuda { ordinal: 2 })
+    );
+    assert_eq!(
+        selector.selected_index(ApplicationDevice::Cuda { ordinal: 2 }),
+        1
+    );
+}
+
+#[test]
+fn selected_and_actual_loaded_device_formatting_remain_distinct() {
+    let selection = map_model_selection("owner/model", "main");
+    let selected =
+        selected_model_summary(&selection, ApplicationDevice::Cuda { ordinal: 3 }, false);
+    let loaded = loaded_model_target_label(
+        ApplicationEngine::Candle,
+        ApplicationSource::HuggingFaceHub,
+        ApplicationModelFormat::Safetensors,
+        ApplicationDevice::Cpu,
+    );
+
+    assert!(selected.contains("Selected device: CUDA 3"));
+    assert!(selected.contains("Availability: unavailable"));
+    assert!(loaded.contains("Actual device: CPU"));
+    assert!(!loaded.contains("CUDA 3"));
+}
+
+#[test]
+fn control_state_uses_the_e1_device_selection_flag_unchanged() {
+    for expected in [false, true] {
+        let controls = control_state(
+            RuntimeAdmissions {
+                can_select_device: expected,
+                ..RuntimeAdmissions::default()
+            },
+            ComposerMode::Unavailable,
+            "",
+        );
+
+        assert_eq!(controls.can_select_device, expected);
+    }
 }
 
 #[test]

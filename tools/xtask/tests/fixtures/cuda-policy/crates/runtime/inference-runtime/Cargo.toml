@@ -1,0 +1,12 @@
+[package]
+name = "inference-runtime"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+default = []
+cuda = ["candle-backend/cuda"]
+
+[dev-dependencies]
+candle-backend = { path = "../../adapters/candle-backend" }

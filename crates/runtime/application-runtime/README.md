@@ -9,22 +9,34 @@ drive the same application state, conversation, and generation machines.
 
 ## Supported local execution
 
-The sole local execution engine is Candle. `ModelSelection` contains a normalized
-Hugging Face repository and revision. E1 resolves that selection to immutable
-Safetensors Llama artifacts and a Hugging Face tokenizer, then constructs one
-`CandleLlamaSource` behind its private composition boundary.
+The sole local execution engine is Candle. `ModelSelection` contains only a
+normalized Hugging Face repository and revision. E1 resolves it to immutable
+Safetensors Llama artifacts and a Hugging Face tokenizer independently from the
+execution device, then constructs one `CandleLlamaSource` behind its private
+composition boundary.
 
-Resolved and loaded state report engine, artifact source, CPU device,
-Safetensors format, supported scalar type, tokenizer vocabulary, and immutable
-repository/commit identity as application-owned values. Those facts are derived
-from the resolved product; callers cannot construct arbitrary engine, source,
-format, or device combinations.
+`ResolvedModel` reports artifacts, source, format, scalar, tokenizer, immutable
+identity, and compatibility only. Selected device is separate E1 state using
+`ApplicationDevice::{Cpu, Cuda { ordinal: u32 }}` and
+`ApplicationDeviceSummary`; `LoadedModel` reports only the actual device verified
+from E0's load receipt. No Candle or `cudarc` type crosses this public boundary.
+
+CPU always exists and is the fresh-install default. Initial bounded discovery
+probes CUDA 0 and, when different, the persisted selected CUDA ordinal. Structured
+failure leaves an unavailable persisted CUDA selection visible and selected.
+`select_device` follows `can_select_device`; load re-probes the selected device,
+blocks unavailable selection, preserves it, and never falls back to CPU.
 
 Concrete local composition uses one monomorphized
 `HostedRuntime<CandleLlamaSource>`, one inference worker thread, one
-`HfTokenizer`, and request-local `HfOwnedStreamingDecoder` values. E0 retains
-exclusive ownership of model resources, sequences, scheduling, sampling,
-cancellation boundaries, cleanup, accounting, unload, and shutdown.
+`HfTokenizer`, and request-local `HfOwnedStreamingDecoder` values. E1 passes the
+exact selected `ExecutionDevice`. E0 retains exclusive ownership of model
+resources, sequences, scheduling, sampling, cancellation boundaries, cleanup,
+accounting, unload, and shutdown.
+
+The crate's non-default `cuda` feature forwards only to `candle-backend/cuda`.
+No default graph reaches CUDA; generic `gpu`, `cudnn`, `flash-attn`, and `nccl`
+features are not provided.
 
 Generation code is split internally by responsibility into admission, the E0/text
 bridge, bounded output, and settings. This is source organization inside the
@@ -38,15 +50,40 @@ before returning the primary Hub failure. A rollback timeout retains the complet
 inference owner in a private startup-cleanup quarantine; a later startup retries
 that cleanup instead of detaching the unresolved worker.
 
-A successful E0 load receipt is published only after immutable identity,
-descriptor, scalar, backend, quantization, and tokenizer evidence agree. If they
-do not, E1 keeps the incompatible `ModelHandle` and compatibility failure in a
-private cleanup record while E0 continues to own and account for the model. The
-public loaded-model state remains empty and the application remains unloading
-while bounded unload submission retries proceed. Submission exhaustion or E0
-cleanup exhaustion does not discard that record; it is released only after the
-model is confirmed absent or the inference worker is confirmed disconnected or
-stopped.
+A successful E0 load receipt is published only after the admission ticket,
+logical model ID and handle, immutable resolution/artifacts, scalar,
+Llama/Candle/Safetensors evidence, tokenizer vocabulary, selected-versus-actual
+device, and bounded footprint agree. If they do not, E1 keeps the incompatible
+`ModelHandle` and compatibility failure in the existing private cleanup record
+while E0 continues to own and account for the model. The public loaded-model
+state remains empty and the application remains unloading while bounded unload
+submission retries proceed. Submission exhaustion or E0 cleanup exhaustion does
+not discard that record; it is released only after the model is confirmed absent
+or the inference worker is confirmed disconnected or stopped. A load error that
+reports retryable retained cleanup triggers one bounded private E0 snapshot and
+returns to idle only when zero aggregate ownership is proven; otherwise selection
+stays locked. Successful unload clears actual loaded-device state but preserves
+selection.
+
+## Memory and persistence
+
+`AcceleratorMemoryPolicy` is `Automatic` or
+`Limit { bytes: NonZeroU64 }`. E0's aggregate budget is fixed at startup, so
+Automatic uses the least physical total across every CUDA row in the bounded
+startup catalogue; an unavailable row or missing total contributes zero and
+fails closed. A limit applies a lower user cap. Load re-probes require that the
+fixed nonzero budget still fit the selected device's latest physical total;
+otherwise loading stays disabled and returns a structured no-fallback error until
+restart. CPU host budgeting is unchanged, while selected-device Candle planning
+checks current available VRAM before partial residency. Host RAM is not used to
+infer CUDA capacity, and no undocumented `u64::MAX` shortcut is used. One resident
+model remains.
+
+`LAS1` settings version 2 tags selected CPU/CUDA identity and memory policy.
+Exact version 1 remains readable as CPU, with zero legacy device bytes mapped to
+Automatic and nonzero bytes to Limit. New writes are version 2, fresh empty
+repository defaults are valid, and unavailable persisted CUDA is not migrated.
+`LAM1` model records remain version 1.
 
 ## Completion and chat
 

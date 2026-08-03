@@ -282,6 +282,89 @@ fn unreviewed_domain_peer_edge_fails_closed() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn exact_reviewed_cuda_feature_chain_is_accepted() -> Result<(), Box<dyn Error>> {
+    let fixture = FixtureWorkspace::new("cuda-policy")?;
+    let report = validate_workspace(&fixture.manifest())?;
+    let cuda_violations = report
+        .violations()
+        .iter()
+        .filter(|violation| {
+            violation.rule().starts_with("CUDA-") || violation.rule() == "POLICY-REVIEW-1"
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        cuda_violations.is_empty(),
+        "exact reviewed CUDA chain was rejected: {cuda_violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn e1_and_application_defaults_cannot_reach_cuda() -> Result<(), Box<dyn Error>> {
+    let fixture = FixtureWorkspace::new("cuda-policy")?;
+    fixture.write(
+        "crates/runtime/application-runtime/Cargo.toml",
+        "[package]\nname = \"application-runtime\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[features]\ndefault = [\"cuda\"]\ncuda = [\"candle-backend/cuda\"]\n\n[dependencies]\ncandle-backend = { path = \"../../adapters/candle-backend\" }\n",
+    )?;
+    fixture.write(
+        "crates/apps/desktop-slint/Cargo.toml",
+        "[package]\nname = \"desktop-slint\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[features]\ndefault = [\"cuda\"]\ncuda = [\"application-runtime/cuda\"]\n\n[dependencies]\napplication-runtime = { path = \"../../runtime/application-runtime\" }\n",
+    )?;
+    let report = validate_workspace(&fixture.manifest())?;
+
+    for package in ["application-runtime", "desktop-slint"] {
+        assert!(report.violations().iter().any(|violation| {
+            violation.source() == package
+                && violation.target() == "default"
+                && violation.rule() == "CUDA-DEFAULT-1"
+        }));
+    }
+    Ok(())
+}
+
+#[test]
+fn generic_gpu_alias_is_not_a_reviewed_cuda_feature() -> Result<(), Box<dyn Error>> {
+    let fixture = FixtureWorkspace::new("cuda-policy")?;
+    fixture.write(
+        "crates/apps/desktop-slint/Cargo.toml",
+        "[package]\nname = \"desktop-slint\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[features]\ndefault = []\ncuda = [\"application-runtime/cuda\"]\ngpu = [\"cuda\"]\n\n[dependencies]\napplication-runtime = { path = \"../../runtime/application-runtime\" }\n",
+    )?;
+    let report = validate_workspace(&fixture.manifest())?;
+
+    assert!(report.violations().iter().any(|violation| {
+        violation.source() == "desktop-slint"
+            && violation.target() == "gpu"
+            && violation.rule() == "CUDA-BOUNDARY-1"
+            && violation.reason().contains("aliases are not allowed")
+    }));
+    Ok(())
+}
+
+#[test]
+fn cargo_metadata_invalid_target_feature_references_remain_rejected() -> Result<(), Box<dyn Error>>
+{
+    let fixture = FixtureWorkspace::new("cuda-policy")?;
+    fixture.write(
+        "crates/adapters/candle-backend/Cargo.toml",
+        "[package]\nname = \"candle-backend\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[features]\ndefault = []\n\n[dependencies]\ncandle-core = { path = \"../../../vendor/candle-core\", default-features = false }\ncandle-nn = { path = \"../../../vendor/candle-nn\", default-features = false }\ncandle-transformers = { path = \"../../../vendor/candle-transformers\", default-features = false }\ncudarc = { path = \"../../../vendor/cudarc\", default-features = false, optional = true }\n",
+    )?;
+    let report = validate_workspace(&fixture.manifest())?;
+
+    for package in ["application-runtime", "inference-runtime"] {
+        assert!(report.violations().iter().any(|violation| {
+            violation.source() == package
+                && violation.target() == "candle-backend/cuda"
+                && violation.rule() == "CUDA-BOUNDARY-1"
+                && violation
+                    .reason()
+                    .contains("retains invalid target-feature references")
+        }));
+    }
+    Ok(())
+}
+
+#[test]
 fn candle_cuda_cannot_become_a_default_feature() -> Result<(), Box<dyn Error>> {
     let fixture = FixtureWorkspace::new("forbidden-edge")?;
     fixture.write(

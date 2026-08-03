@@ -11,22 +11,50 @@ use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 const SETTINGS_KEY: &str = "application";
 const SETTINGS_MAGIC: [u8; 4] = *b"LAS1";
 const MODEL_MAGIC: [u8; 4] = *b"LAM1";
-const RECORD_VERSION: u16 = 1;
+const SETTINGS_VERSION_V1: u16 = 1;
+const SETTINGS_VERSION_V2: u16 = 2;
+const MODEL_VERSION_V1: u16 = 1;
 const SETTINGS_TABLE: TableDefinition<&str, &[u8]> =
     TableDefinition::new("application_settings_v1");
 const MODELS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("model_catalogue_v1");
 
+/// Persisted application device selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StoredApplicationDevice {
+    /// Use the CPU backend.
+    Cpu,
+    /// Use one CUDA device by ordinal.
+    Cuda {
+        /// Zero-based CUDA device ordinal.
+        ordinal: u32,
+    },
+}
+
+/// Persisted accelerator-memory admission policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StoredAcceleratorMemoryPolicy {
+    /// Let the runtime select an accelerator-memory limit.
+    Automatic,
+    /// Enforce an explicit nonzero accelerator-memory limit.
+    Limit {
+        /// Maximum admitted accelerator memory in bytes.
+        bytes: std::num::NonZeroU64,
+    },
+}
+
 /// Persisted application-level runtime limits and default Hub selection.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApplicationSettings {
-    /// Default Hub repository presented by the desktop application.
+    /// Default Hub repository, or empty before the first repository selection.
     pub default_repository: String,
     /// Default Hub revision.
     pub default_revision: String,
     /// Aggregate host-memory admission bound.
     pub maximum_host_memory_bytes: u64,
-    /// Aggregate device-memory admission bound.
-    pub maximum_device_memory_bytes: u64,
+    /// Runtime device selected for application work.
+    pub selected_device: StoredApplicationDevice,
+    /// Accelerator-memory admission policy.
+    pub accelerator_memory_policy: StoredAcceleratorMemoryPolicy,
     /// Mandatory drain timeout used before forced cancellation.
     pub drain_timeout_milliseconds: u64,
 }
@@ -36,10 +64,13 @@ impl ApplicationSettings {
     ///
     /// # Errors
     ///
-    /// Returns [`StorageError::InvalidField`] when the repository or revision is
-    /// empty or consists only of whitespace, or when the drain timeout is zero.
+    /// Returns [`StorageError::InvalidField`] when a nonempty repository consists
+    /// only of whitespace, the revision is empty or whitespace-only, or the drain
+    /// timeout is zero.
     pub fn validate(&self) -> Result<(), StorageError> {
-        validate_non_empty(&self.default_repository, Field::Repository)?;
+        if !self.default_repository.is_empty() {
+            validate_non_empty(&self.default_repository, Field::Repository)?;
+        }
         validate_non_empty(&self.default_revision, Field::Revision)?;
         if self.drain_timeout_milliseconds == 0 {
             return Err(StorageError::InvalidField(Field::DrainTimeout));
@@ -121,6 +152,12 @@ pub enum StorageError {
     },
     /// Persisted bytes were not valid UTF-8.
     InvalidUtf8(std::string::FromUtf8Error),
+    /// Persisted application-device tag is unknown.
+    InvalidApplicationDeviceTag(u8),
+    /// Persisted accelerator-memory policy tag is unknown.
+    InvalidAcceleratorMemoryPolicyTag(u8),
+    /// Persisted accelerator-memory limit is invalid.
+    InvalidAcceleratorMemoryLimit(u64),
     /// Persisted scalar code is unknown.
     InvalidScalarType(u8),
     /// Bytes remained after a complete versioned record was decoded.
@@ -149,6 +186,24 @@ impl Display for StorageError {
             Self::InvalidUtf8(error) => {
                 write!(formatter, "persistent string is invalid UTF-8: {error}")
             }
+            Self::InvalidApplicationDeviceTag(tag) => {
+                write!(
+                    formatter,
+                    "unknown persistent application-device tag: {tag}"
+                )
+            }
+            Self::InvalidAcceleratorMemoryPolicyTag(tag) => {
+                write!(
+                    formatter,
+                    "unknown persistent accelerator-memory policy tag: {tag}"
+                )
+            }
+            Self::InvalidAcceleratorMemoryLimit(bytes) => {
+                write!(
+                    formatter,
+                    "invalid persistent accelerator-memory limit: {bytes} bytes"
+                )
+            }
             Self::InvalidScalarType(code) => {
                 write!(formatter, "unknown persistent scalar type: {code}")
             }
@@ -167,6 +222,9 @@ impl Error for StorageError {
             | Self::UnsupportedVersion(_)
             | Self::TruncatedRecord
             | Self::StringTooLong { .. }
+            | Self::InvalidApplicationDeviceTag(_)
+            | Self::InvalidAcceleratorMemoryPolicyTag(_)
+            | Self::InvalidAcceleratorMemoryLimit(_)
             | Self::InvalidScalarType(_)
             | Self::TrailingBytes => None,
         }
@@ -361,33 +419,98 @@ impl RedbStorage {
 fn encode_settings(settings: &ApplicationSettings) -> Result<Vec<u8>, StorageError> {
     let mut output = Vec::new();
     output.extend_from_slice(&SETTINGS_MAGIC);
-    output.extend_from_slice(&RECORD_VERSION.to_le_bytes());
+    output.extend_from_slice(&SETTINGS_VERSION_V2.to_le_bytes());
     encode_string(&mut output, &settings.default_repository)?;
     encode_string(&mut output, &settings.default_revision)?;
     output.extend_from_slice(&settings.maximum_host_memory_bytes.to_le_bytes());
-    output.extend_from_slice(&settings.maximum_device_memory_bytes.to_le_bytes());
+    match settings.selected_device {
+        StoredApplicationDevice::Cpu => output.push(0),
+        StoredApplicationDevice::Cuda { ordinal } => {
+            output.push(1);
+            output.extend_from_slice(&ordinal.to_le_bytes());
+        }
+    }
+    match settings.accelerator_memory_policy {
+        StoredAcceleratorMemoryPolicy::Automatic => output.push(0),
+        StoredAcceleratorMemoryPolicy::Limit { bytes } => {
+            output.push(1);
+            output.extend_from_slice(&bytes.get().to_le_bytes());
+        }
+    }
     output.extend_from_slice(&settings.drain_timeout_milliseconds.to_le_bytes());
     Ok(output)
 }
 
 fn decode_settings(bytes: &[u8]) -> Result<ApplicationSettings, StorageError> {
-    let mut decoder = Decoder::new(bytes, SETTINGS_MAGIC)?;
-    let settings = ApplicationSettings {
-        default_repository: decoder.string()?,
-        default_revision: decoder.string()?,
-        maximum_host_memory_bytes: decoder.u64()?,
-        maximum_device_memory_bytes: decoder.u64()?,
-        drain_timeout_milliseconds: decoder.u64()?,
+    let (mut decoder, version) = Decoder::new(bytes, SETTINGS_MAGIC)?;
+    let settings = match version {
+        SETTINGS_VERSION_V1 => decode_settings_v1(&mut decoder)?,
+        SETTINGS_VERSION_V2 => decode_settings_v2(&mut decoder)?,
+        version => return Err(StorageError::UnsupportedVersion(version)),
     };
     decoder.finish()?;
     settings.validate()?;
     Ok(settings)
 }
 
+fn decode_settings_v1(decoder: &mut Decoder<'_>) -> Result<ApplicationSettings, StorageError> {
+    let default_repository = decoder.string()?;
+    let default_revision = decoder.string()?;
+    let maximum_host_memory_bytes = decoder.u64()?;
+    let maximum_device_memory_bytes = decoder.u64()?;
+    let accelerator_memory_policy = match std::num::NonZeroU64::new(maximum_device_memory_bytes) {
+        Some(bytes) => StoredAcceleratorMemoryPolicy::Limit { bytes },
+        None => StoredAcceleratorMemoryPolicy::Automatic,
+    };
+    let drain_timeout_milliseconds = decoder.u64()?;
+
+    Ok(ApplicationSettings {
+        default_repository,
+        default_revision,
+        maximum_host_memory_bytes,
+        selected_device: StoredApplicationDevice::Cpu,
+        accelerator_memory_policy,
+        drain_timeout_milliseconds,
+    })
+}
+
+fn decode_settings_v2(decoder: &mut Decoder<'_>) -> Result<ApplicationSettings, StorageError> {
+    let default_repository = decoder.string()?;
+    let default_revision = decoder.string()?;
+    let maximum_host_memory_bytes = decoder.u64()?;
+    let selected_device = match decoder.u8()? {
+        0 => StoredApplicationDevice::Cpu,
+        1 => StoredApplicationDevice::Cuda {
+            ordinal: decoder.u32()?,
+        },
+        tag => return Err(StorageError::InvalidApplicationDeviceTag(tag)),
+    };
+    let accelerator_memory_policy = match decoder.u8()? {
+        0 => StoredAcceleratorMemoryPolicy::Automatic,
+        1 => {
+            let bytes = decoder.u64()?;
+            let bytes = std::num::NonZeroU64::new(bytes)
+                .ok_or(StorageError::InvalidAcceleratorMemoryLimit(bytes))?;
+            StoredAcceleratorMemoryPolicy::Limit { bytes }
+        }
+        tag => return Err(StorageError::InvalidAcceleratorMemoryPolicyTag(tag)),
+    };
+    let drain_timeout_milliseconds = decoder.u64()?;
+
+    Ok(ApplicationSettings {
+        default_repository,
+        default_revision,
+        maximum_host_memory_bytes,
+        selected_device,
+        accelerator_memory_policy,
+        drain_timeout_milliseconds,
+    })
+}
+
 fn encode_model(record: &ModelRecord) -> Result<Vec<u8>, StorageError> {
     let mut output = Vec::new();
     output.extend_from_slice(&MODEL_MAGIC);
-    output.extend_from_slice(&RECORD_VERSION.to_le_bytes());
+    output.extend_from_slice(&MODEL_VERSION_V1.to_le_bytes());
     encode_string(&mut output, &record.name)?;
     encode_string(&mut output, &record.repository)?;
     encode_string(&mut output, &record.revision)?;
@@ -401,7 +524,10 @@ fn encode_model(record: &ModelRecord) -> Result<Vec<u8>, StorageError> {
 }
 
 fn decode_model(bytes: &[u8]) -> Result<ModelRecord, StorageError> {
-    let mut decoder = Decoder::new(bytes, MODEL_MAGIC)?;
+    let (mut decoder, version) = Decoder::new(bytes, MODEL_MAGIC)?;
+    if version != MODEL_VERSION_V1 {
+        return Err(StorageError::UnsupportedVersion(version));
+    }
     let record = ModelRecord {
         name: decoder.string()?,
         repository: decoder.string()?,
@@ -442,7 +568,7 @@ struct Decoder<'record> {
 }
 
 impl<'record> Decoder<'record> {
-    fn new(bytes: &'record [u8], expected_magic: [u8; 4]) -> Result<Self, StorageError> {
+    fn new(bytes: &'record [u8], expected_magic: [u8; 4]) -> Result<(Self, u16), StorageError> {
         let magic = bytes.get(..4).ok_or(StorageError::TruncatedRecord)?;
         if magic != expected_magic {
             return Err(StorageError::InvalidRecordKind);
@@ -453,10 +579,7 @@ impl<'record> Decoder<'record> {
             .try_into()
             .map_err(|_| StorageError::TruncatedRecord)?;
         let version = u16::from_le_bytes(version_bytes);
-        if version != RECORD_VERSION {
-            return Err(StorageError::UnsupportedVersion(version));
-        }
-        Ok(Self { bytes, offset: 6 })
+        Ok((Self { bytes, offset: 6 }, version))
     }
 
     fn u8(&mut self) -> Result<u8, StorageError> {

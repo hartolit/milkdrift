@@ -3,9 +3,10 @@
 use domain_contracts::{FinishReason, GenerationUsage, ModelHandle, RequestId};
 
 use crate::{
-    ApplicationDevice, ApplicationEngine, ApplicationFailure, ApplicationModelFormat,
-    ApplicationScalarType, ApplicationSource, ChatCompatibility, ImmutableModelIdentity,
-    ModelSelection,
+    ApplicationDevice, ApplicationDeviceDiscoveryFailure, ApplicationDeviceSummary,
+    ApplicationDeviceUnavailableReason, ApplicationEngine, ApplicationFailure,
+    ApplicationModelFormat, ApplicationScalarType, ApplicationSource, ChatCompatibility,
+    ImmutableModelIdentity, ModelSelection,
 };
 
 /// Long-running application operation currently in progress.
@@ -69,12 +70,6 @@ impl ResolvedModel {
         ApplicationSource::HuggingFaceHub
     }
 
-    /// Returns the execution device category.
-    #[must_use]
-    pub const fn device(&self) -> ApplicationDevice {
-        ApplicationDevice::Cpu
-    }
-
     /// Returns the model serialization format.
     #[must_use]
     pub const fn format(&self) -> ApplicationModelFormat {
@@ -124,6 +119,7 @@ pub struct LoadedModel {
     handle: ModelHandle,
     selection: ModelSelection,
     identity: ImmutableModelIdentity,
+    device: ApplicationDevice,
     scalar_type: ApplicationScalarType,
     vocabulary_size: u32,
     maximum_context_tokens: u32,
@@ -131,10 +127,15 @@ pub struct LoadedModel {
 }
 
 impl LoadedModel {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the private constructor commits one complete verified load-receipt summary"
+    )]
     pub(crate) const fn new(
         handle: ModelHandle,
         selection: ModelSelection,
         identity: ImmutableModelIdentity,
+        device: ApplicationDevice,
         scalar_type: ApplicationScalarType,
         vocabulary_size: u32,
         maximum_context_tokens: u32,
@@ -144,6 +145,7 @@ impl LoadedModel {
             handle,
             selection,
             identity,
+            device,
             scalar_type,
             vocabulary_size,
             maximum_context_tokens,
@@ -175,10 +177,10 @@ impl LoadedModel {
         ApplicationSource::HuggingFaceHub
     }
 
-    /// Returns the execution device category.
+    /// Returns the actual execution device verified by E0's load receipt.
     #[must_use]
     pub const fn device(&self) -> ApplicationDevice {
-        ApplicationDevice::Cpu
+        self.device
     }
 
     /// Returns the model serialization format.
@@ -270,6 +272,10 @@ pub struct GenerationTerminal {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApplicationState {
     activity: ApplicationActivity,
+    devices: Vec<ApplicationDeviceSummary>,
+    selected_device: ApplicationDevice,
+    device_discovery_failures: Vec<ApplicationDeviceDiscoveryFailure>,
+    accelerator_memory_budget_bytes: u64,
     resolved: Option<ResolvedModel>,
     loaded: Option<LoadedModel>,
     generation: Option<GenerationSummary>,
@@ -282,6 +288,10 @@ impl Default for ApplicationState {
     fn default() -> Self {
         Self {
             activity: ApplicationActivity::Idle,
+            devices: vec![ApplicationDeviceSummary::cpu()],
+            selected_device: ApplicationDevice::Cpu,
+            device_discovery_failures: Vec::new(),
+            accelerator_memory_budget_bytes: 0,
             resolved: None,
             loaded: None,
             generation: None,
@@ -293,6 +303,93 @@ impl Default for ApplicationState {
 }
 
 impl ApplicationState {
+    pub(crate) fn with_devices(
+        selected_device: ApplicationDevice,
+        devices: Vec<ApplicationDeviceSummary>,
+        device_discovery_failures: Vec<ApplicationDeviceDiscoveryFailure>,
+        accelerator_memory_budget_bytes: u64,
+    ) -> Self {
+        let mut state = Self::default();
+        state.devices.clear();
+        for summary in devices {
+            state.replace_device_summary(summary, None);
+        }
+        if !state
+            .devices
+            .iter()
+            .any(|summary| summary.device() == ApplicationDevice::Cpu)
+        {
+            state.replace_device_summary(ApplicationDeviceSummary::cpu(), None);
+        }
+        if !state
+            .devices
+            .iter()
+            .any(|summary| summary.device() == selected_device)
+        {
+            state.replace_device_summary(
+                ApplicationDeviceSummary::unavailable(
+                    selected_device,
+                    ApplicationDeviceUnavailableReason::DiscoveryFailed,
+                ),
+                None,
+            );
+        }
+        state.selected_device = selected_device;
+        state.device_discovery_failures = device_discovery_failures;
+        state.accelerator_memory_budget_bytes = accelerator_memory_budget_bytes;
+        state
+    }
+
+    /// Returns the process catalogue of available devices plus an unavailable selected device.
+    #[must_use]
+    pub const fn devices(&self) -> &[ApplicationDeviceSummary] {
+        self.devices.as_slice()
+    }
+
+    /// Returns the explicit device used for the next model load.
+    #[must_use]
+    pub const fn selected_device(&self) -> ApplicationDevice {
+        self.selected_device
+    }
+
+    /// Returns the latest summary for the selected device.
+    #[must_use]
+    pub fn selected_device_summary(&self) -> Option<&ApplicationDeviceSummary> {
+        self.devices
+            .iter()
+            .find(|summary| summary.device() == self.selected_device)
+    }
+
+    /// Returns whether the selected device passed its latest bounded probe.
+    #[must_use]
+    pub fn selected_device_available(&self) -> bool {
+        self.selected_device_summary()
+            .is_some_and(ApplicationDeviceSummary::available)
+    }
+
+    /// Returns why the selected device is unavailable, when known.
+    #[must_use]
+    pub fn selected_device_unavailable_reason(&self) -> Option<ApplicationDeviceUnavailableReason> {
+        self.selected_device_summary()
+            .and_then(ApplicationDeviceSummary::unavailable_reason)
+    }
+
+    /// Returns structured cold-path failures from the latest bounded probes.
+    #[must_use]
+    pub const fn device_discovery_failures(&self) -> &[ApplicationDeviceDiscoveryFailure] {
+        self.device_discovery_failures.as_slice()
+    }
+
+    /// Returns whether explicit device selection may change without violating lifecycle ownership.
+    #[must_use]
+    pub const fn can_select_device(&self) -> bool {
+        matches!(
+            self.activity,
+            ApplicationActivity::Idle | ApplicationActivity::Resolving
+        ) && self.loaded.is_none()
+            && self.generation.is_none()
+    }
+
     /// Returns the current long-running model-lifecycle operation.
     #[must_use]
     pub const fn activity(&self) -> ApplicationActivity {
@@ -344,11 +441,26 @@ impl ApplicationState {
             && self.generation.is_none()
     }
 
+    pub(crate) fn selected_device_memory_budget_available(&self) -> bool {
+        match self.selected_device {
+            ApplicationDevice::Cpu => true,
+            ApplicationDevice::Cuda { .. } => {
+                self.accelerator_memory_budget_bytes > 0
+                    && self
+                        .selected_device_summary()
+                        .and_then(ApplicationDeviceSummary::total_memory_bytes)
+                        .is_some_and(|total| self.accelerator_memory_budget_bytes <= total)
+            }
+        }
+    }
+
     /// Returns whether a model may be loaded for the complete visible selection.
     #[must_use]
     pub fn can_load(&self, selection: &ModelSelection) -> bool {
         self.activity == ApplicationActivity::Idle
             && self.inference_available
+            && self.selected_device_available()
+            && self.selected_device_memory_budget_available()
             && self.loaded.is_none()
             && self.generation.is_none()
             && self.resolved.as_ref().is_some_and(|resolved| {
@@ -383,6 +495,33 @@ impl ApplicationState {
         matches!(self.activity, ApplicationActivity::Idle)
             && self.inference_available
             && self.loaded.is_some()
+    }
+
+    pub(crate) fn set_selected_device(&mut self, device: ApplicationDevice) {
+        self.selected_device = device;
+    }
+
+    pub(crate) fn replace_device_summary(
+        &mut self,
+        summary: ApplicationDeviceSummary,
+        failure: Option<ApplicationDeviceDiscoveryFailure>,
+    ) {
+        let device = summary.device();
+        self.device_discovery_failures
+            .retain(|current| current.device() != device);
+        if let Some(failure) = failure {
+            self.device_discovery_failures.push(failure);
+        }
+        if let Some(current) = self
+            .devices
+            .iter_mut()
+            .find(|current| current.device() == device)
+        {
+            *current = summary;
+        } else {
+            self.devices.push(summary);
+            self.devices.sort_by_key(ApplicationDeviceSummary::device);
+        }
     }
 
     pub(crate) fn begin_resolving(&mut self) {

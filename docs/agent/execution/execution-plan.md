@@ -1,12 +1,12 @@
 # LLM App execution plan
 
-**Plan status:** Phase 11 active; lower-layer CUDA foundation implemented, E1/frontend work remains
+**Plan status:** Phase 11 active; E1/Slint explicit CUDA selection implemented, external product evidence remains
 **Status date:** 2026-08-03
 
 ```text
 Phase 10: complete.
 External CPU baseline: complete.
-Phase 11: active; lower-layer CUDA/E0 foundation implemented, not complete.
+Phase 11: active; E1/Slint explicit CUDA selection implemented, external product evidence outstanding.
 ```
 
 This document owns active and future objectives, work packages, acceptance criteria, and ordering. Current product truth lives in [implementation status](../../project/implementation-status.md), repeatable commands in [validation](../../project/validation.md), performance methodology and results in [performance evidence](../../project/performance.md), and closed-tree chronology in [execution history](history.md).
@@ -25,7 +25,7 @@ user input
   -> explicit release, unload, and shutdown
 ```
 
-Candle with immutable Hugging Face Hub Safetensors on CPU remains the sole current local composition. New formats, engines, devices, deployment targets, or public abstraction layers require separate evidence and review.
+Candle with immutable Hugging Face Hub Safetensors remains the sole local composition. CPU is mandatory and the fresh-install/default-build selection; reviewed CUDA-enabled builds support explicit ordinal selection. New formats, engines, deployment targets, or public abstraction layers require separate evidence and review.
 
 ## Governing decisions
 
@@ -35,6 +35,7 @@ Candle with immutable Hugging Face Hub Safetensors on CPU remains the sole curre
 - [ADR-0016](../decisions/0016-virtual-workspace-focused-xtask.md) owns the virtual workspace and Rust-native verification boundary.
 - [ADR-0017](../decisions/0017-stable-clippy-gate-exploratory-nursery.md) separates mandatory and exploratory lint policy.
 - [ADR-0018](../decisions/0018-benchmark-and-model-fixture-policy.md) separates benchmark roles and governs fixtures and generated evidence.
+- [ADR-0019](../decisions/0019-explicit-cuda-execution-foundation.md) owns explicit CUDA execution, application selection, and no-fallback policy.
 
 ## Completed program context
 
@@ -93,11 +94,11 @@ The observed run used `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at `fe8a4ea1ffedaf415
 
 ## Phase 11 — GPU execution
 
-**Status:** Active. The lower-layer Candle/E0 CUDA foundation is implemented and hardware-executed; E1/frontend selection and the remaining product evidence are not complete.
+**Status:** Active. Lower Candle/E0 CUDA execution and explicit E1/Slint CPU/CUDA selection are implemented; external/product-model CUDA evidence and measurements are not complete.
 
 **Activation prerequisite:** satisfied by the observed external real-product baseline and clean accepted CPU tree.
 
-**Current handoff:** `domain-contracts` owns verified `ExecutionDevice` identity, `candle-backend` keeps CPU default while adding non-default Linux CUDA, and E0 verifies actual device/footprint and preserves accounting/cleanup. CUDA ordinal 0 has executed the committed fixture on an RTX 5070 Ti at compute capability 12.0. Work package 11.4 and product-facing portions of 11.5 remain for the next session. Phase 11 must not be marked complete until those application/frontend and complete evidence requirements are satisfied.
+**Current handoff:** `domain-contracts` owns `ExecutionDevice`; Candle/E0 execute explicit CPU or opt-in CUDA; E1 owns discovery, selection, persistence, memory policy, admission, and receipt validation; Slint exposes stable presentation-only selection. Work package 11.4 is implemented. Focused development-tree CUDA compilation and the ignored E1 committed-fixture smoke passed locally, but unlocked desktop interaction, clean committed-tree acceptance, and work package 11.5's external/product-model evidence remain outstanding. Phase 11 must not be marked complete until that evidence is accepted.
 
 ### Objective
 
@@ -124,12 +125,16 @@ Add explicit GPU device support without redesigning E1, weakening CPU behavior, 
 
 ### Work package 11.4 — E1 and frontend exposure
 
+**Status:** Implemented.
+
 - Expose frontend-neutral device summaries and selection through E1.
 - Keep Slint presentation-only and free of vendor/runtime types.
 
 ### Work package 11.5 — Executed device evidence
 
-- Measure load, first output, decode throughput, host/device memory, cancellation, unload/synchronization, transfer behavior, fallback, and CPU comparison.
+**Status:** Incomplete.
+
+- Measure load, first output, decode throughput, host/device memory, cancellation, unload/synchronization, transfer behavior, explicit no-fallback failure, and CPU comparison.
 - Distinguish compile-only targets from hardware-executed results.
 
 ### Phase 11 acceptance criteria
@@ -175,4 +180,4 @@ Peer/hosted execution and research tracks start only from their own reviewed evi
 6. Do not claim allocation freedom, portability, product compatibility, or device execution without a named gate or observed run.
 7. Update the canonical owner for changed status, methodology, procedure, or chronology; link instead of copying.
 8. Record architectural changes in an ADR.
-9. Leave Phase 11 and inactive future tracks untouched until their activation criteria are met.
+9. Keep Phase 11 active until its remaining external/product-model CUDA evidence is accepted; leave inactive future tracks untouched until their activation criteria are met.

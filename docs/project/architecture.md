@@ -63,18 +63,11 @@ Capability engines are created only from evidence. Memory orchestration, peer ro
 
 ## E1: application semantics and concrete local composition
 
-E1 `application-runtime` is the frontend-neutral application façade and current local composition root. It owns application-level model selection and lifecycle, immutable resolution, generation, conversation, prompt/text, normalized state/events, persisted preferences/catalogue state, and explicit shutdown semantics shared by every frontend.
+E1 `application-runtime` is the frontend-neutral application façade and current local composition root. It owns application-level model and execution-device selection, bounded device discovery, lifecycle, immutable resolution, generation, conversation, prompt/text, normalized state/events, persisted preferences/catalogue state, accelerator-memory policy, and explicit shutdown semantics shared by every frontend.
 
-`ModelSelection` contains a normalized Hugging Face repository and requested revision. Resolution produces immutable Hub artifacts and derives the current execution facts:
+`ModelSelection` contains only a normalized Hugging Face repository and requested revision. Resolution is device-independent: `ResolvedModel` reports artifacts, source, Safetensors format, validated scalar, tokenizer, immutable identity, and Llama/Candle compatibility evidence, but no selected or actual device. E1 stores `ApplicationDevice::{Cpu, Cuda { ordinal: u32 }}` separately; `LoadedModel` reports only the actual device verified from E0's receipt.
 
-- engine: Candle;
-- artifact source: Hugging Face Hub;
-- device: CPU;
-- format: Safetensors;
-- supported scalar: F32, F16, or BF16 as validated;
-- immutable identity: repository plus resolved Hub commit.
-
-Callers cannot construct arbitrary engine/source/device/format combinations, and Candle types do not cross the public E1 boundary. Concrete local wiring stays behind private `local.rs`, with one `HostedRuntime<CandleLlamaSource>` and one inference thread. The Hub worker, `HfTokenizer`, request-local `HfOwnedStreamingDecoder`, and redb storage remain private composition details. Startup is transactional across worker creation: if Hub-worker startup fails after inference startup, E1 requests bounded inference shutdown and joins the started worker before returning the Hub failure.
+CPU always exists and is the fresh-install default. Initial bounded discovery probes CUDA 0 and, when different, the persisted selected CUDA ordinal. Application-owned summaries retain structured unavailability; persisted unavailable CUDA remains selected, visible, and load-blocking rather than falling back. Selection changes only when E1's lifecycle reports `can_select_device`. No Candle or `cudarc` type crosses the public E1 boundary. Concrete local wiring stays behind private `local.rs`, with one `HostedRuntime<CandleLlamaSource>` and one inference thread. The Hub worker, `HfTokenizer`, request-local `HfOwnedStreamingDecoder`, and redb storage remain private composition details. Startup is transactional across worker creation: if Hub-worker startup fails after inference startup, E1 requests bounded inference shutdown and joins the started worker before returning the Hub failure.
 
 [ADR-0013](../agent/decisions/0013-candle-only-local-execution.md) supersedes the former two-worker composition while retaining a non-generic E1 façade, private concrete composition, and static token-sensitive execution. There is no `application-api`; a transport contract requires a real separate-process or browser consumer.
 
@@ -93,14 +86,14 @@ application-runtime (E1)
                     ↓
              candle-backend
                     ↓
-        Safetensors + CPU execution
+        Safetensors + selected CPU / feature-gated CUDA execution
 ```
 
-Execution engine, model format, artifact source, and device are separate concepts. The E1 product still composes one reviewed CPU combination, not a claim that the dimensions are interchangeable. Below E1, `candle-backend` now retains mandatory default CPU execution and adds non-default Linux CUDA execution through its `cuda` feature. E0 verifies the actual selected device, but E1/frontend discovery and selection remain for the next Phase 11 session. GGUF is unsupported; if pursued later, Candle-native GGUF or another quantized format belongs under the Candle execution path and requires separate compatibility, tokenizer-provenance, artifact-identity, quantization, and device evidence.
+Execution engine, model format, artifact source, and device are separate concepts rather than interchangeable caller-assembled axes. The reviewed E1 composition is Candle plus immutable Hugging Face Safetensors on explicit CPU or feature-gated Linux CUDA. CPU remains mandatory and default. E1 passes the exact selected domain `ExecutionDevice`; E0 reports actual device and footprint, and E1 verifies both before publishing loaded state. The complete opt-in feature graph is `desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda`; the separate `inference-runtime/cuda` forwarding edge is development-only. No default graph reaches CUDA. GGUF is unsupported; if pursued later, Candle-native GGUF or another quantized format belongs under the Candle execution path and requires separate compatibility, tokenizer-provenance, artifact-identity, quantization, and device evidence.
 
 ## Model execution boundary
 
-The implemented E1 selection covers only local CPU execution through E0. The lower-layer Candle/E0 boundary can explicitly execute CPU or feature-gated CUDA, but CUDA is not yet an E1 or frontend product path. Hosted providers, peer nodes, and remote transport are also not product paths. If a remote target is implemented later, the common boundary is coarse: target identity and capabilities, complete request admission, cancellation intent, bounded streamed output, usage, and terminal state. Local execution adapts that boundary to E0; peer and hosted implementations translate it to their transports.
+The implemented E1 selection covers local CPU and feature-gated CUDA execution through E0. Unavailable explicit CUDA fails without CPU fallback. Hosted providers, peer nodes, and remote transport are not product paths. If a remote target is implemented later, the common boundary is coarse: target identity and capabilities, complete request admission, cancellation intent, bounded streamed output, usage, and terminal state. Local execution adapts that boundary to E0; peer and hosted implementations translate it to their transports.
 
 Uniformity must not hide real differences. Context limits, token accounting, prompt/message formats, sampling controls, tool support, privacy boundary, cancellation guarantees, and usage reporting are target capabilities. Unsupported behavior fails explicitly. This direction is recorded in [ADR-0008](../agent/decisions/0008-capability-and-execution-boundaries.md).
 
@@ -112,7 +105,7 @@ Adapters own vendor, model, persistence, network, filesystem, and external-servi
 
 ## Frontend and deployment boundary
 
-`desktop-slint` owns the native event loop, presentation, platform path selection, and UI command mapping. It maps only E1 selection, state, event, and metadata types; it does not construct backend sources or own model tensors, token scheduling, persistence, Hub integration, or inference lifecycle policy.
+`desktop-slint` owns the native event loop, presentation, platform path selection, and UI command mapping. Its compact device selector uses a Rust-owned `ApplicationDevice` identity/index model, never parses labels, and derives selection/load enabled state from E1. It distinguishes selected-device, artifact-only resolved-model, and receipt-verified actual loaded-device summaries. It does not construct backend sources, choose fallback policy, or own model tensors, token scheduling, persistence, Hub integration, or inference lifecycle policy.
 
 A native Slint, Tauri, TUI/CLI, headless node, or similar process can host or call E1 directly. A browser frontend requires an explicit transport to a native or remote host. The frontend presents state and pulls bounded output; it does not issue one inference command per generated token. Local scheduling lives beside model execution as recorded in [ADR-0003](../agent/decisions/0003-generation-scheduling-ownership.md).
 
@@ -120,18 +113,22 @@ A native Slint, Tauri, TUI/CLI, headless node, or similar process can host or ca
 
 Model and sequence values are exclusively owned by E0 rather than shared through public `Arc<Model>`-style ownership. Public handles carry identity and generation safety, not ownership of model state.
 
-Admission validates capacities and accounting before state becomes visible. Cleanup failure does not imply release: unresolved E0 resources remain quarantined and accounted through retry and exhaustion. If a loaded receipt is incompatible with E1's resolution/tokenizer evidence, E1 does not publish it as loaded; it privately retains the model handle and cleanup state while E0 retains ownership/accounting, including after unload-submission or E0 cleanup exhaustion. Detailed behavior belongs in [inference runtime](inference-runtime.md), [model lifecycle](lifecycle.md), and [application runtime](application-runtime.md).
+Admission validates capacities and accounting before state becomes visible. E1 re-probes the selected device, passes its exact `ExecutionDevice`, and validates the receipt ticket, logical model identity/handle, immutable resolution/artifacts, scalar, Llama/Candle/Safetensors evidence, tokenizer vocabulary, selected versus actual device, and bounded footprint. Cleanup failure does not imply release: a mismatch publishes no `LoadedModel`, and unresolved E0 resources remain in the existing private incompatible-load quarantine, owned and accounted through retry and exhaustion. A failed load that reports retained E0 cleanup keeps E1 unloading and device selection locked; a bounded private snapshot returns it to idle only after zero aggregate ownership is proven. Successful unload clears actual loaded-device state but preserves application selection.
+
+Accelerator policy is explicit `Automatic` or a nonzero limit. E0's aggregate device budget is fixed at startup, so `Automatic` uses the least reported physical total across every CUDA row in the bounded startup catalogue; unavailable or capacity-unknown rows contribute zero and fail closed, while a limit applies a lower user cap. Load re-probes require the fixed nonzero budget to remain within the selected device's latest physical total, otherwise loading is blocked without fallback until restart. CPU host budgeting is unchanged, and selected-device Candle planning checks current available VRAM before partial residency. Host RAM is not used to infer CUDA capacity, and no undocumented `u64::MAX` shortcut is used. `LAS1` settings version 2 persists the selected device and policy while exact version 1 remains readable as CPU plus its legacy zero/limit mapping; `LAM1` model records remain version 1. Detailed behavior belongs in [inference runtime](inference-runtime.md), [model lifecycle](lifecycle.md), and [application runtime](application-runtime.md).
 
 Explicit bounded shutdown is required for normal operation; blocking `Drop` is not the primary protocol. E1 distinguishes running, stopping, cleanly stopped, retryable failure, and terminal failure. A timeout leaves unfinished worker handles owned by E1 so a later shutdown call can retry and may complete cleanly. In contrast, E0 cleanup exhaustion is terminal: E0 publishes the structured failure, deliberately retains the runtime allocation until process exit rather than invoking unverified backend destruction, and terminates. E1 retains that failure independently from the join handle and never infers clean success from handle absence. See [ADR-0006](../agent/decisions/0006-explicit-bounded-shutdown.md).
 
 ## Current product constraints
 
 - Candle is the sole local execution engine.
-- Immutable Hugging Face Hub Safetensors on CPU is the only E1-selected product composition; the lower Candle/E0 boundary also has explicit, non-default Linux CUDA execution evidence.
+- Immutable Hugging Face Hub Safetensors execute on explicit CPU or opt-in Linux CUDA; CPU is mandatory and the fresh-install/default-build selection.
 - E1 exposes one selected/resident local model.
+- Accelerator policy is explicit `Automatic` or a nonzero limit resolved against the least startup-catalogue CUDA capacity, with unknown capacity and later incompatible capacity changes failing closed; CPU host-budget behavior is unchanged, and selected-device planning checks current available VRAM.
 - Direct completion is available for every loaded model.
 - Chat/history rendering is enabled only for the exact verified TinyLlama Chat v1 profile.
-- GGUF, E1/frontend CUDA selection, Metal, hosted-provider, peer, browser-transport, and `application-api` paths are not implemented.
+- GGUF, Metal, generic GPU aliases, automatic CPU fallback, hosted-provider, peer, browser-transport, and `application-api` paths are not implemented.
+- External/product-model CUDA evidence and measurements remain outstanding; Phase 11 is active and incomplete.
 
 The authoritative integration and validation matrix is in [implementation status](implementation-status.md).
 

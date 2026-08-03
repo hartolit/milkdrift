@@ -4,14 +4,15 @@
 
 The desktop composition owns native process and presentation concerns while delegating model lifecycle, generation, and compatible conversation orchestration to `application-runtime`:
 
-1. map Hugging Face repository/revision inputs to E1's `ModelSelection`;
-2. ask E1 to resolve immutable Hub artifacts and the concrete Hugging Face tokenizer;
-3. load one Candle/Safetensors model on the CPU E0 worker;
-4. expose E1 submit, regenerate, clear, cancellation, bounded text-pull, and unload behavior;
-5. use verified chat only for the exact TinyLlama Chat v1 profile and direct completion otherwise;
-6. keep network, database, backend, tokenizer, and inference-command types out of Slint.
+1. map Hugging Face repository/revision inputs to E1's device-independent `ModelSelection`;
+2. present E1's explicit CPU/CUDA catalogue and map a stable device identity back to `ApplicationRuntime::select_device`;
+3. ask E1 to resolve immutable Hub artifacts and the concrete Hugging Face tokenizer;
+4. load one Candle/Safetensors model on the explicitly selected CPU or CUDA device;
+5. expose E1 submit, regenerate, clear, cancellation, bounded text-pull, and unload behavior;
+6. use verified chat only for the exact TinyLlama Chat v1 profile and direct completion otherwise;
+7. keep network, database, backend, tokenizer, and inference-command types out of Slint.
 
-The UI presents engine, artifact source, device, format, scalar type, and immutable Hub identity from E1 state. It has no backend/product selector and no local-file model path. See the [application runtime guide](application-runtime.md) for the complete E1 boundary.
+CPU is the fresh-install default. The UI keeps repository/revision, selected device, artifact resolution, and receipt-verified loaded device as separate state. It has no backend/product selector, generic GPU alias, or local-file model path. See the [application runtime guide](application-runtime.md) for the complete E1 boundary.
 
 ## Frontend-neutral orchestration
 
@@ -19,7 +20,8 @@ The UI presents engine, artifact source, device, format, scalar type, and immuta
 
 - the bounded Hugging Face resolver worker;
 - immutable repository/revision and commit validation before loading;
-- persisted application preferences and model catalogue updates;
+- persisted selected-device and accelerator-memory policy plus model catalogue updates;
+- bounded CPU/CUDA discovery, availability diagnostics, selection lifecycle, and load-time re-probing;
 - one monomorphized, process-hosted Candle E0 worker;
 - the concrete Hugging Face tokenizer and request-local streaming decoder;
 - loaded-generation and active-request state;
@@ -35,8 +37,9 @@ Its public state/events contain application and domain values rather than Slint,
 - per-user application-data path selection;
 - Slint component construction;
 - repository/revision input mapping to `ModelSelection`;
+- a compact device `ComboBox` backed by stable Rust identity/index mapping;
 - callback-to-E1-command mapping;
-- E1 model-metadata label mapping;
+- E1 model/device metadata label mapping;
 - one 16 millisecond frame cadence for bounded event draining and one decoded-output pull;
 - presentation-owned chat/direct-completion transcript formatting plus frame-batched fragments and terminal state;
 - control and usage synchronization from `ApplicationState`;
@@ -70,11 +73,22 @@ The tokenizer adapter does not claim allocation-free execution. Upstream encodin
 
 `redb-storage` stores:
 
-- application memory and drain-timeout settings;
+- application host-memory, accelerator-memory policy, and drain-timeout settings;
+- selected CPU/CUDA identity;
 - default repository and revision;
 - logical model catalogue entries.
 
+Application settings use `LAS1` version 2. Exact version 1 remains readable and maps to CPU; zero legacy device bytes become `Automatic`, while a nonzero value becomes `Limit`. New saves use version 2. An unavailable persisted CUDA ordinal remains selected and visible rather than being migrated to CPU. A fresh empty default repository is valid. Logical model records remain `LAM1` version 1.
+
 Records use explicit four-byte kind markers, a numeric schema version, fixed little-endian numeric fields, and length-prefixed UTF-8 strings. Rust struct layout and third-party serialization formats are not treated as the persistent schema. Each write occurs in a redb transaction.
+
+## Device control and presentation
+
+The device control is a compact Slint `ComboBox`. Rust owns an identity/index model keyed by `ApplicationDevice`; labels are presentation only and are never parsed for semantics. Unavailable devices receive a distinct label and remain the selected state when restored from persistence. The frontend does not substitute CPU.
+
+Enabled state comes from E1's `can_select_device` lifecycle policy, and load enablement comes from E1's selected-device availability and model lifecycle state. The selected-device summary comes from `ApplicationDeviceSummary`. The resolved-model summary contains artifacts and compatibility facts only; it does not imply a device. The loaded-model summary displays only the actual device verified from E0's receipt. Unload clears the actual-device display while the selected summary remains.
+
+The default desktop graph is CPU-only. CUDA is deliberate through the exact `desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda` forwarding chain; see [dependency policy](dependency-policy.md).
 
 ## Slint event cadence
 

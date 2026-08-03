@@ -7,20 +7,21 @@
 ```text
 Phase 10: complete.
 External CPU baseline: complete.
-Phase 11: active; lower-layer CUDA/E0 foundation implemented, not complete.
+Phase 11: active; E1/Slint explicit CUDA selection implemented, external product evidence outstanding.
 ```
 
 Commit C was clean before and after the authorized exact-model CPU run. The authoritative runner, command, and cache policy are in [`benchmarks/runtime`](../../../benchmarks/runtime/README.md) and [validation](../../project/validation.md#external-cpu-product-baseline). Exact results and limitations are in [performance evidence](../../project/performance.md#external-product-evidence); concise chronology is in [execution history](history.md).
 
-CPU remains the mandatory default and the only E1/frontend-selected product device. The lower-layer foundation now adds explicit non-default Linux CUDA in `candle-backend`, verified actual-device and footprint contracts in E0, device-aware scalar/memory/logit handling, and ignored opt-in hardware tests. CUDA ordinal 0 executed the committed fixture on an NVIDIA GeForce RTX 5070 Ti with compute capability 12.0 using driver 610.43.03 and CUDA Toolkit 13.3; direct adapter execution and hosted E0 prefill/decode, synchronization, unload, and zero post-unload accounting passed locally.
+CPU remains mandatory and is the fresh-install/default-build selection. The lower Candle/E0 CUDA path now feeds explicit E1 and Slint CPU/CUDA selection through `desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda`; the existing `inference-runtime/cuda -> candle-backend/cuda` forwarding edge remains development-only. No default graph reaches CUDA, and there is no generic `gpu`, `cudnn`, `flash-attn`, or `nccl` feature path.
+
+E1 now owns bounded discovery, structured availability diagnostics, persisted selected-device state, explicit accelerator-memory policy, load-time re-probing, exact selected-device admission, and receipt verification. Slint presents the stable E1 identities without parsing labels or falling back. On the current uncommitted development tree, the focused CUDA feature matrix and release desktop build passed, and the ignored E1 fixture discovered `CUDA 0 — NVIDIA GeForce RTX 5070 Ti` with compute capability 12.0, proved selection alone remained idle/unloaded, then loaded and unloaded the committed fixture with matching selected/actual identity. The desktop process launched against an isolated fresh database, but the Plasma session was locked, so visual selector interaction was not verified. External/product-model CUDA evidence and measurements remain outstanding.
 
 ## Next session ownership
 
-- add frontend-neutral discovery and explicit CPU/CUDA selection to E1 without changing CPU defaults;
-- persist and expose only stable adapter-owned device facts, never Candle or `cudarc` types;
-- add Slint presentation and user selection without moving lifecycle or token scheduling into the frontend;
-- preserve explicit failure after CUDA selection; do not add automatic CPU fallback;
-- complete product-level CUDA evidence and measurements before marking Phase 11 complete.
+- repeat acceptance from a clean committed tree and visually exercise the Slint selector on an unlocked CUDA desktop;
+- preserve the CPU fresh-install default and explicit no-fallback behavior while completing that UI evidence;
+- complete external/product-model CUDA evidence and measurements before marking Phase 11 complete;
+- keep model resolution device-independent and preserve E1/E0 ownership, bounded memory admission, and exact selected-versus-actual device verification.
 
 ## Canonical links
 

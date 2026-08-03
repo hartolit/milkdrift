@@ -8,6 +8,7 @@ It currently owns:
 
 - persisted application preferences and model catalogue state;
 - a `ModelSelection` containing a normalized Hugging Face repository and revision;
+- application-owned CPU/CUDA selection, bounded discovery, availability diagnostics, and accelerator-memory policy;
 - one bounded synchronous Hub resolver worker;
 - immutable artifact identity, tokenizer validation, vocabulary compatibility, and complete-selection checks;
 - one process-hosted, monomorphized Candle E0 worker/thread behind a private local composition boundary;
@@ -27,11 +28,11 @@ It currently owns:
 
 It does not own Slint or transport presentation types, model tensors/logits/backend sequences, per-token scheduling, corrective workflow execution, provider/peer transports, or OS-specific application-data path policy.
 
-No `application-api`, hosted-provider, peer-execution, GPU, local-file, or multiple-model boundary is implemented.
+No `application-api`, hosted-provider, peer-execution, local-file, multiple-model, Metal, or generic GPU abstraction is implemented; no generic `gpu` feature alias exists.
 
 Conversation semantics live in E1 because every frontend must observe the same raw history, active-context policy, regeneration behavior, and cancellation state. Context selection remains in `context-planner`; the verified prompt renderer is internal compatibility logic; corrective workflows remain in `corrective-workflow`. Coordination does not imply implementation ownership.
 
-## Selection, resolution, and reported facts
+## Model selection, device selection, resolution, and reported facts
 
 `ModelSelection` is a structure containing only:
 
@@ -40,27 +41,22 @@ repository
 revision
 ```
 
-`resolve_model` validates the selection and sends it to the bounded Hub worker. `hf-hub-adapter` resolves the requested branch, tag, reference, or commit to an immutable Hub commit before downloading required artifacts. E1 loads the matching `tokenizer.json`, retains the exact resolution, and permits loading only while the complete visible repository/revision selection still matches.
+Execution-device selection is separate application state. Its public vocabulary is `ApplicationDevice::{Cpu, Cuda { ordinal: u32 }}` plus `ApplicationDeviceSummary` and application-owned compute-capability, unavailability, and discovery-diagnostic values. No Candle or `cudarc` type crosses public E1. CPU always exists in the bounded catalogue and is the fresh-install default.
 
-Resolved and loaded models report application-owned facts derived from the supported composition:
+Initial bounded discovery probes CUDA ordinal 0. When persisted selection names a different CUDA ordinal, E1 also probes that ordinal so the persisted identity remains represented. Probe failures become structured application-owned summaries/diagnostics. An unavailable persisted CUDA device remains selected and visible; E1 neither migrates it to CPU nor silently falls back. `ApplicationRuntime::select_device` changes selection only while `ApplicationState::can_select_device` permits it.
 
-| Fact | Current value/evidence |
-|---|---|
-| Engine | Candle |
-| Artifact source | Hugging Face Hub |
-| Device | CPU |
-| Format | Safetensors |
-| Scalar | F32, F16, or BF16 when supported and validated |
-| Immutable identity | Hub repository plus resolved commit |
-| Tokenizer evidence | validated vocabulary size and exact tokenizer used by E1 |
+`resolve_model` validates the repository/revision selection and sends it to the bounded Hub worker. `hf-hub-adapter` resolves the requested branch, tag, reference, or commit to an immutable Hub commit before downloading required artifacts. E1 loads the matching `tokenizer.json`, retains the exact resolution, and permits loading only while the complete visible repository/revision selection still matches.
 
-The public API does not accept arbitrary engine, source, device, or format combinations and exposes no Candle types. GGUF is unsupported; possible Candle-native GGUF or other quantized work is deferred to a separate reviewed implementation.
+Resolution is device-independent. `ResolvedModel` reports only resolved artifacts, source, format, scalar, tokenizer evidence, immutable identity, and compatibility evidence. It contains neither selected-device state nor an actual execution device. `LoadedModel` reports the actual execution device only after E0 returns a receipt and E1 verifies it against the selected device. Unloading clears that actual loaded-device fact while preserving application selection.
+
+The public API does not accept arbitrary engine, source, format, or device cross-products. The implemented compatibility path is Llama through Candle with immutable Hugging Face Safetensors; GGUF is unsupported and requires a separate reviewed implementation.
 
 ## Public boundary
 
-Frontends construct `ApplicationRuntimeConfiguration`, start `ApplicationRuntime`, inspect `ApplicationState`, submit coarse model/generation operations, pull bounded output, and explicitly shut down:
+Frontends construct `ApplicationRuntimeConfiguration`, start `ApplicationRuntime`, inspect `ApplicationState` including the device catalogue/selection, submit coarse model/generation operations, pull bounded output, and explicitly shut down:
 
 ```text
+select_device(application_device)
 resolve_model(selection)
 load_model(&selection)
 start_generation(input, settings) -> RequestId
@@ -123,9 +119,15 @@ ApplicationRuntime
 └── redb application persistence
 ```
 
-`local.rs` owns only the concrete Candle E0 endpoint. It has no active-backend switch, dispatch enum, dormant worker, or placeholder backend variant. E1 generation is internally split by responsibility into admission, the E0/text bridge, bounded output, and settings; that source organization does not create a new layer or imply new public façade operations. [ADR-0013](../agent/decisions/0013-candle-only-local-execution.md) supersedes the former two-worker Phase 8 composition while retaining private static dispatch and the non-generic façade.
+`local.rs` owns only the concrete Candle E0 endpoint. It maps the selected `ApplicationDevice` to the exact domain `ExecutionDevice`; it has no active-backend switch, dispatch enum, dormant worker, or placeholder backend variant. E1 generation is internally split by responsibility into admission, the E0/text bridge, bounded output, and settings; that source organization does not create a new layer or imply new public façade operations. [ADR-0013](../agent/decisions/0013-candle-only-local-execution.md) supersedes the former two-worker Phase 8 composition while retaining private static dispatch and the non-generic façade.
 
-Startup is a transaction across the two worker creations. Configuration, output storage, persistence, and preferences are prepared first; E1 then starts local inference and the Hub worker. If Hub startup fails after inference has started, E1 attempts bounded inference shutdown/join before returning the primary Hub startup failure. If the rollback bound expires, the complete `LocalInference` owner and timing policy remain in a private process-level cleanup quarantine; a later production startup retries one quarantined cleanup without holding the registry lock during the wait.
+Startup is a transaction across the two worker creations. Configuration, output storage, persistence, preferences, and bounded device discovery are prepared first; E1 then starts local inference and the Hub worker. If Hub startup fails after inference has started, E1 attempts bounded inference shutdown/join before returning the primary Hub startup failure. If the rollback bound expires, the complete `LocalInference` owner and timing policy remain in a private process-level cleanup quarantine; a later production startup retries one quarantined cleanup without holding the registry lock during the wait.
+
+## Accelerator memory and persistence
+
+`AcceleratorMemoryPolicy` is explicit: `Automatic` or `Limit { bytes: NonZeroU64 }`. E0's aggregate budget is fixed at startup, so `Automatic` uses the least reported physical total across every CUDA row in the bounded startup catalogue; an unavailable row or a row without a physical total contributes zero and therefore fails closed. `Limit` applies the lower of that safe capacity and the user cap. Before load, E1 re-probes the selected CUDA device and admits work only when the fixed budget is nonzero and does not exceed the latest physical total; a changed or newly discovered capacity that cannot bound the process budget requires restart and produces a structured no-fallback error. Existing CPU host-memory budget behavior is unchanged. Candle planning separately checks current available VRAM before partial residency begins. E1 does not infer accelerator capacity from host RAM and does not use an undocumented `u64::MAX` device-budget shortcut. The product still admits at most one resident model.
+
+Application settings use the `LAS1` schema at version 2. Version 2 explicitly tags selected CPU/CUDA identity and accelerator-memory policy. Exact version 1 records remain readable: they select CPU, map zero legacy device bytes to `Automatic`, and map a nonzero value to `Limit`. New writes are version 2. A fresh database with an empty default repository is valid. Model catalogue records remain `LAM1` version 1. Loading settings never rewrites an unavailable persisted CUDA selection to CPU.
 
 ## Bounded output, cleanup, and unload
 
@@ -133,9 +135,11 @@ Generated token IDs remain private below E1. E1 pulls bounded E0 token/state bat
 
 Generation completion and E0 resource release remain distinct. Pulled output preserves `Terminal`, optional `CleanupPending`, optional `CleanupExhausted`, and `Released` states. E1 keeps the generation lifecycle active until release so unresolved ownership remains visible and conversation clearing stays blocked. Cleanup retry/exhaustion and accounting semantics are owned by E0 and described in [inference runtime](inference-runtime.md).
 
-A model-load receipt is likewise not equivalent to a published resident model. E1 first compares the receipt with the retained immutable resolution, scalar, backend, quantization, and tokenizer evidence. On incompatibility, public loaded state remains empty while E1 stores the exact `ModelHandle`, compatibility failure, and automatic-unload state in a private cleanup record. E0 continues to own and account for the model. E1 retries bounded unload submission, and neither submission exhaustion nor E0 cleanup exhaustion discards the handle; the record remains private and accounted until absence, inference disconnection, or confirmed worker stop permits release.
+Load admission passes the exact selected domain `ExecutionDevice` to E0. A model-load receipt is not equivalent to a published resident model: E1 validates the admission ticket, logical model ID and handle, immutable resolution and artifact set, scalar, Llama/Candle/Safetensors compatibility evidence, tokenizer vocabulary, selected device versus receipt-reported actual device, and bounded resident footprint. Loading re-probes the selected device first; an unavailable selection or a latest physical total that cannot bound the startup-fixed budget produces a structured error, remains selected, and is not replaced by CPU.
 
-The application configures E0 for one resident model and does not expose a misleading model-count setting. Multi-model application state is outside the current product boundary.
+On any receipt mismatch, public `LoadedModel` state remains empty while E1 uses the existing private incompatible-model unload/retention path. It stores the exact `ModelHandle`, compatibility failure, and automatic-unload state while E0 continues to own and account for the model. E1 retries bounded unload submission, and neither submission exhaustion nor E0 cleanup exhaustion discards the handle; the record remains private and accounted until absence, inference disconnection, or confirmed worker stop permits release. A failed E0 load that itself reports retained cleanup likewise leaves E1 unloading and keeps device selection locked. For a retryable cleanup failure, E1 submits one bounded private snapshot inspection and returns to idle only when aggregate E0 state proves zero retained model, request, cleanup, and reservation ownership; inspection failure, nonzero ownership, or cleanup exhaustion stays locked.
+
+The application configures E0 for one resident model and does not expose a misleading model-count setting. Successful unload clears the receipt-verified actual loaded device but preserves the separately selected application device. Multi-model application state is outside the current product boundary.
 
 ## Shutdown
 
@@ -161,4 +165,6 @@ An in-flight synchronous Hub operation has no upstream global cancellation handl
 
 ## Model execution targets
 
-The current target is local Candle CPU execution through E0. A future peer or hosted target would use a coarse boundary above E0 for complete request admission, target capabilities, cancellation intent, bounded output, usage, and terminal state. It must not be represented as a local E0 backend. See [ADR-0008](../agent/decisions/0008-capability-and-execution-boundaries.md).
+The implemented local target is Candle through E0 with explicit CPU or feature-gated CUDA selection. CPU remains the fresh-install and default-build path. `application-runtime/cuda` forwards only to `candle-backend/cuda`; the complete desktop feature chain and exclusions are canonical in [dependency policy](dependency-policy.md). Explicit CUDA failure never falls back to CPU.
+
+A future peer or hosted target would use a coarse boundary above E0 for complete request admission, target capabilities, cancellation intent, bounded output, usage, and terminal state. It must not be represented as a local E0 backend. See [ADR-0008](../agent/decisions/0008-capability-and-execution-boundaries.md).

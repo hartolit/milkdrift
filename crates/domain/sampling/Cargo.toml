@@ -16,6 +16,11 @@ libm.workspace = true
 criterion.workspace = true
 stats_alloc.workspace = true
 
+[[test]]
+name = "allocation"
+path = "tests/allocation.rs"
+harness = false
+
 [[bench]]
 name = "sampling_pipeline"
 harness = false

@@ -1,23 +1,34 @@
 use std::cell::Cell;
 use std::fs;
+use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use domain_contracts::{CancellationReason, FinishReason, RequestId, TokenId};
+use domain_contracts::{
+    CancellationReason, DeviceId, DeviceKind, ExecutionDevice, FinishReason, MemoryBudget,
+    MemoryFootprint, RequestId, TokenId,
+};
 use hf_hub_adapter::{ArtifactScalarType, ResolvedSafetensorsLlamaArtifacts};
 use inference_runtime::{
     CleanupFailureReport, CleanupResource, CleanupRetryState, FailureClass, RuntimeCommand,
     RuntimeError, RuntimeEvent, RuntimeOperation,
 };
+use redb_storage::{
+    ApplicationSettings as StoredApplicationSettings, RedbStorage, StoredAcceleratorMemoryPolicy,
+    StoredApplicationDevice,
+};
 
 use super::{
-    ApplicationRuntime, IncompatibleModelUnload, MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS,
+    ApplicationRuntime, IncompatibleModelUnload, LoadAdmission,
+    MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS, RetainedLoadCleanup,
 };
 use crate::shutdown::ShutdownStatus;
 use crate::support::MAXIMUM_SHUTDOWN_OR_JOIN_TIMEOUT;
 use crate::{
-    ApplicationActivity, ApplicationConfigurationField, ApplicationDevice, ApplicationEngine,
+    AcceleratorMemoryPolicy, ApplicationActivity, ApplicationConfigurationField, ApplicationDevice,
+    ApplicationDeviceDiscoveryFailure, ApplicationDeviceDiscoveryFailureKind,
+    ApplicationDeviceSummary, ApplicationDeviceUnavailableReason, ApplicationEngine,
     ApplicationError, ApplicationEvent, ApplicationFailure, ApplicationFailureKind,
     ApplicationModelFormat, ApplicationOutputRecordKind, ApplicationOutputState,
     ApplicationRuntimeConfiguration, ApplicationScalarType, ApplicationSource, ApplicationWorker,
@@ -33,6 +44,86 @@ const REVISION: &str = "phase7";
 const COMMIT: &str = "fixture";
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 const TEST_POLL: Duration = Duration::from_millis(1);
+const TEST_CUDA_MEMORY_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const CUDA_ZERO: ApplicationDevice = ApplicationDevice::Cuda { ordinal: 0 };
+
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the deterministic probe conforms to the private fallible discovery seam"
+)]
+fn available_device_probe(device: ApplicationDevice) -> crate::local::DeviceProbeResult {
+    match device {
+        ApplicationDevice::Cpu => Ok(ApplicationDeviceSummary::cpu()),
+        ApplicationDevice::Cuda { ordinal } => Ok(ApplicationDeviceSummary::discovered(
+            device,
+            format!("CUDA {ordinal} — deterministic test device"),
+            Some(TEST_CUDA_MEMORY_BYTES),
+            Some(TEST_CUDA_MEMORY_BYTES / 2),
+            Some(crate::ApplicationComputeCapability {
+                major: 12,
+                minor: 0,
+            }),
+        )),
+    }
+}
+
+fn unavailable_cuda_probe(device: ApplicationDevice) -> crate::local::DeviceProbeResult {
+    match device {
+        ApplicationDevice::Cpu => Ok(ApplicationDeviceSummary::cpu()),
+        ApplicationDevice::Cuda { .. } => Err(crate::local::DeviceProbeFailure::Discovery(
+            ApplicationDeviceDiscoveryFailure::new(
+                device,
+                ApplicationDeviceDiscoveryFailureKind::Initialization,
+                "deterministic device initialization failure".to_owned(),
+            ),
+        )),
+    }
+}
+
+fn counted_unavailable_cuda_probe(device: ApplicationDevice) -> crate::local::DeviceProbeResult {
+    if matches!(device, ApplicationDevice::Cuda { .. }) {
+        COUNTED_CUDA_PROBES.fetch_add(1, Ordering::Relaxed);
+    }
+    unavailable_cuda_probe(device)
+}
+
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the deterministic probe conforms to the private fallible discovery seam"
+)]
+fn shrinking_cuda_probe(device: ApplicationDevice) -> crate::local::DeviceProbeResult {
+    match device {
+        ApplicationDevice::Cpu => Ok(ApplicationDeviceSummary::cpu()),
+        ApplicationDevice::Cuda { ordinal } => {
+            let probe = if ordinal == 3 {
+                SHRINKING_CUDA_THREE_PROBES.fetch_add(1, Ordering::Relaxed)
+            } else {
+                0
+            };
+            let total_memory_bytes = if ordinal == 3 && probe > 0 {
+                TEST_CUDA_MEMORY_BYTES / 2
+            } else {
+                TEST_CUDA_MEMORY_BYTES
+            };
+            Ok(ApplicationDeviceSummary::discovered(
+                device,
+                format!("CUDA {ordinal} — shrinking deterministic test device"),
+                Some(total_memory_bytes),
+                Some(total_memory_bytes / 2),
+                None,
+            ))
+        }
+    }
+}
+
+const fn retryable_cleanup_failure() -> RuntimeError {
+    RuntimeError::CleanupFailed(CleanupFailureReport::new(
+        RuntimeOperation::ModelAdmission,
+        FailureClass::BackendContract,
+        RuntimeOperation::ModelUnload,
+        FailureClass::Synchronization,
+    ))
+}
 
 const fn terminal_cleanup_failure() -> RuntimeError {
     RuntimeError::CleanupRetryExhausted(CleanupRetryState {
@@ -51,6 +142,8 @@ const fn terminal_cleanup_failure() -> RuntimeError {
 }
 
 static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(1);
+static COUNTED_CUDA_PROBES: AtomicU64 = AtomicU64::new(0);
+static SHRINKING_CUDA_THREE_PROBES: AtomicU64 = AtomicU64::new(0);
 
 type TestResult<T = ()> = Result<T, String>;
 
@@ -85,6 +178,293 @@ fn resolved_selection_persists_across_application_restart() -> TestResult {
 
     let cleanup_result = remove_database(&database_path);
     result.and(cleanup_result)
+}
+
+#[test]
+fn fresh_configuration_selects_cpu_and_keeps_cpu_catalogue_identity() -> TestResult {
+    with_runtime(default_test_configuration, |runtime| {
+        assert_eq!(
+            runtime.preferences().selected_device,
+            ApplicationDevice::Cpu
+        );
+        assert_eq!(
+            runtime.preferences().accelerator_memory_policy,
+            AcceleratorMemoryPolicy::Automatic
+        );
+        assert_eq!(runtime.state().selected_device(), ApplicationDevice::Cpu);
+        assert!(runtime.state().selected_device_available());
+        assert!(runtime.state().can_select_device());
+        let cpu = runtime
+            .state()
+            .devices()
+            .first()
+            .ok_or_else(|| "CPU was absent from the device catalogue".to_owned())?;
+        assert_eq!(cpu.device(), ApplicationDevice::Cpu);
+        assert_eq!(cpu.label(), "CPU");
+        assert!(cpu.available());
+        #[cfg(not(feature = "cuda"))]
+        assert_eq!(runtime.state().devices(), std::slice::from_ref(cpu));
+        Ok(())
+    })
+}
+
+#[test]
+fn selected_cuda_and_memory_limit_persist_across_restart() -> TestResult {
+    let database_path = unique_database_path();
+    let limit = NonZeroU64::new(TEST_CUDA_MEMORY_BYTES / 2)
+        .ok_or_else(|| "test CUDA memory limit was zero".to_owned())?;
+    let result = with_runtime_at_with_probe(
+        &database_path,
+        |configuration| {
+            default_test_configuration(configuration);
+            configuration.defaults.accelerator_memory_policy =
+                AcceleratorMemoryPolicy::Limit { bytes: limit };
+        },
+        available_device_probe,
+        |runtime| {
+            runtime
+                .select_device(CUDA_ZERO)
+                .map_err(application_error)?;
+            assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
+            assert_eq!(runtime.memory_budget.device_bytes, limit.get());
+            Ok(())
+        },
+    )
+    .and_then(|()| {
+        with_runtime_at_with_probe(
+            &database_path,
+            default_test_configuration,
+            available_device_probe,
+            |runtime| {
+                assert_eq!(runtime.preferences().selected_device, CUDA_ZERO);
+                assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
+                assert!(runtime.state().selected_device_available());
+                assert_eq!(
+                    runtime.preferences().accelerator_memory_policy,
+                    AcceleratorMemoryPolicy::Limit { bytes: limit }
+                );
+                assert_eq!(runtime.memory_budget.device_bytes, limit.get());
+                Ok(())
+            },
+        )
+    })
+    .and_then(|()| {
+        with_runtime_at_with_probe(
+            &database_path,
+            default_test_configuration,
+            unavailable_cuda_probe,
+            |runtime| {
+                assert_eq!(runtime.preferences().selected_device, CUDA_ZERO);
+                assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
+                assert!(!runtime.state().selected_device_available());
+                assert_eq!(
+                    runtime.state().selected_device_unavailable_reason(),
+                    Some(ApplicationDeviceUnavailableReason::DiscoveryFailed)
+                );
+                assert_eq!(runtime.state().device_discovery_failures().len(), 1);
+                Ok(())
+            },
+        )
+    });
+
+    let cleanup_result = remove_database(&database_path);
+    result.and(cleanup_result)
+}
+
+#[test]
+fn persisted_nonzero_cuda_uses_exactly_two_bounded_startup_probes() -> TestResult {
+    let database_path = unique_database_path();
+    let storage = RedbStorage::open(&database_path).map_err(application_error)?;
+    storage
+        .save_settings(&StoredApplicationSettings {
+            default_repository: String::new(),
+            default_revision: "main".to_owned(),
+            maximum_host_memory_bytes: 16 * 1024 * 1024 * 1024,
+            selected_device: StoredApplicationDevice::Cuda { ordinal: 3 },
+            accelerator_memory_policy: StoredAcceleratorMemoryPolicy::Automatic,
+            drain_timeout_milliseconds: 2_000,
+        })
+        .map_err(application_error)?;
+    drop(storage);
+    COUNTED_CUDA_PROBES.store(0, Ordering::Relaxed);
+
+    let result = with_runtime_at_with_probe(
+        &database_path,
+        default_test_configuration,
+        counted_unavailable_cuda_probe,
+        |runtime| {
+            assert_eq!(COUNTED_CUDA_PROBES.load(Ordering::Relaxed), 2);
+            assert_eq!(
+                runtime.state().selected_device(),
+                ApplicationDevice::Cuda { ordinal: 3 }
+            );
+            assert_eq!(runtime.state().devices().len(), 2);
+            assert_eq!(
+                runtime
+                    .state()
+                    .devices()
+                    .first()
+                    .map(ApplicationDeviceSummary::device),
+                Some(ApplicationDevice::Cpu)
+            );
+            assert_eq!(
+                runtime.state().selected_device_unavailable_reason(),
+                Some(ApplicationDeviceUnavailableReason::DiscoveryFailed)
+            );
+            assert_eq!(runtime.state().device_discovery_failures().len(), 2);
+            Ok(())
+        },
+    );
+
+    let cleanup_result = remove_database(&database_path);
+    result.and(cleanup_result)
+}
+
+#[test]
+fn unavailable_selected_cuda_blocks_load_without_fallback() -> TestResult {
+    with_runtime_and_probe(
+        default_test_configuration,
+        available_device_probe,
+        |runtime| {
+            runtime
+                .select_device(CUDA_ZERO)
+                .map_err(application_error)?;
+            runtime.device_probe = unavailable_cuda_probe;
+            let (selection, _resolved) =
+                resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
+
+            assert_eq!(
+                runtime.load_model(&selection),
+                Err(ApplicationError::SelectedDeviceUnavailable {
+                    device: CUDA_ZERO,
+                    reason: ApplicationDeviceUnavailableReason::DiscoveryFailed,
+                })
+            );
+            assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
+            assert!(!runtime.state().selected_device_available());
+            assert!(!runtime.state().can_load(&selection));
+            assert!(runtime.state().loaded().is_none());
+            assert!(runtime.last_submitted_load_device.is_none());
+            assert_eq!(runtime.state().device_discovery_failures().len(), 1);
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn selected_cuda_capacity_shrink_blocks_load_without_fallback() -> TestResult {
+    let database_path = unique_database_path();
+    let storage = RedbStorage::open(&database_path).map_err(application_error)?;
+    storage
+        .save_settings(&StoredApplicationSettings {
+            default_repository: String::new(),
+            default_revision: "main".to_owned(),
+            maximum_host_memory_bytes: 16 * 1024 * 1024 * 1024,
+            selected_device: StoredApplicationDevice::Cuda { ordinal: 3 },
+            accelerator_memory_policy: StoredAcceleratorMemoryPolicy::Automatic,
+            drain_timeout_milliseconds: 2_000,
+        })
+        .map_err(application_error)?;
+    drop(storage);
+    SHRINKING_CUDA_THREE_PROBES.store(0, Ordering::Relaxed);
+
+    let selected_device = ApplicationDevice::Cuda { ordinal: 3 };
+    let result = with_runtime_at_with_probe(
+        &database_path,
+        default_test_configuration,
+        shrinking_cuda_probe,
+        |runtime| {
+            assert_eq!(runtime.state().selected_device(), selected_device);
+            assert!(runtime.state().selected_device_available());
+            assert_eq!(runtime.memory_budget.device_bytes, TEST_CUDA_MEMORY_BYTES);
+            let (selection, _resolved) =
+                resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
+
+            assert_eq!(
+                runtime.load_model(&selection),
+                Err(ApplicationError::SelectedDeviceMemoryBudgetUnavailable {
+                    device: selected_device,
+                    budget_bytes: TEST_CUDA_MEMORY_BYTES,
+                    total_memory_bytes: Some(TEST_CUDA_MEMORY_BYTES / 2),
+                })
+            );
+            assert_eq!(runtime.state().selected_device(), selected_device);
+            assert!(runtime.state().selected_device_available());
+            assert!(!runtime.state().can_load(&selection));
+            assert!(runtime.state().loaded().is_none());
+            assert!(runtime.last_submitted_load_device.is_none());
+            Ok(())
+        },
+    );
+
+    let cleanup_result = remove_database(&database_path);
+    result.and(cleanup_result)
+}
+
+#[test]
+fn load_command_uses_the_exact_selected_cuda_device() -> TestResult {
+    with_runtime_and_probe(
+        default_test_configuration,
+        available_device_probe,
+        |runtime| {
+            runtime
+                .select_device(CUDA_ZERO)
+                .map_err(application_error)?;
+            let (selection, _resolved) =
+                resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
+            runtime.load_model(&selection).map_err(application_error)?;
+
+            assert_eq!(
+                runtime.last_submitted_load_device,
+                Some(ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda))
+            );
+            assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
+            Ok(())
+        },
+    )
+}
+
+#[cfg(feature = "cuda")]
+#[test]
+#[ignore = "requires MILKDRIFT_CUDA_TEST=1 and an initialized CUDA ordinal 0"]
+fn cuda_fixture_load_reports_the_selected_and_actual_e1_device() -> TestResult {
+    if std::env::var("MILKDRIFT_CUDA_TEST").as_deref() != Ok("1") {
+        return Err("set MILKDRIFT_CUDA_TEST=1 for the explicit E1 CUDA fixture test".to_owned());
+    }
+
+    with_runtime(default_test_configuration, |runtime| {
+        let cuda = runtime
+            .state()
+            .devices()
+            .iter()
+            .find(|summary| summary.device() == CUDA_ZERO && summary.available())
+            .ok_or_else(|| "CUDA ordinal 0 was not discovered by E1".to_owned())?;
+        assert!(cuda.label().starts_with("CUDA 0"));
+        eprintln!(
+            "E1 discovered {} with total={:?} available={:?} compute={:?}",
+            cuda.label(),
+            cuda.total_memory_bytes(),
+            cuda.available_memory_bytes(),
+            cuda.compute_capability(),
+        );
+        runtime
+            .select_device(CUDA_ZERO)
+            .map_err(application_error)?;
+        assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
+        assert!(runtime.state().loaded().is_none());
+        assert_eq!(runtime.state().activity(), ApplicationActivity::Idle);
+        let loaded = load_fixture(runtime)?;
+        assert_eq!(loaded.device(), CUDA_ZERO);
+        assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
+
+        runtime.unload_model().map_err(application_error)?;
+        let _unloaded = wait_for_event(runtime, |event| {
+            matches!(event, ApplicationEvent::ModelUnloaded { .. })
+        })?;
+        assert!(runtime.state().loaded().is_none());
+        assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
+        Ok(())
+    })
 }
 
 #[test]
@@ -487,6 +867,62 @@ fn reject_if_busy_preserves_active_generation_and_idle_unload_succeeds() -> Test
 }
 
 #[test]
+fn device_selection_is_rejected_while_loading_or_unloading() -> TestResult {
+    with_runtime_and_probe(
+        default_test_configuration,
+        available_device_probe,
+        |runtime| {
+            runtime.state.begin_loading();
+            assert_eq!(
+                runtime.select_device(CUDA_ZERO),
+                Err(ApplicationError::DeviceSelectionLocked)
+            );
+            runtime.state.set_idle();
+
+            runtime.state.begin_unloading();
+            assert_eq!(
+                runtime.select_device(CUDA_ZERO),
+                Err(ApplicationError::DeviceSelectionLocked)
+            );
+            runtime.state.set_idle();
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn device_selection_is_rejected_while_loaded_generating_and_unloading() -> TestResult {
+    with_loaded_runtime(default_test_configuration, |runtime, _loaded| {
+        assert_eq!(
+            runtime.select_device(CUDA_ZERO),
+            Err(ApplicationError::DeviceSelectionLocked)
+        );
+
+        let request_id = runtime
+            .start_generation("prompt seed", deterministic_settings(1))
+            .map_err(application_error)?;
+        assert_eq!(
+            runtime.select_device(CUDA_ZERO),
+            Err(ApplicationError::DeviceSelectionLocked)
+        );
+        wait_for_generation_started(runtime, request_id)?;
+        let _generation = collect_generation(runtime, request_id)?;
+
+        runtime.unload_model().map_err(application_error)?;
+        assert_eq!(
+            runtime.select_device(CUDA_ZERO),
+            Err(ApplicationError::DeviceSelectionLocked)
+        );
+        let _unloaded = wait_for_event(runtime, |event| {
+            matches!(event, ApplicationEvent::ModelUnloaded { .. })
+        })?;
+        assert_eq!(runtime.state().selected_device(), ApplicationDevice::Cpu);
+        assert!(runtime.state().loaded().is_none());
+        Ok(())
+    })
+}
+
+#[test]
 fn cancel_active_unload_cancels_and_releases_generation() -> TestResult {
     with_loaded_runtime(backpressure_test_configuration, |runtime, _loaded| {
         let request_id = runtime
@@ -591,6 +1027,247 @@ fn incompatible_scalar_evidence_unloads_without_publishing_loaded_state() -> Tes
         ));
         assert!(runtime.state().loaded().is_none());
         assert_eq!(runtime.state().activity(), ApplicationActivity::Idle);
+        Ok(())
+    })
+}
+
+#[test]
+fn load_footprint_validation_rejects_budget_overflow_and_wrong_memory_domains() {
+    let cpu_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu);
+    let admission = LoadAdmission {
+        ticket: inference_runtime::CommandTicket::new(1),
+        scalar_type: ApplicationScalarType::F32,
+        selected_device: ApplicationDevice::Cpu,
+        execution_device: cpu_device,
+        memory_budget: MemoryBudget {
+            host_bytes: 100,
+            device_bytes: 100,
+        },
+    };
+    let valid_cpu = MemoryFootprint {
+        host_weight_bytes: 60,
+        host_working_bytes: 40,
+        ..MemoryFootprint::default()
+    };
+    assert!(ApplicationRuntime::load_footprint_matches(
+        admission, valid_cpu
+    ));
+
+    let over_budget = MemoryFootprint {
+        host_weight_bytes: 61,
+        ..valid_cpu
+    };
+    assert!(!ApplicationRuntime::load_footprint_matches(
+        admission,
+        over_budget
+    ));
+    let overflowing = MemoryFootprint {
+        host_weight_bytes: u64::MAX,
+        host_working_bytes: 1,
+        ..MemoryFootprint::default()
+    };
+    assert!(!ApplicationRuntime::load_footprint_matches(
+        admission,
+        overflowing
+    ));
+    let cpu_with_device_weight = MemoryFootprint {
+        host_weight_bytes: 99,
+        device_weight_bytes: 1,
+        ..MemoryFootprint::default()
+    };
+    assert!(!ApplicationRuntime::load_footprint_matches(
+        admission,
+        cpu_with_device_weight
+    ));
+
+    let cuda_admission = LoadAdmission {
+        selected_device: CUDA_ZERO,
+        execution_device: ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda),
+        ..admission
+    };
+    let cuda_with_host_weight = MemoryFootprint {
+        host_weight_bytes: 1,
+        device_weight_bytes: 99,
+        ..MemoryFootprint::default()
+    };
+    assert!(!ApplicationRuntime::load_footprint_matches(
+        cuda_admission,
+        cuda_with_host_weight
+    ));
+}
+
+#[test]
+fn malformed_load_receipt_footprint_uses_incompatible_model_cleanup() -> TestResult {
+    with_runtime_and_probe(
+        default_test_configuration,
+        available_device_probe,
+        |runtime| {
+            let (selection, _resolved) =
+                resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
+            runtime.load_model(&selection).map_err(application_error)?;
+            let load_event = runtime
+                .local
+                .receive_timeout(TEST_TIMEOUT)
+                .map_err(|error| format!("model load event failed: {error:?}"))?;
+            let RuntimeEvent::ModelLoaded {
+                ticket,
+                result: Ok(mut receipt),
+            } = load_event
+            else {
+                return Err("unexpected model load event".to_owned());
+            };
+            let handle = receipt.handle;
+            receipt.reserved_footprint.device_weight_bytes = 1;
+
+            let event = runtime.process_model_loaded(ticket, Ok(receipt));
+            assert!(matches!(
+                event,
+                ApplicationEvent::ModelCompatibilityFailed { .. }
+            ));
+            assert!(runtime.state().loaded().is_none());
+            assert_eq!(runtime.state().activity(), ApplicationActivity::Unloading);
+            assert_eq!(
+                runtime
+                    .incompatible_model_cleanup
+                    .as_ref()
+                    .map(|cleanup| cleanup.handle),
+                Some(handle)
+            );
+
+            let event = wait_for_event(runtime, |event| {
+                matches!(event, ApplicationEvent::ModelUnloaded { .. })
+            })?;
+            assert!(matches!(event, ApplicationEvent::ModelUnloaded { .. }));
+            assert!(runtime.incompatible_model_cleanup.is_none());
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn wrong_load_receipt_device_uses_incompatible_model_cleanup() -> TestResult {
+    with_runtime(default_test_configuration, |runtime| {
+        let (selection, _resolved) =
+            resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
+        runtime.load_model(&selection).map_err(application_error)?;
+        let load_event = runtime
+            .local
+            .receive_timeout(TEST_TIMEOUT)
+            .map_err(|error| format!("model load event failed: {error:?}"))?;
+        let RuntimeEvent::ModelLoaded {
+            ticket,
+            result: Ok(mut receipt),
+        } = load_event
+        else {
+            return Err("unexpected model load event".to_owned());
+        };
+        receipt.execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda);
+
+        let event = runtime.process_model_loaded(ticket, Ok(receipt));
+        assert!(matches!(
+            event,
+            ApplicationEvent::ModelCompatibilityFailed { .. }
+        ));
+        assert!(runtime.state().loaded().is_none());
+        assert_eq!(runtime.state().selected_device(), ApplicationDevice::Cpu);
+        assert_eq!(runtime.state().activity(), ApplicationActivity::Unloading);
+        assert!(runtime.incompatible_model_cleanup.is_some());
+        assert_eq!(
+            runtime.select_device(CUDA_ZERO),
+            Err(ApplicationError::DeviceSelectionLocked)
+        );
+
+        let event = wait_for_event(runtime, |event| {
+            matches!(event, ApplicationEvent::ModelUnloaded { .. })
+        })?;
+        assert!(matches!(event, ApplicationEvent::ModelUnloaded { .. }));
+        assert!(runtime.incompatible_model_cleanup.is_none());
+        assert_eq!(runtime.state().activity(), ApplicationActivity::Idle);
+        assert_eq!(runtime.state().selected_device(), ApplicationDevice::Cpu);
+        Ok(())
+    })
+}
+
+#[test]
+fn retained_load_cleanup_failure_keeps_device_selection_locked() -> TestResult {
+    with_runtime(default_test_configuration, |runtime| {
+        let (selection, _resolved) =
+            resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
+        runtime.load_model(&selection).map_err(application_error)?;
+        let load_event = runtime
+            .local
+            .receive_timeout(TEST_TIMEOUT)
+            .map_err(|error| format!("model load event failed: {error:?}"))?;
+        let RuntimeEvent::ModelLoaded {
+            ticket,
+            result: Ok(_),
+        } = load_event
+        else {
+            return Err("unexpected model load event".to_owned());
+        };
+
+        let event = runtime.process_model_loaded(ticket, Err(terminal_cleanup_failure()));
+        assert!(matches!(event, ApplicationEvent::ModelLoadFailed { .. }));
+        assert_eq!(
+            runtime.retained_load_cleanup,
+            Some(RetainedLoadCleanup::Exhausted)
+        );
+        assert!(runtime.state().loaded().is_none());
+        assert_eq!(runtime.state().activity(), ApplicationActivity::Unloading);
+        assert!(!runtime.state().can_select_device());
+        assert!(!runtime.state().can_load(&selection));
+        assert_eq!(
+            runtime.select_device(CUDA_ZERO),
+            Err(ApplicationError::DeviceSelectionLocked)
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn retryable_load_cleanup_returns_idle_after_zero_ownership_snapshot() -> TestResult {
+    with_runtime(default_test_configuration, |runtime| {
+        let (selection, _resolved) =
+            resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
+        runtime.load_model(&selection).map_err(application_error)?;
+        let load_event = runtime
+            .local
+            .receive_timeout(TEST_TIMEOUT)
+            .map_err(|error| format!("model load event failed: {error:?}"))?;
+        let RuntimeEvent::ModelLoaded {
+            ticket,
+            result: Ok(_),
+        } = load_event
+        else {
+            return Err("unexpected model load event".to_owned());
+        };
+
+        let event = runtime.process_model_loaded(ticket, Err(retryable_cleanup_failure()));
+        assert!(matches!(event, ApplicationEvent::ModelLoadFailed { .. }));
+        assert!(matches!(
+            runtime.retained_load_cleanup,
+            Some(RetainedLoadCleanup::PendingInspection { .. })
+        ));
+        assert!(runtime.retry_retained_load_cleanup_inspection().is_none());
+        let snapshot_event = runtime
+            .local
+            .receive_timeout(TEST_TIMEOUT)
+            .map_err(|error| format!("cleanup snapshot event failed: {error:?}"))?;
+        let RuntimeEvent::Snapshot {
+            ticket: snapshot_ticket,
+            ..
+        } = snapshot_event
+        else {
+            return Err("unexpected cleanup inspection event".to_owned());
+        };
+
+        runtime.process_retained_load_cleanup_snapshot(
+            snapshot_ticket,
+            &inference_runtime::RuntimeSnapshot::default(),
+        );
+        assert!(runtime.retained_load_cleanup.is_none());
+        assert_eq!(runtime.state().activity(), ApplicationActivity::Idle);
+        assert!(runtime.state().can_select_device());
         Ok(())
     })
 }
@@ -807,6 +1484,7 @@ fn failed_startup_rollback_quarantines_and_later_reaps_inference_worker() -> Tes
                 ApplicationWorker::Inference,
             ))
         },
+        super::probe_application_device,
     );
     let test_result = match start_result {
         Err(failure) => {
@@ -1028,8 +1706,20 @@ where
     C: FnOnce(&mut ApplicationRuntimeConfiguration),
     F: FnOnce(&mut ApplicationRuntime) -> TestResult,
 {
+    with_runtime_and_probe(configure, super::probe_application_device, test)
+}
+
+fn with_runtime_and_probe<C, F>(
+    configure: C,
+    device_probe: crate::local::DeviceProbe,
+    test: F,
+) -> TestResult
+where
+    C: FnOnce(&mut ApplicationRuntimeConfiguration),
+    F: FnOnce(&mut ApplicationRuntime) -> TestResult,
+{
     let database_path = unique_database_path();
-    let result = with_runtime_at(&database_path, configure, test);
+    let result = with_runtime_at_with_probe(&database_path, configure, device_probe, test);
     let cleanup_result = remove_database(&database_path);
     result.and(cleanup_result)
 }
@@ -1039,9 +1729,27 @@ where
     C: FnOnce(&mut ApplicationRuntimeConfiguration),
     F: FnOnce(&mut ApplicationRuntime) -> TestResult,
 {
+    with_runtime_at_with_probe(
+        database_path,
+        configure,
+        super::probe_application_device,
+        test,
+    )
+}
+
+fn with_runtime_at_with_probe<C, F>(
+    database_path: &Path,
+    configure: C,
+    device_probe: crate::local::DeviceProbe,
+    test: F,
+) -> TestResult
+where
+    C: FnOnce(&mut ApplicationRuntimeConfiguration),
+    F: FnOnce(&mut ApplicationRuntime) -> TestResult,
+{
     let mut configuration = ApplicationRuntimeConfiguration::desktop(database_path);
     configure(&mut configuration);
-    match ApplicationRuntime::start(configuration) {
+    match ApplicationRuntime::start_with_device_probe(configuration, device_probe) {
         Ok(mut runtime) => {
             let test_result = test(&mut runtime);
             let shutdown_result = runtime.shutdown().map_err(application_error);
@@ -1151,7 +1859,6 @@ fn resolve_fixture_with(
             assert_eq!(model.selection(), &selection);
             assert_eq!(model.engine(), ApplicationEngine::Candle);
             assert_eq!(model.source(), ApplicationSource::HuggingFaceHub);
-            assert_eq!(model.device(), ApplicationDevice::Cpu);
             assert_eq!(model.format(), ApplicationModelFormat::Safetensors);
             assert_eq!(model.scalar_type(), Some(ApplicationScalarType::F32));
             assert!(model.is_loadable());
@@ -1171,6 +1878,7 @@ fn load_fixture_with(
 ) -> TestResult<LoadedModel> {
     let (selection, _resolved) =
         resolve_fixture_with(runtime, repository, commit, tokenizer_filename)?;
+    let expected_device = runtime.state().selected_device();
     runtime.load_model(&selection).map_err(application_error)?;
     let event = wait_for_event(runtime, |event| {
         matches!(
@@ -1185,7 +1893,11 @@ fn load_fixture_with(
             assert_eq!(model.selection(), &selection);
             assert_eq!(model.engine(), ApplicationEngine::Candle);
             assert_eq!(model.source(), ApplicationSource::HuggingFaceHub);
-            assert_eq!(model.device(), ApplicationDevice::Cpu);
+            assert_eq!(model.device(), expected_device);
+            assert_eq!(
+                runtime.state().loaded().map(LoadedModel::device),
+                Some(expected_device)
+            );
             assert_eq!(model.format(), ApplicationModelFormat::Safetensors);
             assert_eq!(model.scalar_type(), ApplicationScalarType::F32);
             assert_eq!(model.identity().repository(), repository);

@@ -3,7 +3,10 @@
 use std::sync::{Mutex, MutexGuard};
 
 use candle_backend::CandleLlamaSource;
-use domain_contracts::{DeviceId, ModelHandle, ModelId, QuantizationFormat};
+use domain_contracts::{
+    ExecutionDevice, MemoryBudget, MemoryFootprint, ModelArchitecture, ModelHandle, ModelId,
+    QuantizationFormat,
+};
 use hf_hub_adapter::{HubModelReference, ResolvedSafetensorsLlamaArtifacts};
 use hf_tokenizer::HfTokenizer;
 use host_runtime::{BoundedReceiver, BoundedSender, HostThread, TryReceiveError, TrySendError};
@@ -14,24 +17,29 @@ use tokenization::Tokenizer;
 use crate::conversation::ConversationState;
 use crate::generation::GenerationBridge;
 use crate::hub_worker::{HubCommand, HubEvent, HubWorker, start_hub_worker};
-use crate::local::{CANDLE_BACKEND_ID, LocalInference, LocalSubmitError};
+use crate::local::{
+    CANDLE_BACKEND_ID, DeviceProbe, DeviceProbeFailure, LocalInference, LocalSubmitError,
+    application_device, execution_device, probe_application_device,
+};
 use crate::support::{
     application_preferences, application_scalar_type, candle_scalar_type, create_runtime,
-    domain_scalar_type, hub_configuration, hub_failure, model_source_failure, storage_failure,
-    stored_scalar_type, stored_settings, unix_milliseconds, validate_configuration,
-    validate_preferences,
+    domain_scalar_type, hub_configuration, hub_failure, model_source_failure,
+    runtime_memory_budget, storage_failure, stored_scalar_type, stored_settings, unix_milliseconds,
+    validate_configuration, validate_preferences,
 };
 use crate::{
-    ApplicationActivity, ApplicationError, ApplicationEvent, ApplicationFailure,
-    ApplicationFailureKind, ApplicationPreferences, ApplicationRuntimeConfiguration,
-    ApplicationScalarType, ApplicationState, ApplicationTiming, ApplicationWorker,
-    ContextDiagnostics, ImmutableModelIdentity, LoadedModel, ModelSelection, ResolvedModel,
+    ApplicationActivity, ApplicationDevice, ApplicationDeviceDiscoveryFailure,
+    ApplicationDeviceSummary, ApplicationDeviceUnavailableReason, ApplicationError,
+    ApplicationEvent, ApplicationFailure, ApplicationFailureKind, ApplicationPreferences,
+    ApplicationRuntimeConfiguration, ApplicationScalarType, ApplicationState, ApplicationTiming,
+    ApplicationWorker, ContextDiagnostics, ImmutableModelIdentity, LoadedModel, ModelSelection,
+    ResolvedModel,
 };
 
 const MODEL_ID: ModelId = ModelId::new(1);
-const CPU_DEVICE: DeviceId = DeviceId::new(0);
 const INITIAL_COMMAND_TICKET: u64 = 1;
 const MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS: u8 = 3;
+const MAXIMUM_LOAD_CLEANUP_INSPECTION_SUBMISSION_ATTEMPTS: u8 = 3;
 
 /// Frontend-neutral owner of model acquisition, persistence, lifecycle, and generation workers.
 pub struct ApplicationRuntime {
@@ -41,6 +49,8 @@ pub struct ApplicationRuntime {
     pub(crate) hub_thread: Option<HostThread<()>>,
     storage: RedbStorage,
     preferences: ApplicationPreferences,
+    memory_budget: MemoryBudget,
+    device_probe: DeviceProbe,
     pub(crate) configuration: ApplicationRuntimeConfiguration,
     pub(crate) state: ApplicationState,
     resolved_artifacts: Option<ResolvedSafetensorsLlamaArtifacts>,
@@ -53,14 +63,20 @@ pub struct ApplicationRuntime {
     next_ticket: u64,
     pub(crate) shutdown_control: crate::shutdown::ShutdownControl,
     incompatible_model_cleanup: Option<IncompatibleModelCleanup>,
+    retained_load_cleanup: Option<RetainedLoadCleanup>,
     #[cfg(test)]
     forced_inference_busy_submissions: usize,
+    #[cfg(test)]
+    last_submitted_load_device: Option<ExecutionDevice>,
 }
 
 #[derive(Clone, Copy)]
 struct LoadAdmission {
     ticket: CommandTicket,
     scalar_type: ApplicationScalarType,
+    selected_device: ApplicationDevice,
+    execution_device: ExecutionDevice,
+    memory_budget: MemoryBudget,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,6 +101,77 @@ enum IncompatibleModelUnload {
         attempts: u8,
         last_failure: ApplicationFailure,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RetainedLoadCleanup {
+    PendingInspection { submission_attempts: u8 },
+    InspectionSubmitted { ticket: CommandTicket },
+    Exhausted,
+}
+
+struct DeviceCatalogue {
+    summaries: Vec<ApplicationDeviceSummary>,
+    failures: Vec<ApplicationDeviceDiscoveryFailure>,
+}
+
+fn discover_device_catalogue(
+    selected_device: ApplicationDevice,
+    device_probe: DeviceProbe,
+) -> DeviceCatalogue {
+    let mut summaries = vec![ApplicationDeviceSummary::cpu()];
+    let mut failures = Vec::new();
+    let mut cuda_devices = vec![ApplicationDevice::Cuda { ordinal: 0 }];
+    if matches!(selected_device, ApplicationDevice::Cuda { .. })
+        && selected_device != (ApplicationDevice::Cuda { ordinal: 0 })
+    {
+        cuda_devices.push(selected_device);
+    }
+
+    for device in cuda_devices {
+        let (summary, failure) = probe_device(device, device_probe);
+        if summary.available() || device == selected_device {
+            summaries.push(summary);
+        }
+        if let Some(failure) = failure {
+            failures.push(failure);
+        }
+    }
+    summaries.sort_by_key(ApplicationDeviceSummary::device);
+    DeviceCatalogue {
+        summaries,
+        failures,
+    }
+}
+
+fn probe_device(
+    device: ApplicationDevice,
+    device_probe: DeviceProbe,
+) -> (
+    ApplicationDeviceSummary,
+    Option<ApplicationDeviceDiscoveryFailure>,
+) {
+    if device == ApplicationDevice::Cpu {
+        return (ApplicationDeviceSummary::cpu(), None);
+    }
+    match device_probe(device) {
+        Ok(summary) => (summary, None),
+        #[cfg(not(feature = "cuda"))]
+        Err(DeviceProbeFailure::SupportNotCompiled) => (
+            ApplicationDeviceSummary::unavailable(
+                device,
+                ApplicationDeviceUnavailableReason::SupportNotCompiled,
+            ),
+            None,
+        ),
+        Err(DeviceProbeFailure::Discovery(failure)) => (
+            ApplicationDeviceSummary::unavailable(
+                device,
+                ApplicationDeviceUnavailableReason::DiscoveryFailed,
+            ),
+            Some(failure),
+        ),
+    }
 }
 
 type StartupInferenceRollback =
@@ -244,6 +331,27 @@ impl ApplicationRuntime {
         .map_err(StartupFailure::into_primary)
     }
 
+    #[cfg(test)]
+    fn start_with_device_probe(
+        configuration: ApplicationRuntimeConfiguration,
+        device_probe: DeviceProbe,
+    ) -> Result<Self, ApplicationError> {
+        Self::start_transaction_with_rollback(
+            configuration,
+            |configuration| {
+                start_hub_worker(
+                    hub_configuration(&configuration.hub),
+                    configuration.hub_channel_capacity,
+                    configuration.timing.hub_worker_poll,
+                    configuration.timing.hub_event_send_timeout,
+                )
+            },
+            crate::shutdown::rollback_started_inference,
+            device_probe,
+        )
+        .map_err(StartupFailure::into_primary)
+    }
+
     fn start_transaction<F>(
         configuration: ApplicationRuntimeConfiguration,
         start_hub: F,
@@ -255,6 +363,7 @@ impl ApplicationRuntime {
             configuration,
             start_hub,
             crate::shutdown::rollback_started_inference,
+            probe_application_device,
         )
     }
 
@@ -262,6 +371,7 @@ impl ApplicationRuntime {
         configuration: ApplicationRuntimeConfiguration,
         start_hub: F,
         rollback: StartupInferenceRollback,
+        device_probe: DeviceProbe,
     ) -> Result<Self, StartupFailure>
     where
         F: FnOnce(&ApplicationRuntimeConfiguration) -> Result<HubWorker, ApplicationError>,
@@ -274,8 +384,19 @@ impl ApplicationRuntime {
             .map_err(storage_failure)?
             .map_or_else(|| configuration.defaults.clone(), application_preferences);
         validate_preferences(&preferences)?;
+        let DeviceCatalogue {
+            summaries,
+            failures,
+        } = discover_device_catalogue(preferences.selected_device, device_probe);
+        let memory_budget = runtime_memory_budget(&preferences, &summaries);
+        let state = ApplicationState::with_devices(
+            preferences.selected_device,
+            summaries,
+            failures,
+            memory_budget.device_bytes,
+        );
 
-        let local = create_runtime(&preferences, &configuration)?;
+        let local = create_runtime(memory_budget, &configuration)?;
         let local_guard = StartupRollbackGuard::new(local, configuration.timing, rollback);
         let HubWorker {
             commands: hub_commands,
@@ -300,8 +421,10 @@ impl ApplicationRuntime {
             hub_thread: Some(hub_thread),
             storage,
             preferences,
+            memory_budget,
+            device_probe,
             configuration,
-            state: ApplicationState::default(),
+            state,
             resolved_artifacts: None,
             pending_hub_selection: None,
             pending_load: None,
@@ -312,8 +435,11 @@ impl ApplicationRuntime {
             next_ticket: INITIAL_COMMAND_TICKET,
             shutdown_control: crate::shutdown::ShutdownControl::default(),
             incompatible_model_cleanup: None,
+            retained_load_cleanup: None,
             #[cfg(test)]
             forced_inference_busy_submissions: 0,
+            #[cfg(test)]
+            last_submitted_load_device: None,
         })
     }
 
@@ -327,6 +453,40 @@ impl ApplicationRuntime {
     #[must_use]
     pub const fn state(&self) -> &ApplicationState {
         &self.state
+    }
+
+    /// Selects the exact device used by the next model load and persists that intent.
+    ///
+    /// An unavailable CUDA choice remains selected and is never replaced with CPU.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when model or generation ownership locks selection, the device is not in
+    /// the bounded catalogue, or persistence fails.
+    pub fn select_device(&mut self, device: ApplicationDevice) -> Result<(), ApplicationError> {
+        if !self.state.can_select_device() {
+            return Err(ApplicationError::DeviceSelectionLocked);
+        }
+        if !self
+            .state
+            .devices()
+            .iter()
+            .any(|summary| summary.device() == device)
+        {
+            return Err(ApplicationError::DeviceNotInCatalogue(device));
+        }
+
+        let (summary, failure) = probe_device(device, self.device_probe);
+        let mut candidate = self.preferences.clone();
+        candidate.selected_device = device;
+        self.storage
+            .save_settings(&stored_settings(&candidate))
+            .map_err(storage_failure)?;
+
+        self.preferences = candidate;
+        self.state.replace_device_summary(summary, failure);
+        self.state.set_selected_device(device);
+        Ok(())
     }
 
     /// Starts immutable Hugging Face artifact and tokenizer resolution.
@@ -370,6 +530,9 @@ impl ApplicationRuntime {
         let scalar_type = resolved
             .scalar_type()
             .ok_or(ApplicationError::UnknownScalarType)?;
+        let selected_device = self.state.selected_device();
+        self.refresh_selected_device()?;
+        let requested_execution_device = execution_device(selected_device);
         let artifacts = self
             .resolved_artifacts
             .as_ref()
@@ -385,14 +548,14 @@ impl ApplicationRuntime {
             ticket,
             model_id: MODEL_ID,
             source,
-            execution_device: domain_contracts::ExecutionDevice::new(
-                CPU_DEVICE,
-                domain_contracts::DeviceKind::Cpu,
-            ),
+            execution_device: requested_execution_device,
         })?;
         self.pending_load = Some(LoadAdmission {
             ticket,
             scalar_type,
+            selected_device,
+            execution_device: requested_execution_device,
+            memory_budget: self.memory_budget,
         });
         self.state.begin_loading();
         Ok(())
@@ -441,6 +604,7 @@ impl ApplicationRuntime {
                     self.shutdown_control.record_inference_disconnect();
                     self.state.disconnect_inference();
                     self.release_incompatible_model_cleanup();
+                    self.retained_load_cleanup = None;
                     self.handle_generation_runtime_disconnected();
                     if matches!(
                         self.state.activity(),
@@ -453,6 +617,9 @@ impl ApplicationRuntime {
             }
         }
         if let Some(event) = self.retry_incompatible_model_cleanup() {
+            return Some(event);
+        }
+        if let Some(event) = self.retry_retained_load_cleanup_inspection() {
             return Some(event);
         }
         self.pump_generation_event()
@@ -486,10 +653,41 @@ impl ApplicationRuntime {
         }
     }
 
+    fn refresh_selected_device(&mut self) -> Result<(), ApplicationError> {
+        let selected_device = self.state.selected_device();
+        let (summary, failure) = probe_device(selected_device, self.device_probe);
+        let unavailable_reason = summary.unavailable_reason();
+        self.state.replace_device_summary(summary, failure);
+        if let Some(reason) = unavailable_reason {
+            return Err(ApplicationError::SelectedDeviceUnavailable {
+                device: selected_device,
+                reason,
+            });
+        }
+        if !self.state.selected_device_memory_budget_available() {
+            return Err(ApplicationError::SelectedDeviceMemoryBudgetUnavailable {
+                device: selected_device,
+                budget_bytes: self.memory_budget.device_bytes,
+                total_memory_bytes: self
+                    .state
+                    .selected_device_summary()
+                    .and_then(ApplicationDeviceSummary::total_memory_bytes),
+            });
+        }
+        Ok(())
+    }
+
     pub(crate) fn submit_inference(
         &mut self,
         command: RuntimeCommand<CandleLlamaSource>,
     ) -> Result<(), ApplicationError> {
+        #[cfg(test)]
+        let submitted_load_device = match &command {
+            RuntimeCommand::LoadModel {
+                execution_device, ..
+            } => Some(*execution_device),
+            _ => None,
+        };
         #[cfg(test)]
         if self.forced_inference_busy_submissions > 0 {
             self.forced_inference_busy_submissions -= 1;
@@ -497,12 +695,19 @@ impl ApplicationRuntime {
         }
 
         match self.local.submit(command) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                #[cfg(test)]
+                if let Some(device) = submitted_load_device {
+                    self.last_submitted_load_device = Some(device);
+                }
+                Ok(())
+            }
             Err(LocalSubmitError::Full) => Err(ApplicationError::RuntimeBusy),
             Err(LocalSubmitError::Disconnected) => {
                 self.shutdown_control.record_inference_disconnect();
                 self.state.disconnect_inference();
                 self.release_incompatible_model_cleanup();
+                self.retained_load_cleanup = None;
                 Err(ApplicationError::RuntimeDisconnected)
             }
         }
@@ -620,12 +825,17 @@ impl ApplicationRuntime {
             | RuntimeEvent::GenerationCancellationRequested { .. } => {
                 self.process_generation_runtime_event(event)
             }
+            RuntimeEvent::Snapshot {
+                ticket, runtime, ..
+            } => {
+                self.process_retained_load_cleanup_snapshot(*ticket, runtime);
+                None
+            }
             RuntimeEvent::Shutdown { .. }
             | RuntimeEvent::RequestStarted { .. }
             | RuntimeEvent::PrefillCompleted { .. }
             | RuntimeEvent::DecodeCompleted { .. }
-            | RuntimeEvent::RequestFinished { .. }
-            | RuntimeEvent::Snapshot { .. } => None,
+            | RuntimeEvent::RequestFinished { .. } => None,
         }
     }
 
@@ -638,7 +848,22 @@ impl ApplicationRuntime {
         let receipt = match result {
             Ok(receipt) => receipt,
             Err(error) => {
-                self.state.set_idle();
+                match &error {
+                    inference_runtime::RuntimeError::CleanupFailed(_) => {
+                        self.retained_load_cleanup = Some(RetainedLoadCleanup::PendingInspection {
+                            submission_attempts: 0,
+                        });
+                        self.state.begin_unloading();
+                    }
+                    inference_runtime::RuntimeError::CleanupRetryExhausted(_) => {
+                        self.retained_load_cleanup = Some(RetainedLoadCleanup::Exhausted);
+                        self.state.begin_unloading();
+                    }
+                    _ => {
+                        self.retained_load_cleanup = None;
+                        self.state.set_idle();
+                    }
+                }
                 return ApplicationEvent::ModelLoadFailed {
                     failure: ApplicationFailure::from_debug(
                         ApplicationFailureKind::Inference,
@@ -655,20 +880,114 @@ impl ApplicationRuntime {
         let Some(scalar_type) = application_scalar_type(descriptor.metadata.scalar_type) else {
             return self.reject_incompatible_model(receipt.handle);
         };
-        if !self.loaded_compatibility_matches(admission, ticket, &receipt, &resolved, scalar_type) {
+        let Some(actual_device) = application_device(receipt.execution_device) else {
+            return self.reject_incompatible_model(receipt.handle);
+        };
+        if !self.loaded_compatibility_matches(
+            admission,
+            ticket,
+            &receipt,
+            &resolved,
+            scalar_type,
+            actual_device,
+        ) {
             return self.reject_incompatible_model(receipt.handle);
         }
         let loaded = LoadedModel::new(
             receipt.handle,
             resolved.selection().clone(),
             resolved.identity().clone(),
+            actual_device,
             scalar_type,
             descriptor.metadata.vocabulary_size,
             descriptor.capabilities.maximum_context_tokens,
             descriptor.capabilities.maximum_prefill_batch,
         );
+        self.retained_load_cleanup = None;
         self.state.set_loaded(loaded.clone());
         ApplicationEvent::ModelLoaded { model: loaded }
+    }
+
+    fn retry_retained_load_cleanup_inspection(&mut self) -> Option<ApplicationEvent> {
+        let submission_attempts = self
+            .retained_load_cleanup
+            .and_then(|cleanup| match cleanup {
+                RetainedLoadCleanup::PendingInspection {
+                    submission_attempts,
+                } => Some(submission_attempts),
+                RetainedLoadCleanup::InspectionSubmitted { .. }
+                | RetainedLoadCleanup::Exhausted => None,
+            })?;
+        let attempt = submission_attempts.saturating_add(1);
+        let ticket = match self.next_ticket() {
+            Ok(ticket) => ticket,
+            Err(error) => return Some(self.exhaust_load_cleanup_inspection(&error)),
+        };
+        match self.submit_inference(RuntimeCommand::Snapshot { ticket }) {
+            Ok(()) => {
+                self.retained_load_cleanup =
+                    Some(RetainedLoadCleanup::InspectionSubmitted { ticket });
+                None
+            }
+            Err(ApplicationError::RuntimeBusy)
+                if attempt < MAXIMUM_LOAD_CLEANUP_INSPECTION_SUBMISSION_ATTEMPTS =>
+            {
+                self.retained_load_cleanup = Some(RetainedLoadCleanup::PendingInspection {
+                    submission_attempts: attempt,
+                });
+                None
+            }
+            Err(ApplicationError::RuntimeDisconnected) => {
+                self.retained_load_cleanup = None;
+                if self.state.activity() == ApplicationActivity::Unloading {
+                    self.state.set_idle();
+                }
+                Some(ApplicationEvent::RuntimeDisconnected)
+            }
+            Err(error) => Some(self.exhaust_load_cleanup_inspection(&error)),
+        }
+    }
+
+    fn exhaust_load_cleanup_inspection(&mut self, error: &ApplicationError) -> ApplicationEvent {
+        self.retained_load_cleanup = Some(RetainedLoadCleanup::Exhausted);
+        self.state.begin_unloading();
+        ApplicationEvent::ModelLoadFailed {
+            failure: ApplicationFailure::new(
+                ApplicationFailureKind::Inference,
+                format!(
+                    "retained model-load cleanup could not be inspected; device selection remains locked: {error}"
+                ),
+            ),
+        }
+    }
+
+    fn process_retained_load_cleanup_snapshot(
+        &mut self,
+        ticket: CommandTicket,
+        snapshot: &inference_runtime::RuntimeSnapshot,
+    ) {
+        if !matches!(
+            self.retained_load_cleanup,
+            Some(RetainedLoadCleanup::InspectionSubmitted { ticket: expected }) if expected == ticket
+        ) {
+            return;
+        }
+        let ownership_released = snapshot.loaded_models == 0
+            && snapshot.active_requests == 0
+            && snapshot.generation_workspaces == 0
+            && snapshot.pending_cleanup_models == 0
+            && snapshot.pending_cleanup_sequences == 0
+            && snapshot.reserved_footprint == MemoryFootprint::default()
+            && snapshot.reserved_generation_workspace == MemoryFootprint::default();
+        if ownership_released {
+            self.retained_load_cleanup = None;
+            if self.state.activity() == ApplicationActivity::Unloading {
+                self.state.set_idle();
+            }
+        } else {
+            self.retained_load_cleanup = Some(RetainedLoadCleanup::Exhausted);
+            self.state.begin_unloading();
+        }
     }
 
     fn loaded_compatibility_matches(
@@ -678,6 +997,7 @@ impl ApplicationRuntime {
         receipt: &inference_runtime::LoadReceipt,
         resolved: &ResolvedModel,
         scalar_type: ApplicationScalarType,
+        actual_device: ApplicationDevice,
     ) -> bool {
         let Some(admission) = admission else {
             return false;
@@ -693,15 +1013,55 @@ impl ApplicationRuntime {
         let artifact_scalar = artifacts.declared_scalar_type.map(domain_scalar_type);
 
         admission.ticket == ticket
+            && receipt.handle.id == MODEL_ID
             && admission.scalar_type == scalar_type
+            && admission.selected_device == self.state.selected_device()
+            && admission.selected_device == actual_device
+            && admission.execution_device == receipt.execution_device
+            && admission.memory_budget == self.memory_budget
+            && Self::load_footprint_matches(admission, receipt.reserved_footprint)
             && resolved.scalar_type() == Some(scalar_type)
             && artifact_scalar == Some(scalar_type)
             && resolved.selection() == &artifact_selection
             && resolved.identity().repository() == artifacts.repository
             && resolved.identity().commit() == artifacts.commit
             && descriptor.backend == CANDLE_BACKEND_ID
+            && descriptor.metadata.architecture == ModelArchitecture::Llama
             && descriptor.metadata.quantization == QuantizationFormat::None
+            && descriptor.metadata.context_length > 0
+            && descriptor.capabilities.maximum_context_tokens == descriptor.metadata.context_length
+            && descriptor.capabilities.maximum_prefill_batch > 0
+            && descriptor.capabilities.maximum_prefill_batch
+                <= descriptor.capabilities.maximum_context_tokens
+            && descriptor.capabilities.maximum_sequences > 0
             && tokenizer.vocabulary_size() == descriptor.metadata.vocabulary_size
+    }
+
+    fn load_footprint_matches(admission: LoadAdmission, footprint: MemoryFootprint) -> bool {
+        let Some(host_bytes) = footprint
+            .host_weight_bytes
+            .checked_add(footprint.host_working_bytes)
+        else {
+            return false;
+        };
+        let Some(device_bytes) = footprint
+            .device_weight_bytes
+            .checked_add(footprint.device_working_bytes)
+        else {
+            return false;
+        };
+        if host_bytes > admission.memory_budget.host_bytes
+            || device_bytes > admission.memory_budget.device_bytes
+        {
+            return false;
+        }
+
+        match admission.selected_device {
+            ApplicationDevice::Cpu => {
+                footprint.device_weight_bytes == 0 && footprint.device_working_bytes == 0
+            }
+            ApplicationDevice::Cuda { .. } => footprint.host_weight_bytes == 0,
+        }
     }
 
     fn reject_incompatible_model(&mut self, handle: ModelHandle) -> ApplicationEvent {
@@ -710,7 +1070,7 @@ impl ApplicationRuntime {
         self.tokenizer = None;
         let failure = ApplicationFailure {
             kind: ApplicationFailureKind::Inference,
-            message: "resolved identity, descriptor, and tokenizer compatibility evidence differ; deterministic unload was requested".to_owned(),
+            message: "loaded-model compatibility failed because resolved identity, model handle, descriptor, tokenizer, selected device, actual device, or resident-footprint evidence differs; deterministic unload was requested".to_owned(),
         };
         self.incompatible_model_cleanup = Some(IncompatibleModelCleanup {
             handle,
@@ -964,14 +1324,13 @@ impl ApplicationRuntime {
         &mut self,
         artifacts: &ResolvedSafetensorsLlamaArtifacts,
     ) -> Result<(), redb_storage::StorageError> {
-        self.preferences
+        let mut candidate = self.preferences.clone();
+        candidate
             .default_repository
             .clone_from(&artifacts.repository);
-        self.preferences
-            .default_revision
-            .clone_from(&artifacts.revision);
-        self.storage
-            .save_settings(&stored_settings(&self.preferences))?;
+        candidate.default_revision.clone_from(&artifacts.revision);
+        self.storage.save_settings(&stored_settings(&candidate))?;
+        self.preferences = candidate;
         let Some(scalar_type) = artifacts.declared_scalar_type else {
             return Ok(());
         };

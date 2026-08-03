@@ -1,16 +1,141 @@
 //! Private concrete composition for the local Candle E0 worker.
 
-use candle_backend::{CandleLlamaLoader, CandleLlamaSource};
-use domain_contracts::BackendId;
+use candle_backend::{CandleDeviceSummary, CandleLlamaLoader, CandleLlamaSource};
+use domain_contracts::{
+    BackendFailureKind, BackendId, DeviceId, DeviceKind, ExecutionDevice, LoadError,
+};
 use host_runtime::{OutputPullError, TokenOutputBatch};
 use inference_runtime::{
     GenerationOutputState, HostedRuntime, HostedRuntimeConfiguration, RuntimeCommand, RuntimeEvent,
     RuntimeLimits, RuntimeReceiveError, RuntimeThread, start_hosted_runtime,
 };
 
-use crate::{ApplicationError, ApplicationFailure, ApplicationFailureKind};
+use crate::{
+    ApplicationComputeCapability, ApplicationDevice, ApplicationDeviceDiscoveryFailure,
+    ApplicationDeviceDiscoveryFailureKind, ApplicationDeviceSummary, ApplicationError,
+    ApplicationFailure, ApplicationFailureKind,
+};
 
 pub const CANDLE_BACKEND_ID: BackendId = BackendId::new(1);
+
+pub(crate) type DeviceProbe = fn(ApplicationDevice) -> DeviceProbeResult;
+pub(crate) type DeviceProbeResult = Result<ApplicationDeviceSummary, DeviceProbeFailure>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DeviceProbeFailure {
+    #[cfg(not(feature = "cuda"))]
+    SupportNotCompiled,
+    Discovery(ApplicationDeviceDiscoveryFailure),
+}
+
+pub(crate) fn probe_application_device(device: ApplicationDevice) -> DeviceProbeResult {
+    match device {
+        ApplicationDevice::Cpu => CandleLlamaLoader::new(CANDLE_BACKEND_ID)
+            .discover_device(execution_device(device))
+            .map_err(|error| discovery_failure(device, error))
+            .and_then(|summary| translate_device_summary(device, &summary)),
+        ApplicationDevice::Cuda { ordinal } => probe_cuda_device(ordinal),
+    }
+}
+
+#[cfg(feature = "cuda")]
+fn probe_cuda_device(ordinal: u32) -> DeviceProbeResult {
+    let device = ApplicationDevice::Cuda { ordinal };
+    let execution_device = execution_device(device);
+    CandleLlamaLoader::new(CANDLE_BACKEND_ID)
+        .discover_device(execution_device)
+        .map_err(|error| discovery_failure(device, error))
+        .and_then(|summary| translate_device_summary(device, &summary))
+}
+
+#[cfg(not(feature = "cuda"))]
+const fn probe_cuda_device(_ordinal: u32) -> DeviceProbeResult {
+    Err(DeviceProbeFailure::SupportNotCompiled)
+}
+
+pub(crate) fn execution_device(device: ApplicationDevice) -> ExecutionDevice {
+    match device {
+        ApplicationDevice::Cpu => ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu),
+        ApplicationDevice::Cuda { ordinal } => {
+            ExecutionDevice::new(DeviceId::new(u64::from(ordinal)), DeviceKind::Cuda)
+        }
+    }
+}
+
+pub(crate) fn application_device(device: ExecutionDevice) -> Option<ApplicationDevice> {
+    match device.kind {
+        DeviceKind::Cpu if device.id.get() == 0 => Some(ApplicationDevice::Cpu),
+        DeviceKind::Cuda => u32::try_from(device.id.get())
+            .ok()
+            .map(|ordinal| ApplicationDevice::Cuda { ordinal }),
+        _ => None,
+    }
+}
+
+fn translate_device_summary(
+    expected: ApplicationDevice,
+    summary: &CandleDeviceSummary,
+) -> DeviceProbeResult {
+    if application_device(summary.execution_device) != Some(expected)
+        || summary.ordinal
+            != match expected {
+                ApplicationDevice::Cpu => None,
+                ApplicationDevice::Cuda { ordinal } => Some(u64::from(ordinal)),
+            }
+    {
+        return Err(DeviceProbeFailure::Discovery(
+            ApplicationDeviceDiscoveryFailure::new(
+                expected,
+                ApplicationDeviceDiscoveryFailureKind::Other,
+                "device discovery returned inconsistent identity facts".to_owned(),
+            ),
+        ));
+    }
+
+    let mut label = expected.base_label();
+    if let Some(name) = summary
+        .display_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && *name != label.as_str())
+    {
+        label.push_str(" — ");
+        label.push_str(name);
+    }
+    Ok(ApplicationDeviceSummary::discovered(
+        expected,
+        label,
+        summary.total_memory_bytes,
+        summary.available_memory_bytes,
+        summary
+            .compute_capability
+            .map(|capability| ApplicationComputeCapability {
+                major: capability.major,
+                minor: capability.minor,
+            }),
+    ))
+}
+
+fn discovery_failure(device: ApplicationDevice, error: LoadError) -> DeviceProbeFailure {
+    let kind = match error {
+        LoadError::InvalidConfiguration => {
+            ApplicationDeviceDiscoveryFailureKind::InvalidConfiguration
+        }
+        LoadError::Backend(failure) => match failure.kind {
+            BackendFailureKind::Unsupported => ApplicationDeviceDiscoveryFailureKind::Unsupported,
+            BackendFailureKind::DeviceInitialization => {
+                ApplicationDeviceDiscoveryFailureKind::Initialization
+            }
+            _ => ApplicationDeviceDiscoveryFailureKind::Other,
+        },
+        _ => ApplicationDeviceDiscoveryFailureKind::Other,
+    };
+    DeviceProbeFailure::Discovery(ApplicationDeviceDiscoveryFailure::new(
+        device,
+        kind,
+        format!("device discovery failed: {error:?}"),
+    ))
+}
 
 /// Private owner of the concrete, monomorphized Candle E0 endpoint.
 pub struct LocalInference {
@@ -90,4 +215,74 @@ impl LocalInference {
 
 fn worker_start_failure(error: inference_runtime::HostedRuntimeStartError) -> ApplicationError {
     ApplicationFailure::new(ApplicationFailureKind::Worker, error).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use candle_backend::{CandleDeviceSummary, CudaComputeCapability};
+    use domain_contracts::{DeviceId, DeviceKind, ExecutionDevice};
+
+    use super::{application_device, execution_device, translate_device_summary};
+    use crate::{ApplicationDevice, ApplicationDeviceSummary};
+
+    #[test]
+    fn application_device_identity_round_trips_without_vendor_types() {
+        for device in [
+            ApplicationDevice::Cpu,
+            ApplicationDevice::Cuda { ordinal: 7 },
+        ] {
+            assert_eq!(application_device(execution_device(device)), Some(device));
+        }
+        assert_eq!(
+            application_device(ExecutionDevice::new(DeviceId::new(1), DeviceKind::Cpu)),
+            None
+        );
+        assert_eq!(
+            application_device(ExecutionDevice::new(DeviceId::new(0), DeviceKind::Metal)),
+            None
+        );
+    }
+
+    #[test]
+    fn cuda_summary_translation_produces_application_owned_facts() -> Result<(), String> {
+        let device = ApplicationDevice::Cuda { ordinal: 3 };
+        let translated: ApplicationDeviceSummary = translate_device_summary(
+            device,
+            &CandleDeviceSummary {
+                execution_device: execution_device(device),
+                ordinal: Some(3),
+                display_name: Some("NVIDIA Test Device".to_owned()),
+                compute_capability: Some(CudaComputeCapability {
+                    major: 12,
+                    minor: 0,
+                }),
+                total_memory_bytes: Some(16_000),
+                available_memory_bytes: Some(12_000),
+                supports_bf16: true,
+            },
+        )
+        .map_err(|failure| format!("summary translation failed: {failure:?}"))?;
+
+        assert_eq!(translated.device(), device);
+        assert_eq!(translated.label(), "CUDA 3 — NVIDIA Test Device");
+        assert!(translated.available());
+        assert_eq!(translated.total_memory_bytes(), Some(16_000));
+        assert_eq!(translated.available_memory_bytes(), Some(12_000));
+        assert_eq!(
+            translated.compute_capability(),
+            Some(crate::ApplicationComputeCapability {
+                major: 12,
+                minor: 0
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cpu_label_remains_cpu_in_every_feature_build() {
+        let cpu = ApplicationDeviceSummary::cpu();
+        assert_eq!(cpu.device(), ApplicationDevice::Cpu);
+        assert_eq!(cpu.label(), "CPU");
+        assert!(cpu.available());
+    }
 }

@@ -8,11 +8,14 @@ use domain_contracts::MemoryBudget;
 use hf_hub_adapter::{ArtifactScalarType, HubClientConfiguration};
 use host_runtime::ThreadPanicked;
 use inference_runtime::{HostedRuntimeConfiguration, RuntimeLimits};
-use redb_storage::{ApplicationSettings, StoredScalarType};
+use redb_storage::{
+    ApplicationSettings, StoredAcceleratorMemoryPolicy, StoredApplicationDevice, StoredScalarType,
+};
 
 use crate::local::LocalInference;
 use crate::{
-    ApplicationConfigurationField, ApplicationError, ApplicationFailure, ApplicationFailureKind,
+    AcceleratorMemoryPolicy, ApplicationConfigurationField, ApplicationDevice,
+    ApplicationDeviceSummary, ApplicationError, ApplicationFailure, ApplicationFailureKind,
     ApplicationHubConfiguration, ApplicationPreferences, ApplicationRuntimeConfiguration,
     ApplicationScalarType, ApplicationTiming,
 };
@@ -27,8 +30,28 @@ pub fn hub_configuration(configuration: &ApplicationHubConfiguration) -> HubClie
     }
 }
 
-pub fn create_runtime(
+pub fn runtime_memory_budget(
     preferences: &ApplicationPreferences,
+    devices: &[ApplicationDeviceSummary],
+) -> MemoryBudget {
+    let discovered_physical_capacity = devices
+        .iter()
+        .filter(|summary| matches!(summary.device(), ApplicationDevice::Cuda { .. }))
+        .map(|summary| summary.total_memory_bytes().unwrap_or(0))
+        .min()
+        .unwrap_or(0);
+    let device_bytes = match preferences.accelerator_memory_policy {
+        AcceleratorMemoryPolicy::Automatic => discovered_physical_capacity,
+        AcceleratorMemoryPolicy::Limit { bytes } => bytes.get().min(discovered_physical_capacity),
+    };
+    MemoryBudget {
+        host_bytes: preferences.maximum_host_memory_bytes,
+        device_bytes,
+    }
+}
+
+pub fn create_runtime(
+    memory_budget: MemoryBudget,
     configuration: &ApplicationRuntimeConfiguration,
 ) -> Result<LocalInference, ApplicationError> {
     let maximum_requests = NonZeroU32::new(configuration.maximum_requests).ok_or(
@@ -56,14 +79,7 @@ pub fn create_runtime(
     let poll = NonZeroU64::new(poll_milliseconds).ok_or(ApplicationError::InvalidConfiguration(
         ApplicationConfigurationField::RuntimePoll,
     ))?;
-    let limits = RuntimeLimits::new(
-        NonZeroU32::MIN,
-        maximum_requests,
-        MemoryBudget {
-            host_bytes: preferences.maximum_host_memory_bytes,
-            device_bytes: preferences.maximum_device_memory_bytes,
-        },
-    );
+    let limits = RuntimeLimits::new(NonZeroU32::MIN, maximum_requests, memory_budget);
     let hosted = HostedRuntimeConfiguration::new(command_capacity, event_capacity, poll)
         .with_token_output_capacity(token_output_capacity, token_output_record_capacity);
     LocalInference::start(limits, hosted)
@@ -130,7 +146,16 @@ pub fn application_preferences(settings: ApplicationSettings) -> ApplicationPref
         default_repository: settings.default_repository,
         default_revision: settings.default_revision,
         maximum_host_memory_bytes: settings.maximum_host_memory_bytes,
-        maximum_device_memory_bytes: settings.maximum_device_memory_bytes,
+        selected_device: match settings.selected_device {
+            StoredApplicationDevice::Cpu => ApplicationDevice::Cpu,
+            StoredApplicationDevice::Cuda { ordinal } => ApplicationDevice::Cuda { ordinal },
+        },
+        accelerator_memory_policy: match settings.accelerator_memory_policy {
+            StoredAcceleratorMemoryPolicy::Automatic => AcceleratorMemoryPolicy::Automatic,
+            StoredAcceleratorMemoryPolicy::Limit { bytes } => {
+                AcceleratorMemoryPolicy::Limit { bytes }
+            }
+        },
         drain_timeout_milliseconds: settings.drain_timeout_milliseconds,
     }
 }
@@ -140,7 +165,16 @@ pub fn stored_settings(preferences: &ApplicationPreferences) -> ApplicationSetti
         default_repository: preferences.default_repository.clone(),
         default_revision: preferences.default_revision.clone(),
         maximum_host_memory_bytes: preferences.maximum_host_memory_bytes,
-        maximum_device_memory_bytes: preferences.maximum_device_memory_bytes,
+        selected_device: match preferences.selected_device {
+            ApplicationDevice::Cpu => StoredApplicationDevice::Cpu,
+            ApplicationDevice::Cuda { ordinal } => StoredApplicationDevice::Cuda { ordinal },
+        },
+        accelerator_memory_policy: match preferences.accelerator_memory_policy {
+            AcceleratorMemoryPolicy::Automatic => StoredAcceleratorMemoryPolicy::Automatic,
+            AcceleratorMemoryPolicy::Limit { bytes } => {
+                StoredAcceleratorMemoryPolicy::Limit { bytes }
+            }
+        },
         drain_timeout_milliseconds: preferences.drain_timeout_milliseconds,
     }
 }
@@ -296,5 +330,134 @@ where
         Err(ApplicationError::InvalidConfiguration(field))
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroU64;
+
+    use super::{application_preferences, runtime_memory_budget, stored_settings};
+    use crate::{
+        AcceleratorMemoryPolicy, ApplicationDevice, ApplicationDeviceSummary,
+        ApplicationPreferences,
+    };
+
+    const GIBIBYTE: u64 = 1024 * 1024 * 1024;
+
+    fn cuda_summary(ordinal: u32, total_memory_bytes: u64) -> ApplicationDeviceSummary {
+        ApplicationDeviceSummary::discovered(
+            ApplicationDevice::Cuda { ordinal },
+            format!("CUDA {ordinal} — test"),
+            Some(total_memory_bytes),
+            Some(total_memory_bytes / 2),
+            None,
+        )
+    }
+
+    #[test]
+    fn automatic_accelerator_budget_uses_the_least_selectable_physical_capacity() {
+        let preferences = ApplicationPreferences::default();
+        let devices = [
+            ApplicationDeviceSummary::cpu(),
+            cuda_summary(0, 12 * GIBIBYTE),
+            cuda_summary(1, 6 * GIBIBYTE),
+        ];
+
+        let budget = runtime_memory_budget(&preferences, &devices);
+
+        assert_eq!(budget.host_bytes, preferences.maximum_host_memory_bytes);
+        assert_eq!(budget.device_bytes, 6 * GIBIBYTE);
+    }
+
+    #[test]
+    fn missing_cuda_capacity_fails_closed_to_zero_budget() {
+        let devices = [
+            ApplicationDeviceSummary::cpu(),
+            ApplicationDeviceSummary::discovered(
+                ApplicationDevice::Cuda { ordinal: 0 },
+                "CUDA 0 — unknown capacity".to_owned(),
+                None,
+                None,
+                None,
+            ),
+        ];
+
+        assert_eq!(
+            runtime_memory_budget(&ApplicationPreferences::default(), &devices).device_bytes,
+            0
+        );
+    }
+
+    #[test]
+    fn unavailable_cuda_catalogue_row_fails_closed_to_zero_budget() {
+        let devices = [
+            ApplicationDeviceSummary::cpu(),
+            cuda_summary(0, 12 * GIBIBYTE),
+            ApplicationDeviceSummary::unavailable(
+                ApplicationDevice::Cuda { ordinal: 3 },
+                crate::ApplicationDeviceUnavailableReason::DiscoveryFailed,
+            ),
+        ];
+
+        assert_eq!(
+            runtime_memory_budget(&ApplicationPreferences::default(), &devices).device_bytes,
+            0
+        );
+    }
+
+    #[test]
+    fn explicit_accelerator_limit_is_capped_by_physical_capacity() {
+        let preferences = ApplicationPreferences {
+            accelerator_memory_policy: AcceleratorMemoryPolicy::Limit {
+                bytes: NonZeroU64::new(8 * GIBIBYTE).unwrap_or(NonZeroU64::MIN),
+            },
+            ..ApplicationPreferences::default()
+        };
+        let devices = [
+            ApplicationDeviceSummary::cpu(),
+            cuda_summary(0, 12 * GIBIBYTE),
+            cuda_summary(1, 6 * GIBIBYTE),
+        ];
+
+        assert_eq!(
+            runtime_memory_budget(&preferences, &devices).device_bytes,
+            6 * GIBIBYTE
+        );
+
+        let lower_preferences = ApplicationPreferences {
+            accelerator_memory_policy: AcceleratorMemoryPolicy::Limit {
+                bytes: NonZeroU64::new(4 * GIBIBYTE).unwrap_or(NonZeroU64::MIN),
+            },
+            ..preferences
+        };
+        assert_eq!(
+            runtime_memory_budget(&lower_preferences, &devices).device_bytes,
+            4 * GIBIBYTE
+        );
+    }
+
+    #[test]
+    fn cpu_only_budget_preserves_host_limit_and_uses_zero_device_bytes() {
+        let preferences = ApplicationPreferences::default();
+        let budget = runtime_memory_budget(&preferences, &[ApplicationDeviceSummary::cpu()]);
+
+        assert_eq!(budget.host_bytes, preferences.maximum_host_memory_bytes);
+        assert_eq!(budget.device_bytes, 0);
+    }
+
+    #[test]
+    fn preference_storage_conversion_round_trips_device_and_policy() {
+        let limit = NonZeroU64::new(3 * GIBIBYTE).unwrap_or(NonZeroU64::MIN);
+        let preferences = ApplicationPreferences {
+            selected_device: ApplicationDevice::Cuda { ordinal: 3 },
+            accelerator_memory_policy: AcceleratorMemoryPolicy::Limit { bytes: limit },
+            ..ApplicationPreferences::default()
+        };
+
+        assert_eq!(
+            application_preferences(stored_settings(&preferences)),
+            preferences
+        );
     }
 }

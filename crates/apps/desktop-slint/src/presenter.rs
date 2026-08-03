@@ -2,6 +2,7 @@
 
 mod callbacks;
 mod controls;
+mod devices;
 mod model;
 mod output;
 
@@ -15,6 +16,7 @@ use std::time::Duration;
 use application_runtime::ApplicationRuntime;
 use slint::ComponentHandle;
 
+use self::devices::DeviceSelectorModel;
 use self::output::PresentationState;
 use crate::AppWindow;
 
@@ -24,14 +26,27 @@ const MAXIMUM_EVENTS_PER_FRAME: usize = 64;
 /// Owns presentation-only generation state and the Slint callback bindings.
 pub struct Presenter {
     state: Rc<RefCell<PresentationState>>,
+    device_selector: Rc<RefCell<DeviceSelectorModel>>,
 }
 
 impl Presenter {
     /// Connects UI intents to the frontend-neutral application runtime.
     pub fn connect(window: &AppWindow, runtime: &Rc<RefCell<ApplicationRuntime>>) -> Self {
         let state = Rc::new(RefCell::new(PresentationState::default()));
-        callbacks::connect(window, runtime, &state);
-        Self { state }
+        let device_selector = Rc::new(RefCell::new(DeviceSelectorModel::new(
+            runtime.borrow().state().devices(),
+        )));
+        window.set_device_model(device_selector.borrow().slint_model());
+        callbacks::connect(window, runtime, &state, &device_selector);
+        Self {
+            state,
+            device_selector,
+        }
+    }
+
+    /// Synchronizes every control and summary from authoritative E1 state.
+    pub fn synchronize_controls(&self, window: &AppWindow, runtime: &ApplicationRuntime) {
+        synchronize_controls(window, runtime, &self.device_selector);
     }
 
     /// Starts bounded event and decoded-output polling on the UI frame cadence.
@@ -43,6 +58,7 @@ impl Presenter {
         let timer = slint::Timer::default();
         let weak = window.as_weak();
         let presentation = Rc::clone(&self.state);
+        let device_selector = Rc::clone(&self.device_selector);
         timer.start(
             slint::TimerMode::Repeated,
             Duration::from_millis(UI_FRAME_MILLISECONDS),
@@ -93,7 +109,7 @@ impl Presenter {
                     output::synchronize_conversation(&window, &runtime_ref);
                 }
                 let runtime_ref = runtime.borrow();
-                synchronize_controls(&window, &runtime_ref);
+                synchronize_controls(&window, &runtime_ref, &device_selector);
                 output::synchronize_usage(
                     &window,
                     &runtime_ref,
@@ -106,6 +122,10 @@ impl Presenter {
 }
 
 /// Synchronizes every control, model summary, mode, and usage value from authoritative state.
-pub fn synchronize_controls(window: &AppWindow, runtime: &ApplicationRuntime) {
-    controls::synchronize(window, runtime);
+fn synchronize_controls(
+    window: &AppWindow,
+    runtime: &ApplicationRuntime,
+    device_selector: &Rc<RefCell<DeviceSelectorModel>>,
+) {
+    controls::synchronize(window, runtime, &mut device_selector.borrow_mut());
 }

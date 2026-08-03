@@ -70,7 +70,7 @@ lychee --config lychee.toml --offline '**/*.md'
 git diff --check
 ```
 
-The `domain-contracts` allocation target is a harness-free executable so libtest/process activity cannot overlap its isolated allocator regions. The sampling package’s ordinary matrix test executes every benchmark case once at every vocabulary size and every stop case once; statistical execution is not required for correctness coverage.
+The `domain-contracts` and `sampling` allocation targets are harness-free executables so libtest/process activity cannot overlap their process-global allocator regions. The sampling package’s ordinary matrix test executes every benchmark case once at every vocabulary size and every stop case once; statistical execution is not required for correctness coverage.
 
 ### Portable domain checks
 
@@ -242,6 +242,37 @@ CUDA_COMPUTE_CAP=120 cargo clippy --locked \
     -- -D warnings
 ```
 
+Compile the E1 and Slint opt-in graphs independently. These commands exercise the exact `application-runtime/cuda -> candle-backend/cuda` and `desktop-slint/cuda -> application-runtime/cuda` forwarding paths without enabling workspace-wide features:
+
+```sh
+CUDA_COMPUTE_CAP=120 cargo check --locked \
+    -p application-runtime \
+    --all-targets \
+    --features cuda
+
+CUDA_COMPUTE_CAP=120 cargo test --locked \
+    -p application-runtime \
+    --features cuda \
+    --no-run
+
+CUDA_COMPUTE_CAP=120 cargo clippy --locked \
+    -p application-runtime \
+    --all-targets \
+    --features cuda \
+    -- -D warnings
+
+CUDA_COMPUTE_CAP=120 cargo check --locked \
+    -p desktop-slint \
+    --all-targets \
+    --features cuda
+
+CUDA_COMPUTE_CAP=120 cargo clippy --locked \
+    -p desktop-slint \
+    --all-targets \
+    --features cuda \
+    -- -D warnings
+```
+
 A CUDA-enabled binary must also prove that explicit CPU selection remains usable:
 
 ```sh
@@ -280,7 +311,23 @@ cargo test --release --locked \
     --nocapture
 ```
 
-Do not run these tests in ordinary CPU CI, do not use `--all-features` for the workspace, and do not interpret compilation as hardware execution evidence.
+The ignored E1 fixture test is separately guarded by `MILKDRIFT_CUDA_TEST=1`. It exercises explicit E1 CUDA selection, fixture load, and selected-versus-receipt-verified actual device reporting:
+
+```sh
+MILKDRIFT_CUDA_TEST=1 \
+CUDA_COMPUTE_CAP=120 \
+cargo test --release --locked \
+    -p application-runtime \
+    --features cuda \
+    --lib \
+    runtime::tests::cuda_fixture_load_reports_the_selected_and_actual_e1_device \
+    -- \
+    --ignored \
+    --exact \
+    --nocapture
+```
+
+Do not run these tests in ordinary CPU CI, do not use `--all-features` for the workspace, and do not interpret compilation as hardware execution evidence. These are procedures only; this documentation update does not claim that the E1 fixture or a manual product path ran.
 
 ## External CPU product baseline
 

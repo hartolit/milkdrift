@@ -5,7 +5,7 @@ use std::fmt::{self, Debug, Display, Formatter};
 
 use domain_contracts::RequestId;
 
-use crate::ApplicationActivity;
+use crate::{ApplicationActivity, ApplicationDevice, ApplicationDeviceUnavailableReason};
 
 /// Infrastructure or adapter category associated with one failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,8 +196,28 @@ pub enum ApplicationError {
     },
     /// The resolved configuration does not declare a supported scalar type.
     UnknownScalarType,
-    /// Visible selection changed after immutable artifact resolution.
+    /// Visible artifact selection changed after immutable artifact resolution.
     SelectionChanged,
+    /// Device selection is locked by active or retained runtime ownership.
+    DeviceSelectionLocked,
+    /// The requested device is not part of the bounded application catalogue.
+    DeviceNotInCatalogue(ApplicationDevice),
+    /// The explicitly selected device failed its latest bounded availability probe.
+    SelectedDeviceUnavailable {
+        /// Device that remains selected; no fallback was attempted.
+        device: ApplicationDevice,
+        /// Stable reason the selected device cannot currently load.
+        reason: ApplicationDeviceUnavailableReason,
+    },
+    /// The startup-fixed accelerator budget is not valid for the selected device's latest facts.
+    SelectedDeviceMemoryBudgetUnavailable {
+        /// Device that remains selected; no fallback was attempted.
+        device: ApplicationDevice,
+        /// Accelerator bytes fixed into E0 at process startup.
+        budget_bytes: u64,
+        /// Latest reported physical capacity, or `None` when discovery omitted it.
+        total_memory_bytes: Option<u64>,
+    },
     /// Correlation ticket space was exhausted.
     TicketExhausted,
     /// Bounded Hub command queue has no capacity.
@@ -215,6 +235,10 @@ pub enum ApplicationError {
 }
 
 impl Display for ApplicationError {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one exhaustive formatter owns the stable application error vocabulary"
+    )]
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidConfiguration(field) => {
@@ -297,6 +321,24 @@ impl Display for ApplicationError {
             Self::SelectionChanged => formatter.write_str(
                 "the complete model selection changed after resolution; resolve the current \
                  selection again",
+            ),
+            Self::DeviceSelectionLocked => formatter.write_str(
+                "device selection cannot change while model or generation ownership is active",
+            ),
+            Self::DeviceNotInCatalogue(device) => {
+                write!(formatter, "device {device:?} is not in the application catalogue")
+            }
+            Self::SelectedDeviceUnavailable { device, reason } => write!(
+                formatter,
+                "selected device {device:?} is unavailable ({reason:?}); CPU fallback was not attempted",
+            ),
+            Self::SelectedDeviceMemoryBudgetUnavailable {
+                device,
+                budget_bytes,
+                total_memory_bytes,
+            } => write!(
+                formatter,
+                "selected device {device:?} cannot load under the startup accelerator budget ({budget_bytes} bytes, latest physical total {total_memory_bytes:?}); restart after device discovery changes; CPU fallback was not attempted",
             ),
             Self::TicketExhausted => formatter.write_str("command ticket space is exhausted"),
             Self::HubBusy => formatter.write_str("Hub resolver queue is full"),

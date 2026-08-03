@@ -89,21 +89,24 @@ pub(super) fn composer_mode(runtime: &ApplicationRuntime) -> ComposerMode {
     composer_mode_from_evidence(true, has_verified_chat_compatibility)
 }
 
-pub(super) fn selected_model_summary(selection: &ModelSelection) -> String {
+pub(super) fn selected_model_summary(
+    selection: &ModelSelection,
+    selected_device: ApplicationDevice,
+    selected_device_available: bool,
+) -> String {
     format!(
-        "{} • Repository: {} • Revision: {} • Scalar: pending resolution • Identity: pending resolution",
-        current_model_target_label(),
+        "{} • Repository: {} • Revision: {} • Selected device: {} • Availability: {} • Scalar: pending resolution • Identity: pending resolution",
+        current_artifact_target_label(),
         selection.repository(),
         selection.revision(),
+        device_label(selected_device),
+        device_availability_label(selected_device_available),
     )
 }
 
 pub(super) fn resolved_model_summary(model: &ResolvedModel) -> String {
     detailed_model_summary(
-        model.engine(),
-        model.source(),
-        model.device(),
-        model.format(),
+        &artifact_target_label(model.engine(), model.source(), model.format()),
         model.scalar_type(),
         model.identity(),
     )
@@ -111,52 +114,60 @@ pub(super) fn resolved_model_summary(model: &ResolvedModel) -> String {
 
 pub(super) fn loaded_model_summary(model: &LoadedModel) -> String {
     detailed_model_summary(
-        model.engine(),
-        model.source(),
-        model.device(),
-        model.format(),
+        &loaded_model_target_label(
+            model.engine(),
+            model.source(),
+            model.format(),
+            model.device(),
+        ),
         Some(model.scalar_type()),
         model.identity(),
     )
 }
 
 fn detailed_model_summary(
-    engine: ApplicationEngine,
-    source: ApplicationSource,
-    device: ApplicationDevice,
-    format: ApplicationModelFormat,
+    target: &str,
     scalar_type: Option<ApplicationScalarType>,
     identity: &ImmutableModelIdentity,
 ) -> String {
     let scalar = scalar_type.map_or("Unknown", scalar_type_label);
     format!(
-        "{} • Scalar: {scalar} • Identity: {}",
-        model_target_label(engine, source, device, format),
+        "{target} • Scalar: {scalar} • Identity: {}",
         immutable_identity_label(identity)
     )
 }
 
-pub(super) fn current_model_target_label() -> String {
-    model_target_label(
+pub(super) fn current_artifact_target_label() -> String {
+    artifact_target_label(
         ApplicationEngine::Candle,
         ApplicationSource::HuggingFaceHub,
-        ApplicationDevice::Cpu,
         ApplicationModelFormat::Safetensors,
     )
 }
 
-pub(super) fn model_target_label(
+pub(super) fn artifact_target_label(
     engine: ApplicationEngine,
     source: ApplicationSource,
-    device: ApplicationDevice,
     format: ApplicationModelFormat,
 ) -> String {
     format!(
-        "Engine: {} • Source: {} • Device: {} • Format: {}",
+        "Engine: {} • Source: {} • Format: {}",
         engine_label(engine),
         source_label(source),
-        device_label(device),
         model_format_label(format)
+    )
+}
+
+pub(super) fn loaded_model_target_label(
+    engine: ApplicationEngine,
+    source: ApplicationSource,
+    format: ApplicationModelFormat,
+    actual_device: ApplicationDevice,
+) -> String {
+    format!(
+        "{} • Actual device: {}",
+        artifact_target_label(engine, source, format),
+        device_label(actual_device)
     )
 }
 
@@ -172,9 +183,18 @@ const fn source_label(source: ApplicationSource) -> &'static str {
     }
 }
 
-pub(super) const fn device_label(device: ApplicationDevice) -> &'static str {
+pub(super) fn device_label(device: ApplicationDevice) -> String {
     match device {
-        ApplicationDevice::Cpu => "CPU",
+        ApplicationDevice::Cpu => "CPU".to_owned(),
+        ApplicationDevice::Cuda { ordinal } => format!("CUDA {ordinal}"),
+    }
+}
+
+pub(super) const fn device_availability_label(available: bool) -> &'static str {
+    if available {
+        "available"
+    } else {
+        "unavailable"
     }
 }
 

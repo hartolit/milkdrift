@@ -1,0 +1,9 @@
+[workspace]
+members = [
+    "crates/adapters/candle-backend",
+    "crates/runtime/inference-runtime",
+    "crates/runtime/application-runtime",
+    "crates/apps/desktop-slint",
+]
+exclude = ["vendor/*"]
+resolver = "3"

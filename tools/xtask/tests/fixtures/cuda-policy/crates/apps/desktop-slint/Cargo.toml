@@ -1,0 +1,12 @@
+[package]
+name = "desktop-slint"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+default = []
+cuda = ["application-runtime/cuda"]
+
+[dependencies]
+application-runtime = { path = "../../runtime/application-runtime" }

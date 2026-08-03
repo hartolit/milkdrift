@@ -29,13 +29,15 @@ The current external policy is:
 - apps depend on E1 in production rather than directly on E0 or adapters;
 - external and workspace-local development dependencies require separate exact review.
 
-The reviewed E1 production composition edges cover `candle-backend`, `hf-hub-adapter`, `hf-tokenizer`, `host-runtime`, `inference-runtime`, and `redb-storage`. They authorize the one current Candle/Hub/Safetensors/CPU product composition, bounded workers/output, and application persistence; they do not authorize arbitrary adapters or a public generic backend surface. The only workspace-local E0 development edge is `inference-runtime -> candle-backend` for executable compatibility coverage, including an explicitly opted-in test-only CUDA feature forwarding edge.
+The reviewed E1 production composition edges cover `candle-backend`, `hf-hub-adapter`, `hf-tokenizer`, `host-runtime`, `inference-runtime`, and `redb-storage`. They authorize the current Candle/Hub/Safetensors composition with explicit CPU or opt-in CUDA execution, bounded workers/output, and application persistence; they do not authorize arbitrary adapters or a public generic backend surface. The only workspace-local E0 development edge is `inference-runtime -> candle-backend` for executable compatibility coverage.
 
-`candle-backend` owns one non-default `cuda` feature. Its exact mapping is `candle-core/cuda`, `candle-nn/cuda`, `candle-transformers/cuda`, and optional `cudarc`. CUDA may not enter its default feature set. Production crates may not enable Candle CUDA except through a reviewed non-default feature at the private `application-runtime` local-composition boundary; that E1 feature is not implemented yet. The validator also rejects direct or forwarded `cudnn`, `flash-attn`, and `nccl` features without a separate decision.
+The exact product opt-in chain is `desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda`. The existing `inference-runtime/cuda -> candle-backend/cuda` chain is development-only and does not authorize a production application edge. Every default feature set is empty along this path, so no default dependency graph reaches CUDA. There is no generic `gpu` alias.
+
+`candle-backend` owns the sole concrete non-default `cuda` implementation feature. Its exact mapping is `candle-core/cuda`, `candle-nn/cuda`, `candle-transformers/cuda`, and optional `cudarc`. The architecture validator rejects direct or forwarded `cudnn`, `flash-attn`, and `nccl` features without a separate decision.
 
 The optional direct `candle-backend -> cudarc` edge pins Candle's selected `0.19.8` version with default features disabled. It is used only under `cuda` through reviewed safe APIs for device name, compute capability, total/current memory, and native out-of-memory classification. No `cudarc` type crosses the adapter boundary, and default CPU builds do not compile or link it.
 
-`desktop-slint` has one workspace-local production dependency, `application-runtime`. No `application-api` package exists.
+`desktop-slint` has one workspace-local production dependency, `application-runtime`; its non-default `cuda` feature only forwards that dependency's reviewed feature. No `application-api` package exists.
 
 ## Rust-owned operational hygiene
 

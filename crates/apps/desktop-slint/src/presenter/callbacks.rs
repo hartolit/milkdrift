@@ -2,14 +2,15 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use application_runtime::{
-    ApplicationEvent, ApplicationFailure, ApplicationRuntime, ChatCompatibility,
+    ApplicationError, ApplicationEvent, ApplicationFailure, ApplicationRuntime, ChatCompatibility,
     GenerationSettings, ResolvedModel,
 };
 use slint::ComponentHandle;
 
+use super::devices::DeviceSelectorModel;
 use super::model::{
-    ComposerMode, composer_mode, current_model_target_label, device_label, engine_label,
-    model_target_label, scalar_type_label, selected_model,
+    ComposerMode, composer_mode, current_artifact_target_label, device_availability_label,
+    device_label, engine_label, loaded_model_target_label, resolved_model_summary, selected_model,
 };
 use super::output::{
     PresentationState, format_terminal_outcome, render_generated_output_update,
@@ -22,17 +23,86 @@ pub(super) fn connect(
     window: &AppWindow,
     runtime: &Rc<RefCell<ApplicationRuntime>>,
     presentation: &Rc<RefCell<PresentationState>>,
+    device_selector: &Rc<RefCell<DeviceSelectorModel>>,
 ) {
-    connect_resolve(window, Rc::clone(runtime));
-    connect_load(window, Rc::clone(runtime));
-    connect_unload(window, Rc::clone(runtime));
-    connect_submit_message(window, Rc::clone(runtime), Rc::clone(presentation));
-    connect_regenerate(window, Rc::clone(runtime), Rc::clone(presentation));
-    connect_cancel(window, Rc::clone(runtime));
-    connect_clear_conversation(window, Rc::clone(runtime), Rc::clone(presentation));
+    connect_select_device(window, Rc::clone(runtime), Rc::clone(device_selector));
+    connect_resolve(window, Rc::clone(runtime), Rc::clone(device_selector));
+    connect_load(window, Rc::clone(runtime), Rc::clone(device_selector));
+    connect_unload(window, Rc::clone(runtime), Rc::clone(device_selector));
+    connect_submit_message(
+        window,
+        Rc::clone(runtime),
+        Rc::clone(presentation),
+        Rc::clone(device_selector),
+    );
+    connect_regenerate(
+        window,
+        Rc::clone(runtime),
+        Rc::clone(presentation),
+        Rc::clone(device_selector),
+    );
+    connect_cancel(window, Rc::clone(runtime), Rc::clone(device_selector));
+    connect_clear_conversation(
+        window,
+        Rc::clone(runtime),
+        Rc::clone(presentation),
+        Rc::clone(device_selector),
+    );
 }
 
-fn connect_resolve(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) {
+fn connect_select_device(
+    window: &AppWindow,
+    runtime: Rc<RefCell<ApplicationRuntime>>,
+    device_selector: Rc<RefCell<DeviceSelectorModel>>,
+) {
+    let weak = window.as_weak();
+    window.on_select_device(move |index| {
+        let Some(window) = weak.upgrade() else {
+            return;
+        };
+        let device = device_selector.borrow().device_at_checked_index(index);
+        let Some(device) = device else {
+            window.set_status_text(
+                "Device selection failed: the selected row is no longer valid.".into(),
+            );
+            synchronize_controls(&window, &runtime.borrow(), &device_selector);
+            return;
+        };
+
+        let result = runtime.borrow_mut().select_device(device);
+        match result {
+            Ok(()) => {
+                let runtime_ref = runtime.borrow();
+                let state = runtime_ref.state();
+                window.set_status_text(
+                    format!(
+                        "Selected device: {} ({}).",
+                        device_label(state.selected_device()),
+                        device_availability_label(state.selected_device_available()),
+                    )
+                    .into(),
+                );
+                synchronize_controls(&window, &runtime_ref, &device_selector);
+            }
+            Err(error) => {
+                window.set_status_text(
+                    format!(
+                        "Device selection failed: {}",
+                        normalized_application_error(&error)
+                    )
+                    .into(),
+                );
+                synchronize_controls(&window, &runtime.borrow(), &device_selector);
+            }
+        }
+    });
+}
+
+fn connect_resolve(
+    window: &AppWindow,
+    runtime: Rc<RefCell<ApplicationRuntime>>,
+    device_selector: Rc<RefCell<DeviceSelectorModel>>,
+) {
     let weak = window.as_weak();
     window.on_resolve_model(move || {
         let Some(window) = weak.upgrade() else {
@@ -43,7 +113,7 @@ fn connect_resolve(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>)
         if let Err(error) = runtime.borrow_mut().resolve_model(selection) {
             window.set_status_text(error.to_string().into());
         }
-        synchronize_controls(&window, &runtime.borrow());
+        synchronize_controls(&window, &runtime.borrow(), &device_selector);
     });
 }
 
@@ -51,22 +121,44 @@ const fn resolution_progress_message() -> &'static str {
     "Resolving Hub metadata and immutable cached Safetensors artifacts…"
 }
 
-fn connect_load(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) {
+fn connect_load(
+    window: &AppWindow,
+    runtime: Rc<RefCell<ApplicationRuntime>>,
+    device_selector: Rc<RefCell<DeviceSelectorModel>>,
+) {
     let weak = window.as_weak();
     window.on_load_model(move || {
         let Some(window) = weak.upgrade() else {
             return;
         };
         let selection = selected_model(&window);
-        window.set_status_text(format!("Loading {}.", current_model_target_label()).into());
+        let selected_device = runtime.borrow().state().selected_device();
+        window.set_status_text(
+            format!(
+                "Loading {} on selected device {}.",
+                current_artifact_target_label(),
+                device_label(selected_device),
+            )
+            .into(),
+        );
         if let Err(error) = runtime.borrow_mut().load_model(&selection) {
-            window.set_status_text(error.to_string().into());
+            window.set_status_text(
+                format!(
+                    "Model load failed: {}",
+                    normalized_application_error(&error)
+                )
+                .into(),
+            );
         }
-        synchronize_controls(&window, &runtime.borrow());
+        synchronize_controls(&window, &runtime.borrow(), &device_selector);
     });
 }
 
-fn connect_unload(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) {
+fn connect_unload(
+    window: &AppWindow,
+    runtime: Rc<RefCell<ApplicationRuntime>>,
+    device_selector: Rc<RefCell<DeviceSelectorModel>>,
+) {
     let weak = window.as_weak();
     window.on_unload_model(move || {
         let Some(window) = weak.upgrade() else {
@@ -76,7 +168,7 @@ fn connect_unload(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) 
         if let Err(error) = runtime.borrow_mut().unload_model() {
             window.set_status_text(error.to_string().into());
         }
-        synchronize_controls(&window, &runtime.borrow());
+        synchronize_controls(&window, &runtime.borrow(), &device_selector);
     });
 }
 
@@ -84,6 +176,7 @@ fn connect_submit_message(
     window: &AppWindow,
     runtime: Rc<RefCell<ApplicationRuntime>>,
     presentation: Rc<RefCell<PresentationState>>,
+    device_selector: Rc<RefCell<DeviceSelectorModel>>,
 ) {
     let weak = window.as_weak();
     window.on_submit_message(move || {
@@ -106,7 +199,7 @@ fn connect_submit_message(
                 window.set_status_text("Load a model before submitting input.".into());
             }
         }
-        synchronize_controls(&window, &runtime.borrow());
+        synchronize_controls(&window, &runtime.borrow(), &device_selector);
     });
 }
 
@@ -165,6 +258,7 @@ fn connect_regenerate(
     window: &AppWindow,
     runtime: Rc<RefCell<ApplicationRuntime>>,
     presentation: Rc<RefCell<PresentationState>>,
+    device_selector: Rc<RefCell<DeviceSelectorModel>>,
 ) {
     let weak = window.as_weak();
     window.on_regenerate_response(move || {
@@ -173,7 +267,7 @@ fn connect_regenerate(
         };
         if composer_mode(&runtime.borrow()) != ComposerMode::Chat {
             window.set_status_text("Regeneration is available only in Chat mode.".into());
-            synchronize_controls(&window, &runtime.borrow());
+            synchronize_controls(&window, &runtime.borrow(), &device_selector);
             return;
         }
         let result = runtime
@@ -188,7 +282,7 @@ fn connect_regenerate(
                     .set_status_text(format!("Response could not be regenerated: {error}").into());
             }
         }
-        synchronize_controls(&window, &runtime.borrow());
+        synchronize_controls(&window, &runtime.borrow(), &device_selector);
     });
 }
 
@@ -247,7 +341,11 @@ fn generation_submission_message(
     }
 }
 
-fn connect_cancel(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) {
+fn connect_cancel(
+    window: &AppWindow,
+    runtime: Rc<RefCell<ApplicationRuntime>>,
+    device_selector: Rc<RefCell<DeviceSelectorModel>>,
+) {
     let weak = window.as_weak();
     window.on_cancel_generation(move || {
         let Some(window) = weak.upgrade() else {
@@ -273,7 +371,7 @@ fn connect_cancel(window: &AppWindow, runtime: Rc<RefCell<ApplicationRuntime>>) 
                 );
             }
         }
-        synchronize_controls(&window, &runtime.borrow());
+        synchronize_controls(&window, &runtime.borrow(), &device_selector);
     });
 }
 
@@ -301,6 +399,7 @@ fn connect_clear_conversation(
     window: &AppWindow,
     runtime: Rc<RefCell<ApplicationRuntime>>,
     presentation: Rc<RefCell<PresentationState>>,
+    device_selector: Rc<RefCell<DeviceSelectorModel>>,
 ) {
     let weak = window.as_weak();
     window.on_clear_conversation(move || {
@@ -311,7 +410,7 @@ fn connect_clear_conversation(
             window.set_status_text(
                 "Cancel the active generation and wait for release before clearing.".into(),
             );
-            synchronize_controls(&window, &runtime.borrow());
+            synchronize_controls(&window, &runtime.borrow(), &device_selector);
             return;
         }
 
@@ -339,7 +438,7 @@ fn connect_clear_conversation(
             }
         }
         let runtime_ref = runtime.borrow();
-        synchronize_controls(&window, &runtime_ref);
+        synchronize_controls(&window, &runtime_ref, &device_selector);
         synchronize_usage(&window, &runtime_ref, None);
     });
 }
@@ -376,11 +475,11 @@ pub(super) fn apply_event(window: &AppWindow, event: ApplicationEvent) {
             window.set_status_text(
                 format!(
                     "Loaded {} as generation {} with {} vocabulary entries.",
-                    model_target_label(
+                    loaded_model_target_label(
                         model.engine(),
                         model.source(),
-                        model.device(),
                         model.format(),
+                        model.device(),
                     ),
                     model.handle().generation.get(),
                     model.vocabulary_size(),
@@ -467,30 +566,40 @@ fn apply_model_resolved(
     model: &ResolvedModel,
     persistence_warning: Option<ApplicationFailure>,
 ) {
-    let scalar = model.scalar_type().map_or("unknown", scalar_type_label);
+    let artifact = resolved_model_summary(model);
     let mode = match model.chat_compatibility() {
         ChatCompatibility::Supported(_) => "verified Chat mode",
         ChatCompatibility::Unsupported => "Direct completion mode; chat is not verified",
     };
-    let target = model_target_label(
-        model.engine(),
-        model.source(),
-        model.device(),
-        model.format(),
-    );
     let message = persistence_warning.map_or_else(
         || {
             format!(
-                "Resolved {target} ({} vocabulary entries, {scalar}, {mode}) and ready for loading.",
+                "Resolved {artifact} ({} vocabulary entries, {mode}) and ready for loading.",
                 model.vocabulary_size(),
             )
         },
         |warning| {
             format!(
-                "Resolved {target} ({} vocabulary entries, {scalar}, {mode}); catalogue persistence failed: {warning}",
+                "Resolved {artifact} ({} vocabulary entries, {mode}); catalogue persistence failed: {warning}",
                 model.vocabulary_size(),
             )
         },
     );
     window.set_status_text(message.into());
+}
+
+fn normalized_application_error(error: &ApplicationError) -> String {
+    match error {
+        ApplicationError::DeviceSelectionLocked => {
+            "device selection is currently locked by model or generation activity".to_owned()
+        }
+        ApplicationError::DeviceNotInCatalogue(device) => format!(
+            "{} is no longer in the application device list",
+            device_label(*device)
+        ),
+        ApplicationError::SelectedDeviceUnavailable { device, .. } => {
+            format!("selected device {} is unavailable", device_label(*device))
+        }
+        _ => error.to_string(),
+    }
 }

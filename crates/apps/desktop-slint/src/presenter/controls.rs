@@ -1,5 +1,6 @@
 use application_runtime::{ApplicationActivity, ApplicationRuntime};
 
+use super::devices::DeviceSelectorModel;
 use super::model::{
     ComposerMode, composer_mode, loaded_model_summary, resolved_model_summary, selected_model,
     selected_model_summary,
@@ -12,6 +13,7 @@ use crate::AppWindow;
 )]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct RuntimeAdmissions {
+    pub(super) can_select_device: bool,
     pub(super) can_resolve: bool,
     pub(super) can_load: bool,
     pub(super) can_submit_chat: bool,
@@ -28,6 +30,7 @@ pub(super) struct RuntimeAdmissions {
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ControlState {
+    pub(super) can_select_device: bool,
     pub(super) can_resolve: bool,
     pub(super) can_load: bool,
     pub(super) can_edit_message: bool,
@@ -49,6 +52,7 @@ pub(super) fn control_state(
         ComposerMode::DirectCompletion => admissions.can_start_generation,
     };
     ControlState {
+        can_select_device: admissions.can_select_device,
         can_resolve: admissions.can_resolve,
         can_load: admissions.can_load,
         can_edit_message,
@@ -60,7 +64,11 @@ pub(super) fn control_state(
     }
 }
 
-pub(super) fn synchronize(window: &AppWindow, runtime: &ApplicationRuntime) {
+pub(super) fn synchronize(
+    window: &AppWindow,
+    runtime: &ApplicationRuntime,
+    device_selector: &mut DeviceSelectorModel,
+) {
     let state = runtime.state();
     let selection = selected_model(window);
     let can_resolve = state.can_resolve(&selection);
@@ -69,6 +77,7 @@ pub(super) fn synchronize(window: &AppWindow, runtime: &ApplicationRuntime) {
     let message = window.get_message_input().to_string();
     let controls = control_state(
         RuntimeAdmissions {
+            can_select_device: state.can_select_device(),
             can_resolve,
             can_load,
             can_submit_chat: runtime.can_submit_chat_message(),
@@ -82,10 +91,14 @@ pub(super) fn synchronize(window: &AppWindow, runtime: &ApplicationRuntime) {
         &message,
     );
 
+    device_selector.synchronize(state.devices());
+    window.set_selected_device_index(device_selector.selected_index(state.selected_device()));
+
     window.set_busy(state.activity() != ApplicationActivity::Idle);
     window.set_can_edit_selection(
         state.activity() == ApplicationActivity::Idle && state.loaded().is_none(),
     );
+    window.set_can_select_device(controls.can_select_device);
     window.set_can_resolve(controls.can_resolve);
     window.set_can_load(controls.can_load);
     window.set_can_edit_message(controls.can_edit_message);
@@ -99,7 +112,14 @@ pub(super) fn synchronize(window: &AppWindow, runtime: &ApplicationRuntime) {
     window.set_composer_input_label(mode.input_label().into());
     window.set_composer_submit_label(mode.submit_label().into());
 
-    window.set_selected_model_summary(selected_model_summary(&selection).into());
+    window.set_selected_model_summary(
+        selected_model_summary(
+            &selection,
+            state.selected_device(),
+            state.selected_device_available(),
+        )
+        .into(),
+    );
     window.set_resolved_model_summary(
         state
             .resolved()

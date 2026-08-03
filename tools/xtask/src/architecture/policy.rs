@@ -26,7 +26,7 @@ const RULE_TOOLING_EXTERNAL: &str = "EXT-TOOLING-PROD-1";
 const RULE_F0_EXTERNAL: &str = "EXT-F0-PROD-1";
 const RULE_F1_EXTERNAL: &str = "EXT-F1-PROD-1";
 const RULE_ENGINE_EXTERNAL: &str = "EXT-ENGINE-PROD-1";
-const RULE_REVIEW_REGISTRY: &str = "POLICY-REVIEW-1";
+pub(super) const RULE_REVIEW_REGISTRY: &str = "POLICY-REVIEW-1";
 const RULE_DOMAIN_DAG: &str = "DOMAIN-DAG-1";
 
 /// A package role in the workspace architecture.
@@ -79,6 +79,16 @@ struct ReviewedDependency {
     target: &'static str,
     kind: DependencyKind,
     rationale: &'static str,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ReviewedFeatureForward {
+    pub(super) source_package: &'static str,
+    pub(super) source_feature: &'static str,
+    pub(super) target_package: &'static str,
+    pub(super) target_feature: &'static str,
+    pub(super) dependency_kind: DependencyKind,
+    pub(super) rationale: &'static str,
 }
 
 // Every production edge wholly inside the domain layer is exact, reviewed, and acyclic. The
@@ -263,6 +273,35 @@ const REVIEWED_LOCAL_DEV_DEPENDENCIES: &[ReviewedDependency] = &[ReviewedDepende
     rationale: "E0 compatibility tests exercise the Candle backend contract",
 }];
 
+// CUDA propagation is opt-in and exact. Each entry binds one source feature to one target
+// feature through a dependency whose Cargo kind is part of the review.
+const REVIEWED_CUDA_FEATURE_FORWARDS: &[ReviewedFeatureForward] = &[
+    ReviewedFeatureForward {
+        source_package: "application-runtime",
+        source_feature: "cuda",
+        target_package: "candle-backend",
+        target_feature: "cuda",
+        dependency_kind: DependencyKind::Normal,
+        rationale: "E1 exposes the selected Candle backend's CUDA support without enabling it by default",
+    },
+    ReviewedFeatureForward {
+        source_package: "desktop-slint",
+        source_feature: "cuda",
+        target_package: "application-runtime",
+        target_feature: "cuda",
+        dependency_kind: DependencyKind::Normal,
+        rationale: "the desktop product exposes E1 CUDA selection without bypassing application orchestration",
+    },
+    ReviewedFeatureForward {
+        source_package: "inference-runtime",
+        source_feature: "cuda",
+        target_package: "candle-backend",
+        target_feature: "cuda",
+        dependency_kind: DependencyKind::Development,
+        rationale: "E0 compatibility tests expose development-only Candle CUDA without changing the production graph",
+    },
+];
+
 pub(super) struct PolicyFailure {
     pub(super) rule: &'static str,
     pub(super) reason: String,
@@ -300,6 +339,11 @@ pub(super) fn policy_configuration_failures() -> Vec<PolicyConfigurationFailure>
     review_table_failures(
         "local development reviews",
         REVIEWED_LOCAL_DEV_DEPENDENCIES,
+        &mut failures,
+    );
+    feature_forward_table_failures(
+        "CUDA feature-forward reviews",
+        REVIEWED_CUDA_FEATURE_FORWARDS,
         &mut failures,
     );
 
@@ -348,6 +392,77 @@ fn review_table_failures(
                 ),
                 reason: "reviewed dependency entries must be unique by source, target, and kind"
                     .to_owned(),
+            });
+        }
+    }
+}
+
+fn feature_forward_table_failures(
+    registry: &str,
+    reviewed_forwards: &[ReviewedFeatureForward],
+    failures: &mut Vec<PolicyConfigurationFailure>,
+) {
+    for (index, reviewed) in reviewed_forwards.iter().enumerate() {
+        let rendered = format!(
+            "{}[{}] --{}--> {}[{}]",
+            reviewed.source_package,
+            reviewed.source_feature,
+            reviewed.dependency_kind,
+            reviewed.target_package,
+            reviewed.target_feature
+        );
+        if reviewed.rationale.trim().is_empty() {
+            failures.push(PolicyConfigurationFailure {
+                rule: RULE_REVIEW_REGISTRY,
+                source: registry.to_owned(),
+                target: rendered.clone(),
+                reason: "every reviewed feature forward requires a nonempty rationale".to_owned(),
+            });
+        }
+        if [
+            reviewed.source_package,
+            reviewed.source_feature,
+            reviewed.target_package,
+            reviewed.target_feature,
+        ]
+        .into_iter()
+        .any(|value| value.trim().is_empty())
+        {
+            failures.push(PolicyConfigurationFailure {
+                rule: RULE_REVIEW_REGISTRY,
+                source: registry.to_owned(),
+                target: rendered.clone(),
+                reason: "reviewed feature-forward package and feature names must be nonempty"
+                    .to_owned(),
+            });
+        }
+        if reviewed.source_feature != "cuda" || reviewed.target_feature != "cuda" {
+            failures.push(PolicyConfigurationFailure {
+                rule: RULE_REVIEW_REGISTRY,
+                source: registry.to_owned(),
+                target: rendered.clone(),
+                reason: "reviewed CUDA forwards must preserve the exact cuda feature name at both ends; aliases are not allowed".to_owned(),
+            });
+        }
+        if reviewed.source_package == reviewed.target_package {
+            failures.push(PolicyConfigurationFailure {
+                rule: RULE_REVIEW_REGISTRY,
+                source: registry.to_owned(),
+                target: rendered.clone(),
+                reason: "reviewed feature forwards must cross a package dependency".to_owned(),
+            });
+        }
+        if reviewed_forwards.iter().take(index).any(|prior| {
+            prior.source_package == reviewed.source_package
+                && prior.source_feature == reviewed.source_feature
+                && prior.target_package == reviewed.target_package
+                && prior.target_feature == reviewed.target_feature
+        }) {
+            failures.push(PolicyConfigurationFailure {
+                rule: RULE_REVIEW_REGISTRY,
+                source: registry.to_owned(),
+                target: rendered,
+                reason: "reviewed feature-forward entries must be unique by source package, source feature, target package, and target feature; dependency kinds may not conflict".to_owned(),
             });
         }
     }
@@ -644,6 +759,29 @@ fn reviewed_external_or_failure(
     )
 }
 
+pub(super) const fn reviewed_cuda_feature_forwards() -> &'static [ReviewedFeatureForward] {
+    REVIEWED_CUDA_FEATURE_FORWARDS
+}
+
+pub(super) fn reviewed_cuda_feature_forward(
+    source_package: &str,
+    source_feature: &str,
+    target_package: &str,
+    target_feature: &str,
+    dependency_kind: DependencyKind,
+) -> Option<&'static ReviewedFeatureForward> {
+    REVIEWED_CUDA_FEATURE_FORWARDS
+        .iter()
+        .find(|reviewed| {
+            reviewed.source_package == source_package
+                && reviewed.source_feature == source_feature
+                && reviewed.target_package == target_package
+                && reviewed.target_feature == target_feature
+                && reviewed.dependency_kind == dependency_kind
+        })
+        .filter(|reviewed| !reviewed.rationale.trim().is_empty())
+}
+
 fn reviewed_dependency<'a>(
     policy: &'a [ReviewedDependency],
     source_name: &str,
@@ -758,14 +896,15 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        DependencyKind, Layer, REVIEWED_BENCHMARK_DEPENDENCIES,
+        DependencyKind, Layer, REVIEWED_BENCHMARK_DEPENDENCIES, REVIEWED_CUDA_FEATURE_FORWARDS,
         REVIEWED_DOMAIN_PRODUCTION_DEPENDENCIES, REVIEWED_ENGINE_PRODUCTION_DEPENDENCIES,
         REVIEWED_EXTERNAL_DEPENDENCIES, REVIEWED_LOCAL_DEV_DEPENDENCIES, RULE_BENCHMARK_BUILD,
         RULE_BENCHMARK_EXTERNAL_REVIEW, RULE_BENCHMARK_LOCAL_REVIEW, RULE_BENCHMARK_REVERSE,
         RULE_DOMAIN_LOCAL_REVIEW, RULE_ENGINE_EXTERNAL, RULE_ENGINE_LOCAL_REVIEW,
         RULE_EXTERNAL_DEV_REVIEW, RULE_F0_EXTERNAL, RULE_F1_EXTERNAL, ReviewedDependency,
-        allows_production, classify_manifest, external_policy, local_dependency_policy,
-        local_production_policy, policy_configuration_failures, review_table_failures,
+        ReviewedFeatureForward, allows_production, classify_manifest, external_policy,
+        feature_forward_table_failures, local_dependency_policy, local_production_policy,
+        policy_configuration_failures, review_table_failures, reviewed_cuda_feature_forward,
         reviewed_dependency, reviewed_graph_is_acyclic,
     };
 
@@ -1096,6 +1235,104 @@ mod tests {
     }
 
     #[test]
+    fn cuda_feature_forwards_are_exactly_reviewed() {
+        const EXPECTED: [(&str, &str, &str, &str, DependencyKind); 3] = [
+            (
+                "application-runtime",
+                "cuda",
+                "candle-backend",
+                "cuda",
+                DependencyKind::Normal,
+            ),
+            (
+                "desktop-slint",
+                "cuda",
+                "application-runtime",
+                "cuda",
+                DependencyKind::Normal,
+            ),
+            (
+                "inference-runtime",
+                "cuda",
+                "candle-backend",
+                "cuda",
+                DependencyKind::Development,
+            ),
+        ];
+
+        assert_eq!(REVIEWED_CUDA_FEATURE_FORWARDS.len(), EXPECTED.len());
+        for (reviewed, expected) in REVIEWED_CUDA_FEATURE_FORWARDS.iter().zip(EXPECTED) {
+            assert_eq!(
+                (
+                    reviewed.source_package,
+                    reviewed.source_feature,
+                    reviewed.target_package,
+                    reviewed.target_feature,
+                    reviewed.dependency_kind,
+                ),
+                expected
+            );
+            assert!(!reviewed.rationale.trim().is_empty());
+            assert!(
+                reviewed_cuda_feature_forward(
+                    reviewed.source_package,
+                    reviewed.source_feature,
+                    reviewed.target_package,
+                    reviewed.target_feature,
+                    reviewed.dependency_kind,
+                )
+                .is_some()
+            );
+        }
+    }
+
+    #[test]
+    fn feature_forward_registry_rejects_aliases_duplicates_and_empty_configuration() {
+        const INVALID: &[ReviewedFeatureForward] = &[
+            ReviewedFeatureForward {
+                source_package: "alpha",
+                source_feature: "gpu",
+                target_package: "beta",
+                target_feature: "cuda",
+                dependency_kind: DependencyKind::Normal,
+                rationale: "",
+            },
+            ReviewedFeatureForward {
+                source_package: "alpha",
+                source_feature: "gpu",
+                target_package: "beta",
+                target_feature: "cuda",
+                dependency_kind: DependencyKind::Development,
+                rationale: "conflicting duplicate",
+            },
+            ReviewedFeatureForward {
+                source_package: "",
+                source_feature: "cuda",
+                target_package: "beta",
+                target_feature: "cuda",
+                dependency_kind: DependencyKind::Normal,
+                rationale: "missing source package",
+            },
+        ];
+        let mut failures = Vec::new();
+        feature_forward_table_failures("test feature forwards", INVALID, &mut failures);
+
+        for expected in [
+            "nonempty rationale",
+            "exact cuda feature name",
+            "must be unique",
+            "package and feature names must be nonempty",
+        ] {
+            assert!(
+                failures
+                    .iter()
+                    .any(|failure| failure.reason.contains(expected)),
+                "missing feature-forward configuration failure containing {expected:?}"
+            );
+        }
+    }
+
+    #[test]
     fn cyclic_review_graph_is_rejected() {
         const CYCLE: &[ReviewedDependency] = &[
             ReviewedDependency {
@@ -1278,6 +1515,9 @@ mod tests {
                         .is_some()
                 );
             }
+        }
+        for reviewed in REVIEWED_CUDA_FEATURE_FORWARDS {
+            assert!(!reviewed.rationale.trim().is_empty());
         }
     }
 }

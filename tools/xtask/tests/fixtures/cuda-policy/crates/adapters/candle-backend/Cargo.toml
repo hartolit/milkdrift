@@ -1,0 +1,20 @@
+[package]
+name = "candle-backend"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+default = []
+cuda = [
+    "dep:cudarc",
+    "candle-core/cuda",
+    "candle-nn/cuda",
+    "candle-transformers/cuda",
+]
+
+[dependencies]
+candle-core = { path = "../../../vendor/candle-core", default-features = false }
+candle-nn = { path = "../../../vendor/candle-nn", default-features = false }
+candle-transformers = { path = "../../../vendor/candle-transformers", default-features = false }
+cudarc = { path = "../../../vendor/cudarc", default-features = false, optional = true }

@@ -55,7 +55,7 @@ pub fn run() -> Result<(), DesktopError> {
 
     let runtime = Rc::new(RefCell::new(runtime));
     let presenter = presenter::Presenter::connect(&window, &runtime);
-    presenter::synchronize_controls(&window, &runtime.borrow());
+    presenter.synchronize_controls(&window, &runtime.borrow());
     let timer = presenter.start_frame_timer(&window, Rc::clone(&runtime));
     let run_result = window.run();
     timer.stop();

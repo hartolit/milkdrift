@@ -288,7 +288,6 @@ fn validate_resolved(
     }
     if model.engine() != ApplicationEngine::Candle
         || model.source() != ApplicationSource::HuggingFaceHub
-        || model.device() != ApplicationDevice::Cpu
         || model.format() != ApplicationModelFormat::Safetensors
         || !model.is_loadable()
         || model.scalar_type().is_none()
@@ -297,7 +296,7 @@ fn validate_resolved(
             != ChatCompatibility::Supported(PromptCompatibilityProfile::TinyLlamaChatV1)
     {
         return Err(BenchmarkError::new(format!(
-            "resolved execution evidence did not match Candle/Hub/CPU/Safetensors/Llama with supported scalar, tokenizer vocabulary, loadability, and exact TinyLlama chat compatibility: {model:?}"
+            "resolved artifact evidence did not match Candle/Hub/Safetensors/Llama with supported scalar, tokenizer vocabulary, loadability, and exact TinyLlama chat compatibility: {model:?}"
         )));
     }
     let state = runtime.state();

@@ -14,11 +14,200 @@ pub enum ApplicationSource {
     HuggingFaceHub,
 }
 
-/// Local execution device reported by E1.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Application-owned identity of one local execution device.
+///
+/// CUDA ordinals are process-local backend selectors rather than permanent
+/// hardware identities.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ApplicationDevice {
     /// Host CPU execution.
     Cpu,
+    /// One CUDA device selected by its backend-visible ordinal.
+    Cuda {
+        /// Zero-based CUDA ordinal.
+        ordinal: u32,
+    },
+}
+
+impl ApplicationDevice {
+    pub(crate) fn base_label(self) -> String {
+        match self {
+            Self::Cpu => "CPU".to_owned(),
+            Self::Cuda { ordinal } => format!("CUDA {ordinal}"),
+        }
+    }
+}
+
+/// CUDA compute capability translated into application-owned vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ApplicationComputeCapability {
+    /// Compute-capability major version.
+    pub major: u32,
+    /// Compute-capability minor version.
+    pub minor: u32,
+}
+
+/// Stable reason that a selected application device cannot currently load a model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApplicationDeviceUnavailableReason {
+    /// The binary was built without the selected device implementation.
+    SupportNotCompiled,
+    /// Bounded device initialization or fact discovery failed.
+    DiscoveryFailed,
+}
+
+/// One frontend-neutral device choice and its latest observed facts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApplicationDeviceSummary {
+    device: ApplicationDevice,
+    label: String,
+    available: bool,
+    unavailable_reason: Option<ApplicationDeviceUnavailableReason>,
+    total_memory_bytes: Option<u64>,
+    available_memory_bytes: Option<u64>,
+    compute_capability: Option<ApplicationComputeCapability>,
+}
+
+impl ApplicationDeviceSummary {
+    pub(crate) fn cpu() -> Self {
+        Self {
+            device: ApplicationDevice::Cpu,
+            label: "CPU".to_owned(),
+            available: true,
+            unavailable_reason: None,
+            total_memory_bytes: None,
+            available_memory_bytes: None,
+            compute_capability: None,
+        }
+    }
+
+    pub(crate) fn discovered(
+        device: ApplicationDevice,
+        label: String,
+        total_memory_bytes: Option<u64>,
+        available_memory_bytes: Option<u64>,
+        compute_capability: Option<ApplicationComputeCapability>,
+    ) -> Self {
+        Self {
+            device,
+            label,
+            available: true,
+            unavailable_reason: None,
+            total_memory_bytes,
+            available_memory_bytes,
+            compute_capability,
+        }
+    }
+
+    pub(crate) fn unavailable(
+        device: ApplicationDevice,
+        reason: ApplicationDeviceUnavailableReason,
+    ) -> Self {
+        Self {
+            device,
+            label: device.base_label(),
+            available: false,
+            unavailable_reason: Some(reason),
+            total_memory_bytes: None,
+            available_memory_bytes: None,
+            compute_capability: None,
+        }
+    }
+
+    /// Returns the stable application device identity.
+    #[must_use]
+    pub const fn device(&self) -> ApplicationDevice {
+        self.device
+    }
+
+    /// Returns a presentation-ready CPU or CUDA ordinal label.
+    #[must_use]
+    pub const fn label(&self) -> &str {
+        self.label.as_str()
+    }
+
+    /// Returns whether the latest bounded probe found the device available.
+    #[must_use]
+    pub const fn available(&self) -> bool {
+        self.available
+    }
+
+    /// Returns the normalized reason an unavailable selected device cannot be used.
+    #[must_use]
+    pub const fn unavailable_reason(&self) -> Option<ApplicationDeviceUnavailableReason> {
+        self.unavailable_reason
+    }
+
+    /// Returns total device-local memory reported during discovery.
+    #[must_use]
+    pub const fn total_memory_bytes(&self) -> Option<u64> {
+        self.total_memory_bytes
+    }
+
+    /// Returns the point-in-time available device-local memory observation.
+    #[must_use]
+    pub const fn available_memory_bytes(&self) -> Option<u64> {
+        self.available_memory_bytes
+    }
+
+    /// Returns the translated CUDA compute capability when available.
+    #[must_use]
+    pub const fn compute_capability(&self) -> Option<ApplicationComputeCapability> {
+        self.compute_capability
+    }
+}
+
+/// Stable category for one cold-path device-discovery failure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApplicationDeviceDiscoveryFailureKind {
+    /// The application supplied an invalid device identity.
+    InvalidConfiguration,
+    /// The compiled backend does not support the requested device.
+    Unsupported,
+    /// Driver or device initialization failed.
+    Initialization,
+    /// Discovery failed outside the more specific stable categories.
+    Other,
+}
+
+/// Application-owned diagnostic for one failed bounded device probe.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApplicationDeviceDiscoveryFailure {
+    device: ApplicationDevice,
+    kind: ApplicationDeviceDiscoveryFailureKind,
+    message: String,
+}
+
+impl ApplicationDeviceDiscoveryFailure {
+    pub(crate) fn new(
+        device: ApplicationDevice,
+        kind: ApplicationDeviceDiscoveryFailureKind,
+        message: String,
+    ) -> Self {
+        Self {
+            device,
+            kind,
+            message,
+        }
+    }
+
+    /// Returns the device whose probe failed.
+    #[must_use]
+    pub const fn device(&self) -> ApplicationDevice {
+        self.device
+    }
+
+    /// Returns the stable failure category.
+    #[must_use]
+    pub const fn kind(&self) -> ApplicationDeviceDiscoveryFailureKind {
+        self.kind
+    }
+
+    /// Returns the owned cold-path diagnostic.
+    #[must_use]
+    pub const fn message(&self) -> &str {
+        self.message.as_str()
+    }
 }
 
 /// Model serialization format reported by E1.

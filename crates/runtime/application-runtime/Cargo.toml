@@ -7,6 +7,10 @@ license.workspace = true
 description = "Frontend-neutral application orchestration for model lifecycle, completion, and chat"
 publish = false
 
+[features]
+default = []
+cuda = ["candle-backend/cuda"]
+
 [dependencies]
 candle-backend.workspace = true
 context-planner.workspace = true

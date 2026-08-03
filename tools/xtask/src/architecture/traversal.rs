@@ -8,8 +8,9 @@ use super::policy::{
     DependencyKind, Layer, PolicyFailure, RULE_BENCHMARK_BUILD, RULE_BENCHMARK_PACKAGE,
     RULE_BENCHMARK_PUBLISH, RULE_BENCHMARK_ROLE, RULE_CUDA_BOUNDARY, RULE_CUDA_DEFAULT,
     RULE_CUDA_PROHIBITED, RULE_KNOWN_KIND, RULE_KNOWN_LOCATION, RULE_LOCAL_TARGET,
-    RULE_PLATFORM_ROLE, RULE_RUNTIME_ROLE, classify_manifest, dependency_kind, external_policy,
-    is_direct_child, local_dependency_policy, policy_configuration_failures,
+    RULE_PLATFORM_ROLE, RULE_REVIEW_REGISTRY, RULE_RUNTIME_ROLE, ReviewedFeatureForward,
+    classify_manifest, dependency_kind, external_policy, is_direct_child, local_dependency_policy,
+    policy_configuration_failures, reviewed_cuda_feature_forward, reviewed_cuda_feature_forwards,
 };
 use super::report::{ValidationError, ValidationReport, Violation};
 
@@ -53,6 +54,10 @@ fn validate_metadata(metadata: &Metadata) -> ValidationReport {
             })
         })
         .collect::<BTreeMap<_, _>>();
+    let packages_by_name = packages
+        .iter()
+        .map(|package| (package.name.to_string(), *package))
+        .collect::<BTreeMap<_, _>>();
     let mut report = ValidationReport::default();
 
     for failure in policy_configuration_failures() {
@@ -66,6 +71,8 @@ fn validate_metadata(metadata: &Metadata) -> ValidationReport {
             failure.reason,
         ));
     }
+
+    validate_reviewed_cuda_feature_configuration(&mut report, root, &packages_by_name);
 
     for package in packages {
         let source_name = package.name.to_string();
@@ -93,7 +100,130 @@ fn validate_metadata(metadata: &Metadata) -> ValidationReport {
     report
 }
 
+fn validate_reviewed_cuda_feature_configuration(
+    report: &mut ValidationReport,
+    root: &Path,
+    packages: &BTreeMap<String, &Package>,
+) {
+    let reviewed_forwards = reviewed_cuda_feature_forwards();
+    let mut checked_source_features = BTreeSet::new();
+
+    for reviewed in reviewed_forwards {
+        let Some(source) = packages.get(reviewed.source_package).copied() else {
+            report.push(Violation::new(
+                "CUDA feature-forward reviews".to_owned(),
+                reviewed.source_package.to_owned(),
+                None,
+                None,
+                None,
+                RULE_REVIEW_REGISTRY,
+                "a reviewed feature-forward source package is not a workspace member".to_owned(),
+            ));
+            continue;
+        };
+        let Some(source_layer) = classify_manifest(root, source.manifest_path.as_std_path()) else {
+            continue;
+        };
+
+        if checked_source_features.insert((reviewed.source_package, reviewed.source_feature)) {
+            let expected = reviewed_forwards
+                .iter()
+                .filter(|candidate| {
+                    candidate.source_package == reviewed.source_package
+                        && candidate.source_feature == reviewed.source_feature
+                })
+                .map(|candidate| {
+                    format!("{}/{}", candidate.target_package, candidate.target_feature)
+                })
+                .collect::<BTreeSet<_>>();
+            let actual_references = source.features.get(reviewed.source_feature);
+            let actual = actual_references
+                .into_iter()
+                .flatten()
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            let actual_count = actual_references.map_or(0, Vec::len);
+            if actual != expected || actual_count != expected.len() {
+                report.push(feature_violation(
+                    source,
+                    source_layer,
+                    reviewed.source_feature,
+                    RULE_CUDA_BOUNDARY,
+                    "a registered CUDA source feature must contain exactly its reviewed dependency-feature forwards and no aliases or additional entries",
+                ));
+            }
+        }
+
+        let reference = format!("{}/{}", reviewed.target_package, reviewed.target_feature);
+        let Some(target) = packages.get(reviewed.target_package).copied() else {
+            report.push(feature_violation(
+                source,
+                source_layer,
+                &reference,
+                RULE_CUDA_BOUNDARY,
+                "a reviewed CUDA forward must target a workspace package",
+            ));
+            continue;
+        };
+        if !target.features.contains_key(reviewed.target_feature) {
+            report.push(feature_violation(
+                source,
+                source_layer,
+                &reference,
+                RULE_CUDA_BOUNDARY,
+                "a reviewed CUDA forward's target package must declare the referenced target feature; Cargo metadata retains invalid target-feature references",
+            ));
+        }
+        if !reviewed_dependency_is_exact(source, target, reviewed) {
+            report.push(feature_violation(
+                source,
+                source_layer,
+                &reference,
+                RULE_CUDA_BOUNDARY,
+                "a reviewed CUDA forward must use the exact unrenamed workspace dependency and dependency kind recorded in the feature-forward registry",
+            ));
+        }
+    }
+}
+
+fn reviewed_dependency_is_exact(
+    source: &Package,
+    target: &Package,
+    reviewed: &ReviewedFeatureForward,
+) -> bool {
+    let Some(target_directory) = target.manifest_path.parent() else {
+        return false;
+    };
+    let matching_dependencies = source
+        .dependencies
+        .iter()
+        .filter(|dependency| dependency_manifest_name(dependency) == reviewed.target_package)
+        .collect::<Vec<_>>();
+
+    !matching_dependencies.is_empty()
+        && matching_dependencies.iter().all(|dependency| {
+            dependency.rename.is_none()
+                && dependency.name == reviewed.target_package
+                && dependency_kind(dependency.kind) == Some(reviewed.dependency_kind)
+                && dependency
+                    .path
+                    .as_ref()
+                    .is_some_and(|path| path.as_std_path() == target_directory.as_std_path())
+        })
+}
+
 fn validate_cuda_feature_policy(report: &mut ValidationReport, package: &Package, layer: Layer) {
+    let mut visited = BTreeSet::new();
+    if feature_reaches_cuda(package, "default", &mut visited) {
+        report.push(feature_violation(
+            package,
+            layer,
+            "default",
+            RULE_CUDA_DEFAULT,
+            "no workspace package default feature graph may reach CUDA; CUDA support must remain explicitly opt-in",
+        ));
+    }
+
     validate_candle_cuda_feature(report, package, layer);
     validate_forwarded_cuda_features(report, package, layer);
     validate_direct_cuda_dependency_features(report, package, layer);
@@ -103,16 +233,6 @@ fn validate_candle_cuda_feature(report: &mut ValidationReport, package: &Package
     if package.name != "candle-backend" {
         return;
     }
-    let mut visited = BTreeSet::new();
-    if feature_reaches_cuda(package, "default", &mut visited) {
-        report.push(feature_violation(
-            package,
-            layer,
-            "default",
-            RULE_CUDA_DEFAULT,
-            "candle-backend CUDA support must remain non-default so ordinary CPU builds never require a CUDA toolkit",
-        ));
-    }
 
     let required = BTreeSet::from([
         "candle-core/cuda",
@@ -120,12 +240,13 @@ fn validate_candle_cuda_feature(report: &mut ValidationReport, package: &Package
         "candle-transformers/cuda",
         "dep:cudarc",
     ]);
-    let actual = package
-        .features
-        .get("cuda")
-        .map(|features| features.iter().map(String::as_str).collect::<BTreeSet<_>>())
-        .unwrap_or_default();
-    if actual != required {
+    let actual_references = package.features.get("cuda");
+    let actual = actual_references
+        .into_iter()
+        .flatten()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if actual != required || actual_references.map_or(0, Vec::len) != required.len() {
         report.push(feature_violation(
             package,
             layer,
@@ -141,6 +262,22 @@ fn validate_forwarded_cuda_features(
     package: &Package,
     layer: Layer,
 ) {
+    let registered_source = reviewed_cuda_feature_forwards()
+        .iter()
+        .any(|reviewed| package.name == reviewed.source_package);
+    if package.name != "candle-backend"
+        && package.features.contains_key("cuda")
+        && !registered_source
+    {
+        report.push(feature_violation(
+            package,
+            layer,
+            "cuda",
+            RULE_CUDA_BOUNDARY,
+            "only candle-backend and exact source packages in the reviewed CUDA feature-forward registry may declare a cuda feature",
+        ));
+    }
+
     for (feature, references) in &package.features {
         if prohibited_cuda_feature(feature)
             || references
@@ -154,6 +291,18 @@ fn validate_forwarded_cuda_features(
                 RULE_CUDA_PROHIBITED,
                 "cuDNN, flash attention, and NCCL require a separate architecture decision and may not enter the current CUDA feature graph",
             ));
+        }
+        if feature != "default" && feature != "cuda" {
+            let mut visited = BTreeSet::new();
+            if feature_reaches_cuda(package, feature, &mut visited) {
+                report.push(feature_violation(
+                    package,
+                    layer,
+                    feature,
+                    RULE_CUDA_BOUNDARY,
+                    "CUDA may be exposed only through the exact cuda feature name; generic gpu and other aliases are not allowed",
+                ));
+            }
         }
         for reference in references {
             validate_forwarded_cuda_reference(report, package, layer, feature, reference);
@@ -174,22 +323,29 @@ fn validate_forwarded_cuda_reference(
     if target_feature != "cuda" || package.name == "candle-backend" {
         return;
     }
-    let production_dependency = package.dependencies.iter().any(|dependency| {
-        dependency.name == target
-            && matches!(
-                dependency.kind,
-                cargo_metadata::DependencyKind::Normal | cargo_metadata::DependencyKind::Build
-            )
+
+    let reviewed = package.dependencies.iter().any(|dependency| {
+        dependency_manifest_name(dependency) == target
+            && dependency.rename.is_none()
+            && dependency.name == target
+            && dependency_kind(dependency.kind).is_some_and(|kind| {
+                reviewed_cuda_feature_forward(
+                    package.name.as_ref(),
+                    feature,
+                    target,
+                    target_feature,
+                    kind,
+                )
+                .is_some()
+            })
     });
-    let reviewed_local_composition =
-        package.name == "application-runtime" && target == "candle-backend" && feature == "cuda";
-    if production_dependency && !reviewed_local_composition {
+    if !reviewed {
         report.push(feature_violation(
             package,
             layer,
             reference,
             RULE_CUDA_BOUNDARY,
-            "only candle-backend and application-runtime's reviewed non-default local-composition feature may enable Candle CUDA in the production graph",
+            "CUDA dependency-feature forwards require an exact reviewed source package, source feature, target package, target feature, and dependency kind",
         ));
     }
 }
@@ -200,19 +356,13 @@ fn validate_direct_cuda_dependency_features(
     layer: Layer,
 ) {
     for dependency in &package.dependencies {
-        if dependency.features.iter().any(|feature| feature == "cuda")
-            && package.name != "candle-backend"
-            && matches!(
-                dependency.kind,
-                cargo_metadata::DependencyKind::Normal | cargo_metadata::DependencyKind::Build
-            )
-        {
+        if dependency.features.iter().any(|feature| feature == "cuda") {
             report.push(feature_violation(
                 package,
                 layer,
-                &dependency.name,
+                dependency_manifest_name(dependency),
                 RULE_CUDA_BOUNDARY,
-                "a production dependency may not enable CUDA unconditionally; CUDA must remain behind the reviewed non-default composition feature",
+                "dependencies may not enable CUDA directly; CUDA must remain behind an exact reviewed non-default feature forward",
             ));
         }
         if dependency
@@ -223,12 +373,16 @@ fn validate_direct_cuda_dependency_features(
             report.push(feature_violation(
                 package,
                 layer,
-                &dependency.name,
+                dependency_manifest_name(dependency),
                 RULE_CUDA_PROHIBITED,
                 "cuDNN, flash attention, and NCCL require a separate architecture decision and may not enter direct dependency features",
             ));
         }
     }
+}
+
+fn dependency_manifest_name(dependency: &Dependency) -> &str {
+    dependency.rename.as_deref().unwrap_or(&dependency.name)
 }
 
 fn feature_reaches_cuda(package: &Package, feature: &str, visited: &mut BTreeSet<String>) -> bool {

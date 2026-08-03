@@ -3,10 +3,11 @@
 #![forbid(unsafe_code)]
 
 use std::alloc::System;
+use std::process::ExitCode;
 
 use domain_contracts::TokenId;
 use sampling::{Sampler, SamplingConfig, SamplingError, SamplingWorkspace};
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+use stats_alloc::{INSTRUMENTED_SYSTEM, Region, Stats, StatsAlloc};
 
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
@@ -19,8 +20,25 @@ const BASE_LOGIT: f32 = 0.5;
 const REPETITION_PENALTY: f32 = 1.1;
 const RANDOM_SEED: u64 = 7;
 
-#[test]
-fn sampling_reuses_prepared_logits_and_workspace_without_allocating() -> Result<(), SamplingError> {
+fn main() -> ExitCode {
+    match measure_sampling_allocations() {
+        Ok(allocation_change)
+            if allocation_change.allocations == 0 && allocation_change.reallocations == 0 =>
+        {
+            ExitCode::SUCCESS
+        }
+        Ok(allocation_change) => {
+            eprintln!("sampling allocated after preparation: {allocation_change:?}");
+            ExitCode::FAILURE
+        }
+        Err(error) => {
+            eprintln!("sampling failed during allocation measurement: {error:?}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn measure_sampling_allocations() -> Result<Stats, SamplingError> {
     let configuration = SamplingConfig {
         repetition_penalty: REPETITION_PENALTY,
         ..SamplingConfig::default()
@@ -33,24 +51,16 @@ fn sampling_reuses_prepared_logits_and_workspace_without_allocating() -> Result<
     let mut seen_tokens = [0_u32; VOCABULARY_SIZE];
 
     let region = Region::new(GLOBAL);
-    let mut every_sample_succeeded = true;
     for _ in 0..MEASURED_SAMPLE_COUNT {
         logits.copy_from_slice(&baseline_logits);
-        every_sample_succeeded &= sampler
-            .sample(
-                &mut logits,
-                &repetition_history,
-                SamplingWorkspace {
-                    indices: &mut indices,
-                    seen_tokens: &mut seen_tokens,
-                },
-            )
-            .is_ok();
+        sampler.sample(
+            &mut logits,
+            &repetition_history,
+            SamplingWorkspace {
+                indices: &mut indices,
+                seen_tokens: &mut seen_tokens,
+            },
+        )?;
     }
-    let allocation_change = region.change();
-
-    assert!(every_sample_succeeded);
-    assert_eq!(allocation_change.allocations, 0, "{allocation_change:?}");
-    assert_eq!(allocation_change.reallocations, 0, "{allocation_change:?}");
-    Ok(())
+    Ok(region.change())
 }

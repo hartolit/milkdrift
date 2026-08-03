@@ -4,9 +4,11 @@ Thin Slint presentation adapter over `application-runtime` (E1).
 
 ## Supported local model flow
 
-The frontend accepts a Hugging Face repository and revision. E1 resolves immutable Safetensors artifacts for Candle execution and reports the resolved Hub commit identity.
+The frontend accepts a Hugging Face repository and revision as E1's device-independent `ModelSelection`. E1 resolves immutable Safetensors artifacts for Candle execution and reports artifact/source/format/scalar/tokenizer/identity/compatibility facts without attaching a device.
 
-Current local execution uses the CPU. The UI presents engine, artifact source, device, model format, scalar type, and immutable identity as separate facts for selected, resolved, and loaded state. Repository and revision inputs remain locked while a lifecycle operation is busy or a model is loaded.
+CPU is the fresh-install default. A compact device `ComboBox` presents E1's explicit CPU/CUDA catalogue. Rust owns stable `ApplicationDevice` identity/index mapping, so labels are never parsed for semantics. Unavailable devices have a distinct label; persisted unavailable CUDA remains selected and visible, and neither Slint nor E1 falls back to CPU.
+
+Selection enabled state comes from E1's `can_select_device` lifecycle policy, and load enabled state comes from E1's selected-device availability/lifecycle state. The UI presents an E1 selected-device summary, an artifact-only resolved summary, and an actual-device loaded summary verified from E0's receipt. Unload clears the actual-device summary while selection remains. Repository and revision inputs remain locked while a lifecycle operation is busy or a model is loaded.
 
 ## Generation presentation
 
@@ -16,14 +18,22 @@ Otherwise the composer is labeled **Direct completion** and delegates the prompt
 
 ## Frontend boundary
 
-This crate owns only the Slint event loop, widget callbacks, presentation mapping, and per-user database path. It preserves one 16 millisecond frame cadence, processes at most 64 E1 events per frame, performs one bounded output pull, and appends decoded text once per frame batch while preserving transcript selection and viewport state.
+This crate owns only the Slint event loop, widget callbacks, stable device identity/index presentation mapping, and per-user database path. It preserves one 16 millisecond frame cadence, processes at most 64 E1 events per frame, performs one bounded output pull, and appends decoded text once per frame batch while preserving transcript selection and viewport state.
 
 The crate depends on E1's application types and APIs. It does **not** import adapter crates, concrete Candle or Hugging Face source types, redb, Flume, tokenizer internals, or inference commands. Model resolution and loading, compatibility verification, immutable identity, generation lifecycle, cancellation, conversation state, and terminal ownership remain in E1.
 
 The binary entry point delegates to the library so process startup remains lean.
 
-Run with:
+Run the default CPU graph with:
 
 ```text
 cargo run -p desktop-slint
 ```
+
+Opt into the exact `desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda` chain with:
+
+```text
+CUDA_COMPUTE_CAP=120 cargo run -p desktop-slint --features cuda
+```
+
+There is no generic `gpu` alias, and CUDA is never enabled by default.

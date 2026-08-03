@@ -1,12 +1,12 @@
 //! Validated defaults and host-worker configuration for application orchestration.
 
 use std::fmt::{self, Formatter};
+use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::time::Duration;
 
 const DEFAULT_REVISION: &str = "main";
 const DEFAULT_HOST_MEMORY_BYTES: u64 = 16 * 1024 * 1024 * 1024;
-const DEFAULT_DEVICE_MEMORY_BYTES: u64 = 0;
 const DEFAULT_DRAIN_TIMEOUT_MILLISECONDS: u64 = 2_000;
 const DEFAULT_MAXIMUM_REQUESTS: u32 = 1;
 const DEFAULT_COMMAND_CAPACITY: usize = 32;
@@ -52,6 +52,18 @@ impl fmt::Debug for ApplicationHubConfiguration {
     }
 }
 
+/// Application-owned accelerator-memory admission policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AcceleratorMemoryPolicy {
+    /// Bound accelerator admission by discovered physical capacity.
+    Automatic,
+    /// Apply an explicit nonzero cap below discovered physical capacity.
+    Limit {
+        /// Maximum accelerator bytes admitted by E0.
+        bytes: NonZeroU64,
+    },
+}
+
 /// User-facing defaults used only when no persisted settings exist.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApplicationPreferences {
@@ -61,8 +73,10 @@ pub struct ApplicationPreferences {
     pub default_revision: String,
     /// Aggregate host-memory admission limit.
     pub maximum_host_memory_bytes: u64,
-    /// Aggregate device-memory admission limit.
-    pub maximum_device_memory_bytes: u64,
+    /// Explicit execution-device selection, independent from model artifacts.
+    pub selected_device: crate::ApplicationDevice,
+    /// Accelerator-memory admission policy resolved against discovered capacity.
+    pub accelerator_memory_policy: AcceleratorMemoryPolicy,
     /// Mandatory drain window before force-cancellation.
     pub drain_timeout_milliseconds: u64,
 }
@@ -73,7 +87,8 @@ impl Default for ApplicationPreferences {
             default_repository: String::new(),
             default_revision: DEFAULT_REVISION.to_owned(),
             maximum_host_memory_bytes: DEFAULT_HOST_MEMORY_BYTES,
-            maximum_device_memory_bytes: DEFAULT_DEVICE_MEMORY_BYTES,
+            selected_device: crate::ApplicationDevice::Cpu,
+            accelerator_memory_policy: AcceleratorMemoryPolicy::Automatic,
             drain_timeout_milliseconds: DEFAULT_DRAIN_TIMEOUT_MILLISECONDS,
         }
     }

@@ -8,6 +8,10 @@ description = "Thin Slint frontend for the reusable application runtime"
 publish = false
 build = "build.rs"
 
+[features]
+default = []
+cuda = ["application-runtime/cuda"]
+
 [dependencies]
 application-runtime.workspace = true
 slint.workspace = true
