@@ -4,6 +4,7 @@ members = [
     "crates/runtime/inference-runtime",
     "crates/runtime/application-runtime",
     "crates/apps/desktop-slint",
+    "benchmarks/runtime",
 ]
 exclude = ["vendor/*"]
 resolver = "3"

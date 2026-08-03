@@ -300,6 +300,14 @@ const REVIEWED_CUDA_FEATURE_FORWARDS: &[ReviewedFeatureForward] = &[
         dependency_kind: DependencyKind::Development,
         rationale: "E0 compatibility tests expose development-only Candle CUDA without changing the production graph",
     },
+    ReviewedFeatureForward {
+        source_package: "runtime-benchmarks",
+        source_feature: "cuda",
+        target_package: "application-runtime",
+        target_feature: "cuda",
+        dependency_kind: DependencyKind::Normal,
+        rationale: "the runtime benchmark exposes E1 CUDA support only through its exact non-default CUDA feature",
+    },
 ];
 
 pub(super) struct PolicyFailure {
@@ -1236,7 +1244,7 @@ mod tests {
 
     #[test]
     fn cuda_feature_forwards_are_exactly_reviewed() {
-        const EXPECTED: [(&str, &str, &str, &str, DependencyKind); 3] = [
+        const EXPECTED: [(&str, &str, &str, &str, DependencyKind); 4] = [
             (
                 "application-runtime",
                 "cuda",
@@ -1257,6 +1265,13 @@ mod tests {
                 "candle-backend",
                 "cuda",
                 DependencyKind::Development,
+            ),
+            (
+                "runtime-benchmarks",
+                "cuda",
+                "application-runtime",
+                "cuda",
+                DependencyKind::Normal,
             ),
         ];
 

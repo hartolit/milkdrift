@@ -1,4 +1,4 @@
-//! Process entry point for the explicit external CPU product baseline.
+//! Process entry point for the explicit external CPU/CUDA product baseline.
 
 #![forbid(unsafe_code)]
 

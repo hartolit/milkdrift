@@ -3,7 +3,8 @@
 //! Each normal runner writes exactly one typed JSON document to stdout. Human
 //! progress and summaries use stderr so callers may redirect stdout directly.
 //! The synthetic runner is download-free; the separate external runner requires
-//! explicit network authorization and an explicit cache path.
+//! explicit network authorization, an explicit cache path, and an exact CPU or
+//! feature-gated CUDA device selection.
 
 #![forbid(unsafe_code)]
 
@@ -48,12 +49,13 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), Benchmar
     }
 }
 
-/// Runs the explicit external CPU baseline, writing JSON only to stdout.
+/// Runs the explicit external CPU/CUDA baseline, writing JSON only to stdout.
 ///
 /// # Errors
 ///
-/// Returns an actionable error when opt-in/cache policy, environment collection,
-/// exact model identity, lifecycle execution, cleanup, or serialization fails.
+/// Returns an actionable error when opt-in/cache/device policy, environment
+/// collection, exact model identity, lifecycle execution, cleanup, or
+/// serialization fails.
 pub fn run_external_baseline(
     arguments: impl IntoIterator<Item = OsString>,
 ) -> Result<(), BenchmarkError> {

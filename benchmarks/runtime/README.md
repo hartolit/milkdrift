@@ -3,12 +3,12 @@
 `runtime-benchmarks` is the sole non-production cross-crate measurement package. It observes reviewed public production APIs and has three current surfaces:
 
 - the normal `baseline` binary runs bounded, download-free synthetic hosted-E0 scenarios plus fresh E1 startup/shutdown cycles;
-- the separate `external-baseline` binary is the sole opt-in external E1 CPU product-baseline path;
+- the `external-baseline` binary is the sole opt-in external E1 product-baseline path, parameterized by mandatory `--device cpu|cuda:0` selection;
 - `benches/runtime.rs` runs two hosted-E0 Criterion submission-to-event measurements.
 
 Operational timeouts stop hangs; they are not performance thresholds. Fixture, identity, output, lifecycle, cleanup, accounting, or join mismatches fail. A slow valid sample does not.
 
-Canonical methodology, environment, curated results, RSS interpretation, and limitations live in [Phase 10 performance evidence](../../docs/project/performance.md). Repository-wide procedures live in [validation](../../docs/project/validation.md).
+Canonical methodology, environment, curated results, RSS/device-memory interpretation, and limitations live in [performance evidence](../../docs/project/performance.md). Repository-wide procedures live in [validation](../../docs/project/validation.md).
 
 ## Package contract
 
@@ -16,6 +16,7 @@ Canonical methodology, environment, curated results, RSS interpretation, and lim
 - Use only the root `target/`; never create `benchmarks/runtime/Cargo.lock`, `benchmarks/runtime/target`, or a source-tree results/cache directory.
 - Production, application, tooling, and test packages do not depend on this package.
 - Benchmark support remains private to this package; no helper is added to a production public API solely for measurement.
+- The non-default `runtime-benchmarks/cuda` feature forwards only to `application-runtime/cuda`; CPU remains selectable in that binary.
 - The committed Candle fixture is referenced in place and its byte sizes, hashes, parsed configuration, and loaded descriptor are verified before measurement.
 
 ## Test and compile
@@ -25,9 +26,14 @@ cargo check --locked -p runtime-benchmarks --all-targets
 cargo test --locked -p runtime-benchmarks
 cargo clippy --locked -p runtime-benchmarks --all-targets -- -D warnings
 cargo bench --workspace --no-run --locked
+
+CUDA_COMPUTE_CAP=120 cargo check --locked \
+  -p runtime-benchmarks \
+  --all-targets \
+  --features cuda
 ```
 
-These commands compile the current benchmark targets without claiming a product baseline.
+These commands compile the current benchmark targets without claiming CUDA hardware execution or a product baseline. Ordinary tests remain network-free.
 
 ## Run the synthetic baseline
 
@@ -45,23 +51,45 @@ cargo run --release --locked \
 
 The runner writes one schema-versioned JSON document to stdout and progress plus a compact summary to stderr. It excludes generated text, token IDs, credentials, secrets, and broad environment dumps.
 
-## Run the external CPU baseline
+## Run the controlled CPU and CUDA product baseline
 
-The external binary fixes `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`; callers cannot substitute either identity. It requires explicit network authorization and an already-existing canonical cache beneath the repository-root `target/` or outside the repository. It never reads a default global Hub cache implicitly.
+The external binary fixes `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`; callers cannot substitute either identity. It requires explicit network authorization, explicit device selection, a clean committed tree, and an already-existing canonical cache beneath repository-root `target/` or outside the repository. It never reads a default global Hub cache implicitly and never falls back from CUDA to CPU.
+
+Build separate release artifacts, then execute them directly and sequentially so no compiler process overlaps model residency:
 
 ```text
-mkdir -p target/phase10-external-cache target/phase10-evidence
+mkdir -p target/phase11-cpu target/phase11-cuda target/phase11-evidence
+
+CARGO_TARGET_DIR="$PWD/target/phase11-cpu" \
 cargo build --release --locked \
   -p runtime-benchmarks \
   --bin external-baseline
 
-target/release/external-baseline \
+CUDA_COMPUTE_CAP=120 \
+CARGO_TARGET_DIR="$PWD/target/phase11-cuda" \
+cargo build --release --locked \
+  -p runtime-benchmarks \
+  --features cuda \
+  --bin external-baseline
+
+target/phase11-cpu/release/external-baseline \
   --allow-network \
   --cache-dir target/phase10-external-cache \
-  > target/phase10-evidence/external.json
+  --device cpu \
+  > target/phase11-evidence/cpu.json
+
+target/phase11-cuda/release/external-baseline \
+  --allow-network \
+  --cache-dir target/phase10-external-cache \
+  --device cuda:0 \
+  > target/phase11-evidence/cuda.json
 ```
 
-Build first, then execute the binary directly so no compiler process overlaps model residency. Stdout contains one external-schema JSON report; progress and the compact summary use stderr. Ordinary tests and CI compile this path but never execute it or access the network. Resource preflight, cache policy, and canonical evidence procedure are in [validation](../../docs/project/validation.md#external-cpu-product-baseline); curated results live only in [performance evidence](../../docs/project/performance.md#external-product-evidence).
+The primary cycle on each device runs one compatible-chat proof, one direct-completion warmup, three measured 32-token completions, and one progress-triggered cancellation. The CUDA invocation then runs two additional load/generate/release/cancel/unload/shutdown stability cycles, yielding three complete CUDA lifecycle cycles total. Stdout contains one schema-versioned report; progress and the compact summary use stderr.
+
+CUDA total/free/used observations are safe driver observations for the whole device, not process-attributed memory. Each cycle establishes its own pre-load baseline; retained-delta stability uses post-unload and post-owner-drop deltas while preserving absolute observations. The report records an independent public adapter plan plus validated E1 acceptance of the E0 load contract; it does not fabricate a same-worker E0 reservation or post-unload accounting snapshot. Direct E0 zero-accounting evidence is an explicit separate hardware test.
+
+Ordinary tests and shared CI compile this path but never execute it, access the network, or require CUDA hardware. Resource preflight, hardware tests, report review, and the bounded manual Slint procedure are in [Phase 11 validation](../../docs/project/validation.md#phase-11-controlled-cpu-and-cuda-product-evidence); curated results live only in [performance evidence](../../docs/project/performance.md#external-product-evidence).
 
 ## Run focused Criterion targets
 
@@ -85,6 +113,6 @@ Temporary redb state for E1 lifecycle checks is created beneath root `target` an
 
 ## Evidence limits
 
-The synthetic fixture proves deterministic integration and lifecycle behavior, not model quality, product-model speed, representative scale, production serving throughput, allocation freedom, or GPU/device behavior. Synthetic E1 cycles cover startup and bounded shutdown without Hub resolution, model loading, or generation.
+The synthetic fixture proves deterministic integration and lifecycle behavior, not model quality, product-model speed, representative scale, production serving throughput, allocation freedom, or product-model GPU behavior. Synthetic E1 cycles cover startup and bounded shutdown without Hub resolution, model loading, or generation.
 
-The normal `baseline` CLI remains synthetic-only and rejects product/network options. The external binary has a separate opt-in, report schema, and evidence contract; one local CPU/model observation does not establish model quality, serving capacity, cross-host performance, GPU capability, or an optimization threshold. Canonical interpretation is in [performance evidence](../../docs/project/performance.md#external-product-evidence).
+The normal `baseline` CLI remains synthetic-only and rejects product/network options. The external binary has a separate opt-in report schema and evidence contract. Executed CUDA evidence applies only to its documented Linux/NVIDIA/GPU/toolkit matrix; it does not establish generic NVIDIA compatibility, model quality, serving capacity, cross-host performance, allocation freedom, or an optimization threshold. CUDA sampling remains on the host after vocabulary-logit transfer. Canonical interpretation is in [performance evidence](../../docs/project/performance.md#external-product-evidence).

@@ -7,6 +7,10 @@ license.workspace = true
 description = "Controlled runtime benchmarks and explicit E1 product baselines"
 publish = false
 
+[features]
+default = []
+cuda = ["application-runtime/cuda"]
+
 [dependencies]
 application-runtime.workspace = true
 candle-backend.workspace = true

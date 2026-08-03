@@ -331,40 +331,185 @@ Do not run these tests in ordinary CPU CI, do not use `--all-features` for the w
 
 ## External CPU product baseline
 
-`runtime-benchmarks` owns the sole current external E1 orchestration path. The external binary fixes `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`; repository and revision overrides are rejected. The pinned revision's [model-card metadata](https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/raw/fe8a4ea1ffedaf415f4da2f062534de366a451e6/README.md) declares `apache-2.0`. Record that upstream declaration and source without making a broader legal conclusion.
+The former CPU-only procedure is superseded by the device-parameterized [Phase 11 controlled CPU and CUDA product evidence](#phase-11-controlled-cpu-and-cuda-product-evidence) procedure below. Existing CPU evidence links retain this heading for historical continuity.
 
-This procedure is the only ordinary exception to the download-free rule, and it requires explicit authorization to contact Hugging Face for that exact model/revision. Shared CI and ordinary tests compile the binary but never execute it, contact the network, require its cache, or load TinyLlama.
+## Phase 11 controlled CPU and CUDA product evidence
 
-Before building or acquiring artifacts, confirm no compiler, benchmark, or model process is consuming substantial resources and require approximately 12 GiB available host memory plus 8 GiB free disk for the root target/cache:
+`runtime-benchmarks` owns the single external E1 orchestration path for both devices. The external binary requires exactly `--device cpu` or `--device cuda:0`, never substitutes a device, and never falls back to CPU. It fixes `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`; repository and revision overrides are rejected. The pinned revision's [model-card metadata](https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/raw/fe8a4ea1ffedaf415f4da2f062534de366a451e6/README.md) declares `apache-2.0`. Record that upstream declaration and source without making a broader legal conclusion.
+
+This procedure is the only ordinary exception to the download-free rule. It requires explicit authorization to contact Hugging Face for that exact model/revision. Shared CI and ordinary tests compile the CPU path but never execute the external binary, contact the network, require its cache, load TinyLlama, or require CUDA hardware.
+
+### Preflight and code-under-test identity
+
+Commit the code and procedure changes as the clean code-under-test commit before measuring. Record its commit and tree, then run the ordinary gate:
 
 ```sh
+git status --short --untracked-files=all
+git rev-parse HEAD
+git rev-parse 'HEAD^{tree}'
+
 export CARGO_TARGET_DIR="$(git rev-parse --show-toplevel)/target"
+
+cargo xtask verify
+```
+
+Require physical CUDA ordinal 0 to be the intended RTX 5070 Ti, CUDA Toolkit 12.8 or newer, `CUDA_COMPUTE_CAP=120`, sufficient free host/device memory and disk, and no competing compiler or model process:
+
+```sh
+nvidia-smi
+nvcc --version
+printf 'CUDA_COMPUTE_CAP=%s\n' "${CUDA_COMPUTE_CAP:-unset}"
 free -h
-df -h "$(git rev-parse --show-toplevel)/target"
+df -h target
 ps -eo pid,comm,rss --sort=-rss | head -20
 ```
 
-Stop rather than running when either capacity bound is not met. Use one Cargo process and one model process at a time. Do not run `cargo clean`.
+Stop rather than measuring when the matrix or resources do not match. Use one Cargo process and one model process at a time. Do not run `cargo clean`.
 
-Create an explicit cache and evidence directory beneath the ignored repository-root target. The cache must already exist when the binary starts. It may instead be an existing canonical directory outside the repository, but any cache inside the repository and outside its root `target/` is rejected. The runner configures this exact cache and does not implicitly use a default global Hugging Face cache.
+### Separate release builds and controlled runs
+
+Use separate root-target children so the CPU and CUDA executables cannot be confused. The explicit cache must already exist. A cache outside the repository is also allowed; a cache inside the source tree but outside root `target/` is rejected.
 
 ```sh
-mkdir -p target/phase10-external-cache
-mkdir -p target/phase10-evidence
+mkdir -p target/phase11-cpu
+mkdir -p target/phase11-cuda
+mkdir -p target/phase11-evidence
 
+CARGO_TARGET_DIR="$PWD/target/phase11-cpu" \
 cargo build --release --locked \
     -p runtime-benchmarks \
     --bin external-baseline
 
-target/release/external-baseline \
-    --allow-network \
-    --cache-dir target/phase10-external-cache \
-    > target/phase10-evidence/external.json
+CUDA_COMPUTE_CAP=120 \
+CARGO_TARGET_DIR="$PWD/target/phase11-cuda" \
+cargo build --release --locked \
+    -p runtime-benchmarks \
+    --features cuda \
+    --bin external-baseline
 ```
 
-When `CARGO_TARGET_DIR` differs, execute `external-baseline` from that configured root target rather than creating a nested package target. Build first and execute the binary directly so no compiler overlaps model residency. The executable writes no result file itself: stdout is exactly one structured report, stderr carries progress/concise diagnostics, and the redirect above owns the ignored raw artifact.
+Execute the produced binaries directly and sequentially so no compiler process overlaps model residency:
 
-Before treating a run as evidence, verify the report and surrounding Git commands agree on a clean commit/tree, exact model/commit, compatible-chat success, one warmup plus three sequential 32-token direct completions, clean release, zero-cancellation unload, and successful bounded shutdown. Record whether the explicit cache was empty or populated before resolution; do not call the interval pure download or pure cache lookup without that observation. Exact measured values belong only in [performance evidence](performance.md#external-product-evidence).
+```sh
+target/phase11-cpu/release/external-baseline \
+    --allow-network \
+    --cache-dir target/phase10-external-cache \
+    --device cpu \
+    > target/phase11-evidence/cpu.json
+
+target/phase11-cuda/release/external-baseline \
+    --allow-network \
+    --cache-dir target/phase10-external-cache \
+    --device cuda:0 \
+    > target/phase11-evidence/cuda.json
+```
+
+The executable writes no result file itself: stdout is exactly one structured report, stderr carries progress and concise diagnostics, and the redirect owns the ignored raw artifact. Do not edit generated JSON.
+
+The primary cycle on each device must prove the exact model/revision, non-empty compatible chat, one direct-completion warmup, three measured 32-token completions, matching request identities, exact terminal/released outcomes and usage, one cancellation after decoded progress, zero cleanup-pending/exhausted events, synchronized zero-cancellation unload, and bounded shutdown. CUDA additionally performs two reduced stability cycles containing load, direct generation/release, separate cancellation/release, unload, synchronization, shutdown, and owner drop. Together with the primary cycle this is three complete CUDA lifecycle cycles; warmup timing remains separate from measured samples.
+
+Review both reports programmatically without printing generated text or token identifiers. Require:
+
+- the same clean code-under-test Git commit/tree and `dirty: false`;
+- the same exact model, revision, prompt hashes, sampling settings, and primary workload;
+- requested, selected E1, and actual loaded E0 identities all CPU in one report and all CUDA ordinal 0 in the other;
+- `cuda_enabled: false` for the CPU build and `cuda_enabled: true` for the CUDA build;
+- CPU F32 execution and CUDA BF16 execution;
+- RTX 5070 Ti identity, driver/toolkit metadata, compute capability 12.0, and build target 120 only in the CUDA report;
+- complete cancellation, unload, shutdown, workspace-removal, and three-cycle CUDA stability results.
+
+CUDA total/free/used values are safe driver observations for the whole device, not process-attributed usage. Every cycle establishes a new immediately-pre-load baseline. Interpret post-unload and post-owner-drop retained deltas together with the absolute observations; desktop or other GPU activity can perturb either. The external report records an independent public adapter plan and validated E1 acceptance of the E0 load contract, but public E1 does not expose a same-worker E0 reservation or post-unload `RuntimeSnapshot`. Do not synthesize those fields or call the E1 state a direct accounting snapshot. Execute and record the direct opted-in E0 CUDA hardware snapshot test in the lower-layer section separately; that test owns exact zero model/request/workspace/cleanup accounting evidence.
+
+Exact measured values belong only in [performance evidence](performance.md#external-product-evidence).
+
+### Manual Slint acceptance
+
+Use an isolated application data root that does not exist before the session:
+
+```sh
+test ! -e target/phase11-slint-data
+mkdir -p target/phase11-slint-data
+
+XDG_DATA_HOME="$PWD/target/phase11-slint-data" \
+CUDA_COMPUTE_CAP=120 \
+cargo run --release --locked \
+    -p desktop-slint \
+    --features cuda
+```
+
+A human must visibly verify all of the following; compilation or process launch is not graphical acceptance:
+
+1. CPU and CUDA 0 are shown.
+2. CUDA 0 can be selected explicitly.
+3. The exact TinyLlama revision resolves and loads.
+4. The UI reports actual CUDA execution.
+5. One chat message produces streamed output.
+6. A second generation can be cancelled after progress.
+7. Unload returns controls to idle.
+8. Closing the window completes bounded shutdown.
+
+Record only the behavioral result. Do not retain screenshots containing generated private text unless they were deliberately reviewed.
+
+### Final Phase 11 validation
+
+Run the ordinary CPU gates sequentially:
+
+```sh
+cargo xtask verify
+
+cargo deny --workspace --locked check \
+    advisories bans licenses sources
+
+lychee --config lychee.toml --offline '**/*.md'
+
+git diff --check
+```
+
+Run the exact CUDA feature matrix without `--all-features`:
+
+```sh
+export CUDA_COMPUTE_CAP=120
+
+cargo check --locked \
+    -p candle-backend \
+    -p application-runtime \
+    -p desktop-slint \
+    -p runtime-benchmarks \
+    --all-targets \
+    --features cuda
+
+cargo test --locked \
+    -p candle-backend \
+    -p application-runtime \
+    -p runtime-benchmarks \
+    --features cuda \
+    --no-run
+
+cargo clippy --locked \
+    -p candle-backend \
+    -p application-runtime \
+    -p desktop-slint \
+    -p runtime-benchmarks \
+    --all-targets \
+    --features cuda \
+    -- -D warnings
+```
+
+Run every explicitly opted-in CUDA hardware test listed in [Phase 11 lower-layer CUDA validation](#phase-11-lower-layer-cuda-validation), then run the controlled external CPU and CUDA baselines above. Confirm artifact hygiene:
+
+```sh
+test ! -e benchmarks/runtime/Cargo.lock
+test ! -d benchmarks/runtime/target
+
+find . \
+    -path './.git' -prune -o \
+    -type d -name target -print
+
+git status --short --untracked-files=all
+git status --short --ignored
+```
+
+Only root `target/` and its descendants may contain build artifacts, generated CUDA kernels, model cache, temporary application state, and raw evidence. After reviewing successful results, update canonical evidence/status/execution documents in a separate documentation-only evidence commit. Re-run the documentation and canonical gates on that commit. Push only when requested, then observe the actual GitHub Actions run; local success is not remote acceptance.
 
 ## Dependency, link, and graph audits
 

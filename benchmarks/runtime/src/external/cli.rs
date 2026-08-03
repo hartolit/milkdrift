@@ -6,11 +6,18 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{BenchmarkError, BenchmarkResult};
 
-pub(crate) const HELP: &str = "runtime-benchmarks external CPU baseline\n\nUsage:\n  external-baseline --allow-network --cache-dir PATH\n\nThe model repository and immutable revision are built in and cannot be\noverridden. PATH must already exist and resolve beneath the repository-root\ntarget/ directory or outside the repository. The command may contact Hugging\nFace only for the pinned model and writes one JSON report to stdout.\n";
+pub(crate) const HELP: &str = "runtime-benchmarks external baseline\n\nUsage:\n  external-baseline --allow-network --cache-dir PATH --device cpu|cuda:0\n\nThe model repository and immutable revision are built in and cannot be\noverridden. PATH must already exist and resolve beneath the repository-root\ntarget/ directory or outside the repository. The cuda:0 device requires\nruntime-benchmarks to be built with --features cuda. The command may contact\nHugging Face only for the pinned model and writes one JSON report to stdout.\n";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RequestedDevice {
+    Cpu,
+    Cuda0,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Configuration {
     pub(crate) cache_directory: PathBuf,
+    pub(crate) device: RequestedDevice,
 }
 
 pub(crate) enum Action {
@@ -37,6 +44,7 @@ impl CacheLocation {
 pub(crate) struct ValidatedConfiguration {
     pub(crate) cache_directory: PathBuf,
     pub(crate) cache_location: CacheLocation,
+    pub(crate) device: RequestedDevice,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +67,7 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> BenchmarkR
     let _program = arguments.next();
     let mut allow_network = false;
     let mut cache_directory = None;
+    let mut device = None;
 
     while let Some(argument) = arguments.next() {
         let flag = argument
@@ -80,6 +89,12 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> BenchmarkR
                 }
                 cache_directory = Some(next_value(&mut arguments, "--cache-dir")?.into());
             }
+            "--device" => {
+                if device.is_some() {
+                    return Err(BenchmarkError::new("--device may be supplied only once"));
+                }
+                device = Some(parse_device(&next_value(&mut arguments, "--device")?)?);
+            }
             "--repository" | "--revision" | "--model" | "--repo" => {
                 return Err(BenchmarkError::new(format!(
                     "{flag} is not supported; the external model and immutable revision are built in"
@@ -100,7 +115,11 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> BenchmarkR
     }
     let cache_directory =
         cache_directory.ok_or_else(|| BenchmarkError::new("--cache-dir PATH is required"))?;
-    Ok(Action::Run(Configuration { cache_directory }))
+    let device = device.ok_or_else(|| BenchmarkError::new("--device cpu|cuda:0 is required"))?;
+    Ok(Action::Run(Configuration {
+        cache_directory,
+        device,
+    }))
 }
 
 pub(crate) fn validate_cache_directory(
@@ -152,6 +171,7 @@ pub(crate) fn validate_cache_directory(
     Ok(ValidatedConfiguration {
         cache_directory,
         cache_location,
+        device: configuration.device,
     })
 }
 
@@ -168,6 +188,27 @@ pub(crate) fn inspect_cache_state(cache_directory: &Path) -> BenchmarkResult<Cac
         Some(Err(error)) => Err(BenchmarkError::new(format!(
             "could not inspect an entry in explicit cache directory {}: {error}",
             cache_directory.display()
+        ))),
+    }
+}
+
+fn parse_device(value: &std::ffi::OsStr) -> BenchmarkResult<RequestedDevice> {
+    let value = value
+        .to_str()
+        .ok_or_else(|| BenchmarkError::new("--device value must be valid Unicode"))?;
+    match value {
+        "cpu" => Ok(RequestedDevice::Cpu),
+        "cuda:0" => {
+            if cfg!(feature = "cuda") {
+                Ok(RequestedDevice::Cuda0)
+            } else {
+                Err(BenchmarkError::new(
+                    "--device cuda:0 requires the runtime-benchmarks `cuda` feature; rebuild with `--features cuda`",
+                ))
+            }
+        }
+        _ => Err(BenchmarkError::new(format!(
+            "unsupported --device value {value:?}; expected exactly cpu or cuda:0"
         ))),
     }
 }
@@ -190,7 +231,8 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        Action, CacheLocation, Configuration, inspect_cache_state, parse, validate_cache_directory,
+        Action, CacheLocation, Configuration, RequestedDevice, inspect_cache_state, parse,
+        validate_cache_directory,
     };
 
     static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -199,12 +241,42 @@ mod tests {
         values.iter().map(OsString::from).collect()
     }
 
+    fn execution_arguments(device: &str) -> Vec<OsString> {
+        arguments(&[
+            "external-baseline",
+            "--allow-network",
+            "--cache-dir",
+            "target/cache",
+            "--device",
+            device,
+        ])
+    }
+
+    #[test]
+    fn external_cli_help_is_side_effect_free() -> Result<(), String> {
+        let action = parse(arguments(&[
+            "external-baseline",
+            "--help",
+            "--cache-dir",
+            "path-that-need-not-exist",
+            "--device",
+            "cuda:0",
+        ]))
+        .map_err(|error| error.to_string())?;
+        let Action::Help = action else {
+            return Err("--help unexpectedly requested execution".to_owned());
+        };
+        Ok(())
+    }
+
     #[test]
     fn external_cli_requires_explicit_network_authorization() -> Result<(), String> {
         let Err(error) = parse(arguments(&[
             "external-baseline",
             "--cache-dir",
             "target/cache",
+            "--device",
+            "cpu",
         ])) else {
             return Err("missing opt-in unexpectedly succeeded".to_owned());
         };
@@ -214,7 +286,12 @@ mod tests {
 
     #[test]
     fn external_cli_requires_an_explicit_cache_path() -> Result<(), String> {
-        let Err(error) = parse(arguments(&["external-baseline", "--allow-network"])) else {
+        let Err(error) = parse(arguments(&[
+            "external-baseline",
+            "--allow-network",
+            "--device",
+            "cpu",
+        ])) else {
             return Err("missing cache unexpectedly succeeded".to_owned());
         };
         assert!(error.to_string().contains("--cache-dir"));
@@ -222,34 +299,163 @@ mod tests {
     }
 
     #[test]
+    fn external_cli_requires_an_explicit_device() -> Result<(), String> {
+        let Err(error) = parse(arguments(&[
+            "external-baseline",
+            "--allow-network",
+            "--cache-dir",
+            "target/cache",
+        ])) else {
+            return Err("missing device unexpectedly succeeded".to_owned());
+        };
+        assert!(error.to_string().contains("--device cpu|cuda:0"));
+        Ok(())
+    }
+
+    #[test]
+    fn external_cli_rejects_a_device_without_a_value() -> Result<(), String> {
+        let Err(error) = parse(arguments(&[
+            "external-baseline",
+            "--allow-network",
+            "--cache-dir",
+            "target/cache",
+            "--device",
+        ])) else {
+            return Err("valueless device unexpectedly succeeded".to_owned());
+        };
+        assert!(error.to_string().contains("--device requires a value"));
+        Ok(())
+    }
+
+    #[test]
+    fn external_cli_rejects_duplicate_devices() -> Result<(), String> {
+        let Err(error) = parse(arguments(&[
+            "external-baseline",
+            "--allow-network",
+            "--cache-dir",
+            "target/cache",
+            "--device",
+            "cpu",
+            "--device",
+            "cpu",
+        ])) else {
+            return Err("duplicate device unexpectedly succeeded".to_owned());
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("--device may be supplied only once")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_cli_rejects_near_miss_device_values() -> Result<(), String> {
+        for device in ["CPU", "cpu:0", "cuda", "cuda:00", "cuda:1", "gpu"] {
+            let Err(error) = parse(execution_arguments(device)) else {
+                return Err(format!(
+                    "near-miss device {device:?} unexpectedly succeeded"
+                ));
+            };
+            assert!(
+                error.to_string().contains("expected exactly cpu or cuda:0"),
+                "{device:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn external_cli_rejects_unknown_and_identity_substitution_flags() {
         for values in [
-            &["external-baseline", "--allow-network", "--unknown"][..],
             &[
                 "external-baseline",
                 "--allow-network",
+                "--cache-dir",
+                "target/cache",
+                "--device",
+                "cpu",
+                "--unknown",
+            ][..],
+            &[
+                "external-baseline",
+                "--allow-network",
+                "--cache-dir",
+                "target/cache",
+                "--device",
+                "cpu",
                 "--repository",
                 "other/model",
             ][..],
-            &["external-baseline", "--allow-network", "--revision", "main"][..],
+            &[
+                "external-baseline",
+                "--allow-network",
+                "--cache-dir",
+                "target/cache",
+                "--device",
+                "cpu",
+                "--revision",
+                "main",
+            ][..],
+            &[
+                "external-baseline",
+                "--allow-network",
+                "--cache-dir",
+                "target/cache",
+                "--device",
+                "cpu",
+                "--model",
+                "other/model",
+            ][..],
+            &[
+                "external-baseline",
+                "--allow-network",
+                "--cache-dir",
+                "target/cache",
+                "--device",
+                "cpu",
+                "--repo",
+                "other/model",
+            ][..],
         ] {
             assert!(parse(arguments(values)).is_err(), "{values:?}");
         }
     }
 
     #[test]
-    fn external_cli_accepts_only_the_two_required_execution_options() -> Result<(), String> {
-        let action = parse(arguments(&[
-            "external-baseline",
-            "--allow-network",
-            "--cache-dir",
-            "target/cache",
-        ]))
-        .map_err(|error| error.to_string())?;
+    fn external_cli_always_accepts_the_exact_cpu_device() -> Result<(), String> {
+        let action = parse(execution_arguments("cpu")).map_err(|error| error.to_string())?;
         let Action::Run(configuration) = action else {
             return Err("execution arguments unexpectedly requested help".to_owned());
         };
         assert_eq!(configuration.cache_directory, PathBuf::from("target/cache"));
+        assert_eq!(configuration.device, RequestedDevice::Cpu);
+        Ok(())
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn external_cli_accepts_cuda_zero_when_the_feature_is_enabled() -> Result<(), String> {
+        let action = parse(execution_arguments("cuda:0")).map_err(|error| error.to_string())?;
+        let Action::Run(configuration) = action else {
+            return Err("CUDA execution arguments unexpectedly requested help".to_owned());
+        };
+        assert_eq!(configuration.device, RequestedDevice::Cuda0);
+        Ok(())
+    }
+
+    #[cfg(not(feature = "cuda"))]
+    #[test]
+    fn external_cli_rejects_cuda_zero_when_the_feature_is_disabled() -> Result<(), String> {
+        let Err(error) = parse(execution_arguments("cuda:0")) else {
+            return Err("CUDA device unexpectedly succeeded without the cuda feature".to_owned());
+        };
+        let error = error.to_string();
+        assert!(
+            error.contains("requires the runtime-benchmarks `cuda` feature"),
+            "{error}"
+        );
+        assert!(error.contains("--features cuda"), "{error}");
         Ok(())
     }
 
@@ -260,6 +466,7 @@ mod tests {
         let rejected = validate_cache_directory(
             &Configuration {
                 cache_directory: fixture.source_cache.clone(),
+                device: RequestedDevice::Cpu,
             },
             &fixture.repository,
         );
@@ -268,21 +475,25 @@ mod tests {
         let target = validate_cache_directory(
             &Configuration {
                 cache_directory: fixture.target_cache.clone(),
+                device: RequestedDevice::Cpu,
             },
             &fixture.repository,
         )
         .map_err(|error| error.to_string())?;
         assert_eq!(target.cache_location, CacheLocation::RepositoryTarget);
+        assert_eq!(target.device, RequestedDevice::Cpu);
 
         fs::remove_dir_all(fixture.repository.join("target")).map_err(|error| error.to_string())?;
         let external = validate_cache_directory(
             &Configuration {
                 cache_directory: fixture.external_cache.clone(),
+                device: RequestedDevice::Cpu,
             },
             &fixture.repository,
         )
         .map_err(|error| error.to_string())?;
         assert_eq!(external.cache_location, CacheLocation::External);
+        assert_eq!(external.device, RequestedDevice::Cpu);
         Ok(())
     }
 

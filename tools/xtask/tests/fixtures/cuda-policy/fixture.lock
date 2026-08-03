@@ -48,3 +48,10 @@ version = "0.1.0"
 dependencies = [
  "candle-backend",
 ]
+
+[[package]]
+name = "runtime-benchmarks"
+version = "0.1.0"
+dependencies = [
+ "application-runtime",
+]
