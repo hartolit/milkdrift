@@ -385,8 +385,10 @@ impl ApplicationRuntime {
             ticket,
             model_id: MODEL_ID,
             source,
-            device: CPU_DEVICE,
-            device_kind: domain_contracts::DeviceKind::Cpu,
+            execution_device: domain_contracts::ExecutionDevice::new(
+                CPU_DEVICE,
+                domain_contracts::DeviceKind::Cpu,
+            ),
         })?;
         self.pending_load = Some(LoadAdmission {
             ticket,

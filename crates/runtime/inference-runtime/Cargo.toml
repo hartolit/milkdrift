@@ -7,6 +7,10 @@ license.workspace = true
 description = "Exclusive model registry and bounded inference lifecycle engine"
 publish = false
 
+[features]
+default = []
+cuda = ["candle-backend/cuda"]
+
 [dependencies]
 domain-contracts.workspace = true
 host-runtime.workspace = true

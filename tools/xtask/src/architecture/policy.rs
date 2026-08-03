@@ -9,6 +9,9 @@ pub(super) const RULE_PLATFORM_ROLE: &str = "PLATFORM-ROLE-1";
 pub(super) const RULE_PRODUCTION_DIRECTION: &str = "LAYER-PROD-1";
 pub(super) const RULE_RUNTIME_ROLE: &str = "RUNTIME-ROLE-1";
 pub(super) const RULE_BENCHMARK_ROLE: &str = "BENCHMARK-ROLE-1";
+pub(super) const RULE_CUDA_DEFAULT: &str = "CUDA-DEFAULT-1";
+pub(super) const RULE_CUDA_BOUNDARY: &str = "CUDA-BOUNDARY-1";
+pub(super) const RULE_CUDA_PROHIBITED: &str = "CUDA-PROHIBITED-1";
 pub(super) const RULE_BENCHMARK_PACKAGE: &str = "BENCHMARK-PACKAGE-1";
 pub(super) const RULE_BENCHMARK_PUBLISH: &str = "BENCHMARK-PUBLISH-1";
 pub(super) const RULE_BENCHMARK_BUILD: &str = "BENCHMARK-BUILD-1";
@@ -166,6 +169,12 @@ const REVIEWED_EXTERNAL_DEPENDENCIES: &[ReviewedDependency] = &[
         target: "libm",
         kind: DependencyKind::Normal,
         rationale: "sampling requires reviewed portable floating-point math",
+    },
+    ReviewedDependency {
+        source: "candle-backend",
+        target: "cudarc",
+        kind: DependencyKind::Normal,
+        rationale: "the optional CUDA adapter uses Candle's exact cudarc version only for safe device identity, capability, memory discovery, and native OOM classification",
     },
     ReviewedDependency {
         source: "domain-contracts",

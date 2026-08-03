@@ -70,8 +70,12 @@ must leave the model valid after failure. The runtime never treats unverified
 Rust trait conformance is necessary but not sufficient for backend substitution.
 During model admission E0 validates internally ordered non-zero descriptor limits,
 capability consistency, and equality between the accepted plan and the complete
-descriptor retained by the loaded model. Sequence requests and backend plans must
-remain within the descriptor's context and prefill limits.
+descriptor retained by the loaded model. It also requires the loaded model to report
+the exact requested `ExecutionDevice` and accepted resident footprint before any
+receipt or model slot is published. Device or footprint mismatch uses the same
+explicit unload/quarantine transaction as any other post-load contract violation.
+Sequence requests and backend plans must remain within the descriptor's context and
+prefill limits.
 
 A successful prefill or decode result is accepted only when it:
 
@@ -140,10 +144,14 @@ step before token publication even if a larger configured quantum is retained. T
 is the correctness baseline; later measured tuning may batch a small number of
 steps without changing the contract.
 
-Prefill occurs once. Sampling runs inside E0 immediately from checked logits using
-request-owned `sampling::Sampler` state. The selected token is appended to bounded
-history before any subsequent decode. EOS, generated-token limit, and token stop
-suffixes are checked after ordered token publication.
+Prefill occurs once. Sampling runs inside E0 immediately from checked caller-owned
+host `f32` logits using request-owned `sampling::Sampler` state. CPU Candle tensors
+use the existing contiguous-storage copy. CUDA tensors are converted and transferred
+through Candle's safe device-to-host API before E0 samples; Candle may allocate a
+temporary upstream CPU tensor for this transfer, so no allocation-free CUDA hot-path
+claim is made. The selected token is appended to bounded history before any subsequent
+decode. EOS, generated-token limit, and token stop suffixes are checked after ordered
+token publication.
 
 ## Pull output and backpressure
 
@@ -178,7 +186,10 @@ and failures.
 Immediate model unload marks scheduled requests with `ModelUnload`; drain timeout
 maintenance marks them with `DrainTimeout`. The runtime may have already destroyed
 the sequence at that safe boundary, but the scheduler still publishes the stable
-cancellation outcome during normal operation.
+cancellation outcome during normal operation. Candle sequence destruction and model
+unload explicitly synchronize the actual selected device before ownership may be
+dropped; a failed CUDA synchronization enters the existing bounded cleanup-retention
+path.
 
 Explicit runtime shutdown is a terminal worker transition. It performs bounded
 sequence and model cleanup, releases retained generation-workspace accounting, and
@@ -212,7 +223,7 @@ Ordinary scheduler and fault-injection coverage remains backend-independent. Det
 - sequence destruction plus complete request, generation-workspace, cleanup, and memory accounting release;
 - model unload, an empty post-unload runtime/model snapshot, terminal shutdown, and worker join.
 
-The fixture requires no network access and validates execution and lifecycle contracts rather than language quality. The CPU suite does not exercise a GPU path or establish an allocation-free Candle hot path. See [download-free focused validation](validation.md#download-free-focused-validation).
+The fixture requires no network access and validates execution and lifecycle contracts rather than language quality. The default CPU suite does not require a GPU or establish an allocation-free Candle hot path. With the non-default test-only `inference-runtime/cuda` feature and explicit `MILKDRIFT_CUDA_TEST=1` opt-in, an ignored release test drives the same fixture through CUDA ordinal 0, verifies the E0 receipt/snapshot device, device-weight and device-sequence accounting, prefill, incremental decode, host-logit sampling, explicit synchronization, sequence destruction, unload, and zero post-unload accounting. See [download-free focused validation](validation.md#download-free-focused-validation).
 
 External artifact resolution belongs to E1 rather than E0. The opt-in [external CPU product baseline](validation.md#external-cpu-product-baseline) resolves an exact immutable Hub revision through the production Hub worker and then exercises E1, E0, and Candle. The E0-only `candle_llama_smoke` example remains a local diagnostic for artifacts that are already resolved; it performs no network or Hub work.
 

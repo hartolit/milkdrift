@@ -5,7 +5,7 @@
 ```text
 Phase 10: complete.
 External CPU product baseline: complete.
-Phase 11: ready to activate; not yet implemented.
+Phase 11: active; lower-layer CUDA/E0 foundation implemented, not complete.
 ```
 
 This page owns current product support, unsupported behavior, lifecycle guarantees, and the existence of benchmark infrastructure. It does not own command logs or timing intervals. Use [performance evidence](performance.md) for methodology/results, [validation](validation.md) for procedures, [execution history](../agent/execution/history.md) for chronology, and the [execution plan](../agent/execution/execution-plan.md) for future work.
@@ -37,6 +37,21 @@ Slint or another native frontend
                   -> inference-runtime (E0)
                        -> Candle + Safetensors + CPU
 ```
+
+### Phase 11 lower-layer foundation
+
+The supported E1/frontend product remains CPU-only. Below that product boundary, `domain-contracts`, `candle-backend`, and `inference-runtime` now implement an explicit CPU-plus-Linux-CUDA execution foundation:
+
+- CPU device ID 0 remains compiled by default and mandatory;
+- non-default `candle-backend/cuda` enables only the reviewed Candle CUDA graph and safe discovery dependency;
+- CUDA ordinals are explicit `ExecutionDevice` identities and never fall back to CPU;
+- E0 verifies the actual loaded device and resident footprint before publishing a receipt or slot;
+- BF16 source metadata remains distinct from execution dtype;
+- CUDA weights and sequence cache/rope memory are device-charged, while sampling remains over caller-owned host `f32` logits;
+- CUDA sequence destruction and unload require explicit synchronization;
+- ignored, `MILKDRIFT_CUDA_TEST=1` hardware tests executed the committed fixture on CUDA ordinal 0, an NVIDIA GeForce RTX 5070 Ti with compute capability 12.0.
+
+E1 discovery/selection, persistence, frontend presentation, and product-level GPU measurement remain unimplemented. This lower-layer evidence does not make CUDA a selectable product device yet.
 
 ## Runtime and lifecycle guarantees
 
@@ -70,12 +85,12 @@ Benchmark infrastructure exists without changing production support or public AP
 
 `benchmarks/runtime` is the sole root benchmark package. It is non-publishable, has no build script or incoming dependency, uses the root lockfile/target, and consumes only reviewed public production APIs. Its normal baseline remains download-free; the separate external binary requires explicit network authorization and a canonical explicit cache. Curated methodology and exact synthetic/external results are canonical in [performance evidence](performance.md).
 
-A current exact external CPU product baseline now exists for the supported TinyLlama revision. CPU remains the only supported device, and no GPU capability has been implemented.
+A current exact external CPU product baseline exists for the supported TinyLlama revision. CPU remains the only E1-selected product device. Lower-layer CUDA fixture execution now exists, but no external CUDA product baseline or E1/frontend selection exists.
 
 ## Unsupported and deferred behavior
 
 - GGUF and other quantized model formats are unsupported.
-- GPU execution, device selection, and device-memory evidence are unsupported.
+- E1/frontend GPU discovery and selection, external-model CUDA product evidence, Metal, cuDNN, flash attention, and multi-GPU execution are unsupported; only the explicit lower-layer CUDA foundation described above is implemented.
 - Hosted-provider, peer, remote/browser transport, and multi-model residency are not implemented.
 - Chat compatibility is not generalized beyond the exact reviewed TinyLlama profile.
 - Conversation persistence and arbitrary branch trees are not implemented.
@@ -88,7 +103,7 @@ A current exact external CPU product baseline now exists for the supported TinyL
 
 Synthetic acceptance remains attributable to Commit A `efcd36e320a97d61d3f982619fee182410c514df`, tree `f80c5d6c746376df81d7ac8e7281ac9736e44d88`. The external CPU baseline executed on clean Commit C `771c0de4d72565a6302ca60f3b6bafd8c807962b`, tree `3d5b6ccc5ecc959de7cb370c1147f76e4cd32e3f`. Exact local evidence is recorded in [history](../agent/execution/history.md) and [performance evidence](performance.md). Local evidence is not a claim that a remote GitHub Actions run passed.
 
-Phase 10 is complete. Phase 11 is ready to activate from the accepted CPU tree, but no Phase 11 implementation has begun and no GPU support is claimed.
+Phase 10 is complete. Phase 11 is active, and its lower-layer CUDA/E0 foundation has local hardware execution evidence. Phase 11 is not complete; E1/frontend device selection and product-level evidence remain outstanding.
 
 ## Historical context
 

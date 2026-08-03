@@ -29,7 +29,9 @@ contracts:
 
 A cooperative in-process backend may delay physical reclamation until its current
 bounded step returns. The runtime must never drop a model concurrently with an
-active backend call.
+active backend call. For CUDA, successful sequence destruction and model unload
+also require explicit synchronization of the verified selected device; tensor drop
+alone is not a successful cleanup contract.
 
 ## Terminal cleanup and degraded state
 

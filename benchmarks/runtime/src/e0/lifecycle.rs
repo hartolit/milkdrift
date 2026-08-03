@@ -4,8 +4,8 @@ use std::num::NonZeroU32;
 use std::time::Duration;
 
 use domain_contracts::{
-    CapabilitySet, DecodeOutcome, DeviceId, DeviceKind, FinishReason, MemoryFootprint,
-    ModelArchitecture, PrefillOutcome, QuantizationFormat, RequestId, ScalarType,
+    CapabilitySet, DecodeOutcome, DeviceId, DeviceKind, ExecutionDevice, FinishReason,
+    MemoryFootprint, ModelArchitecture, PrefillOutcome, QuantizationFormat, RequestId, ScalarType,
     SequenceConfiguration, TokenId, UnloadPolicy,
 };
 use inference_runtime::{LoadReceipt, RuntimeCommand, RuntimeEvent, UnloadStatus};
@@ -31,8 +31,7 @@ pub(super) fn load_fixture(
         ticket,
         model_id: FIXTURE_MODEL_ID,
         source,
-        device: CPU_DEVICE,
-        device_kind: DeviceKind::Cpu,
+        execution_device: ExecutionDevice::new(CPU_DEVICE, DeviceKind::Cpu),
     };
     let TimedEvent { event, elapsed } =
         harness.timed_exchange(ticket, command, "fixture model load")?;

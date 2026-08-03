@@ -49,7 +49,7 @@ Portable domain code does not import runtimes, applications, platform implementa
 
 ## E0: local inference ownership
 
-E0 `inference-runtime` exclusively owns loaded model generations, backend sequences, request admission, generation workspaces, sampling execution, cancellation boundaries, draining, cleanup quarantine, accounting, unload, and shutdown. Its contracts describe direct ownership of model resources and token-step scheduling. E0 verifies complete loaded descriptors, advertised limits and capabilities, sequence identity/state, position transitions, and exact vocabulary logits rather than trusting adapter claims after trait conformance. [ADR-0010](../agent/decisions/0010-verify-backend-contracts-at-e0.md) records this substitution rule.
+E0 `inference-runtime` exclusively owns loaded model generations, backend sequences, request admission, generation workspaces, sampling execution, cancellation boundaries, draining, cleanup quarantine, accounting, unload, and shutdown. Its contracts describe direct ownership of model resources and token-step scheduling. E0 verifies complete loaded descriptors, the actual execution-device identity and accepted resident footprint, advertised limits and capabilities, sequence identity/state, position transitions, and exact vocabulary logits rather than trusting adapter claims after trait conformance. [ADR-0010](../agent/decisions/0010-verify-backend-contracts-at-e0.md) records the general substitution rule; [ADR-0019](../agent/decisions/0019-explicit-cuda-execution-foundation.md) applies it to devices and CUDA accounting.
 
 Production E0 is instantiated once with `CandleLlamaSource`. Token-sensitive execution stays statically dispatched; E0 remains generic and backend-neutral at its project-owned contracts so deterministic test loaders can exercise lifecycle and failure semantics without adding another production engine.
 
@@ -96,11 +96,11 @@ application-runtime (E1)
         Safetensors + CPU execution
 ```
 
-Execution engine, model format, artifact source, and device are separate concepts. Current support is one reviewed combination, not a claim that the dimensions are interchangeable today. GGUF is unsupported. If pursued later, Candle-native GGUF or another quantized format belongs under the Candle execution path and requires separate compatibility, tokenizer-provenance, artifact-identity, quantization, and device evidence. GPU support is also deferred.
+Execution engine, model format, artifact source, and device are separate concepts. The E1 product still composes one reviewed CPU combination, not a claim that the dimensions are interchangeable. Below E1, `candle-backend` now retains mandatory default CPU execution and adds non-default Linux CUDA execution through its `cuda` feature. E0 verifies the actual selected device, but E1/frontend discovery and selection remain for the next Phase 11 session. GGUF is unsupported; if pursued later, Candle-native GGUF or another quantized format belongs under the Candle execution path and requires separate compatibility, tokenizer-provenance, artifact-identity, quantization, and device evidence.
 
 ## Model execution boundary
 
-The implemented selection covers only local CPU execution through E0. Hosted providers, peer nodes, remote transport, and GPU execution are not product paths. If a remote target is implemented later, the common boundary is coarse: target identity and capabilities, complete request admission, cancellation intent, bounded streamed output, usage, and terminal state. Local execution adapts that boundary to E0; peer and hosted implementations translate it to their transports.
+The implemented E1 selection covers only local CPU execution through E0. The lower-layer Candle/E0 boundary can explicitly execute CPU or feature-gated CUDA, but CUDA is not yet an E1 or frontend product path. Hosted providers, peer nodes, and remote transport are also not product paths. If a remote target is implemented later, the common boundary is coarse: target identity and capabilities, complete request admission, cancellation intent, bounded streamed output, usage, and terminal state. Local execution adapts that boundary to E0; peer and hosted implementations translate it to their transports.
 
 Uniformity must not hide real differences. Context limits, token accounting, prompt/message formats, sampling controls, tool support, privacy boundary, cancellation guarantees, and usage reporting are target capabilities. Unsupported behavior fails explicitly. This direction is recorded in [ADR-0008](../agent/decisions/0008-capability-and-execution-boundaries.md).
 
@@ -127,11 +127,11 @@ Explicit bounded shutdown is required for normal operation; blocking `Drop` is n
 ## Current product constraints
 
 - Candle is the sole local execution engine.
-- Immutable Hugging Face Hub Safetensors on CPU is the only supported source/format/device composition.
+- Immutable Hugging Face Hub Safetensors on CPU is the only E1-selected product composition; the lower Candle/E0 boundary also has explicit, non-default Linux CUDA execution evidence.
 - E1 exposes one selected/resident local model.
 - Direct completion is available for every loaded model.
 - Chat/history rendering is enabled only for the exact verified TinyLlama Chat v1 profile.
-- GGUF, GPU, hosted-provider, peer, browser-transport, and `application-api` paths are not implemented.
+- GGUF, E1/frontend CUDA selection, Metal, hosted-provider, peer, browser-transport, and `application-api` paths are not implemented.
 
 The authoritative integration and validation matrix is in [implementation status](implementation-status.md).
 

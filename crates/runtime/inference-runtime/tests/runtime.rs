@@ -8,12 +8,13 @@ use std::time::Duration;
 use domain_contracts::{
     BackendFailure, BackendFailureKind, BackendId, BackendSequence, CancellationReason,
     CapabilitySet, DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind,
-    DrainTimeout, FinishReason, LoadConfiguration, LoadError, LoadPlan, LoadedModel, MemoryBudget,
-    MemoryFootprint, ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError,
-    ModelHandle, ModelId, ModelLoader, ModelMetadata, MonotonicMillis, PrefillBufferRequirements,
-    PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers,
-    QuantizationFormat, RequestId, ScalarType, SequenceConfiguration, SequenceError, SequenceId,
-    SequencePlan, SequenceState, SynchronizationError, TokenId, UnloadPolicy,
+    DrainTimeout, ExecutionDevice, FinishReason, LoadConfiguration, LoadError, LoadPlan,
+    LoadedModel, MemoryBudget, MemoryFootprint, MemoryKind, ModelArchitecture, ModelCapabilities,
+    ModelDescriptor, ModelError, ModelHandle, ModelId, ModelLoader, ModelMetadata, MonotonicMillis,
+    PrefillBufferRequirements, PrefillInput, PrefillOutcome, PreparedDecodeBuffers,
+    PreparedPrefillBuffers, QuantizationFormat, RequestId, ScalarType, SequenceConfiguration,
+    SequenceError, SequenceId, SequencePlan, SequenceState, SynchronizationError, TokenId,
+    UnloadPolicy,
 };
 use inference_runtime::{
     CommandTicket, HostedRuntime, HostedRuntimeConfiguration, InferenceRuntime, LoadReceipt,
@@ -21,6 +22,10 @@ use inference_runtime::{
 };
 
 const BACKEND_ID: BackendId = BackendId::new(91);
+
+const fn cpu_device() -> ExecutionDevice {
+    ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu)
+}
 
 #[derive(Clone, Copy)]
 struct MockSource {
@@ -34,7 +39,9 @@ struct MockLoader;
 struct MockModel {
     _thread_confined: Rc<()>,
     handle: ModelHandle,
+    execution_device: ExecutionDevice,
     descriptor: ModelDescriptor,
+    resident_footprint: MemoryFootprint,
     unloading: bool,
     destroy_failure_consumed: bool,
 }
@@ -81,6 +88,7 @@ impl ModelLoader for MockLoader {
         let required = descriptor.estimated_footprint.host_bytes();
         if required > configuration.memory_budget.host_bytes {
             return Err(LoadError::InsufficientMemory {
+                kind: MemoryKind::Host,
                 required_bytes: required,
                 available_bytes: configuration.memory_budget.host_bytes,
             });
@@ -100,7 +108,9 @@ impl ModelLoader for MockLoader {
         Ok(MockModel {
             _thread_confined: Rc::new(()),
             handle: configuration.handle,
+            execution_device: configuration.execution_device,
             descriptor,
+            resident_footprint: descriptor.estimated_footprint,
             unloading: false,
             destroy_failure_consumed: false,
         })
@@ -116,6 +126,14 @@ impl LoadedModel for MockModel {
 
     fn descriptor(&self) -> &ModelDescriptor {
         &self.descriptor
+    }
+
+    fn execution_device(&self) -> ExecutionDevice {
+        self.execution_device
+    }
+
+    fn resident_footprint(&self) -> MemoryFootprint {
+        self.resident_footprint
     }
 
     fn plan_sequence(
@@ -267,8 +285,7 @@ fn registry_interleaves_sequences_and_reclaims_all_resources() -> Result<(), Str
                 model_bytes: 100,
                 vocabulary_size: 8,
             },
-            DeviceId::new(0),
-            DeviceKind::Cpu,
+            cpu_device(),
         )
         .map_err(debug_error)?;
     let configuration = sequence_configuration(16, 8)?;
@@ -341,8 +358,7 @@ fn failed_sequence_release_preserves_request_for_retry() -> Result<(), String> {
                 model_bytes: 100,
                 vocabulary_size: 4,
             },
-            DeviceId::new(0),
-            DeviceKind::Cpu,
+            cpu_device(),
         )
         .map_err(debug_error)?;
     runtime
@@ -390,8 +406,7 @@ fn drain_timeout_force_cancels_and_unloads() -> Result<(), String> {
                 model_bytes: 100,
                 vocabulary_size: 4,
             },
-            DeviceId::new(0),
-            DeviceKind::Cpu,
+            cpu_device(),
         )
         .map_err(debug_error)?;
     runtime
@@ -441,8 +456,7 @@ fn undersized_logits_finish_request_without_backend_overwrite() -> Result<(), St
                 model_bytes: 100,
                 vocabulary_size: 8,
             },
-            DeviceId::new(0),
-            DeviceKind::Cpu,
+            cpu_device(),
         )
         .map_err(debug_error)?;
     runtime
@@ -480,8 +494,7 @@ fn aggregate_sequence_memory_is_admitted_before_allocation() -> Result<(), Strin
                 model_bytes: 100,
                 vocabulary_size: 4,
             },
-            DeviceId::new(0),
-            DeviceKind::Cpu,
+            cpu_device(),
         )
         .map_err(debug_error)?;
     let error = runtime
@@ -516,7 +529,7 @@ fn reloading_increments_generation_and_rejects_stale_handles() -> Result<(), Str
         vocabulary_size: 4,
     };
     let first = runtime
-        .load_model(ModelId::new(3), &source, DeviceId::new(0), DeviceKind::Cpu)
+        .load_model(ModelId::new(3), &source, cpu_device())
         .map_err(debug_error)?;
     runtime
         .unload_model(
@@ -526,7 +539,7 @@ fn reloading_increments_generation_and_rejects_stale_handles() -> Result<(), Str
         )
         .map_err(debug_error)?;
     let second = runtime
-        .load_model(ModelId::new(3), &source, DeviceId::new(0), DeviceKind::Cpu)
+        .load_model(ModelId::new(3), &source, cpu_device())
         .map_err(debug_error)?;
     if second.handle.generation.get() != first.handle.generation.get() + 1 {
         return Err("model generation did not advance".into());
@@ -563,8 +576,7 @@ fn hosted_worker_retries_a_failed_forced_release() -> Result<(), String> {
                 model_bytes: 100,
                 vocabulary_size: 4,
             },
-            device: DeviceId::new(0),
-            device_kind: DeviceKind::Cpu,
+            execution_device: cpu_device(),
         })
         .map_err(|_| "load command rejected")?;
     let loaded = receive_load_receipt(&hosted)?;
@@ -655,8 +667,7 @@ fn hosted_worker_reports_terminal_unload_after_natural_drain() -> Result<(), Str
                 model_bytes: 100,
                 vocabulary_size: 4,
             },
-            device: DeviceId::new(0),
-            device_kind: DeviceKind::Cpu,
+            execution_device: cpu_device(),
         })
         .map_err(|_| "load command rejected")?;
     let loaded = receive_load_receipt(&hosted)?;
@@ -764,8 +775,7 @@ fn hosted_worker_enforces_deadline_while_event_queue_is_full() -> Result<(), Str
                 model_bytes: 100,
                 vocabulary_size: 4,
             },
-            device: DeviceId::new(0),
-            device_kind: DeviceKind::Cpu,
+            execution_device: cpu_device(),
         })
         .map_err(|_| "load command rejected")?;
     let loaded = receive_load_receipt(&hosted)?;

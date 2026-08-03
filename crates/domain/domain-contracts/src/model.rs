@@ -66,6 +66,27 @@ pub enum DeviceKind {
     Accelerator(u16),
 }
 
+/// Backend-visible identity of the device that executes a loaded model.
+///
+/// Device identifiers are interpreted within the selected backend and device
+/// kind. In particular, a CUDA ordinal is not a globally permanent hardware
+/// identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExecutionDevice {
+    /// Backend-visible device identifier or ordinal.
+    pub id: DeviceId,
+    /// Execution device category.
+    pub kind: DeviceKind,
+}
+
+impl ExecutionDevice {
+    /// Creates one backend-visible execution-device identity.
+    #[must_use]
+    pub const fn new(id: DeviceId, kind: DeviceKind) -> Self {
+        Self { id, kind }
+    }
+}
+
 /// Compact capability bitset.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -158,6 +179,15 @@ impl MemoryFootprint {
     }
 }
 
+/// Memory domain used by planning and aggregate admission failures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemoryKind {
+    /// Host-addressable memory.
+    Host,
+    /// Device-local memory.
+    Device,
+}
+
 /// Admission-control budget supplied by the engine.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MemoryBudget {
@@ -200,10 +230,8 @@ pub struct ModelDescriptor {
 pub struct LoadConfiguration {
     /// Handle assigned by the owning inference runtime.
     pub handle: ModelHandle,
-    /// Target device selected by an adapter or application.
-    pub device: DeviceId,
-    /// Device category.
-    pub device_kind: DeviceKind,
+    /// Explicit execution device requested by the caller.
+    pub execution_device: ExecutionDevice,
     /// Hard admission-control budget.
     pub memory_budget: MemoryBudget,
 }

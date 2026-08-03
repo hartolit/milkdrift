@@ -280,3 +280,57 @@ fn unreviewed_domain_peer_edge_fails_closed() -> Result<(), Box<dyn Error>> {
     assert!(violation.reason().contains("acyclic domain graph"));
     Ok(())
 }
+
+#[test]
+fn candle_cuda_cannot_become_a_default_feature() -> Result<(), Box<dyn Error>> {
+    let fixture = FixtureWorkspace::new("forbidden-edge")?;
+    fixture.write(
+        "crates/adapters/candle-backend/Cargo.toml",
+        "[package]\nname = \"candle-backend\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[features]\ndefault = [\"cuda\"]\ncuda = []\n",
+    )?;
+    let report = validate_workspace(&fixture.manifest())?;
+
+    assert!(report.violations().iter().any(|violation| {
+        violation.source() == "candle-backend" && violation.rule() == "CUDA-DEFAULT-1"
+    }));
+    Ok(())
+}
+
+#[test]
+fn production_crates_cannot_enable_candle_cuda_outside_reviewed_composition()
+-> Result<(), Box<dyn Error>> {
+    let fixture = FixtureWorkspace::new("forbidden-edge")?;
+    fixture.write(
+        "crates/adapters/candle-backend/Cargo.toml",
+        "[package]\nname = \"candle-backend\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[features]\ndefault = []\ncuda = []\n",
+    )?;
+    fixture.write(
+        "crates/domain/domain-contracts/Cargo.toml",
+        "[package]\nname = \"domain-contracts\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[features]\ngpu = [\"candle-backend/cuda\"]\n\n[dependencies]\ncandle-backend = { path = \"../../adapters/candle-backend\" }\n",
+    )?;
+    let report = validate_workspace(&fixture.manifest())?;
+
+    assert!(report.violations().iter().any(|violation| {
+        violation.source() == "domain-contracts" && violation.rule() == "CUDA-BOUNDARY-1"
+    }));
+    Ok(())
+}
+
+#[test]
+fn cudnn_flash_attention_and_nccl_require_a_separate_decision() -> Result<(), Box<dyn Error>> {
+    let fixture = FixtureWorkspace::new("forbidden-edge")?;
+    fixture.write(
+        "crates/adapters/candle-backend/Cargo.toml",
+        "[package]\nname = \"candle-backend\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[features]\ndefault = []\ncuda = []\ncudnn = []\nflash-attn = []\nnccl = []\n",
+    )?;
+    let report = validate_workspace(&fixture.manifest())?;
+
+    for prohibited in ["cudnn", "flash-attn", "nccl"] {
+        assert!(report.violations().iter().any(|violation| {
+            violation.source() == "candle-backend"
+                && violation.target() == prohibited
+                && violation.rule() == "CUDA-PROHIBITED-1"
+        }));
+    }
+    Ok(())
+}

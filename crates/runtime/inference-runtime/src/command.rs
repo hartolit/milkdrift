@@ -3,7 +3,7 @@
 use std::vec::Vec;
 
 use domain_contracts::{
-    CancellationReason, DecodeOutcome, DeviceId, DeviceKind, FinishReason, GenerationUsage,
+    CancellationReason, DecodeOutcome, ExecutionDevice, FinishReason, GenerationUsage,
     MemoryFootprint, ModelDescriptor, ModelHandle, ModelId, ModelLifecycleState, PrefillOutcome,
     RequestId, SequenceConfiguration, SequenceId, TokenId, UnloadPolicy,
 };
@@ -34,6 +34,8 @@ impl CommandTicket {
 pub struct LoadReceipt {
     /// Runtime-assigned generation-safe model handle.
     pub handle: ModelHandle,
+    /// Actual execution device verified against the load request.
+    pub execution_device: ExecutionDevice,
     /// Backend-inspected model description.
     pub descriptor: ModelDescriptor,
     /// Footprint reserved by the runtime registry.
@@ -127,6 +129,8 @@ pub struct RuntimeSnapshot {
 pub struct ModelSnapshot {
     /// Generation-safe handle.
     pub handle: ModelHandle,
+    /// Actual execution device verified during model admission.
+    pub execution_device: ExecutionDevice,
     /// Current deterministic lifecycle state.
     pub lifecycle: ModelLifecycleState,
     /// Inspected backend description.
@@ -162,10 +166,8 @@ pub enum RuntimeCommand<S> {
         model_id: ModelId,
         /// Backend-specific owned source descriptor.
         source: S,
-        /// Backend-visible device identity.
-        device: DeviceId,
-        /// Device category.
-        device_kind: DeviceKind,
+        /// Explicit backend-visible execution device.
+        execution_device: ExecutionDevice,
     },
     /// Allocate one request-owned backend sequence.
     StartRequest {

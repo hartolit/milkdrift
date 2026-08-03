@@ -1,8 +1,8 @@
 //! Stable runtime, admission, and host-transport failures.
 
 use domain_contracts::{
-    CapacityExhausted, LifecycleError, LoadError, ModelError, ModelHandle, ModelId, RequestId,
-    SequenceError, SynchronizationError,
+    CapacityExhausted, LifecycleError, LoadError, MemoryKind, ModelError, ModelHandle, ModelId,
+    RequestId, SequenceError, SynchronizationError,
 };
 
 use core::fmt::{self, Debug, Formatter};
@@ -176,15 +176,6 @@ impl From<sampling::SamplingError> for SamplingFailure {
             _ => Self::InvalidInput,
         }
     }
-}
-
-/// Memory domain whose aggregate budget was exceeded.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MemoryKind {
-    /// Host-addressable memory.
-    Host,
-    /// Device-local memory.
-    Device,
 }
 
 /// Inference registry or backend operation failure.

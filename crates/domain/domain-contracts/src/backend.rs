@@ -3,7 +3,8 @@
 use crate::error::{LoadError, ModelError, SequenceError, SynchronizationError};
 use crate::generation::{CancellationStatus, DecodeOutcome, FinishReason, PrefillOutcome};
 use crate::model::{
-    LoadConfiguration, LoadPlan, ModelDescriptor, SequenceConfiguration, SequencePlan,
+    ExecutionDevice, LoadConfiguration, LoadPlan, MemoryFootprint, ModelDescriptor,
+    SequenceConfiguration, SequencePlan,
 };
 use crate::sequence::{
     DecodeBufferRequirements, DecodeBuffers, DecodeInput, PrefillBufferRequirements,
@@ -81,6 +82,12 @@ pub trait LoadedModel {
 
     /// Returns the complete immutable descriptor retained by the loaded model.
     fn descriptor(&self) -> &ModelDescriptor;
+
+    /// Returns the actual backend-visible device used by this loaded model.
+    fn execution_device(&self) -> ExecutionDevice;
+
+    /// Returns the complete model footprint accepted during native loading.
+    fn resident_footprint(&self) -> MemoryFootprint;
 
     /// Validates and reports sequence resource requirements before allocation.
     ///

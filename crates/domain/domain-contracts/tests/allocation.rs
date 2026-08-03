@@ -7,12 +7,12 @@ use std::process::ExitCode;
 
 use domain_contracts::{
     BackendId, BackendSequence, CancellationStatus, CapabilitySet, DecodeBufferRequirements,
-    DecodeBuffers, DecodeInput, DecodeOutcome, LoadedModel, MemoryFootprint, ModelArchitecture,
-    ModelCapabilities, ModelDescriptor, ModelError, ModelGeneration, ModelHandle, ModelId,
-    ModelMetadata, PrefillBufferRequirements, PrefillBuffers, PrefillInput, PrefillOutcome,
-    PreparedDecodeBuffers, PreparedPrefillBuffers, QuantizationFormat, ScalarType,
-    SequenceConfiguration, SequenceError, SequenceId, SequencePlan, SequenceState,
-    SynchronizationError, TokenId, decode_checked, prefill_checked,
+    DecodeBuffers, DecodeInput, DecodeOutcome, DeviceId, DeviceKind, ExecutionDevice, LoadedModel,
+    MemoryFootprint, ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError,
+    ModelGeneration, ModelHandle, ModelId, ModelMetadata, PrefillBufferRequirements,
+    PrefillBuffers, PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers,
+    QuantizationFormat, ScalarType, SequenceConfiguration, SequenceError, SequenceId, SequencePlan,
+    SequenceState, SynchronizationError, TokenId, decode_checked, prefill_checked,
 };
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, Stats, StatsAlloc};
 
@@ -83,6 +83,14 @@ impl LoadedModel for TestModel {
             },
         };
         &DESCRIPTOR
+    }
+
+    fn execution_device(&self) -> ExecutionDevice {
+        ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu)
+    }
+
+    fn resident_footprint(&self) -> MemoryFootprint {
+        MemoryFootprint::default()
     }
 
     fn plan_sequence(

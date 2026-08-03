@@ -14,10 +14,10 @@ pub use command::{
     RuntimeCommand, RuntimeEvent, RuntimeSnapshot, ShutdownReceipt, UnloadReceipt, UnloadStatus,
 };
 pub use configuration::{CleanupRetryPolicy, HostedRuntimeConfiguration, RuntimeLimits};
+pub use domain_contracts::MemoryKind;
 pub use error::{
     CleanupFailureReport, CleanupPoll, CleanupResource, CleanupRetryState, FailureClass,
-    MemoryKind, RuntimeError, RuntimeOperation, RuntimeReceiveError, RuntimeSubmitError,
-    SamplingFailure,
+    RuntimeError, RuntimeOperation, RuntimeReceiveError, RuntimeSubmitError, SamplingFailure,
 };
 pub use generation::{
     GenerationAdmission, GenerationOutcome, GenerationOutputCapacityPolicy, GenerationOutputState,

@@ -6,9 +6,9 @@ use std::time::{Duration, Instant};
 
 use candle_backend::{CandleLlamaLoader, CandleLlamaSource, CandleScalarType};
 use domain_contracts::{
-    BackendId, CancellationReason, CapabilitySet, DeviceId, DeviceKind, FinishReason, MemoryBudget,
-    MemoryFootprint, ModelArchitecture, ModelHandle, ModelId, RequestId, ScalarType,
-    SequenceConfiguration, SequenceId, TokenId, UnloadPolicy, YieldReason,
+    BackendId, CancellationReason, CapabilitySet, DeviceId, DeviceKind, ExecutionDevice,
+    FinishReason, MemoryBudget, MemoryFootprint, ModelArchitecture, ModelHandle, ModelId,
+    RequestId, ScalarType, SequenceConfiguration, SequenceId, TokenId, UnloadPolicy, YieldReason,
 };
 
 use host_runtime::TokenOutputRecordKind;
@@ -159,6 +159,38 @@ fn candle_fixture_covers_output_backpressure_and_cancellation() -> TestResult {
     shutdown(hosted, thread)
 }
 
+#[cfg(feature = "cuda")]
+#[test]
+#[ignore = "requires MILKDRIFT_CUDA_TEST=1 and CUDA ordinal 0"]
+fn candle_cuda_fixture_covers_e0_generation_accounting_and_lifecycle() -> TestResult {
+    require_cuda_opt_in()?;
+    let (hosted, thread) = hosted_cuda_runtime()?;
+    let loaded = load_cuda_model(&hosted, candle_fixture_source()?)?;
+    assert_eq!(
+        loaded.execution_device,
+        ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda)
+    );
+    assert_eq!(loaded.reserved_footprint.host_weight_bytes, 0);
+    assert!(loaded.reserved_footprint.device_weight_bytes > 0);
+    assert!(loaded.reserved_footprint.host_working_bytes > 0);
+    let handle = loaded.handle;
+
+    let request = generation_request(50, 150, 3, SamplingConfig::greedy(), 31, Box::new([]))?;
+    submit_generation(&hosted, handle, CommandTicket::new(50), &request)?;
+    let output = collect_until_released(
+        &hosted,
+        request.request_id,
+        OUTPUT_TIMEOUT,
+        CollectedOutput::default(),
+    )?;
+    assert_eq!(output.tokens, vec![EXPECTED_GREEDY_TOKEN; 3]);
+    assert_finished(&output, FinishReason::TokenLimit);
+    assert_cuda_released_snapshot(&hosted, handle, loaded.reserved_footprint)?;
+
+    unload_model(&hosted, handle)?;
+    shutdown(hosted, thread)
+}
+
 fn candle_fixture_source() -> TestResult<CandleLlamaSource> {
     let directory = candle_fixture_directory();
     CandleLlamaSource::new(
@@ -194,14 +226,33 @@ fn hosted_runtime(
     .map_err(|error| error.to_string())
 }
 
+#[cfg(feature = "cuda")]
+fn hosted_cuda_runtime() -> TestResult<(CandleRuntime, RuntimeThread)> {
+    let configuration =
+        HostedRuntimeConfiguration::new(nonzero_usize(8)?, nonzero_usize(8)?, NonZeroU64::MIN)
+            .with_token_output_capacity(nonzero_usize(16)?, nonzero_usize(64)?);
+    start_hosted_runtime(
+        CandleLlamaLoader::new(CANDLE_BACKEND),
+        RuntimeLimits::new(
+            NonZeroU32::MIN,
+            NonZeroU32::MIN,
+            MemoryBudget {
+                host_bytes: u64::MAX,
+                device_bytes: u64::MAX,
+            },
+        ),
+        configuration,
+    )
+    .map_err(|error| error.to_string())
+}
+
 fn load_model(hosted: &CandleRuntime, source: CandleLlamaSource) -> TestResult<LoadReceipt> {
     hosted
         .try_submit(RuntimeCommand::LoadModel {
             ticket: LOAD_TICKET,
             model_id: MODEL,
             source,
-            device: DeviceId::new(0),
-            device_kind: DeviceKind::Cpu,
+            execution_device: ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu),
         })
         .map_err(|error| format!("load command rejected: {error:?}"))?;
     match hosted
@@ -222,7 +273,39 @@ fn load_model(hosted: &CandleRuntime, source: CandleLlamaSource) -> TestResult<L
     }
 }
 
+#[cfg(feature = "cuda")]
+fn load_cuda_model(hosted: &CandleRuntime, source: CandleLlamaSource) -> TestResult<LoadReceipt> {
+    hosted
+        .try_submit(RuntimeCommand::LoadModel {
+            ticket: LOAD_TICKET,
+            model_id: MODEL,
+            source,
+            execution_device: ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda),
+        })
+        .map_err(|error| format!("CUDA load command rejected: {error:?}"))?;
+    match hosted
+        .receive_timeout(EVENT_TIMEOUT)
+        .map_err(|error| format!("CUDA load event failed: {error:?}"))?
+    {
+        RuntimeEvent::ModelLoaded {
+            ticket,
+            result: Ok(receipt),
+        } if ticket == LOAD_TICKET => Ok(receipt),
+        RuntimeEvent::ModelLoaded {
+            result: Err(error), ..
+        } => Err(format!("CUDA model load failed: {error:?}")),
+        event => Err(format!(
+            "unexpected CUDA load event for ticket {:?}",
+            event.ticket()
+        )),
+    }
+}
+
 fn assert_loaded_fixture(loaded: &LoadReceipt) {
+    assert_eq!(
+        loaded.execution_device,
+        ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu)
+    );
     let descriptor = loaded.descriptor;
     assert_eq!(descriptor.backend, CANDLE_BACKEND);
     assert_eq!(descriptor.metadata.architecture, ModelArchitecture::Llama);
@@ -502,6 +585,10 @@ fn assert_released_snapshot(
             assert_eq!(models.len(), 1);
             let model = models.first().ok_or("loaded model snapshot missing")?;
             assert_eq!(model.handle, handle);
+            assert_eq!(
+                model.execution_device,
+                ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu)
+            );
             assert_eq!(model.active_requests, 0);
             assert_eq!(model.pending_cleanup_sequences, 0);
             assert_eq!(model.exhausted_cleanup_sequences, 0);
@@ -510,6 +597,54 @@ fn assert_released_snapshot(
         }
         event => Err(format!(
             "unexpected released snapshot event for ticket {:?}",
+            event.ticket()
+        )),
+    }
+}
+
+#[cfg(feature = "cuda")]
+fn assert_cuda_released_snapshot(
+    hosted: &CandleRuntime,
+    handle: ModelHandle,
+    model_footprint: MemoryFootprint,
+) -> TestResult {
+    let ticket = CommandTicket::new(51);
+    hosted
+        .try_submit(RuntimeCommand::Snapshot { ticket })
+        .map_err(|error| format!("CUDA snapshot command rejected: {error:?}"))?;
+    match hosted
+        .receive_timeout(EVENT_TIMEOUT)
+        .map_err(|error| format!("CUDA snapshot event failed: {error:?}"))?
+    {
+        RuntimeEvent::Snapshot {
+            ticket: event_ticket,
+            runtime,
+            models,
+        } if event_ticket == ticket => {
+            assert_eq!(runtime.loaded_models, 1);
+            assert_eq!(runtime.active_requests, 0);
+            assert_eq!(runtime.reserved_footprint, model_footprint);
+            assert_eq!(runtime.generation_workspaces, 0);
+            assert_eq!(
+                runtime.reserved_generation_workspace,
+                MemoryFootprint::default()
+            );
+            assert_eq!(runtime.pending_cleanup_models, 0);
+            assert_eq!(runtime.pending_cleanup_sequences, 0);
+            assert_eq!(models.len(), 1);
+            let model = models.first().ok_or("CUDA model snapshot missing")?;
+            assert_eq!(model.handle, handle);
+            assert_eq!(
+                model.execution_device,
+                ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda)
+            );
+            assert_eq!(model.reserved_footprint, model_footprint);
+            assert_eq!(model.active_requests, 0);
+            assert!(!model.degraded);
+            Ok(())
+        }
+        event => Err(format!(
+            "unexpected CUDA snapshot event for ticket {:?}",
             event.ticket()
         )),
     }
@@ -615,6 +750,15 @@ fn shutdown(hosted: CandleRuntime, thread: RuntimeThread) -> TestResult {
         }
     }
     thread.join().map_err(|error| error.to_string())
+}
+
+#[cfg(feature = "cuda")]
+fn require_cuda_opt_in() -> TestResult {
+    if matches!(std::env::var("MILKDRIFT_CUDA_TEST").as_deref(), Ok("1")) {
+        Ok(())
+    } else {
+        Err("set MILKDRIFT_CUDA_TEST=1 to execute CUDA hardware tests".to_owned())
+    }
 }
 
 fn candle_fixture_directory() -> PathBuf {

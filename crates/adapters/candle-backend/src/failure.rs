@@ -17,7 +17,47 @@ pub const CODE_LOGITS_STORAGE: u32 = 12;
 pub const CODE_SYNCHRONIZE: u32 = 13;
 pub const CODE_RESERVATION: u32 = 14;
 pub const CODE_NUMERIC_OVERFLOW: u32 = 15;
+#[cfg(not(feature = "cuda"))]
+pub const CODE_CUDA_NOT_COMPILED: u32 = 16;
+pub const CODE_UNSUPPORTED_DEVICE: u32 = 17;
+#[cfg(feature = "cuda")]
+pub const CODE_CUDA_INITIALIZATION: u32 = 18;
+#[cfg(feature = "cuda")]
+pub const CODE_CUDA_DISCOVERY: u32 = 19;
+pub const CODE_LOGITS_TRANSFER: u32 = 20;
+pub const CODE_UNSUPPORTED_SCALAR: u32 = 21;
 
 pub const fn failure(backend: BackendId, kind: BackendFailureKind, code: u32) -> BackendFailure {
     BackendFailure::new(backend, kind, code)
+}
+
+#[cfg(feature = "cuda")]
+pub fn candle_cuda_failure_kind(error: &candle_core::Error) -> Option<BackendFailureKind> {
+    use cudarc::driver::{DriverError, sys::CUresult};
+
+    fn driver_error(error: &candle_core::Error) -> Option<&DriverError> {
+        match error {
+            candle_core::Error::Cuda(source) => source.downcast_ref::<DriverError>(),
+            candle_core::Error::WrappedContext { wrapped, .. } => {
+                wrapped.downcast_ref::<DriverError>()
+            }
+            candle_core::Error::Context { inner, .. }
+            | candle_core::Error::WithPath { inner, .. }
+            | candle_core::Error::WithBacktrace { inner, .. } => driver_error(inner),
+            _ => None,
+        }
+    }
+
+    driver_error(error).map(|error| {
+        if error.0 == CUresult::CUDA_ERROR_OUT_OF_MEMORY {
+            BackendFailureKind::DeviceMemory
+        } else {
+            BackendFailureKind::DeviceExecution
+        }
+    })
+}
+
+#[cfg(not(feature = "cuda"))]
+pub const fn candle_cuda_failure_kind(_error: &candle_core::Error) -> Option<BackendFailureKind> {
+    None
 }

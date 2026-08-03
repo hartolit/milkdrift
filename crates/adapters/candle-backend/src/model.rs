@@ -1,51 +1,64 @@
-//! Loaded CPU model and sequence implementations.
+//! Loaded Candle model and device-aware sequence implementations.
 
 use candle_core::{DType, Device, Storage, Tensor};
 use candle_transformers::models::llama::{Cache, Config, Llama};
 use domain_contracts::{
     BackendFailureKind, BackendId, BackendSequence, CapacityExhausted, CapacityResource,
-    DecodeBufferRequirements, DecodeInput, DecodeOutcome, LoadedModel, MemoryFootprint,
-    ModelDescriptor, ModelError, ModelHandle, PrefillBufferRequirements, PrefillInput,
-    PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers, SequenceConfiguration,
-    SequenceError, SequenceId, SequencePlan, SequenceState, SynchronizationError,
+    DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceKind, ExecutionDevice, LoadedModel,
+    MemoryFootprint, ModelDescriptor, ModelError, ModelHandle, PrefillBufferRequirements,
+    PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers,
+    SequenceConfiguration, SequenceError, SequenceId, SequencePlan, SequenceState,
+    SynchronizationError,
 };
 
 use crate::failure::{
     CODE_CACHE_CREATE, CODE_FORWARD, CODE_INPUT_TENSOR, CODE_LOGITS_LAYOUT, CODE_LOGITS_STORAGE,
-    CODE_NUMERIC_OVERFLOW, CODE_RESERVATION, CODE_SYNCHRONIZE, failure,
+    CODE_LOGITS_TRANSFER, CODE_NUMERIC_OVERFLOW, CODE_RESERVATION, CODE_SYNCHRONIZE,
+    candle_cuda_failure_kind, failure,
 };
+use crate::source::CandleScalarType;
 
-/// Loaded CPU Llama model exclusively owned by the inference runtime.
+pub(crate) struct CandleLlamaModelParameters {
+    pub(crate) backend: BackendId,
+    pub(crate) handle: ModelHandle,
+    pub(crate) execution_device: ExecutionDevice,
+    pub(crate) descriptor: ModelDescriptor,
+    pub(crate) resident_footprint: MemoryFootprint,
+    pub(crate) config: Config,
+    pub(crate) dtype: DType,
+    pub(crate) execution_scalar: CandleScalarType,
+    pub(crate) device: Device,
+}
+
+/// Loaded Llama model exclusively owned by the inference runtime.
 pub struct CandleLlamaModel {
     backend: BackendId,
     handle: ModelHandle,
+    execution_device: ExecutionDevice,
     descriptor: ModelDescriptor,
+    resident_footprint: MemoryFootprint,
     vocabulary_size: usize,
     config: Config,
     dtype: DType,
+    execution_scalar: CandleScalarType,
     device: Device,
     model: Llama,
     unloading: bool,
 }
 
 impl CandleLlamaModel {
-    pub(crate) const fn new(
-        backend: BackendId,
-        handle: ModelHandle,
-        descriptor: ModelDescriptor,
-        config: Config,
-        dtype: DType,
-        device: Device,
-        model: Llama,
-    ) -> Self {
+    pub(crate) fn new(parameters: CandleLlamaModelParameters, model: Llama) -> Self {
         Self {
-            backend,
-            handle,
-            descriptor,
-            vocabulary_size: config.vocab_size,
-            config,
-            dtype,
-            device,
+            backend: parameters.backend,
+            handle: parameters.handle,
+            execution_device: parameters.execution_device,
+            descriptor: parameters.descriptor,
+            resident_footprint: parameters.resident_footprint,
+            vocabulary_size: parameters.config.vocab_size,
+            config: parameters.config,
+            dtype: parameters.dtype,
+            execution_scalar: parameters.execution_scalar,
+            device: parameters.device,
             model,
             unloading: false,
         }
@@ -57,14 +70,19 @@ impl CandleLlamaModel {
         &self.descriptor
     }
 
+    /// Returns the actual execution scalar selected independently from source metadata.
+    #[must_use]
+    pub const fn execution_scalar_type(&self) -> CandleScalarType {
+        self.execution_scalar
+    }
+
     fn sequence_footprint(
         &self,
         configuration: SequenceConfiguration,
     ) -> Result<MemoryFootprint, ModelError> {
         let maximum_tokens = u64::from(configuration.maximum_tokens.get());
         let cache_bytes = self
-            .descriptor
-            .estimated_footprint
+            .resident_footprint
             .cache_bytes_per_token
             .checked_mul(maximum_tokens)
             .ok_or_else(|| numeric_model_error(self.backend))?;
@@ -74,17 +92,28 @@ impl CandleLlamaModel {
             .and_then(|positions| positions.checked_mul(u64::try_from(head_dimension).ok()?))
             .and_then(|elements| elements.checked_mul(dtype_bytes(self.dtype)))
             .ok_or_else(|| numeric_model_error(self.backend))?;
-        let host_working_bytes = cache_bytes
+        let working_bytes = cache_bytes
             .checked_add(rope_bytes)
             .ok_or_else(|| numeric_model_error(self.backend))?;
+        let cache_bytes_per_token = self.resident_footprint.cache_bytes_per_token;
 
-        Ok(MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 0,
-            host_working_bytes,
-            device_working_bytes: 0,
-            cache_bytes_per_token: self.descriptor.estimated_footprint.cache_bytes_per_token,
-        })
+        match self.execution_device.kind {
+            DeviceKind::Cpu => Ok(MemoryFootprint {
+                host_weight_bytes: 0,
+                device_weight_bytes: 0,
+                host_working_bytes: working_bytes,
+                device_working_bytes: 0,
+                cache_bytes_per_token,
+            }),
+            DeviceKind::Cuda => Ok(MemoryFootprint {
+                host_weight_bytes: 0,
+                device_weight_bytes: 0,
+                host_working_bytes: 0,
+                device_working_bytes: working_bytes,
+                cache_bytes_per_token,
+            }),
+            _ => Err(ModelError::Unsupported),
+        }
     }
 
     fn execute(
@@ -93,11 +122,53 @@ impl CandleLlamaModel {
         position: usize,
         tokens: &[u32],
     ) -> Result<Tensor, SequenceError> {
-        let input = Tensor::from_slice(tokens, (1, tokens.len()), &self.device)
-            .map_err(|_| sequence_failure(self.backend, CODE_INPUT_TENSOR))?;
+        let input =
+            Tensor::from_slice(tokens, (1, tokens.len()), &self.device).map_err(|error| {
+                sequence_candle_failure(self.backend, &self.device, &error, CODE_INPUT_TENSOR)
+            })?;
         self.device
             .with_context(|| self.model.forward(&input, position, cache))
-            .map_err(|_| sequence_failure(self.backend, CODE_FORWARD))
+            .map_err(|error| {
+                sequence_candle_failure(self.backend, &self.device, &error, CODE_FORWARD)
+            })
+    }
+
+    fn copy_logits(
+        &self,
+        tensor: &Tensor,
+        output: &mut [f32],
+        required: usize,
+    ) -> Result<usize, SequenceError> {
+        if tensor.elem_count() != required || !tensor.is_contiguous() {
+            return Err(sequence_failure(self.backend, CODE_LOGITS_LAYOUT));
+        }
+        let available = output.len();
+        let Some(destination) = output.get_mut(..required) else {
+            return Err(SequenceError::CapacityExhausted(CapacityExhausted::new(
+                CapacityResource::Logits,
+                usize_to_u64(required),
+                usize_to_u64(available),
+            )));
+        };
+        let logits = tensor.to_dtype(DType::F32).map_err(|error| {
+            sequence_candle_failure(self.backend, &self.device, &error, CODE_LOGITS_STORAGE)
+        })?;
+        let host_logits = if self.device.is_cuda() {
+            // Candle's safe device-to-host boundary allocates a temporary
+            // upstream CPU tensor. The project-owned destination remains fixed
+            // and reusable; this CUDA path is not claimed allocation-free.
+            let transferred = logits.to_device(&Device::Cpu).map_err(|error| {
+                sequence_candle_failure(self.backend, &self.device, &error, CODE_LOGITS_TRANSFER)
+            })?;
+            self.device.synchronize().map_err(|_| {
+                synchronization_sequence_failure(self.backend, CODE_LOGITS_TRANSFER)
+            })?;
+            transferred
+        } else {
+            logits
+        };
+        copy_cpu_storage(self.backend, &host_logits, destination, required)?;
+        Ok(required)
     }
 }
 
@@ -110,6 +181,14 @@ impl LoadedModel for CandleLlamaModel {
 
     fn descriptor(&self) -> &ModelDescriptor {
         &self.descriptor
+    }
+
+    fn execution_device(&self) -> ExecutionDevice {
+        self.execution_device
+    }
+
+    fn resident_footprint(&self) -> MemoryFootprint {
+        self.resident_footprint
     }
 
     fn plan_sequence(
@@ -150,12 +229,8 @@ impl LoadedModel for CandleLlamaModel {
                     CODE_RESERVATION,
                 ))
             })?;
-        let cache = Cache::new(true, self.dtype, &self.config, &self.device).map_err(|_| {
-            ModelError::Backend(failure(
-                self.backend,
-                BackendFailureKind::HostMemory,
-                CODE_CACHE_CREATE,
-            ))
+        let cache = Cache::new(true, self.dtype, &self.config, &self.device).map_err(|error| {
+            model_candle_failure(self.backend, &self.device, &error, CODE_CACHE_CREATE)
         })?;
 
         Ok(CandleLlamaSequence {
@@ -222,7 +297,7 @@ impl LoadedModel for CandleLlamaModel {
         let logits = self.execute(cache, position, staging)?;
         let logits_written = if input.emit_logits {
             let required_logits = buffers.required_logits();
-            copy_cpu_logits(self.backend, &logits, buffers.logits_mut(), required_logits)?
+            self.copy_logits(&logits, buffers.logits_mut(), required_logits)?
         } else {
             0
         };
@@ -253,8 +328,7 @@ impl LoadedModel for CandleLlamaModel {
         let position = sequence.position;
         let logits = self.execute(&mut sequence.cache, position, &token)?;
         let required_logits = buffers.required_logits();
-        let logits_written =
-            copy_cpu_logits(self.backend, &logits, buffers.logits_mut(), required_logits)?;
+        let logits_written = self.copy_logits(&logits, buffers.logits_mut(), required_logits)?;
         sequence.position = sequence
             .position
             .checked_add(1)
@@ -267,6 +341,9 @@ impl LoadedModel for CandleLlamaModel {
     }
 
     fn destroy_sequence(&mut self, sequence: &mut Self::Sequence) -> Result<(), SequenceError> {
+        self.device
+            .synchronize()
+            .map_err(|_| synchronization_sequence_failure(self.backend, CODE_SYNCHRONIZE))?;
         sequence.state = SequenceState::Finished;
         Ok(())
     }
@@ -342,27 +419,16 @@ impl BackendSequence for CandleLlamaSequence {
     }
 }
 
-fn copy_cpu_logits(
+fn copy_cpu_storage(
     backend: BackendId,
     tensor: &Tensor,
-    output: &mut [f32],
+    destination: &mut [f32],
     required: usize,
-) -> Result<usize, SequenceError> {
-    if tensor.elem_count() != required {
+) -> Result<(), SequenceError> {
+    if !tensor.is_contiguous() {
         return Err(sequence_failure(backend, CODE_LOGITS_LAYOUT));
     }
-    let available = output.len();
-    let Some(destination) = output.get_mut(..required) else {
-        return Err(SequenceError::CapacityExhausted(CapacityExhausted::new(
-            CapacityResource::Logits,
-            usize_to_u64(required),
-            usize_to_u64(available),
-        )));
-    };
-    let logits = tensor
-        .to_dtype(DType::F32)
-        .map_err(|_| sequence_failure(backend, CODE_LOGITS_STORAGE))?;
-    let (storage, layout) = logits.storage_and_layout();
+    let (storage, layout) = tensor.storage_and_layout();
     let Storage::Cpu(cpu) = &*storage else {
         return Err(sequence_failure(backend, CODE_LOGITS_STORAGE));
     };
@@ -375,11 +441,11 @@ fn copy_cpu_logits(
     let Some(source) = values.get(start..end) else {
         return Err(sequence_failure(backend, CODE_LOGITS_LAYOUT));
     };
-    if source.len() != required {
+    if source.len() != required || destination.len() != required {
         return Err(sequence_failure(backend, CODE_LOGITS_LAYOUT));
     }
     destination.copy_from_slice(source);
-    Ok(required)
+    Ok(())
 }
 
 const fn dtype_bytes(dtype: DType) -> u64 {
@@ -408,4 +474,36 @@ const fn numeric_sequence_error(backend: BackendId) -> SequenceError {
 
 const fn sequence_failure(backend: BackendId, code: u32) -> SequenceError {
     SequenceError::Backend(failure(backend, BackendFailureKind::DeviceExecution, code))
+}
+
+const fn synchronization_sequence_failure(backend: BackendId, code: u32) -> SequenceError {
+    SequenceError::Backend(failure(backend, BackendFailureKind::Synchronization, code))
+}
+
+fn sequence_candle_failure(
+    backend: BackendId,
+    device: &Device,
+    error: &candle_core::Error,
+    code: u32,
+) -> SequenceError {
+    let kind = if device.is_cuda() {
+        candle_cuda_failure_kind(error).unwrap_or(BackendFailureKind::DeviceExecution)
+    } else {
+        BackendFailureKind::DeviceExecution
+    };
+    SequenceError::Backend(failure(backend, kind, code))
+}
+
+fn model_candle_failure(
+    backend: BackendId,
+    device: &Device,
+    error: &candle_core::Error,
+    code: u32,
+) -> ModelError {
+    let kind = if device.is_cuda() {
+        candle_cuda_failure_kind(error).unwrap_or(BackendFailureKind::DeviceExecution)
+    } else {
+        BackendFailureKind::HostMemory
+    };
+    ModelError::Backend(failure(backend, kind, code))
 }

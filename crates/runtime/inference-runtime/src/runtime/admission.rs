@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use domain_contracts::{
-    BackendSequence, CapabilitySet, CapacityExhausted, CapacityResource, DeviceId, DeviceKind,
+    BackendSequence, CapabilitySet, CapacityExhausted, CapacityResource, ExecutionDevice,
     GenerationUsage, LoadConfiguration, LoadedModel, MemoryFootprint, ModelDescriptor, ModelError,
     ModelHandle, ModelId, ModelLifecycle, ModelLifecycleState, ModelLoader, RequestId,
     SequenceConfiguration, SequenceId,
@@ -35,8 +35,7 @@ where
         &mut self,
         model_id: ModelId,
         source: &L::Source,
-        device: DeviceId,
-        device_kind: DeviceKind,
+        execution_device: ExecutionDevice,
     ) -> Result<LoadReceipt, RuntimeError> {
         self.reject_if_shutting_down()?;
         if self.models.contains_key(&model_id) || self.pending_models.contains_key(&model_id) {
@@ -58,8 +57,7 @@ where
         let remaining_budget = remaining_budget(self.limits.memory_budget, self.reserved_footprint);
         let configuration = LoadConfiguration {
             handle,
-            device,
-            device_kind,
+            execution_device,
             memory_budget: remaining_budget,
         };
         let mut lifecycle = ModelLifecycle::new();
@@ -72,7 +70,13 @@ where
             self.limits.memory_budget,
         )?;
         let mut model = self.loader.load(source, &configuration)?;
-        let validation = if model.handle() != handle || model.descriptor() != &plan.descriptor {
+        let actual_device = model.execution_device();
+        let actual_footprint = model.resident_footprint();
+        let validation = if model.handle() != handle
+            || model.descriptor() != &plan.descriptor
+            || actual_device != execution_device
+            || actual_footprint != plan.expected_footprint
+        {
             Err(RuntimeError::BackendContractViolation)
         } else {
             lifecycle.complete_load().map(|_| ()).map_err(Into::into)
@@ -109,6 +113,7 @@ where
 
         let slot = ModelSlot {
             handle,
+            execution_device: actual_device,
             descriptor: plan.descriptor,
             lifecycle,
             model,
@@ -126,6 +131,7 @@ where
 
         Ok(LoadReceipt {
             handle,
+            execution_device: actual_device,
             descriptor: plan.descriptor,
             reserved_footprint: plan.expected_footprint,
         })

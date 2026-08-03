@@ -57,6 +57,7 @@ where
             .values()
             .map(|slot| ModelSnapshot {
                 handle: slot.handle,
+                execution_device: slot.execution_device,
                 lifecycle: slot.lifecycle.state(),
                 descriptor: slot.descriptor,
                 reserved_footprint: slot.reserved_footprint,
@@ -170,6 +171,7 @@ where
         }
         Ok(ModelSnapshot {
             handle: slot.handle,
+            execution_device: slot.execution_device,
             lifecycle: slot.lifecycle.state(),
             descriptor: slot.descriptor,
             reserved_footprint: slot.reserved_footprint,

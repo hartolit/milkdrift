@@ -31,9 +31,9 @@ pub use lifecycle::{
     ModelLifecycle, ModelLifecycleState, UnloadPolicy,
 };
 pub use model::{
-    CapabilitySet, DeviceKind, LoadConfiguration, LoadPlan, MemoryBudget, MemoryFootprint,
-    ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelMetadata, QuantizationFormat,
-    ScalarType, SequenceConfiguration, SequencePlan,
+    CapabilitySet, DeviceKind, ExecutionDevice, LoadConfiguration, LoadPlan, MemoryBudget,
+    MemoryFootprint, MemoryKind, ModelArchitecture, ModelCapabilities, ModelDescriptor,
+    ModelMetadata, QuantizationFormat, ScalarType, SequenceConfiguration, SequencePlan,
 };
 pub use output::{ByteRange, OutputBatch, OutputCursor, OutputRecord, OutputRecordKind};
 pub use sequence::{

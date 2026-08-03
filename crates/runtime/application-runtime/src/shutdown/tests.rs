@@ -5,12 +5,13 @@ use std::time::Duration;
 
 use domain_contracts::{
     BackendFailure, BackendFailureKind, BackendId, BackendSequence, CapabilitySet,
-    DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind, LoadConfiguration,
-    LoadError, LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint, ModelArchitecture,
-    ModelCapabilities, ModelDescriptor, ModelError, ModelHandle, ModelId, ModelLoader,
-    ModelMetadata, PrefillBufferRequirements, PrefillInput, PrefillOutcome, PreparedDecodeBuffers,
-    PreparedPrefillBuffers, QuantizationFormat, RequestId, ScalarType, SequenceConfiguration,
-    SequenceError, SequenceId, SequencePlan, SequenceState, SynchronizationError,
+    DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind, ExecutionDevice,
+    LoadConfiguration, LoadError, LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint,
+    ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError, ModelHandle, ModelId,
+    ModelLoader, ModelMetadata, PrefillBufferRequirements, PrefillInput, PrefillOutcome,
+    PreparedDecodeBuffers, PreparedPrefillBuffers, QuantizationFormat, RequestId, ScalarType,
+    SequenceConfiguration, SequenceError, SequenceId, SequencePlan, SequenceState,
+    SynchronizationError,
 };
 use host_runtime::spawn_named;
 use inference_runtime::{
@@ -42,6 +43,7 @@ struct TestCounts {
 
 struct TestModel {
     handle: ModelHandle,
+    execution_device: ExecutionDevice,
     descriptor: ModelDescriptor,
     fail_unload: bool,
     counts: Arc<TestCounts>,
@@ -98,6 +100,7 @@ impl ModelLoader for TestLoader {
     ) -> Result<Self::Model, LoadError> {
         Ok(TestModel {
             handle: configuration.handle,
+            execution_device: configuration.execution_device,
             descriptor: self.inspect(source)?,
             fail_unload: self.fail_unload,
             counts: Arc::clone(&self.counts),
@@ -120,6 +123,14 @@ impl LoadedModel for TestModel {
 
     fn descriptor(&self) -> &ModelDescriptor {
         &self.descriptor
+    }
+
+    fn execution_device(&self) -> ExecutionDevice {
+        self.execution_device
+    }
+
+    fn resident_footprint(&self) -> MemoryFootprint {
+        self.descriptor.estimated_footprint
     }
 
     fn plan_sequence(
@@ -397,8 +408,7 @@ fn load_model(runtime: &HostedRuntime<TestSource>, ticket: u64) -> Result<LoadRe
             ticket: CommandTicket::new(ticket),
             model_id: ModelId::new(ticket),
             source: TestSource,
-            device: DeviceId::new(0),
-            device_kind: DeviceKind::Cpu,
+            execution_device: ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu),
         })
         .map_err(|_| "load command was rejected".to_owned())?;
     let event = runtime.receive_timeout(TEST_TIMEOUT).map_err(debug_error)?;

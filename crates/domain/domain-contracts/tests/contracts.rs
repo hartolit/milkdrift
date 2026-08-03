@@ -78,6 +78,17 @@ impl domain_contracts::LoadedModel for TestModel {
         &DESCRIPTOR
     }
 
+    fn execution_device(&self) -> domain_contracts::ExecutionDevice {
+        domain_contracts::ExecutionDevice::new(
+            domain_contracts::DeviceId::new(0),
+            domain_contracts::DeviceKind::Cpu,
+        )
+    }
+
+    fn resident_footprint(&self) -> domain_contracts::MemoryFootprint {
+        domain_contracts::MemoryFootprint::default()
+    }
+
     fn plan_sequence(
         &self,
         configuration: &domain_contracts::SequenceConfiguration,

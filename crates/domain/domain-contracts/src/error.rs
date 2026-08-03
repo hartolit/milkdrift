@@ -1,6 +1,6 @@
 //! Allocation-free error taxonomy shared by engines and backend adapters.
 
-use crate::{BackendId, CancellationReason, CapacityExhausted};
+use crate::{BackendId, CancellationReason, CapacityExhausted, MemoryKind};
 
 /// Stable classification of a backend-native failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -14,6 +14,8 @@ pub enum BackendFailureKind {
     HostMemory,
     /// A device-memory allocation or reservation failed.
     DeviceMemory,
+    /// Device initialization or driver selection failed.
+    DeviceInitialization,
     /// A device command failed.
     DeviceExecution,
     /// Backend synchronization failed.
@@ -65,6 +67,8 @@ pub enum LoadError {
     CapacityExhausted(CapacityExhausted),
     /// The available resource budget is insufficient.
     InsufficientMemory {
+        /// Memory domain whose bound was exceeded.
+        kind: MemoryKind,
         /// Required bytes.
         required_bytes: u64,
         /// Available bytes.

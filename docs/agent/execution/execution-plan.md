@@ -1,12 +1,12 @@
 # LLM App execution plan
 
-**Plan status:** No implementation phase is active
+**Plan status:** Phase 11 active; lower-layer CUDA foundation implemented, E1/frontend work remains
 **Status date:** 2026-08-03
 
 ```text
 Phase 10: complete.
 External CPU baseline: complete.
-Phase 11: ready to activate; no implementation has begun.
+Phase 11: active; lower-layer CUDA/E0 foundation implemented, not complete.
 ```
 
 This document owns active and future objectives, work packages, acceptance criteria, and ordering. Current product truth lives in [implementation status](../../project/implementation-status.md), repeatable commands in [validation](../../project/validation.md), performance methodology and results in [performance evidence](../../project/performance.md), and closed-tree chronology in [execution history](history.md).
@@ -93,9 +93,11 @@ The observed run used `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at `fe8a4ea1ffedaf415
 
 ## Phase 11 — GPU execution
 
-**Status:** Ready to activate; no Phase 11 implementation has begun.
+**Status:** Active. The lower-layer Candle/E0 CUDA foundation is implemented and hardware-executed; E1/frontend selection and the remaining product evidence are not complete.
 
-**Activation prerequisite:** satisfied by the observed external real-product baseline and clean accepted CPU tree. Activation remains a separate work decision; this Phase 10 closure adds no GPU implementation or capability claim.
+**Activation prerequisite:** satisfied by the observed external real-product baseline and clean accepted CPU tree.
+
+**Current handoff:** `domain-contracts` owns verified `ExecutionDevice` identity, `candle-backend` keeps CPU default while adding non-default Linux CUDA, and E0 verifies actual device/footprint and preserves accounting/cleanup. CUDA ordinal 0 has executed the committed fixture on an RTX 5070 Ti at compute capability 12.0. Work package 11.4 and product-facing portions of 11.5 remain for the next session. Phase 11 must not be marked complete until those application/frontend and complete evidence requirements are satisfied.
 
 ### Objective
 

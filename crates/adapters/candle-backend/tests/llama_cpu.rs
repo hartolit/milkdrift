@@ -12,11 +12,11 @@ use candle_backend::{
 use candle_core::{DType, Device, Tensor};
 use domain_contracts::{
     BackendId, BackendSequence, CancellationReason, CancellationStatus, CapabilitySet,
-    DecodeBuffers, DecodeInput, DecodeOutcome, DeviceId, DeviceKind, DrainTimeout, LifecycleAction,
-    LoadConfiguration, LoadedModel, MemoryBudget, ModelDescriptor, ModelGeneration, ModelHandle,
-    ModelId, ModelLifecycle, ModelLoader, MonotonicMillis, PrefillBuffers, PrefillInput,
-    PrefillOutcome, SequenceConfiguration, SequenceId, SequenceState, TokenId, UnloadPolicy,
-    decode_checked, prefill_checked,
+    DecodeBuffers, DecodeInput, DecodeOutcome, DeviceId, DeviceKind, DrainTimeout, ExecutionDevice,
+    LifecycleAction, LoadConfiguration, LoadedModel, MemoryBudget, ModelDescriptor,
+    ModelGeneration, ModelHandle, ModelId, ModelLifecycle, ModelLoader, MonotonicMillis,
+    PrefillBuffers, PrefillInput, PrefillOutcome, SequenceConfiguration, SequenceId, SequenceState,
+    TokenId, UnloadPolicy, decode_checked, prefill_checked,
 };
 
 type TestResult = Result<(), &'static str>;
@@ -29,10 +29,16 @@ fn loads_two_sequences_and_unloads_after_bounded_drain() -> TestResult {
     let configuration = load_configuration();
     let descriptor = loader.inspect(&source).map_err(|_| "inspect model")?;
     assert_capabilities(&descriptor);
+    let plan = loader
+        .plan_load(&source, &configuration)
+        .map_err(|_| "plan model")?;
+    assert_eq!(plan.expected_footprint, descriptor.estimated_footprint);
 
     let mut model = loader
         .load(&source, &configuration)
         .map_err(|_| "load model")?;
+    assert_eq!(model.execution_device(), configuration.execution_device);
+    assert_eq!(model.resident_footprint(), plan.expected_footprint);
     let sequence_configuration = SequenceConfiguration::new(
         NonZeroU32::new(16).ok_or("maximum tokens")?,
         NonZeroU32::new(8).ok_or("maximum prefill")?,
@@ -313,29 +319,60 @@ fn rejects_weight_dtype_mismatch() -> TestResult {
 }
 
 #[test]
-fn rejects_non_cpu_and_insufficient_memory_plans() -> TestResult {
+fn rejects_invalid_cpu_identity_unsupported_devices_and_insufficient_host_memory() -> TestResult {
     let fixture = TinyLlamaFixture::create()?;
     let source = fixture.source()?;
     let loader = CandleLlamaLoader::new(BackendId::new(2));
     let mut configuration = load_configuration();
-    configuration.device_kind = DeviceKind::Cuda;
-    assert!(loader.plan_load(&source, &configuration).is_err());
+    configuration.execution_device = ExecutionDevice::new(DeviceId::new(1), DeviceKind::Cpu);
+    assert_eq!(
+        loader.plan_load(&source, &configuration),
+        Err(domain_contracts::LoadError::InvalidConfiguration)
+    );
 
-    configuration.device_kind = DeviceKind::Cpu;
-    configuration.device = DeviceId::new(1);
-    assert!(loader.plan_load(&source, &configuration).is_err());
+    for kind in [DeviceKind::Metal, DeviceKind::Accelerator(1)] {
+        configuration.execution_device = ExecutionDevice::new(DeviceId::new(0), kind);
+        assert!(matches!(
+            loader.plan_load(&source, &configuration),
+            Err(domain_contracts::LoadError::Backend(failure))
+                if failure.kind == domain_contracts::BackendFailureKind::Unsupported
+        ));
+    }
 
-    configuration.device = DeviceId::new(0);
+    configuration.execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu);
     configuration.memory_budget.host_bytes = 1;
-    assert!(loader.plan_load(&source, &configuration).is_err());
+    assert!(matches!(
+        loader.plan_load(&source, &configuration),
+        Err(domain_contracts::LoadError::InsufficientMemory {
+            kind: domain_contracts::MemoryKind::Host,
+            ..
+        })
+    ));
+    Ok(())
+}
+
+#[cfg(not(feature = "cuda"))]
+#[test]
+fn cuda_request_fails_explicitly_when_support_is_not_compiled() -> TestResult {
+    let fixture = TinyLlamaFixture::create()?;
+    let source = fixture.source()?;
+    let loader = CandleLlamaLoader::new(BackendId::new(4));
+    let mut configuration = load_configuration();
+    configuration.execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda);
+    configuration.memory_budget.device_bytes = u64::MAX;
+
+    assert!(matches!(
+        loader.plan_load(&source, &configuration),
+        Err(domain_contracts::LoadError::Backend(failure))
+            if failure.kind == domain_contracts::BackendFailureKind::Unsupported
+    ));
     Ok(())
 }
 
 const fn load_configuration() -> LoadConfiguration {
     LoadConfiguration {
         handle: ModelHandle::new(ModelId::new(9), ModelGeneration::new(1)),
-        device: DeviceId::new(0),
-        device_kind: DeviceKind::Cpu,
+        execution_device: ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu),
         memory_budget: MemoryBudget {
             host_bytes: u64::MAX,
             device_bytes: 0,

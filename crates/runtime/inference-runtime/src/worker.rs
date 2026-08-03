@@ -555,12 +555,11 @@ where
             ticket,
             model_id,
             source,
-            device,
-            device_kind,
+            execution_device,
         } => (
             RuntimeEvent::ModelLoaded {
                 ticket,
-                result: runtime.load_model(model_id, &source, device, device_kind),
+                result: runtime.load_model(model_id, &source, execution_device),
             },
             None,
         ),

@@ -8,12 +8,13 @@ use std::time::{Duration, Instant};
 use domain_contracts::{
     BackendFailure, BackendFailureKind, BackendId, BackendSequence, CapabilitySet,
     DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind, DrainTimeout,
-    FinishReason, LoadConfiguration, LoadError, LoadPlan, LoadedModel, MemoryBudget,
-    MemoryFootprint, ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError,
-    ModelGeneration, ModelHandle, ModelId, ModelLoader, ModelMetadata, PrefillBufferRequirements,
-    PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers,
-    QuantizationFormat, RequestId, ScalarType, SequenceConfiguration, SequenceError, SequenceId,
-    SequencePlan, SequenceState, SynchronizationError, TokenId, UnloadPolicy,
+    ExecutionDevice, FinishReason, LoadConfiguration, LoadError, LoadPlan, LoadedModel,
+    MemoryBudget, MemoryFootprint, ModelArchitecture, ModelCapabilities, ModelDescriptor,
+    ModelError, ModelGeneration, ModelHandle, ModelId, ModelLoader, ModelMetadata,
+    PrefillBufferRequirements, PrefillInput, PrefillOutcome, PreparedDecodeBuffers,
+    PreparedPrefillBuffers, QuantizationFormat, RequestId, ScalarType, SequenceConfiguration,
+    SequenceError, SequenceId, SequencePlan, SequenceState, SynchronizationError, TokenId,
+    UnloadPolicy,
 };
 use host_runtime::TokenOutputRecordKind;
 use inference_runtime::{
@@ -26,6 +27,10 @@ use sampling::SamplingConfig;
 
 const BACKEND: BackendId = BackendId::new(93);
 const MODEL: ModelId = ModelId::new(1);
+
+const fn cpu_device() -> ExecutionDevice {
+    ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu)
+}
 const GENERATION_OPERATIONS: CapabilitySet = CapabilitySet::PREFILL
     .union(CapabilitySet::INCREMENTAL_DECODE)
     .union(CapabilitySet::MULTIPLE_SEQUENCES)
@@ -142,7 +147,9 @@ struct FakeLoader {
 
 struct FakeModel {
     handle: ModelHandle,
+    execution_device: ExecutionDevice,
     descriptor: ModelDescriptor,
+    resident_footprint: MemoryFootprint,
     source: FakeSource,
     counters: Arc<Mutex<Counters>>,
     remaining_destroy_failures: u32,
@@ -221,7 +228,9 @@ impl ModelLoader for FakeLoader {
         drop(counters);
         Ok(FakeModel {
             handle: configuration.handle,
+            execution_device: configuration.execution_device,
             descriptor: self.inspect(source)?,
+            resident_footprint: model_footprint(),
             source: source.clone(),
             counters: Arc::clone(&self.counters),
             remaining_destroy_failures: source.destroy_failures,
@@ -240,6 +249,14 @@ impl LoadedModel for FakeModel {
 
     fn descriptor(&self) -> &ModelDescriptor {
         &self.descriptor
+    }
+
+    fn execution_device(&self) -> ExecutionDevice {
+        self.execution_device
+    }
+
+    fn resident_footprint(&self) -> MemoryFootprint {
+        self.resident_footprint
     }
 
     fn plan_sequence(
@@ -1318,8 +1335,7 @@ fn cancellation_queued_with_admission_is_observed_before_prefill() -> TestResult
             ticket: CommandTicket::new(1),
             model_id: MODEL,
             source,
-            device: DeviceId::new(0),
-            device_kind: DeviceKind::Cpu,
+            execution_device: cpu_device(),
         })
         .map_err(|_| "load command rejected")?;
     entered
@@ -1774,7 +1790,7 @@ fn synchronous_runtime(source: &FakeSource) -> TestResult<SynchronousParts> {
         ),
     );
     let handle = runtime
-        .load_model(MODEL, source, DeviceId::new(0), DeviceKind::Cpu)
+        .load_model(MODEL, source, cpu_device())
         .map_err(debug_error)?
         .handle;
     Ok((runtime, counters, handle))
@@ -1863,8 +1879,7 @@ fn load_model(
             ticket,
             model_id,
             source,
-            device: DeviceId::new(0),
-            device_kind: DeviceKind::Cpu,
+            execution_device: cpu_device(),
         })
         .map_err(|_| "load command rejected")?;
     let event = hosted

@@ -7,12 +7,12 @@ use std::rc::Rc;
 use domain_contracts::{
     BackendFailure, BackendFailureKind, BackendId, BackendSequence, CancellationReason,
     CapabilitySet, DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind,
-    LoadConfiguration, LoadError, LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint,
-    ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError, ModelHandle, ModelId,
-    ModelLoader, ModelMetadata, MonotonicMillis, PrefillBufferRequirements, PrefillInput,
-    PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers, QuantizationFormat, RequestId,
-    ScalarType, SequenceConfiguration, SequenceError, SequenceId, SequencePlan, SequenceState,
-    SynchronizationError, UnloadPolicy,
+    ExecutionDevice, LoadConfiguration, LoadError, LoadPlan, LoadedModel, MemoryBudget,
+    MemoryFootprint, ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError,
+    ModelHandle, ModelId, ModelLoader, ModelMetadata, MonotonicMillis, PrefillBufferRequirements,
+    PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers,
+    QuantizationFormat, RequestId, ScalarType, SequenceConfiguration, SequenceError, SequenceId,
+    SequencePlan, SequenceState, SynchronizationError, UnloadPolicy,
 };
 use inference_runtime::{
     CleanupPoll, CleanupResource, CleanupRetryPolicy, FailureClass, InferenceRuntime, RuntimeError,
@@ -24,7 +24,7 @@ const BACKEND_ID: BackendId = BackendId::new(92);
 type TestResult = Result<(), String>;
 
 #[derive(Clone, Copy, Default)]
-struct Faults(u16);
+struct Faults(u32);
 
 impl Faults {
     const WRONG_MODEL_HANDLE: Self = Self(1 << 0);
@@ -43,6 +43,9 @@ impl Faults {
     const ZERO_MAXIMUM_PREFILL: Self = Self(1 << 13);
     const CONTEXT_EXCEEDS_METADATA: Self = Self(1 << 14);
     const PREFILL_EXCEEDS_CONTEXT: Self = Self(1 << 15);
+    const WRONG_DEVICE_ID: Self = Self(1 << 16);
+    const WRONG_DEVICE_KIND: Self = Self(1 << 17);
+    const WRONG_MODEL_FOOTPRINT: Self = Self(1 << 18);
 
     const fn contains(self, fault: Self) -> bool {
         self.0 & fault.0 != 0
@@ -71,7 +74,9 @@ struct FaultLoader {
 
 struct FaultModel {
     handle: ModelHandle,
+    execution_device: ExecutionDevice,
     descriptor: ModelDescriptor,
+    resident_footprint: MemoryFootprint,
     faults: Faults,
     counts: Rc<CleanupCounts>,
 }
@@ -175,9 +180,23 @@ impl ModelLoader for FaultLoader {
         } else {
             configuration.handle
         };
+        let mut execution_device = configuration.execution_device;
+        if self.faults.contains(Faults::WRONG_DEVICE_ID) {
+            execution_device.id = DeviceId::new(execution_device.id.get().saturating_add(1));
+        }
+        if self.faults.contains(Faults::WRONG_DEVICE_KIND) {
+            execution_device.kind = DeviceKind::Cuda;
+        }
+        let mut resident_footprint = descriptor.estimated_footprint;
+        if self.faults.contains(Faults::WRONG_MODEL_FOOTPRINT) {
+            resident_footprint.host_working_bytes =
+                resident_footprint.host_working_bytes.saturating_add(1);
+        }
         Ok(FaultModel {
             handle,
+            execution_device,
             descriptor,
+            resident_footprint,
             faults: self.faults,
             counts: Rc::clone(&self.counts),
         })
@@ -193,6 +212,14 @@ impl LoadedModel for FaultModel {
 
     fn descriptor(&self) -> &ModelDescriptor {
         &self.descriptor
+    }
+
+    fn execution_device(&self) -> ExecutionDevice {
+        self.execution_device
+    }
+
+    fn resident_footprint(&self) -> MemoryFootprint {
+        self.resident_footprint
     }
 
     fn plan_sequence(
@@ -319,6 +346,21 @@ fn wrong_model_handle_is_explicitly_cleaned_without_publication() {
 }
 
 #[test]
+fn wrong_device_id_after_native_load_is_cleaned_without_publication() {
+    assert_model_admission_mismatch_is_cleaned(Faults::WRONG_DEVICE_ID);
+}
+
+#[test]
+fn wrong_device_kind_after_native_load_is_cleaned_without_publication() {
+    assert_model_admission_mismatch_is_cleaned(Faults::WRONG_DEVICE_KIND);
+}
+
+#[test]
+fn wrong_loaded_footprint_is_cleaned_without_publication() {
+    assert_model_admission_mismatch_is_cleaned(Faults::WRONG_MODEL_FOOTPRINT);
+}
+
+#[test]
 fn mismatched_metadata_is_explicitly_cleaned_without_publication() {
     let counts = Rc::new(CleanupCounts::default());
     let mut runtime = runtime(Faults::MISMATCHED_METADATA, Rc::clone(&counts));
@@ -378,9 +420,9 @@ fn descriptor_numeric_fields_must_be_nonzero_and_consistent() {
 }
 
 #[test]
-fn model_cleanup_failure_preserves_primary_error_ownership_and_accounting() {
+fn device_mismatch_cleanup_failure_preserves_primary_error_ownership_and_accounting() {
     let counts = Rc::new(CleanupCounts::default());
-    let faults = Faults::WRONG_MODEL_HANDLE.union(Faults::FAIL_MODEL_CLEANUP);
+    let faults = Faults::WRONG_DEVICE_ID.union(Faults::FAIL_MODEL_CLEANUP);
     let mut runtime = runtime(faults, Rc::clone(&counts));
 
     let result = load(&mut runtime);
@@ -695,6 +737,19 @@ fn shutdown_reports_model_cleanup_exhaustion_with_shutdown_as_primary() -> TestR
     Ok(())
 }
 
+fn assert_model_admission_mismatch_is_cleaned(faults: Faults) {
+    let counts = Rc::new(CleanupCounts::default());
+    let mut runtime = runtime(faults, Rc::clone(&counts));
+
+    assert_eq!(
+        load(&mut runtime),
+        Err(RuntimeError::BackendContractViolation)
+    );
+    assert_eq!(counts.model_loads.get(), 1);
+    assert_eq!(counts.model_cleanups.get(), 1);
+    assert_empty(&runtime);
+}
+
 fn assert_sequence_contract_rollback(faults: Faults) -> TestResult {
     let counts = Rc::new(CleanupCounts::default());
     let mut runtime = runtime(faults, Rc::clone(&counts));
@@ -740,8 +795,7 @@ fn load(
     runtime.load_model(
         ModelId::new(1),
         &FaultSource,
-        DeviceId::new(0),
-        DeviceKind::Cpu,
+        ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu),
     )
 }
 

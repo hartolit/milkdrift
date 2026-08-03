@@ -10,9 +10,9 @@ use std::time::{Duration, Instant};
 
 use candle_backend::{CandleLlamaLoader, CandleLlamaSource, CandleScalarType};
 use domain_contracts::{
-    BackendId, CancellationReason, DeviceId, DeviceKind, FinishReason, MemoryBudget,
-    MemoryFootprint, ModelArchitecture, ModelHandle, ModelId, RequestId, SequenceConfiguration,
-    SequenceId, TokenId, UnloadPolicy,
+    BackendId, CancellationReason, DeviceId, DeviceKind, ExecutionDevice, FinishReason,
+    MemoryBudget, MemoryFootprint, ModelArchitecture, ModelHandle, ModelId, RequestId,
+    SequenceConfiguration, SequenceId, TokenId, UnloadPolicy,
 };
 use host_runtime::TokenOutputRecordKind;
 use inference_runtime::{
@@ -235,8 +235,7 @@ fn load_model(
             ticket: CommandTicket::new(1),
             model_id: MODEL,
             source,
-            device: DeviceId::new(0),
-            device_kind: DeviceKind::Cpu,
+            execution_device: ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu),
         })
         .map_err(|error| SmokeError::runtime(format!("load command rejected: {error:?}")))?;
     match receive(hosted, "model load")? {

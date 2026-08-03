@@ -3,8 +3,9 @@
 use std::collections::BTreeMap;
 
 use domain_contracts::{
-    BackendSequence, GenerationUsage, LoadedModel, MemoryFootprint, ModelDescriptor,
-    ModelGeneration, ModelHandle, ModelId, ModelLifecycle, ModelLoader, RequestId, SequenceId,
+    BackendSequence, ExecutionDevice, GenerationUsage, LoadedModel, MemoryFootprint,
+    ModelDescriptor, ModelGeneration, ModelHandle, ModelId, ModelLifecycle, ModelLoader, RequestId,
+    SequenceId,
 };
 
 use crate::{CleanupFailureReport, CleanupRetryState, RuntimeError, RuntimeLimits};
@@ -46,6 +47,7 @@ where
     M: LoadedModel,
 {
     handle: ModelHandle,
+    execution_device: ExecutionDevice,
     descriptor: ModelDescriptor,
     lifecycle: ModelLifecycle,
     model: M,

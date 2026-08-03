@@ -4,13 +4,23 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "CPU Llama inference adapter implemented with Hugging Face Candle"
+description = "CPU and feature-gated CUDA Llama inference adapter implemented with Hugging Face Candle"
 publish = false
+
+[features]
+default = []
+cuda = [
+    "dep:cudarc",
+    "candle-core/cuda",
+    "candle-nn/cuda",
+    "candle-transformers/cuda",
+]
 
 [dependencies]
 candle-core.workspace = true
 candle-nn.workspace = true
 candle-transformers.workspace = true
+cudarc = { workspace = true, optional = true }
 domain-contracts.workspace = true
 serde_json.workspace = true
 

@@ -212,6 +212,76 @@ cargo test --locked -p candle-backend --test generate_synthetic_fixture -- --ign
 
 Run it only when intentionally replacing the fixture, then review generated files and update provenance hashes in the same change.
 
+## Phase 11 lower-layer CUDA validation
+
+The canonical gate remains CPU-only. CUDA validation is separate, sequential, Linux x86_64 only, and requires no model download. Before any CUDA Cargo command, require an NVIDIA driver that recognizes the intended device, CUDA Toolkit 12.8 or newer, and the Blackwell build capability:
+
+```sh
+nvidia-smi
+nvcc --version
+printf 'CUDA_COMPUTE_CAP=%s\n' "${CUDA_COMPUTE_CAP:-unset}"
+```
+
+For the first executed target, set `CUDA_COMPUTE_CAP=120` for every Cargo invocation. Compile the adapter feature without enabling workspace-wide features:
+
+```sh
+CUDA_COMPUTE_CAP=120 cargo check --locked \
+    -p candle-backend \
+    --all-targets \
+    --features cuda
+
+CUDA_COMPUTE_CAP=120 cargo test --locked \
+    -p candle-backend \
+    --features cuda \
+    --no-run
+
+CUDA_COMPUTE_CAP=120 cargo clippy --locked \
+    -p candle-backend \
+    --all-targets \
+    --features cuda \
+    -- -D warnings
+```
+
+A CUDA-enabled binary must also prove that explicit CPU selection remains usable:
+
+```sh
+CUDA_COMPUTE_CAP=120 cargo test --locked \
+    -p candle-backend \
+    --features cuda \
+    --test llama_cuda
+```
+
+Hardware execution is ignored by default and additionally requires `MILKDRIFT_CUDA_TEST=1`. The adapter target proves CUDA 0 discovery, RTX 5070 Ti identity and compute capability 12.0, unavailable-ordinal failure, F32 CPU/CUDA fixture-logit comparison, BF16 execution policy, device memory charging, synchronization, sequence destruction, and unload:
+
+```sh
+MILKDRIFT_CUDA_TEST=1 \
+CUDA_COMPUTE_CAP=120 \
+cargo test --release --locked \
+    -p candle-backend \
+    --features cuda \
+    --test llama_cuda \
+    -- \
+    --ignored \
+    --nocapture
+```
+
+The E0 hardware target proves verified receipt/snapshot identity, scheduled prefill and incremental decode, CPU-side sampling from exact transferred logits, sequence cleanup, model unload, and zero post-unload accounting:
+
+```sh
+MILKDRIFT_CUDA_TEST=1 \
+CUDA_COMPUTE_CAP=120 \
+cargo test --release --locked \
+    -p inference-runtime \
+    --features cuda \
+    --test native_backend_generation \
+    -- \
+    --ignored \
+    --exact candle_cuda_fixture_covers_e0_generation_accounting_and_lifecycle \
+    --nocapture
+```
+
+Do not run these tests in ordinary CPU CI, do not use `--all-features` for the workspace, and do not interpret compilation as hardware execution evidence.
+
 ## External CPU product baseline
 
 `runtime-benchmarks` owns the sole current external E1 orchestration path. The external binary fixes `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`; repository and revision overrides are rejected. The pinned revision's [model-card metadata](https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/raw/fe8a4ea1ffedaf415f4da2f062534de366a451e6/README.md) declares `apache-2.0`. Record that upstream declaration and source without making a broader legal conclusion.
