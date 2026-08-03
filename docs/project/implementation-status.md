@@ -1,11 +1,11 @@
 # Current implementation status
 
-**Status date:** 2026-08-02
+**Status date:** 2026-08-03
 
 ```text
-Phase 10 repository infrastructure and synthetic acceptance: complete.
-External real-product baseline: outstanding.
-Phase 11: not active.
+Phase 10: complete.
+External CPU product baseline: complete.
+Phase 11: ready to activate; not yet implemented.
 ```
 
 This page owns current product support, unsupported behavior, lifecycle guarantees, and the existence of benchmark infrastructure. It does not own command logs or timing intervals. Use [performance evidence](performance.md) for methodology/results, [validation](validation.md) for procedures, [execution history](../agent/execution/history.md) for chronology, and the [execution plan](../agent/execution/execution-plan.md) for future work.
@@ -64,12 +64,13 @@ Benchmark infrastructure exists without changing production support or public AP
 | `sampling` Criterion target | Public sampler matrix with separate `sample_only` and `restore_and_sample` boundaries, eight policy/history cases at three vocabulary sizes, and three stop-matching cases | Component regression only; the ordinary matrix test executes every case once for correctness |
 | `domain-contracts` allocation target | Harness-free executable with isolated prefill/decode allocator regions | Deterministic project-allocation gate, not native/device allocation attribution |
 | `runtime-benchmarks` synthetic runner | Bounded download-free hosted-E0 lifecycle/output/accounting/RSS cycles plus fresh E1 start/shutdown cycles | Synthetic integration evidence, not product-model performance or quality |
+| `runtime-benchmarks` external runner | Sole explicit-network public-E1 path for the exact supported TinyLlama revision; compatible chat, controlled direct completion, release, unload, shutdown, timing, and process RSS | One current local CPU product baseline, not model quality, general serving capacity, another model/scalar/device, or a threshold |
 | `runtime-benchmarks` Criterion target | Hosted public-E0 checked-prefill and incremental-decode submission-to-event measurements | Component-like hosted boundary, not raw Candle kernels or E1 latency |
-| Stable report support | Versioned JSON with Git/toolchain/host/workload/fixture identity, typed lifecycle/accounting, and sampled Linux process memory | Generated output remains under root `target`; tokens, text, secrets, and broad environment dumps are excluded |
+| Stable report support | Separate versioned synthetic and external JSON with Git/toolchain/host/workload/model identity, typed lifecycle/accounting, and sampled Linux process memory | Generated output remains under root `target`; tokens, text, secrets, and broad environment dumps are excluded |
 
-`benchmarks/runtime` is the sole root benchmark package. It is non-publishable, has no build script or incoming dependency, uses the root lockfile/target, and consumes only reviewed public production APIs. Curated methodology and the exact Commit A results are canonical in [performance evidence](performance.md).
+`benchmarks/runtime` is the sole root benchmark package. It is non-publishable, has no build script or incoming dependency, uses the root lockfile/target, and consumes only reviewed public production APIs. Its normal baseline remains download-free; the separate external binary requires explicit network authorization and a canonical explicit cache. Curated methodology and exact synthetic/external results are canonical in [performance evidence](performance.md).
 
-`runtime-benchmarks` is currently synthetic-only. External product evidence remains outstanding; [performance evidence](performance.md#external-product-evidence) owns the complete status and limitations.
+A current exact external CPU product baseline now exists for the supported TinyLlama revision. CPU remains the only supported device, and no GPU capability has been implemented.
 
 ## Unsupported and deferred behavior
 
@@ -85,9 +86,9 @@ Benchmark infrastructure exists without changing production support or public AP
 
 ## Acceptance state
 
-The accepted code-under-test is Commit A `efcd36e320a97d61d3f982619fee182410c514df`, tree `f80c5d6c746376df81d7ac8e7281ac9736e44d88`. It has clean local exact-tree repository acceptance and controlled download-free measurements recorded in [history](../agent/execution/history.md#phase-10--repository-infrastructure-and-synthetic-acceptance) and [performance evidence](performance.md). Local evidence is not a claim that a remote GitHub CI run passed.
+Synthetic acceptance remains attributable to Commit A `efcd36e320a97d61d3f982619fee182410c514df`, tree `f80c5d6c746376df81d7ac8e7281ac9736e44d88`. The external CPU baseline executed on clean Commit C `771c0de4d72565a6302ca60f3b6bafd8c807962b`, tree `3d5b6ccc5ecc959de7cb370c1147f76e4cd32e3f`. Exact local evidence is recorded in [history](../agent/execution/history.md) and [performance evidence](performance.md). Local evidence is not a claim that a remote GitHub Actions run passed.
 
-External product evidence remains outstanding. The historical E1 Hub smoke proves an older pinned correctness path only; it is not current product-performance evidence. A future baseline must actually run an exact model/revision through a narrow authorized opt-in path before Phase 11 is activated.
+Phase 10 is complete. Phase 11 is ready to activate from the accepted CPU tree, but no Phase 11 implementation has begun and no GPU support is claimed.
 
 ## Historical context
 

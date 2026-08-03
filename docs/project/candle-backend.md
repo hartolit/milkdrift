@@ -48,7 +48,7 @@ The deterministic fixture assigns distinguishable token embeddings and LM-head r
 
 `inference-runtime/tests/native_backend_generation.rs` drives `CandleLlamaLoader` through the hosted E0 scheduler. It covers token-limit and EOS completion, seeded repeatability, one-token output backpressure, cancellation between backend calls, terminal/released publication, accounting release, unload, an empty post-unload snapshot, shutdown, and worker join.
 
-The opt-in external-model procedure is the E1 [Rust-native Candle/Hub smoke](validation.md#rust-native-candle-hub-smoke). It resolves the exact immutable artifact through `hf-hub-adapter`; ordinary adapter/runtime tests remain download-free.
+The opt-in external-model procedure is the authoritative E1 [external CPU product baseline](validation.md#external-cpu-product-baseline). It resolves the exact immutable artifact through `hf-hub-adapter`; ordinary adapter/runtime tests remain download-free.
 
 ## Allocation capability
 

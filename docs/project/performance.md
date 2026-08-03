@@ -15,7 +15,7 @@ Hard harness timeouts stop hangs only. Lifecycle, fixture, identity, output, cle
 | Hosted E0 component-like | `benchmarks/runtime/benches/runtime.rs` | Public command submission through matching completion event, including bounded transport and dispatch | Raw Candle kernel timing, E1/product latency, RSS, or full-generation throughput |
 | Synthetic system/integration | `benchmarks/runtime` normal `baseline` binary | Download-free hosted-E0 lifecycle/output/accounting/RSS observations and fresh E1 start/shutdown cycles | Product-model speed or quality, representative scale, steady-state serving, or device memory |
 | Compile-only | Workspace benchmark compilation | Target/API compatibility | Runtime correctness or performance |
-| External real-product | Not currently implemented in `runtime-benchmarks` | Nothing on the current tree | No current product baseline may be inferred |
+| External real-product | `runtime-benchmarks` `external-baseline` binary | One exact local Candle/Hub/Safetensors/BF16/CPU product lifecycle and controlled direct-completion timing on Commit C | Model quality, other hosts/models/scalars, serving capacity, GPU behavior, or a regression threshold |
 
 ## Sampling methodology
 
@@ -225,11 +225,97 @@ Elevated post-unload RSS was not treated as retained model ownership because all
 
 ## External product evidence
 
-The original Phase 10 benchmark implementation included a network-dependent real-product mode, but it was never executed and was subsequently removed during benchmark simplification. The current CLI intentionally rejects its former product/network options.
+### Exact code-under-test and model identity
 
-No network access was authorized for the Commit A closure. No external model was resolved, loaded, or measured, and no product output, latency, throughput, lifecycle, or memory baseline is claimed. The historical E1 Hub smoke is correctness evidence for an older checkpoint, not current performance evidence.
+The authoritative external run executed the release `external-baseline` binary directly after building it on clean Commit C. The source/index remained clean before and after execution; generated state existed only beneath ignored root `target/`.
 
-External product evidence remains a prerequisite before Phase 11. A future path must be narrow, opt-in, exact-model/revision, cache-safe, actually executed through public E1 behavior, and documented here only after observation.
+| Field | Recorded value |
+|---|---|
+| Commit C | `771c0de4d72565a6302ca60f3b6bafd8c807962b` |
+| Commit C tree | `3d5b6ccc5ecc959de7cb370c1147f76e4cd32e3f` |
+| Raw report | `target/phase10-evidence/external.json`; schema version 1; `dirty: false` |
+| Repository | `TinyLlama/TinyLlama-1.1B-Chat-v1.0` |
+| Requested revision | `fe8a4ea1ffedaf415f4da2f062534de366a451e6` |
+| Resolved immutable commit | `fe8a4ea1ffedaf415f4da2f062534de366a451e6` |
+| Composition | Candle / Hugging Face Hub / CPU / Safetensors / Llama / BF16 |
+| Vocabulary / context / prefill capacities | 32,000 / 2,048 / 2,048 tokens |
+| Upstream-declared license metadata | `apache-2.0`, from the pinned revision's [model card](https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/raw/fe8a4ea1ffedaf415f4da2f062534de366a451e6/README.md); this records the upstream declaration, not a broader legal conclusion |
+| Explicit cache | `target/phase10-external-cache`; empty before resolution; populated only as an ignored generated artifact |
+
+The initially empty cache means the 21.031913121-second resolution interval included first acquisition and local cache population. It is still the complete public E1 resolve interval—not a pure network-transfer benchmark—because it also includes Hub metadata handling plus artifact/tokenizer/configuration validation and local I/O.
+
+### Controlled environment and workload
+
+| Field | Recorded value |
+|---|---|
+| Rust / Cargo / LLVM | `rustc 1.96.1`; `cargo 1.96.1`; LLVM `22.1.2` |
+| Host target / profile | `x86_64-unknown-linux-gnu`; `release` |
+| OS / kernel | Linux / `7.1.4-arch1-1` |
+| CPU | AMD Ryzen 9 5950X; 16 physical cores; 32 logical CPUs |
+| RAM | 33,556,660,224 bytes |
+| Thread controls | All eight allowlisted runtime thread-control variables were unset |
+| Resource preflight | Approximately 19 GiB available memory and 187 GiB free disk; no `cargo`, `rustc`, or external-model process active before model execution |
+| Runtime ownership | One `ApplicationRuntime`, one resolved/loaded model, and sequential requests only |
+| Chat proof | Message identifier `tinyllama-local-inference-chat-proof-v1`; SHA-256 `85edb99e63b9fcedf242043a55ba131e0ca9a2bfa7349ce6a1da81f90dbecd0e`; 73 bytes; maximum 24 generated tokens; exact profile-owned EOS policy |
+| Direct completion | Prompt identifier `deterministic-resource-cleanup-completion-v1`; SHA-256 `a4b6e5d148e9f1b2b2cf962ec4ce5a0e4f40e21866b7b602cdeb80b1f3a6f5a4`; 93 bytes; 1 warmup then 3 measured samples; exactly 32 generated tokens each |
+| Sampling | Temperature 1.0; top-k 1; top-p 1.0; min-p 0.0; repetition penalty 1.0; repetition window 0; fixed seed 39 |
+| Direct termination controls | No EOS tokens and no textual stop sequences; token-limit completion required |
+
+No decoded model text or generated token IDs were retained in the report or curated evidence.
+
+### Compatibility and lifecycle results
+
+The compatible chat submission was accepted through the public conversation API. It observed matching request identity, `GenerationStarted`, non-empty decoded output, terminal and released states, and the matching terminal application event. It completed by end-of-sequence with 30 prompt tokens, 6 generated tokens, and 27 decoded bytes. The user record and completed active assistant attempt were validated after release, then public conversation clear left conversation and context diagnostics empty.
+
+The direct warmup reached token limit with 17 prompt tokens, exactly 32 generated tokens, 150 decoded bytes, matching terminal/released/event outcomes, and clean release. All three measured requests then produced the same usage and decoded-byte counts sequentially against the already loaded model. No request entered cleanup-pending or cleanup-exhausted state, no worker disconnected, and no active generation remained after release.
+
+`ModelUnloadBehavior::RejectIfBusy` completed with zero cancelled requests and left no public loaded model or active generation while both workers remained available. Explicit bounded shutdown returned successfully, left Hub and inference unavailable with no loaded model or active generation, and the temporary redb workspace was removed. Successful E1 lifecycle events and public state establish application-visible ownership cleanup; process RSS is a separate coarse observation.
+
+### External timing results
+
+Durations are submission/call-to-observation intervals from the one recorded run. Operational deadlines were hang bounds only and no wall-clock acceptance threshold was applied. The warmup is excluded from measured timing summaries.
+
+| Lifecycle measurement | Recorded duration |
+|---|---:|
+| `ApplicationRuntime::start` | 0.053289329 s |
+| Resolve plus first acquisition/cache population | 21.031913121 s |
+| Load submission through matching `ModelLoaded` | 4.977881531 s |
+| `RejectIfBusy` unload submission through matching successful unload | 0.201129165 s |
+| Explicit bounded shutdown call through successful return | 0.021589180 s |
+
+| Direct sample | To `GenerationStarted` | To first non-empty decoded output | To terminal application event | To observable release | Effective generated throughput |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 0.014357342 s | 0.427737818 s | 8.554832290 s | 8.554831990 s | 3.740576 generated tokens/s |
+| 2 | 0.014343812 s | 0.416876410 s | 8.332556224 s | 8.332555974 s | 3.840358 generated tokens/s |
+| 3 | 0.013663945 s | 0.415999918 s | 8.352163915 s | 8.352163495 s | 3.831343 generated tokens/s |
+| **Median** | **0.014343812 s** | **0.416876410 s** | **8.352163915 s** | **8.352163495 s** | **3.831343 generated tokens/s** |
+
+Here “first output” means the first non-empty decoded UTF-8 fragment observed at the public E1 output boundary. Effective throughput is exactly 32 generated tokens divided by submission-to-release duration. No post-first-output throughput is reported because the public output record does not identify how many generated tokens had been consumed at the first decoded fragment.
+
+### Process-memory observations
+
+The runner sampled Linux `/proc/self/status` at lifecycle checkpoints. Each measured sample's memory was captured after release.
+
+| Checkpoint | `VmRSS` | Observed `VmHWM` field |
+|---|---:|---:|
+| Before application start | 5,332,992 bytes | 5,332,992 bytes |
+| After application start | 9,842,688 bytes | 9,842,688 bytes |
+| After resolution | 602,669,056 bytes | 1,505,689,600 bytes |
+| After load | 5,649,702,912 bytes | 5,649,702,912 bytes |
+| After warmup release | 5,666,664,448 bytes | 5,666,664,448 bytes |
+| After measured sample 1 release | 5,666,672,640 bytes | 5,666,672,640 bytes |
+| After measured sample 2 release | 5,666,676,736 bytes | 5,666,676,736 bytes |
+| After measured sample 3 release | 5,666,680,832 bytes | 5,666,680,832 bytes |
+| After unload | 2,498,686,976 bytes | 5,661,573,120 bytes |
+| After shutdown | 2,088,587,264 bytes | 5,661,573,120 bytes |
+
+The sampled RSS dropped by 3,167,993,856 bytes from the final measured release to post-unload and by another 410,099,712 bytes after shutdown. Remaining RSS is not treated as retained model/runtime ownership: it includes the whole process, executable/library mappings, allocator arenas/caches, stacks, and other host state. `/proc` RSS/HWM accounting and checkpoint sampling are coarse and can miss or approximate transient residency; the highest observed reported field was 5,666,680,832 bytes. There is no device-memory evidence because CPU is the only supported device.
+
+### Interpretation and limitations
+
+This closes the missing current-tree CPU product baseline and is sufficient to make Phase 11 ready for a separate activation decision. It does not implement or evidence GPU capability. It is one local run on one desktop host, one model/revision/scalar, one initially empty cache, one chat proof, one warmup, and three short direct completions. Background desktop and editor services remained present, so these values are controlled local evidence rather than isolated laboratory results.
+
+The result supports product-path compatibility, deterministic workload comparison, and lifecycle regression investigation on a comparable host. It does not establish model quality, concurrent or steady-state serving throughput, another model/format/engine/device, allocator attribution, cross-host portability, a memory leak/non-leak conclusion, or a production optimization target. No production optimization is justified by this baseline alone.
 
 ## Interpretation and deferred work
 

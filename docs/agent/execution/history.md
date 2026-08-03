@@ -99,7 +99,7 @@ The recorded run included architecture/dependency validation, formatting, worksp
 
 The Phase 4 baseline executed one pinned tiny-random Llama model through E0, generated eight tokens, exercised cancellation and unload, and exited cleanly. Its exact model identity, timing, RSS observations, and interpretation now live in the canonical [historical performance evidence](../../project/performance.md#historical-phase-4-external-smoke); this entry retains only chronology.
 
-The repeatable external-model procedure now lives in [project validation](../../project/validation.md#rust-native-candle-hub-smoke).
+The current repeatable external-model procedure lives in [project validation](../../project/validation.md#external-cpu-product-baseline).
 
 ### Historical boundary at closure
 
@@ -500,3 +500,13 @@ No external model was executed and no network access was authorized. The removed
 ### Evidence-document workflow
 
 A separate documentation-only Commit B records the curated evidence and canonical ownership changes. Commit A remains the executable tree measured because Commit B changes no executable source, manifest, lockfile, fixture, or configuration. Commit B’s identity and post-commit local gate are recorded by the closure report rather than predicted by this tracked file.
+
+## Phase 10 — external CPU baseline closure
+
+On 2026-08-03, Commit C `771c0de4d72565a6302ca60f3b6bafd8c807962b`, tree `3d5b6ccc5ecc959de7cb370c1147f76e4cd32e3f`, added the sole current external E1 runner under `benchmarks/runtime` and removed the independently orchestrated `application-runtime` Hub smoke example. Focused runtime/application checks, benchmark compilation, architecture, hygiene, and the canonical repository gate passed before execution.
+
+The release runner then executed from that clean tree against `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6` using one initially empty explicit cache beneath ignored root `target/`. Exact compatible chat produced non-empty decoded output and clean release. One warmup and three sequential controlled 32-token direct completions each reached matching token-limit terminal, released, and application-event outcomes.
+
+Unload used `RejectIfBusy`, cancelled zero requests, and left no public loaded model or active generation. Explicit bounded shutdown completed with both workers unavailable, no cleanup-pending/exhausted state was observed, the temporary redb workspace was removed, and Git commit/tree/status remained unchanged after execution. Raw JSON stayed under `target/phase10-evidence/external.json`; curated methodology, timing, process-memory observations, and limitations are canonical in [performance evidence](../../project/performance.md#external-product-evidence).
+
+This observed CPU product baseline completes Phase 10 and makes Phase 11 ready to activate. No Phase 11 or GPU implementation was included.

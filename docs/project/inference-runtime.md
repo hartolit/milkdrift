@@ -214,6 +214,6 @@ Ordinary scheduler and fault-injection coverage remains backend-independent. Det
 
 The fixture requires no network access and validates execution and lifecycle contracts rather than language quality. The CPU suite does not exercise a GPU path or establish an allocation-free Candle hot path. See [download-free focused validation](validation.md#download-free-focused-validation).
 
-External artifact resolution belongs to E1 rather than E0. The opt-in [Rust-native Candle/Hub smoke](validation.md#rust-native-candle-hub-smoke) resolves an exact immutable Hub revision through the production Hub worker and then exercises E1, E0, and Candle. The E0-only `candle_llama_smoke` example remains a local diagnostic for artifacts that are already resolved; it performs no network or Hub work.
+External artifact resolution belongs to E1 rather than E0. The opt-in [external CPU product baseline](validation.md#external-cpu-product-baseline) resolves an exact immutable Hub revision through the production Hub worker and then exercises E1, E0, and Candle. The E0-only `candle_llama_smoke` example remains a local diagnostic for artifacts that are already resolved; it performs no network or Hub work.
 
 Product-level composition and unsupported capabilities are tracked in [implementation status](implementation-status.md); this guide remains focused on E0 behavior rather than roadmap sequencing.

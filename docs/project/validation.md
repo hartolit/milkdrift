@@ -178,6 +178,8 @@ git diff --check
 
 Record Commit B and its tree in the closure report. A tracked document should not try to contain its own resulting tree hash.
 
+The external closure uses the same discipline with Commit C (runner code under test) and Commit D (documentation-only curated evidence). Build and execute the external binary only from clean Commit C; the raw report must identify Commit C with `dirty: false`. Exact external timing remains attributable to Commit C after Commit D because Commit D changes documentation only. Record Commit D and its post-commit gate in the closure report rather than predicting its identity in tracked documentation.
+
 ## Repository architecture and hygiene
 
 Run the policy halves independently when diagnosing:

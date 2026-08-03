@@ -1,22 +1,18 @@
 # Current execution context
 
-**Status date:** 2026-08-02
-**Code-under-test (Commit A):** `efcd36e320a97d61d3f982619fee182410c514df`
-**Commit A tree:** `f80c5d6c746376df81d7ac8e7281ac9736e44d88`
-**Repository status:** Phase 10 repository infrastructure and synthetic acceptance complete
-**External-product status:** baseline outstanding; no current product-performance claim
-**Next numbered phase:** Phase 11 is not active
+**Status date:** 2026-08-03
+**External code-under-test (Commit C):** `771c0de4d72565a6302ca60f3b6bafd8c807962b`
+**Commit C tree:** `3d5b6ccc5ecc959de7cb370c1147f76e4cd32e3f`
 
-Commit A was clean before and after its dedicated-target validation and measurements. It contains the isolated deterministic domain allocation gate, one-shot sampling-matrix coverage, and the simplified synthetic-only runtime benchmark package. The exact local acceptance summary is in [execution history](history.md#phase-10--repository-infrastructure-and-synthetic-acceptance), and exact methodology/results are in [performance evidence](../../project/performance.md).
+```text
+Phase 10: complete.
+External CPU baseline: complete.
+Phase 11: ready to activate, not yet implemented.
+```
 
-The follow-on evidence commit (Commit B) changes documentation only. Commit A therefore remains the executable tree measured; Commit B’s identity and post-commit local gate belong in the closure report rather than in a self-referential tracked file.
+Commit C was clean before and after the authorized exact-model CPU run. The authoritative runner, command, and cache policy are in [`benchmarks/runtime`](../../../benchmarks/runtime/README.md) and [validation](../../project/validation.md#external-cpu-product-baseline). Exact results and limitations are in [performance evidence](../../project/performance.md#external-product-evidence); concise chronology is in [execution history](history.md).
 
-## Immediate handoff
-
-- Canonical documentation ownership has been consolidated; timing intervals appear only in `docs/project/performance.md`.
-- Raw synthetic JSON and Criterion output remain ignored beneath root `target/`.
-- External product evidence remains outstanding; no network-dependent product run was authorized or performed. See [performance evidence](../../project/performance.md#external-product-evidence).
-- Before Phase 11: execute the exact-model/revision external baseline, reconcile any finding, and re-establish a clean accepted CPU tree as defined by the [execution plan](execution-plan.md#phase-11--gpu-execution).
+CPU remains the only supported device. No GPU execution, feature, discovery, or evidence has been implemented.
 
 ## Canonical links
 

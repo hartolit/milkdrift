@@ -65,7 +65,7 @@ cargo test --workspace --locked
 cargo bench --locked -p sampling --bench sampling_pipeline
 ```
 
-Ordinary workspace tests are download-free. The opt-in, network-dependent E1 Candle/Hub smoke and its exact immutable revision are documented in [project validation](docs/project/validation.md#rust-native-candle-hub-smoke).
+Ordinary workspace tests are download-free. The opt-in, network-dependent E1 external CPU baseline and its exact immutable revision are documented in [project validation](docs/project/validation.md#external-cpu-product-baseline).
 
 ## Slint frontend
 

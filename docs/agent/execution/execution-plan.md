@@ -1,12 +1,12 @@
 # LLM App execution plan
 
 **Plan status:** No implementation phase is active
-**Status date:** 2026-08-02
+**Status date:** 2026-08-03
 
 ```text
-Phase 10 repository infrastructure and synthetic acceptance: complete.
-External real-product baseline: outstanding.
-Phase 11: not active.
+Phase 10: complete.
+External CPU baseline: complete.
+Phase 11: ready to activate; no implementation has begun.
 ```
 
 This document owns active and future objectives, work packages, acceptance criteria, and ordering. Current product truth lives in [implementation status](../../project/implementation-status.md), repeatable commands in [validation](../../project/validation.md), performance methodology and results in [performance evidence](../../project/performance.md), and closed-tree chronology in [execution history](history.md).
@@ -43,7 +43,7 @@ Candle with immutable Hugging Face Hub Safetensors on CPU remains the sole curre
 | 0–8 | Documentation, quality gates, transactional runtime safety, generation, E1, Slint, conversation behavior, and the historical GGUF experiment were delivered in sequence. | [Execution history](history.md); current support is not inferred from superseded phase text. |
 | 9 | Candle-only composition, lifecycle hardening, exact domain DAG, virtual workspace tooling, module reconciliation, and stable lint policy were closed. | Current [architecture](../../project/architecture.md), [workspace](../../project/workspace.md), and accepted ADRs. |
 | Pre-10 | Terminal cleanup semantics, benchmark placement, artifact hygiene, and fixture provenance were established. | ADR-0006 and ADR-0018. |
-| 10 repository infrastructure | Sampling and runtime measurement surfaces plus deterministic acceptance gates were implemented and accepted on a later clean exact tree. | [Phase 10 history](history.md#phase-10--repository-infrastructure-and-synthetic-acceptance) and [performance evidence](../../project/performance.md). |
+| 10 | Sampling/runtime measurement surfaces, deterministic acceptance gates, and the exact external CPU product baseline were implemented and accepted on clean exact trees. | [Phase 10 history](history.md#phase-10--repository-infrastructure-and-synthetic-acceptance), [external closure](history.md#phase-10--external-cpu-baseline-closure), and [performance evidence](../../project/performance.md). |
 
 Detailed completion inventories, command results, and timing intervals do not belong in this plan.
 
@@ -75,29 +75,27 @@ Repository acceptance requires all of the following on one clean code-under-test
 
 The exact procedure is canonical in [validation](../../project/validation.md). The accepted Commit A identity and summarized outcome are recorded in [history](history.md#phase-10--repository-infrastructure-and-synthetic-acceptance); exact measurements exist only in [performance evidence](../../project/performance.md).
 
-### External real-product baseline — outstanding
+### External real-product baseline — complete
 
-This is a separate evidence class. Its current implementation and evidence status is canonical in [performance evidence](../../project/performance.md#external-product-evidence); repository synthetic acceptance does not satisfy it.
+This separate evidence class completed on clean Commit C `771c0de4d72565a6302ca60f3b6bafd8c807962b`, tree `3d5b6ccc5ecc959de7cb370c1147f76e4cd32e3f`. Its authoritative implementation, exact model/revision, observed lifecycle, controlled timing, process-memory evidence, and limitations are canonical in [performance evidence](../../project/performance.md#external-product-evidence).
 
-A future external baseline work package must:
+The completed work package:
 
-1. select and document one exact external model identifier and immutable revision;
-2. use a narrow opt-in path through public E1 behavior without duplicating product orchestration;
-3. require explicit network authorization and an allowed cache or artifact location;
-4. actually resolve, load, generate decoded output, release, unload, and shut down successfully;
-5. record controlled environment, timing, memory, identity, lifecycle, and limitations without exposing text, token IDs, credentials, or caches;
-6. place raw output under root `target` or outside the repository and add only curated results to `docs/project/performance.md`;
-7. pass the canonical repository gate on the resulting clean tree.
+1. fixes one exact external model identifier and immutable revision;
+2. uses one narrow opt-in `runtime-benchmarks` path through public E1 behavior and removes the superseded application-runtime smoke orchestration;
+3. requires explicit network authorization and an allowed canonical cache location;
+4. resolves, loads, proves compatible chat, runs controlled direct completion, observes release, unloads, and shuts down successfully;
+5. records controlled environment, timing, memory, identity, lifecycle, and limitations without exposing text, token IDs, credentials, or caches;
+6. keeps raw output beneath ignored root `target` and places curated results only in `docs/project/performance.md`;
+7. restores a clean CPU tree and passes the canonical local repository gate.
 
-Acceptance requires an observed run against the exact model/revision. Source presence, compilation, cached artifacts, successful resolution alone, or historical smoke evidence is insufficient.
-
-No network access is authorized for the current closure, so this work package is not active.
+The observed run used `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at `fe8a4ea1ffedaf415f4da2f062534de366a451e6`. Source presence, compilation, cache presence, or resolution alone did not satisfy acceptance.
 
 ## Phase 11 — GPU execution
 
-**Status:** Not active.
+**Status:** Ready to activate; no Phase 11 implementation has begun.
 
-**Activation prerequisite:** record the outstanding external real-product baseline, reconcile any product-path issue it exposes, and begin Phase 11 from a clean accepted CPU tree. Do not activate Phase 11 merely because repository benchmark infrastructure exists.
+**Activation prerequisite:** satisfied by the observed external real-product baseline and clean accepted CPU tree. Activation remains a separate work decision; this Phase 10 closure adds no GPU implementation or capability claim.
 
 ### Objective
 
