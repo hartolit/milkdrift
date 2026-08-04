@@ -1,27 +1,29 @@
 # Current execution context
 
-**Status date:** 2026-08-03
-**External code-under-test (Commit C):** `771c0de4d72565a6302ca60f3b6bafd8c807962b`
-**Commit C tree:** `3d5b6ccc5ecc959de7cb370c1147f76e4cd32e3f`
+**Status date:** 2026-08-04
+**Code-under-test (Commit E):** `411945e0fd53363f98609db21a43d757c4d9b506`
+**Commit E tree:** `7099dcb5c9879190543d3afa5fde399a84d799df`
 
 ```text
 Phase 10: complete.
 External CPU baseline: complete.
-Phase 11: active; E1/Slint explicit CUDA selection implemented, external product evidence outstanding.
+Phase 11 complete for the executed CPU + Linux CUDA matrix.
+No subsequent phase is active.
 ```
 
-Commit C was clean before and after the authorized exact-model CPU run. The authoritative runner, command, and cache policy are in [`benchmarks/runtime`](../../../benchmarks/runtime/README.md) and [validation](../../project/validation.md#external-cpu-product-baseline). Exact results and limitations are in [performance evidence](../../project/performance.md#external-product-evidence); concise chronology is in [execution history](history.md).
+Commit E was clean for the executed acceptance matrix. Raw reports remained beneath ignored root `target/`. The authoritative runner, commands, and cache policy are in [`benchmarks/runtime`](../../../benchmarks/runtime/README.md) and [validation](../../project/validation.md#phase-11-controlled-cpu-and-cuda-product-evidence). Exact result tables and limitations are in [performance evidence](../../project/performance.md#external-product-evidence); concise chronology is in [execution history](history.md). GitHub Actions acceptance remains a separate post-push fact and is not claimed until an observed run is recorded.
 
-CPU remains mandatory and is the fresh-install/default-build selection. The lower Candle/E0 CUDA path now feeds explicit E1 and Slint CPU/CUDA selection through `desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda`; the existing `inference-runtime/cuda -> candle-backend/cuda` forwarding edge remains development-only. No default graph reaches CUDA, and there is no generic `gpu`, `cudnn`, `flash-attn`, or `nccl` feature path.
+CPU remains mandatory, is the default-build and fresh-install selection, remains the shared-CI path, and passed the executed CPU tests and final CPU compile/test/Clippy gates. Explicit CUDA ordinal 0 is supported only on the executed Linux x86_64 matrix: NVIDIA GeForce RTX 5070 Ti, driver 610.43.03, CUDA toolkit 13.3, compute capability 12.0, and build target 120. This is not a generic NVIDIA compatibility claim.
 
-E1 now owns bounded discovery, structured availability diagnostics, persisted selected-device state, explicit accelerator-memory policy, load-time re-probing, exact selected-device admission, and receipt verification. Slint presents the stable E1 identities without parsing labels or falling back. On the current uncommitted development tree, the focused CUDA feature matrix and release desktop build passed, and the ignored E1 fixture discovered `CUDA 0 — NVIDIA GeForce RTX 5070 Ti` with compute capability 12.0, proved selection alone remained idle/unloaded, then loaded and unloaded the committed fixture with matching selected/actual identity. The desktop process launched against an isolated fresh database, but the Plasma session was locked, so visual selector interaction was not verified. External/product-model CUDA evidence and measurements remain outstanding.
+The product feature graph is exactly `desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda`; the benchmark graph is `runtime-benchmarks/cuda -> application-runtime/cuda`; and the direct E0 test edge `inference-runtime/cuda -> candle-backend/cuda` remains development-only. No default graph reaches CUDA. User device selection is explicit and persisted; unavailable CUDA fails without fallback. E0 verifies the actual loaded device, and that identity reaches E1 and Slint. Sampling remains host-side over F32 logits after CUDA transfer.
+
+The exact supported TinyLlama primary workload passed on CPU and CUDA, including cancellation, release, unload, and shutdown. Three complete CUDA lifecycle cycles were stable; a direct E0 CUDA snapshot test proved zero model/request/workspace/cleanup accounting; adapter and E1 CUDA tests passed; schema-2 chat timing is now recorded; and the final CPU and CUDA compile/test/Clippy gates passed. The user accepted the manual Slint run: CPU and CUDA worked, CUDA output was visibly near instant, and no interaction issue was observed. No screenshots were recorded or claimed.
+
+Metal, `cudnn`, flash attention, GGUF/quantized formats, GPU-side sampling, multi-GPU, `nccl`, another local engine, hosted execution, and peer execution remain unsupported or deferred. One selected/resident model remains the product limit.
 
 ## Next session ownership
 
-- repeat acceptance from a clean committed tree and visually exercise the Slint selector on an unlocked CUDA desktop;
-- preserve the CPU fresh-install default and explicit no-fallback behavior while completing that UI evidence;
-- complete external/product-model CUDA evidence and measurements before marking Phase 11 complete;
-- keep model resolution device-independent and preserve E1/E0 ownership, bounded memory admission, and exact selected-versus-actual device verification.
+There is no next-session implementation work and no active product phase. Future execution tracks remain inactive until a separate reviewed activation decision. The only unresolved acceptance fact is external to the local closure record: GitHub Actions acceptance must be observed after push before it can be claimed.
 
 ## Canonical links
 

@@ -4,7 +4,7 @@ This document is the canonical owner of evidence classes, benchmark methodology,
 
 ## Evidence policy
 
-Phase 10 created measurement and regression infrastructure; it made no production optimization and defines no portable wall-clock pass/fail threshold. Absolute timing varies with CPU frequency, thermals, scheduler activity, compiler version, and background work. Comparisons require the same host, toolchain, profile, fixture, workload, and benchmark configuration.
+Phase 10 created measurement and regression infrastructure; it made no production optimization and defines no portable wall-clock pass/fail threshold. Phase 11 adds controlled product evidence for the exact CPU and CUDA compositions documented below; it likewise defines no portable threshold or generic device-family claim. Absolute timing varies with CPU frequency, thermals, scheduler activity, compiler version, and background work. Comparisons require the same host, toolchain, profile, fixture, workload, and benchmark configuration.
 
 Hard harness timeouts stop hangs only. Lifecycle, fixture, identity, output, cleanup, accounting, or join mismatches fail a run; elapsed time alone does not.
 
@@ -15,7 +15,7 @@ Hard harness timeouts stop hangs only. Lifecycle, fixture, identity, output, cle
 | Hosted E0 component-like | `benchmarks/runtime/benches/runtime.rs` | Public command submission through matching completion event, including bounded transport and dispatch | Raw Candle kernel timing, E1/product latency, RSS, or full-generation throughput |
 | Synthetic system/integration | `benchmarks/runtime` normal `baseline` binary | Download-free hosted-E0 lifecycle/output/accounting/RSS observations and fresh E1 start/shutdown cycles | Product-model speed or quality, representative scale, steady-state serving, or device memory |
 | Compile-only | Workspace benchmark compilation | Target/API compatibility | Runtime correctness or performance |
-| External real-product | `runtime-benchmarks` `external-baseline` binary | One exact local Candle/Hub/Safetensors/BF16/CPU product lifecycle and controlled direct-completion timing on Commit C | Model quality, other hosts/models/scalars, serving capacity, GPU behavior, or a regression threshold |
+| External real-product | `runtime-benchmarks` `external-baseline` binary plus focused E0/E1 device and accounting validation | Current schema-2 controlled TinyLlama lifecycle, direct-completion, cancellation, footprint-contract, host-RSS, and exact-device whole-device CUDA-memory evidence for default CPU/F32 and opt-in CUDA/BF16 on Commit E; historical CPU-only Commit C evidence remains below | Model quality, other hosts/models/scalars/devices, serving capacity, GPU sampling, process-attributed device memory, generic NVIDIA behavior, leak/non-leak proof, or a portable regression threshold |
 
 ## Sampling methodology
 
@@ -225,7 +225,159 @@ Elevated post-unload RSS was not treated as retained model ownership because all
 
 ## External product evidence
 
-### Exact code-under-test and model identity
+### Phase 11 controlled CPU-vs-CUDA product evidence
+
+The schema-2 Commit E reports and exact curated tables below are the canonical current CPU/CUDA product evidence. The CPU and CUDA primary runs use the same application workload, but they are product-path observations rather than precision-matched hardware microbenchmarks: the CPU path is F32, the CUDA path is BF16, and CUDA generation includes full-vocabulary-logit transfer for host F32 sampling.
+
+#### Exact code, model, and report identity
+
+| Field | Recorded value |
+|---|---|
+| Commit E | `411945e0fd53363f98609db21a43d757c4d9b506` |
+| Commit E tree | `7099dcb5c9879190543d3afa5fde399a84d799df` |
+| Repository state | Clean Commit E; both reports record `dirty: false` |
+| CPU report | `target/phase11-evidence/cpu.json`; schema version 2 |
+| CUDA report | `target/phase11-evidence/cuda.json`; schema version 2 |
+| Model | `TinyLlama/TinyLlama-1.1B-Chat-v1.0` |
+| Exact model revision | `fe8a4ea1ffedaf415f4da2f062534de366a451e6` |
+
+No raw report body, generated model text, or generated token ID is reproduced here.
+
+#### Controlled host and execution composition
+
+| Field | Recorded value |
+|---|---|
+| CPU | AMD Ryzen 9 5950X; 16 physical cores; 32 logical CPUs |
+| OS / kernel | Linux `7.1.4-arch1-1` |
+| Rust / Cargo / LLVM | `rustc 1.96.1`; `cargo 1.96.1`; LLVM `22.1.2` |
+| RAM | 33,556,647,936 B (31.25 GiB) |
+| CUDA device | NVIDIA GeForce RTX 5070 Ti, ordinal 0 |
+| Driver | `610.43.03` |
+| CUDA toolkit / compiler | CUDA `13.3`; `nvcc V13.3.73` |
+| Compute capability / build cap | CC 12.0; `CUDA_COMPUTE_CAP=120` |
+| Device VRAM | 16,648,896,512 B |
+| CPU product composition | Default build; explicit `cpu` device; F32 |
+| CUDA product composition | Non-default `runtime-benchmarks/cuda -> application-runtime/cuda -> candle-backend/cuda`; explicit `cuda:0` device; BF16 |
+| Sampling boundary | Host sampling; CUDA full-vocabulary logits transferred to host F32; no GPU sampling |
+
+#### Controlled workload and boundaries
+
+The CPU primary cycle and CUDA primary cycle each ran the same chat proof, one direct-completion warmup, three measured direct completions of exactly 32 generated tokens each, and user-requested cancellation after the first generation progress. The warmup is excluded from the measured sample table. CUDA then ran two reduced stability cycles, for three CUDA cycles total; the reduced cycles contribute the lifecycle and memory checkpoints curated below rather than another direct-sample set.
+
+Operational deadlines were hang bounds only. No elapsed-time pass/fail threshold was applied. Cancellation, unload, and shutdown completed cleanly.
+
+#### Lifecycle timing results
+
+All values are seconds. The primary rows cover the common full workload; CUDA cycles 2 and 3 are the reduced stability cycles.
+
+| Run | `ApplicationRuntime::start` | Resolve | Load | Unload | Shutdown |
+|---|---:|---:|---:|---:|---:|
+| CPU primary | 0.043196614 s | 0.350453311 s | 6.276900458 s | 0.191068334 s | 0.000180964 s |
+| CUDA cycle 1 (primary) | 0.042087709 s | 0.283494348 s | 2.313752303 s | 0.010063483 s | 0.000116972 s |
+| CUDA cycle 2 (reduced stability) | 0.042084268 s | 0.255933587 s | 1.740622140 s | 0.010064204 s | 0.000219314 s |
+| CUDA cycle 3 (reduced stability) | 0.039309835 s | 0.246895773 s | 1.418942616 s | 0.010061673 s | 0.001800384 s |
+
+#### Chat compatibility timing results
+
+All intervals begin at chat submission and end at the named public E1 observation.
+
+| Device | `GenerationStarted` | First decoded output | Terminal application event | Observable release |
+|---|---:|---:|---:|---:|
+| CPU | 0.016440457 s | 0.480356773 s | 1.859431995 s | 1.859433145 s |
+| CUDA | 0.096552685 s | 0.247440335 s | 0.268494479 s | 0.268494949 s |
+
+#### Direct 32-token completion results
+
+“First output” is submission to the first non-empty decoded output at the public E1 boundary. “Release” is submission to observable release. Effective rate is exactly 32 generated tokens divided by release duration.
+
+| Device | Sample | First output | Release | Effective generated rate |
+|---|---:|---:|---:|---:|
+| CPU | 1 | 0.427336524 s | 8.545338298 s | 3.744732 tokens/s |
+| CPU | 2 | 0.426757627 s | 8.575551839 s | 3.731538 tokens/s |
+| CPU | 3 | 0.416893491 s | 8.605083176 s | 3.718732 tokens/s |
+| CPU | **Median** | **0.426757627 s** | **8.575551839 s** | **3.731538 tokens/s** |
+| CUDA | 1 | 0.014379286 s | 0.156057848 s | 205.052168 tokens/s |
+| CUDA | 2 | 0.014050340 s | 0.165905288 s | 192.881133 tokens/s |
+| CUDA | 3 | 0.013828106 s | 0.155647781 s | 205.592395 tokens/s |
+| CUDA | **Median** | **0.014050340 s** | **0.156057848 s** | **205.052168 tokens/s** |
+
+On this exact run, CUDA's median first-output interval was about 30.4 times shorter and its median effective generated-token rate about 55.0 times higher than CPU. Those are same-workload local observations, not a portable speedup claim; execution dtype and transfer boundaries differ as documented above.
+
+#### Cancellation results
+
+Progress was established before cancellation. Both primary runs generated exactly one token and ended for user-requested cancellation.
+
+| Device | Generation submission to progress | Cancel submission to acknowledgement | Cancel submission to terminal event | Cancel submission to release | Generated tokens | Terminal reason |
+|---|---:|---:|---:|---:|---:|---|
+| CPU | 0.426740446 s | 0.251451575 s | 0.262429696 s | 0.252368862 s | 1 | User-requested cancellation |
+| CUDA | 0.013790885 s | 0.010059043 s | 0.020916542 s | 0.010860189 s | 1 | User-requested cancellation |
+
+#### Planned E0 footprint and E1 load contract
+
+| Composition | Planned weight residency | Planned host working bytes | Planned cache bytes per token |
+|---|---:|---:|---:|
+| CPU / F32 | 4,400,239,728 B host weights | 2,200,119,864 B | 45,056 B |
+| CUDA / BF16 | 2,200,119,864 B device weights | 2,200,119,864 B | 22,528 B |
+
+This is an independent E0 plan plus the E1 accepted load contract, not a reservation snapshot from the same worker that ran the product workload. Exact zero-accounting evidence is owned by the direct E0 snapshot test.
+
+#### Process-wide host RSS observations
+
+The key CPU primary checkpoints were:
+
+| Checkpoint | CPU `VmRSS` |
+|---|---:|
+| Pre-load | 36,708,352 B |
+| Post-load | 4,469,198,848 B |
+| Peak sampled | 4,489,629,696 B |
+| Post-unload | 901,120,000 B |
+| Owner-drop | 896,720,896 B |
+
+The key CUDA checkpoints were:
+
+| CUDA cycle | Pre-load `VmRSS` | Post-load `VmRSS` | Post-unload `VmRSS` | Owner-drop `VmRSS` |
+|---|---:|---:|---:|---:|
+| 1 (primary) | 340,312,064 B | 358,006,784 B | 821,284,864 B | 821,211,136 B |
+| 2 (reduced stability) | 821,272,576 B | 822,132,736 B | 859,877,376 B | 859,811,840 B |
+| 3 (reduced stability) | 859,815,936 B | 860,663,808 B | 898,453,504 B | 863,121,408 B |
+
+These RSS values describe the whole process, including executable and library mappings, allocator retention, workers, stacks, driver state, and other host allocations. They are sampled residency observations, not deterministic owner attribution.
+
+#### Whole-device CUDA used-memory observations
+
+Each delta is relative to that cycle's pre-load whole-device used-memory value.
+
+| CUDA cycle | Checkpoint | Whole-device used memory | Delta from cycle pre-load |
+|---|---|---:|---:|
+| 1 (primary) | Pre-load | 1,529,151,488 B | 0 B |
+| 1 (primary) | Post-load | 3,812,950,016 B | +2,283,798,528 B |
+| 1 (primary) | Post-unload / owner-drop | 1,577,385,984 B | +48,234,496 B |
+| 2 (reduced stability) | Pre-load | 1,577,385,984 B | 0 B |
+| 2 (reduced stability) | Post-load | 3,859,087,360 B | +2,281,701,376 B |
+| 2 (reduced stability) | Post-unload / owner-drop | 1,577,385,984 B | 0 B |
+| 3 (reduced stability) | Pre-load | 1,577,385,984 B | 0 B |
+| 3 (reduced stability) | Post-load | 3,859,087,360 B | +2,281,701,376 B |
+| 3 (reduced stability) | Post-unload / owner-drop | 1,577,385,984 B | 0 B |
+
+The maximum retained delta was 48,234,496 B (46 MiB), in cycle 1. There was no strict monotonic retained growth across the three cycles. These are whole-device values, not process-attributed CUDA allocations.
+
+#### Focused validation and manual product evidence
+
+The two adapter tests, the direct E0 snapshot test, and the E1 device test all passed. The direct E0 snapshot test is the exact-zero-accounting owner; the external E1 run establishes that the selected device and planned footprint were accepted by the product load contract. All recorded cancellation, unload, and shutdown paths were clean.
+
+A manual Slint user check confirmed CPU and CUDA behavior, described CUDA prompt output as near instant, reported no issues, and accepted the implementation. The automation launch reached its 20-minute bound while the window remained open. No screenshot or automated UI assertion is claimed.
+
+#### Interpretation and limitations
+
+This evidence establishes controlled local product-path behavior for the exact Commit E tree, model revision, host, RTX 5070 Ti ordinal, driver, toolkit, build cap, scalar choices, and workload above. The lower CUDA durations are observations for that exact composition, not a hard threshold or a hardware-only speedup claim: CPU used F32, CUDA used BF16, and CUDA transferred full-vocabulary logits to host F32 for host sampling. GPU sampling was not measured.
+
+Nothing here generalizes to NVIDIA devices as a family, another device/model/revision/scalar, concurrent or steady-state serving, model quality, or production capacity. Whole-device CUDA values cannot attribute memory to this process. The three CUDA cycles and absence of strict monotonic retained growth prove neither a leak nor non-leak; sampled RSS likewise cannot do so. Clean lifecycle outcomes, the accepted E1 contract, and exact direct-E0 zero accounting establish their named ownership boundaries without claiming immediate OS, allocator, or driver reclamation.
+
+### Historical Phase 10 CPU product evidence
+
+The following Commit C CPU evidence is retained as the historical Phase 10 product baseline; it is not the current Phase 11 CPU/CUDA comparison.
+
+#### Exact code-under-test and model identity
 
 The authoritative external run executed the release `external-baseline` binary directly after building it on clean Commit C. The source/index remained clean before and after execution; generated state existed only beneath ignored root `target/`.
 
@@ -244,7 +396,7 @@ The authoritative external run executed the release `external-baseline` binary d
 
 The initially empty cache means the 21.031913121-second resolution interval included first acquisition and local cache population. It is still the complete public E1 resolve interval—not a pure network-transfer benchmark—because it also includes Hub metadata handling plus artifact/tokenizer/configuration validation and local I/O.
 
-### Controlled environment and workload
+#### Controlled environment and workload
 
 | Field | Recorded value |
 |---|---|
@@ -263,7 +415,7 @@ The initially empty cache means the 21.031913121-second resolution interval incl
 
 No decoded model text or generated token IDs were retained in the report or curated evidence.
 
-### Compatibility and lifecycle results
+#### Compatibility and lifecycle results
 
 The compatible chat submission was accepted through the public conversation API. It observed matching request identity, `GenerationStarted`, non-empty decoded output, terminal and released states, and the matching terminal application event. It completed by end-of-sequence with 30 prompt tokens, 6 generated tokens, and 27 decoded bytes. The user record and completed active assistant attempt were validated after release, then public conversation clear left conversation and context diagnostics empty.
 
@@ -271,7 +423,7 @@ The direct warmup reached token limit with 17 prompt tokens, exactly 32 generate
 
 `ModelUnloadBehavior::RejectIfBusy` completed with zero cancelled requests and left no public loaded model or active generation while both workers remained available. Explicit bounded shutdown returned successfully, left Hub and inference unavailable with no loaded model or active generation, and the temporary redb workspace was removed. Successful E1 lifecycle events and public state establish application-visible ownership cleanup; process RSS is a separate coarse observation.
 
-### External timing results
+#### External timing results
 
 Durations are submission/call-to-observation intervals from the one recorded run. Operational deadlines were hang bounds only and no wall-clock acceptance threshold was applied. The warmup is excluded from measured timing summaries.
 
@@ -292,7 +444,7 @@ Durations are submission/call-to-observation intervals from the one recorded run
 
 Here “first output” means the first non-empty decoded UTF-8 fragment observed at the public E1 output boundary. Effective throughput is exactly 32 generated tokens divided by submission-to-release duration. No post-first-output throughput is reported because the public output record does not identify how many generated tokens had been consumed at the first decoded fragment.
 
-### Process-memory observations
+#### Process-memory observations
 
 The runner sampled Linux `/proc/self/status` at lifecycle checkpoints. Each measured sample's memory was captured after release.
 
@@ -311,7 +463,7 @@ The runner sampled Linux `/proc/self/status` at lifecycle checkpoints. Each meas
 
 The sampled RSS dropped by 3,167,993,856 bytes from the final measured release to post-unload and by another 410,099,712 bytes after shutdown. Remaining RSS is not treated as retained model/runtime ownership: it includes the whole process, executable/library mappings, allocator arenas/caches, stacks, and other host state. `/proc` RSS/HWM accounting and checkpoint sampling are coarse and can miss or approximate transient residency; the highest observed reported field was 5,666,680,832 bytes. There is no device-memory evidence because CPU is the only supported device.
 
-### Interpretation and limitations
+#### Interpretation and limitations
 
 This closes the missing current-tree CPU product baseline and is sufficient to make Phase 11 ready for a separate activation decision. It does not implement or evidence GPU capability. It is one local run on one desktop host, one model/revision/scalar, one initially empty cache, one chat proof, one warmup, and three short direct completions. Background desktop and editor services remained present, so these values are controlled local evidence rather than isolated laboratory results.
 
@@ -319,7 +471,7 @@ The result supports product-path compatibility, deterministic workload compariso
 
 ## Interpretation and deferred work
 
-- No production optimization is justified by this single local baseline.
+- No production optimization or portable performance threshold is justified by these controlled local baselines alone.
 - Tokenizer encode/streaming decode, context planning, output accumulation, and isolated Candle kernels remain deferred until a named decision and profile show that current surfaces are insufficient.
 - Synthetic timings are useful for regression investigation, lifecycle confidence, and harness comparison—not product claims.
 - A proposed optimization should compare equivalent before/after trees on this controlled host and include a profile or other evidence identifying the cost.
