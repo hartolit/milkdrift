@@ -2,13 +2,13 @@
 
 This directory contains the project's execution inputs and chronological closure record. It does not own current architecture, component behavior, product support, or reusable engineering doctrine.
 
-## Active execution inputs
+## Execution inputs
 
-- [Current execution context](current.md) — dense, mutable working context for the phase being executed now.
-- [Architecture analysis](analyzer.md) — the evidence and findings that motivated the active program.
+- [Current execution context](current.md) — concise, mutable handoff for either the active phase or an explicitly parked state.
+- [Architecture analysis](analyzer.md) — preserved evidence and findings that motivated the completed program.
 - [Execution plan](execution-plan.md) — the ordered implementation program and phase gates.
 
-`current.md` is derived operational context: it may restate selected facts so an execution agent can start quickly, but it links to the canonical project owners and must be advanced as the active phase changes.
+`current.md` is derived operational context: it may restate selected facts so an execution agent can start quickly, but it links to canonical project owners and must record either the active phase or that no phase is active.
 
 The analyzer and execution plan are intentionally preserved as source artifacts. They are exempt from opportunistic restyling or consolidation during ordinary documentation cleanup; revise their substance only when the analysis or execution baseline itself changes. Mechanical path corrections after repository moves are permitted.
 

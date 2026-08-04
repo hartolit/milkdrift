@@ -29,7 +29,7 @@ A document may restate a small boundary when needed locally, but changing facts 
 - [Implementation status](implementation-status.md) is the only product-level support matrix and validation-state page.
 - Accepted and superseded project decisions are indexed in [architecture decisions](../agent/decisions/README.md).
 
-The current local product is Candle with immutable Hugging Face Hub Safetensors on CPU. GGUF and GPU execution are unsupported; possible Candle-native quantized-format and device work is deferred to separately reviewed changes.
+The current local product is Candle with immutable Hugging Face Hub Safetensors and the unquantized Llama path. CPU is mandatory and default. Explicit non-default CUDA ordinal 0 is supported only on the executed Linux x86_64 RTX 5070 Ti matrix named in [implementation status](implementation-status.md), with no automatic CPU fallback and no generic NVIDIA compatibility claim. GGUF, other quantized formats, Metal, and unlisted GPU targets are unsupported.
 
 ## Runtime and frontend
 
@@ -60,4 +60,4 @@ Procedures and measurements stay close to the domain that owns them. The status 
 
 The [recovered implementation plan](implementation-plan.md) is retained as clearly marked historical source material and is not the active roadmap. Completed Phase 8 plan text and [Phase 8 history](../agent/execution/history.md#phase-8--gguf-parity-and-native-composition-evidence) remain factual evidence for the former dual-product tree; [ADR-0013](../agent/decisions/0013-candle-only-local-execution.md) supersedes that composition for current work.
 
-The dense working set is [current execution context](../agent/execution/current.md), closed execution-phase evidence is consolidated in [execution history](../agent/execution/history.md), and the active program remains the [execution plan](../agent/execution/execution-plan.md).
+The concise handoff is [current execution context](../agent/execution/current.md), closed execution and maintenance evidence is consolidated in [execution history](../agent/execution/history.md), and the completed program plus inactive future tracks remain in the [execution plan](../agent/execution/execution-plan.md). No product phase is active.

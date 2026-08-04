@@ -99,7 +99,7 @@ The recorded run included architecture/dependency validation, formatting, worksp
 
 The Phase 4 baseline executed one pinned tiny-random Llama model through E0, generated eight tokens, exercised cancellation and unload, and exited cleanly. Its exact model identity, timing, RSS observations, and interpretation now live in the canonical [historical performance evidence](../../project/performance.md#historical-phase-4-external-smoke); this entry retains only chronology.
 
-The current repeatable external-model procedure lives in [project validation](../../project/validation.md#external-cpu-product-baseline).
+The current repeatable external-model procedure lives in [controlled CPU and CUDA external product evidence](../../project/validation.md#controlled-cpu-and-cuda-external-product-evidence).
 
 ### Historical boundary at closure
 
@@ -481,7 +481,7 @@ The allocation check was subsequently isolated as a deterministic harness-free e
 
 ### Commit A exact-tree acceptance
 
-Commit A was clean before validation and remained clean after generated output was confined to root `target/`. A fresh dedicated target was used. The complete local procedure in [validation](../../project/validation.md#phase-10-exact-tree-acceptance) passed, including:
+Commit A was clean before validation and remained clean after generated output was confined to root `target/`. A fresh dedicated target was used. The complete local procedure in [validation](../../project/validation.md#historical-phase-10-exact-tree-acceptance) passed, including:
 
 - the isolated domain allocation gate, full domain/sampling/runtime/xtask suites, and one-shot sampling matrix;
 - strict workspace Clippy, complete benchmark compilation, and the canonical architecture/hygiene/repository gate;
@@ -523,4 +523,26 @@ The exact supported TinyLlama primary workload passed on CPU and CUDA, including
 
 E1 retained explicit persisted selection, unavailable CUDA failed without fallback, and E0's verified actual loaded-device identity reached E1 and Slint. The user accepted manual Slint CPU and CUDA operation: both worked, CUDA output was visibly near instant, and no interaction issue was observed. No screenshots were recorded or claimed. Sampling remained host-side over F32 logits after CUDA transfer.
 
-Metal, `cudnn`, flash attention, GGUF/quantized formats, GPU-side sampling, multi-GPU, `nccl`, another engine, hosted execution, and peer execution remain unsupported or deferred; one selected/resident model remains the limit. GitHub Actions acceptance remains a separate post-push fact until an observed run is recorded. No future execution track was activated.
+Metal, `cudnn`, flash attention, GGUF/quantized formats, GPU-side sampling, multi-GPU, `nccl`, another engine, hosted execution, and peer execution remained unsupported or deferred; one selected/resident model remained the limit. At the time of this local Phase 11 closure, GitHub Actions acceptance had not yet been observed. No future execution track was activated.
+
+## Post-Phase 11 quality closure
+
+- **Prepared:** 2026-08-04
+- **Executable/workflow baseline:** commit `1a62d2ed6623500e9052b4b8386ebd058984bd89`, tree `79864da274aed94471c2fbcfedaa97c2f32f3e7a`
+- **Recorded outcome:** maintenance closure complete; no product behavior changed and no subsequent product phase activated
+
+Commit `992daa07f48dcc2175d53c49a9031c423d1fa5ca`, tree `41a237a9690b8e164652201e004d712622d3ce4b`, reconciled execution-stack truth: source scalar and execution scalar became separate verified facts, adapter accounted footprint and E0 reserved footprint replaced physical-residency language, safe host-logit transfer and actual-device verification were tightened, and E1 runtime/tests were split into responsibility modules without creating a new layer.
+
+Commit `7dd7a72565cfb976bf123ed664296e9332af0e70`, tree `766682d96b89a3e6fb4b0d14282e44e318244a56`, refactored the external evidence runner by responsibility and introduced the schema-3 observation contract. Commits `a5f5270e58ede3b4844c1fe1bc84f7befa258781`, `abe06a580da6377cefdcde34004ab119ff9c2b45`, and final baseline `1a62d2ed6623500e9052b4b8386ebd058984bd89` added and stabilized the trusted self-hosted CUDA fixture workflow and maintained offline Cargo cache. Historical Commit E timing tables were not rerun or rewritten; [performance evidence](../../project/performance.md#external-product-evidence) remains their canonical owner.
+
+The normal [quality run 30942153370](https://github.com/hartolit/milkdrift/actions/runs/30942153370) completed successfully on the final baseline. It printed the exact commit/tree, passed the clean-target canonical CPU gate, portable-domain checks, dependency policy, and offline local-link validation.
+
+The self-hosted [CUDA hardware run 30942148369](https://github.com/hartolit/milkdrift/actions/runs/30942148369) completed successfully on the same commit. It passed exact RTX 5070 Ti / ordinal-0 / compute-capability-12.0 preflight with CUDA Toolkit 13.3 and build target 120, the exact CUDA feature check/Clippy graph, explicit CPU execution in a CUDA build, CUDA fixture logits, BF16 source/BF16 execution, hosted E0 zero accounting, E1 device/scalar truth, synchronization, unload, and bounded shutdown. This remains exact-matrix evidence, not generic NVIDIA compatibility.
+
+This documentation-only maintenance commit reconciles the root README, documentation maps, component guides, sole support matrix, validation/performance ownership, current context, plan, history, and ADR consequences. Its resulting commit/tree is recorded in the external closure report rather than embedded self-referentially in the tracked document.
+
+```text
+Phase 11 remains complete for the executed CPU + Linux CUDA matrix.
+Post-Phase 11 quality closure is complete.
+No subsequent product phase is active.
+```

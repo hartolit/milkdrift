@@ -16,6 +16,6 @@ Generated token IDs and ordered terminal state use `host-runtime`'s preallocated
 
 ## Opt-in local diagnostic
 
-The `candle_llama_smoke` example is an E0 lifecycle and performance diagnostic for already-resolved local Candle Llama artifacts. It performs no network or Hugging Face resolution. Rust-native external-model smoke resolution belongs to the E1 `application-runtime`, which can reuse its production artifact resolver before exercising Candle through E0; keeping that responsibility above this crate preserves E0's network-free boundary.
+The `candle_llama_smoke` example is an E0 lifecycle and performance diagnostic for already-resolved local Candle Llama artifacts. It performs no network or Hugging Face resolution. The opt-in `runtime-benchmarks` external runner owns the controlled CPU/CUDA product procedure and drives E1’s production artifact resolver before exercising Candle through E0; keeping network resolution above this crate preserves E0’s network-free boundary. See [validation](../../../docs/project/validation.md#controlled-cpu-and-cuda-external-product-evidence).
 
 See the [inference runtime guide](../../../docs/project/inference-runtime.md) for lifecycle, accounting, cancellation, output, and cleanup semantics.

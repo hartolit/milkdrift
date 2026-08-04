@@ -39,7 +39,7 @@ Its public state/events contain application and domain values rather than Slint,
 - repository/revision input mapping to `ModelSelection`;
 - a compact device `ComboBox` backed by stable Rust identity/index mapping;
 - callback-to-E1-command mapping;
-- E1 source-scalar, execution-scalar, and selected/actual-device metadata label mapping;
+- E1 source scalar, execution scalar, and selected/actual-device metadata label mapping;
 - one 16 millisecond frame cadence for bounded event draining and one decoded-output pull;
 - presentation-owned chat/direct-completion transcript formatting plus frame-batched fragments and terminal state;
 - control and usage synchronization from `ApplicationState`;
@@ -59,7 +59,7 @@ A browser-only application cannot execute native E0 directly. It would require a
 
 Repository-relative paths are rejected if absolute, empty, or non-normal. After inspection, every required artifact is resolved through a repository handle pinned to the returned immutable commit, so a moving branch cannot mix revisions. Cache paths are not model identity; repository, requested revision, and immutable commit are the logical facts.
 
-The adapter reads `dtype` or legacy `torch_dtype` as the source scalar declaration and recognizes F32, F16, and BF16. E1 rejects loading when the declaration is absent or unsupported. It also rejects a load if the visible repository or revision changed after resolution. Candle validates actual tensor types during load and independently selects an execution scalar for the requested device, so configuration metadata is not the final authority. The presenter reports E1's source-scalar and execution-scalar facts independently and infers neither from the device. A BF16 source may execute as F32 on CPU or remain BF16 on supported CUDA.
+The adapter reads `dtype` or legacy `torch_dtype` as the source scalar declaration and recognizes F32, F16, and BF16. E1 rejects loading when the declaration is absent or unsupported. It also rejects a load if the visible repository or revision changed after resolution. Candle validates actual tensor types during load and independently selects an execution scalar for the requested device, so configuration metadata is not the final authority. The presenter reports E1’s source scalar and execution scalar independently and infers neither from the device. A BF16 source executes as F32 on CPU and remains BF16 on the supported CUDA matrix.
 
 The adapter is synchronous by design and runs only on the dedicated cold-path Hub worker. Environment-derived Hugging Face cache and token configuration remain active unless E1 explicitly overrides them.
 
@@ -88,7 +88,7 @@ The device control is a compact Slint `ComboBox`. Rust owns an identity/index mo
 
 Enabled state comes from E1's `can_select_device` lifecycle policy, and load enablement comes from E1's selected-device availability and model lifecycle state. Dropdown labels come from `ApplicationDeviceSummary`, while Rust retains the exact `ApplicationDevice` identity. The selected-device presentation remains independent from loaded state. The resolved-source summary displays the source scalar and artifact identity only; it does not display or imply an execution scalar or device. The loaded-execution summary displays explicit Source scalar, Execution scalar, and Actual device facts verified through E0's receipt. Unload clears all loaded execution facts while the selected identity and resolved source summary remain.
 
-The default desktop graph is CPU-only. CUDA is deliberate through the exact `desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda` forwarding chain; see [dependency policy](dependency-policy.md).
+The default desktop graph contains mandatory CPU execution and does not enable CUDA. CUDA is deliberate through the exact `desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda` forwarding chain, while current product support remains limited to the executed matrix in [implementation status](implementation-status.md); see [dependency policy](dependency-policy.md) for feature enforcement.
 
 ## Slint event cadence
 

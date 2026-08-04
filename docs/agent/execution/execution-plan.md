@@ -1,16 +1,16 @@
 # LLM App execution plan
 
-**Plan status:** Phase 11 complete for the executed CPU + Linux CUDA matrix; no subsequent phase active
+**Plan status:** Phase 11 and post-Phase 11 quality maintenance closure complete; no subsequent product phase active
 **Status date:** 2026-08-04
 
 ```text
-Phase 10: complete.
-External CPU baseline: complete.
+Phase 10 complete.
 Phase 11 complete for the executed CPU + Linux CUDA matrix.
-No subsequent phase is active.
+Post-Phase 11 quality closure complete.
+No subsequent product phase is active.
 ```
 
-This document owns active and future objectives, work packages, acceptance criteria, and ordering. Current product truth lives in [implementation status](../../project/implementation-status.md), repeatable commands in [validation](../../project/validation.md), performance methodology and results in [performance evidence](../../project/performance.md), and closed-tree chronology in [execution history](history.md).
+This document owns the completed program, maintenance closures, inactive future objectives, work packages, acceptance criteria, and ordering. Current product truth lives in [implementation status](../../project/implementation-status.md), repeatable commands in [validation](../../project/validation.md), performance methodology and results in [performance evidence](../../project/performance.md), and closed-tree chronology in [execution history](history.md).
 
 ## Program objective
 
@@ -48,7 +48,7 @@ Candle with immutable Hugging Face Hub Safetensors remains the sole local compos
 | 10 | Sampling/runtime measurement surfaces, deterministic acceptance gates, and the exact external CPU product baseline were implemented and accepted on clean exact trees. | [Phase 10 history](history.md#phase-10--repository-infrastructure-and-synthetic-acceptance), [external closure](history.md#phase-10--external-cpu-baseline-closure), and [performance evidence](../../project/performance.md). |
 | 11 | Mandatory CPU plus explicit CUDA ordinal 0 execution, E1/Slint selection, lifecycle evidence, and product benchmarking were accepted for the executed Linux x86_64 RTX 5070 Ti matrix only. | [Phase 11 history](history.md#phase-11--executed-cpu--linux-cuda-closure), [implementation status](../../project/implementation-status.md#phase-11-implemented-boundary), and [performance evidence](../../project/performance.md#external-product-evidence). |
 
-Phases 10 and 11 are completed program context. No product phase is active. Detailed completion inventories, command results, and timing intervals do not belong in this plan.
+Phases 10 and 11 plus the post-Phase 11 quality maintenance closure are completed program context. No product phase is active. Detailed completion inventories, command results, and timing intervals do not belong in this plan.
 
 ## Phase 10 closure boundary
 
@@ -102,7 +102,7 @@ The observed run used `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at `fe8a4ea1ffedaf415
 
 **Closure provenance:** clean Commit E `411945e0fd53363f98609db21a43d757c4d9b506`, tree `7099dcb5c9879190543d3afa5fde399a84d799df`.
 
-**Closure handoff:** `domain-contracts` owns `ExecutionDevice`; Candle/E0 execute mandatory CPU or explicit opt-in CUDA; E1 owns discovery, selection, persistence, memory policy, admission, and receipt validation; Slint exposes stable presentation-only selection. Support extends only to CUDA ordinal 0 on the executed Linux x86_64 NVIDIA GeForce RTX 5070 Ti matrix with driver 610.43.03, toolkit 13.3, compute capability 12.0, and build target 120. This does not establish generic NVIDIA compatibility. GitHub Actions acceptance remains a separate post-push fact until an observed run is recorded.
+**Closure handoff:** `domain-contracts` owns `ExecutionDevice`; Candle/E0 execute mandatory CPU or explicit opt-in CUDA; E1 owns discovery, selection, persistence, memory policy, admission, and receipt validation; Slint exposes stable presentation-only selection. Support extends only to CUDA ordinal 0 on the executed Linux x86_64 NVIDIA GeForce RTX 5070 Ti matrix with driver 610.43.03, toolkit 13.3, compute capability 12.0, and build target 120. This does not establish generic NVIDIA compatibility. Normal CPU quality run `30942153370` and self-hosted CUDA hardware run `30942148369` were observed successful on the final executable/workflow baseline.
 
 ### Objective
 
@@ -114,7 +114,7 @@ The completed objective was to add explicit GPU device support without redesigni
 
 - CPU remains mandatory, default, shared-CI, and covered by executed tests.
 - Explicit CUDA ordinal 0 is supported only for the exact executed Linux matrix named above.
-- Engine, artifact source, model format, scalar type, and device remain distinct facts.
+- Engine, artifact source, model format, source scalar, execution scalar, and device remain distinct facts.
 - Unavailable CUDA fails explicitly without fallback; other NVIDIA/GPU targets are unsupported and unclaimed.
 
 ### Work package 11.2 — Build and CI matrix
@@ -124,7 +124,7 @@ The completed objective was to add explicit GPU device support without redesigni
 - The product feature graph is exactly `desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda`.
 - The benchmark feature graph is exactly `runtime-benchmarks/cuda -> application-runtime/cuda`.
 - The direct E0 test edge `inference-runtime/cuda -> candle-backend/cuda` remains development-only, and no default graph reaches CUDA.
-- Final CPU and CUDA compile, test, and Clippy gates passed; hardware execution remains distinct from shared-CI compile/test coverage.
+- Final CPU and CUDA compile, test, and Clippy gates passed. The normal shared-CPU quality workflow and separate self-hosted CUDA hardware workflow were both observed successful; feature compilation remains distinct from hardware execution.
 
 ### Work package 11.3 — Discovery, admission, and lifecycle
 
@@ -167,6 +167,14 @@ The completed objective was to add explicit GPU device support without redesigni
 
 These criteria are accepted only for mandatory CPU and the exact executed Linux CUDA row. Metal, `cudnn`, flash attention, GGUF/quantized formats, GPU-side sampling, multi-GPU, `nccl`, another engine, hosted execution, and peer execution remain unsupported or deferred. One selected/resident model remains the product limit.
 
+## Post-Phase 11 quality maintenance closure
+
+**Status:** Complete. This is an unnumbered maintenance closure, not Phase 12.
+
+The closure reconciled final source/API terminology and E1 module structure, refactored the external evidence implementation and schema without replacing historical measurements, established the trusted download-free CUDA hardware workflow, observed both normal CPU and CUDA Actions acceptance on the final executable/workflow tree, and reconciled canonical documentation. It changed no product behavior and activated no future track.
+
+Commit chronology and run links are canonical in [post-Phase 11 history](history.md#post-phase-11-quality-closure). Current support remains solely in [implementation status](../../project/implementation-status.md), procedures in [validation](../../project/validation.md), and exact measurements in [performance evidence](../../project/performance.md).
+
 ## Future execution tracks
 
 These tracks are intentionally unnumbered and inactive:
@@ -186,6 +194,7 @@ accepted CPU product
   -> Phase 10 repository infrastructure and synthetic acceptance
   -> executed external real-product baseline
   -> Phase 11 executed CPU + Linux CUDA matrix closure
+  -> post-Phase 11 quality maintenance closure
   -> no active successor
 ```
 

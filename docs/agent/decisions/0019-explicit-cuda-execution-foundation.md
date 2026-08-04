@@ -3,7 +3,9 @@
 - **Status:** Accepted
 - **Date:** 2026-08-03
 - **Phase 11 follow-up:** E1/Slint exposure accepted 2026-08-03
+- **Amends:** [ADR-0013](0013-candle-only-local-execution.md) for the execution-device dimension
 - **Contract amendment:** source/execution scalar separation and accounted-footprint terminology accepted 2026-08-04
+- **Evidence acceptance:** product-model CUDA evidence and self-hosted hardware CI accepted 2026-08-04
 
 ## Context
 
@@ -16,18 +18,18 @@ Candle can compile CUDA support behind Cargo features, but compilation alone doe
 The accepted Phase 11 execution and exposure matrix is:
 
 - CPU remains compiled by default, mandatory, and represented as `Cpu` with device ID 0;
-- CUDA is a non-default `candle-backend/cuda` feature for Linux x86_64 execution;
+- CUDA is a non-default `candle-backend/cuda` implementation feature; accepted product support is narrower than feature compilation;
 - the product feature chain is exactly `desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda`;
 - `inference-runtime/cuda -> candle-backend/cuda` remains a development-only compatibility-test edge;
 - no default feature graph reaches CUDA, no generic `gpu` alias exists, and `cudnn`, `flash-attn`, and `nccl` remain disabled;
 - a CUDA `DeviceId` is interpreted as a backend-visible ordinal, not a globally permanent hardware identity;
-- the first executed target is CUDA ordinal 0 on an NVIDIA GeForce RTX 5070 Ti with compute capability 12.0 and CUDA Toolkit 12.8 or newer;
+- accepted product support is CUDA ordinal 0 only on the executed Linux x86_64 NVIDIA GeForce RTX 5070 Ti row with driver 610.43.03, CUDA Toolkit 13.3, compute capability 12.0, and build target 120; the fixture workflow enforces Toolkit 12.8 or newer but does not broaden product support beyond the observed 13.3 row;
 - enabling CUDA adds capability and does not change an explicit CPU request;
 - an explicitly requested CUDA device never falls back to CPU.
 
 `domain-contracts::ExecutionDevice` owns the compact `{ id, kind }` identity. `ModelDescriptor::metadata.scalar_type` remains immutable source scalar metadata. `LoadPlan::execution_scalar_type` records the scalar selected by device-aware planning, and a loaded backend model must report its actual execution device, actual execution scalar, and accounted footprint. E0 compares the handle, complete descriptor, requested versus actual device, planned versus actual execution scalar, and planned versus actual accounted footprint before completing the lifecycle transition or publishing a receipt or resident slot. A mismatch uses the existing transactional cleanup/quarantine path, including complete reserved footprint retention when explicit cleanup fails. The accounted footprint is the quantity E0 admits, reserves, and restores transactionally; physical memory observation remains separate OS/driver evidence.
 
-Candle device construction is centralized and maps CPU ID 0 to `Device::Cpu` and CUDA ordinal `n` to `Device::new_cuda(n)`. Discovery, planning, and loading are bounded cold paths that each initialize and probe independently; only loading retains the Candle device. Sequence creation, prefill, decode, destruction, synchronization, and unload reuse that retained device, so no CUDA device or direct context is created per token or decode step. This bounded behavior does not justify a cache, singleton, unsafe sharing, or a wider public API. Nonzero CPU IDs, unsupported device kinds, CUDA in a CPU-only build, driver initialization failures, host/device budget failures, device execution failures, and synchronization failures remain distinguishable stable adapter outcomes. The optional direct `cudarc` dependency uses Candle's exact selected version and safe APIs only for device name, compute capability, physical memory observation, and native out-of-memory classification; no `cudarc` type crosses the adapter boundary.
+Candle device construction is centralized and maps CPU ID 0 to `Device::Cpu` and CUDA ordinal `n` to `Device::new_cuda(n)`. Discovery, planning, and loading are bounded cold paths that each initialize and probe independently; only loading retains the Candle device. Sequence creation, prefill, decode, destruction, synchronization, and unload reuse that retained device, so no CUDA device or direct context is created per token or decode step. This bounded behavior does not justify a cache, singleton, unsafe sharing, or a wider public API. Nonzero CPU IDs, unsupported device kinds, an explicit CUDA request in a build without the CUDA feature, driver initialization failures, host/device budget failures, device execution failures, and synchronization failures remain distinguishable stable adapter outcomes. The optional direct `cudarc` dependency uses Candle's exact selected version and safe APIs only for device name, compute capability, physical memory observation, and native out-of-memory classification; no `cudarc` type crosses the adapter boundary.
 
 Source scalar metadata remains independent from execution scalar. F32 sources execute as F32 on CPU and CUDA. F16 sources execute as F16 where the current Candle path supports them. BF16-sourced CPU models execute in F32 where Candle requires it, while BF16 remains BF16 on a CUDA device that reports support. Unsupported combinations fail during planning before partial residency. Model planning derives weight and cache accounting from the execution scalar, charges execution weights to host memory on CPU and device memory on CUDA, and charges sequence cache and rope working bytes to the corresponding execution-memory domain. No `candle_core::DType` crosses the adapter boundary.
 
@@ -66,7 +68,7 @@ Metal remains domain vocabulary only. Metal execution, `cudnn`, `flash-attn`, `n
 - Backend models report an accounted footprint rather than claiming a physical measurement; E0 reserved footprints remain exact to accepted plans and survive cleanup failure.
 - Hardware evidence must state the driver, toolkit, GPU, compute capability, selected ordinal, fixture result, synchronization result, and post-unload accounting.
 - E1 and Slint expose explicit CPU/CUDA selection plus separate source scalar, execution scalar, and actual loaded-device facts while preserving CPU as the fresh-install default and preserving explicit unavailable CUDA state without fallback.
-- Phase 11 hardware and real-model evidence predates this contract amendment; validation of the amended tree must still name the exact CPU/CUDA commands and hardware tests executed.
+- The accepted real-model CPU/CUDA evidence remains attributed to clean Commit E and its original schema-2 facts. The amended executable/workflow tree subsequently passed observed normal CPU quality run `30942153370` and self-hosted CUDA hardware run `30942148369`; schema-3 refactoring did not rerun or replace the historical timing tables.
 
 ## Review trigger
 

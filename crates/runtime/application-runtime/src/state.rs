@@ -88,7 +88,7 @@ impl ResolvedModel {
         self.vocabulary_size
     }
 
-    /// Returns the source-weight scalar type declared by immutable model configuration.
+    /// Returns the source scalar type declared by immutable model configuration.
     #[must_use]
     pub const fn source_scalar_type(&self) -> Option<ApplicationScalarType> {
         self.source_scalar_type
@@ -198,7 +198,7 @@ impl LoadedModel {
         &self.identity
     }
 
-    /// Returns the source-weight scalar type validated against the loaded descriptor.
+    /// Returns the source scalar type validated against the loaded descriptor.
     #[must_use]
     pub const fn source_scalar_type(&self) -> ApplicationScalarType {
         self.source_scalar_type

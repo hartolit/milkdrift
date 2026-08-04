@@ -21,7 +21,7 @@ Weight, cache, and rope accounting is computed from the selected execution scala
 
 ## CUDA initialization lifecycle
 
-CPU device ID 0 maps directly to `Device::Cpu`. CUDA ordinals are available only behind the non-default `cuda` feature and never fall back to CPU.
+CPU device ID 0 maps directly to `Device::Cpu`. Explicit CUDA ordinals can be represented only behind the non-default `cuda` feature and never fall back to CPU. Product support is narrower than this representation: only ordinal 0 on the executed Linux x86_64 RTX 5070 Ti matrix is claimed.
 
 Discovery, load planning, and loading are independent cold paths. Each CUDA invocation initializes its own Candle device and direct `cudarc` probe; no probe or context cache is retained between them. Planning drops its prepared device after returning the portable `LoadPlan`. Loading performs a fresh probe and retains only its loaded Candle device in the model.
 
@@ -37,18 +37,18 @@ The upstream cache cannot be cleared in place without constructing a replacement
 
 ## Tests
 
-Default CPU tests deterministically cover F32, F16, and BF16 sources, including the BF16-source/F32-execution distinction, execution-scalar memory accounting, final-position prefill logits, decode progression, cancellation, independent caches, synchronized destruction, and unload preparation.
+Default CPU tests deterministically cover F32, F16, and BF16 sources, including the BF16 source/F32 execution distinction, execution scalar memory accounting, final-position prefill logits, decode progression, cancellation, independent caches, synchronized destruction, and unload preparation.
 
 A CUDA-enabled build keeps explicit CPU execution non-ignored to prove that enabling CUDA does not change a CPU request. Actual CUDA execution remains both ignored and explicitly opted in with `MILKDRIFT_CUDA_TEST=1`. The target-specific tests validate CUDA ordinal 0, physical device observations, F32 CPU/CUDA compatibility, BF16-source/BF16-execution evidence, synchronization, and unload preparation.
 
 ## Supported scope
 
 - CPU device ID 0, compiled by default and still usable in CUDA-enabled binaries
-- Linux x86_64 CUDA ordinals behind the non-default `cuda` feature; explicit CUDA requests never fall back to CPU
+- explicit CUDA ordinal construction behind the non-default `cuda` feature; product support limited to ordinal 0 on the exact executed Linux x86_64 RTX 5070 Ti matrix, with no fallback
 - unquantized Llama-family models
 - Hugging Face `config.json`
 - one or more Safetensors shards
 - F32, F16, and BF16 source weight types under the execution policy above
 - CPU weights/cache/rope charged to host accounting; CUDA weights/cache/rope charged to device accounting with host load headroom represented separately
 
-Model downloading and tokenizer integration remain separate adapters. Metal, cuDNN, flash attention, NCCL, multi-GPU execution, GPU-side sampling, GGUF, and other quantized formats are unsupported.
+Model downloading and tokenizer integration remain separate adapters. Metal, cuDNN, flash attention, NCCL, multi-GPU execution, GPU-side sampling, GGUF, and other quantized formats are unsupported. Feature/API capability and accepted hardware support remain distinct; see the sole [product support matrix](../../../docs/project/implementation-status.md).

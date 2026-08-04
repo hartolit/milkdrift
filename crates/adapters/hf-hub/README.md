@@ -5,7 +5,7 @@ The adapter accepts only `tokenizer.json`, `config.json`, and
 unquantized Llama Safetensors layouts understood by the current Candle backend.
 Repository inspection resolves mutable references to an immutable commit before
 any required artifact is downloaded. Numbered shard layouts must be complete and
-consistent, and configuration scalar declarations are exposed for admission. The
+consistent, and configuration source scalar declarations are exposed for admission.
 public result is deliberately named `ResolvedSafetensorsLlamaArtifacts`; it is not
 a generic model bundle. Future model-format or artifact-source work requires its
 own reviewed contract rather than overloading this current result.

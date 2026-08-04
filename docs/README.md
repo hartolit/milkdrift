@@ -50,8 +50,8 @@ ADRs, applied project architecture, current status, or an active phase specifica
 ### Project decisions and execution memory
 
 - [Architecture decisions](agent/decisions/README.md) record why important project choices were made and when they should be revisited.
-- [Current execution context](agent/execution/current.md) is the concise handoff for the repository’s immediate state and next action.
-- [Execution plan](agent/execution/execution-plan.md) owns the ordered roadmap and phase gates.
+- [Current execution context](agent/execution/current.md) is the concise handoff for the repository’s immediate state, including an explicitly parked state when no phase is active.
+- [Execution plan](agent/execution/execution-plan.md) owns the completed program, phase gates, maintenance closures, and inactive future tracks.
 - [Architecture analysis](agent/execution/analyzer.md) preserves the analysis that motivated that program.
 - [Execution history](agent/execution/history.md) preserves chronology and closed-tree acceptance provenance; exact curated timing results live in [performance evidence](project/performance.md).
 
@@ -59,7 +59,7 @@ ADRs, applied project architecture, current status, or an active phase specifica
 
 ### Current project reference
 
-[Project documentation](project/README.md) owns the applied architecture, exact workspace structure, runtime/backend behavior, current support, validation procedures, portability claims, and other llm-app-specific reference material.
+[Project documentation](project/README.md) owns the applied architecture, exact workspace structure, runtime/backend behavior, current support, validation procedures, portability claims, and other Milkdrift-specific reference material. The current support and closure state is canonical in [implementation status](project/implementation-status.md); no product phase is active.
 
 Reference documents describe how the system works **now**. Execution documents describe what is being done **next** or what was proven **then**.
 
@@ -104,4 +104,4 @@ Do not create a second canonical page merely because an existing page is long. S
 
 Preserve rationale, failure semantics, measurements, and constraints that teach the system. Remove duplication by assigning ownership—not by deleting context until every file is a summary.
 
-Closed phases append to execution history. The active phase updates `agent/execution/current.md`. Current project behavior updates the relevant project guide and status page.
+Closed phases and maintenance closures append to execution history. `agent/execution/current.md` records either the active phase or the explicit absence of one. Current project behavior updates the relevant project guide and status page.

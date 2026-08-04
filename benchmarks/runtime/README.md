@@ -108,7 +108,7 @@ CUDA total/free/used observations are safe driver observations for the whole dev
 
 Every safe Candle `discover_device` observation constructs a temporary Candle CUDA device and cudarc context. Schema 3 records the exact number of these calls. They occur only at cold identity/resource checkpoints and never per token. The runner intentionally keeps this behavior: safe reuse would require exposing context ownership through production APIs or adding a lower-level benchmark dependency, neither of which is justified by this observation-only path.
 
-Ordinary tests and shared CI compile this path but never execute it, access the network, or require CUDA hardware. Resource preflight, hardware tests, report review, and the bounded manual Slint procedure are in [Phase 11 validation](../../docs/project/validation.md#phase-11-controlled-cpu-and-cuda-product-evidence); curated results live only in [performance evidence](../../docs/project/performance.md#external-product-evidence).
+Ordinary tests and shared CI compile this path but never execute it, access the network, or require CUDA hardware. Resource preflight, hardware tests, report review, and the bounded manual Slint procedure are in [controlled CPU and CUDA external product evidence](../../docs/project/validation.md#controlled-cpu-and-cuda-external-product-evidence); curated results live only in [performance evidence](../../docs/project/performance.md#external-product-evidence).
 
 ## Run focused Criterion targets
 

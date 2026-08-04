@@ -28,8 +28,8 @@ Models and sequences are never placed in `Arc` or borrowed across the command
 boundary. Public clients retain only typed identifiers and generation-safe model
 handles. A resource remains counted until its explicit backend cleanup succeeds.
 `RuntimeSnapshot` distinguishes active requests, retained generation workspaces,
-pending model cleanup, pending sequence cleanup, exhausted cleanup, and total
-reserved memory. Per-model snapshots expose the verified execution scalar, degraded
+pending model cleanup, pending sequence cleanup, exhausted cleanup, and aggregate
+reserved footprint. Per-model snapshots expose the verified execution scalar, degraded
 state, and pending sequence counts.
 
 ## Transaction and cleanup semantics
@@ -77,7 +77,7 @@ load lifecycle transition. The inspected descriptor's source scalar is not used 
 substitute for the independently planned execution scalar. No receipt or model slot
 is published before all checks succeed.
 
-Device, execution-scalar, or accounted-footprint mismatch uses the same explicit
+Device, execution scalar, or accounted footprint mismatch uses the same explicit
 unload/quarantine transaction as any other post-load contract violation. If cleanup
 fails, the runtime retains the complete planned footprint in aggregate accounting
 until a bounded cleanup retry succeeds; exhausted cleanup remains quarantined and
@@ -232,6 +232,6 @@ Ordinary scheduler and fault-injection coverage remains backend-independent. Det
 
 The fixture requires no network access and validates execution and lifecycle contracts rather than language quality. The default CPU suite does not require a GPU or establish an allocation-free Candle hot path. With the non-default test-only `inference-runtime/cuda` feature and explicit `MILKDRIFT_CUDA_TEST=1` opt-in, an ignored release test drives the same fixture through CUDA ordinal 0, verifies the E0 receipt/snapshot device, device-weight and device-sequence accounting, prefill, incremental decode, host-logit sampling, explicit synchronization, sequence destruction, unload, and zero post-unload accounting. See [download-free focused validation](validation.md#download-free-focused-validation).
 
-External artifact resolution belongs to E1 rather than E0. The opt-in [external CPU product baseline](validation.md#external-cpu-product-baseline) resolves an exact immutable Hub revision through the production Hub worker and then exercises E1, E0, and Candle. The E0-only `candle_llama_smoke` example remains a local diagnostic for artifacts that are already resolved; it performs no network or Hub work.
+External artifact resolution belongs to E1 rather than E0. The opt-in [controlled CPU and CUDA external product evidence](validation.md#controlled-cpu-and-cuda-external-product-evidence) runner resolves one exact immutable Hub revision through the production Hub worker and exercises E1, E0, and Candle on an explicitly selected device. The E0-only `candle_llama_smoke` example remains a local diagnostic for artifacts that are already resolved; it performs no network or Hub work.
 
 Product-level composition and unsupported capabilities are tracked in [implementation status](implementation-status.md); this guide remains focused on E0 behavior rather than roadmap sequencing.

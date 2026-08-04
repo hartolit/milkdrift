@@ -118,12 +118,12 @@ Commands should be copy/pasteable. State whether they are canonical gates, focus
 
 ### Current execution context
 
-`docs/agent/execution/current.md` is intentionally denser than an evergreen reference page. Its purpose is to let a new execution agent acquire the active working set without reconstructing the phase from the entire repository.
+`docs/agent/execution/current.md` is intentionally denser than an evergreen reference page. Its purpose is to let a new execution agent acquire the immediate working set—or learn that execution is deliberately parked—without reconstructing the program from the entire repository.
 
 It should contain:
 
 - the reviewed baseline and gate state;
-- the active phase objective;
+- the active phase objective, or an explicit statement that no phase is active;
 - the subset of already-implemented behavior the phase depends on;
 - current source touchpoints when they materially reduce rediscovery;
 - phase-specific invariants and non-goals;
@@ -132,7 +132,7 @@ It should contain:
 
 This is **derived context**. It may deliberately repeat a small amount of current information for operational clarity, but it must not become the only owner of support state, architecture, component behavior, or validation procedure.
 
-Update it while the phase is active. When the phase closes, move durable evidence to execution history, update the canonical project references, and advance `current.md` to the next active phase.
+Update it while a phase is active. When the phase closes, move durable evidence to execution history, update canonical project references, and either advance `current.md` to a reviewed successor or park it explicitly with no active phase.
 
 ### Execution history
 
@@ -172,7 +172,7 @@ Execution plans own future work. Evergreen project reference should not say "Pha
 
 Historical phase names are appropriate in execution history because chronology is the subject of that document.
 
-The active phase name is appropriate in `execution/current.md` because current execution is that document's subject. Keep detailed roadmap sequencing in the plan and durable current behavior in project reference.
+The active phase name—or an explicit no-active-phase statement—is appropriate in `execution/current.md` because immediate execution state is that document’s subject. Keep detailed roadmap sequencing in the plan and durable current behavior in project reference.
 
 ## Validation and measurements
 

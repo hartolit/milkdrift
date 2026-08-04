@@ -40,7 +40,15 @@ git diff --check
 
 The mandatory lint profile uses stable selected Clippy policy under `-D warnings`. Nursery remains a separate non-blocking report.
 
-## Phase 10 exact-tree acceptance
+## Shared CPU quality workflow
+
+[`.github/workflows/quality.yml`](../../.github/workflows/quality.yml) is the normal shared-CI gate. It runs on every push and pull request, plus a weekly schedule, using GitHub-hosted Ubuntu 24.04 and the mandatory default CPU feature graph. It does not install a CUDA toolkit, require a driver, enable the `cuda` feature, execute CUDA hardware tests, download an external model, or run performance thresholds.
+
+The `Rust and architecture` job prints the commit and tree, runs the canonical gate from a fresh target with forbidden-tool shims, checks the two portable domain targets, and reports duplicate dependencies. The separate blocking policy job runs locked dependency policy and offline repository-local Markdown links. Scheduled-only nursery and external-link jobs remain non-blocking or outside pull-request determinism as configured in the workflow.
+
+Untrusted pull-request code runs only on GitHub-hosted infrastructure. It cannot schedule the self-hosted CUDA machine because that workflow has no pull-request trigger. Observed run acceptance belongs in [implementation status](implementation-status.md); this document owns the repeatable workflow boundary.
+
+## Historical Phase 10 exact-tree acceptance
 
 Use a fresh dedicated directory beneath the root target without deleting the normal target. The absence check must succeed; if it does not, choose another new child path rather than reusing prior build output:
 
@@ -112,7 +120,7 @@ git status --short --ignored
 
 Directories named `target` beneath the root `target/` may be generated documentation artifacts and are valid. A package-local target elsewhere is not. The untracked status must be clean; ignored generated output should be confined to the root target.
 
-## Controlled Phase 10 measurements
+## Historical controlled Phase 10 measurements
 
 Run measurements only after exact-tree acceptance on the same clean code-under-test commit. Raw output remains ignored beneath root `target`; only curated reviewed values enter [performance evidence](performance.md).
 
@@ -202,7 +210,7 @@ cargo test --locked -p application-runtime
 cargo test --locked -p desktop-slint
 ```
 
-These tests exercise real-adapter fixture execution plus E0/E1/frontend lifecycle behavior, not external artifact availability, language quality, product performance, GPU execution, or allocation freedom inside upstream libraries.
+These commands exercise the default CPU fixture plus E0/E1/frontend lifecycle behavior. They do not establish external artifact availability, language quality, product performance, CUDA hardware execution, or allocation freedom inside upstream libraries.
 
 Fixture regeneration is an explicit maintenance operation, not ordinary validation:
 
@@ -212,9 +220,9 @@ cargo test --locked -p candle-backend --test generate_synthetic_fixture -- --ign
 
 Run it only when intentionally replacing the fixture, then review generated files and update provenance hashes in the same change.
 
-## Phase 11 lower-layer CUDA validation
+## Download-free CUDA hardware validation
 
-The canonical gate remains CPU-only. CUDA validation is separate, sequential, Linux x86_64 only, and requires no model download. Before any CUDA Cargo command, require an NVIDIA driver that recognizes the intended device, CUDA Toolkit 12.8 or newer, and the Blackwell build capability:
+The canonical repository gate uses the mandatory default CPU feature graph. CUDA validation is separate, sequential, Linux x86_64 only, and requires no model download. Before any CUDA Cargo command, require an NVIDIA driver that recognizes the intended device, CUDA Toolkit 12.8 or newer, and the Blackwell build capability:
 
 ```sh
 nvidia-smi
@@ -367,19 +375,16 @@ The security boundary is deliberate:
 
 - triggers are path-filtered pushes to `main` and owner-dispatched runs of the `main` ref only;
 - neither `pull_request` nor `pull_request_target` can schedule the machine, so fork or other untrusted PR code is never checked out there;
+- path-filtered pushes trust code already landed on `main`; anyone able to land matching code on `main` is inside the machine-execution boundary, so repository write and branch controls remain part of runner security;
 - workflow permissions are `contents: read`, checkout credentials are not persisted, and no repository secret or command input is used;
 - one repository-wide concurrency group prevents overlapping Milkdrift GPU jobs;
 - Cargo is offline after checkout, the target directory is isolated beneath `$RUNNER_TEMP`, and an `always()` final step removes it without `cargo clean`.
 
 The runner administrator maintains `/var/tmp/milkdrift-cargo-home` as a dependency-only Cargo cache seeded out of band from a trusted locked checkout. Refresh that cache before a trusted dependency update reaches `main`; do not expose credentials in it or relax the workflow's offline setting. The job fails before compilation when the maintained cache is missing or inaccessible.
 
-The job validates the exact RTX 5070 Ti / CUDA ordinal 0 / compute capability 12.0 / Toolkit 12.8+ / build-cap-120 matrix, then runs metadata, architecture, hygiene, the five-package CUDA check and Clippy graph, and the sequential adapter, hosted-E0, and E1 fixture tests listed above. It does not run TinyLlama, Hugging Face resolution, Criterion, elapsed-time thresholds, Slint interaction, or any arbitrary model.
+The job validates the exact RTX 5070 Ti / CUDA ordinal 0 / compute capability 12.0 / Toolkit 12.8+ / build-cap-120 matrix, then runs metadata, architecture, hygiene, the five-package CUDA check and Clippy graph, and the sequential adapter, hosted-E0, and E1 fixture tests listed above. It does not run TinyLlama, Hugging Face resolution, Criterion, elapsed-time thresholds, Slint interaction, or any arbitrary model. Its Toolkit 12.8+ fixture preflight range does not broaden product support beyond the exact observed Toolkit 13.3 row in implementation status.
 
-## External CPU product baseline
-
-The former CPU-only procedure is superseded by the device-parameterized [Phase 11 controlled CPU and CUDA product evidence](#phase-11-controlled-cpu-and-cuda-product-evidence) procedure below. Existing CPU evidence links retain this heading for historical continuity.
-
-## Phase 11 controlled CPU and CUDA product evidence
+## Controlled CPU and CUDA external product evidence
 
 `runtime-benchmarks` owns the single external E1 orchestration path for both devices. The external binary requires exactly `--device cpu` or `--device cuda:0`, never substitutes a device, and never falls back to CPU. It fixes `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`; repository and revision overrides are rejected. The pinned revision's [model-card metadata](https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/raw/fe8a4ea1ffedaf415f4da2f062534de366a451e6/README.md) declares `apache-2.0`. Record that upstream declaration and source without making a broader legal conclusion.
 
@@ -434,7 +439,7 @@ cargo build --release --locked \
     --bin external-baseline
 ```
 
-Execute the produced binaries directly and sequentially so no compiler process overlaps model residency:
+Execute the produced binaries directly and sequentially so no compiler process overlaps loaded-model ownership:
 
 ```sh
 target/phase11-cpu/release/external-baseline \
@@ -464,7 +469,7 @@ Review both schema-3 reports programmatically without printing generated text or
 - RTX 5070 Ti identity, driver/toolkit metadata, compute capability 12.0, and build target 120 only in the CUDA report;
 - complete cancellation, unload, shutdown, workspace-removal, and three-cycle CUDA stability results.
 
-CUDA total/free/used values are safe driver observations for the whole device, not process-attributed usage. Every cycle establishes a new immediately-pre-load baseline. Interpret post-unload and post-owner-drop retained deltas together with the absolute observations; desktop or other GPU activity can perturb either. The external report records `accounted_footprint` as an independent public adapter plan with validated E1 acceptance of the E0 load contract, but public E1 does not expose a same-worker E0 reservation or post-unload `RuntimeSnapshot`. Do not synthesize those fields or call the E1 state a direct accounting snapshot. Execute and record the direct opted-in E0 CUDA hardware snapshot test in the lower-layer section separately; that test owns exact zero model/request/workspace/cleanup accounting evidence.
+CUDA total/free/used values are safe driver observations for the whole device, not process-attributed usage. Every cycle establishes a new immediately-pre-load baseline. Interpret post-unload and post-owner-drop retained deltas together with the absolute observations; desktop or other GPU activity can perturb either. The external report records `accounted_footprint` as an independent public adapter plan with validated E1 acceptance of the E0 load contract, but public E1 does not expose a same-worker E0 reservation or post-unload `RuntimeSnapshot`. Do not synthesize those fields or call the E1 state a direct accounting snapshot. Execute and record the direct opted-in E0 CUDA hardware snapshot test in [download-free CUDA hardware validation](#download-free-cuda-hardware-validation) separately; that test owns exact zero model/request/workspace/cleanup accounting evidence.
 
 Schema 3 also records the exact number of safe Candle `discover_device` calls. Each call initializes a temporary Candle CUDA device and cudarc context; these observations are bounded to cold identity/resource checkpoints and never occur per token. Review the count as context-churn audit evidence only, not as a timing or performance threshold.
 
@@ -498,7 +503,7 @@ A human must visibly verify all of the following; compilation or process launch 
 
 Record only the behavioral result. Do not retain screenshots containing generated private text unless they were deliberately reviewed.
 
-### Final Phase 11 validation
+### Final CPU and CUDA acceptance procedure
 
 Run the ordinary CPU gates sequentially:
 
@@ -546,7 +551,7 @@ cargo clippy --locked \
     -- -D warnings
 ```
 
-Run every explicitly opted-in CUDA hardware test listed in [Phase 11 lower-layer CUDA validation](#phase-11-lower-layer-cuda-validation), then run the controlled external CPU and CUDA baselines above. Confirm artifact hygiene:
+Run every explicitly opted-in CUDA hardware test listed in [download-free CUDA hardware validation](#download-free-cuda-hardware-validation), then run the controlled external CPU and CUDA baselines above. Confirm artifact hygiene:
 
 ```sh
 test ! -e benchmarks/runtime/Cargo.lock
@@ -560,7 +565,7 @@ git status --short --untracked-files=all
 git status --short --ignored
 ```
 
-Only root `target/` and its descendants may contain build artifacts, generated CUDA kernels, model cache, temporary application state, and raw evidence. After reviewing successful results, update canonical evidence/status/execution documents in a separate documentation-only evidence commit. Re-run the documentation and canonical gates on that commit. Push only when requested, then observe the actual GitHub Actions run; local success is not remote acceptance.
+Only root `target/` and its descendants may contain build artifacts, generated CUDA kernels, model cache, temporary application state, and raw evidence. After reviewing successful results, update canonical evidence/status/execution documents in a separate documentation-only evidence commit. Re-run the documentation and canonical gates on that commit. Push only when requested; local success and an observed run on an earlier executable tree must remain separately identified.
 
 ## Dependency, link, and graph audits
 

@@ -1,12 +1,12 @@
-# Candle CPU-default and CUDA-capable reference backend
+# Candle backend
 
 ## Scope
 
-`crates/adapters/candle-backend` is the sole current local execution adapter. It implements the `domain-contracts` backend boundary for unquantized Hugging Face Llama configuration files and one or more Safetensors weight shards. CPU is compiled by default. Explicit CUDA ordinals are supported behind the non-default `candle-backend/cuda` feature and never fall back to CPU.
+`crates/adapters/candle-backend` is the sole current local execution adapter. It implements the `domain-contracts` backend boundary for unquantized Hugging Face Llama configuration files and one or more Safetensors weight shards. CPU is compiled by default. The non-default `candle-backend/cuda` feature can construct an explicitly requested CUDA ordinal and never falls back to CPU; current product support is limited to ordinal 0 on the exact executed Linux x86_64 RTX 5070 Ti matrix in [implementation status](implementation-status.md). Feature compilation or ordinal representation alone is not hardware-execution evidence.
 
 The adapter owns every Candle and `cudarc` type. No native tensor, device, model, cache, context, dtype, or error crosses into `domain-contracts`. Artifact download and tokenizer integration remain separate adapters.
 
-## Scalar contract
+## Source and execution scalar contract
 
 Scalar identity has two distinct stages:
 
@@ -16,17 +16,17 @@ Scalar identity has two distinct stages:
 
 Candle's `DType` remains private to the adapter. The exact policy is:
 
-| Source scalar | CPU execution | CUDA execution |
-| --- | --- | --- |
+| Source scalar | Execution scalar on CPU | Execution scalar on supported CUDA |
+|---|---|---|
 | F32 | F32 | F32 |
 | F16 | F16 | F16 |
-| BF16 | F32 | BF16 only when the selected device reports support |
+| BF16 | F32 | BF16 when the selected device reports support |
 
 Unsupported BF16 CUDA execution fails during the cold planning/loading preparation step, before any model weight shard is loaded. Vocabulary logits are normalized to caller-owned host F32 storage for every supported source and execution scalar.
 
-## Accounting and physical memory observation
+## Accounted footprint and physical-memory observation
 
-`MemoryFootprint`, `ModelDescriptor::estimated_footprint`, `LoadPlan::expected_footprint`, and `LoadedModel::accounted_footprint()` are planning and accounting quantities. They are not measurements of physical memory currently allocated by Candle or available on a device.
+`MemoryFootprint`, `ModelDescriptor::estimated_footprint`, `LoadPlan::expected_footprint`, and `LoadedModel::accounted_footprint()` are planning and accounting quantities. `accounted_footprint()` is the adapter quantity E0 verifies against its accepted plan; after admission, E0 exposes that committed ownership quantity as a reserved footprint in receipts and snapshots. Neither term measures physical memory currently allocated by Candle or available on a device.
 
 Inspection remains device-independent and uses the mandatory CPU execution policy for `ModelDescriptor::estimated_footprint`. Device-aware planning computes execution weight bytes and cache bytes per token from the selected execution scalar:
 
@@ -47,6 +47,8 @@ The loader has independent cold-path initialization boundaries:
 4. `load` repeats source validation and device initialization, selects the execution scalar again, validates accounting again, then retains the newly prepared Candle device while loading weights and constructing the Llama model.
 
 For CUDA, each discovery, planning, or loading call invokes the centralized `Device::new_cuda(ordinal)` path and a direct safe `CudaContext::new(ordinal)` probe for name, compute capability, and physical memory observations. There is deliberately no cross-call device or context cache.
+
+The loaded model reports its actual `ExecutionDevice`, execution scalar, complete descriptor, and accounted footprint through the domain `LoadedModel` contract. E0 compares those facts with the explicit request and accepted `LoadPlan` before committing a model slot or load receipt. A mismatch enters E0’s existing explicit unload/quarantine path; it is never repaired by selecting CPU.
 
 Sequence planning performs arithmetic only. Sequence creation allocates a Candle cache on the loaded model's retained device. Prefill and decode create their required tensors and execute through that same device; they do not construct a CUDA device or direct CUDA context per sequence or token. Sequence destruction, model synchronization, and unload preparation also reuse and synchronize the retained device. Successful unload preparation does not create another context; resources are released when the owner drops the model and finished sequences.
 
@@ -83,7 +85,7 @@ The deterministic CPU fixtures assign distinguishable token embeddings and LM-he
 
 With the `cuda` feature enabled, a non-ignored test explicitly executes CPU to prove that enabling CUDA does not change device selection or initialize the CUDA branch for a CPU request. Oversized CUDA identities are rejected before driver initialization.
 
-Actual CUDA hardware tests remain ignored and additionally require `MILKDRIFT_CUDA_TEST=1`. The accepted target test probes CUDA ordinal 0, validates its driver-reported identity, compute capability, BF16 support, physical total memory, and current available memory, compares deterministic F32 CPU/CUDA logits, proves BF16 source metadata remains BF16 with actual BF16 CUDA execution, synchronizes sequence/model work, and prepares unload. Feature compilation alone is not execution evidence.
+Actual CUDA hardware tests remain ignored and additionally require `MILKDRIFT_CUDA_TEST=1`. The accepted target test probes CUDA ordinal 0 on the exact supported matrix, validates its driver-reported identity, compute capability, BF16 support, physical total memory, and current available memory, compares deterministic F32 CPU/CUDA logits, proves BF16 source metadata remains BF16 with BF16 execution, synchronizes sequence/model work, and prepares unload. The accepted self-hosted run is recorded in [implementation status](implementation-status.md); feature compilation alone is not execution evidence.
 
 ## Allocation and reset capabilities
 

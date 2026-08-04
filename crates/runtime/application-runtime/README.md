@@ -15,7 +15,7 @@ Safetensors Llama artifacts and a Hugging Face tokenizer independently from the
 execution device, then constructs one `CandleLlamaSource` behind its private
 composition boundary.
 
-`ResolvedModel` reports artifacts, source, format, source-weight scalar,
+`ResolvedModel` reports artifacts, source, format, source scalar,
 tokenizer, immutable identity, and compatibility only. Selected device is
 separate E1 state using `ApplicationDevice::{Cpu, Cuda { ordinal: u32 }}` and
 `ApplicationDeviceSummary`; `LoadedModel` reports the independently verified
@@ -58,6 +58,7 @@ A successful E0 load receipt is published only after the admission ticket,
 logical model ID and handle, immutable resolution/artifacts, source scalar,
 E0-verified execution scalar, Llama/Candle/Safetensors evidence, tokenizer
 vocabulary, selected-versus-actual device, and bounded reserved footprint agree.
+The reserved footprint is E0 admission/ownership accounting, not physical residency.
 E1 checks that source and execution scalar evidence is coherent without inferring
 scalar from device or reproducing Candle's device-aware planner. If any evidence
 is unsupported or disagrees, E1 keeps the incompatible

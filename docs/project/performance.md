@@ -15,7 +15,7 @@ Hard harness timeouts stop hangs only. Lifecycle, fixture, identity, output, cle
 | Hosted E0 component-like | `benchmarks/runtime/benches/runtime.rs` | Public command submission through matching completion event, including bounded transport and dispatch | Raw Candle kernel timing, E1/product latency, RSS, or full-generation throughput |
 | Synthetic system/integration | `benchmarks/runtime` normal `baseline` binary | Download-free hosted-E0 lifecycle/output/accounting/RSS observations and fresh E1 start/shutdown cycles | Product-model speed or quality, representative scale, steady-state serving, or device memory |
 | Compile-only | Workspace benchmark compilation | Target/API compatibility | Runtime correctness or performance |
-| External real-product | `runtime-benchmarks` `external-baseline` binary plus focused E0/E1 device and accounting validation | Schema-3 evidence infrastructure for the exact TinyLlama lifecycle, explicit source/execution scalars, direct-completion, cancellation, accounted footprint, host RSS, and exact-device whole-device CUDA memory; the curated CPU/CUDA measurements remain the preserved schema-2 Commit E evidence below, and historical CPU-only Commit C evidence remains below | Model quality, other hosts/models/scalars/devices, serving capacity, GPU sampling, process-attributed device memory, generic NVIDIA behavior, leak/non-leak proof, or a portable regression threshold |
+| External real-product | `runtime-benchmarks` `external-baseline` binary plus focused E0/E1 device and accounting validation | Schema-3 evidence infrastructure for the exact TinyLlama lifecycle, explicit source/execution scalars, direct-completion, cancellation, accounted footprint, process RSS, and whole-device CUDA observations; the curated CPU/CUDA measurements remain the preserved schema-2 Commit E evidence below, and historical CPU-only Commit C evidence remains below | Model quality, other hosts/models/scalars/devices, serving capacity, GPU sampling, process-attributed device memory, generic NVIDIA behavior, leak/non-leak proof, or a portable regression threshold |
 
 ## Sampling methodology
 
@@ -244,7 +244,7 @@ The clean schema-3 CUDA regression on commit `7dd7a72565cfb976bf123ed664296e9332
 
 ### Phase 11 controlled CPU-vs-CUDA product evidence
 
-The schema-2 Commit E reports and exact curated tables below are the canonical current CPU/CUDA product evidence. The CPU and CUDA primary runs use the same application workload, but they are product-path observations rather than precision-matched hardware microbenchmarks: the CPU path is F32, the CUDA path is BF16, and CUDA generation includes full-vocabulary-logit transfer for host F32 sampling.
+The schema-2 Commit E reports and exact curated tables below are the canonical current CPU/CUDA product evidence. The CPU and CUDA primary runs use the same BF16-source model and application workload, but they are product-path observations rather than precision-matched hardware microbenchmarks: CPU uses F32 execution, supported CUDA uses BF16 execution, and CUDA generation includes full-vocabulary-logit transfer for host F32 sampling.
 
 #### Exact code, model, and report identity
 
@@ -273,8 +273,8 @@ No raw report body, generated model text, or generated token ID is reproduced he
 | CUDA toolkit / compiler | CUDA `13.3`; `nvcc V13.3.73` |
 | Compute capability / build cap | CC 12.0; `CUDA_COMPUTE_CAP=120` |
 | Device VRAM | 16,648,896,512 B |
-| CPU product composition | Default build; explicit `cpu` device; F32 |
-| CUDA product composition | Non-default `runtime-benchmarks/cuda -> application-runtime/cuda -> candle-backend/cuda`; explicit `cuda:0` device; BF16 |
+| CPU product composition | Default build; explicit `cpu` device; BF16 source → F32 execution |
+| CUDA product composition | Non-default `runtime-benchmarks/cuda -> application-runtime/cuda -> candle-backend/cuda`; explicit `cuda:0` device; BF16 source → BF16 execution |
 | Sampling boundary | Host sampling; CUDA full-vocabulary logits transferred to host F32; no GPU sampling |
 
 #### Controlled workload and boundaries
@@ -329,16 +329,16 @@ Progress was established before cancellation. Both primary runs generated exactl
 | CPU | 0.426740446 s | 0.251451575 s | 0.262429696 s | 0.252368862 s | 1 | User-requested cancellation |
 | CUDA | 0.013790885 s | 0.010059043 s | 0.020916542 s | 0.010860189 s | 1 | User-requested cancellation |
 
-#### Planned E0 footprint and E1 load contract
+#### Accounted E0 footprint and E1 load contract
 
-| Composition | Planned weight residency | Planned host working bytes | Planned cache bytes per token |
+| Composition | Accounted weight bytes | Accounted host working bytes | Accounted cache bytes per token |
 |---|---:|---:|---:|
-| CPU / F32 | 4,400,239,728 B host weights | 2,200,119,864 B | 45,056 B |
-| CUDA / BF16 | 2,200,119,864 B device weights | 2,200,119,864 B | 22,528 B |
+| CPU / BF16 source → F32 execution | 4,400,239,728 B host weights | 2,200,119,864 B | 45,056 B |
+| CUDA / BF16 source → BF16 execution | 2,200,119,864 B device weights | 2,200,119,864 B | 22,528 B |
 
 This is an independent E0 plan plus the E1 accepted load contract, not a reservation snapshot from the same worker that ran the product workload. Exact zero-accounting evidence is owned by the direct E0 snapshot test.
 
-#### Process-wide host RSS observations
+#### Process RSS observations
 
 The key CPU primary checkpoints were:
 
@@ -386,7 +386,7 @@ A manual Slint user check confirmed CPU and CUDA behavior, described CUDA prompt
 
 #### Interpretation and limitations
 
-This evidence establishes controlled local product-path behavior for the exact Commit E tree, model revision, host, RTX 5070 Ti ordinal, driver, toolkit, build cap, scalar choices, and workload above. The lower CUDA durations are observations for that exact composition, not a hard threshold or a hardware-only speedup claim: CPU used F32, CUDA used BF16, and CUDA transferred full-vocabulary logits to host F32 for host sampling. GPU sampling was not measured.
+This evidence establishes controlled local product-path behavior for the exact Commit E tree, model revision, host, RTX 5070 Ti ordinal, driver, toolkit, build cap, scalar choices, and workload above. The lower CUDA durations are observations for that exact composition, not a hard threshold or a hardware-only speedup claim: the shared BF16 source executed as F32 on CPU and BF16 on CUDA, and CUDA transferred full-vocabulary logits to host F32 for host sampling. GPU sampling was not measured. GPU sampling was not measured.
 
 Nothing here generalizes to NVIDIA devices as a family, another device/model/revision/scalar, concurrent or steady-state serving, model quality, or production capacity. Whole-device CUDA values cannot attribute memory to this process. The three CUDA cycles and absence of strict monotonic retained growth prove neither a leak nor non-leak; sampled RSS likewise cannot do so. Clean lifecycle outcomes, the accepted E1 contract, and exact direct-E0 zero accounting establish their named ownership boundaries without claiming immediate OS, allocator, or driver reclamation.
 
@@ -406,7 +406,7 @@ The authoritative external run executed the release `external-baseline` binary d
 | Repository | `TinyLlama/TinyLlama-1.1B-Chat-v1.0` |
 | Requested revision | `fe8a4ea1ffedaf415f4da2f062534de366a451e6` |
 | Resolved immutable commit | `fe8a4ea1ffedaf415f4da2f062534de366a451e6` |
-| Composition | Candle / Hugging Face Hub / CPU / Safetensors / Llama / BF16 |
+| Composition | Candle / Hugging Face Hub / CPU / Safetensors / Llama; BF16 source with F32 CPU execution under the then-current policy |
 | Vocabulary / context / prefill capacities | 32,000 / 2,048 / 2,048 tokens |
 | Upstream-declared license metadata | `apache-2.0`, from the pinned revision's [model card](https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/raw/fe8a4ea1ffedaf415f4da2f062534de366a451e6/README.md); this records the upstream declaration, not a broader legal conclusion |
 | Explicit cache | `target/phase10-external-cache`; empty before resolution; populated only as an ignored generated artifact |
@@ -461,7 +461,7 @@ Durations are submission/call-to-observation intervals from the one recorded run
 
 Here “first output” means the first non-empty decoded UTF-8 fragment observed at the public E1 output boundary. Effective throughput is exactly 32 generated tokens divided by submission-to-release duration. No post-first-output throughput is reported because the public output record does not identify how many generated tokens had been consumed at the first decoded fragment.
 
-#### Process-memory observations
+#### Process RSS observations
 
 The runner sampled Linux `/proc/self/status` at lifecycle checkpoints. Each measured sample's memory was captured after release.
 
@@ -478,11 +478,11 @@ The runner sampled Linux `/proc/self/status` at lifecycle checkpoints. Each meas
 | After unload | 2,498,686,976 bytes | 5,661,573,120 bytes |
 | After shutdown | 2,088,587,264 bytes | 5,661,573,120 bytes |
 
-The sampled RSS dropped by 3,167,993,856 bytes from the final measured release to post-unload and by another 410,099,712 bytes after shutdown. Remaining RSS is not treated as retained model/runtime ownership: it includes the whole process, executable/library mappings, allocator arenas/caches, stacks, and other host state. `/proc` RSS/HWM accounting and checkpoint sampling are coarse and can miss or approximate transient residency; the highest observed reported field was 5,666,680,832 bytes. There is no device-memory evidence because CPU is the only supported device.
+The sampled RSS dropped by 3,167,993,856 bytes from the final measured release to post-unload and by another 410,099,712 bytes after shutdown. Remaining RSS is not treated as retained model/runtime ownership: it includes the whole process, executable/library mappings, allocator arenas/caches, stacks, and other host state. `/proc` RSS/HWM accounting and checkpoint sampling are coarse and can miss or approximate transient residency; the highest observed reported field was 5,666,680,832 bytes. That historical run used CPU and recorded no device-memory evidence.
 
 #### Interpretation and limitations
 
-This closes the missing current-tree CPU product baseline and is sufficient to make Phase 11 ready for a separate activation decision. It does not implement or evidence GPU capability. It is one local run on one desktop host, one model/revision/scalar, one initially empty cache, one chat proof, one warmup, and three short direct completions. Background desktop and editor services remained present, so these values are controlled local evidence rather than isolated laboratory results.
+This closes the missing current-tree CPU product baseline and is sufficient to make Phase 11 ready for a separate activation decision. It does not implement or evidence GPU capability. It is one local run on one desktop host, one model/revision and one BF16-source/F32-execution policy, one initially empty cache, one chat proof, one warmup, and three short direct completions. Background desktop and editor services remained present, so these values are controlled local evidence rather than isolated laboratory results.
 
 The result supports product-path compatibility, deterministic workload comparison, and lifecycle regression investigation on a comparable host. It does not establish model quality, concurrent or steady-state serving throughput, another model/format/engine/device, allocator attribution, cross-host portability, a memory leak/non-leak conclusion, or a production optimization target. No production optimization is justified by this baseline alone.
 

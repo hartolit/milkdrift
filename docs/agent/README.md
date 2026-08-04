@@ -26,8 +26,8 @@ The contents have different lifecycles:
 - `persona.md` is reusable collaboration guidance;
 - `knowledge/` is reusable technical explanation and evidence-oriented guidance;
 - `decisions/` is project-specific architectural rationale;
-- `execution/current.md` is the mutable working set for the active phase;
-- `execution/analyzer.md` and `execution-plan.md` are preserved source artifacts for the active execution program;
+- `execution/current.md` is the mutable handoff for an active phase or an explicitly parked state;
+- `execution/analyzer.md` and `execution-plan.md` are preserved source artifacts for the execution program and inactive future tracks;
 - `execution/history.md` is chronological closure evidence.
 
 ## Recommended agent read path

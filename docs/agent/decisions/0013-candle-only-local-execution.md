@@ -3,6 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-07-31
 - **Supersedes:** [ADR-0012](0012-local-native-composition.md)
+- **Device dimension amended by:** [ADR-0019](0019-explicit-cuda-execution-foundation.md)
 
 ## Context
 
@@ -21,7 +22,7 @@ The current supported local composition is:
 - **execution engine:** Candle;
 - **model format:** Safetensors;
 - **artifact source:** immutable-revision Hugging Face artifacts resolved through the Rust adapter;
-- **execution device:** CPU.
+- **execution device:** mandatory/default CPU, plus explicit feature-gated CUDA only within ADR-0019’s accepted matrix.
 
 These are separate architectural dimensions. A new format, artifact source, or device does not by itself justify another execution engine or another E0 ownership architecture.
 
@@ -51,7 +52,7 @@ This decision supersedes ADR-0012. It retains ADR-0012's valid conclusions that 
 - Public application vocabulary reports only facts derived from the supported composition and no longer represents unsupported backend/source/format cross-products.
 - The selected dependency graph no longer includes llama.cpp, its Rust bindings, or native build dependencies retained solely for that path.
 - Direct completion, the verified TinyLlama chat profile, context planning, cancellation, bounded output, cleanup, unload, persistence, and explicit shutdown remain application requirements.
-- GPU support and Candle-native GGUF remain deliberate future work rather than implicit capabilities.
+- CUDA support is deliberate, explicit, and limited by [ADR-0019](0019-explicit-cuda-execution-foundation.md); it does not introduce another engine or generic GPU capability. Candle-native GGUF remains separate future work.
 
 ## Review trigger
 

@@ -4,26 +4,28 @@ A layered Rust workspace for a local-first, composable language-model system wit
 
 ## Current product state
 
-The current local product uses one coherent composition:
+Milkdrift’s current local product uses Candle with immutable Hugging Face Hub revisions, Safetensors, and the unquantized Llama path. CPU is mandatory, compiled by default, and selected on a fresh installation. Explicit non-default CUDA ordinal 0 is supported only on the executed Linux x86_64 NVIDIA GeForce RTX 5070 Ti matrix recorded in [implementation status](docs/project/implementation-status.md); this is not a generic NVIDIA compatibility claim, and an unavailable CUDA selection never falls back to CPU.
 
-- **execution engine:** Candle;
-- **artifact source:** immutable Hugging Face Hub revisions;
-- **model format:** Safetensors;
-- **device:** CPU.
+`application-runtime` (E1) is the frontend-neutral façade. `ModelSelection` contains a Hugging Face repository and requested revision. Resolution pins that selection to an immutable Hub commit and reports source evidence without choosing a device. After load, E1 reports the verified source scalar, execution scalar, and actual execution device separately. In particular:
 
-`application-runtime` (E1) is the frontend-neutral façade. `ModelSelection` contains a Hugging Face repository and requested revision. Resolution pins that selection to an immutable Hub commit, loads the matching Hugging Face tokenizer, and reports application-owned engine, source, device, format, scalar, vocabulary, and commit facts. Callers cannot assemble unsupported combinations.
+```text
+BF16 source on CPU
+    -> F32 execution
 
-E1 owns one concrete Candle E0 worker/thread, one bounded Hub resolver worker, one resident-model lifecycle, and the concrete Hugging Face tokenizer/streaming-decoder path. E0 owns loaded model resources, sequences, request admission, token scheduling, sampling, cancellation boundaries, output backpressure, cleanup quarantine, accounting, unload, and shutdown.
+BF16 source on supported CUDA
+    -> BF16 execution
+```
 
-- Direct completion is available for every successfully loaded model.
-- Chat is enabled only for `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable commit `fe8a4ea1ffedaf415f4da2f062534de366a451e6` when `</s>` resolves to token ID 2.
-- Conversation/context planning, regeneration and supersession, bounded decoded output, cancellation, cleanup retry/exhaustion, unload policy, redb-backed preferences/catalogue state, and explicit bounded shutdown remain implemented.
-- Startup rolls back an already-started inference worker if Hub-worker startup fails. An incompatible load receipt is never published as the resident model: its handle remains privately accounted through unload retry or exhaustion. Shutdown is retryable, and a timeout retains worker handles rather than detaching them.
-- Slint maps only E1-owned types and displays the derived engine, source, CPU device, Safetensors format, scalar type, and immutable Hub identity.
+E1 owns one concrete Candle E0 worker/thread, one bounded Hub resolver worker, one resident-model lifecycle, and the Hugging Face tokenizer/streaming-decoder path. E0 owns loaded resources, request admission, scheduling, host-side sampling over F32 logits, cancellation, bounded output, cleanup accounting, synchronization, unload, and shutdown.
 
-GGUF is not supported by the current product. Possible Candle-native GGUF or other quantized-format work requires a separate reviewed implementation. GPU execution is also deferred. There is no current llama.cpp product, hosted-provider or peer execution path, browser transport, `application-api`, or multiple application-level resident models.
+- Direct completion is available for every successfully loaded compatible model.
+- Built-in chat is limited to `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable commit `fe8a4ea1ffedaf415f4da2f062534de366a451e6` when `</s>` resolves to token ID 2.
+- Slint uses only E1-owned types and keeps selected device, source scalar, execution scalar, and actual loaded device distinct.
+- CUDA-enabled builds can still explicitly select CPU.
 
-See the [current implementation status](docs/project/implementation-status.md) for the exact support and validation state. The [execution plan](docs/agent/execution/execution-plan.md) is the active roadmap, and the [project vision](docs/vision.md) is intentionally aspirational rather than a support claim.
+GGUF and other quantized formats, Metal, GPU-side sampling, generic GPU selection, automatic CPU fallback, another local engine, hosted or peer execution, browser transport, `application-api`, and multiple application-level resident models are not supported.
+
+See [implementation status](docs/project/implementation-status.md) for the sole product support matrix and accepted validation state. The [execution plan](docs/agent/execution/execution-plan.md) records the completed program and inactive future tracks; no product phase is active. The [project vision](docs/vision.md) remains aspirational rather than a support claim.
 
 ## Workspace
 
@@ -65,17 +67,26 @@ cargo test --workspace --locked
 cargo bench --locked -p sampling --bench sampling_pipeline
 ```
 
-Ordinary workspace tests are download-free. The opt-in, network-dependent E1 external CPU baseline and its exact immutable revision are documented in [project validation](docs/project/validation.md#external-cpu-product-baseline).
+Ordinary workspace tests and the normal quality workflow are download-free and use the mandatory default CPU feature graph. The opt-in controlled CPU/CUDA external runner and its exact immutable model revision are documented in [project validation](docs/project/validation.md#controlled-cpu-and-cuda-external-product-evidence).
 
 ## Slint frontend
 
-Run the native frontend with:
+Run the default CPU build with:
 
 ```text
 cargo run --locked -p desktop-slint
 ```
 
-The frontend accepts a Hugging Face repository and revision, resolves and loads the immutable Candle/Safetensors CPU model through E1, streams bounded decoded output, supports cancellation and deterministic unload, and calls E1's bounded shutdown protocol for the inference and Hub workers on normal closure. Verified TinyLlama uses Chat mode; every other loaded model uses honest Direct completion mode. Application state is stored in the platform's per-user application-data directory.
+On the exact supported CUDA matrix, build and run the opt-in CUDA graph with:
+
+```text
+CUDA_COMPUTE_CAP=120 \
+cargo run --release --locked \
+    -p desktop-slint \
+    --features cuda
+```
+
+The CUDA-enabled application still requires explicit device selection and can explicitly run on CPU. Feature compilation alone is not hardware-execution evidence. The frontend resolves immutable Candle/Safetensors artifacts through E1, streams bounded decoded output, supports cancellation and deterministic unload, and calls E1’s bounded shutdown protocol on normal closure. Verified TinyLlama uses Chat mode; every other compatible loaded model uses Direct completion mode. Application state is stored in the platform’s per-user application-data directory.
 
 Relevant guides:
 

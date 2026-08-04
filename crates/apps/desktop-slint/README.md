@@ -4,7 +4,7 @@ Thin Slint presentation adapter over `application-runtime` (E1).
 
 ## Supported local model flow
 
-The frontend accepts a Hugging Face repository and revision as E1's device-independent `ModelSelection`. E1 resolves immutable Safetensors artifacts for Candle execution and reports artifact/source/format/source-scalar/tokenizer/identity/compatibility facts without attaching a device.
+The frontend accepts a Hugging Face repository and revision as E1's device-independent `ModelSelection`. E1 resolves immutable Safetensors artifacts for Candle execution and reports artifact/source/format/source scalar/tokenizer/identity/compatibility facts without attaching a device.
 
 CPU is the fresh-install default. A compact device `ComboBox` presents E1's explicit CPU/CUDA catalogue. Rust owns stable `ApplicationDevice` identity/index mapping, so labels are never parsed for semantics. Unavailable devices have a distinct label; persisted unavailable CUDA remains selected and visible, and neither Slint nor E1 falls back to CPU.
 
@@ -24,16 +24,19 @@ The crate depends on E1's application types and APIs. It does **not** import ada
 
 The binary entry point delegates to the library so process startup remains lean.
 
-Run the default CPU graph with:
+Run the mandatory/default CPU graph with:
 
 ```text
-cargo run -p desktop-slint
+cargo run --locked -p desktop-slint
 ```
 
-Opt into the exact `desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda` chain with:
+On the exact supported Linux x86_64 RTX 5070 Ti matrix, opt into the `desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda` chain with:
 
 ```text
-CUDA_COMPUTE_CAP=120 cargo run -p desktop-slint --features cuda
+CUDA_COMPUTE_CAP=120 \
+cargo run --release --locked \
+    -p desktop-slint \
+    --features cuda
 ```
 
-There is no generic `gpu` alias, and CUDA is never enabled by default.
+A CUDA-enabled application can still explicitly select CPU. There is no generic `gpu` alias, CUDA is never enabled by default, and feature compilation alone is not hardware-execution evidence. See the sole [product support matrix](../../../docs/project/implementation-status.md).

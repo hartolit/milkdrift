@@ -3,28 +3,54 @@
 **Status date:** 2026-08-04
 
 ```text
-Phase 10: complete.
-External CPU product baseline: complete.
+Phase 10 complete.
 Phase 11 complete for the executed CPU + Linux CUDA matrix.
-No subsequent phase is active.
+Post-Phase 11 quality closure complete.
+No subsequent product phase is active.
 ```
 
-This page owns current product support, unsupported behavior, lifecycle guarantees, and the existence of benchmark infrastructure. It does not own command logs or timing intervals. Use [performance evidence](performance.md) for methodology/results, [validation](validation.md) for procedures, [execution history](../agent/execution/history.md) for chronology, and the [execution plan](../agent/execution/execution-plan.md) for future work.
+This page is the sole product-level support matrix and validation-state owner. It does not own command logs or timing tables. Use [validation](validation.md) for repeatable procedures, [performance evidence](performance.md) for exact measurements and their limits, [execution history](../agent/execution/history.md) for chronology, and the [execution plan](../agent/execution/execution-plan.md) for the completed program and inactive future tracks.
+
+## Accepted current tree
+
+The final executable and workflow baseline is commit `1a62d2ed6623500e9052b4b8386ebd058984bd89`, tree `79864da274aed94471c2fbcfedaa97c2f32f3e7a`. It contains the final source scalar and execution scalar APIs, E1 modularization, schema-3 evidence refactor, and CPU/CUDA workflows. The post-Phase 11 documentation-only maintenance commit reconciles current documentation to that baseline.
+
+Two successful GitHub Actions runs were observed on that exact commit:
+
+- normal shared-CPU [quality run 30942153370](https://github.com/hartolit/milkdrift/actions/runs/30942153370), including the canonical gate, portable-domain checks, dependency policy, and offline local-link validation;
+- self-hosted [CUDA hardware run 30942148369](https://github.com/hartolit/milkdrift/actions/runs/30942148369), including the exact CUDA feature graph and download-free adapter, E0, and E1 hardware tests.
+
+The later documentation commit changes no executable source, manifest, lockfile, fixture, or workflow. Its local closure gates and resulting identity belong in the final closure report rather than a self-referential tracked hash.
 
 ## Supported product
 
 | Capability | Current support |
 |---|---|
 | Local engine | Candle only |
-| Artifact source and format | Immutable Hugging Face Hub revision with Safetensors |
-| Device | Mandatory default CPU; explicit CUDA ordinal 0 only on the executed Linux x86_64 NVIDIA GeForce RTX 5070 Ti matrix |
+| Artifact source | Hugging Face Hub revision resolved to an immutable commit |
+| Model format and path | Safetensors; current unquantized Llama path |
+| CPU | Mandatory in every build, default feature graph, and fresh-install selection |
+| CUDA | Explicit non-default ordinal 0 only on the executed Linux x86_64 NVIDIA GeForce RTX 5070 Ti matrix below |
+| Device failure | Explicit failure with no automatic CPU fallback |
 | Resident models | One selected/resident model in E1 |
 | Direct completion | Supported for every successfully loaded compatible model |
 | Built-in chat | Exact `TinyLlama/TinyLlama-1.1B-Chat-v1.0` profile at commit `fe8a4ea1ffedaf415f4da2f062534de366a451e6`, with `</s>` token ID 2 |
 | Frontend | Slint desktop through the E1 façade |
 | Persistence | redb-backed preferences and model catalogue; conversation history remains in memory |
 
-`ModelSelection` remains normalized repository/revision input. Resolution pins an immutable Hub commit and reports artifacts, source, format, scalar, tokenizer, identity, and compatibility without selecting a device. E1 holds selected `ApplicationDevice` state separately, and `LoadedModel` reports only the actual device verified from E0's receipt. Callers cannot assemble unsupported engine/source/format/device cross-products.
+`ModelSelection` contains only normalized repository/revision input. Resolution pins an immutable Hub commit and reports source evidence without selecting a device. E1 holds `ApplicationDevice` selection separately. A resolved model exposes a source scalar; a loaded model exposes the verified source scalar, receipt-verified execution scalar, and actual device.
+
+The current TinyLlama scalar boundary is:
+
+```text
+BF16 source on CPU
+    -> F32 execution
+
+BF16 source on supported CUDA
+    -> BF16 execution
+```
+
+A loaded CPU model with BF16 source weights is therefore not reported simply as “BF16.”
 
 The current composition is:
 
@@ -36,101 +62,80 @@ Slint or another native frontend
              -> redb persistence
              -> one Candle hosted E0 worker/thread
                   -> inference-runtime (E0)
-                       -> Candle + Safetensors + mandatory CPU or explicitly selected, feature-gated CUDA ordinal 0
+                       -> Candle + Safetensors
+                       -> mandatory/default CPU
+                          or explicit feature-gated CUDA ordinal 0
 ```
 
 ### Phase 11 implemented boundary
 
-Phase 11 is complete only for the following executed support matrix:
-
 | Execution target | Support and evidence boundary |
 |---|---|
-| CPU | Mandatory in every build, the default feature graph and fresh-install selection, and the shared-CI path. CPU tests and the final CPU compile/test/Clippy gates were executed successfully. |
-| CUDA ordinal 0 | Local exact-feature compilation and executed hardware evidence support only the Linux x86_64 matrix: NVIDIA GeForce RTX 5070 Ti, driver 610.43.03, CUDA toolkit 13.3, compute capability 12.0, and build target 120. |
+| CPU | Mandatory and default. The shared Ubuntu 24.04 quality workflow executes the default CPU graph without a CUDA toolkit or driver. |
+| CUDA ordinal 0 | Supported only on Linux x86_64 with NVIDIA GeForce RTX 5070 Ti, driver 610.43.03, CUDA Toolkit 13.3, compute capability 12.0, and `CUDA_COMPUTE_CAP=120`. |
 | Other NVIDIA/CUDA or GPU targets | Unsupported and unclaimed. The exact executed row does not establish generic NVIDIA compatibility. |
 | Metal | Not implemented. |
 
-The implemented boundary is:
+The implementation and evidence boundary is:
 
-- the product feature graph is exactly `desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda`;
-- the benchmark feature graph is exactly `runtime-benchmarks/cuda -> application-runtime/cuda`;
-- the direct E0 test edge `inference-runtime/cuda -> candle-backend/cuda` remains development-only;
-- no default feature graph reaches CUDA, there is no generic `gpu` alias, and `cudnn`, `flash-attn`, and `nccl` are not enabled;
-- E1 owns `ApplicationDevice::{Cpu, Cuda { ordinal: u32 }}`, bounded discovery, structured availability diagnostics, persisted explicit selection, selection lifecycle, and explicit accelerator-memory policy without exposing Candle or `cudarc` types;
-- resolution remains device-independent, while load admission passes the exact selected `ExecutionDevice`; an unavailable persisted CUDA selection fails explicitly after re-probing and never falls back to CPU;
-- E0 verifies the actual loaded device and bounded footprint before publishing a receipt, and that actual device identity reaches E1 and Slint;
-- Slint uses stable Rust identity/index mapping for its compact device selector and distinguishes selected, artifact-only resolved, and actual loaded-device summaries;
-- sampling remains host-side over F32 logits after CUDA transfer; GPU-side sampling is not supported.
+- product features are exactly `desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda`;
+- benchmark features are exactly `runtime-benchmarks/cuda -> application-runtime/cuda`;
+- `inference-runtime/cuda -> candle-backend/cuda` is a development-only fixture edge;
+- no default graph reaches CUDA, and there is no generic `gpu` alias;
+- E1 owns bounded discovery, explicit persisted selection, structured availability, and accelerator-memory policy without exposing Candle or `cudarc` types;
+- unavailable selected CUDA fails without fallback;
+- E0 verifies actual device, execution scalar, and adapter accounted footprint before publishing its reserved footprint; that actual device reaches E1 and Slint;
+- CUDA-enabled binaries retain explicit CPU execution;
+- sampling remains host-side over F32 logits after a safe CUDA-to-host transfer.
 
-The E1 memory policy is `AcceleratorMemoryPolicy::{Automatic, Limit { bytes: NonZeroU64 }}`. Because E0's aggregate device budget is fixed at startup, Automatic admission uses the least reported physical total across every CUDA row in the bounded startup catalogue; an unavailable row or missing capacity contributes zero and fails closed, while a limit applies the lower user cap. Load re-probes block without fallback when that fixed nonzero budget no longer fits the selected device's latest physical total, requiring restart before CUDA load. Existing CPU host budgeting is unchanged, and selected-device Candle planning checks current available VRAM before partial residency. One resident model remains the product limit.
+## Memory terminology
 
-Clean Commit E `411945e0fd53363f98609db21a43d757c4d9b506`, tree `7099dcb5c9879190543d3afa5fde399a84d799df`, supplied the Phase 11 closure evidence:
+- **Accounted footprint** is the adapter’s accepted planning/accounting quantity reported by `LoadedModel::accounted_footprint()`; it is not physical residency.
+- **Reserved footprint** is E0’s deterministic admission and ownership quantity in load receipts and snapshots, including retained cleanup ownership.
+- **Process RSS** is a sampled whole-process OS observation that includes unrelated mappings, allocator retention, workers, and driver state.
+- **Whole-device CUDA observation** is a sampled driver total/free/used value for the complete device, not process-attributed memory.
 
-- the exact supported TinyLlama primary workload passed on CPU and CUDA, including compatible chat, controlled completion, cancellation, release, unload, and bounded shutdown;
-- three complete CUDA lifecycle cycles were stable;
-- the direct E0 CUDA snapshot test proved zero model, request, workspace, and cleanup accounting after lifecycle cleanup;
-- the CUDA adapter tests and E1 CUDA tests passed;
-- schema-2 chat timing is now recorded in the external evidence reports;
-- the final CPU and CUDA compile, test, and Clippy gates passed;
-- raw reports remained beneath ignored root `target/`.
+Accounted and reserved footprints establish their named deterministic contracts. Process RSS and whole-device CUDA observations establish only sampled environment state. None of these sampled observations proves a leak or non-leak, and immediate OS/allocator/driver reclamation is not inferred from E0 ownership release.
 
-The user accepted the manual Slint run: CPU and CUDA both worked, CUDA output was visibly near instant, and no interaction issue was observed. No screenshots were recorded or claimed. GitHub Actions acceptance remains a separate post-push fact and is not claimed until an observed run is recorded.
+## Validation and evidence state
+
+Normal CPU CI and self-hosted CUDA hardware CI passed on the accepted current tree as recorded above. The CUDA workflow is download-free and does not run TinyLlama, Hugging Face resolution, Criterion, elapsed-time thresholds, or Slint interaction. Its trigger trust boundary is canonical in [validation](validation.md#self-hosted-cuda-hardware-correctness-gate).
+
+Manual external product evidence remains attributed to clean Commit E `411945e0fd53363f98609db21a43d757c4d9b506`, tree `7099dcb5c9879190543d3afa5fde399a84d799df`. The same exact TinyLlama workload executed on CPU and supported CUDA, including compatible chat, controlled completion, cancellation, release, unload, and bounded shutdown. Three complete CUDA lifecycle cycles ran, and the direct E0 CUDA fixture established zero model, request, workspace, and cleanup accounting after unload. The user also accepted manual Slint CPU and CUDA behavior; no screenshot or automated graphical assertion is claimed.
+
+The post-Phase 11 schema-3 regression remains attributed to commit `7dd7a72565cfb976bf123ed664296e9332af0e70`, tree `766682d96b89a3e6fb4b0d14282e44e318244a56`. It changes the evidence schema and observation schedule without replacing Commit E’s historical timing values. Exact measurements and limitations remain only in [performance evidence](performance.md#external-product-evidence).
 
 ## Runtime and lifecycle guarantees
 
-`application-runtime` is the public frontend-neutral, non-generic E1 façade. E0 exclusively owns loaded model resources, sequences, request admission, generation workspaces, token scheduling and sampling, cancellation boundaries, output backpressure, cleanup quarantine, accounting, unload, and terminal shutdown.
+`application-runtime` is the public frontend-neutral E1 façade. E0 exclusively owns loaded model resources, sequences, request admission, generation workspaces, token scheduling and sampling, cancellation boundaries, output backpressure, cleanup quarantine, reserved-footprint accounting, unload, and terminal shutdown.
 
-Current lifecycle guarantees include:
+Current guarantees include:
 
 - startup rollback retains and boundedly reaps partially created worker ownership;
 - incompatible-model cleanup remains privately owned and accounted through success, proven disconnection, or observable bounded exhaustion;
 - shutdown distinguishes running, stopping, cleanly stopped, retryable failure, and terminal failure;
 - unresolved join handles remain owned after timeout so later shutdown can retry;
 - E0 cleanup exhaustion is terminal and retains the runtime allocation until process exit rather than invoking unverified implicit backend destruction;
-- E1 preserves terminal E0 cleanup failure independently of handle state;
-- endpoint disconnection alone does not prove clean shutdown;
-- successful request release restores model-only accounting, and successful unload restores empty accounting.
+- successful request release restores model-only reserved footprint, and successful unload restores empty E0 accounting.
 
-These guarantees are exercised by deterministic tests; exact acceptance provenance is in [execution history](../agent/execution/history.md).
+## Evidence infrastructure
 
-## Benchmark and evidence infrastructure
+`runtime-benchmarks` remains the sole cross-crate measurement observer. Its normal synthetic runner is download-free; its external runner requires explicit network authorization, an exact immutable TinyLlama revision, and mandatory `cpu` or `cuda:0` selection. Schema 3 records separate source/execution scalars, requested/selected/actual device identities, an independent accounted footprint, process RSS, and qualified whole-device CUDA observations. Exact methodology and results remain canonical in [performance evidence](performance.md); repeatable commands remain in [validation](validation.md) and [`benchmarks/runtime/README.md`](../../benchmarks/runtime/README.md).
 
-Benchmark infrastructure exists without changing production support or public APIs:
+## Unsupported behavior
 
-| Surface | Current capability | Evidence boundary |
-|---|---|---|
-| `sampling` Criterion target | Public sampler matrix with separate `sample_only` and `restore_and_sample` boundaries, eight policy/history cases at three vocabulary sizes, and three stop-matching cases | Component regression only; the ordinary matrix test executes every case once for correctness |
-| `domain-contracts` allocation target | Harness-free executable with isolated prefill/decode allocator regions | Deterministic project-allocation gate, not native/device allocation attribution |
-| `runtime-benchmarks` synthetic runner | Bounded download-free hosted-E0 lifecycle/output/accounting/RSS cycles plus fresh E1 start/shutdown cycles | Synthetic integration evidence, not product-model performance or quality |
-| `runtime-benchmarks` external runner | Sole explicit-network public-E1 path for the exact supported TinyLlama revision, with mandatory `cpu` or `cuda:0` selection; compatible chat, controlled direct completion, cancellation, release, unload, shutdown, timing, process RSS, and CUDA device observations | Executed CPU and exact Linux CUDA product evidence only; not model quality, general serving capacity, another model/scalar/device, generic NVIDIA compatibility, or a threshold |
-| `runtime-benchmarks` Criterion target | Hosted public-E0 checked-prefill and incremental-decode submission-to-event measurements | Component-like hosted boundary, not raw Candle kernels or E1 latency |
-| Stable report support | Versioned synthetic JSON owns direct E0 accounting; CPU/CUDA external JSON owns Git/toolchain/host/workload/model/device identity, qualified E1 lifecycle and load-contract evidence, sampled Linux process memory, and bounded CUDA driver observations | Generated output remains under root `target`; tokens, text, secrets, and broad environment dumps are excluded |
-
-`benchmarks/runtime` is the sole root benchmark package. It is non-publishable, has no build script or incoming dependency, uses the root lockfile/target, and consumes only reviewed public production APIs. Its normal baseline remains download-free; the separate external CPU/CUDA binary requires explicit network authorization, explicit device selection, and a canonical explicit cache. Curated methodology and exact synthetic/external results are canonical in [performance evidence](performance.md).
-
-Current exact external product evidence exists for the supported TinyLlama revision on CPU and on CUDA ordinal 0 for the exact executed Linux matrix. CPU remains mandatory and the fresh-install default; CUDA selection is explicit and persisted, and unavailable CUDA fails without fallback. This does not broaden support to another CUDA ordinal, NVIDIA device, operating system, model, format, or engine.
-
-## Unsupported and deferred behavior
-
-- Metal is unsupported.
-- CUDA support is limited to the exact executed Linux x86_64 ordinal-0 matrix above. There is no generic NVIDIA compatibility claim, generic `gpu` alias, automatic CPU fallback, cuDNN (`cudnn`), flash-attention (`flash-attn`), multi-GPU, or `nccl` support.
-- GGUF and other quantized model formats are unsupported.
-- GPU-side sampling is unsupported; sampling remains host-side over transferred F32 logits.
+- CUDA outside the exact matrix above, generic NVIDIA compatibility, generic `gpu`, automatic CPU fallback, cuDNN, flash attention, multi-GPU, and NCCL are unsupported.
+- Metal and GPU-side sampling are unsupported.
+- GGUF and other quantized formats are unsupported.
 - Another local engine, hosted-provider execution, peer execution, and remote/browser transport are not implemented.
-- Multi-model residency is unsupported; one selected/resident model remains the product limit.
+- Multi-model residency is unsupported.
 - Chat compatibility is not generalized beyond the exact reviewed TinyLlama profile.
-- Conversation persistence and arbitrary branch trees are not implemented.
-- Slint does not expose a generation-settings panel.
+- Conversation persistence, arbitrary branch trees, and a Slint generation-settings panel are not implemented.
 - Strict allocation freedom is not claimed for Candle or Hugging Face tokenization/decoding.
-- Synthetic fixture timings do not establish language quality, representative vocabulary/context scale, production steady-state throughput, or product-model performance.
-- Process RSS and whole-device CUDA observations are not ownership proof, allocator-event counting, native-resource attribution, or process-attributed device memory.
-
-## Acceptance state
-
-Synthetic acceptance remains attributable to Commit A `efcd36e320a97d61d3f982619fee182410c514df`, tree `f80c5d6c746376df81d7ac8e7281ac9736e44d88`. The Phase 10 external CPU baseline executed on clean Commit C `771c0de4d72565a6302ca60f3b6bafd8c807962b`, tree `3d5b6ccc5ecc959de7cb370c1147f76e4cd32e3f`. Phase 11 CPU + Linux CUDA acceptance executed on clean Commit E `411945e0fd53363f98609db21a43d757c4d9b506`, tree `7099dcb5c9879190543d3afa5fde399a84d799df`. Exact local evidence is recorded in [history](../agent/execution/history.md) and [performance evidence](performance.md).
-
-Phase 11 is complete only for the executed CPU and exact Linux x86_64 CUDA ordinal-0 matrix stated above. No subsequent phase is active. GitHub Actions acceptance remains a separate post-push fact and is not claimed until an observed run is recorded.
+- Synthetic fixture timings do not establish language quality, representative scale, production throughput, or product-model performance.
 
 ## Historical context
 
-The [recovered implementation plan](implementation-plan.md) is non-authoritative historical source material. Phase 8’s dual-product experiment and earlier phase claims remain historical; current support follows accepted ADRs and this page.
+Synthetic Phase 10 acceptance remains attributable to Commit A `efcd36e320a97d61d3f982619fee182410c514df`, tree `f80c5d6c746376df81d7ac8e7281ac9736e44d88`. The historical Phase 10 CPU product baseline remains attributable to Commit C `771c0de4d72565a6302ca60f3b6bafd8c807962b`, tree `3d5b6ccc5ecc959de7cb370c1147f76e4cd32e3f`. Those records are not rewritten as current-tree measurements.
+
+The [recovered implementation plan](implementation-plan.md) remains non-authoritative historical source material. Phase 8’s former dual-product experiment and earlier support claims remain historical; current support follows accepted ADRs and this page.
