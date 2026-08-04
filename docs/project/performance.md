@@ -15,7 +15,7 @@ Hard harness timeouts stop hangs only. Lifecycle, fixture, identity, output, cle
 | Hosted E0 component-like | `benchmarks/runtime/benches/runtime.rs` | Public command submission through matching completion event, including bounded transport and dispatch | Raw Candle kernel timing, E1/product latency, RSS, or full-generation throughput |
 | Synthetic system/integration | `benchmarks/runtime` normal `baseline` binary | Download-free hosted-E0 lifecycle/output/accounting/RSS observations and fresh E1 start/shutdown cycles | Product-model speed or quality, representative scale, steady-state serving, or device memory |
 | Compile-only | Workspace benchmark compilation | Target/API compatibility | Runtime correctness or performance |
-| External real-product | `runtime-benchmarks` `external-baseline` binary plus focused E0/E1 device and accounting validation | Current schema-2 controlled TinyLlama lifecycle, direct-completion, cancellation, footprint-contract, host-RSS, and exact-device whole-device CUDA-memory evidence for default CPU/F32 and opt-in CUDA/BF16 on Commit E; historical CPU-only Commit C evidence remains below | Model quality, other hosts/models/scalars/devices, serving capacity, GPU sampling, process-attributed device memory, generic NVIDIA behavior, leak/non-leak proof, or a portable regression threshold |
+| External real-product | `runtime-benchmarks` `external-baseline` binary plus focused E0/E1 device and accounting validation | Schema-3 evidence infrastructure for the exact TinyLlama lifecycle, explicit source/execution scalars, direct-completion, cancellation, accounted footprint, host RSS, and exact-device whole-device CUDA memory; the curated CPU/CUDA measurements remain the preserved schema-2 Commit E evidence below, and historical CPU-only Commit C evidence remains below | Model quality, other hosts/models/scalars/devices, serving capacity, GPU sampling, process-attributed device memory, generic NVIDIA behavior, leak/non-leak proof, or a portable regression threshold |
 
 ## Sampling methodology
 
@@ -224,6 +224,21 @@ This section preserves curated product-path observations from the 2026-07-25 Pha
 Elevated post-unload RSS was not treated as retained model ownership because allocator page retention can outlive resource release. The historical ownership evidence was released records, empty accounting, an empty post-unload snapshot, successful worker shutdown, and clean process exit.
 
 ## External product evidence
+
+### Post-Phase 11 schema-3 observation contract
+
+The sole device-parameterized external runner now emits schema version 3. The serialized change is structural and does not revise the fixed model, revision, workload, lifecycle timing boundaries, cancellation boundary, or canonical Commit E measurements below. Schema version 2 remains historical evidence with its original field meanings.
+
+Schema 3 records:
+
+- `source_scalar` from explicit resolved and loaded E1 facts;
+- `execution_scalar` from the independent public Candle `LoadPlan`, marked accepted only after the loaded E1 execution scalar matches;
+- requested, selected-E1, and actual-loaded-E0 device identities separately;
+- `accounted_footprint` as the independent accepted plan, explicitly not a physical-memory observation or same-worker E0 reservation snapshot;
+- process RSS and whole-device CUDA total/free/used observations only in separate resource checkpoints;
+- the exact count of safe Candle `discover_device` calls used by benchmark observation.
+
+Each counted CUDA discovery constructs a temporary Candle CUDA device and cudarc context. Calls are bounded to cold environment, identity, and resource checkpoints and never occur per generated token. The runner retains this behavior because safe context reuse would require production ownership exposure or a new lower-level benchmark dependency; neither is justified for cold observation. This count is context-churn audit evidence, not a performance threshold. Whole-device memory remains non-process-attributed, and direct E0 fixture validation remains the separate exact-zero accounting owner.
 
 ### Phase 11 controlled CPU-vs-CUDA product evidence
 

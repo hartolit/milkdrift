@@ -9,6 +9,7 @@ mod report;
 
 use std::ffi::OsString;
 
+use application_runtime::ApplicationScalarType;
 use sha2::{Digest, Sha256};
 
 use crate::error::{BenchmarkError, BenchmarkResult};
@@ -18,8 +19,7 @@ use crate::workspace::{TemporaryWorkspace, repository_root};
 use observation::DeviceObserver;
 use report::{
     CancellationWorkloadMetadata, ChatWorkloadMetadata, DirectCompletionWorkloadMetadata,
-    ExternalBaselineReport, LifecycleCounts, ModelMetadata, Provenance, Results, SamplingMetadata,
-    WorkloadMetadata,
+    ExternalBaselineReport, LifecycleCounts, ModelMetadata, Provenance, Results, WorkloadMetadata,
 };
 
 pub(crate) use cli::{Action, HELP};
@@ -28,16 +28,11 @@ pub(crate) const UPSTREAM_DECLARED_LICENSE: &str = "apache-2.0";
 pub(crate) const LICENSE_METADATA_SOURCE: &str = "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/raw/fe8a4ea1ffedaf415f4da2f062534de366a451e6/README.md";
 const COMMAND_MODE: &str = "external_e1_hugging_face_hub";
 const PRIMARY_CYCLE_COUNT: u32 = 1;
-const CUDA_STABILITY_CYCLE_COUNT: u32 = 2;
 
 pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> BenchmarkResult<Action> {
     cli::parse(arguments)
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one cold-path function assembles the complete versioned external evidence record"
-)]
 pub(crate) fn run_configuration(
     configuration: &cli::Configuration,
 ) -> BenchmarkResult<ExternalBaselineReport> {
@@ -75,22 +70,11 @@ pub(crate) fn run_configuration(
         Err(error) => return Err(error.with_cleanup(workspace_cleanup)),
     };
 
-    let sampling = SamplingMetadata {
-        temperature: 1.0,
-        top_k: 1,
-        top_p: 1.0,
-        min_p: 0.0,
-        repetition_penalty: 1.0,
-        repetition_window: 0,
-        fixed_seed: generation::FIXED_SEED,
-    };
-    let cuda_stability_cycles = match configuration.device {
-        cli::RequestedDevice::Cpu => 0,
-        cli::RequestedDevice::Cuda0 => CUDA_STABILITY_CYCLE_COUNT,
-    };
-    let total_cycles = PRIMARY_CYCLE_COUNT
-        .checked_add(cuda_stability_cycles)
-        .ok_or_else(|| BenchmarkError::new("external lifecycle-cycle count overflowed"))?;
+    let cuda_stability_cycle_count = u32::try_from(lifecycle.cuda_stability_cycles.len())
+        .map_err(|_| BenchmarkError::new("CUDA stability-cycle count conversion failed"))?;
+    let execution = observer.execution_metadata(scalar_label(lifecycle.execution_scalar));
+    let model = model_metadata(&lifecycle, initial_cache_state);
+    let workload = workload_metadata(cuda_stability_cycle_count)?;
 
     Ok(ExternalBaselineReport {
         schema_version: report::SCHEMA_VERSION,
@@ -103,58 +87,9 @@ pub(crate) fn run_configuration(
             cache_location: configuration.cache_location.label(),
             cuda_environment,
         },
-        execution: observer.execution_metadata(lifecycle.execution_dtype),
-        model: ModelMetadata {
-            repository: model::MODEL_REPOSITORY,
-            requested_revision: model::MODEL_REVISION,
-            resolved_commit: lifecycle.resolved_commit,
-            upstream_declared_license: UPSTREAM_DECLARED_LICENSE,
-            license_metadata_source: LICENSE_METADATA_SOURCE,
-            engine: "Candle",
-            source: "Hugging Face Hub",
-            format: "Safetensors",
-            architecture: model::MODEL_ARCHITECTURE,
-            source_scalar: lifecycle.source_scalar,
-            vocabulary_size: lifecycle.vocabulary_size,
-            maximum_context_tokens: lifecycle.maximum_context_tokens,
-            maximum_prefill_batch: lifecycle.maximum_prefill_batch,
-            cache_state_before_resolution: initial_cache_state.label(),
-        },
-        workload: WorkloadMetadata {
-            chat_compatibility: ChatWorkloadMetadata {
-                message_identifier: generation::CHAT_MESSAGE_IDENTIFIER,
-                message_sha256: sha256_hex(generation::CHAT_MESSAGE.as_bytes()),
-                message_bytes: byte_len(generation::CHAT_MESSAGE)?,
-                maximum_new_tokens: generation::CHAT_MAXIMUM_NEW_TOKENS,
-                sampling,
-                termination_policy: "exact_chat_compatibility_profile",
-            },
-            direct_completion: DirectCompletionWorkloadMetadata {
-                prompt_identifier: generation::DIRECT_COMPLETION_PROMPT_IDENTIFIER,
-                prompt_sha256: sha256_hex(generation::DIRECT_COMPLETION_PROMPT.as_bytes()),
-                prompt_bytes: byte_len(generation::DIRECT_COMPLETION_PROMPT)?,
-                warmup_count: generation::WARMUP_COUNT,
-                sample_count: generation::SAMPLE_COUNT,
-                maximum_new_tokens: generation::DIRECT_MAXIMUM_NEW_TOKENS,
-                sampling,
-                eos_tokens: "none",
-                textual_stop_sequences: "none",
-            },
-            cancellation: CancellationWorkloadMetadata {
-                prompt_identifier: generation::DIRECT_COMPLETION_PROMPT_IDENTIFIER,
-                prompt_sha256: sha256_hex(generation::DIRECT_COMPLETION_PROMPT.as_bytes()),
-                prompt_bytes: byte_len(generation::DIRECT_COMPLETION_PROMPT)?,
-                maximum_new_tokens: generation::CANCELLATION_MAXIMUM_NEW_TOKENS,
-                sampling,
-                cancellation_trigger: "GenerationStarted plus first non-empty decoded output",
-                cancellation_reason: "user_requested",
-            },
-            lifecycle: LifecycleCounts {
-                primary_full_workload_cycles: PRIMARY_CYCLE_COUNT,
-                cuda_stability_cycles,
-                total_cycles,
-            },
-        },
+        execution,
+        model,
+        workload,
         results: Results {
             primary_cycle: lifecycle.primary_cycle,
             cuda_stability_cycles: lifecycle.cuda_stability_cycles,
@@ -162,6 +97,78 @@ pub(crate) fn run_configuration(
             temporary_workspace_removed: true,
         },
     })
+}
+
+fn model_metadata(
+    lifecycle: &lifecycle::LifecycleEvidence,
+    initial_cache_state: cli::CacheState,
+) -> ModelMetadata {
+    ModelMetadata {
+        repository: model::MODEL_REPOSITORY,
+        requested_revision: model::MODEL_REVISION,
+        resolved_commit: lifecycle.resolved_commit.clone(),
+        upstream_declared_license: UPSTREAM_DECLARED_LICENSE,
+        license_metadata_source: LICENSE_METADATA_SOURCE,
+        engine: "Candle",
+        source: "Hugging Face Hub",
+        format: "Safetensors",
+        architecture: model::MODEL_ARCHITECTURE,
+        source_scalar: scalar_label(lifecycle.source_scalar),
+        vocabulary_size: lifecycle.vocabulary_size,
+        maximum_context_tokens: lifecycle.maximum_context_tokens,
+        maximum_prefill_batch: lifecycle.maximum_prefill_batch,
+        cache_state_before_resolution: initial_cache_state.label(),
+    }
+}
+
+fn workload_metadata(cuda_stability_cycles: u32) -> BenchmarkResult<WorkloadMetadata> {
+    let sampling = generation::sampling_metadata();
+    let total_cycles = PRIMARY_CYCLE_COUNT
+        .checked_add(cuda_stability_cycles)
+        .ok_or_else(|| BenchmarkError::new("external lifecycle-cycle count overflowed"))?;
+    Ok(WorkloadMetadata {
+        chat_compatibility: ChatWorkloadMetadata {
+            message_identifier: generation::CHAT_MESSAGE_IDENTIFIER,
+            message_sha256: sha256_hex(generation::CHAT_MESSAGE.as_bytes()),
+            message_bytes: byte_len(generation::CHAT_MESSAGE)?,
+            maximum_new_tokens: generation::CHAT_MAXIMUM_NEW_TOKENS,
+            sampling,
+            termination_policy: "exact_chat_compatibility_profile",
+        },
+        direct_completion: DirectCompletionWorkloadMetadata {
+            prompt_identifier: generation::DIRECT_COMPLETION_PROMPT_IDENTIFIER,
+            prompt_sha256: sha256_hex(generation::DIRECT_COMPLETION_PROMPT.as_bytes()),
+            prompt_bytes: byte_len(generation::DIRECT_COMPLETION_PROMPT)?,
+            warmup_count: generation::WARMUP_COUNT,
+            sample_count: generation::SAMPLE_COUNT,
+            maximum_new_tokens: generation::DIRECT_MAXIMUM_NEW_TOKENS,
+            sampling,
+            eos_tokens: "none",
+            textual_stop_sequences: "none",
+        },
+        cancellation: CancellationWorkloadMetadata {
+            prompt_identifier: generation::DIRECT_COMPLETION_PROMPT_IDENTIFIER,
+            prompt_sha256: sha256_hex(generation::DIRECT_COMPLETION_PROMPT.as_bytes()),
+            prompt_bytes: byte_len(generation::DIRECT_COMPLETION_PROMPT)?,
+            maximum_new_tokens: generation::CANCELLATION_MAXIMUM_NEW_TOKENS,
+            sampling,
+            cancellation_trigger: "GenerationStarted plus first non-empty decoded output",
+            cancellation_reason: "user_requested",
+        },
+        lifecycle: LifecycleCounts {
+            primary_full_workload_cycles: PRIMARY_CYCLE_COUNT,
+            cuda_stability_cycles,
+            total_cycles,
+        },
+    })
+}
+
+const fn scalar_label(scalar: ApplicationScalarType) -> &'static str {
+    match scalar {
+        ApplicationScalarType::F32 => "F32",
+        ApplicationScalarType::F16 => "F16",
+        ApplicationScalarType::Bf16 => "BF16",
+    }
 }
 
 pub(crate) fn print_human_summary(report: &ExternalBaselineReport) {

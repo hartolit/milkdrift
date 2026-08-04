@@ -282,9 +282,21 @@ CUDA_COMPUTE_CAP=120 cargo test --locked \
     --test llama_cuda
 ```
 
-Hardware execution is ignored by default and additionally requires `MILKDRIFT_CUDA_TEST=1`. The adapter target proves CUDA 0 discovery, RTX 5070 Ti identity and compute capability 12.0, unavailable-ordinal failure, F32 CPU/CUDA fixture-logit comparison, BF16 execution policy, device memory charging, synchronization, sequence destruction, and unload:
+Hardware execution is ignored by default and additionally requires `MILKDRIFT_CUDA_TEST=1`. Run the adapter proofs separately so no CUDA fixture tests overlap. They establish that explicit CPU execution remains usable in a CUDA build, CUDA 0 matches CPU fixture logits, and BF16 source weights execute as BF16 on the required CUDA device:
 
 ```sh
+CUDA_VISIBLE_DEVICES=0 \
+CUDA_COMPUTE_CAP=120 \
+cargo test --release --locked \
+    -p candle-backend \
+    --features cuda \
+    --test llama_cuda \
+    -- \
+    --exact cuda_enabled_binary_can_explicitly_execute_cpu \
+    --nocapture \
+    --test-threads=1
+
+CUDA_VISIBLE_DEVICES=0 \
 MILKDRIFT_CUDA_TEST=1 \
 CUDA_COMPUTE_CAP=120 \
 cargo test --release --locked \
@@ -293,12 +305,28 @@ cargo test --release --locked \
     --test llama_cuda \
     -- \
     --ignored \
-    --nocapture
+    --exact cuda_ordinal_zero_executes_fixture_and_matches_cpu_logits \
+    --nocapture \
+    --test-threads=1
+
+CUDA_VISIBLE_DEVICES=0 \
+MILKDRIFT_CUDA_TEST=1 \
+CUDA_COMPUTE_CAP=120 \
+cargo test --release --locked \
+    -p candle-backend \
+    --features cuda \
+    --test llama_cuda \
+    -- \
+    --ignored \
+    --exact cuda_bf16_source_executes_as_bf16 \
+    --nocapture \
+    --test-threads=1
 ```
 
 The E0 hardware target proves verified receipt/snapshot identity, scheduled prefill and incremental decode, CPU-side sampling from exact transferred logits, sequence cleanup, model unload, and zero post-unload accounting:
 
 ```sh
+CUDA_VISIBLE_DEVICES=0 \
 MILKDRIFT_CUDA_TEST=1 \
 CUDA_COMPUTE_CAP=120 \
 cargo test --release --locked \
@@ -308,23 +336,25 @@ cargo test --release --locked \
     -- \
     --ignored \
     --exact candle_cuda_fixture_covers_e0_generation_accounting_and_lifecycle \
-    --nocapture
+    --nocapture \
+    --test-threads=1
 ```
 
-The ignored E1 fixture test is separately guarded by `MILKDRIFT_CUDA_TEST=1`. It exercises explicit E1 CUDA selection, fixture load, and selected-versus-receipt-verified actual device reporting:
+The ignored E1 fixture test is separately guarded by `MILKDRIFT_CUDA_TEST=1`. It exercises discovery, explicit E1 CUDA selection, fixture load, source/execution scalar truth, selected-versus-receipt-verified actual device reporting, unload, and bounded shutdown:
 
 ```sh
+CUDA_VISIBLE_DEVICES=0 \
 MILKDRIFT_CUDA_TEST=1 \
 CUDA_COMPUTE_CAP=120 \
 cargo test --release --locked \
     -p application-runtime \
     --features cuda \
     --lib \
-    runtime::tests::cuda_fixture_load_reports_the_selected_and_actual_e1_device \
     -- \
     --ignored \
-    --exact \
-    --nocapture
+    --exact runtime::tests::devices::cuda_fixture_load_reports_the_selected_and_actual_e1_device \
+    --nocapture \
+    --test-threads=1
 ```
 
 Do not run these tests in ordinary CPU CI, do not use `--all-features` for the workspace, and do not interpret compilation as hardware execution evidence. These are procedures only; this documentation update does not claim that the E1 fixture or a manual product path ran.
@@ -408,17 +438,19 @@ The executable writes no result file itself: stdout is exactly one structured re
 
 The primary cycle on each device must prove the exact model/revision, non-empty compatible chat, one direct-completion warmup, three measured 32-token completions, matching request identities, exact terminal/released outcomes and usage, one cancellation after decoded progress, zero cleanup-pending/exhausted events, synchronized zero-cancellation unload, and bounded shutdown. CUDA additionally performs two reduced stability cycles containing load, direct generation/release, separate cancellation/release, unload, synchronization, shutdown, and owner drop. Together with the primary cycle this is three complete CUDA lifecycle cycles; warmup timing remains separate from measured samples.
 
-Review both reports programmatically without printing generated text or token identifiers. Require:
+Review both schema-3 reports programmatically without printing generated text or token identifiers. Require:
 
 - the same clean code-under-test Git commit/tree and `dirty: false`;
 - the same exact model, revision, prompt hashes, sampling settings, and primary workload;
 - requested, selected E1, and actual loaded E0 identities all CPU in one report and all CUDA ordinal 0 in the other;
 - `cuda_enabled: false` for the CPU build and `cuda_enabled: true` for the CUDA build;
-- CPU F32 execution and CUDA BF16 execution;
+- explicit BF16 `source_scalar` in both reports, CPU F32 `execution_scalar`, and CUDA BF16 `execution_scalar`;
 - RTX 5070 Ti identity, driver/toolkit metadata, compute capability 12.0, and build target 120 only in the CUDA report;
 - complete cancellation, unload, shutdown, workspace-removal, and three-cycle CUDA stability results.
 
-CUDA total/free/used values are safe driver observations for the whole device, not process-attributed usage. Every cycle establishes a new immediately-pre-load baseline. Interpret post-unload and post-owner-drop retained deltas together with the absolute observations; desktop or other GPU activity can perturb either. The external report records an independent public adapter plan and validated E1 acceptance of the E0 load contract, but public E1 does not expose a same-worker E0 reservation or post-unload `RuntimeSnapshot`. Do not synthesize those fields or call the E1 state a direct accounting snapshot. Execute and record the direct opted-in E0 CUDA hardware snapshot test in the lower-layer section separately; that test owns exact zero model/request/workspace/cleanup accounting evidence.
+CUDA total/free/used values are safe driver observations for the whole device, not process-attributed usage. Every cycle establishes a new immediately-pre-load baseline. Interpret post-unload and post-owner-drop retained deltas together with the absolute observations; desktop or other GPU activity can perturb either. The external report records `accounted_footprint` as an independent public adapter plan with validated E1 acceptance of the E0 load contract, but public E1 does not expose a same-worker E0 reservation or post-unload `RuntimeSnapshot`. Do not synthesize those fields or call the E1 state a direct accounting snapshot. Execute and record the direct opted-in E0 CUDA hardware snapshot test in the lower-layer section separately; that test owns exact zero model/request/workspace/cleanup accounting evidence.
+
+Schema 3 also records the exact number of safe Candle `discover_device` calls. Each call initializes a temporary Candle CUDA device and cudarc context; these observations are bounded to cold identity/resource checkpoints and never occur per token. Review the count as context-churn audit evidence only, not as a timing or performance threshold.
 
 Exact measured values belong only in [performance evidence](performance.md#external-product-evidence).
 
@@ -472,6 +504,7 @@ export CUDA_COMPUTE_CAP=120
 
 cargo check --locked \
     -p candle-backend \
+    -p inference-runtime \
     -p application-runtime \
     -p desktop-slint \
     -p runtime-benchmarks \
@@ -480,6 +513,7 @@ cargo check --locked \
 
 cargo test --locked \
     -p candle-backend \
+    -p inference-runtime \
     -p application-runtime \
     -p runtime-benchmarks \
     --features cuda \
@@ -487,6 +521,7 @@ cargo test --locked \
 
 cargo clippy --locked \
     -p candle-backend \
+    -p inference-runtime \
     -p application-runtime \
     -p desktop-slint \
     -p runtime-benchmarks \

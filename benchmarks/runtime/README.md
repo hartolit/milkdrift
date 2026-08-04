@@ -19,6 +19,19 @@ Canonical methodology, environment, curated results, RSS/device-memory interpret
 - The non-default `runtime-benchmarks/cuda` feature forwards only to `application-runtime/cuda`; CPU remains selectable in that binary.
 - The committed Candle fixture is referenced in place and its byte sizes, hashes, parsed configuration, and loaded descriptor are verified before measurement.
 
+The sole external runner is split by evidence responsibility, not by device:
+
+```text
+external/
+├── generation/   # fixed workload, one request observer, validation, summaries
+├── model/        # exact identity, resolution, independent plan, load lifecycle
+├── observation/  # device matrix, resources, environment
+├── lifecycle.rs  # start -> select -> resolve -> plan -> load -> workload -> unload -> shutdown -> owner drop
+└── report.rs     # one versioned CPU/CUDA report contract
+```
+
+CPU and CUDA use the same CLI, binary, E1 lifecycle, generation observer, cleanup path, and report schema.
+
 ## Test and compile
 
 ```text
@@ -55,6 +68,8 @@ The runner writes one schema-versioned JSON document to stdout and progress plus
 
 The external binary fixes `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`; callers cannot substitute either identity. It requires explicit network authorization, explicit device selection, a clean committed tree, and an already-existing canonical cache beneath repository-root `target/` or outside the repository. It never reads a default global Hub cache implicitly and never falls back from CUDA to CPU.
 
+External schema version 3 records `source_scalar` from explicit resolved/loaded E1 facts, `execution_scalar` from the independent public Candle plan only after matching E1 load acceptance, and separate requested, selected-E1, and actual-loaded-E0 device identities. `accounted_footprint` is the accepted independent plan, not physical residency or a same-worker E0 reservation snapshot. Process RSS and qualified whole-device CUDA total/free/used observations remain separate resource checkpoints. Schema version 2 retains its historical meaning and is not reinterpreted.
+
 Build separate release artifacts, then execute them directly and sequentially so no compiler process overlaps model residency:
 
 ```text
@@ -88,6 +103,8 @@ target/phase11-cuda/release/external-baseline \
 The primary cycle on each device runs one compatible-chat proof, one direct-completion warmup, three measured 32-token completions, and one progress-triggered cancellation. The CUDA invocation then runs two additional load/generate/release/cancel/unload/shutdown stability cycles, yielding three complete CUDA lifecycle cycles total. Stdout contains one schema-versioned report; progress and the compact summary use stderr.
 
 CUDA total/free/used observations are safe driver observations for the whole device, not process-attributed memory. Each cycle establishes its own pre-load baseline; retained-delta stability uses post-unload and post-owner-drop deltas while preserving absolute observations. The report records an independent public adapter plan plus validated E1 acceptance of the E0 load contract; it does not fabricate a same-worker E0 reservation or post-unload accounting snapshot. Direct E0 zero-accounting evidence is an explicit separate hardware test.
+
+Every safe Candle `discover_device` observation constructs a temporary Candle CUDA device and cudarc context. Schema 3 records the exact number of these calls. They occur only at cold identity/resource checkpoints and never per token. The runner intentionally keeps this behavior: safe reuse would require exposing context ownership through production APIs or adding a lower-level benchmark dependency, neither of which is justified by this observation-only path.
 
 Ordinary tests and shared CI compile this path but never execute it, access the network, or require CUDA hardware. Resource preflight, hardware tests, report review, and the bounded manual Slint procedure are in [Phase 11 validation](../../docs/project/validation.md#phase-11-controlled-cpu-and-cuda-product-evidence); curated results live only in [performance evidence](../../docs/project/performance.md#external-product-evidence).
 

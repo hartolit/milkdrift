@@ -5,7 +5,7 @@ use serde::Serialize;
 use crate::memory::ProcessMemory;
 use crate::report::{GitMetadata, MemoryFootprintRecord, SystemMetadata, ToolchainMetadata};
 
-pub(super) const SCHEMA_VERSION: u32 = 2;
+pub(super) const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct ExternalBaselineReport {
@@ -42,10 +42,17 @@ pub(super) struct ExecutionMetadata {
     pub(super) cuda_enabled: bool,
     pub(super) requested_device: DeviceIdentity,
     pub(super) cuda_device: Option<CudaDeviceMetadata>,
-    pub(super) execution_dtype: &'static str,
+    pub(super) execution_scalar: &'static str,
     pub(super) host_sampling: bool,
     pub(super) cuda_logits_to_host_limitation: Option<&'static str>,
     pub(super) cuda_memory_observation_scope: Option<&'static str>,
+    pub(super) cuda_context_observation: Option<CudaContextObservation>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub(super) struct CudaContextObservation {
+    pub(super) device_discovery_calls: u64,
+    pub(super) initialization_scope: &'static str,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -182,7 +189,7 @@ pub(super) struct LifecycleResult {
     pub(super) load_ns: u64,
     pub(super) selected_e1_device: DeviceIdentity,
     pub(super) actual_loaded_e0_device: DeviceIdentity,
-    pub(super) e0_footprint: E0FootprintEvidence,
+    pub(super) accounted_footprint: AccountedFootprintEvidence,
     pub(super) post_unload_e0_accounting_scope: &'static str,
     pub(super) unload: UnloadResult,
     pub(super) shutdown: ShutdownResult,
@@ -190,7 +197,7 @@ pub(super) struct LifecycleResult {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub(super) struct E0FootprintEvidence {
+pub(super) struct AccountedFootprintEvidence {
     pub(super) independent_public_plan: MemoryFootprintRecord,
     pub(super) e1_accepted_e0_load_contract: bool,
     pub(super) reservation_snapshot_observed: bool,
@@ -366,4 +373,456 @@ pub(super) struct StabilitySummary {
     pub(super) strict_monotonic_retained_growth_observed: bool,
     pub(super) max_retained_cuda_delta_bytes: Option<i64>,
     pub(super) assessment: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use serde_json::Value;
+
+    use super::*;
+    use crate::report::{GitMetadata, MemoryFootprintRecord, SystemMetadata, ToolchainMetadata};
+
+    const CUDA_IDENTITY: DeviceIdentity = DeviceIdentity {
+        kind: "cuda",
+        id: 0,
+        ordinal: Some(0),
+    };
+
+    fn footprint() -> MemoryFootprintRecord {
+        MemoryFootprintRecord {
+            host_weight_bytes: 0,
+            device_weight_bytes: 2_200,
+            host_working_bytes: 2_200,
+            device_working_bytes: 0,
+            cache_bytes_per_token: 22,
+        }
+    }
+
+    fn generation_outcomes() -> GenerationOutcomeMatch {
+        GenerationOutcomeMatch {
+            terminal_state_matched: true,
+            released_state_matched: true,
+            terminal_event_matched: true,
+        }
+    }
+
+    fn cancellation() -> CancellationResult {
+        CancellationResult {
+            generation_submission: GenerationSubmissionTimings {
+                to_generation_started_ns: 1,
+                to_first_decoded_output_ns: 2,
+                to_cancellation_submission_ns: 3,
+            },
+            cancellation_submission: CancellationSubmissionTimings {
+                to_acknowledgement_ns: 1,
+                to_terminal_output_ns: 2,
+                to_terminal_event_ns: 3,
+                to_release_ns: 4,
+            },
+            decoded_byte_count: 8,
+            prompt_tokens: 4,
+            generated_tokens: 1,
+            terminal_kind: "cancelled",
+            cancellation_acknowledged: true,
+            outcome_match: generation_outcomes(),
+        }
+    }
+
+    fn sample() -> DirectCompletionSample {
+        DirectCompletionSample {
+            ordinal: 1,
+            submission_to_generation_started_ns: 1,
+            submission_to_first_decoded_output_ns: 2,
+            submission_to_terminal_event_ns: 3,
+            submission_to_release_ns: 4,
+            prompt_tokens: 4,
+            generated_tokens: 32,
+            decoded_byte_count: 64,
+            terminal_kind: "token_limit",
+            terminal_state_matched: true,
+            released_state_matched: true,
+            terminal_event_matched: true,
+            effective_generated_tokens_per_second: 8.0,
+        }
+    }
+
+    fn lifecycle() -> LifecycleResult {
+        LifecycleResult {
+            ordinal: 1,
+            cache_state_before_resolution: "populated",
+            start_ns: 1,
+            resolve_ns: 2,
+            load_ns: 3,
+            selected_e1_device: CUDA_IDENTITY,
+            actual_loaded_e0_device: CUDA_IDENTITY,
+            accounted_footprint: AccountedFootprintEvidence {
+                independent_public_plan: footprint(),
+                e1_accepted_e0_load_contract: true,
+                reservation_snapshot_observed: false,
+                provenance: "independent public plan accepted by E1",
+            },
+            post_unload_e0_accounting_scope: "separate direct E0 fixture proof",
+            unload: UnloadResult {
+                duration_ns: 4,
+                cancelled_requests: 0,
+                loaded_model_absent: true,
+                active_generation_absent: true,
+                runtime_connected: true,
+                backend_release_synchronized: true,
+            },
+            shutdown: ShutdownResult {
+                duration_ns: 5,
+                shutdown_returned_cleanly: true,
+                workers: ShutdownWorkerState {
+                    hub_unavailable: true,
+                    inference_unavailable: true,
+                },
+                ownership: ShutdownOwnershipState {
+                    loaded_model_absent: true,
+                    active_generation_absent: true,
+                },
+            },
+            resource_checkpoints: vec![ResourceCheckpoint {
+                checkpoint: "after-model-load",
+                host_memory: ProcessMemory {
+                    vm_rss_bytes: Some(10_000),
+                    vm_hwm_bytes: Some(12_000),
+                },
+                cuda_memory: Some(CudaMemoryObservation {
+                    total_bytes: 16_000,
+                    free_bytes: 10_000,
+                    used_bytes: 6_000,
+                    used_delta_from_pre_load_bytes: Some(2_000),
+                }),
+            }],
+        }
+    }
+
+    const fn sampling() -> SamplingMetadata {
+        SamplingMetadata {
+            temperature: 1.0,
+            top_k: 1,
+            top_p: 1.0,
+            min_p: 0.0,
+            repetition_penalty: 1.0,
+            repetition_window: 0,
+            fixed_seed: 39,
+        }
+    }
+
+    fn provenance() -> Provenance {
+        Provenance {
+            git: GitMetadata {
+                head: "commit".to_owned(),
+                head_tree: "tree".to_owned(),
+                dirty: false,
+            },
+            toolchain: ToolchainMetadata {
+                rust_version: "rustc".to_owned(),
+                cargo_version: "cargo".to_owned(),
+                llvm_version: Some("llvm".to_owned()),
+                rustc_host: "x86_64-unknown-linux-gnu".to_owned(),
+                build_profile: "release",
+            },
+            system: SystemMetadata {
+                os: "linux",
+                kernel: "kernel".to_owned(),
+                cpu_model: Some("cpu".to_owned()),
+                physical_cpu_count: Some(1),
+                logical_cpu_count: Some(1),
+                total_memory_bytes: Some(32_000),
+                thread_environment: BTreeMap::new(),
+            },
+            command_mode: "external_e1_hugging_face_hub",
+            network_authorized: true,
+            cache_location: "repository_root_target",
+            cuda_environment: Some(CudaEnvironmentMetadata {
+                driver_version: "600.0".to_owned(),
+                toolkit_release: "12.8".to_owned(),
+                toolkit_compiler_version: "V12.8.0".to_owned(),
+                build_compute_capability: "120".to_owned(),
+                cuda_visible_devices: Some("0".to_owned()),
+            }),
+        }
+    }
+
+    fn execution() -> ExecutionMetadata {
+        ExecutionMetadata {
+            cuda_enabled: true,
+            requested_device: CUDA_IDENTITY,
+            cuda_device: Some(CudaDeviceMetadata {
+                name: "NVIDIA GeForce RTX 5070 Ti".to_owned(),
+                compute_capability: CudaComputeCapability {
+                    major: 12,
+                    minor: 0,
+                },
+                total_memory_bytes: 16_000,
+            }),
+            execution_scalar: "BF16",
+            host_sampling: true,
+            cuda_logits_to_host_limitation: Some("host sampling"),
+            cuda_memory_observation_scope: Some("whole device"),
+            cuda_context_observation: Some(CudaContextObservation {
+                device_discovery_calls: 17,
+                initialization_scope: "cold checkpoints; never per token",
+            }),
+        }
+    }
+
+    fn model() -> ModelMetadata {
+        ModelMetadata {
+            repository: "model",
+            requested_revision: "revision",
+            resolved_commit: "revision".to_owned(),
+            upstream_declared_license: "apache-2.0",
+            license_metadata_source: "model-card",
+            engine: "Candle",
+            source: "Hugging Face Hub",
+            format: "Safetensors",
+            architecture: "Llama",
+            source_scalar: "BF16",
+            vocabulary_size: 32_000,
+            maximum_context_tokens: 2_048,
+            maximum_prefill_batch: 2_048,
+            cache_state_before_resolution: "populated",
+        }
+    }
+
+    fn workload() -> WorkloadMetadata {
+        WorkloadMetadata {
+            chat_compatibility: ChatWorkloadMetadata {
+                message_identifier: "chat",
+                message_sha256: "hash".to_owned(),
+                message_bytes: 10,
+                maximum_new_tokens: 24,
+                sampling: sampling(),
+                termination_policy: "profile",
+            },
+            direct_completion: DirectCompletionWorkloadMetadata {
+                prompt_identifier: "direct",
+                prompt_sha256: "hash".to_owned(),
+                prompt_bytes: 10,
+                warmup_count: 1,
+                sample_count: 3,
+                maximum_new_tokens: 32,
+                sampling: sampling(),
+                eos_tokens: "none",
+                textual_stop_sequences: "none",
+            },
+            cancellation: CancellationWorkloadMetadata {
+                prompt_identifier: "direct",
+                prompt_sha256: "hash".to_owned(),
+                prompt_bytes: 10,
+                maximum_new_tokens: 128,
+                sampling: sampling(),
+                cancellation_trigger: "progress",
+                cancellation_reason: "user_requested",
+            },
+            lifecycle: LifecycleCounts {
+                primary_full_workload_cycles: 1,
+                cuda_stability_cycles: 0,
+                total_cycles: 1,
+            },
+        }
+    }
+
+    fn primary_cycle() -> PrimaryCycleResult {
+        PrimaryCycleResult {
+            lifecycle: lifecycle(),
+            chat_compatibility: ChatProofResult {
+                submission_to_generation_started_ns: 1,
+                submission_to_first_decoded_output_ns: 2,
+                submission_to_terminal_event_ns: 3,
+                submission_to_release_ns: 4,
+                decoded_byte_count: 8,
+                prompt_tokens: 4,
+                generated_tokens: 2,
+                terminal_kind: "end_of_sequence",
+                outcome_match: generation_outcomes(),
+                conversation: ConversationProof {
+                    validated: true,
+                    cleared: true,
+                },
+            },
+            direct_completion: DirectCompletionResults {
+                warmup: DirectCompletionWarmupResult {
+                    decoded_byte_count: 64,
+                    prompt_tokens: 4,
+                    generated_tokens: 32,
+                    terminal_kind: "token_limit",
+                    clean_release: true,
+                },
+                samples: vec![sample()],
+                summary: DirectCompletionSummary {
+                    sample_count: 1,
+                    median_submission_to_generation_started_ns: 1,
+                    median_submission_to_first_decoded_output_ns: 2,
+                    median_submission_to_terminal_event_ns: 3,
+                    median_submission_to_release_ns: 4,
+                    median_effective_generated_tokens_per_second: 8.0,
+                },
+            },
+            cancellation: cancellation(),
+        }
+    }
+
+    fn results() -> Results {
+        Results {
+            primary_cycle: primary_cycle(),
+            cuda_stability_cycles: Vec::new(),
+            stability_summary: StabilitySummary {
+                primary_cycle_count: 1,
+                cuda_stability_cycle_count: 0,
+                post_unload_cuda_used_bytes: vec![4_000],
+                post_owner_drop_cuda_used_bytes: vec![4_000],
+                post_unload_cuda_delta_from_pre_load_bytes: vec![0],
+                post_owner_drop_cuda_delta_from_pre_load_bytes: vec![0],
+                strict_monotonic_retained_growth_observed: false,
+                max_retained_cuda_delta_bytes: Some(0),
+                assessment: "finite whole-device observation".to_owned(),
+            },
+            temporary_workspace_removed: true,
+        }
+    }
+
+    fn fixture_report() -> ExternalBaselineReport {
+        ExternalBaselineReport {
+            schema_version: SCHEMA_VERSION,
+            provenance: provenance(),
+            execution: execution(),
+            model: model(),
+            workload: workload(),
+            results: results(),
+        }
+    }
+
+    fn assert_no_prohibited_keys(value: &Value) {
+        match value {
+            Value::Object(fields) => {
+                for (key, nested) in fields {
+                    assert!(
+                        ![
+                            "scalar_type",
+                            "execution_dtype",
+                            "decoded_text",
+                            "generated_text",
+                            "token_ids",
+                            "generated_token_ids",
+                        ]
+                        .contains(&key.as_str()),
+                        "prohibited serialized field {key}"
+                    );
+                    assert_no_prohibited_keys(nested);
+                }
+            }
+            Value::Array(values) => {
+                for nested in values {
+                    assert_no_prohibited_keys(nested);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn value_at<'a>(value: &'a Value, path: &[&str]) -> Result<&'a Value, String> {
+        let mut current = value;
+        for key in path {
+            current = current
+                .get(*key)
+                .ok_or_else(|| format!("serialized report omitted key {key:?} in {path:?}"))?;
+        }
+        Ok(current)
+    }
+
+    #[test]
+    fn schema_three_serializes_explicit_scalar_and_device_facts() -> Result<(), String> {
+        let value = serde_json::to_value(fixture_report()).map_err(|error| error.to_string())?;
+        assert_eq!(value_at(&value, &["schema_version"])?.as_u64(), Some(3));
+        assert_eq!(
+            value_at(&value, &["model", "source_scalar"])?.as_str(),
+            Some("BF16")
+        );
+        assert_eq!(
+            value_at(&value, &["execution", "execution_scalar"])?.as_str(),
+            Some("BF16")
+        );
+        assert_eq!(
+            value_at(&value, &["execution", "requested_device", "kind"])?.as_str(),
+            Some("cuda")
+        );
+        assert_eq!(
+            value_at(
+                &value,
+                &[
+                    "results",
+                    "primary_cycle",
+                    "lifecycle",
+                    "selected_e1_device",
+                    "ordinal"
+                ],
+            )?
+            .as_u64(),
+            Some(0)
+        );
+        assert_eq!(
+            value_at(
+                &value,
+                &[
+                    "results",
+                    "primary_cycle",
+                    "lifecycle",
+                    "actual_loaded_e0_device",
+                    "ordinal",
+                ],
+            )?
+            .as_u64(),
+            Some(0)
+        );
+        assert_eq!(
+            value_at(
+                &value,
+                &[
+                    "execution",
+                    "cuda_context_observation",
+                    "device_discovery_calls",
+                ],
+            )?
+            .as_u64(),
+            Some(17)
+        );
+        assert_no_prohibited_keys(&value);
+        Ok(())
+    }
+
+    #[test]
+    fn accounting_and_physical_memory_serialize_as_separate_evidence() -> Result<(), String> {
+        let value = serde_json::to_value(fixture_report()).map_err(|error| error.to_string())?;
+        let lifecycle = value_at(&value, &["results", "primary_cycle", "lifecycle"])?;
+        let accounted = value_at(lifecycle, &["accounted_footprint"])?;
+        let checkpoints = value_at(lifecycle, &["resource_checkpoints"])?
+            .as_array()
+            .ok_or_else(|| "resource checkpoints were not an array".to_owned())?;
+        let first = checkpoints
+            .first()
+            .ok_or_else(|| "resource checkpoints were empty".to_owned())?;
+        let physical = value_at(first, &["cuda_memory"])?;
+        assert_eq!(
+            value_at(
+                accounted,
+                &["independent_public_plan", "device_weight_bytes"],
+            )?
+            .as_u64(),
+            Some(2_200)
+        );
+        assert_eq!(value_at(physical, &["used_bytes"])?.as_u64(), Some(6_000));
+        assert!(accounted.get("used_bytes").is_none());
+        assert!(physical.get("device_weight_bytes").is_none());
+        assert_eq!(
+            value_at(accounted, &["reservation_snapshot_observed"])?.as_bool(),
+            Some(false)
+        );
+        Ok(())
+    }
 }

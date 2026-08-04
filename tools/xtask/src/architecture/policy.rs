@@ -220,7 +220,7 @@ const REVIEWED_EXTERNAL_DEPENDENCIES: &[ReviewedDependency] = &[
         source: "runtime-benchmarks",
         target: "sha2",
         kind: DependencyKind::Normal,
-        rationale: "the benchmark harness verifies the exact reviewed synthetic fixture identity before timing",
+        rationale: "the benchmark harness verifies exact fixture identity and hashes fixed external workload inputs without retaining generated output",
     },
     ReviewedDependency {
         source: "runtime-benchmarks",
@@ -237,19 +237,19 @@ const REVIEWED_BENCHMARK_DEPENDENCIES: &[ReviewedDependency] = &[
         source: "runtime-benchmarks",
         target: "application-runtime",
         kind: DependencyKind::Normal,
-        rationale: "the baseline runner measures download-free E1 worker startup and bounded shutdown through the public application facade",
+        rationale: "the benchmark runners observe download-free lifecycle checks and the sole external model/device/scalar/generation workflow through public E1 APIs",
     },
     ReviewedDependency {
         source: "runtime-benchmarks",
         target: "candle-backend",
         kind: DependencyKind::Normal,
-        rationale: "the synthetic harness constructs the reviewed Candle Llama source and loader for the committed fixture",
+        rationale: "the benchmark package constructs the reviewed fixture and independently plans the exact external model while using safe public Candle device observation",
     },
     ReviewedDependency {
         source: "runtime-benchmarks",
         target: "domain-contracts",
         kind: DependencyKind::Normal,
-        rationale: "the synthetic harness supplies public model, request, sequence, device, cancellation, and accounting vocabulary to E0",
+        rationale: "the benchmark package uses public model, request, sequence, scalar, device, cancellation, and accounting vocabulary for E0 and external evidence",
     },
     ReviewedDependency {
         source: "runtime-benchmarks",
@@ -306,7 +306,7 @@ const REVIEWED_CUDA_FEATURE_FORWARDS: &[ReviewedFeatureForward] = &[
         target_package: "application-runtime",
         target_feature: "cuda",
         dependency_kind: DependencyKind::Normal,
-        rationale: "the runtime benchmark exposes E1 CUDA support only through its exact non-default CUDA feature",
+        rationale: "the sole device-parameterized external benchmark and CUDA compile checks reach Candle only through E1's exact non-default CUDA feature",
     },
 ];
 

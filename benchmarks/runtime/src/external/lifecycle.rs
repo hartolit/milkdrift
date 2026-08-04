@@ -1,4 +1,4 @@
-//! Shared CPU/CUDA lifecycle coordination for the external product baseline.
+//! Concise shared CPU/CUDA lifecycle coordination for the external product baseline.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -10,16 +10,19 @@ use application_runtime::{
 
 use super::cli::{self, RequestedDevice};
 use super::generation::{self, PrimaryWorkloadEvidence};
-use super::model;
-use super::observation::DeviceObserver;
+use super::model::{self, PlannedModelEvidence};
+use super::observation::{
+    CycleStabilityObservation, DeviceObserver, record_owner_drop, stability_after_unload,
+    summarize_stability, validate_pre_load_checkpoint,
+};
 use super::report::{
-    CancellationResult, DeviceIdentity, DirectCompletionSample, E0FootprintEvidence,
+    AccountedFootprintEvidence, CancellationResult, DeviceIdentity, DirectCompletionSample,
     LifecycleResult, PrimaryCycleResult, ResourceCheckpoint, ShutdownOwnershipState,
     ShutdownResult, ShutdownWorkerState, StabilityCycleResult, StabilitySummary, UnloadResult,
 };
 use crate::e1::cleanup_runtime_after_failure;
 use crate::error::{BenchmarkError, BenchmarkResult};
-use crate::report::{MemoryFootprintRecord, duration_ns};
+use crate::report::MemoryFootprintRecord;
 use crate::workspace::TemporaryWorkspace;
 
 const PRIMARY_CYCLE_ORDINAL: u32 = 1;
@@ -42,18 +45,14 @@ const AFTER_SHUTDOWN_RETURN_CHECKPOINT: &str = "after-application-shutdown-retur
 const AFTER_OWNER_DROP_CHECKPOINT: &str = "after-application-shutdown-owner-drop";
 
 const POST_UNLOAD_ACCOUNTING_SCOPE: &str = "complete same-worker E0 RuntimeSnapshot accounting is not exposed by public E1 APIs and is not inferred here; this report records Released output, no cleanup-pending/exhausted event, synchronized ModelUnloaded acceptance, and zero E1 ownership only; direct E0 snapshot validation is external to this report and must be executed and recorded separately";
-const CPU_STABILITY_ASSESSMENT: &str =
-    "not-applicable: CPU execution has no CUDA stability cycles or CUDA memory observations";
-const CUDA_GROWTH_ASSESSMENT: &str = "review-required: at least one retained CUDA used-byte delta series strictly increased across all cycle windows relative to each cycle's own pre-load baseline; observations are device-global and can be affected by other GPU processes, so this finite result is neither proof of a process leak nor proof of unbounded growth";
-const CUDA_NO_GROWTH_ASSESSMENT: &str = "no retained CUDA used-byte delta series strictly increased across every cycle window relative to each cycle's own pre-load baseline; observations are device-global, lifecycle contracts passed, and no leak conclusion is drawn";
 
 pub(super) struct LifecycleEvidence {
     pub(super) resolved_commit: String,
-    pub(super) source_scalar: &'static str,
+    pub(super) source_scalar: ApplicationScalarType,
+    pub(super) execution_scalar: ApplicationScalarType,
     pub(super) vocabulary_size: u32,
     pub(super) maximum_context_tokens: u32,
     pub(super) maximum_prefill_batch: u32,
-    pub(super) execution_dtype: &'static str,
     pub(super) primary_cycle: PrimaryCycleResult,
     pub(super) cuda_stability_cycles: Vec<StabilityCycleResult>,
     pub(super) stability_summary: StabilitySummary,
@@ -62,12 +61,12 @@ pub(super) struct LifecycleEvidence {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CycleModelFacts {
     resolved_commit: String,
-    source_scalar: &'static str,
+    source_scalar: ApplicationScalarType,
+    execution_scalar: ApplicationScalarType,
     vocabulary_size: u32,
     maximum_context_tokens: u32,
     maximum_prefill_batch: u32,
-    execution_dtype: &'static str,
-    e0_footprint: E0FootprintEvidence,
+    accounted_footprint: AccountedFootprintEvidence,
 }
 
 #[derive(Clone, Copy)]
@@ -91,12 +90,58 @@ struct CompletedCycle {
     stability: CycleStabilityObservation,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct CycleStabilityObservation {
-    unload_used: Option<u64>,
-    owner_drop_used: Option<u64>,
-    unload_delta: Option<i64>,
-    owner_drop_delta: Option<i64>,
+struct CycleRecorder<'a> {
+    requested: RequestedDevice,
+    observer: &'a mut DeviceObserver,
+    checkpoints: Vec<ResourceCheckpoint>,
+}
+
+impl<'a> CycleRecorder<'a> {
+    fn new(requested: RequestedDevice, observer: &'a mut DeviceObserver) -> BenchmarkResult<Self> {
+        let mut checkpoints = Vec::new();
+        checkpoints
+            .try_reserve_exact(RESOURCE_CHECKPOINT_CAPACITY)
+            .map_err(|error| {
+                BenchmarkError::new(format!(
+                    "resource-checkpoint allocation failed for external cycle: {error}"
+                ))
+            })?;
+        Ok(Self {
+            requested,
+            observer,
+            checkpoints,
+        })
+    }
+
+    fn capture(&mut self, label: &'static str) -> BenchmarkResult {
+        self.checkpoints.push(self.observer.capture(label)?);
+        Ok(())
+    }
+
+    fn capture_pre_load(&mut self) -> BenchmarkResult {
+        let checkpoint = self.observer.capture_pre_load(BEFORE_LOAD_CHECKPOINT)?;
+        validate_pre_load_checkpoint(self.requested, &checkpoint)?;
+        self.checkpoints.push(checkpoint);
+        Ok(())
+    }
+
+    fn capture_after_unload(&mut self) -> BenchmarkResult<CycleStabilityObservation> {
+        let checkpoint = self.observer.capture(AFTER_UNLOAD_CHECKPOINT)?;
+        let stability = stability_after_unload(self.requested, &checkpoint)?;
+        self.checkpoints.push(checkpoint);
+        Ok(stability)
+    }
+
+    fn finish_owner_drop(&mut self, completed: &mut CompletedCycle) -> BenchmarkResult {
+        let checkpoint = self.observer.capture(AFTER_OWNER_DROP_CHECKPOINT)?;
+        record_owner_drop(self.requested, &checkpoint, &mut completed.stability)?;
+        completed.lifecycle.resource_checkpoints.push(checkpoint);
+        Ok(())
+    }
+
+    fn take_checkpoints(&mut self) -> Vec<ResourceCheckpoint> {
+        std::mem::take(&mut self.checkpoints)
+    }
 }
 
 pub(super) fn run(
@@ -116,7 +161,7 @@ pub(super) fn run(
         CycleWorkload::Primary,
     )?;
     let primary_model = primary.model.clone();
-    let primary_stability = primary.stability;
+    let mut stability_observations = vec![primary.stability];
     let primary_cycle = primary_cycle_result(primary)?;
 
     let ordinals = stability_cycle_ordinals(requested);
@@ -128,13 +173,11 @@ pub(super) fn run(
                 "CUDA stability-cycle result allocation failed: {error}"
             ))
         })?;
-    let mut stability_observations = Vec::new();
     stability_observations
-        .try_reserve_exact(1_usize.saturating_add(ordinals.len()))
+        .try_reserve_exact(ordinals.len())
         .map_err(|error| {
             BenchmarkError::new(format!("stability observation allocation failed: {error}"))
         })?;
-    stability_observations.push(primary_stability);
 
     for &ordinal in ordinals {
         let cycle = run_cycle(
@@ -150,24 +193,18 @@ pub(super) fn run(
         cuda_stability_cycles.push(stability_cycle_result(cycle)?);
     }
 
-    let stability_summary = summarize_stability(requested, &stability_observations)?;
-    let CycleModelFacts {
-        resolved_commit,
-        source_scalar,
-        vocabulary_size,
-        maximum_context_tokens,
-        maximum_prefill_batch,
-        execution_dtype,
-        e0_footprint: _,
-    } = primary_model;
+    let cuda_cycle_count = u32::try_from(ordinals.len())
+        .map_err(|_| BenchmarkError::new("CUDA stability-cycle count conversion failed"))?;
+    let stability_summary =
+        summarize_stability(requested, cuda_cycle_count, &stability_observations)?;
 
     Ok(LifecycleEvidence {
-        resolved_commit,
-        source_scalar,
-        vocabulary_size,
-        maximum_context_tokens,
-        maximum_prefill_batch,
-        execution_dtype,
+        resolved_commit: primary_model.resolved_commit,
+        source_scalar: primary_model.source_scalar,
+        execution_scalar: primary_model.execution_scalar,
+        vocabulary_size: primary_model.vocabulary_size,
+        maximum_context_tokens: primary_model.maximum_context_tokens,
+        maximum_prefill_batch: primary_model.maximum_prefill_batch,
         primary_cycle,
         cuda_stability_cycles,
         stability_summary,
@@ -183,22 +220,14 @@ fn run_cycle(
     workload: CycleWorkload,
 ) -> BenchmarkResult<CompletedCycle> {
     observer.begin_cycle();
-    let mut resource_checkpoints = Vec::new();
-    resource_checkpoints
-        .try_reserve_exact(RESOURCE_CHECKPOINT_CAPACITY)
-        .map_err(|error| {
-            BenchmarkError::new(format!(
-                "cycle {ordinal} resource-checkpoint allocation failed: {error}"
-            ))
-        })?;
-    capture_checkpoint(
-        observer,
-        &mut resource_checkpoints,
-        BEFORE_APPLICATION_START_CHECKPOINT,
-    )?;
+    let mut recorder = CycleRecorder::new(requested, observer)?;
+    recorder.capture(BEFORE_APPLICATION_START_CHECKPOINT)?;
 
-    let database_path = workspace.database_path("external-application", ordinal);
-    let configuration = application_configuration(database_path, cache_directory, requested);
+    let configuration = application_configuration(
+        workspace.database_path("external-application", ordinal),
+        cache_directory,
+        requested,
+    );
     eprintln!(
         "starting external ApplicationRuntime cycle {ordinal} on {}",
         requested_device_label(requested)
@@ -214,12 +243,10 @@ fn run_cycle(
     let result = execute_started_cycle(
         &mut runtime,
         cache_directory,
-        requested,
-        observer,
         ordinal,
         workload,
         start_elapsed,
-        resource_checkpoints,
+        &mut recorder,
     );
     let mut completed = match result {
         Ok(completed) => completed,
@@ -227,152 +254,139 @@ fn run_cycle(
     };
 
     drop(runtime);
-    let after_owner_drop = observer.capture(AFTER_OWNER_DROP_CHECKPOINT)?;
-    let (post_owner_drop_cuda_used_bytes, post_owner_drop_cuda_delta_bytes) =
-        checkpoint_cuda_usage(
-            requested,
-            &after_owner_drop,
-            true,
-            "post-application-shutdown owner-drop checkpoint",
-        )?;
-    completed
-        .lifecycle
-        .resource_checkpoints
-        .push(after_owner_drop);
-    completed.stability.owner_drop_used = post_owner_drop_cuda_used_bytes;
-    completed.stability.owner_drop_delta = post_owner_drop_cuda_delta_bytes;
-    validate_complete_stability_observation(requested, completed.stability)?;
+    recorder.finish_owner_drop(&mut completed)?;
     Ok(completed)
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn execute_started_cycle(
     runtime: &mut ApplicationRuntime,
     cache_directory: &Path,
-    requested: RequestedDevice,
-    observer: &mut DeviceObserver,
     ordinal: u32,
     workload: CycleWorkload,
     start_elapsed: Duration,
-    mut resource_checkpoints: Vec<ResourceCheckpoint>,
+    recorder: &mut CycleRecorder<'_>,
 ) -> BenchmarkResult<CompletedCycle> {
-    select_requested_device(runtime, requested, ordinal)?;
+    select_requested_device(runtime, recorder.requested, ordinal)?;
     validate_started(runtime)?;
-    observer.validate_selected_e1(runtime)?;
-    capture_checkpoint(
-        observer,
-        &mut resource_checkpoints,
-        AFTER_APPLICATION_START_CHECKPOINT,
-    )?;
+    recorder.observer.validate_selected_e1(runtime)?;
+    recorder.capture(AFTER_APPLICATION_START_CHECKPOINT)?;
 
     let cache_state = cli::inspect_cache_state(cache_directory)?;
-    eprintln!(
-        "cycle {ordinal} cache is {} before exact immutable resolution",
-        cache_state.label()
-    );
     let selection = ModelSelection::new(model::MODEL_REPOSITORY, model::MODEL_REVISION);
     let (resolved, resolve_elapsed) = model::resolve_model(runtime, &selection)?;
-    capture_checkpoint(
-        observer,
-        &mut resource_checkpoints,
-        AFTER_RESOLUTION_CHECKPOINT,
-    )?;
+    recorder.capture(AFTER_RESOLUTION_CHECKPOINT)?;
 
-    let mut planned = model::plan_resolved_model(cache_directory, runtime, requested)?;
-    let before_load = observer.capture_pre_load(BEFORE_LOAD_CHECKPOINT)?;
-    let (loaded, load_elapsed) = model::load_model(runtime, &selection, &mut planned, observer)?;
-    validate_pre_load_checkpoint(requested, &before_load)?;
-    resource_checkpoints.push(before_load);
-    capture_checkpoint(observer, &mut resource_checkpoints, AFTER_LOAD_CHECKPOINT)?;
+    let mut planned = model::plan_resolved_model(cache_directory, runtime, recorder.requested)?;
+    recorder.capture_pre_load()?;
+    let (loaded, load_elapsed) =
+        model::load_model(runtime, &selection, &mut planned, recorder.observer)?;
+    recorder.capture(AFTER_LOAD_CHECKPOINT)?;
 
-    let (selected_e1_device, actual_loaded_e0_device) =
-        validated_device_identities(runtime, &loaded, observer)?;
-    validate_footprint_evidence(&planned.e0_footprint)?;
-    let model_facts = CycleModelFacts {
-        resolved_commit: resolved.identity().commit().to_owned(),
-        source_scalar: scalar_label(loaded.source_scalar_type()),
-        vocabulary_size: loaded.vocabulary_size(),
-        maximum_context_tokens: loaded.maximum_context_tokens(),
-        maximum_prefill_batch: loaded.maximum_prefill_batch(),
-        execution_dtype: planned.execution_dtype,
-        e0_footprint: planned.e0_footprint,
-    };
-
-    let workload_evidence = {
-        let mut observe = |checkpoint: &'static str| -> BenchmarkResult {
-            capture_checkpoint(observer, &mut resource_checkpoints, checkpoint)
-        };
-        match workload {
-            CycleWorkload::Primary => CycleWorkloadEvidence::Primary(
-                generation::run_primary_workload(runtime, &loaded, &mut observe)?,
-            ),
-            CycleWorkload::Stability => {
-                let (direct_completion, cancellation) =
-                    generation::run_stability_workload(runtime, &mut observe)?;
-                CycleWorkloadEvidence::Stability {
-                    direct_completion,
-                    cancellation,
-                }
-            }
-        }
-    };
+    let model_facts =
+        validated_model_facts(runtime, &resolved, &loaded, &planned, recorder.observer)?;
+    let workload_evidence = run_cycle_workload(runtime, &loaded, workload, recorder)?;
     validate_released_workload_state(runtime, &loaded)?;
 
     let unload = model::unload_model(runtime, &loaded)?;
     validate_unload_contract(&unload)?;
-    let after_unload = observer.capture(AFTER_UNLOAD_CHECKPOINT)?;
-    let (post_unload_cuda_used_bytes, post_unload_cuda_delta_bytes) =
-        checkpoint_cuda_usage(requested, &after_unload, true, "post-unload checkpoint")?;
-    resource_checkpoints.push(after_unload);
-
-    eprintln!("shutting down external ApplicationRuntime cycle {ordinal}");
-    let shutdown_started_at = Instant::now();
-    runtime.shutdown().map_err(|error| {
-        BenchmarkError::new(format!(
-            "external ApplicationRuntime cycle {ordinal} bounded shutdown failed: {error}"
-        ))
-    })?;
-    let shutdown_elapsed = shutdown_started_at.elapsed();
-    validate_stopped(runtime)?;
-    capture_checkpoint(
-        observer,
-        &mut resource_checkpoints,
-        AFTER_SHUTDOWN_RETURN_CHECKPOINT,
-    )?;
+    let stability = recorder.capture_after_unload()?;
+    let shutdown = shutdown_cycle(runtime, ordinal)?;
+    recorder.capture(AFTER_SHUTDOWN_RETURN_CHECKPOINT)?;
 
     Ok(CompletedCycle {
         model: model_facts,
         lifecycle: LifecycleResult {
             ordinal,
             cache_state_before_resolution: cache_state.label(),
-            start_ns: duration_ns(start_elapsed),
-            resolve_ns: duration_ns(resolve_elapsed),
-            load_ns: duration_ns(load_elapsed),
-            selected_e1_device,
-            actual_loaded_e0_device,
-            e0_footprint: planned.e0_footprint,
+            start_ns: generation::duration_ns(start_elapsed, "ApplicationRuntime startup")?,
+            resolve_ns: generation::duration_ns(resolve_elapsed, "immutable model resolution")?,
+            load_ns: generation::duration_ns(load_elapsed, "E1 model load acceptance")?,
+            selected_e1_device: application_device_identity(runtime.state().selected_device()),
+            actual_loaded_e0_device: application_device_identity(loaded.device()),
+            accounted_footprint: planned.accounted_footprint,
             post_unload_e0_accounting_scope: POST_UNLOAD_ACCOUNTING_SCOPE,
             unload,
-            shutdown: ShutdownResult {
-                duration_ns: duration_ns(shutdown_elapsed),
-                shutdown_returned_cleanly: true,
-                workers: ShutdownWorkerState {
-                    hub_unavailable: true,
-                    inference_unavailable: true,
-                },
-                ownership: ShutdownOwnershipState {
-                    loaded_model_absent: true,
-                    active_generation_absent: true,
-                },
-            },
-            resource_checkpoints,
+            shutdown,
+            resource_checkpoints: recorder.take_checkpoints(),
         },
         workload: workload_evidence,
-        stability: CycleStabilityObservation {
-            unload_used: post_unload_cuda_used_bytes,
-            owner_drop_used: None,
-            unload_delta: post_unload_cuda_delta_bytes,
-            owner_drop_delta: None,
+        stability,
+    })
+}
+
+fn validated_model_facts(
+    runtime: &ApplicationRuntime,
+    resolved: &application_runtime::ResolvedModel,
+    loaded: &LoadedModel,
+    planned: &PlannedModelEvidence,
+    observer: &DeviceObserver,
+) -> BenchmarkResult<CycleModelFacts> {
+    observer.validate_selected_e1(runtime)?;
+    observer.validate_actual_loaded(loaded.device())?;
+    validate_accounted_footprint(&planned.accounted_footprint)?;
+    if loaded.source_scalar_type() != planned.source_scalar_type
+        || loaded.execution_scalar_type() != planned.execution_scalar_type
+    {
+        return Err(BenchmarkError::new(
+            "loaded source/execution scalar facts changed after exact E1 load acceptance",
+        ));
+    }
+    Ok(CycleModelFacts {
+        resolved_commit: resolved.identity().commit().to_owned(),
+        source_scalar: loaded.source_scalar_type(),
+        execution_scalar: loaded.execution_scalar_type(),
+        vocabulary_size: loaded.vocabulary_size(),
+        maximum_context_tokens: loaded.maximum_context_tokens(),
+        maximum_prefill_batch: loaded.maximum_prefill_batch(),
+        accounted_footprint: planned.accounted_footprint,
+    })
+}
+
+fn run_cycle_workload(
+    runtime: &mut ApplicationRuntime,
+    loaded: &LoadedModel,
+    workload: CycleWorkload,
+    recorder: &mut CycleRecorder<'_>,
+) -> BenchmarkResult<CycleWorkloadEvidence> {
+    let mut observe = |checkpoint: &'static str| recorder.capture(checkpoint);
+    match workload {
+        CycleWorkload::Primary => Ok(CycleWorkloadEvidence::Primary(
+            generation::run_primary_workload(runtime, loaded, &mut observe)?,
+        )),
+        CycleWorkload::Stability => {
+            let (direct_completion, cancellation) =
+                generation::run_stability_workload(runtime, &mut observe)?;
+            Ok(CycleWorkloadEvidence::Stability {
+                direct_completion,
+                cancellation,
+            })
+        }
+    }
+}
+
+fn shutdown_cycle(
+    runtime: &mut ApplicationRuntime,
+    ordinal: u32,
+) -> BenchmarkResult<ShutdownResult> {
+    eprintln!("shutting down external ApplicationRuntime cycle {ordinal}");
+    let started_at = Instant::now();
+    runtime.shutdown().map_err(|error| {
+        BenchmarkError::new(format!(
+            "external ApplicationRuntime cycle {ordinal} bounded shutdown failed: {error}"
+        ))
+    })?;
+    let elapsed = started_at.elapsed();
+    validate_stopped(runtime)?;
+    Ok(ShutdownResult {
+        duration_ns: generation::duration_ns(elapsed, "ApplicationRuntime shutdown")?,
+        shutdown_returned_cleanly: true,
+        workers: ShutdownWorkerState {
+            hub_unavailable: true,
+            inference_unavailable: true,
+        },
+        ownership: ShutdownOwnershipState {
+            loaded_model_absent: true,
+            active_generation_absent: true,
         },
     })
 }
@@ -476,25 +490,6 @@ fn validate_stopped(runtime: &ApplicationRuntime) -> BenchmarkResult {
     Ok(())
 }
 
-fn validated_device_identities(
-    runtime: &ApplicationRuntime,
-    loaded: &LoadedModel,
-    observer: &DeviceObserver,
-) -> BenchmarkResult<(DeviceIdentity, DeviceIdentity)> {
-    observer.validate_selected_e1(runtime)?;
-    observer.validate_actual_loaded(loaded.device())?;
-
-    let expected = observer.requested_identity();
-    let selected = application_device_identity(runtime.state().selected_device());
-    let actual = application_device_identity(loaded.device());
-    if selected != expected || actual != expected {
-        return Err(BenchmarkError::new(format!(
-            "validated device identities changed before recording: requested={expected:?}, selected={selected:?}, actual={actual:?}"
-        )));
-    }
-    Ok((selected, actual))
-}
-
 fn validate_observer_request(
     requested: RequestedDevice,
     observer: &DeviceObserver,
@@ -509,14 +504,14 @@ fn validate_observer_request(
     Ok(())
 }
 
-fn validate_footprint_evidence(evidence: &E0FootprintEvidence) -> BenchmarkResult {
+fn validate_accounted_footprint(evidence: &AccountedFootprintEvidence) -> BenchmarkResult {
     if !evidence.e1_accepted_e0_load_contract
         || evidence.reservation_snapshot_observed
         || footprint_is_zero(&evidence.independent_public_plan)
         || evidence.provenance.is_empty()
     {
         return Err(BenchmarkError::new(
-            "E0 footprint evidence must be a nonzero independent public plan plus validated E1 acceptance, without claiming a same-worker reservation snapshot",
+            "accounted footprint evidence must be a nonzero independent public plan plus validated E1 acceptance, without claiming a same-worker reservation snapshot",
         ));
     }
     Ok(())
@@ -536,62 +531,6 @@ fn validate_unload_contract(unload: &UnloadResult) -> BenchmarkResult {
     Ok(())
 }
 
-fn validate_pre_load_checkpoint(
-    requested: RequestedDevice,
-    checkpoint: &ResourceCheckpoint,
-) -> BenchmarkResult {
-    let (used_bytes, delta) = checkpoint_cuda_usage(
-        requested,
-        checkpoint,
-        true,
-        "immediately-before-load checkpoint",
-    )?;
-    match requested {
-        RequestedDevice::Cpu if used_bytes.is_none() && delta.is_none() => Ok(()),
-        RequestedDevice::Cuda0 if used_bytes.is_some() && delta == Some(0) => Ok(()),
-        _ => Err(BenchmarkError::new(
-            "pre-load resource checkpoint did not establish the exact zero CUDA baseline delta",
-        )),
-    }
-}
-
-fn capture_checkpoint(
-    observer: &DeviceObserver,
-    checkpoints: &mut Vec<ResourceCheckpoint>,
-    label: &'static str,
-) -> BenchmarkResult {
-    checkpoints.push(observer.capture(label)?);
-    Ok(())
-}
-
-fn checkpoint_cuda_usage(
-    requested: RequestedDevice,
-    checkpoint: &ResourceCheckpoint,
-    require_pre_load_delta: bool,
-    context: &'static str,
-) -> BenchmarkResult<(Option<u64>, Option<i64>)> {
-    match (requested, checkpoint.cuda_memory) {
-        (RequestedDevice::Cpu, None) => Ok((None, None)),
-        (RequestedDevice::Cpu, Some(_)) => Err(BenchmarkError::new(format!(
-            "{context} unexpectedly contained CUDA memory for a CPU cycle"
-        ))),
-        (RequestedDevice::Cuda0, None) => Err(BenchmarkError::new(format!(
-            "{context} omitted CUDA memory for a CUDA cycle"
-        ))),
-        (RequestedDevice::Cuda0, Some(memory)) => {
-            if require_pre_load_delta && memory.used_delta_from_pre_load_bytes.is_none() {
-                return Err(BenchmarkError::new(format!(
-                    "{context} omitted its delta from the current cycle's pre-load baseline"
-                )));
-            }
-            Ok((
-                Some(memory.used_bytes),
-                memory.used_delta_from_pre_load_bytes,
-            ))
-        }
-    }
-}
-
 fn validate_model_consistency(
     primary: &CycleModelFacts,
     observed: &CycleModelFacts,
@@ -599,34 +538,8 @@ fn validate_model_consistency(
 ) -> BenchmarkResult {
     if observed != primary {
         return Err(BenchmarkError::new(format!(
-            "cycle {ordinal} changed immutable model facts, execution dtype, or E0 footprint semantics relative to primary cycle 1: primary={primary:?}, observed={observed:?}"
+            "cycle {ordinal} changed immutable model, scalar, or accounted-footprint facts relative to primary cycle 1: primary={primary:?}, observed={observed:?}"
         )));
-    }
-    Ok(())
-}
-
-fn validate_complete_stability_observation(
-    requested: RequestedDevice,
-    observation: CycleStabilityObservation,
-) -> BenchmarkResult {
-    let complete = match requested {
-        RequestedDevice::Cpu => {
-            observation.unload_used.is_none()
-                && observation.owner_drop_used.is_none()
-                && observation.unload_delta.is_none()
-                && observation.owner_drop_delta.is_none()
-        }
-        RequestedDevice::Cuda0 => {
-            observation.unload_used.is_some()
-                && observation.owner_drop_used.is_some()
-                && observation.unload_delta.is_some()
-                && observation.owner_drop_delta.is_some()
-        }
-    };
-    if !complete {
-        return Err(BenchmarkError::new(
-            "completed cycle did not retain the requested device's full stability observations",
-        ));
     }
     Ok(())
 }
@@ -660,106 +573,6 @@ fn stability_cycle_result(cycle: CompletedCycle) -> BenchmarkResult<StabilityCyc
         direct_completion,
         cancellation,
     })
-}
-
-fn summarize_stability(
-    requested: RequestedDevice,
-    observations: &[CycleStabilityObservation],
-) -> BenchmarkResult<StabilitySummary> {
-    let expected_cycles = 1_usize.saturating_add(stability_cycle_ordinals(requested).len());
-    if observations.len() != expected_cycles {
-        return Err(BenchmarkError::new(format!(
-            "stability summary received {} complete cycles, expected {expected_cycles}",
-            observations.len()
-        )));
-    }
-
-    let cuda_stability_cycle_count = u32::try_from(stability_cycle_ordinals(requested).len())
-        .map_err(|_| BenchmarkError::new("CUDA stability-cycle count conversion failed"))?;
-    if requested == RequestedDevice::Cpu {
-        if observations.iter().any(|observation| {
-            observation.unload_used.is_some()
-                || observation.owner_drop_used.is_some()
-                || observation.unload_delta.is_some()
-                || observation.owner_drop_delta.is_some()
-        }) {
-            return Err(BenchmarkError::new(
-                "CPU stability summary received unexpected CUDA observations",
-            ));
-        }
-        return Ok(StabilitySummary {
-            primary_cycle_count: 1,
-            cuda_stability_cycle_count,
-            post_unload_cuda_used_bytes: Vec::new(),
-            post_owner_drop_cuda_used_bytes: Vec::new(),
-            post_unload_cuda_delta_from_pre_load_bytes: Vec::new(),
-            post_owner_drop_cuda_delta_from_pre_load_bytes: Vec::new(),
-            strict_monotonic_retained_growth_observed: false,
-            max_retained_cuda_delta_bytes: None,
-            assessment: CPU_STABILITY_ASSESSMENT.to_owned(),
-        });
-    }
-
-    let mut post_unload_cuda_used_bytes = Vec::new();
-    let mut post_owner_drop_cuda_used_bytes = Vec::new();
-    let mut post_unload_deltas = Vec::new();
-    let mut post_owner_drop_deltas = Vec::new();
-    for observation in observations {
-        validate_complete_stability_observation(requested, *observation)?;
-        post_unload_cuda_used_bytes.push(observation.unload_used.ok_or_else(|| {
-            BenchmarkError::new("CUDA post-unload used bytes disappeared during summary")
-        })?);
-        post_owner_drop_cuda_used_bytes.push(observation.owner_drop_used.ok_or_else(|| {
-            BenchmarkError::new(
-                "CUDA post-application-shutdown owner-drop used bytes disappeared during summary",
-            )
-        })?);
-        post_unload_deltas.push(observation.unload_delta.ok_or_else(|| {
-            BenchmarkError::new(
-                "CUDA post-unload pre-load-baseline delta disappeared during summary",
-            )
-        })?);
-        post_owner_drop_deltas.push(observation.owner_drop_delta.ok_or_else(|| {
-            BenchmarkError::new(
-                "CUDA post-owner-drop pre-load-baseline delta disappeared during summary",
-            )
-        })?);
-    }
-
-    let strict_monotonic_retained_growth_observed =
-        strictly_increases(&post_unload_deltas) || strictly_increases(&post_owner_drop_deltas);
-    let max_retained_cuda_delta_bytes = post_unload_deltas
-        .iter()
-        .chain(&post_owner_drop_deltas)
-        .copied()
-        .max();
-    let assessment = if strict_monotonic_retained_growth_observed {
-        CUDA_GROWTH_ASSESSMENT
-    } else {
-        CUDA_NO_GROWTH_ASSESSMENT
-    };
-
-    Ok(StabilitySummary {
-        primary_cycle_count: 1,
-        cuda_stability_cycle_count,
-        post_unload_cuda_used_bytes,
-        post_owner_drop_cuda_used_bytes,
-        post_unload_cuda_delta_from_pre_load_bytes: post_unload_deltas,
-        post_owner_drop_cuda_delta_from_pre_load_bytes: post_owner_drop_deltas,
-        strict_monotonic_retained_growth_observed,
-        max_retained_cuda_delta_bytes,
-        assessment: assessment.to_owned(),
-    })
-}
-
-fn strictly_increases(values: &[i64]) -> bool {
-    values.len() > 1
-        && values.windows(2).all(|window| {
-            window
-                .first()
-                .zip(window.get(1))
-                .is_some_and(|(previous, current)| current > previous)
-        })
 }
 
 const fn stability_cycle_ordinals(requested: RequestedDevice) -> &'static [u32] {
@@ -798,14 +611,6 @@ const fn requested_device_label(requested: RequestedDevice) -> &'static str {
     }
 }
 
-const fn scalar_label(scalar: ApplicationScalarType) -> &'static str {
-    match scalar {
-        ApplicationScalarType::F32 => "F32",
-        ApplicationScalarType::F16 => "F16",
-        ApplicationScalarType::Bf16 => "BF16",
-    }
-}
-
 const fn footprint_is_zero(footprint: &MemoryFootprintRecord) -> bool {
     footprint.host_weight_bytes == 0
         && footprint.device_weight_bytes == 0
@@ -816,10 +621,26 @@ const fn footprint_is_zero(footprint: &MemoryFootprintRecord) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::{
-        CPU_STABILITY_ASSESSMENT, CycleStabilityObservation, RequestedDevice,
-        stability_cycle_ordinals, strictly_increases, summarize_stability,
+        CompletedCycle, CycleWorkload, DeviceObserver, RequestedDevice, TemporaryWorkspace,
+        run_cycle, stability_cycle_ordinals,
     };
+    use crate::error::BenchmarkResult;
+
+    type CycleEntryPoint = fn(
+        &TemporaryWorkspace,
+        &Path,
+        RequestedDevice,
+        &mut DeviceObserver,
+        u32,
+        CycleWorkload,
+    ) -> BenchmarkResult<CompletedCycle>;
+
+    const fn orchestration_entry_point(_requested: RequestedDevice) -> CycleEntryPoint {
+        run_cycle
+    }
 
     #[test]
     fn cpu_and_cuda_cycle_plans_are_exact() {
@@ -833,90 +654,10 @@ mod tests {
     }
 
     #[test]
-    fn strict_growth_requires_every_adjacent_window_to_increase() {
-        assert!(strictly_increases(&[10, 11, 12]));
-        assert!(!strictly_increases(&[]));
-        assert!(!strictly_increases(&[10]));
-        assert!(!strictly_increases(&[10, 10, 11]));
-        assert!(!strictly_increases(&[10, 12, 11]));
-    }
-
-    #[test]
-    fn cpu_summary_is_not_applicable_and_has_no_cuda_arrays() -> Result<(), String> {
-        let summary = summarize_stability(
-            RequestedDevice::Cpu,
-            &[CycleStabilityObservation {
-                unload_used: None,
-                owner_drop_used: None,
-                unload_delta: None,
-                owner_drop_delta: None,
-            }],
-        )
-        .map_err(|error| error.to_string())?;
-        assert_eq!(summary.primary_cycle_count, 1);
-        assert_eq!(summary.cuda_stability_cycle_count, 0);
-        assert!(summary.post_unload_cuda_used_bytes.is_empty());
-        assert!(summary.post_owner_drop_cuda_used_bytes.is_empty());
-        assert!(
-            summary
-                .post_unload_cuda_delta_from_pre_load_bytes
-                .is_empty()
-        );
-        assert!(
-            summary
-                .post_owner_drop_cuda_delta_from_pre_load_bytes
-                .is_empty()
-        );
-        assert!(!summary.strict_monotonic_retained_growth_observed);
-        assert_eq!(summary.max_retained_cuda_delta_bytes, None);
-        assert_eq!(summary.assessment, CPU_STABILITY_ASSESSMENT);
-        Ok(())
-    }
-
-    #[test]
-    fn cuda_summary_flags_growth_without_calling_it_a_leak() -> Result<(), String> {
-        let observations = [
-            CycleStabilityObservation {
-                unload_used: Some(100),
-                owner_drop_used: Some(90),
-                unload_delta: Some(20),
-                owner_drop_delta: Some(10),
-            },
-            CycleStabilityObservation {
-                unload_used: Some(90),
-                owner_drop_used: Some(80),
-                unload_delta: Some(30),
-                owner_drop_delta: Some(20),
-            },
-            CycleStabilityObservation {
-                unload_used: Some(80),
-                owner_drop_used: Some(70),
-                unload_delta: Some(40),
-                owner_drop_delta: Some(30),
-            },
-        ];
-        let summary = summarize_stability(RequestedDevice::Cuda0, &observations)
-            .map_err(|error| error.to_string())?;
-        assert_eq!(summary.primary_cycle_count, 1);
-        assert_eq!(summary.cuda_stability_cycle_count, 2);
-        assert_eq!(summary.post_unload_cuda_used_bytes, [100, 90, 80]);
-        assert_eq!(summary.post_owner_drop_cuda_used_bytes, [90, 80, 70]);
-        assert_eq!(
-            summary.post_unload_cuda_delta_from_pre_load_bytes,
-            [20, 30, 40]
-        );
-        assert_eq!(
-            summary.post_owner_drop_cuda_delta_from_pre_load_bytes,
-            [10, 20, 30]
-        );
-        assert!(summary.strict_monotonic_retained_growth_observed);
-        assert_eq!(summary.max_retained_cuda_delta_bytes, Some(40));
-        assert!(summary.assessment.contains("review-required"));
-        assert!(
-            summary
-                .assessment
-                .contains("neither proof of a process leak")
-        );
-        Ok(())
+    fn cpu_and_cuda_share_one_cycle_orchestration_entry_point() {
+        assert!(std::ptr::fn_addr_eq(
+            orchestration_entry_point(RequestedDevice::Cpu),
+            orchestration_entry_point(RequestedDevice::Cuda0),
+        ));
     }
 }
