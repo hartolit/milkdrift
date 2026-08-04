@@ -240,6 +240,8 @@ Schema 3 records:
 
 Each counted CUDA discovery constructs a temporary Candle CUDA device and cudarc context. Calls are bounded to cold environment, identity, and resource checkpoints and never occur per generated token. The runner retains this behavior because safe context reuse would require production ownership exposure or a new lower-level benchmark dependency; neither is justified for cold observation. This count is context-churn audit evidence, not a performance threshold. Whole-device memory remains non-process-attributed, and direct E0 fixture validation remains the separate exact-zero accounting owner.
 
+The clean schema-3 CUDA regression on commit `7dd7a72565cfb976bf123ed664296e9332af0e70`, tree `766682d96b89a3e6fb4b0d14282e44e318244a56`, recorded exactly 51 safe discovery calls: two before lifecycle execution, 19 in the primary cycle, and 15 in each reduced stability cycle. The same report classified retained whole-device growth as not strictly monotonic. These facts validate the observation schedule and finite stability classifier only; they do not revise canonical performance numbers or establish a leak/non-leak conclusion.
+
 ### Phase 11 controlled CPU-vs-CUDA product evidence
 
 The schema-2 Commit E reports and exact curated tables below are the canonical current CPU/CUDA product evidence. The CPU and CUDA primary runs use the same application workload, but they are product-path observations rather than precision-matched hardware microbenchmarks: the CPU path is F32, the CUDA path is BF16, and CUDA generation includes full-vocabulary-logit transfer for host F32 sampling.

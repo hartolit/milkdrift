@@ -48,6 +48,8 @@ CUDA_COMPUTE_CAP=120 cargo check --locked \
 
 These commands compile the current benchmark targets without claiming CUDA hardware execution or a product baseline. Ordinary tests remain network-free.
 
+The separate [`cuda-hardware` workflow](../../.github/workflows/cuda-hardware.yml) runs the exact CUDA feature graph and committed adapter/E0/E1 fixtures on the dedicated `milkdrift-cuda-5070ti` self-hosted label. It accepts only trusted `main` pushes or owner dispatches of `main`, uses read-only permissions and offline Cargo, and never runs this package's external model binary or a performance threshold. The full security and maintenance procedure is in [validation](../../docs/project/validation.md#self-hosted-cuda-hardware-correctness-gate).
+
 ## Run the synthetic baseline
 
 ```text

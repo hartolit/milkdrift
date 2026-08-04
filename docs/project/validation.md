@@ -357,7 +357,21 @@ cargo test --release --locked \
     --test-threads=1
 ```
 
-Do not run these tests in ordinary CPU CI, do not use `--all-features` for the workspace, and do not interpret compilation as hardware execution evidence. These are procedures only; this documentation update does not claim that the E1 fixture or a manual product path ran.
+Do not run these tests in ordinary CPU CI, do not use `--all-features` for the workspace, and do not interpret compilation as hardware execution evidence. Executed evidence must name the exact commit, hardware, and local or Actions run rather than being inferred from this procedure.
+
+## Self-hosted CUDA hardware correctness gate
+
+[`.github/workflows/cuda-hardware.yml`](../../.github/workflows/cuda-hardware.yml) is a separate download-free correctness gate for the committed fixture. The maintained repository runner is named `hart-desk-rtx5070ti` and is selected with all registered labels: `self-hosted`, `Linux`, `X64`, and the dedicated `milkdrift-cuda-5070ti` label. If that runner is offline, removed, or under maintenance, restore its exact registration rather than weakening the job to generic `self-hosted` routing.
+
+The security boundary is deliberate:
+
+- triggers are path-filtered pushes to `main` and owner-dispatched runs of the `main` ref only;
+- neither `pull_request` nor `pull_request_target` can schedule the machine, so fork or other untrusted PR code is never checked out there;
+- workflow permissions are `contents: read`, checkout credentials are not persisted, and no repository secret or command input is used;
+- one repository-wide concurrency group prevents overlapping Milkdrift GPU jobs;
+- Cargo is offline after checkout, the target directory is isolated beneath `$RUNNER_TEMP`, and an `always()` final step removes it without `cargo clean`.
+
+The job validates the exact RTX 5070 Ti / CUDA ordinal 0 / compute capability 12.0 / Toolkit 12.8+ / build-cap-120 matrix, then runs metadata, architecture, hygiene, the five-package CUDA check and Clippy graph, and the sequential adapter, hosted-E0, and E1 fixture tests listed above. It does not run TinyLlama, Hugging Face resolution, Criterion, elapsed-time thresholds, Slint interaction, or any arbitrary model.
 
 ## External CPU product baseline
 

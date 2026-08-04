@@ -1,0 +1,190 @@
+name: CUDA hardware
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/cuda-hardware.yml
+      - .cargo/config.toml
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - benchmarks/runtime/Cargo.toml
+      - benchmarks/runtime/src/**/*.rs
+      - benchmarks/runtime/benches/**/*.rs
+      - crates/adapters/candle-backend/**
+      - crates/domain/domain-contracts/**
+      - crates/platform/host-runtime/**
+      - crates/runtime/inference-runtime/**
+      - crates/runtime/application-runtime/**
+      - crates/apps/desktop-slint/**
+      - tools/xtask/Cargo.toml
+      - tools/xtask/src/**/*.rs
+      - tools/xtask/tests/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: milkdrift-cuda-hardware
+  cancel-in-progress: false
+
+jobs:
+  cuda:
+    name: RTX 5070 Ti correctness
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.actor == github.repository_owner)
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - milkdrift-cuda-5070ti
+    timeout-minutes: 90
+    env:
+      CARGO_NET_OFFLINE: "true"
+      CARGO_TARGET_DIR: ${{ runner.temp }}/milkdrift-cuda-target
+      CUDA_COMPUTE_CAP: "120"
+      CUDA_VISIBLE_DEVICES: "0"
+      MILKDRIFT_CUDA_TEST: "1"
+    steps:
+      - name: Check out trusted main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prepare isolated target
+        run: |
+          set -eu
+          rm -rf "${CARGO_TARGET_DIR}"
+          mkdir -p "${CARGO_TARGET_DIR}"
+
+      - name: Preflight exact CUDA matrix
+        run: |
+          set -eu
+          nvidia-smi
+          nvcc --version
+          rustc --version
+          cargo --version
+          free -h
+          df -h "${RUNNER_TEMP}"
+
+          test "${CUDA_VISIBLE_DEVICES}" = "0"
+          test "${CUDA_COMPUTE_CAP}" = "120"
+
+          gpu_matrix="$(nvidia-smi --id=0 --query-gpu=index,name,compute_cap --format=csv,noheader,nounits)"
+          test "${gpu_matrix}" = "0, NVIDIA GeForce RTX 5070 Ti, 12.0"
+
+          toolkit_release="$(nvcc --version | sed -n 's/.*release \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')"
+          test -n "${toolkit_release}"
+          toolkit_major="${toolkit_release%%.*}"
+          toolkit_minor="${toolkit_release#*.}"
+          if test "${toolkit_major}" -lt 12 || { test "${toolkit_major}" -eq 12 && test "${toolkit_minor}" -lt 8; }; then
+            printf '%s\n' "CUDA Toolkit ${toolkit_release} is older than required 12.8" >&2
+            exit 1
+          fi
+
+      - name: Validate metadata and architecture policy
+        run: |
+          set -eu
+          cargo metadata --locked --format-version 1 --no-deps > /dev/null
+          cargo xtask architecture
+          cargo xtask hygiene
+
+      - name: Check exact CUDA feature graph
+        run: |
+          set -eu
+          cargo check --locked \
+            -p candle-backend \
+            -p inference-runtime \
+            -p application-runtime \
+            -p desktop-slint \
+            -p runtime-benchmarks \
+            --all-targets \
+            --features cuda
+
+      - name: Clippy exact CUDA feature graph
+        run: |
+          set -eu
+          cargo clippy --locked \
+            -p candle-backend \
+            -p inference-runtime \
+            -p application-runtime \
+            -p desktop-slint \
+            -p runtime-benchmarks \
+            --all-targets \
+            --features cuda \
+            -- -D warnings
+
+      - name: Prove CPU execution in the CUDA build
+        run: |
+          set -eu
+          cargo test --release --locked \
+            -p candle-backend \
+            --features cuda \
+            --test llama_cuda \
+            -- \
+            --exact cuda_enabled_binary_can_explicitly_execute_cpu \
+            --nocapture \
+            --test-threads=1
+
+      - name: Prove CUDA fixture logits on ordinal zero
+        run: |
+          set -eu
+          cargo test --release --locked \
+            -p candle-backend \
+            --features cuda \
+            --test llama_cuda \
+            -- \
+            --ignored \
+            --exact cuda_ordinal_zero_executes_fixture_and_matches_cpu_logits \
+            --nocapture \
+            --test-threads=1
+
+      - name: Prove BF16 source and execution scalars
+        run: |
+          set -eu
+          cargo test --release --locked \
+            -p candle-backend \
+            --features cuda \
+            --test llama_cuda \
+            -- \
+            --ignored \
+            --exact cuda_bf16_source_executes_as_bf16 \
+            --nocapture \
+            --test-threads=1
+
+      - name: Prove hosted E0 CUDA lifecycle and zero accounting
+        run: |
+          set -eu
+          cargo test --release --locked \
+            -p inference-runtime \
+            --features cuda \
+            --test native_backend_generation \
+            -- \
+            --ignored \
+            --exact candle_cuda_fixture_covers_e0_generation_accounting_and_lifecycle \
+            --nocapture \
+            --test-threads=1
+
+      - name: Prove E1 CUDA discovery selection scalar truth and shutdown
+        run: |
+          set -eu
+          cargo test --release --locked \
+            -p application-runtime \
+            --features cuda \
+            --lib \
+            -- \
+            --ignored \
+            --exact runtime::tests::devices::cuda_fixture_load_reports_the_selected_and_actual_e1_device \
+            --nocapture \
+            --test-threads=1
+
+      - name: Remove isolated target
+        if: ${{ always() }}
+        run: |
+          rm -rf "${CARGO_TARGET_DIR}"
