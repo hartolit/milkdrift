@@ -371,6 +371,8 @@ The security boundary is deliberate:
 - one repository-wide concurrency group prevents overlapping Milkdrift GPU jobs;
 - Cargo is offline after checkout, the target directory is isolated beneath `$RUNNER_TEMP`, and an `always()` final step removes it without `cargo clean`.
 
+The runner administrator maintains `/var/tmp/milkdrift-cargo-home` as a dependency-only Cargo cache seeded out of band from a trusted locked checkout. Refresh that cache before a trusted dependency update reaches `main`; do not expose credentials in it or relax the workflow's offline setting. The job fails before compilation when the maintained cache is missing or inaccessible.
+
 The job validates the exact RTX 5070 Ti / CUDA ordinal 0 / compute capability 12.0 / Toolkit 12.8+ / build-cap-120 matrix, then runs metadata, architecture, hygiene, the five-package CUDA check and Clippy graph, and the sequential adapter, hosted-E0, and E1 fixture tests listed above. It does not run TinyLlama, Hugging Face resolution, Criterion, elapsed-time thresholds, Slint interaction, or any arbitrary model.
 
 ## External CPU product baseline
