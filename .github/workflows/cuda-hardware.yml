@@ -45,7 +45,6 @@ jobs:
     timeout-minutes: 90
     env:
       CARGO_NET_OFFLINE: "true"
-      CARGO_TARGET_DIR: ${{ runner.temp }}/milkdrift-cuda-target
       CUDA_COMPUTE_CAP: "120"
       CUDA_VISIBLE_DEVICES: "0"
       MILKDRIFT_CUDA_TEST: "1"
@@ -60,8 +59,10 @@ jobs:
       - name: Prepare isolated target
         run: |
           set -eu
-          rm -rf "${CARGO_TARGET_DIR}"
-          mkdir -p "${CARGO_TARGET_DIR}"
+          target_dir="${RUNNER_TEMP}/milkdrift-cuda-target"
+          rm -rf "${target_dir}"
+          mkdir -p "${target_dir}"
+          printf 'CARGO_TARGET_DIR=%s\n' "${target_dir}" >> "${GITHUB_ENV}"
 
       - name: Preflight exact CUDA matrix
         run: |
@@ -187,4 +188,4 @@ jobs:
       - name: Remove isolated target
         if: ${{ always() }}
         run: |
-          rm -rf "${CARGO_TARGET_DIR}"
+          rm -rf "${RUNNER_TEMP}/milkdrift-cuda-target"
