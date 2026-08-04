@@ -5,7 +5,7 @@ use std::vec::Vec;
 use domain_contracts::{
     CancellationReason, DecodeOutcome, ExecutionDevice, FinishReason, GenerationUsage,
     MemoryFootprint, ModelDescriptor, ModelHandle, ModelId, ModelLifecycleState, PrefillOutcome,
-    RequestId, SequenceConfiguration, SequenceId, TokenId, UnloadPolicy,
+    RequestId, ScalarType, SequenceConfiguration, SequenceId, TokenId, UnloadPolicy,
 };
 
 use crate::{CleanupRetryState, GenerationAdmission, GenerationRequest, RuntimeError};
@@ -36,6 +36,8 @@ pub struct LoadReceipt {
     pub handle: ModelHandle,
     /// Actual execution device verified against the load request.
     pub execution_device: ExecutionDevice,
+    /// Actual execution scalar verified against the accepted load plan.
+    pub execution_scalar_type: ScalarType,
     /// Backend-inspected model description.
     pub descriptor: ModelDescriptor,
     /// Footprint reserved by the runtime registry.
@@ -102,7 +104,7 @@ pub struct RuntimeSnapshot {
     pub loaded_models: u32,
     /// Number of active request-owned sequences.
     pub active_requests: u32,
-    /// Aggregate reserved resident footprint, including quarantined resources.
+    /// Aggregate reserved footprint, including quarantined resources.
     pub reserved_footprint: MemoryFootprint,
     /// Generation tasks retaining host workspaces until terminal output is released.
     pub generation_workspaces: u32,
@@ -131,6 +133,8 @@ pub struct ModelSnapshot {
     pub handle: ModelHandle,
     /// Actual execution device verified during model admission.
     pub execution_device: ExecutionDevice,
+    /// Actual execution scalar verified during model admission.
+    pub execution_scalar_type: ScalarType,
     /// Current deterministic lifecycle state.
     pub lifecycle: ModelLifecycleState,
     /// Inspected backend description.

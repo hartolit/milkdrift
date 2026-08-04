@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use candle_core::DType;
 use domain_contracts::{DeviceKind, ScalarType};
 
-/// Scalar type stored in source weights or selected for execution tensors.
+/// Scalar type stored in the source weight tensors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CandleScalarType {
     /// IEEE-754 32-bit floating point.
@@ -44,16 +44,16 @@ impl CandleScalarType {
         }
     }
 
-    pub(crate) const fn from_dtype(dtype: DType) -> Option<Self> {
+    pub(crate) const fn execution_scalar_type(dtype: DType) -> Option<ScalarType> {
         match dtype {
-            DType::F32 => Some(Self::F32),
-            DType::F16 => Some(Self::F16),
-            DType::BF16 => Some(Self::Bf16),
+            DType::F32 => Some(ScalarType::F32),
+            DType::F16 => Some(ScalarType::F16),
+            DType::BF16 => Some(ScalarType::Bf16),
             _ => None,
         }
     }
 
-    pub(crate) const fn domain_type(self) -> ScalarType {
+    pub(crate) const fn source_scalar_type(self) -> ScalarType {
         match self {
             Self::F32 => ScalarType::F32,
             Self::F16 => ScalarType::F16,
@@ -139,10 +139,29 @@ impl CandleLlamaSource {
 mod tests {
     use super::CandleScalarType;
     use candle_core::DType;
-    use domain_contracts::DeviceKind;
+    use domain_contracts::{DeviceKind, ScalarType};
 
     #[test]
     fn execution_scalar_policy_is_device_aware() {
+        assert_eq!(CandleScalarType::F32.source_scalar_type(), ScalarType::F32);
+        assert_eq!(CandleScalarType::F16.source_scalar_type(), ScalarType::F16);
+        assert_eq!(
+            CandleScalarType::Bf16.source_scalar_type(),
+            ScalarType::Bf16
+        );
+        assert_eq!(
+            CandleScalarType::execution_scalar_type(DType::F32),
+            Some(ScalarType::F32)
+        );
+        assert_eq!(
+            CandleScalarType::execution_scalar_type(DType::F16),
+            Some(ScalarType::F16)
+        );
+        assert_eq!(
+            CandleScalarType::execution_scalar_type(DType::BF16),
+            Some(ScalarType::Bf16)
+        );
+
         for kind in [DeviceKind::Cpu, DeviceKind::Cuda] {
             assert_eq!(
                 CandleScalarType::F32.execution_dtype(kind, false),

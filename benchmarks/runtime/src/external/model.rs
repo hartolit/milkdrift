@@ -424,7 +424,7 @@ fn validate_resolved_facts(model: &ResolvedModel, selection: &ModelSelection) ->
         || model.engine() != ApplicationEngine::Candle
         || model.source() != ApplicationSource::HuggingFaceHub
         || model.format() != ApplicationModelFormat::Safetensors
-        || model.scalar_type() != Some(ApplicationScalarType::Bf16)
+        || model.source_scalar_type() != Some(ApplicationScalarType::Bf16)
         || !model.is_loadable()
         || model.vocabulary_size() != EXPECTED_VOCABULARY_SIZE
         || model.chat_compatibility()
@@ -606,8 +606,11 @@ fn validate_loaded_state(
         || loaded.source() != ApplicationSource::HuggingFaceHub
         || loaded.device() != requested_application_device(planned.requested_device)
         || loaded.format() != ApplicationModelFormat::Safetensors
-        || loaded.scalar_type() != ApplicationScalarType::Bf16
-        || loaded.scalar_type() != resolved.scalar_type().unwrap_or(ApplicationScalarType::F32)
+        || loaded.source_scalar_type() != ApplicationScalarType::Bf16
+        || loaded.source_scalar_type()
+            != resolved
+                .source_scalar_type()
+                .unwrap_or(ApplicationScalarType::F32)
         || loaded.vocabulary_size() != EXPECTED_VOCABULARY_SIZE
         || loaded.vocabulary_size() != resolved.vocabulary_size()
         || loaded.maximum_context_tokens() != EXPECTED_CONTEXT_TOKENS

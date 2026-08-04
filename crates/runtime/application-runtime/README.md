@@ -15,11 +15,13 @@ Safetensors Llama artifacts and a Hugging Face tokenizer independently from the
 execution device, then constructs one `CandleLlamaSource` behind its private
 composition boundary.
 
-`ResolvedModel` reports artifacts, source, format, scalar, tokenizer, immutable
-identity, and compatibility only. Selected device is separate E1 state using
-`ApplicationDevice::{Cpu, Cuda { ordinal: u32 }}` and
-`ApplicationDeviceSummary`; `LoadedModel` reports only the actual device verified
-from E0's load receipt. No Candle or `cudarc` type crosses this public boundary.
+`ResolvedModel` reports artifacts, source, format, source-weight scalar,
+tokenizer, immutable identity, and compatibility only. Selected device is
+separate E1 state using `ApplicationDevice::{Cpu, Cuda { ordinal: u32 }}` and
+`ApplicationDeviceSummary`; `LoadedModel` reports the independently verified
+source and actual execution scalars plus the actual device from E0's load
+receipt. Source and execution scalars may differ. No Candle or `cudarc` type
+crosses this public boundary.
 
 CPU always exists and is the fresh-install default. Initial bounded discovery
 probes CUDA 0 and, when different, the persisted selected CUDA ordinal. Structured
@@ -39,8 +41,10 @@ No default graph reaches CUDA; generic `gpu`, `cudnn`, `flash-attn`, and `nccl`
 features are not provided.
 
 Generation code is split internally by responsibility into admission, the E0/text
-bridge, bounded output, and settings. This is source organization inside the
-existing E1 crate, not a new layer or a claim of additional public API.
+bridge, bounded output, and settings. Runtime coordination is likewise organized
+privately around startup, devices, model operations, retained cleanup, and event
+lifecycle. This is source organization inside the existing E1 crate, not a new
+layer or a claim of additional public API.
 
 ## Startup and incompatible-load cleanup
 
@@ -51,9 +55,12 @@ inference owner in a private startup-cleanup quarantine; a later startup retries
 that cleanup instead of detaching the unresolved worker.
 
 A successful E0 load receipt is published only after the admission ticket,
-logical model ID and handle, immutable resolution/artifacts, scalar,
-Llama/Candle/Safetensors evidence, tokenizer vocabulary, selected-versus-actual
-device, and bounded footprint agree. If they do not, E1 keeps the incompatible
+logical model ID and handle, immutable resolution/artifacts, source scalar,
+E0-verified execution scalar, Llama/Candle/Safetensors evidence, tokenizer
+vocabulary, selected-versus-actual device, and bounded reserved footprint agree.
+E1 checks that source and execution scalar evidence is coherent without inferring
+scalar from device or reproducing Candle's device-aware planner. If any evidence
+is unsupported or disagrees, E1 keeps the incompatible
 `ModelHandle` and compatibility failure in the existing private cleanup record
 while E0 continues to own and account for the model. The public loaded-model
 state remains empty and the application remains unloading while bounded unload
@@ -83,7 +90,8 @@ model remains.
 Exact version 1 remains readable as CPU, with zero legacy device bytes mapped to
 Automatic and nonzero bytes to Limit. New writes are version 2, fresh empty
 repository defaults are valid, and unavailable persisted CUDA is not migrated.
-`LAM1` model records remain version 1.
+`LAM1` model records remain version 1 and continue to persist source scalar only;
+execution scalar is device-dependent loaded-state evidence and is not persisted.
 
 ## Completion and chat
 

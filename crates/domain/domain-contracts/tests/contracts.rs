@@ -78,6 +78,10 @@ impl domain_contracts::LoadedModel for TestModel {
         &DESCRIPTOR
     }
 
+    fn execution_scalar_type(&self) -> domain_contracts::ScalarType {
+        domain_contracts::ScalarType::F32
+    }
+
     fn execution_device(&self) -> domain_contracts::ExecutionDevice {
         domain_contracts::ExecutionDevice::new(
             domain_contracts::DeviceId::new(0),
@@ -85,7 +89,7 @@ impl domain_contracts::LoadedModel for TestModel {
         )
     }
 
-    fn resident_footprint(&self) -> domain_contracts::MemoryFootprint {
+    fn accounted_footprint(&self) -> domain_contracts::MemoryFootprint {
         domain_contracts::MemoryFootprint::default()
     }
 

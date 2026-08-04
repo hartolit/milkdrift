@@ -89,6 +89,7 @@ impl ModelLoader for TestLoader {
         let descriptor = self.inspect(source)?;
         Ok(LoadPlan {
             descriptor,
+            execution_scalar_type: ScalarType::F32,
             expected_footprint: descriptor.estimated_footprint,
         })
     }
@@ -125,11 +126,15 @@ impl LoadedModel for TestModel {
         &self.descriptor
     }
 
+    fn execution_scalar_type(&self) -> ScalarType {
+        ScalarType::F32
+    }
+
     fn execution_device(&self) -> ExecutionDevice {
         self.execution_device
     }
 
-    fn resident_footprint(&self) -> MemoryFootprint {
+    fn accounted_footprint(&self) -> MemoryFootprint {
         self.descriptor.estimated_footprint
     }
 

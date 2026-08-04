@@ -29,8 +29,8 @@ boundary. Public clients retain only typed identifiers and generation-safe model
 handles. A resource remains counted until its explicit backend cleanup succeeds.
 `RuntimeSnapshot` distinguishes active requests, retained generation workspaces,
 pending model cleanup, pending sequence cleanup, exhausted cleanup, and total
-reserved memory. Per-model snapshots expose degraded state and pending sequence
-counts.
+reserved memory. Per-model snapshots expose the verified execution scalar, degraded
+state, and pending sequence counts.
 
 ## Transaction and cleanup semantics
 
@@ -70,12 +70,19 @@ must leave the model valid after failure. The runtime never treats unverified
 Rust trait conformance is necessary but not sufficient for backend substitution.
 During model admission E0 validates internally ordered non-zero descriptor limits,
 capability consistency, and equality between the accepted plan and the complete
-descriptor retained by the loaded model. It also requires the loaded model to report
-the exact requested `ExecutionDevice` and accepted resident footprint before any
-receipt or model slot is published. Device or footprint mismatch uses the same
-explicit unload/quarantine transaction as any other post-load contract violation.
-Sequence requests and backend plans must remain within the descriptor's context and
-prefill limits.
+descriptor retained by the loaded model. After native loading, validation is ordered
+as handle, descriptor, requested versus actual `ExecutionDevice`, planned versus
+actual execution scalar, planned versus actual accounted footprint, and finally the
+load lifecycle transition. The inspected descriptor's source scalar is not used as a
+substitute for the independently planned execution scalar. No receipt or model slot
+is published before all checks succeed.
+
+Device, execution-scalar, or accounted-footprint mismatch uses the same explicit
+unload/quarantine transaction as any other post-load contract violation. If cleanup
+fails, the runtime retains the complete planned footprint in aggregate accounting
+until a bounded cleanup retry succeeds; exhausted cleanup remains quarantined and
+accounted. Sequence requests and backend plans must remain within the descriptor's
+context and prefill limits.
 
 A successful prefill or decode result is accepted only when it:
 

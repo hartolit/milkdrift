@@ -46,6 +46,10 @@ impl Faults {
     const WRONG_DEVICE_ID: Self = Self(1 << 16);
     const WRONG_DEVICE_KIND: Self = Self(1 << 17);
     const WRONG_MODEL_FOOTPRINT: Self = Self(1 << 18);
+    const WRONG_EXECUTION_SCALAR: Self = Self(1 << 19);
+    const SOURCE_SCALAR_AS_EXECUTION_SCALAR: Self = Self(1 << 20);
+    const UNSUPPORTED_ACTUAL_EXECUTION_SCALAR: Self = Self(1 << 21);
+    const FAIL_MODEL_CLEANUP_ONCE: Self = Self(1 << 22);
 
     const fn contains(self, fault: Self) -> bool {
         self.0 & fault.0 != 0
@@ -65,7 +69,19 @@ struct CleanupCounts {
 }
 
 #[derive(Clone, Copy)]
-struct FaultSource;
+struct FaultSource {
+    source_scalar_type: ScalarType,
+    planned_execution_scalar_type: ScalarType,
+}
+
+const DEFAULT_SOURCE: FaultSource = FaultSource {
+    source_scalar_type: ScalarType::F32,
+    planned_execution_scalar_type: ScalarType::F32,
+};
+const BF16_SOURCE_WITH_F32_EXECUTION: FaultSource = FaultSource {
+    source_scalar_type: ScalarType::Bf16,
+    planned_execution_scalar_type: ScalarType::F32,
+};
 
 struct FaultLoader {
     faults: Faults,
@@ -75,8 +91,10 @@ struct FaultLoader {
 struct FaultModel {
     handle: ModelHandle,
     execution_device: ExecutionDevice,
+    execution_scalar_type: ScalarType,
     descriptor: ModelDescriptor,
-    resident_footprint: MemoryFootprint,
+    accounted_footprint: MemoryFootprint,
+    remaining_model_cleanup_failures: u32,
     faults: Faults,
     counts: Rc<CleanupCounts>,
 }
@@ -109,8 +127,8 @@ impl ModelLoader for FaultLoader {
     type Source = FaultSource;
     type Model = FaultModel;
 
-    fn inspect(&self, _source: &Self::Source) -> Result<ModelDescriptor, LoadError> {
-        let mut descriptor = descriptor();
+    fn inspect(&self, source: &Self::Source) -> Result<ModelDescriptor, LoadError> {
+        let mut descriptor = descriptor(source.source_scalar_type);
         if self.faults.contains(Faults::MISSING_MULTIPLE_SEQUENCES) {
             descriptor.capabilities.operations = CapabilitySet::PREFILL
                 .union(CapabilitySet::INCREMENTAL_DECODE)
@@ -152,6 +170,7 @@ impl ModelLoader for FaultLoader {
         let descriptor = self.inspect(source)?;
         Ok(LoadPlan {
             descriptor,
+            execution_scalar_type: source.planned_execution_scalar_type,
             expected_footprint: descriptor.estimated_footprint,
         })
     }
@@ -187,16 +206,35 @@ impl ModelLoader for FaultLoader {
         if self.faults.contains(Faults::WRONG_DEVICE_KIND) {
             execution_device.kind = DeviceKind::Cuda;
         }
-        let mut resident_footprint = descriptor.estimated_footprint;
+        let execution_scalar_type = if self
+            .faults
+            .contains(Faults::SOURCE_SCALAR_AS_EXECUTION_SCALAR)
+        {
+            descriptor.metadata.scalar_type
+        } else if self
+            .faults
+            .contains(Faults::UNSUPPORTED_ACTUAL_EXECUTION_SCALAR)
+        {
+            ScalarType::Other(u16::MAX)
+        } else if self.faults.contains(Faults::WRONG_EXECUTION_SCALAR) {
+            ScalarType::F16
+        } else {
+            source.planned_execution_scalar_type
+        };
+        let mut accounted_footprint = descriptor.estimated_footprint;
         if self.faults.contains(Faults::WRONG_MODEL_FOOTPRINT) {
-            resident_footprint.host_working_bytes =
-                resident_footprint.host_working_bytes.saturating_add(1);
+            accounted_footprint.host_working_bytes =
+                accounted_footprint.host_working_bytes.saturating_add(1);
         }
         Ok(FaultModel {
             handle,
             execution_device,
+            execution_scalar_type,
             descriptor,
-            resident_footprint,
+            accounted_footprint,
+            remaining_model_cleanup_failures: u32::from(
+                self.faults.contains(Faults::FAIL_MODEL_CLEANUP_ONCE),
+            ),
             faults: self.faults,
             counts: Rc::clone(&self.counts),
         })
@@ -218,8 +256,12 @@ impl LoadedModel for FaultModel {
         self.execution_device
     }
 
-    fn resident_footprint(&self) -> MemoryFootprint {
-        self.resident_footprint
+    fn execution_scalar_type(&self) -> ScalarType {
+        self.execution_scalar_type
+    }
+
+    fn accounted_footprint(&self) -> MemoryFootprint {
+        self.accounted_footprint
     }
 
     fn plan_sequence(
@@ -325,7 +367,11 @@ impl LoadedModel for FaultModel {
         self.counts
             .model_cleanups
             .set(self.counts.model_cleanups.get().saturating_add(1));
-        if self.faults.contains(Faults::FAIL_MODEL_CLEANUP) {
+        if self.faults.contains(Faults::FAIL_MODEL_CLEANUP)
+            || self.remaining_model_cleanup_failures > 0
+        {
+            self.remaining_model_cleanup_failures =
+                self.remaining_model_cleanup_failures.saturating_sub(1);
             Err(SynchronizationError::Backend(backend_failure(3)))
         } else {
             Ok(())
@@ -356,8 +402,94 @@ fn wrong_device_kind_after_native_load_is_cleaned_without_publication() {
 }
 
 #[test]
-fn wrong_loaded_footprint_is_cleaned_without_publication() {
+fn correct_execution_scalar_wrong_accounted_footprint_is_cleaned_without_publication() {
     assert_model_admission_mismatch_is_cleaned(Faults::WRONG_MODEL_FOOTPRINT);
+}
+
+#[test]
+fn correct_device_wrong_execution_scalar_is_cleaned_without_publication() {
+    assert_model_admission_mismatch_is_cleaned(Faults::WRONG_EXECUTION_SCALAR);
+}
+
+#[test]
+fn source_scalar_mistaken_for_execution_scalar_is_cleaned_without_publication() {
+    assert_model_admission_mismatch_for_source_is_cleaned(
+        Faults::SOURCE_SCALAR_AS_EXECUTION_SCALAR,
+        BF16_SOURCE_WITH_F32_EXECUTION,
+    );
+}
+
+#[test]
+fn unsupported_actual_execution_scalar_is_cleaned_without_publication() {
+    assert_model_admission_mismatch_is_cleaned(Faults::UNSUPPORTED_ACTUAL_EXECUTION_SCALAR);
+}
+
+#[test]
+fn planned_execution_scalar_is_published_independently_from_source_scalar() -> TestResult {
+    let counts = Rc::new(CleanupCounts::default());
+    let mut runtime = runtime(Faults::default(), Rc::clone(&counts));
+
+    let loaded = load_source(&mut runtime, BF16_SOURCE_WITH_F32_EXECUTION).map_err(debug_error)?;
+    assert_eq!(loaded.descriptor.metadata.scalar_type, ScalarType::Bf16);
+    assert_eq!(loaded.execution_scalar_type, ScalarType::F32);
+    assert_eq!(
+        loaded.execution_device,
+        ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu)
+    );
+    assert_eq!(loaded.reserved_footprint, model_footprint());
+    let snapshot = runtime
+        .model_snapshot(loaded.handle)
+        .ok_or_else(|| "loaded model snapshot missing".to_owned())?;
+    assert_eq!(snapshot.descriptor.metadata.scalar_type, ScalarType::Bf16);
+    assert_eq!(snapshot.execution_scalar_type, ScalarType::F32);
+    assert_eq!(snapshot.reserved_footprint, model_footprint());
+
+    runtime
+        .unload_model(
+            loaded.handle,
+            UnloadPolicy::RejectIfBusy,
+            MonotonicMillis::new(0),
+        )
+        .map_err(debug_error)?;
+    assert_eq!(counts.model_cleanups.get(), 1);
+    assert_empty(&runtime);
+    Ok(())
+}
+
+#[test]
+fn wrong_execution_scalar_cleanup_failure_retains_accounting_until_successful_retry() -> TestResult
+{
+    let counts = Rc::new(CleanupCounts::default());
+    let faults = Faults::WRONG_EXECUTION_SCALAR.union(Faults::FAIL_MODEL_CLEANUP_ONCE);
+    let mut runtime = runtime(faults, Rc::clone(&counts));
+
+    assert!(matches!(
+        load(&mut runtime),
+        Err(RuntimeError::CleanupFailed(report))
+            if report.primary_operation == RuntimeOperation::ModelAdmission
+                && report.primary_failure == FailureClass::BackendContract
+                && report.cleanup_operation == RuntimeOperation::ModelUnload
+                && report.cleanup_failure == FailureClass::Synchronization
+    ));
+    assert_eq!(counts.model_loads.get(), 1);
+    assert_eq!(counts.model_cleanups.get(), 1);
+    let retained = runtime.snapshot();
+    assert_eq!(retained.loaded_models, 0);
+    assert_eq!(retained.pending_cleanup_models, 1);
+    assert_eq!(retained.reserved_footprint, model_footprint());
+    assert!(runtime.model_snapshots().is_empty());
+    assert!(matches!(
+        runtime.model_cleanup_state(ModelId::new(1)),
+        Some(state) if state.attempts == 1 && !state.exhausted()
+    ));
+
+    assert!(matches!(
+        runtime.poll_cleanup().map_err(debug_error)?,
+        CleanupPoll::Released(state) if state.attempts == 2 && !state.exhausted()
+    ));
+    assert_eq!(counts.model_cleanups.get(), 2);
+    assert_empty(&runtime);
+    Ok(())
 }
 
 #[test]
@@ -738,11 +870,15 @@ fn shutdown_reports_model_cleanup_exhaustion_with_shutdown_as_primary() -> TestR
 }
 
 fn assert_model_admission_mismatch_is_cleaned(faults: Faults) {
+    assert_model_admission_mismatch_for_source_is_cleaned(faults, DEFAULT_SOURCE);
+}
+
+fn assert_model_admission_mismatch_for_source_is_cleaned(faults: Faults, source: FaultSource) {
     let counts = Rc::new(CleanupCounts::default());
     let mut runtime = runtime(faults, Rc::clone(&counts));
 
     assert_eq!(
-        load(&mut runtime),
+        load_source(&mut runtime, source),
         Err(RuntimeError::BackendContractViolation)
     );
     assert_eq!(counts.model_loads.get(), 1);
@@ -792,9 +928,16 @@ fn runtime_with_cleanup_attempts(
 fn load(
     runtime: &mut InferenceRuntime<FaultLoader>,
 ) -> Result<inference_runtime::LoadReceipt, RuntimeError> {
+    load_source(runtime, DEFAULT_SOURCE)
+}
+
+fn load_source(
+    runtime: &mut InferenceRuntime<FaultLoader>,
+    source: FaultSource,
+) -> Result<inference_runtime::LoadReceipt, RuntimeError> {
     runtime.load_model(
         ModelId::new(1),
-        &FaultSource,
+        &source,
         ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu),
     )
 }
@@ -849,6 +992,10 @@ fn assert_only_model_reserved(runtime: &InferenceRuntime<FaultLoader>) {
     assert_eq!(snapshot.reserved_footprint, model_footprint());
     let models = runtime.model_snapshots();
     assert_eq!(models.len(), 1);
+    assert_eq!(
+        models.first().map(|model| model.execution_scalar_type),
+        Some(ScalarType::F32)
+    );
     assert_eq!(models.first().map(|model| model.active_requests), Some(0));
     assert_eq!(
         models.first().map(|model| model.reserved_footprint),
@@ -856,12 +1003,12 @@ fn assert_only_model_reserved(runtime: &InferenceRuntime<FaultLoader>) {
     );
 }
 
-const fn descriptor() -> ModelDescriptor {
+const fn descriptor(source_scalar_type: ScalarType) -> ModelDescriptor {
     ModelDescriptor {
         backend: BACKEND_ID,
         metadata: ModelMetadata {
             architecture: ModelArchitecture::Llama,
-            scalar_type: ScalarType::F32,
+            scalar_type: source_scalar_type,
             quantization: QuantizationFormat::None,
             vocabulary_size: 4,
             context_length: 16,

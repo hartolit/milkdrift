@@ -14,8 +14,8 @@ use domain_contracts::{
     BackendFailureKind, BackendId, CancellationStatus, DecodeBuffers, DecodeInput, DecodeOutcome,
     DeviceId, DeviceKind, ExecutionDevice, LoadConfiguration, LoadedModel, MemoryBudget,
     MemoryFootprint, ModelGeneration, ModelHandle, ModelId, ModelLoader, PrefillBuffers,
-    PrefillInput, PrefillOutcome, SequenceConfiguration, SequenceId, TokenId, decode_checked,
-    prefill_checked,
+    PrefillInput, PrefillOutcome, ScalarType, SequenceConfiguration, SequenceId, TokenId,
+    decode_checked, prefill_checked,
 };
 
 const BACKEND: BackendId = BackendId::new(501);
@@ -30,10 +30,11 @@ fn cuda_enabled_binary_can_explicitly_execute_cpu() -> TestResult {
     let source = fixture_source(CandleScalarType::F32, fixture_weight_path())?;
     let result = execute_fixture(&source, CPU)?;
 
+    assert_eq!(result.source_scalar_type, ScalarType::F32);
+    assert_eq!(result.execution_scalar_type, ScalarType::F32);
     assert_eq!(result.execution_device, CPU);
-    assert_eq!(result.execution_scalar, CandleScalarType::F32);
-    assert!(result.model_footprint.host_weight_bytes > 0);
-    assert_eq!(result.model_footprint.device_weight_bytes, 0);
+    assert!(result.accounted_footprint.host_weight_bytes > 0);
+    assert_eq!(result.accounted_footprint.device_weight_bytes, 0);
     assert!(result.sequence_footprint.host_working_bytes > 0);
     assert_eq!(result.sequence_footprint.device_working_bytes, 0);
     assert_eq!(
@@ -107,10 +108,12 @@ fn cuda_ordinal_zero_executes_fixture_and_matches_cpu_logits() -> TestResult {
         CUDA_0,
     )?;
 
+    assert_eq!(cuda.source_scalar_type, ScalarType::F32);
+    assert_eq!(cuda.execution_scalar_type, ScalarType::F32);
     assert_eq!(cuda.execution_device, CUDA_0);
-    assert_eq!(cuda.model_footprint.host_weight_bytes, 0);
-    assert!(cuda.model_footprint.device_weight_bytes > 0);
-    assert!(cuda.model_footprint.host_working_bytes > 0);
+    assert_eq!(cuda.accounted_footprint.host_weight_bytes, 0);
+    assert!(cuda.accounted_footprint.device_weight_bytes > 0);
+    assert!(cuda.accounted_footprint.host_working_bytes > 0);
     assert_eq!(cuda.sequence_footprint.host_working_bytes, 0);
     assert!(cuda.sequence_footprint.device_working_bytes > 0);
     assert!(cuda.sequence_footprint.cache_bytes_per_token > 0);
@@ -129,10 +132,11 @@ fn cuda_bf16_source_executes_as_bf16() -> TestResult {
     let source = fixture_source(CandleScalarType::Bf16, converted.weight_path.clone())?;
     let result = execute_fixture(&source, CUDA_0)?;
 
+    assert_eq!(result.source_scalar_type, ScalarType::Bf16);
+    assert_eq!(result.execution_scalar_type, ScalarType::Bf16);
     assert_eq!(result.execution_device, CUDA_0);
-    assert_eq!(result.execution_scalar, CandleScalarType::Bf16);
-    assert!(result.model_footprint.device_weight_bytes > 0);
-    assert_eq!(result.model_footprint.host_weight_bytes, 0);
+    assert!(result.accounted_footprint.device_weight_bytes > 0);
+    assert_eq!(result.accounted_footprint.host_weight_bytes, 0);
     assert!(result.sequence_footprint.device_working_bytes > 0);
     assert_eq!(
         maximum_logit_token(&result.prefill_logits)?,
@@ -142,9 +146,10 @@ fn cuda_bf16_source_executes_as_bf16() -> TestResult {
 }
 
 struct FixtureExecution {
+    source_scalar_type: ScalarType,
+    execution_scalar_type: ScalarType,
     execution_device: ExecutionDevice,
-    execution_scalar: CandleScalarType,
-    model_footprint: MemoryFootprint,
+    accounted_footprint: MemoryFootprint,
     sequence_footprint: MemoryFootprint,
     prefill_logits: Vec<f32>,
     decode_logits: Vec<f32>,
@@ -163,14 +168,18 @@ fn execute_fixture(
             device_bytes: u64::MAX,
         },
     };
+    let source_scalar_type = domain_source_scalar_type(source.scalar_type());
     let plan = loader
         .plan_load(source, &configuration)
         .map_err(|error| format!("plan fixture on {execution_device:?}: {error:?}"))?;
+    assert_eq!(plan.descriptor.metadata.scalar_type, source_scalar_type);
     let mut model = loader
         .load(source, &configuration)
         .map_err(|error| format!("load fixture on {execution_device:?}: {error:?}"))?;
+    assert_eq!(model.descriptor().metadata.scalar_type, source_scalar_type);
+    assert_eq!(model.execution_scalar_type(), plan.execution_scalar_type);
     assert_eq!(model.execution_device(), execution_device);
-    assert_eq!(model.resident_footprint(), plan.expected_footprint);
+    assert_eq!(model.accounted_footprint(), plan.expected_footprint);
 
     let sequence_configuration = SequenceConfiguration::new(
         NonZeroU32::new(16).ok_or_else(|| "maximum tokens must be nonzero".to_owned())?,
@@ -230,19 +239,30 @@ fn execute_fixture(
         .destroy_sequence(&mut sequence)
         .map_err(|error| format!("destroy sequence: {error:?}"))?;
     drop(sequence);
-    let execution_scalar = model.execution_scalar_type();
+    let execution_scalar_type = model.execution_scalar_type();
+    let accounted_footprint = model.accounted_footprint();
     model
         .prepare_unload()
         .map_err(|error| format!("prepare unload: {error:?}"))?;
+    drop(model);
 
     Ok(FixtureExecution {
+        source_scalar_type,
+        execution_scalar_type,
         execution_device,
-        execution_scalar,
-        model_footprint: plan.expected_footprint,
+        accounted_footprint,
         sequence_footprint: sequence_plan.expected_footprint,
         prefill_logits,
         decode_logits,
     })
+}
+
+const fn domain_source_scalar_type(scalar_type: CandleScalarType) -> ScalarType {
+    match scalar_type {
+        CandleScalarType::F32 => ScalarType::F32,
+        CandleScalarType::F16 => ScalarType::F16,
+        CandleScalarType::Bf16 => ScalarType::Bf16,
+    }
 }
 
 fn fixture_source(

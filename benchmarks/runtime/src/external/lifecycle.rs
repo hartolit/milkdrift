@@ -290,7 +290,7 @@ fn execute_started_cycle(
     validate_footprint_evidence(&planned.e0_footprint)?;
     let model_facts = CycleModelFacts {
         resolved_commit: resolved.identity().commit().to_owned(),
-        source_scalar: scalar_label(loaded.scalar_type()),
+        source_scalar: scalar_label(loaded.source_scalar_type()),
         vocabulary_size: loaded.vocabulary_size(),
         maximum_context_tokens: loaded.maximum_context_tokens(),
         maximum_prefill_batch: loaded.maximum_prefill_batch(),

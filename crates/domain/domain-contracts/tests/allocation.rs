@@ -85,11 +85,15 @@ impl LoadedModel for TestModel {
         &DESCRIPTOR
     }
 
+    fn execution_scalar_type(&self) -> ScalarType {
+        ScalarType::F32
+    }
+
     fn execution_device(&self) -> ExecutionDevice {
         ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu)
     }
 
-    fn resident_footprint(&self) -> MemoryFootprint {
+    fn accounted_footprint(&self) -> MemoryFootprint {
         MemoryFootprint::default()
     }
 

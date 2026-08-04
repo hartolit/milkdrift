@@ -6,7 +6,7 @@ use domain_contracts::{
     BackendFailureKind, BackendId, BackendSequence, CapacityExhausted, CapacityResource,
     DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceKind, ExecutionDevice, LoadedModel,
     MemoryFootprint, ModelDescriptor, ModelError, ModelHandle, PrefillBufferRequirements,
-    PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers,
+    PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers, ScalarType,
     SequenceConfiguration, SequenceError, SequenceId, SequencePlan, SequenceState,
     SynchronizationError,
 };
@@ -16,17 +16,15 @@ use crate::failure::{
     CODE_LOGITS_TRANSFER, CODE_NUMERIC_OVERFLOW, CODE_RESERVATION, CODE_SYNCHRONIZE,
     candle_cuda_failure_kind, failure,
 };
-use crate::source::CandleScalarType;
-
 pub(crate) struct CandleLlamaModelParameters {
     pub(crate) backend: BackendId,
     pub(crate) handle: ModelHandle,
     pub(crate) execution_device: ExecutionDevice,
     pub(crate) descriptor: ModelDescriptor,
-    pub(crate) resident_footprint: MemoryFootprint,
+    pub(crate) accounted_footprint: MemoryFootprint,
     pub(crate) config: Config,
     pub(crate) dtype: DType,
-    pub(crate) execution_scalar: CandleScalarType,
+    pub(crate) execution_scalar_type: ScalarType,
     pub(crate) device: Device,
 }
 
@@ -36,11 +34,11 @@ pub struct CandleLlamaModel {
     handle: ModelHandle,
     execution_device: ExecutionDevice,
     descriptor: ModelDescriptor,
-    resident_footprint: MemoryFootprint,
+    accounted_footprint: MemoryFootprint,
     vocabulary_size: usize,
     config: Config,
     dtype: DType,
-    execution_scalar: CandleScalarType,
+    execution_scalar_type: ScalarType,
     device: Device,
     model: Llama,
     unloading: bool,
@@ -53,11 +51,11 @@ impl CandleLlamaModel {
             handle: parameters.handle,
             execution_device: parameters.execution_device,
             descriptor: parameters.descriptor,
-            resident_footprint: parameters.resident_footprint,
+            accounted_footprint: parameters.accounted_footprint,
             vocabulary_size: parameters.config.vocab_size,
             config: parameters.config,
             dtype: parameters.dtype,
-            execution_scalar: parameters.execution_scalar,
+            execution_scalar_type: parameters.execution_scalar_type,
             device: parameters.device,
             model,
             unloading: false,
@@ -70,10 +68,13 @@ impl CandleLlamaModel {
         &self.descriptor
     }
 
-    /// Returns the actual execution scalar selected independently from source metadata.
+    /// Returns the actual domain scalar retained for backend execution tensors.
+    ///
+    /// This evidence is selected independently from the source scalar metadata
+    /// retained in [`ModelDescriptor`].
     #[must_use]
-    pub const fn execution_scalar_type(&self) -> CandleScalarType {
-        self.execution_scalar
+    pub const fn execution_scalar_type(&self) -> ScalarType {
+        self.execution_scalar_type
     }
 
     fn sequence_footprint(
@@ -82,7 +83,7 @@ impl CandleLlamaModel {
     ) -> Result<MemoryFootprint, ModelError> {
         let maximum_tokens = u64::from(configuration.maximum_tokens.get());
         let cache_bytes = self
-            .resident_footprint
+            .accounted_footprint
             .cache_bytes_per_token
             .checked_mul(maximum_tokens)
             .ok_or_else(|| numeric_model_error(self.backend))?;
@@ -95,7 +96,7 @@ impl CandleLlamaModel {
         let working_bytes = cache_bytes
             .checked_add(rope_bytes)
             .ok_or_else(|| numeric_model_error(self.backend))?;
-        let cache_bytes_per_token = self.resident_footprint.cache_bytes_per_token;
+        let cache_bytes_per_token = self.accounted_footprint.cache_bytes_per_token;
 
         match self.execution_device.kind {
             DeviceKind::Cpu => Ok(MemoryFootprint {
@@ -183,12 +184,16 @@ impl LoadedModel for CandleLlamaModel {
         &self.descriptor
     }
 
+    fn execution_scalar_type(&self) -> ScalarType {
+        self.execution_scalar_type
+    }
+
     fn execution_device(&self) -> ExecutionDevice {
         self.execution_device
     }
 
-    fn resident_footprint(&self) -> MemoryFootprint {
-        self.resident_footprint
+    fn accounted_footprint(&self) -> MemoryFootprint {
+        self.accounted_footprint
     }
 
     fn plan_sequence(

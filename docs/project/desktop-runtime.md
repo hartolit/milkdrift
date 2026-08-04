@@ -12,7 +12,7 @@ The desktop composition owns native process and presentation concerns while dele
 6. use verified chat only for the exact TinyLlama Chat v1 profile and direct completion otherwise;
 7. keep network, database, backend, tokenizer, and inference-command types out of Slint.
 
-CPU is the fresh-install default. The UI keeps repository/revision, selected device, artifact resolution, and receipt-verified loaded device as separate state. It has no backend/product selector, generic GPU alias, or local-file model path. See the [application runtime guide](application-runtime.md) for the complete E1 boundary.
+CPU is the fresh-install default. The UI keeps repository/revision, selected device, resolved source scalar, loaded execution scalar, and receipt-verified actual device as separate state. It has no backend/product selector, generic GPU alias, or local-file model path. See the [application runtime guide](application-runtime.md) for the complete E1 boundary.
 
 ## Frontend-neutral orchestration
 
@@ -39,7 +39,7 @@ Its public state/events contain application and domain values rather than Slint,
 - repository/revision input mapping to `ModelSelection`;
 - a compact device `ComboBox` backed by stable Rust identity/index mapping;
 - callback-to-E1-command mapping;
-- E1 model/device metadata label mapping;
+- E1 source-scalar, execution-scalar, and selected/actual-device metadata label mapping;
 - one 16 millisecond frame cadence for bounded event draining and one decoded-output pull;
 - presentation-owned chat/direct-completion transcript formatting plus frame-batched fragments and terminal state;
 - control and usage synchronization from `ApplicationState`;
@@ -59,7 +59,7 @@ A browser-only application cannot execute native E0 directly. It would require a
 
 Repository-relative paths are rejected if absolute, empty, or non-normal. After inspection, every required artifact is resolved through a repository handle pinned to the returned immutable commit, so a moving branch cannot mix revisions. Cache paths are not model identity; repository, requested revision, and immutable commit are the logical facts.
 
-The adapter reads `dtype` or legacy `torch_dtype` and recognizes F32, F16, and BF16. E1 rejects loading when the declaration is absent or unsupported. It also rejects a load if the visible repository or revision changed after resolution. Candle validates actual tensor types during load, so configuration metadata is not the final authority.
+The adapter reads `dtype` or legacy `torch_dtype` as the source scalar declaration and recognizes F32, F16, and BF16. E1 rejects loading when the declaration is absent or unsupported. It also rejects a load if the visible repository or revision changed after resolution. Candle validates actual tensor types during load and independently selects an execution scalar for the requested device, so configuration metadata is not the final authority. The presenter reports E1's source-scalar and execution-scalar facts independently and infers neither from the device. A BF16 source may execute as F32 on CPU or remain BF16 on supported CUDA.
 
 The adapter is synchronous by design and runs only on the dedicated cold-path Hub worker. Environment-derived Hugging Face cache and token configuration remain active unless E1 explicitly overrides them.
 
@@ -86,7 +86,7 @@ Records use explicit four-byte kind markers, a numeric schema version, fixed lit
 
 The device control is a compact Slint `ComboBox`. Rust owns an identity/index model keyed by `ApplicationDevice`; labels are presentation only and are never parsed for semantics. Unavailable devices receive a distinct label and remain the selected state when restored from persistence. The frontend does not substitute CPU.
 
-Enabled state comes from E1's `can_select_device` lifecycle policy, and load enablement comes from E1's selected-device availability and model lifecycle state. The selected-device summary comes from `ApplicationDeviceSummary`. The resolved-model summary contains artifacts and compatibility facts only; it does not imply a device. The loaded-model summary displays only the actual device verified from E0's receipt. Unload clears the actual-device display while the selected summary remains.
+Enabled state comes from E1's `can_select_device` lifecycle policy, and load enablement comes from E1's selected-device availability and model lifecycle state. Dropdown labels come from `ApplicationDeviceSummary`, while Rust retains the exact `ApplicationDevice` identity. The selected-device presentation remains independent from loaded state. The resolved-source summary displays the source scalar and artifact identity only; it does not display or imply an execution scalar or device. The loaded-execution summary displays explicit Source scalar, Execution scalar, and Actual device facts verified through E0's receipt. Unload clears all loaded execution facts while the selected identity and resolved source summary remain.
 
 The default desktop graph is CPU-only. CUDA is deliberate through the exact `desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda` forwarding chain; see [dependency policy](dependency-policy.md).
 

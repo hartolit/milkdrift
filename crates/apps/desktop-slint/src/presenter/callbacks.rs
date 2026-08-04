@@ -10,7 +10,7 @@ use slint::ComponentHandle;
 use super::devices::DeviceSelectorModel;
 use super::model::{
     ComposerMode, composer_mode, current_artifact_target_label, device_availability_label,
-    device_label, engine_label, loaded_model_target_label, resolved_model_summary, selected_model,
+    device_label, engine_label, loaded_model_summary, resolved_model_summary, selected_model,
 };
 use super::output::{
     PresentationState, format_terminal_outcome, render_generated_output_update,
@@ -324,7 +324,7 @@ fn generation_submission_message(
         || "the loaded model".to_owned(),
         |loaded| {
             format!(
-                "{} on {}",
+                "{} on actual device {}",
                 engine_label(loaded.engine()),
                 device_label(loaded.device())
             )
@@ -475,12 +475,7 @@ pub(super) fn apply_event(window: &AppWindow, event: ApplicationEvent) {
             window.set_status_text(
                 format!(
                     "Loaded {} as generation {} with {} vocabulary entries.",
-                    loaded_model_target_label(
-                        model.engine(),
-                        model.source(),
-                        model.format(),
-                        model.device(),
-                    ),
+                    loaded_model_summary(&model),
                     model.handle().generation.get(),
                     model.vocabulary_size(),
                 )

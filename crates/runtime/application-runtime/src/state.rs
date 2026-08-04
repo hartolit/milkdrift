@@ -31,7 +31,7 @@ pub struct ResolvedModel {
     selection: ModelSelection,
     identity: ImmutableModelIdentity,
     vocabulary_size: u32,
-    scalar_type: Option<ApplicationScalarType>,
+    source_scalar_type: Option<ApplicationScalarType>,
     chat_compatibility: ChatCompatibility,
 }
 
@@ -40,14 +40,14 @@ impl ResolvedModel {
         selection: ModelSelection,
         identity: ImmutableModelIdentity,
         vocabulary_size: u32,
-        scalar_type: Option<ApplicationScalarType>,
+        source_scalar_type: Option<ApplicationScalarType>,
         chat_compatibility: ChatCompatibility,
     ) -> Self {
         Self {
             selection,
             identity,
             vocabulary_size,
-            scalar_type,
+            source_scalar_type,
             chat_compatibility,
         }
     }
@@ -88,16 +88,16 @@ impl ResolvedModel {
         self.vocabulary_size
     }
 
-    /// Returns the scalar type declared by immutable model configuration, when supported.
+    /// Returns the source-weight scalar type declared by immutable model configuration.
     #[must_use]
-    pub const fn scalar_type(&self) -> Option<ApplicationScalarType> {
-        self.scalar_type
+    pub const fn source_scalar_type(&self) -> Option<ApplicationScalarType> {
+        self.source_scalar_type
     }
 
-    /// Returns whether this resolution contains sufficient evidence for loading.
+    /// Returns whether this resolution contains sufficient source evidence for loading.
     #[must_use]
     pub const fn is_loadable(&self) -> bool {
-        self.scalar_type.is_some()
+        self.source_scalar_type.is_some()
     }
 
     /// Returns explicit prompt-rendering and termination compatibility.
@@ -120,7 +120,8 @@ pub struct LoadedModel {
     selection: ModelSelection,
     identity: ImmutableModelIdentity,
     device: ApplicationDevice,
-    scalar_type: ApplicationScalarType,
+    source_scalar_type: ApplicationScalarType,
+    execution_scalar_type: ApplicationScalarType,
     vocabulary_size: u32,
     maximum_context_tokens: u32,
     maximum_prefill_batch: u32,
@@ -136,7 +137,8 @@ impl LoadedModel {
         selection: ModelSelection,
         identity: ImmutableModelIdentity,
         device: ApplicationDevice,
-        scalar_type: ApplicationScalarType,
+        source_scalar_type: ApplicationScalarType,
+        execution_scalar_type: ApplicationScalarType,
         vocabulary_size: u32,
         maximum_context_tokens: u32,
         maximum_prefill_batch: u32,
@@ -146,7 +148,8 @@ impl LoadedModel {
             selection,
             identity,
             device,
-            scalar_type,
+            source_scalar_type,
+            execution_scalar_type,
             vocabulary_size,
             maximum_context_tokens,
             maximum_prefill_batch,
@@ -195,10 +198,16 @@ impl LoadedModel {
         &self.identity
     }
 
-    /// Returns the scalar type validated against the loaded E0 descriptor.
+    /// Returns the source-weight scalar type validated against the loaded descriptor.
     #[must_use]
-    pub const fn scalar_type(&self) -> ApplicationScalarType {
-        self.scalar_type
+    pub const fn source_scalar_type(&self) -> ApplicationScalarType {
+        self.source_scalar_type
+    }
+
+    /// Returns the actual execution scalar type verified from E0's load receipt.
+    #[must_use]
+    pub const fn execution_scalar_type(&self) -> ApplicationScalarType {
+        self.execution_scalar_type
     }
 
     /// Returns the loaded model vocabulary size.

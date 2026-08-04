@@ -179,7 +179,7 @@ pub fn stored_settings(preferences: &ApplicationPreferences) -> ApplicationSetti
     }
 }
 
-pub const fn domain_scalar_type(value: ArtifactScalarType) -> ApplicationScalarType {
+pub const fn application_source_scalar_type(value: ArtifactScalarType) -> ApplicationScalarType {
     match value {
         ArtifactScalarType::F32 => ApplicationScalarType::F32,
         ArtifactScalarType::F16 => ApplicationScalarType::F16,
@@ -187,7 +187,7 @@ pub const fn domain_scalar_type(value: ArtifactScalarType) -> ApplicationScalarT
     }
 }
 
-pub const fn candle_scalar_type(value: ApplicationScalarType) -> CandleScalarType {
+pub const fn candle_source_scalar_type(value: ApplicationScalarType) -> CandleScalarType {
     match value {
         ApplicationScalarType::F32 => CandleScalarType::F32,
         ApplicationScalarType::F16 => CandleScalarType::F16,
@@ -206,7 +206,7 @@ pub const fn application_scalar_type(
     }
 }
 
-pub const fn stored_scalar_type(value: ArtifactScalarType) -> StoredScalarType {
+pub const fn stored_source_scalar_type(value: ArtifactScalarType) -> StoredScalarType {
     match value {
         ArtifactScalarType::F32 => StoredScalarType::F32,
         ArtifactScalarType::F16 => StoredScalarType::F16,

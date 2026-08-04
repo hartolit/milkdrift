@@ -3,7 +3,7 @@
 use crate::error::{LoadError, ModelError, SequenceError, SynchronizationError};
 use crate::generation::{CancellationStatus, DecodeOutcome, FinishReason, PrefillOutcome};
 use crate::model::{
-    ExecutionDevice, LoadConfiguration, LoadPlan, MemoryFootprint, ModelDescriptor,
+    ExecutionDevice, LoadConfiguration, LoadPlan, MemoryFootprint, ModelDescriptor, ScalarType,
     SequenceConfiguration, SequencePlan,
 };
 use crate::sequence::{
@@ -83,11 +83,20 @@ pub trait LoadedModel {
     /// Returns the complete immutable descriptor retained by the loaded model.
     fn descriptor(&self) -> &ModelDescriptor;
 
+    /// Returns the actual scalar type used by backend execution tensors.
+    ///
+    /// This may differ from the source scalar metadata in the descriptor and
+    /// must equal the execution scalar accepted by the load plan.
+    fn execution_scalar_type(&self) -> ScalarType;
+
     /// Returns the actual backend-visible device used by this loaded model.
     fn execution_device(&self) -> ExecutionDevice;
 
-    /// Returns the complete model footprint accepted during native loading.
-    fn resident_footprint(&self) -> MemoryFootprint;
+    /// Returns the complete model footprint accepted for runtime accounting.
+    ///
+    /// This is the load's accounted quantity, not an observation of physical
+    /// memory currently allocated by the backend or available on the device.
+    fn accounted_footprint(&self) -> MemoryFootprint;
 
     /// Validates and reports sequence resource requirements before allocation.
     ///

@@ -1,9 +1,9 @@
 use application_runtime::{
     ApplicationDevice, ApplicationEngine, ApplicationEvent, ApplicationFailure,
-    ApplicationFailureKind, ApplicationModelFormat, ApplicationOutputState, ApplicationSource,
-    ConversationProvenance, ConversationRecord, ConversationRecordId, ConversationRetention,
-    ConversationRole, ConversationTokenEstimate, GenerationTerminalKind, GenerationTerminalOutcome,
-    ResponseAttempt, ResponseAttemptId, ResponseAttemptState,
+    ApplicationFailureKind, ApplicationModelFormat, ApplicationOutputState, ApplicationScalarType,
+    ApplicationSource, ConversationProvenance, ConversationRecord, ConversationRecordId,
+    ConversationRetention, ConversationRole, ConversationTokenEstimate, GenerationTerminalKind,
+    GenerationTerminalOutcome, ResponseAttempt, ResponseAttemptId, ResponseAttemptState,
 };
 use slint::Model;
 
@@ -13,8 +13,9 @@ use super::callbacks::{
 use super::controls::{RuntimeAdmissions, control_state};
 use super::devices::{DeviceChoice, DeviceSelectorModel};
 use super::model::{
-    ComposerMode, artifact_target_label, composer_mode_from_evidence, device_label,
-    loaded_model_target_label, map_model_selection, selected_model_summary,
+    ComposerMode, UNLOADED_MODEL_SUMMARY, artifact_target_label, composer_mode_from_evidence,
+    device_label, loaded_model_facts_summary, map_model_selection, resolved_model_facts_summary,
+    selected_model_summary,
 };
 use super::output::{
     FrameOutputDelta, GeneratedOutputUpdate, PresentationState, TerminalPresentation,
@@ -34,6 +35,10 @@ fn repository_and_revision_map_to_model_selection() {
     assert!(summary.contains("Engine: Candle"));
     assert!(summary.contains("Repository: owner/model"));
     assert!(summary.contains("Revision: main"));
+    assert!(summary.contains("Selected device: CPU"));
+    assert!(!summary.contains("Source scalar"));
+    assert!(!summary.contains("Execution scalar"));
+    assert!(!summary.contains("Actual device"));
 }
 
 #[test]
@@ -84,6 +89,10 @@ fn checked_device_indices_map_to_the_rust_owned_e1_order() {
         Some(ApplicationDevice::Cuda { ordinal: 4 })
     );
     assert_eq!(selector.device_at_checked_index(3), None);
+    assert_eq!(
+        selector.selected_index(ApplicationDevice::Cuda { ordinal: 9 }),
+        -1
+    );
 }
 
 #[test]
@@ -121,21 +130,118 @@ fn unavailable_selected_cuda_row_is_retained_at_its_stable_index() {
 }
 
 #[test]
+fn resolved_summary_reports_source_scalar_without_execution_or_device() {
+    let target = artifact_target_label(
+        ApplicationEngine::Candle,
+        ApplicationSource::HuggingFaceHub,
+        ApplicationModelFormat::Safetensors,
+    );
+    let resolved = resolved_model_facts_summary(
+        &target,
+        Some(ApplicationScalarType::Bf16),
+        "Hub commit abc123 (owner/model)",
+    );
+
+    assert!(resolved.contains("Source scalar: BF16"));
+    assert!(!resolved.contains("Execution scalar"));
+    assert!(!resolved.contains("Actual device"));
+    assert!(!resolved.contains("CPU"));
+    assert!(!resolved.contains("CUDA"));
+}
+
+#[test]
+fn bf16_source_can_be_presented_as_f32_cpu_execution() {
+    let target = artifact_target_label(
+        ApplicationEngine::Candle,
+        ApplicationSource::HuggingFaceHub,
+        ApplicationModelFormat::Safetensors,
+    );
+    let loaded = loaded_model_facts_summary(
+        &target,
+        ApplicationScalarType::Bf16,
+        ApplicationScalarType::F32,
+        ApplicationDevice::Cpu,
+        "Hub commit abc123 (owner/model)",
+    );
+
+    assert!(loaded.contains("Source scalar: BF16"));
+    assert!(loaded.contains("Execution scalar: F32"));
+    assert!(loaded.contains("Actual device: CPU"));
+}
+
+#[test]
+fn bf16_source_can_be_presented_as_bf16_cuda_execution() {
+    let target = artifact_target_label(
+        ApplicationEngine::Candle,
+        ApplicationSource::HuggingFaceHub,
+        ApplicationModelFormat::Safetensors,
+    );
+    let loaded = loaded_model_facts_summary(
+        &target,
+        ApplicationScalarType::Bf16,
+        ApplicationScalarType::Bf16,
+        ApplicationDevice::Cuda { ordinal: 2 },
+        "Hub commit abc123 (owner/model)",
+    );
+
+    assert!(loaded.contains("Source scalar: BF16"));
+    assert!(loaded.contains("Execution scalar: BF16"));
+    assert!(loaded.contains("Actual device: CUDA 2"));
+}
+
+#[test]
 fn selected_and_actual_loaded_device_formatting_remain_distinct() {
     let selection = map_model_selection("owner/model", "main");
     let selected =
         selected_model_summary(&selection, ApplicationDevice::Cuda { ordinal: 3 }, false);
-    let loaded = loaded_model_target_label(
+    let target = artifact_target_label(
         ApplicationEngine::Candle,
         ApplicationSource::HuggingFaceHub,
         ApplicationModelFormat::Safetensors,
+    );
+    let loaded = loaded_model_facts_summary(
+        &target,
+        ApplicationScalarType::Bf16,
+        ApplicationScalarType::F32,
         ApplicationDevice::Cpu,
+        "Hub commit abc123 (owner/model)",
     );
 
     assert!(selected.contains("Selected device: CUDA 3"));
     assert!(selected.contains("Availability: unavailable"));
+    assert!(!selected.contains("Actual device"));
     assert!(loaded.contains("Actual device: CPU"));
+    assert!(!loaded.contains("Selected device"));
     assert!(!loaded.contains("CUDA 3"));
+}
+
+#[test]
+fn unload_display_clears_loaded_facts_without_changing_selected_identity() {
+    let selection = map_model_selection("owner/model", "main");
+    let selected_before =
+        selected_model_summary(&selection, ApplicationDevice::Cuda { ordinal: 3 }, false);
+    let target = artifact_target_label(
+        ApplicationEngine::Candle,
+        ApplicationSource::HuggingFaceHub,
+        ApplicationModelFormat::Safetensors,
+    );
+    let loaded_before = loaded_model_facts_summary(
+        &target,
+        ApplicationScalarType::Bf16,
+        ApplicationScalarType::F32,
+        ApplicationDevice::Cpu,
+        "Hub commit abc123 (owner/model)",
+    );
+    let selected_after =
+        selected_model_summary(&selection, ApplicationDevice::Cuda { ordinal: 3 }, false);
+
+    assert!(loaded_before.contains("Execution scalar: F32"));
+    assert!(loaded_before.contains("Actual device: CPU"));
+    assert_eq!(UNLOADED_MODEL_SUMMARY, "Not loaded.");
+    assert!(!UNLOADED_MODEL_SUMMARY.contains("scalar"));
+    assert!(!UNLOADED_MODEL_SUMMARY.contains("device"));
+    assert_eq!(selected_after, selected_before);
+    assert!(selected_after.contains("Selected device: CUDA 3"));
 }
 
 #[test]

@@ -18,10 +18,12 @@ pub struct CudaComputeCapability {
     pub minor: u32,
 }
 
-/// Stable adapter-owned facts observed while initializing an execution device.
+/// Stable adapter-owned physical facts observed while initializing a device.
 ///
-/// CUDA ordinals are process-local backend selectors, not permanent hardware
-/// identities.
+/// Total and available memory are driver observations made at probe time. They
+/// are distinct from the planned and retained accounting quantities represented
+/// by `MemoryFootprint`. CUDA ordinals are process-local backend selectors, not
+/// permanent hardware identities.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CandleDeviceSummary {
     /// Backend-visible identity accepted by Candle.
@@ -32,9 +34,9 @@ pub struct CandleDeviceSummary {
     pub display_name: Option<String>,
     /// CUDA compute capability when this is a CUDA device.
     pub compute_capability: Option<CudaComputeCapability>,
-    /// Total device-local memory reported during discovery.
+    /// Physical device-local memory capacity reported during this probe.
     pub total_memory_bytes: Option<u64>,
-    /// Currently available device-local memory reported during discovery.
+    /// Moment-in-time available device-local memory reported during this probe.
     pub available_memory_bytes: Option<u64>,
     /// Whether Candle reports BF16 execution support for this device.
     pub supports_bf16: bool,
@@ -45,6 +47,10 @@ pub(crate) struct PreparedExecutionDevice {
     pub(crate) summary: CandleDeviceSummary,
 }
 
+/// Independently initializes one cold-path execution-device probe.
+///
+/// Discovery, load planning, and loading each call this function and retain no
+/// shared probe cache. Only the load path keeps the returned Candle device.
 pub(crate) fn prepare_execution_device(
     backend: BackendId,
     execution_device: ExecutionDevice,

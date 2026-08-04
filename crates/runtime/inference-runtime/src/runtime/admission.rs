@@ -71,11 +71,13 @@ where
         )?;
         let mut model = self.loader.load(source, &configuration)?;
         let actual_device = model.execution_device();
-        let actual_footprint = model.resident_footprint();
+        let actual_execution_scalar_type = model.execution_scalar_type();
+        let actual_accounted_footprint = model.accounted_footprint();
         let validation = if model.handle() != handle
             || model.descriptor() != &plan.descriptor
-            || actual_device != execution_device
-            || actual_footprint != plan.expected_footprint
+            || execution_device != actual_device
+            || plan.execution_scalar_type != actual_execution_scalar_type
+            || plan.expected_footprint != actual_accounted_footprint
         {
             Err(RuntimeError::BackendContractViolation)
         } else {
@@ -114,6 +116,7 @@ where
         let slot = ModelSlot {
             handle,
             execution_device: actual_device,
+            execution_scalar_type: actual_execution_scalar_type,
             descriptor: plan.descriptor,
             lifecycle,
             model,
@@ -132,6 +135,7 @@ where
         Ok(LoadReceipt {
             handle,
             execution_device: actual_device,
+            execution_scalar_type: actual_execution_scalar_type,
             descriptor: plan.descriptor,
             reserved_footprint: plan.expected_footprint,
         })

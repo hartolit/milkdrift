@@ -119,7 +119,7 @@ impl CandleLlamaLoader {
         )?;
         let metadata = ModelMetadata {
             architecture: ModelArchitecture::Llama,
-            scalar_type: source.scalar_type().domain_type(),
+            scalar_type: source.scalar_type().source_scalar_type(),
             quantization: QuantizationFormat::None,
             vocabulary_size,
             context_length,
@@ -165,7 +165,7 @@ impl CandleLlamaLoader {
                 prepared_device.summary.supports_bf16,
             )
             .ok_or_else(|| unsupported_scalar(self.backend))?;
-        let execution_scalar = CandleScalarType::from_dtype(execution_dtype)
+        let execution_scalar_type = CandleScalarType::execution_scalar_type(execution_dtype)
             .ok_or_else(|| unsupported_scalar(self.backend))?;
         let execution_bytes = dtype_bytes(execution_dtype);
         let execution_weight_bytes = scaled_weight_bytes(
@@ -188,12 +188,12 @@ impl CandleLlamaLoader {
         Ok(PreparedLoad {
             plan: LoadPlan {
                 descriptor: inspected.descriptor,
+                execution_scalar_type,
                 expected_footprint: footprint,
             },
             inspected,
             prepared_device,
             execution_dtype,
-            execution_scalar,
         })
     }
 }
@@ -227,7 +227,6 @@ impl ModelLoader for CandleLlamaLoader {
             inspected,
             prepared_device,
             execution_dtype,
-            execution_scalar,
         } = prepared;
         let device = prepared_device.device;
         let weight_dtype = source.scalar_type().weight_dtype();
@@ -277,10 +276,10 @@ impl ModelLoader for CandleLlamaLoader {
                 handle: configuration.handle,
                 execution_device: configuration.execution_device,
                 descriptor: plan.descriptor,
-                resident_footprint: plan.expected_footprint,
+                accounted_footprint: plan.expected_footprint,
                 config: inspected.config,
                 dtype: execution_dtype,
-                execution_scalar,
+                execution_scalar_type: plan.execution_scalar_type,
                 device,
             },
             loaded,
@@ -293,7 +292,6 @@ struct PreparedLoad {
     inspected: InspectedSource,
     prepared_device: PreparedExecutionDevice,
     execution_dtype: DType,
-    execution_scalar: CandleScalarType,
 }
 
 #[derive(Clone, Debug)]

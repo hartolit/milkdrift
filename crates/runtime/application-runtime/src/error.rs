@@ -194,7 +194,7 @@ pub enum ApplicationError {
         /// Maximum token positions available.
         available: u64,
     },
-    /// The resolved configuration does not declare a supported scalar type.
+    /// The resolved configuration does not declare a supported source scalar type.
     UnknownScalarType,
     /// Visible artifact selection changed after immutable artifact resolution.
     SelectionChanged,
@@ -316,7 +316,7 @@ impl Display for ApplicationError {
                  {available}"
             ),
             Self::UnknownScalarType => formatter.write_str(
-                "model configuration does not declare a supported floating-point scalar type",
+                "model configuration does not declare a supported floating-point source scalar type",
             ),
             Self::SelectionChanged => formatter.write_str(
                 "the complete model selection changed after resolution; resolve the current \

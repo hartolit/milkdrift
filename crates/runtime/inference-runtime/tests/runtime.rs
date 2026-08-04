@@ -40,8 +40,9 @@ struct MockModel {
     _thread_confined: Rc<()>,
     handle: ModelHandle,
     execution_device: ExecutionDevice,
+    execution_scalar_type: ScalarType,
     descriptor: ModelDescriptor,
-    resident_footprint: MemoryFootprint,
+    accounted_footprint: MemoryFootprint,
     unloading: bool,
     destroy_failure_consumed: bool,
 }
@@ -95,6 +96,7 @@ impl ModelLoader for MockLoader {
         }
         Ok(LoadPlan {
             descriptor,
+            execution_scalar_type: ScalarType::F32,
             expected_footprint: descriptor.estimated_footprint,
         })
     }
@@ -109,8 +111,9 @@ impl ModelLoader for MockLoader {
             _thread_confined: Rc::new(()),
             handle: configuration.handle,
             execution_device: configuration.execution_device,
+            execution_scalar_type: ScalarType::F32,
             descriptor,
-            resident_footprint: descriptor.estimated_footprint,
+            accounted_footprint: descriptor.estimated_footprint,
             unloading: false,
             destroy_failure_consumed: false,
         })
@@ -132,8 +135,12 @@ impl LoadedModel for MockModel {
         self.execution_device
     }
 
-    fn resident_footprint(&self) -> MemoryFootprint {
-        self.resident_footprint
+    fn execution_scalar_type(&self) -> ScalarType {
+        self.execution_scalar_type
+    }
+
+    fn accounted_footprint(&self) -> MemoryFootprint {
+        self.accounted_footprint
     }
 
     fn plan_sequence(
@@ -288,6 +295,25 @@ fn registry_interleaves_sequences_and_reclaims_all_resources() -> Result<(), Str
             cpu_device(),
         )
         .map_err(debug_error)?;
+    assert_eq!(loaded.execution_device, cpu_device());
+    assert_eq!(loaded.execution_scalar_type, ScalarType::F32);
+    assert_eq!(
+        loaded.reserved_footprint,
+        descriptor(MockSource {
+            model_bytes: 100,
+            vocabulary_size: 8,
+        })
+        .estimated_footprint
+    );
+    let loaded_snapshot = runtime
+        .model_snapshot(loaded.handle)
+        .ok_or_else(|| "loaded model snapshot missing".to_owned())?;
+    assert_eq!(loaded_snapshot.execution_device, cpu_device());
+    assert_eq!(loaded_snapshot.execution_scalar_type, ScalarType::F32);
+    assert_eq!(
+        loaded_snapshot.reserved_footprint,
+        loaded.reserved_footprint
+    );
     let configuration = sequence_configuration(16, 8)?;
     runtime
         .start_request(

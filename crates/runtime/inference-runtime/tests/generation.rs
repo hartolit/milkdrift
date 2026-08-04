@@ -148,8 +148,9 @@ struct FakeLoader {
 struct FakeModel {
     handle: ModelHandle,
     execution_device: ExecutionDevice,
+    execution_scalar_type: ScalarType,
     descriptor: ModelDescriptor,
-    resident_footprint: MemoryFootprint,
+    accounted_footprint: MemoryFootprint,
     source: FakeSource,
     counters: Arc<Mutex<Counters>>,
     remaining_destroy_failures: u32,
@@ -198,6 +199,7 @@ impl ModelLoader for FakeLoader {
     ) -> Result<LoadPlan, LoadError> {
         Ok(LoadPlan {
             descriptor: self.inspect(source)?,
+            execution_scalar_type: ScalarType::F32,
             expected_footprint: model_footprint(),
         })
     }
@@ -229,8 +231,9 @@ impl ModelLoader for FakeLoader {
         Ok(FakeModel {
             handle: configuration.handle,
             execution_device: configuration.execution_device,
+            execution_scalar_type: ScalarType::F32,
             descriptor: self.inspect(source)?,
-            resident_footprint: model_footprint(),
+            accounted_footprint: model_footprint(),
             source: source.clone(),
             counters: Arc::clone(&self.counters),
             remaining_destroy_failures: source.destroy_failures,
@@ -255,8 +258,12 @@ impl LoadedModel for FakeModel {
         self.execution_device
     }
 
-    fn resident_footprint(&self) -> MemoryFootprint {
-        self.resident_footprint
+    fn execution_scalar_type(&self) -> ScalarType {
+        self.execution_scalar_type
+    }
+
+    fn accounted_footprint(&self) -> MemoryFootprint {
+        self.accounted_footprint
     }
 
     fn plan_sequence(

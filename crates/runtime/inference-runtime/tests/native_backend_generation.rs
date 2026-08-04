@@ -170,6 +170,7 @@ fn candle_cuda_fixture_covers_e0_generation_accounting_and_lifecycle() -> TestRe
         loaded.execution_device,
         ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda)
     );
+    assert_eq!(loaded.execution_scalar_type, ScalarType::F32);
     assert_eq!(loaded.reserved_footprint.host_weight_bytes, 0);
     assert!(loaded.reserved_footprint.device_weight_bytes > 0);
     assert!(loaded.reserved_footprint.host_working_bytes > 0);
@@ -306,6 +307,7 @@ fn assert_loaded_fixture(loaded: &LoadReceipt) {
         loaded.execution_device,
         ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu)
     );
+    assert_eq!(loaded.execution_scalar_type, ScalarType::F32);
     let descriptor = loaded.descriptor;
     assert_eq!(descriptor.backend, CANDLE_BACKEND);
     assert_eq!(descriptor.metadata.architecture, ModelArchitecture::Llama);
@@ -589,6 +591,7 @@ fn assert_released_snapshot(
                 model.execution_device,
                 ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu)
             );
+            assert_eq!(model.execution_scalar_type, ScalarType::F32);
             assert_eq!(model.active_requests, 0);
             assert_eq!(model.pending_cleanup_sequences, 0);
             assert_eq!(model.exhausted_cleanup_sequences, 0);
@@ -638,6 +641,7 @@ fn assert_cuda_released_snapshot(
                 model.execution_device,
                 ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda)
             );
+            assert_eq!(model.execution_scalar_type, ScalarType::F32);
             assert_eq!(model.reserved_footprint, model_footprint);
             assert_eq!(model.active_requests, 0);
             assert!(!model.degraded);

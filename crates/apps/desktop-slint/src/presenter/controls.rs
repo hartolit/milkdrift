@@ -2,8 +2,8 @@ use application_runtime::{ApplicationActivity, ApplicationRuntime};
 
 use super::devices::DeviceSelectorModel;
 use super::model::{
-    ComposerMode, composer_mode, loaded_model_summary, resolved_model_summary, selected_model,
-    selected_model_summary,
+    ComposerMode, UNLOADED_MODEL_SUMMARY, UNRESOLVED_MODEL_SUMMARY, composer_mode,
+    loaded_model_summary, resolved_model_summary, selected_model, selected_model_summary,
 };
 use crate::AppWindow;
 
@@ -123,13 +123,16 @@ pub(super) fn synchronize(
     window.set_resolved_model_summary(
         state
             .resolved()
-            .map_or_else(|| "Not resolved.".to_owned(), resolved_model_summary)
+            .map_or_else(
+                || UNRESOLVED_MODEL_SUMMARY.to_owned(),
+                resolved_model_summary,
+            )
             .into(),
     );
     window.set_loaded_model_summary(
         state
             .loaded()
-            .map_or_else(|| "Not loaded.".to_owned(), loaded_model_summary)
+            .map_or_else(|| UNLOADED_MODEL_SUMMARY.to_owned(), loaded_model_summary)
             .into(),
     );
 }

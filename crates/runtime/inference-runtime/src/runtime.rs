@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use domain_contracts::{
     BackendSequence, ExecutionDevice, GenerationUsage, LoadedModel, MemoryFootprint,
     ModelDescriptor, ModelGeneration, ModelHandle, ModelId, ModelLifecycle, ModelLoader, RequestId,
-    SequenceId,
+    ScalarType, SequenceId,
 };
 
 use crate::{CleanupFailureReport, CleanupRetryState, RuntimeError, RuntimeLimits};
@@ -48,6 +48,7 @@ where
 {
     handle: ModelHandle,
     execution_device: ExecutionDevice,
+    execution_scalar_type: ScalarType,
     descriptor: ModelDescriptor,
     lifecycle: ModelLifecycle,
     model: M,

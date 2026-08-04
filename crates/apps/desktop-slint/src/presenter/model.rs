@@ -95,7 +95,7 @@ pub(super) fn selected_model_summary(
     selected_device_available: bool,
 ) -> String {
     format!(
-        "{} • Repository: {} • Revision: {} • Selected device: {} • Availability: {} • Scalar: pending resolution • Identity: pending resolution",
+        "{} • Repository: {} • Revision: {} • Selected device: {} • Availability: {} • Identity: pending resolution",
         current_artifact_target_label(),
         selection.repository(),
         selection.revision(),
@@ -104,36 +104,48 @@ pub(super) fn selected_model_summary(
     )
 }
 
+pub(super) const UNRESOLVED_MODEL_SUMMARY: &str = "Not resolved.";
+pub(super) const UNLOADED_MODEL_SUMMARY: &str = "Not loaded.";
+
 pub(super) fn resolved_model_summary(model: &ResolvedModel) -> String {
-    detailed_model_summary(
-        &artifact_target_label(model.engine(), model.source(), model.format()),
-        model.scalar_type(),
-        model.identity(),
-    )
+    let target = artifact_target_label(model.engine(), model.source(), model.format());
+    let identity = immutable_identity_label(model.identity());
+    resolved_model_facts_summary(&target, model.source_scalar_type(), &identity)
 }
 
 pub(super) fn loaded_model_summary(model: &LoadedModel) -> String {
-    detailed_model_summary(
-        &loaded_model_target_label(
-            model.engine(),
-            model.source(),
-            model.format(),
-            model.device(),
-        ),
-        Some(model.scalar_type()),
-        model.identity(),
+    let target = artifact_target_label(model.engine(), model.source(), model.format());
+    let identity = immutable_identity_label(model.identity());
+    loaded_model_facts_summary(
+        &target,
+        model.source_scalar_type(),
+        model.execution_scalar_type(),
+        model.device(),
+        &identity,
     )
 }
 
-fn detailed_model_summary(
+pub(super) fn resolved_model_facts_summary(
     target: &str,
-    scalar_type: Option<ApplicationScalarType>,
-    identity: &ImmutableModelIdentity,
+    source_scalar_type: Option<ApplicationScalarType>,
+    identity: &str,
 ) -> String {
-    let scalar = scalar_type.map_or("Unknown", scalar_type_label);
+    let source_scalar = source_scalar_type.map_or("Unknown", scalar_type_label);
+    format!("{target} • Source scalar: {source_scalar} • Identity: {identity}")
+}
+
+pub(super) fn loaded_model_facts_summary(
+    target: &str,
+    source_scalar_type: ApplicationScalarType,
+    execution_scalar_type: ApplicationScalarType,
+    actual_device: ApplicationDevice,
+    identity: &str,
+) -> String {
     format!(
-        "{target} • Scalar: {scalar} • Identity: {}",
-        immutable_identity_label(identity)
+        "{target} • Source scalar: {} • Execution scalar: {} • Actual device: {} • Identity: {identity}",
+        scalar_type_label(source_scalar_type),
+        scalar_type_label(execution_scalar_type),
+        device_label(actual_device),
     )
 }
 
@@ -155,19 +167,6 @@ pub(super) fn artifact_target_label(
         engine_label(engine),
         source_label(source),
         model_format_label(format)
-    )
-}
-
-pub(super) fn loaded_model_target_label(
-    engine: ApplicationEngine,
-    source: ApplicationSource,
-    format: ApplicationModelFormat,
-    actual_device: ApplicationDevice,
-) -> String {
-    format!(
-        "{} • Actual device: {}",
-        artifact_target_label(engine, source, format),
-        device_label(actual_device)
     )
 }
 

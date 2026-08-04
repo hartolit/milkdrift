@@ -20,7 +20,7 @@ pub enum ModelArchitecture {
     Other(u32),
 }
 
-/// Scalar representation used by model tensors or execution buffers.
+/// Scalar representation used by source tensors or selected backend execution tensors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ScalarType {
@@ -148,7 +148,10 @@ pub struct ModelCapabilities {
     pub maximum_prefill_batch: u32,
 }
 
-/// Estimated or observed memory footprint in bytes.
+/// Planned or accounted memory footprint in bytes.
+///
+/// This value is an admission and accounting quantity, not a measurement of
+/// physical memory currently allocated or available on a device.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MemoryFootprint {
     /// Host-resident model weights.
@@ -202,7 +205,10 @@ pub struct MemoryBudget {
 pub struct ModelMetadata {
     /// Model architecture family.
     pub architecture: ModelArchitecture,
-    /// Weight scalar type.
+    /// Scalar type stored in the source weight tensors.
+    ///
+    /// This metadata remains source-derived and does not imply the scalar type
+    /// selected later for execution.
     pub scalar_type: ScalarType,
     /// Weight quantization format.
     pub quantization: QuantizationFormat,
@@ -221,7 +227,7 @@ pub struct ModelDescriptor {
     pub metadata: ModelMetadata,
     /// Backend capability report.
     pub capabilities: ModelCapabilities,
-    /// Estimated memory footprint.
+    /// Device-independent estimated accounting footprint.
     pub estimated_footprint: MemoryFootprint,
 }
 
@@ -239,9 +245,11 @@ pub struct LoadConfiguration {
 /// Validated load plan produced before allocating model resources.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LoadPlan {
-    /// Model descriptor accepted by the backend.
+    /// Model descriptor accepted by the backend, including source scalar metadata.
     pub descriptor: ModelDescriptor,
-    /// Expected resource footprint after load.
+    /// Scalar type selected for backend execution tensors.
+    pub execution_scalar_type: ScalarType,
+    /// Expected accounting footprint accepted for the load.
     pub expected_footprint: MemoryFootprint,
 }
 

@@ -15,8 +15,8 @@ use domain_contracts::{
     DecodeBuffers, DecodeInput, DecodeOutcome, DeviceId, DeviceKind, DrainTimeout, ExecutionDevice,
     LifecycleAction, LoadConfiguration, LoadedModel, MemoryBudget, ModelDescriptor,
     ModelGeneration, ModelHandle, ModelId, ModelLifecycle, ModelLoader, MonotonicMillis,
-    PrefillBuffers, PrefillInput, PrefillOutcome, SequenceConfiguration, SequenceId, SequenceState,
-    TokenId, UnloadPolicy, decode_checked, prefill_checked,
+    PrefillBuffers, PrefillInput, PrefillOutcome, ScalarType, SequenceConfiguration, SequenceId,
+    SequenceState, TokenId, UnloadPolicy, decode_checked, prefill_checked,
 };
 
 type TestResult = Result<(), &'static str>;
@@ -32,13 +32,15 @@ fn loads_two_sequences_and_unloads_after_bounded_drain() -> TestResult {
     let plan = loader
         .plan_load(&source, &configuration)
         .map_err(|_| "plan model")?;
+    assert_eq!(plan.execution_scalar_type, ScalarType::F32);
     assert_eq!(plan.expected_footprint, descriptor.estimated_footprint);
 
     let mut model = loader
         .load(&source, &configuration)
         .map_err(|_| "load model")?;
+    assert_eq!(model.execution_scalar_type(), ScalarType::F32);
     assert_eq!(model.execution_device(), configuration.execution_device);
-    assert_eq!(model.resident_footprint(), plan.expected_footprint);
+    assert_eq!(model.accounted_footprint(), plan.expected_footprint);
     let sequence_configuration = SequenceConfiguration::new(
         NonZeroU32::new(16).ok_or("maximum tokens")?,
         NonZeroU32::new(8).ok_or("maximum prefill")?,
@@ -232,72 +234,130 @@ fn unload_after_bounded_drain(
     Ok(())
 }
 
-#[test]
-fn advertised_scalar_types_produce_f32_vocabulary_logits() -> TestResult {
-    for (index, scalar_type) in [
-        CandleScalarType::F32,
-        CandleScalarType::F16,
-        CandleScalarType::Bf16,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let fixture = TinyLlamaFixture::create_with_scalar(scalar_type)?;
-        let source = fixture.source()?;
-        let mut loader = CandleLlamaLoader::new(BackendId::new(
-            u64::try_from(index + 10).map_err(|_| "backend identifier")?,
-        ));
-        let descriptor = loader
-            .inspect(&source)
-            .map_err(|_| "inspect scalar fixture")?;
-        if scalar_type == CandleScalarType::Bf16 {
-            let source_bytes = fs::metadata(&fixture.weight_path)
-                .map_err(|_| "inspect scalar weight file")?
-                .len();
-            assert!(descriptor.estimated_footprint.host_weight_bytes >= source_bytes * 2);
-            assert_eq!(descriptor.estimated_footprint.cache_bytes_per_token % 4, 0);
-        }
-        let mut model = loader
-            .load(&source, &load_configuration())
-            .map_err(|_| "load scalar fixture")?;
-        let configuration = SequenceConfiguration::new(
-            NonZeroU32::new(16).ok_or("maximum tokens")?,
-            NonZeroU32::new(8).ok_or("maximum prefill")?,
-        );
-        let mut sequence = model
-            .create_sequence(SequenceId::new(10), &configuration)
-            .map_err(|_| "create scalar sequence")?;
-        let prompt = [TokenId::new(1), TokenId::new(2)];
-        let mut logits = [0.0_f32; 16];
-        let outcome = prefill_checked(
-            &mut model,
-            &mut sequence,
-            PrefillInput::new(&prompt, true),
-            PrefillBuffers::new(&mut logits),
-            CancellationStatus::Running,
-        )
-        .map_err(|_| match scalar_type {
-            CandleScalarType::F32 => "prefill failed for F32",
-            CandleScalarType::F16 => "prefill failed for F16",
-            CandleScalarType::Bf16 => "prefill failed for BF16",
-        })?;
+#[derive(Clone, Copy)]
+struct ScalarExecutionCase {
+    source_scalar: CandleScalarType,
+    expected_source_scalar: ScalarType,
+    expected_execution_scalar: ScalarType,
+    source_bytes_per_element: u64,
+    execution_bytes_per_element: u64,
+}
 
-        assert_eq!(
-            outcome,
-            PrefillOutcome::Ready {
-                consumed_tokens: 2,
-                position: 2,
-                logits_written: 16,
-            }
-        );
-        assert_eq!(maximum_logit_token(&logits)?, TokenId::new(2));
-        model
-            .destroy_sequence(&mut sequence)
-            .map_err(|_| "destroy scalar sequence")?;
-        assert_eq!(sequence.state(), SequenceState::Finished);
-        drop(sequence);
-        model.prepare_unload().map_err(|_| "unload scalar model")?;
+#[test]
+fn source_and_execution_scalar_mappings_produce_f32_vocabulary_logits() -> TestResult {
+    let cases = [
+        ScalarExecutionCase {
+            source_scalar: CandleScalarType::F32,
+            expected_source_scalar: ScalarType::F32,
+            expected_execution_scalar: ScalarType::F32,
+            source_bytes_per_element: 4,
+            execution_bytes_per_element: 4,
+        },
+        ScalarExecutionCase {
+            source_scalar: CandleScalarType::F16,
+            expected_source_scalar: ScalarType::F16,
+            expected_execution_scalar: ScalarType::F16,
+            source_bytes_per_element: 2,
+            execution_bytes_per_element: 2,
+        },
+        ScalarExecutionCase {
+            source_scalar: CandleScalarType::Bf16,
+            expected_source_scalar: ScalarType::Bf16,
+            expected_execution_scalar: ScalarType::F32,
+            source_bytes_per_element: 2,
+            execution_bytes_per_element: 4,
+        },
+    ];
+
+    for (index, case) in cases.into_iter().enumerate() {
+        assert_scalar_execution_case(index, case)?;
     }
+    Ok(())
+}
+
+fn assert_scalar_execution_case(index: usize, case: ScalarExecutionCase) -> TestResult {
+    let fixture = TinyLlamaFixture::create_with_scalar(case.source_scalar)?;
+    let source = fixture.source()?;
+    let mut loader = CandleLlamaLoader::new(BackendId::new(
+        u64::try_from(index + 10).map_err(|_| "backend identifier")?,
+    ));
+    let load_configuration = load_configuration();
+    let descriptor = loader
+        .inspect(&source)
+        .map_err(|_| "inspect scalar fixture")?;
+    let plan = loader
+        .plan_load(&source, &load_configuration)
+        .map_err(|_| "plan scalar fixture")?;
+    let source_bytes = fs::metadata(&fixture.weight_path)
+        .map_err(|_| "inspect scalar weight file")?
+        .len();
+
+    assert_eq!(descriptor.metadata.scalar_type, case.expected_source_scalar);
+    assert_eq!(plan.descriptor, descriptor);
+    assert_eq!(plan.execution_scalar_type, case.expected_execution_scalar);
+    assert_eq!(plan.expected_footprint, descriptor.estimated_footprint);
+    assert_eq!(
+        plan.expected_footprint.host_weight_bytes,
+        source_bytes * case.execution_bytes_per_element / case.source_bytes_per_element,
+        "model weight accounting must use the execution scalar"
+    );
+    assert_eq!(
+        plan.expected_footprint.cache_bytes_per_token,
+        16 * case.execution_bytes_per_element,
+        "cache accounting must use the execution scalar"
+    );
+
+    let mut model = loader
+        .load(&source, &load_configuration)
+        .map_err(|_| "load scalar fixture")?;
+    assert_eq!(
+        model.descriptor().metadata.scalar_type,
+        case.expected_source_scalar
+    );
+    assert_eq!(
+        model.execution_scalar_type(),
+        case.expected_execution_scalar
+    );
+    assert_eq!(model.accounted_footprint(), plan.expected_footprint);
+
+    let configuration = SequenceConfiguration::new(
+        NonZeroU32::new(16).ok_or("maximum tokens")?,
+        NonZeroU32::new(8).ok_or("maximum prefill")?,
+    );
+    let mut sequence = model
+        .create_sequence(SequenceId::new(10), &configuration)
+        .map_err(|_| "create scalar sequence")?;
+    let prompt = [TokenId::new(1), TokenId::new(2)];
+    let mut logits = [0.0_f32; 16];
+    let outcome = prefill_checked(
+        &mut model,
+        &mut sequence,
+        PrefillInput::new(&prompt, true),
+        PrefillBuffers::new(&mut logits),
+        CancellationStatus::Running,
+    )
+    .map_err(|_| match case.source_scalar {
+        CandleScalarType::F32 => "prefill failed for F32",
+        CandleScalarType::F16 => "prefill failed for F16",
+        CandleScalarType::Bf16 => "prefill failed for BF16",
+    })?;
+
+    assert_eq!(
+        outcome,
+        PrefillOutcome::Ready {
+            consumed_tokens: 2,
+            position: 2,
+            logits_written: 16,
+        }
+    );
+    assert_eq!(maximum_logit_token(&logits)?, TokenId::new(2));
+    model
+        .destroy_sequence(&mut sequence)
+        .map_err(|_| "destroy scalar sequence")?;
+    assert_eq!(sequence.state(), SequenceState::Finished);
+    drop(sequence);
+    model.prepare_unload().map_err(|_| "unload scalar model")?;
+    drop(model);
     Ok(())
 }
 
