@@ -373,7 +373,7 @@ Do not run these tests in ordinary CPU CI, do not use `--all-features` for the w
 
 The security boundary is deliberate:
 
-- triggers are path-filtered pushes to `main` and owner-dispatched runs of the `main` ref only;
+- triggers are pushes to `main` filtered by stable ownership roots for every crate, the runtime benchmark, xtask, and Cargo/toolchain policy, plus owner-dispatched runs of the `main` ref only; documentation-only changes do not schedule push runs;
 - neither `pull_request` nor `pull_request_target` can schedule the machine, so fork or other untrusted PR code is never checked out there;
 - path-filtered pushes trust code already landed on `main`; anyone able to land matching code on `main` is inside the machine-execution boundary, so repository write and branch controls remain part of runner security;
 - workflow permissions are `contents: read`, checkout credentials are not persisted, and no repository secret or command input is used;

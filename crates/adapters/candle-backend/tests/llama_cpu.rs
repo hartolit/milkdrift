@@ -362,8 +362,10 @@ fn assert_scalar_execution_case(index: usize, case: ScalarExecutionCase) -> Test
 }
 
 #[test]
-fn rejects_weight_dtype_mismatch() -> TestResult {
+fn tensor_dtype_mismatch_is_rejected_by_current_homogeneous_source_policy() -> TestResult {
     let fixture = TinyLlamaFixture::create()?;
+    // The F32 fixture is declared as F16 so the existing artifact exercises the
+    // policy without adding another committed model fixture.
     let source = CandleLlamaSource::new(
         fixture.config_path.clone(),
         vec![fixture.weight_path.clone()],

@@ -6,22 +6,13 @@ on:
       - main
     paths:
       - .github/workflows/cuda-hardware.yml
-      - .cargo/config.toml
+      - .cargo/**
       - Cargo.toml
       - Cargo.lock
       - rust-toolchain.toml
-      - benchmarks/runtime/Cargo.toml
-      - benchmarks/runtime/src/**/*.rs
-      - benchmarks/runtime/benches/**/*.rs
-      - crates/adapters/candle-backend/**
-      - crates/domain/domain-contracts/**
-      - crates/platform/host-runtime/**
-      - crates/runtime/inference-runtime/**
-      - crates/runtime/application-runtime/**
-      - crates/apps/desktop-slint/**
-      - tools/xtask/Cargo.toml
-      - tools/xtask/src/**/*.rs
-      - tools/xtask/tests/**
+      - crates/**
+      - benchmarks/runtime/**
+      - tools/xtask/**
   workflow_dispatch:
 
 permissions:

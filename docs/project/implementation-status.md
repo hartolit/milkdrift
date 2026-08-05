@@ -1,6 +1,6 @@
 # Current implementation status
 
-**Status date:** 2026-08-04
+**Status date:** 2026-08-05
 
 ```text
 Phase 10 complete.
@@ -11,16 +11,16 @@ No subsequent product phase is active.
 
 This page is the sole product-level support matrix and validation-state owner. It does not own command logs or timing tables. Use [validation](validation.md) for repeatable procedures, [performance evidence](performance.md) for exact measurements and their limits, [execution history](../agent/execution/history.md) for chronology, and the [execution plan](../agent/execution/execution-plan.md) for the completed program and inactive future tracks.
 
-## Accepted current tree
+## Accepted hardware-executed baseline
 
-The final executable and workflow baseline is commit `1a62d2ed6623500e9052b4b8386ebd058984bd89`, tree `79864da274aed94471c2fbcfedaa97c2f32f3e7a`. It contains the final source scalar and execution scalar APIs, E1 modularization, schema-3 evidence refactor, and CPU/CUDA workflows. The post-Phase 11 documentation-only maintenance commit reconciles current documentation to that baseline.
+The accepted hardware-executed source baseline is commit `1a62d2ed6623500e9052b4b8386ebd058984bd89`, tree `79864da274aed94471c2fbcfedaa97c2f32f3e7a`. It contains the final source scalar and execution scalar APIs, E1 modularization, schema-3 evidence refactor, and the CUDA job whose execution behavior remains current. Subsequent unnumbered maintenance through the current tree reconciles documentation and broadens the workflow's source path coverage without changing the job body or supported runtime behavior.
 
 Two successful GitHub Actions runs were observed on that exact commit:
 
 - normal shared-CPU [quality run 30942153370](https://github.com/hartolit/milkdrift/actions/runs/30942153370), including the canonical gate, portable-domain checks, dependency policy, and offline local-link validation;
 - self-hosted [CUDA hardware run 30942148369](https://github.com/hartolit/milkdrift/actions/runs/30942148369), including the exact CUDA feature graph and download-free adapter, E0, and E1 hardware tests.
 
-The later documentation commit changes no executable source, manifest, lockfile, fixture, or workflow. Its local closure gates and resulting identity belong in the final closure report rather than a self-referential tracked hash.
+The intervening post-Phase 11 documentation closure changed no executable source, manifest, lockfile, fixture, or workflow. Its local closure gates and resulting identity belong in the final closure report rather than a self-referential tracked hash.
 
 ## Supported product
 
@@ -38,19 +38,19 @@ The later documentation commit changes no executable source, manifest, lockfile,
 | Frontend | Slint desktop through the E1 façade |
 | Persistence | redb-backed preferences and model catalogue; conversation history remains in memory |
 
-`ModelSelection` contains only normalized repository/revision input. Resolution pins an immutable Hub commit and reports source evidence without selecting a device. E1 holds `ApplicationDevice` selection separately. A resolved model exposes a source scalar; a loaded model exposes the verified source scalar, receipt-verified execution scalar, and actual device.
+`ModelSelection` contains only normalized repository/revision input. Resolution pins an immutable Hub commit and reports source evidence without selecting a device. E1 holds `ApplicationDevice` selection separately. A resolved model exposes a configuration-declared source scalar; a loaded model exposes that source metadata after loader compatibility validation, the receipt-verified execution scalar, and the actual device.
 
 The current TinyLlama scalar boundary is:
 
 ```text
-BF16 source on CPU
+BF16 configuration-declared source scalar on CPU
     -> F32 execution
 
-BF16 source on supported CUDA
+BF16 configuration-declared source scalar on supported CUDA
     -> BF16 execution
 ```
 
-A loaded CPU model with BF16 source weights is therefore not reported simply as “BF16.”
+A loaded CPU model with a BF16 configuration-declared source scalar is therefore not reported simply as “BF16.”
 
 The current composition is:
 
@@ -99,7 +99,7 @@ Accounted and reserved footprints establish their named deterministic contracts.
 
 ## Validation and evidence state
 
-Normal CPU CI and self-hosted CUDA hardware CI passed on the accepted current tree as recorded above. The CUDA workflow is download-free and does not run TinyLlama, Hugging Face resolution, Criterion, elapsed-time thresholds, or Slint interaction. Its trigger trust boundary is canonical in [validation](validation.md#self-hosted-cuda-hardware-correctness-gate).
+Normal CPU CI and self-hosted CUDA hardware CI passed on the accepted hardware-executed source baseline recorded above. The CUDA workflow is download-free and does not run TinyLlama, Hugging Face resolution, Criterion, elapsed-time thresholds, or Slint interaction. Its trigger trust boundary is canonical in [validation](validation.md#self-hosted-cuda-hardware-correctness-gate).
 
 Manual external product evidence remains attributed to clean Commit E `411945e0fd53363f98609db21a43d757c4d9b506`, tree `7099dcb5c9879190543d3afa5fde399a84d799df`. The same exact TinyLlama workload executed on CPU and supported CUDA, including compatible chat, controlled completion, cancellation, release, unload, and bounded shutdown. Three complete CUDA lifecycle cycles ran, and the direct E0 CUDA fixture established zero model, request, workspace, and cleanup accounting after unload. The user also accepted manual Slint CPU and CUDA behavior; no screenshot or automated graphical assertion is claimed.
 
@@ -127,6 +127,7 @@ Current guarantees include:
 - CUDA outside the exact matrix above, generic NVIDIA compatibility, generic `gpu`, automatic CPU fallback, cuDNN, flash attention, multi-GPU, and NCCL are unsupported.
 - Metal and GPU-side sampling are unsupported.
 - GGUF and other quantized formats are unsupported.
+- Mixed-dtype Safetensors repositories are not generally supported. The current Candle Llama loader requires every tensor in every shard to match the source scalar declared by model configuration, so an otherwise compatible repository containing another floating-point tensor dtype may fail with `UnsupportedFormat`.
 - Another local engine, hosted-provider execution, peer execution, and remote/browser transport are not implemented.
 - Multi-model residency is unsupported.
 - Chat compatibility is not generalized beyond the exact reviewed TinyLlama profile.

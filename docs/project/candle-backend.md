@@ -2,27 +2,29 @@
 
 ## Scope
 
-`crates/adapters/candle-backend` is the sole current local execution adapter. It implements the `domain-contracts` backend boundary for unquantized Hugging Face Llama configuration files and one or more Safetensors weight shards. CPU is compiled by default. The non-default `candle-backend/cuda` feature can construct an explicitly requested CUDA ordinal and never falls back to CPU; current product support is limited to ordinal 0 on the exact executed Linux x86_64 RTX 5070 Ti matrix in [implementation status](implementation-status.md). Feature compilation or ordinal representation alone is not hardware-execution evidence.
+`crates/adapters/candle-backend` is the sole current local execution adapter. It implements the `domain-contracts` backend boundary for the current compatibility subset of unquantized Hugging Face Llama configuration files and one or more Safetensors weight shards. CPU is compiled by default. The non-default `candle-backend/cuda` feature can construct an explicitly requested CUDA ordinal and never falls back to CPU; current product support is limited to ordinal 0 on the exact executed Linux x86_64 RTX 5070 Ti matrix in [implementation status](implementation-status.md). Feature compilation or ordinal representation alone is not hardware-execution evidence.
 
 The adapter owns every Candle and `cudarc` type. No native tensor, device, model, cache, context, dtype, or error crosses into `domain-contracts`. Artifact download and tokenizer integration remain separate adapters.
 
 ## Source and execution scalar contract
 
-Scalar identity has two distinct stages:
+Scalar terminology has three distinct meanings:
 
-- `ModelDescriptor::metadata.scalar_type` is immutable source metadata and reports the scalar stored in the weight tensors;
-- `LoadPlan::execution_scalar_type` is selected during device-aware planning;
-- `LoadedModel::execution_scalar_type()` is the actual domain `ScalarType` retained as loaded execution evidence.
+- **Configuration-declared source scalar:** immutable scalar metadata declared by model configuration and exposed as `ModelDescriptor::metadata.scalar_type`;
+- **Observed tensor dtype:** the dtype encoded independently in one Safetensors tensor entry and inspected during loading;
+- **Execution scalar:** the scalar selected for backend execution tensors during device-aware planning, exposed by `LoadPlan::execution_scalar_type` and retained by `LoadedModel::execution_scalar_type()` as loaded evidence.
 
-Candle's `DType` remains private to the adapter. The exact policy is:
+Candle's `DType` remains private to the adapter. The current Llama loader requires every observed tensor dtype in every shard to equal the configuration-declared source scalar before any conversion to the execution scalar. This strict equality is an intentional current compatibility boundary, not a Safetensors format rule: a mixed-dtype repository is not necessarily malformed, but it may fail with `UnsupportedFormat`.
 
-| Source scalar | Execution scalar on CPU | Execution scalar on supported CUDA |
+The execution policy remains:
+
+| Configuration-declared source scalar | Execution scalar on CPU | Execution scalar on supported CUDA |
 |---|---|---|
 | F32 | F32 | F32 |
 | F16 | F16 | F16 |
 | BF16 | F32 | BF16 when the selected device reports support |
 
-Unsupported BF16 CUDA execution fails during the cold planning/loading preparation step, before any model weight shard is loaded. Vocabulary logits are normalized to caller-owned host F32 storage for every supported source and execution scalar.
+Unsupported BF16 CUDA execution fails during the cold planning/loading preparation step, before any model weight shard is loaded. Vocabulary logits are normalized to caller-owned host F32 storage for every supported configuration-declared source scalar and execution scalar.
 
 ## Accounted footprint and physical-memory observation
 
@@ -76,9 +78,10 @@ inspect
 
 The deterministic CPU fixtures assign distinguishable token embeddings and LM-head rows while keeping the transformer residual path stable. CPU tests cover all advertised scalar mappings:
 
-- F32 source, F32 execution;
-- F16 source, F16 execution;
-- BF16 source metadata retained as BF16 with actual F32 execution;
+- F32 configuration-declared source scalar, homogeneous F32 tensors, and F32 execution;
+- F16 configuration-declared source scalar, homogeneous F16 tensors, and F16 execution;
+- BF16 configuration-declared source metadata retained as BF16 with homogeneous BF16 tensors and actual F32 execution;
+- rejection with `UnsupportedFormat` when an observed tensor dtype differs from the declared source scalar, using the existing fixture;
 - weight and cache accounting derived from the execution scalar;
 - host F32 final-position logits for each mapping;
 - exact decode position progression, independent sequence state, cancellation boundaries, synchronized destruction, and unload preparation.

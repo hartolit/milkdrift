@@ -1,7 +1,7 @@
 # LLM App execution plan
 
 **Plan status:** Phase 11 and post-Phase 11 quality maintenance closure complete; no subsequent product phase active
-**Status date:** 2026-08-04
+**Status date:** 2026-08-05
 
 ```text
 Phase 10 complete.
@@ -179,6 +179,7 @@ Commit chronology and run links are canonical in [post-Phase 11 history](history
 
 These tracks are intentionally unnumbered and inactive:
 
+- **Broader unquantized Safetensors compatibility:** replace the current configuration-wide homogeneous tensor-dtype assumption with reviewed per-tensor Safetensors inspection, exact conversion-aware memory planning, and transactional partial-load cleanup. Activate only with project-authored mixed F16/F32 and BF16/F32 fixtures plus a pinned external mixed-dtype Llama checkpoint.
 - **Peer and hosted execution:** define a coarse application request/stream contract only when a real second deployment target proves the seam; do not represent remote services as E0 backends.
 - **Composable workflows:** evolve beyond `corrective-workflow` only when independent ownership and lifecycle are demonstrated.
 - **Long-term memory and context repair:** preserve raw provenance while testing concrete retrieval and active-context behavior before selecting storage architecture.

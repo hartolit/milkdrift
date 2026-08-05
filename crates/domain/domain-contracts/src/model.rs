@@ -20,7 +20,7 @@ pub enum ModelArchitecture {
     Other(u32),
 }
 
-/// Scalar representation used by source tensors or selected backend execution tensors.
+/// Scalar representation used for configuration-declared source metadata or backend execution tensors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ScalarType {
@@ -205,10 +205,12 @@ pub struct MemoryBudget {
 pub struct ModelMetadata {
     /// Model architecture family.
     pub architecture: ModelArchitecture,
-    /// Scalar type stored in the source weight tensors.
+    /// Source scalar metadata declared by immutable model configuration.
     ///
-    /// This metadata remains source-derived and does not imply the scalar type
-    /// selected later for execution.
+    /// This metadata is used by the current compatibility policy, but it does
+    /// not prove that every serialized tensor has this dtype. An observed tensor
+    /// dtype encoded in Safetensors and the scalar selected later for execution
+    /// are separate facts.
     pub scalar_type: ScalarType,
     /// Weight quantization format.
     pub quantization: QuantizationFormat,
@@ -245,7 +247,7 @@ pub struct LoadConfiguration {
 /// Validated load plan produced before allocating model resources.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LoadPlan {
-    /// Model descriptor accepted by the backend, including source scalar metadata.
+    /// Model descriptor accepted by the backend, including configuration-declared source scalar metadata.
     pub descriptor: ModelDescriptor,
     /// Scalar type selected for backend execution tensors.
     pub execution_scalar_type: ScalarType,

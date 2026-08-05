@@ -7,7 +7,11 @@ use std::path::{Path, PathBuf};
 use candle_core::DType;
 use domain_contracts::{DeviceKind, ScalarType};
 
-/// Scalar type stored in the source weight tensors.
+/// Configuration-declared source scalar for an unquantized Llama model.
+///
+/// This metadata is used by the current homogeneous-tensor compatibility
+/// policy. It is not an observation of each Safetensors entry and does not
+/// prove that every tensor has this dtype.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CandleScalarType {
     /// IEEE-754 32-bit floating point.
@@ -128,7 +132,10 @@ impl CandleLlamaSource {
         &self.weight_paths
     }
 
-    /// Returns the scalar type stored in the source weight tensors.
+    /// Returns the configuration-declared source scalar.
+    ///
+    /// The current loader checks each observed Safetensors tensor dtype against
+    /// this metadata; the declaration itself does not prove tensor homogeneity.
     #[must_use]
     pub const fn scalar_type(&self) -> CandleScalarType {
         self.scalar_type

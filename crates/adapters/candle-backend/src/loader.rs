@@ -237,6 +237,9 @@ impl ModelLoader for CandleLlamaLoader {
                 map_candle_load_error(self.backend, &device, &error, CODE_WEIGHT_LOAD)
             })?;
             for (name, tensor) in shard {
+                // Safetensors permits independent per-tensor dtypes. The current
+                // Llama policy intentionally accepts only tensors matching the
+                // configuration-declared source scalar.
                 if tensor.dtype() != weight_dtype {
                     return Err(LoadError::UnsupportedFormat);
                 }
