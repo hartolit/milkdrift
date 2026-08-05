@@ -97,8 +97,13 @@ Relevant guides:
 
 ## License
 
-Milkdrift project-authored source code and documentation are licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE) for attribution. The license permits commercial use, including paid inference, modification, redistribution, proprietary integrations, and products or services built using Milkdrift, subject to its terms.
+Milkdrift project-authored source code and documentation are available under either:
 
-The Milkdrift name, logo, and related brand assets are governed separately by the [trademark policy](TRADEMARKS.md) and are not licensed under Apache-2.0.
+- the [Apache License 2.0](LICENSE-APACHE); or
+- the [MIT License](LICENSE-MIT),
 
-Third-party dependencies retain their own license terms. Slint licensing, attribution, and distribution obligations remain documented in the [dependency policy](docs/project/dependency-policy.md).
+at your option.
+
+Third-party dependencies retain their own license terms. Slint licensing,
+attribution, and distribution obligations remain documented in the
+[dependency policy](docs/project/dependency-policy.md).
