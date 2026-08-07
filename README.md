@@ -1,109 +1,267 @@
 # Milkdrift
 
-A layered Rust workspace for a local-first, composable language-model system with explicit inference ownership, context planning, workflows, persistence, and replaceable frontends.
+> **Design the AI system around the model.**
 
-## Current product state
+Milkdrift is a Rust-native runtime for building operator-defined AI systems. It connects local models, remote providers, tools, context workspaces, validators, and external data sources through versioned workflows rather than a fixed agent pipeline.
 
-Milkdrift’s current local product uses Candle with immutable Hugging Face Hub revisions, Safetensors, and the unquantized Llama path. CPU is mandatory, compiled by default, and selected on a fresh installation. Explicit non-default CUDA ordinal 0 is supported only on the executed Linux x86_64 NVIDIA GeForce RTX 5070 Ti matrix recorded in [implementation status](docs/project/implementation-status.md); this is not a generic NVIDIA compatibility claim, and an unavailable CUDA selection never falls back to CPU.
+Operators decide how work is researched, routed, corrected, executed, and committed. Milkdrift supplies the lifecycle, permissions, provenance, resource bounds, execution targets, and extensibility needed to make those systems reliable and deeply embeddable.
 
-`application-runtime` (E1) is the frontend-neutral façade. `ModelSelection` contains a Hugging Face repository and requested revision. Resolution pins that selection to an immutable Hub commit and reports source evidence without choosing a device. After load, E1 reports the verified source scalar, execution scalar, and actual execution device separately. In particular:
+> [!IMPORTANT]
+> Milkdrift is pre-release. The current implementation provides the local inference foundation. The general workflow, workspace, plugin, provider, peer, and visual-control layers described here are the project's architectural direction and are not all implemented yet.
 
-```text
-BF16 source on CPU
-    -> F32 execution
+## The idea
 
-BF16 source on supported CUDA
-    -> BF16 execution
-```
+Most people cannot create a new AI model. They should still be able to design the system that makes a model useful.
 
-E1 owns one concrete Candle E0 worker/thread, one bounded Hub resolver worker, one resident-model lifecycle, and the Hugging Face tokenizer/streaming-decoder path. E0 owns loaded resources, request admission, scheduling, host-side sampling over F32 logits, cancellation, bounded output, cleanup accounting, synchronization, unload, and shutdown.
-
-- Direct completion is available for every successfully loaded compatible model.
-- Built-in chat is limited to `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable commit `fe8a4ea1ffedaf415f4da2f062534de366a451e6` when `</s>` resolves to token ID 2.
-- Slint uses only E1-owned types and keeps selected device, source scalar, execution scalar, and actual loaded device distinct.
-- CUDA-enabled builds can still explicitly select CPU.
-
-GGUF and other quantized formats, Metal, GPU-side sampling, generic GPU selection, automatic CPU fallback, another local engine, hosted or peer execution, browser transport, `application-api`, and multiple application-level resident models are not supported.
-
-See [implementation status](docs/project/implementation-status.md) for the sole product support matrix and accepted validation state. The [execution plan](docs/agent/execution/execution-plan.md) records the completed program and inactive future tracks; no product phase is active. The [project vision](docs/vision.md) remains aspirational rather than a support claim.
-
-## Workspace
-
-The root `Cargo.toml` is a virtual workspace manifest; there is no root Rust package. Repository-defined maintenance tooling is the `xtask` member under `tools/xtask`, exposed through the alias in `.cargo/config.toml`.
+A Milkdrift workflow might:
 
 ```text
-.cargo/              workspace-local Cargo aliases
-tools/xtask/         architecture, hygiene, and composite verification tooling
-benchmarks/runtime/  non-production E0/E1 measurement observer
-crates/domain/       portable contracts and algorithms
-crates/platform/     process-host threading, timing, channels, and bounded output plumbing
-crates/adapters/     Candle, tokenizer, Hub, storage, and vendor integrations
-crates/runtime/      E0 inference, capability engines, and E1 application coordination
-crates/apps/         presentation and process entry points
+user task
+  -> small research agents search books, the web, and local workspaces
+  -> context assembler selects bounded evidence
+  -> main agent produces a proposal
+  -> validators compare it with specifications and tests
+  -> correction repeats up to an operator-defined limit
+  -> sanitizer and execution nodes prepare approved effects
+  -> child workflows handle focused subtasks in their own workspaces
+  -> results are committed to an editor, repository, document, or another system
 ```
 
-The applied structure is documented in [project architecture](docs/project/architecture.md), with exact members and crate edges in [workspace boundaries](docs/project/workspace.md) and enforcement in [dependency policy](docs/project/dependency-policy.md). Documentation authority and component guides are indexed in the [documentation map](docs/README.md).
+That is only one template. Milkdrift does not require a main agent, a linear flow, a correction stage, a local model, or one final output destination.
 
-## Validate
+**Defaults are workflow data, not hidden framework procedure.**
 
-Run the canonical locked repository gate with:
+## What makes Milkdrift different
+
+### Workflows belong to the operator
+
+The canonical workflow is a versioned graph with typed nodes, ports, policies, targets, authority bindings, and resource limits. A visual editor, Rust builder, CLI, or shared template uses the same underlying definition.
+
+### Context outlives a model window
+
+Each deployed workflow is bound to a context workspace containing versioned artifacts, provenance, indexes, external references, and links to other authorized workspaces.
+
+A model prompt is a temporary bounded view over that workspace—not the workspace itself.
+
+### Truth and commit authority are explicit
+
+A model normally produces a proposal. Specifications, tests, repositories, documents, humans, or other agents may validate it. A separate authorized node commits the accepted revision.
+
+Milkdrift does not assume that the largest model, the first answer, or a designated "main agent" is automatically the source of truth.
+
+### Local and remote intelligence can coexist
+
+A workflow node may use:
+
+- the local Milkdrift/Candle execution runtime;
+- an authorized provider connector;
+- a supported coding-agent process;
+- a model in a datacenter;
+- a trusted peer host.
+
+Targets share coarse workflow semantics while retaining honest differences in ownership, privacy, cost, cancellation, and cleanup.
+
+### Extensibility is a first-class requirement
+
+Plugins and connectors can add:
+
+- workflow node types;
+- model execution targets;
+- tools and effect handlers;
+- artifact stores;
+- search and memory indexes;
+- triggers;
+- validators and policies;
+- external systems such as editors, files, repositories, documents, or databases.
+
+Plugins receive explicit capabilities rather than ambient access to every file, secret, workspace, and network.
+
+### Recursive work is explicit and bounded
+
+Workflows may retry, loop, schedule future work, subscribe to changes, or spawn child workflows with focused context workspaces.
+
+Depth, concurrency, cost, token use, storage, network egress, and external effects remain operator-controlled and observable.
+
+### The local inference kernel is lifecycle-safe
+
+Milkdrift's current local runtime adds real systems behavior above Candle:
+
+- exclusive model and sequence ownership;
+- transactional load and request admission;
+- bounded scheduling and output backpressure;
+- cancellation safe points;
+- cleanup retry and quarantine;
+- retained resource accounting;
+- unload and explicit shutdown;
+- truthful CPU/CUDA target reporting with no silent fallback.
+
+Candle executes tensors and models. Milkdrift controls how that execution lives inside a long-running system.
+
+## Architecture
 
 ```text
-cargo xtask verify
+Hosts and projections
+Rust SDK · headless host · CLI/TUI · editor integration · control center
+                              │
+                              ▼
+Workflow control plane
+versioned definitions · runs · scheduling · triggers · recursion · budgets
+              ┌───────────────┼─────────────────┐
+              ▼               ▼                 ▼
+Context workspace       Plugin/node       Execution targets
+artifacts                runtime           local · provider · peer
+provenance               typed ports               │
+authority bindings       capabilities              ▼
+search/indexes            effects          Local inference runtime
+              │                                    │
+              ▼                                    ▼
+Storage/connectors                         Candle adapter and Candle
 ```
 
-Run the two custom policy checks independently with:
+The visual control center is a replaceable host over these schemas and APIs. It does not own workflow semantics.
 
-```text
-cargo xtask architecture
-cargo xtask hygiene
-```
+## Core concepts
 
-`xtask` owns only repository-specific policy and the composite gate. Ordinary Cargo operations are direct rather than forwarded through custom subcommands:
+| Concept | Meaning |
+|---|---|
+| Workflow definition | Versioned graph of nodes, ports, edges, policies, target requirements, and bounds |
+| Workflow deployment | Definition bound to a workspace, authorities, plugins, targets, credentials, and quotas |
+| Workflow run | One live or durable execution with lineage, checkpoints, events, and terminal state |
+| Workflow node | A logical operation such as retrieval, model invocation, validation, routing, execution, or commit |
+| Execution endpoint | A local runtime, provider connector, process, or trusted peer that performs work |
+| Context workspace | Durable artifact and context environment associated with a deployment |
+| Context view | Bounded projection of workspace artifacts supplied to one node invocation |
+| Artifact | Versioned information or work product with provenance |
+| Authority binding | Configured evidence, validation, working, derived, or commit authority for an artifact scope |
+| Connector | Integration with an external system |
+| Plugin | Package registering node, target, connector, index, trigger, or policy types |
 
-```text
-cargo check --workspace --all-targets --locked
-cargo test --workspace --locked
-cargo bench --locked -p sampling --bench sampling_pipeline
-```
+## Current implementation
 
-Ordinary workspace tests and the normal quality workflow are download-free and use the mandatory default CPU feature graph. The opt-in controlled CPU/CUDA external runner and its exact immutable model revision are documented in [project validation](docs/project/validation.md#controlled-cpu-and-cuda-external-product-evidence).
+At the current reviewed foundation, Milkdrift already provides:
 
-## Slint frontend
+- portable domain contracts and algorithms;
+- a backend-independent local inference runtime;
+- exclusive model ownership and request scheduling;
+- bounded token and text output paths;
+- cancellation, cleanup quarantine, unload, and explicit shutdown;
+- a first-party Candle adapter;
+- mandatory/default CPU execution;
+- explicitly selected CUDA execution for the exact validated matrix;
+- Hugging Face model acquisition and tokenizer integration;
+- a frontend-neutral application/reference composition;
+- redb-backed preferences and model catalogue state;
+- a thin Slint reference host;
+- an incubating task graph and corrective workflow vertical slice.
 
-Run the default CPU build with:
+Important limitations currently include:
 
-```text
-cargo run --locked -p desktop-slint
-```
+- Candle is the sole local model backend;
+- the supported model path is narrow unquantized Llama Safetensors;
+- mixed-dtype repositories are not generally supported yet;
+- workflow definitions, workspaces, plugins, external targets, peer execution, and the control center are not yet general product paths;
+- current chat and conversation behavior belongs to the reference application layer, not the final workflow API.
 
-On the exact supported CUDA matrix, build and run the opt-in CUDA graph with:
+The implementation-status document is authoritative for the exact support matrix.
 
-```text
-CUDA_COMPUTE_CAP=120 \
-cargo run --release --locked \
-    -p desktop-slint \
-    --features cuda
-```
+## Why not just use Candle?
 
-The CUDA-enabled application still requires explicit device selection and can explicitly run on CPU. Feature compilation alone is not hardware-execution evidence. The frontend resolves immutable Candle/Safetensors artifacts through E1, streams bounded decoded output, supports cancellation and deterministic unload, and calls E1’s bounded shutdown protocol on normal closure. Verified TinyLlama uses Chat mode; every other compatible loaded model uses Direct completion mode. Application state is stored in the platform’s per-user application-data directory.
+Use Candle directly when a short-lived program only needs to load a model, run one generation loop, and exit.
 
-Relevant guides:
+Use Milkdrift when a system needs to remain alive and control:
 
-- [Application runtime](docs/project/application-runtime.md)
-- [Desktop runtime](docs/project/desktop-runtime.md)
-- [Candle backend](docs/project/candle-backend.md)
-- [Validation](docs/project/validation.md)
+- model and request ownership;
+- multiple or repeated work items;
+- bounded output and backpressure;
+- cancellation;
+- load/unload transactions;
+- cleanup failures;
+- target capabilities;
+- workflow composition;
+- durable context and artifact lineage;
+- external effects and commit authority;
+- local, provider, or peer execution;
+- thin replaceable hosts.
 
-## License
+## Repository direction
 
-Milkdrift project-authored source code and documentation are available under either:
+Milkdrift is an **engine-centered monorepo**.
 
-- the [Apache License 2.0](LICENSE-APACHE); or
-- the [MIT License](LICENSE-MIT),
+- publishable core and runtime crates form the center;
+- local/provider/peer implementations remain adapters or execution targets;
+- default behavior is shipped as editable workflow templates;
+- a headless host proves direct embedding;
+- the current Slint host remains temporary and thin;
+- a future control center edits and observes the public graph model;
+- experiments, benchmarks, and evidence tooling remain outside the default product graph.
 
-at your option.
+A future `crates/core/` root is appropriate only for portable, vendor-neutral schemas and algorithms. It must not become a generic dumping ground.
 
-Third-party dependencies retain their own license terms. Slint licensing,
-attribution, and distribution obligations remain documented in the
-[dependency policy](docs/project/dependency-policy.md).
+## Roadmap
+
+### Now — identity and local-execution correctness
+
+- ratify the operator-programmable workflow identity;
+- extend the authentic vision and rewrite the public documentation spine;
+- keep task-graph and corrective-workflow as incubating foundations;
+- complete Phase 12 mixed-dtype inspection, planning, loading, and cleanup work;
+- tighten the local inference API and repository boundaries.
+
+### Next — workflow and workspace foundation
+
+- define versioned workflow, node, port, artifact, workspace, authority, capability, budget, and target schemas;
+- implement a minimal general workflow runtime;
+- add a headless host;
+- express direct completion through a public workflow template.
+
+### Then — configurable correction and durable context
+
+- migrate corrective behavior into a general template;
+- add persistent runs, workspace artifacts, context search, child workspaces, triggers, subscriptions, and external commit connectors;
+- prove correction count, validator, target, and sink can change without scheduler code changes.
+
+### Later — plugins, external targets, peers, and control center
+
+- publish a plugin/connector SDK;
+- add one real external execution target;
+- add trusted peer execution over operator-provided connectivity;
+- build a Blueprint/ComfyUI-like control center over stable schemas;
+- experiment with spatial memory, advanced placement, and long-lived cooperating agents.
+
+## Project values
+
+- **Operator control:** framework policy never replaces workflow configuration.
+- **Explicit context:** nodes receive scoped views, not ambient global memory.
+- **Explicit authority:** proposal, validation, and commit are separate.
+- **Explicit effects:** tools and external mutation require capabilities.
+- **Bounded autonomy:** recursion and long-lived work remain observable and governed.
+- **Native embedding:** Rust is the canonical API; transports are optional.
+- **Truthful targets:** local, provider, process, and peer guarantees stay distinct.
+- **Thin hosts:** UI semantics never become runtime semantics.
+- **Replaceable backends:** Candle is the first local backend, not the project identity.
+- **Scoped portability:** each crate states its real `no_std`, `alloc`, `std`, or native requirements.
+- **Useful rigor:** architecture exists to enable more powerful systems, not to become an end in itself.
+
+## Contributing
+
+Before adding a feature, determine whether it belongs in:
+
+| Change | Owner |
+|---|---|
+| Workflow, artifact, workspace, authority, capability, or target schema | portable core |
+| Run scheduling, recurrence, triggers, checkpoints, child workflows | workflow runtime |
+| Local model ownership, token scheduling, cleanup, unload | inference runtime |
+| Candle model/device support | Candle adapter |
+| Provider, peer, editor, document, filesystem, or tool integration | target/connector plugin |
+| Context search or memory algorithm | context/index plugin or portable algorithm |
+| Chat, conversation, acquisition, preferences | optional application services/template |
+| Visual graph editing and live inspection | host/control center |
+| Measurements and run evidence | evidence tooling |
+
+A flow-specific behavior should normally be a node or template. A behavior required for every workflow to execute safely belongs in the runtime.
+
+## Status and licensing
+
+Milkdrift is under active architectural development. Current capability is intentionally narrower than the vision, and support claims require named implementation and validation evidence.
+
+Licensed under **MIT OR Apache-2.0**.
