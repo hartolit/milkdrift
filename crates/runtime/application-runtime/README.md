@@ -15,13 +15,13 @@ Safetensors Llama artifacts and a Hugging Face tokenizer independently from the
 execution device, then constructs one `CandleLlamaSource` behind its private
 composition boundary.
 
-`ResolvedModel` reports artifacts, source, format, source scalar,
-tokenizer, immutable identity, and compatibility only. Selected device is
+`ResolvedModel` reports artifacts, source, format, tokenizer, immutable identity,
+compatibility, and optional configuration-declared scalar metadata. That declaration
+is producer-intent evidence, not a tensor-homogeneity claim. Selected device is
 separate E1 state using `ApplicationDevice::{Cpu, Cuda { ordinal: u32 }}` and
-`ApplicationDeviceSummary`; `LoadedModel` reports the independently verified
-source and actual execution scalars plus the actual device from E0's load
-receipt. Source and execution scalars may differ. No Candle or `cudarc` type
-crosses this public boundary.
+`ApplicationDeviceSummary`; `LoadedModel` reports only the actual execution scalar
+and device from E0's verified load receipt. Detailed observed per-tensor data remains
+below E1. No Candle or `cudarc` type crosses this public boundary.
 
 CPU always exists and is the fresh-install default. Initial bounded discovery
 probes CUDA 0 and, when different, the persisted selected CUDA ordinal. Structured
@@ -55,23 +55,23 @@ inference owner in a private startup-cleanup quarantine; a later startup retries
 that cleanup instead of detaching the unresolved worker.
 
 A successful E0 load receipt is published only after the admission ticket,
-logical model ID and handle, immutable resolution/artifacts, source scalar,
-E0-verified execution scalar, Llama/Candle/Safetensors evidence, tokenizer
-vocabulary, selected-versus-actual device, and bounded reserved footprint agree.
-The reserved footprint is E0 admission/ownership accounting, not physical residency.
-E1 checks that source and execution scalar evidence is coherent without inferring
-scalar from device or reproducing Candle's device-aware planner. If any evidence
-is unsupported or disagrees, E1 keeps the incompatible
-`ModelHandle` and compatibility failure in the existing private cleanup record
-while E0 continues to own and account for the model. The public loaded-model
-state remains empty and the application remains unloading while bounded unload
-submission retries proceed. Submission exhaustion or E0 cleanup exhaustion does
-not discard that record; it is released only after the model is confirmed absent
-or the inference worker is confirmed disconnected or stopped. A load error that
-reports retryable retained cleanup triggers one bounded private E0 snapshot and
-returns to idle only when zero aggregate ownership is proven; otherwise selection
-stays locked. Successful unload clears actual loaded-device state but preserves
-selection.
+logical model ID and handle, immutable resolution/artifacts, optional configuration
+declaration, supported compact observed-scalar classification, E0-verified execution
+scalar, Llama/Candle/Safetensors evidence, tokenizer vocabulary and operations,
+selected-versus-actual device, and bounded reserved footprint agree. The reserved
+footprint is E0 admission/ownership accounting, not physical residency. E1 does not
+compare the declaration with observed tensor dtypes or execution scalar and does not
+reproduce Candle's conversion or device-aware scalar policy. If application-level
+evidence is unsupported or disagrees, E1 keeps the incompatible `ModelHandle` and
+compatibility failure in the existing private cleanup record while E0 continues to
+own and account for the model. The public loaded-model state remains empty and the
+application remains unloading while bounded unload submission retries proceed.
+Submission exhaustion or E0 cleanup exhaustion does not discard that record; it is
+released only after the model is confirmed absent or the inference worker is
+confirmed disconnected or stopped. A load error that reports retained cleanup emits
+an explicit pending or exhausted application event and returns to idle only when a
+private E0 snapshot proves zero aggregate ownership. Successful unload clears actual
+loaded execution facts but preserves resolution and selection.
 
 ## Memory and persistence
 
@@ -91,8 +91,10 @@ model remains.
 Exact version 1 remains readable as CPU, with zero legacy device bytes mapped to
 Automatic and nonzero bytes to Limit. New writes are version 2, fresh empty
 repository defaults are valid, and unavailable persisted CUDA is not migrated.
-`LAM1` model records remain version 1 and continue to persist source scalar only;
-execution scalar is device-dependent loaded-state evidence and is not persisted.
+`LAM1` model records are written as version 2 with optional configuration-declared
+scalar metadata. Exact version 1 records remain readable in memory as present
+configuration declarations. Per-tensor inventory, execution scalar, device, and cache
+paths are not persisted.
 
 ## Completion and chat
 

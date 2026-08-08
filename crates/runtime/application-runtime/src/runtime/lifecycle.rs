@@ -52,7 +52,7 @@ impl ApplicationRuntime {
                     self.shutdown_control.record_inference_disconnect();
                     self.state.disconnect_inference();
                     self.release_incompatible_model_cleanup();
-                    self.retained_load_cleanup = None;
+                    self.retained_model_cleanup = None;
                     self.handle_generation_runtime_disconnected();
                     if matches!(
                         self.state.activity(),
@@ -67,7 +67,7 @@ impl ApplicationRuntime {
         if let Some(event) = self.retry_incompatible_model_cleanup() {
             return Some(event);
         }
-        if let Some(event) = self.retry_retained_load_cleanup_inspection() {
+        if let Some(event) = self.retry_retained_model_cleanup_inspection() {
             return Some(event);
         }
         self.pump_generation_event()
@@ -131,7 +131,7 @@ impl ApplicationRuntime {
                 self.shutdown_control.record_inference_disconnect();
                 self.state.disconnect_inference();
                 self.release_incompatible_model_cleanup();
-                self.retained_load_cleanup = None;
+                self.retained_model_cleanup = None;
                 Err(ApplicationError::RuntimeDisconnected)
             }
         }
@@ -151,10 +151,7 @@ impl ApplicationRuntime {
             }
             RuntimeEvent::Snapshot {
                 ticket, runtime, ..
-            } => {
-                self.process_retained_load_cleanup_snapshot(*ticket, runtime);
-                None
-            }
+            } => self.process_retained_model_cleanup_snapshot(*ticket, runtime),
             RuntimeEvent::Shutdown { .. }
             | RuntimeEvent::RequestStarted { .. }
             | RuntimeEvent::PrefillCompleted { .. }

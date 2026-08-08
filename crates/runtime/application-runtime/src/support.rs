@@ -3,8 +3,7 @@
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use candle_backend::CandleScalarType;
-use domain_contracts::MemoryBudget;
+use domain_contracts::{MemoryBudget, ScalarType};
 use hf_hub_adapter::{ArtifactScalarType, HubClientConfiguration};
 use host_runtime::ThreadPanicked;
 use inference_runtime::{HostedRuntimeConfiguration, RuntimeLimits};
@@ -179,7 +178,9 @@ pub fn stored_settings(preferences: &ApplicationPreferences) -> ApplicationSetti
     }
 }
 
-pub const fn application_source_scalar_type(value: ArtifactScalarType) -> ApplicationScalarType {
+pub const fn application_configuration_declared_scalar_type(
+    value: ArtifactScalarType,
+) -> ApplicationScalarType {
     match value {
         ArtifactScalarType::F32 => ApplicationScalarType::F32,
         ArtifactScalarType::F16 => ApplicationScalarType::F16,
@@ -187,11 +188,11 @@ pub const fn application_source_scalar_type(value: ArtifactScalarType) -> Applic
     }
 }
 
-pub const fn candle_source_scalar_type(value: ApplicationScalarType) -> CandleScalarType {
+pub const fn domain_scalar_type(value: ApplicationScalarType) -> ScalarType {
     match value {
-        ApplicationScalarType::F32 => CandleScalarType::F32,
-        ApplicationScalarType::F16 => CandleScalarType::F16,
-        ApplicationScalarType::Bf16 => CandleScalarType::Bf16,
+        ApplicationScalarType::F32 => ScalarType::F32,
+        ApplicationScalarType::F16 => ScalarType::F16,
+        ApplicationScalarType::Bf16 => ScalarType::Bf16,
     }
 }
 
@@ -206,7 +207,9 @@ pub const fn application_scalar_type(
     }
 }
 
-pub const fn stored_source_scalar_type(value: ArtifactScalarType) -> StoredScalarType {
+pub const fn stored_configuration_declared_scalar_type(
+    value: ArtifactScalarType,
+) -> StoredScalarType {
     match value {
         ArtifactScalarType::F32 => StoredScalarType::F32,
         ArtifactScalarType::F16 => StoredScalarType::F16,

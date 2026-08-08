@@ -16,9 +16,19 @@ pub enum ApplicationFailureKind {
     Tokenizer,
     /// Persistent state could not be read or written.
     Storage,
-    /// Backend model-source construction failed.
+    /// Backend model-source construction failed before lower admission.
     ModelSource,
-    /// Inference runtime rejected or failed an operation.
+    /// Immutable artifacts or their format-neutral layout are unsupported.
+    UnsupportedArtifact,
+    /// Application or lower-runtime memory admission rejected a model load.
+    MemoryAdmission,
+    /// Model preparation or materialization failed after resolution.
+    ModelLoad,
+    /// Failed-load resources remain owned while cleanup is pending or exhausted.
+    RetainedCleanup,
+    /// A successful lower load receipt contradicted stable application compatibility facts.
+    IncompatibleReceipt,
+    /// Inference runtime rejected or failed an operation outside model loading.
     Inference,
     /// A host worker or bounded output accumulator failed.
     Worker,
@@ -194,8 +204,6 @@ pub enum ApplicationError {
         /// Maximum token positions available.
         available: u64,
     },
-    /// The resolved configuration does not declare a supported source scalar type.
-    UnknownScalarType,
     /// Visible artifact selection changed after immutable artifact resolution.
     SelectionChanged,
     /// Device selection is locked by active or retained runtime ownership.
@@ -314,9 +322,6 @@ impl Display for ApplicationError {
                 formatter,
                 "generation requires {required} token positions but model context provides \
                  {available}"
-            ),
-            Self::UnknownScalarType => formatter.write_str(
-                "model configuration does not declare a supported floating-point source scalar type",
             ),
             Self::SelectionChanged => formatter.write_str(
                 "the complete model selection changed after resolution; resolve the current \

@@ -6,12 +6,12 @@ use std::time::Duration;
 use domain_contracts::{
     BackendFailure, BackendFailureKind, BackendId, BackendSequence, CapabilitySet,
     DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind, ExecutionDevice,
-    LoadConfiguration, LoadError, LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint,
+    FailedLoad, LoadConfiguration, LoadError, LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint,
     ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError, ModelHandle, ModelId,
     ModelLoader, ModelMetadata, PrefillBufferRequirements, PrefillInput, PrefillOutcome,
-    PreparedDecodeBuffers, PreparedPrefillBuffers, QuantizationFormat, RequestId, ScalarType,
-    SequenceConfiguration, SequenceError, SequenceId, SequencePlan, SequenceState,
-    SynchronizationError,
+    PreparedDecodeBuffers, PreparedLoad, PreparedPrefillBuffers, QuantizationFormat, RequestId,
+    ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceError, SequenceId, SequencePlan,
+    SequenceState, SynchronizationError,
 };
 use host_runtime::spawn_named;
 use inference_runtime::{
@@ -39,6 +39,10 @@ struct TestLoader {
 struct TestCounts {
     model_drops: AtomicUsize,
     unload_attempts: AtomicUsize,
+}
+
+struct TestPrepared {
+    plan: LoadPlan,
 }
 
 struct TestModel {
@@ -73,36 +77,50 @@ impl BackendSequence for TestSequence {
     }
 }
 
+impl PreparedLoad for TestPrepared {
+    fn plan(&self) -> &LoadPlan {
+        &self.plan
+    }
+
+    fn cleanup(&mut self) -> Result<(), SynchronizationError> {
+        Ok(())
+    }
+}
+
 impl ModelLoader for TestLoader {
     type Source = TestSource;
+    type Prepared = TestPrepared;
     type Model = TestModel;
 
     fn inspect(&self, _source: &Self::Source) -> Result<ModelDescriptor, LoadError> {
         Ok(descriptor())
     }
 
-    fn plan_load(
-        &self,
-        source: &Self::Source,
-        _configuration: &LoadConfiguration,
-    ) -> Result<LoadPlan, LoadError> {
-        let descriptor = self.inspect(source)?;
-        Ok(LoadPlan {
-            descriptor,
-            execution_scalar_type: ScalarType::F32,
-            expected_footprint: descriptor.estimated_footprint,
-        })
-    }
-
-    fn load(
+    fn prepare_load(
         &mut self,
         source: &Self::Source,
         configuration: &LoadConfiguration,
-    ) -> Result<Self::Model, LoadError> {
+    ) -> Result<Self::Prepared, LoadError> {
+        let descriptor = self.inspect(source)?;
+        Ok(TestPrepared {
+            plan: LoadPlan {
+                accepted_configuration: *configuration,
+                descriptor,
+                execution_scalar_type: ScalarType::F32,
+                expected_footprint: descriptor.estimated_footprint,
+                loading_peak_footprint: descriptor.estimated_footprint,
+            },
+        })
+    }
+
+    fn load_prepared(
+        &mut self,
+        prepared: Self::Prepared,
+    ) -> Result<Self::Model, FailedLoad<Self::Prepared>> {
         Ok(TestModel {
-            handle: configuration.handle,
-            execution_device: configuration.execution_device,
-            descriptor: self.inspect(source)?,
+            handle: prepared.plan.accepted_configuration.handle,
+            execution_device: prepared.plan.accepted_configuration.execution_device,
+            descriptor: prepared.plan.descriptor,
             fail_unload: self.fail_unload,
             counts: Arc::clone(&self.counts),
         })
@@ -454,7 +472,8 @@ fn descriptor() -> ModelDescriptor {
         backend: BACKEND_ID,
         metadata: ModelMetadata {
             architecture: ModelArchitecture::Llama,
-            scalar_type: ScalarType::F32,
+            configuration_declared_scalar_type: Some(ScalarType::F32),
+            observed_tensor_scalar_types: ScalarTypeSet::from_scalar(ScalarType::F32),
             quantization: QuantizationFormat::None,
             vocabulary_size: 4,
             context_length: 16,

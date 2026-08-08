@@ -324,7 +324,7 @@ fn generation_submission_message(
         || "the loaded model".to_owned(),
         |loaded| {
             format!(
-                "{} on actual device {}",
+                "{} on execution device {}",
                 engine_label(loaded.engine()),
                 device_label(loaded.device())
             )
@@ -484,6 +484,10 @@ pub(super) fn apply_event(window: &AppWindow, event: ApplicationEvent) {
         }
         ApplicationEvent::ModelLoadFailed { failure } => {
             window.set_status_text(format!("Model load failed: {failure}").into());
+        }
+        ApplicationEvent::ModelCleanupPending { exhausted, failure } => {
+            let state = if exhausted { "exhausted" } else { "pending" };
+            window.set_status_text(format!("Model cleanup {state}: {failure}").into());
         }
         ApplicationEvent::ModelCompatibilityFailed { failure } => {
             window.set_status_text(format!("Model compatibility check failed: {failure}").into());

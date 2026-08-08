@@ -14,6 +14,7 @@ const MODEL_MAGIC: [u8; 4] = *b"LAM1";
 const SETTINGS_VERSION_V1: u16 = 1;
 const SETTINGS_VERSION_V2: u16 = 2;
 const MODEL_VERSION_V1: u16 = 1;
+const MODEL_VERSION_V2: u16 = 2;
 const SETTINGS_TABLE: TableDefinition<&str, &[u8]> =
     TableDefinition::new("application_settings_v1");
 const MODELS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("model_catalogue_v1");
@@ -79,7 +80,7 @@ impl ApplicationSettings {
     }
 }
 
-/// Scalar format selected when loading one catalogue entry.
+/// Scalar value retained from recognized model-configuration metadata.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StoredScalarType {
     /// IEEE-754 32-bit floating point.
@@ -99,8 +100,11 @@ pub struct ModelRecord {
     pub repository: String,
     /// Branch, tag, reference, or commit.
     pub revision: String,
-    /// Scalar format requested from the backend.
-    pub scalar_type: StoredScalarType,
+    /// Optional scalar metadata declared by immutable model configuration.
+    ///
+    /// This is producer intent only. It does not describe per-tensor inventory or
+    /// the scalar type selected for execution.
+    pub configuration_declared_scalar_type: Option<StoredScalarType>,
     /// Last successful use in Unix milliseconds, supplied by the application.
     pub last_used_unix_milliseconds: u64,
 }
@@ -158,7 +162,7 @@ pub enum StorageError {
     InvalidAcceleratorMemoryPolicyTag(u8),
     /// Persisted accelerator-memory limit is invalid.
     InvalidAcceleratorMemoryLimit(u64),
-    /// Persisted scalar code is unknown.
+    /// Persisted configuration-declared scalar metadata code is unknown.
     InvalidScalarType(u8),
     /// Bytes remained after a complete versioned record was decoded.
     TrailingBytes,
@@ -205,7 +209,10 @@ impl Display for StorageError {
                 )
             }
             Self::InvalidScalarType(code) => {
-                write!(formatter, "unknown persistent scalar type: {code}")
+                write!(
+                    formatter,
+                    "unknown persistent configuration-declared scalar type: {code}"
+                )
             }
             Self::TrailingBytes => formatter.write_str("persistent record contains trailing bytes"),
         }
@@ -291,7 +298,7 @@ impl RedbStorage {
         decode_settings(bytes.as_slice()).map(Some)
     }
 
-    /// Atomically inserts or replaces one model catalogue entry.
+    /// Atomically inserts or replaces one model catalogue entry as `LAM1` version 2.
     ///
     /// # Errors
     ///
@@ -510,14 +517,15 @@ fn decode_settings_v2(decoder: &mut Decoder<'_>) -> Result<ApplicationSettings, 
 fn encode_model(record: &ModelRecord) -> Result<Vec<u8>, StorageError> {
     let mut output = Vec::new();
     output.extend_from_slice(&MODEL_MAGIC);
-    output.extend_from_slice(&MODEL_VERSION_V1.to_le_bytes());
+    output.extend_from_slice(&MODEL_VERSION_V2.to_le_bytes());
     encode_string(&mut output, &record.name)?;
     encode_string(&mut output, &record.repository)?;
     encode_string(&mut output, &record.revision)?;
-    output.push(match record.scalar_type {
-        StoredScalarType::F32 => 0,
-        StoredScalarType::F16 => 1,
-        StoredScalarType::Bf16 => 2,
+    output.push(match record.configuration_declared_scalar_type {
+        Some(StoredScalarType::F32) => 0,
+        Some(StoredScalarType::F16) => 1,
+        Some(StoredScalarType::Bf16) => 2,
+        None => 3,
     });
     output.extend_from_slice(&record.last_used_unix_milliseconds.to_le_bytes());
     Ok(output)
@@ -525,24 +533,52 @@ fn encode_model(record: &ModelRecord) -> Result<Vec<u8>, StorageError> {
 
 fn decode_model(bytes: &[u8]) -> Result<ModelRecord, StorageError> {
     let (mut decoder, version) = Decoder::new(bytes, MODEL_MAGIC)?;
-    if version != MODEL_VERSION_V1 {
-        return Err(StorageError::UnsupportedVersion(version));
-    }
-    let record = ModelRecord {
-        name: decoder.string()?,
-        repository: decoder.string()?,
-        revision: decoder.string()?,
-        scalar_type: match decoder.u8()? {
-            0 => StoredScalarType::F32,
-            1 => StoredScalarType::F16,
-            2 => StoredScalarType::Bf16,
-            code => return Err(StorageError::InvalidScalarType(code)),
-        },
-        last_used_unix_milliseconds: decoder.u64()?,
+    let record = match version {
+        MODEL_VERSION_V1 => decode_model_v1(&mut decoder)?,
+        MODEL_VERSION_V2 => decode_model_v2(&mut decoder)?,
+        version => return Err(StorageError::UnsupportedVersion(version)),
     };
     decoder.finish()?;
     record.validate()?;
     Ok(record)
+}
+
+fn decode_model_v1(decoder: &mut Decoder<'_>) -> Result<ModelRecord, StorageError> {
+    Ok(ModelRecord {
+        name: decoder.string()?,
+        repository: decoder.string()?,
+        revision: decoder.string()?,
+        configuration_declared_scalar_type: Some(decode_stored_scalar_type(decoder.u8()?)?),
+        last_used_unix_milliseconds: decoder.u64()?,
+    })
+}
+
+fn decode_model_v2(decoder: &mut Decoder<'_>) -> Result<ModelRecord, StorageError> {
+    let name = decoder.string()?;
+    let repository = decoder.string()?;
+    let revision = decoder.string()?;
+    let configuration_declared_scalar_type = match decoder.u8()? {
+        3 => None,
+        code => Some(decode_stored_scalar_type(code)?),
+    };
+    let last_used_unix_milliseconds = decoder.u64()?;
+
+    Ok(ModelRecord {
+        name,
+        repository,
+        revision,
+        configuration_declared_scalar_type,
+        last_used_unix_milliseconds,
+    })
+}
+
+fn decode_stored_scalar_type(code: u8) -> Result<StoredScalarType, StorageError> {
+    match code {
+        0 => Ok(StoredScalarType::F32),
+        1 => Ok(StoredScalarType::F16),
+        2 => Ok(StoredScalarType::Bf16),
+        code => Err(StorageError::InvalidScalarType(code)),
+    }
 }
 
 fn validate_non_empty(value: &str, field: Field) -> Result<(), StorageError> {

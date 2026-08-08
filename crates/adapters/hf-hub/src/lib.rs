@@ -95,8 +95,11 @@ pub struct ResolvedSafetensorsLlamaArtifacts {
     pub revision: String,
     /// Immutable Hub commit returned by repository inspection.
     pub commit: String,
-    /// Scalar type declared by the cached model configuration, when recognized.
-    pub declared_scalar_type: Option<ArtifactScalarType>,
+    /// Optional scalar metadata declared by immutable model configuration.
+    ///
+    /// This is producer-intent evidence only. It does not describe tensor-header
+    /// homogeneity or the scalar selected for backend execution.
+    pub configuration_declared_scalar_type: Option<ArtifactScalarType>,
     /// Cached model configuration.
     pub config_path: PathBuf,
     /// Cached serialized tokenizer.
@@ -274,7 +277,8 @@ impl HubClient {
         };
 
         let config_path = resolve_file(&repository, commit.as_str(), CONFIG_FILE)?;
-        let declared_scalar_type = read_declared_scalar_type(config_path.as_path())?;
+        let configuration_declared_scalar_type =
+            read_configuration_declared_scalar_type(config_path.as_path())?;
         let tokenizer_path = resolve_file(&repository, commit.as_str(), TOKENIZER_FILE)?;
         let mut weight_paths = Vec::with_capacity(weight_filenames.len());
         for filename in weight_filenames {
@@ -289,7 +293,7 @@ impl HubClient {
             repository: reference.repository.clone(),
             revision: reference.revision.clone(),
             commit,
-            declared_scalar_type,
+            configuration_declared_scalar_type,
             config_path,
             tokenizer_path,
             weight_paths,
@@ -310,15 +314,28 @@ struct ModelConfiguration {
     torch_dtype: Option<String>,
 }
 
-fn read_declared_scalar_type(path: &Path) -> Result<Option<ArtifactScalarType>, HubError> {
+fn read_configuration_declared_scalar_type(
+    path: &Path,
+) -> Result<Option<ArtifactScalarType>, HubError> {
     let bytes = fs::read(path).map_err(HubError::ReadConfiguration)?;
-    let configuration: ModelConfiguration =
-        serde_json::from_slice(bytes.as_slice()).map_err(HubError::InvalidConfiguration)?;
+    parse_configuration_declared_scalar_type(bytes.as_slice())
+        .map_err(HubError::InvalidConfiguration)
+}
+
+fn parse_configuration_declared_scalar_type(
+    bytes: &[u8],
+) -> Result<Option<ArtifactScalarType>, serde_json::Error> {
+    let configuration: ModelConfiguration = serde_json::from_slice(bytes)?;
     Ok(configuration
         .dtype
         .as_deref()
-        .or(configuration.torch_dtype.as_deref())
-        .and_then(parse_scalar_type))
+        .and_then(parse_scalar_type)
+        .or_else(|| {
+            configuration
+                .torch_dtype
+                .as_deref()
+                .and_then(parse_scalar_type)
+        }))
 }
 
 fn parse_scalar_type(value: &str) -> Option<ArtifactScalarType> {
@@ -437,7 +454,7 @@ fn resolve_file(
 mod tests {
     use super::{
         ArtifactScalarType, HubClientConfiguration, direct_weights, indexed_weights,
-        parse_scalar_type,
+        parse_configuration_declared_scalar_type, parse_scalar_type,
     };
     use std::collections::BTreeSet;
 
@@ -500,6 +517,48 @@ mod tests {
         assert_eq!(parse_scalar_type("HALF"), Some(ArtifactScalarType::F16));
         assert_eq!(parse_scalar_type(" bf16 "), Some(ArtifactScalarType::Bf16));
         assert_eq!(parse_scalar_type("float8_e4m3fn"), None);
+    }
+
+    #[test]
+    fn configuration_parser_recognizes_modern_and_legacy_declarations()
+    -> Result<(), serde_json::Error> {
+        assert_eq!(
+            parse_configuration_declared_scalar_type(br#"{"dtype":"bfloat16"}"#)?,
+            Some(ArtifactScalarType::Bf16)
+        );
+        assert_eq!(
+            parse_configuration_declared_scalar_type(br#"{"torch_dtype":"float16"}"#)?,
+            Some(ArtifactScalarType::F16)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn configuration_parser_retains_absent_declaration() -> Result<(), serde_json::Error> {
+        assert_eq!(parse_configuration_declared_scalar_type(br"{}")?, None);
+        assert_eq!(
+            parse_configuration_declared_scalar_type(br#"{"dtype":null,"torch_dtype":null}"#)?,
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn configuration_parser_prefers_recognized_dtype_then_legacy_fallback()
+    -> Result<(), serde_json::Error> {
+        assert_eq!(
+            parse_configuration_declared_scalar_type(
+                br#"{"dtype":"bfloat16","torch_dtype":"float16"}"#
+            )?,
+            Some(ArtifactScalarType::Bf16)
+        );
+        assert_eq!(
+            parse_configuration_declared_scalar_type(
+                br#"{"dtype":"float8_e4m3fn","torch_dtype":"float16"}"#
+            )?,
+            Some(ArtifactScalarType::F16)
+        );
+        Ok(())
     }
 
     #[test]

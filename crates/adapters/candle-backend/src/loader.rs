@@ -28,8 +28,8 @@ use crate::failure::{
     CODE_HEADER_BOUNDS, CODE_HEADER_DECODE, CODE_LOAD_SYNCHRONIZE, CODE_MODEL_LOAD,
     CODE_MODEL_LOAD_PANIC, CODE_NUMERIC_OVERFLOW, CODE_PARTIAL_LOAD_SYNCHRONIZE, CODE_PAYLOAD_READ,
     CODE_PREPARED_PAYLOAD_CHANGED, CODE_REQUIRED_TENSOR, CODE_TENSOR_MATERIALIZE,
-    CODE_TENSOR_TRANSFER, CODE_UNSUPPORTED_SCALAR, CODE_UNSUPPORTED_TENSOR_DTYPE,
-    CODE_WEIGHT_METADATA, candle_cuda_failure_kind, failure,
+    CODE_TENSOR_TRANSFER, CODE_UNSUPPORTED_SCALAR, CODE_WEIGHT_METADATA, candle_cuda_failure_kind,
+    failure,
 };
 use crate::model::{CandleLlamaModel, CandleLlamaModelParameters};
 use crate::source::CandleLlamaSource;
@@ -844,14 +844,8 @@ fn inspect_weight_shards(
             .try_reserve_exact(parsed.tensors.len())
             .map_err(|_| host_memory_failure(backend, CODE_HEADER_ALLOCATION))?;
         for (name, info) in parsed.tensors {
-            let source_dtype =
-                SourceTensorDType::from_safetensors(info.dtype).ok_or_else(|| {
-                    LoadError::Backend(failure(
-                        backend,
-                        BackendFailureKind::Unsupported,
-                        CODE_UNSUPPORTED_TENSOR_DTYPE,
-                    ))
-                })?;
+            let source_dtype = SourceTensorDType::from_safetensors(info.dtype)
+                .ok_or(LoadError::UnsupportedFormat)?;
             let element_count = checked_element_count(backend, &info.shape)?;
             let source_bytes = element_count
                 .checked_mul(source_dtype.bytes_per_element())

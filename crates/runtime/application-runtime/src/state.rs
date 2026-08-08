@@ -31,7 +31,7 @@ pub struct ResolvedModel {
     selection: ModelSelection,
     identity: ImmutableModelIdentity,
     vocabulary_size: u32,
-    source_scalar_type: Option<ApplicationScalarType>,
+    configuration_declared_scalar_type: Option<ApplicationScalarType>,
     chat_compatibility: ChatCompatibility,
 }
 
@@ -40,14 +40,14 @@ impl ResolvedModel {
         selection: ModelSelection,
         identity: ImmutableModelIdentity,
         vocabulary_size: u32,
-        source_scalar_type: Option<ApplicationScalarType>,
+        configuration_declared_scalar_type: Option<ApplicationScalarType>,
         chat_compatibility: ChatCompatibility,
     ) -> Self {
         Self {
             selection,
             identity,
             vocabulary_size,
-            source_scalar_type,
+            configuration_declared_scalar_type,
             chat_compatibility,
         }
     }
@@ -88,16 +88,13 @@ impl ResolvedModel {
         self.vocabulary_size
     }
 
-    /// Returns source scalar metadata declared by immutable model configuration.
+    /// Returns optional scalar metadata declared by immutable model configuration.
+    ///
+    /// This producer-intent evidence neither describes tensor-header homogeneity nor
+    /// determines the scalar type selected later for execution.
     #[must_use]
-    pub const fn source_scalar_type(&self) -> Option<ApplicationScalarType> {
-        self.source_scalar_type
-    }
-
-    /// Returns whether this resolution contains sufficient source evidence for loading.
-    #[must_use]
-    pub const fn is_loadable(&self) -> bool {
-        self.source_scalar_type.is_some()
+    pub const fn configuration_declared_scalar_type(&self) -> Option<ApplicationScalarType> {
+        self.configuration_declared_scalar_type
     }
 
     /// Returns explicit prompt-rendering and termination compatibility.
@@ -120,7 +117,6 @@ pub struct LoadedModel {
     selection: ModelSelection,
     identity: ImmutableModelIdentity,
     device: ApplicationDevice,
-    source_scalar_type: ApplicationScalarType,
     execution_scalar_type: ApplicationScalarType,
     vocabulary_size: u32,
     maximum_context_tokens: u32,
@@ -137,7 +133,6 @@ impl LoadedModel {
         selection: ModelSelection,
         identity: ImmutableModelIdentity,
         device: ApplicationDevice,
-        source_scalar_type: ApplicationScalarType,
         execution_scalar_type: ApplicationScalarType,
         vocabulary_size: u32,
         maximum_context_tokens: u32,
@@ -148,7 +143,6 @@ impl LoadedModel {
             selection,
             identity,
             device,
-            source_scalar_type,
             execution_scalar_type,
             vocabulary_size,
             maximum_context_tokens,
@@ -196,12 +190,6 @@ impl LoadedModel {
     #[must_use]
     pub const fn identity(&self) -> &ImmutableModelIdentity {
         &self.identity
-    }
-
-    /// Returns configuration-declared source scalar metadata validated against the loaded descriptor.
-    #[must_use]
-    pub const fn source_scalar_type(&self) -> ApplicationScalarType {
-        self.source_scalar_type
     }
 
     /// Returns the actual execution scalar type verified from E0's load receipt.
@@ -472,9 +460,10 @@ impl ApplicationState {
             && self.selected_device_memory_budget_available()
             && self.loaded.is_none()
             && self.generation.is_none()
-            && self.resolved.as_ref().is_some_and(|resolved| {
-                resolved.is_loadable() && resolved.matches_selection(selection)
-            })
+            && self
+                .resolved
+                .as_ref()
+                .is_some_and(|resolved| resolved.matches_selection(selection))
     }
 
     /// Returns whether completion or compatible chat generation may start against the resident model.

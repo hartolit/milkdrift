@@ -4,11 +4,11 @@ Thin Slint presentation adapter over `application-runtime` (E1).
 
 ## Supported local model flow
 
-The frontend accepts a Hugging Face repository and revision as E1's device-independent `ModelSelection`. E1 resolves immutable Safetensors artifacts for Candle execution and reports artifact/source/format/source scalar/tokenizer/identity/compatibility facts without attaching a device.
+The frontend accepts a Hugging Face repository and revision as E1's device-independent `ModelSelection`. E1 resolves immutable Safetensors artifacts for Candle execution and reports artifact/source/format, optional configuration-declared scalar metadata, tokenizer, identity, and compatibility facts without attaching a device.
 
 CPU is the fresh-install default. A compact device `ComboBox` presents E1's explicit CPU/CUDA catalogue. Rust owns stable `ApplicationDevice` identity/index mapping, so labels are never parsed for semantics. Unavailable devices have a distinct label; persisted unavailable CUDA remains selected and visible, and neither Slint nor E1 falls back to CPU.
 
-Selection enabled state comes from E1's `can_select_device` lifecycle policy, and load enabled state comes from E1's selected-device availability/lifecycle state. The UI presents the selected device independently, a resolved-source summary containing only the source scalar, and a loaded-execution summary containing explicit Source scalar, Execution scalar, and Actual device facts verified through E0's receipt. Source and execution scalar are never inferred from the device: a BF16 source may execute as F32 on CPU or remain BF16 on supported CUDA. Unload clears the loaded execution facts while the selected device remains unchanged. Repository and revision inputs remain locked while a lifecycle operation is busy or a model is loaded.
+Selection enabled state comes from E1's `can_select_device` lifecycle policy, and load enabled state comes from E1's selected-device availability/lifecycle state. The UI presents the selected device independently, a resolved-artifact summary containing optional configuration-declared scalar metadata, and a loaded-execution summary containing only the Execution scalar and Execution device facts verified through E0's receipt. A configuration declaration is producer-intent metadata, not a claim that source tensors are homogeneous and not an execution fact. Unload clears the loaded execution facts while the selected device remains unchanged. Repository and revision inputs remain locked while a lifecycle operation is busy or a model is loaded.
 
 ## Generation presentation
 

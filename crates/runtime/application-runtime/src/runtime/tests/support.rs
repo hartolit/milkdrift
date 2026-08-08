@@ -33,13 +33,38 @@ static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(super) type TestResult<T = ()> = Result<T, String>;
 
-pub(super) const fn retryable_cleanup_failure() -> RuntimeError {
+pub(super) const fn retryable_failed_load_cleanup_failure() -> RuntimeError {
     RuntimeError::CleanupFailed(CleanupFailureReport::new(
-        RuntimeOperation::ModelAdmission,
-        FailureClass::BackendContract,
+        RuntimeOperation::ModelLoad,
+        FailureClass::Load,
+        RuntimeOperation::FailedLoadCleanup,
+        FailureClass::Synchronization,
+    ))
+}
+
+pub(super) const fn retryable_model_unload_cleanup_failure() -> RuntimeError {
+    RuntimeError::CleanupFailed(CleanupFailureReport::new(
+        RuntimeOperation::ModelUnload,
+        FailureClass::Completion,
         RuntimeOperation::ModelUnload,
         FailureClass::Synchronization,
     ))
+}
+
+pub(super) const fn exhausted_failed_load_cleanup_failure() -> RuntimeError {
+    RuntimeError::CleanupRetryExhausted(CleanupRetryState {
+        resource: CleanupResource::FailedLoad {
+            model_id: ModelId::new(1),
+        },
+        failure: CleanupFailureReport::new(
+            RuntimeOperation::ModelLoad,
+            FailureClass::Load,
+            RuntimeOperation::FailedLoadCleanup,
+            FailureClass::Synchronization,
+        ),
+        attempts: 3,
+        maximum_attempts: 3,
+    })
 }
 
 pub(super) const fn terminal_cleanup_failure() -> RuntimeError {
@@ -168,13 +193,29 @@ pub(super) fn resolve_fixture_with(
     commit: &str,
     tokenizer_filename: &str,
 ) -> TestResult<(ModelSelection, ResolvedModel)> {
+    resolve_fixture_with_declaration(
+        runtime,
+        repository,
+        commit,
+        tokenizer_filename,
+        Some(ArtifactScalarType::F32),
+    )
+}
+
+pub(super) fn resolve_fixture_with_declaration(
+    runtime: &mut ApplicationRuntime,
+    repository: &str,
+    commit: &str,
+    tokenizer_filename: &str,
+    configuration_declared_scalar_type: Option<ArtifactScalarType>,
+) -> TestResult<(ModelSelection, ResolvedModel)> {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let candle = manifest.join("../inference-runtime/tests/fixtures/candle-llama");
     let artifacts = ResolvedSafetensorsLlamaArtifacts {
         repository: repository.to_owned(),
         revision: REVISION.to_owned(),
         commit: commit.to_owned(),
-        declared_scalar_type: Some(ArtifactScalarType::F32),
+        configuration_declared_scalar_type,
         config_path: canonical(candle.join("config.json"))?,
         tokenizer_path: canonical(manifest.join("tests/fixtures").join(tokenizer_filename))?,
         weight_paths: vec![canonical(candle.join("model.safetensors"))?],
@@ -190,8 +231,11 @@ pub(super) fn resolve_fixture_with(
             assert_eq!(model.engine(), ApplicationEngine::Candle);
             assert_eq!(model.source(), ApplicationSource::HuggingFaceHub);
             assert_eq!(model.format(), ApplicationModelFormat::Safetensors);
-            assert_eq!(model.source_scalar_type(), Some(ApplicationScalarType::F32));
-            assert!(model.is_loadable());
+            assert_eq!(
+                model.configuration_declared_scalar_type(),
+                configuration_declared_scalar_type
+                    .map(crate::support::application_configuration_declared_scalar_type)
+            );
             assert_eq!(model.identity().repository(), repository);
             assert_eq!(model.identity().commit(), commit);
             Ok((selection, model))
@@ -215,6 +259,7 @@ pub(super) fn load_fixture_with(
             event,
             ApplicationEvent::ModelLoaded { .. }
                 | ApplicationEvent::ModelLoadFailed { .. }
+                | ApplicationEvent::ModelCleanupPending { .. }
                 | ApplicationEvent::ModelCompatibilityFailed { .. }
         )
     })?;
@@ -229,7 +274,6 @@ pub(super) fn load_fixture_with(
                 Some(expected_device)
             );
             assert_eq!(model.format(), ApplicationModelFormat::Safetensors);
-            assert_eq!(model.source_scalar_type(), ApplicationScalarType::F32);
             assert_eq!(model.execution_scalar_type(), ApplicationScalarType::F32);
             assert_eq!(model.identity().repository(), repository);
             assert_eq!(model.identity().commit(), commit);

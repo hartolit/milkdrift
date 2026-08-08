@@ -251,7 +251,10 @@ impl ModelSelection {
     }
 }
 
-/// Scalar representation supported by the Candle/Safetensors application path.
+/// Scalar category used by application-level configuration metadata or execution facts.
+///
+/// The containing field defines provenance. This type alone never means that every
+/// serialized tensor has the same scalar representation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApplicationScalarType {
     /// IEEE-754 32-bit floating point.

@@ -184,8 +184,7 @@ fn unsupported_tensor_dtype_fails_before_device_initialization() -> TestResult {
 
     assert!(matches!(
         loader.prepare_load(&source, &configuration),
-        Err(LoadError::Backend(failure))
-            if failure.kind == BackendFailureKind::Unsupported
+        Err(LoadError::UnsupportedFormat)
     ));
     Ok(())
 }

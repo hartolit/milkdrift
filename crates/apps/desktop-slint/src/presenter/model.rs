@@ -110,7 +110,11 @@ pub(super) const UNLOADED_MODEL_SUMMARY: &str = "Not loaded.";
 pub(super) fn resolved_model_summary(model: &ResolvedModel) -> String {
     let target = artifact_target_label(model.engine(), model.source(), model.format());
     let identity = immutable_identity_label(model.identity());
-    resolved_model_facts_summary(&target, model.source_scalar_type(), &identity)
+    resolved_model_facts_summary(
+        &target,
+        model.configuration_declared_scalar_type(),
+        &identity,
+    )
 }
 
 pub(super) fn loaded_model_summary(model: &LoadedModel) -> String {
@@ -118,7 +122,6 @@ pub(super) fn loaded_model_summary(model: &LoadedModel) -> String {
     let identity = immutable_identity_label(model.identity());
     loaded_model_facts_summary(
         &target,
-        model.source_scalar_type(),
         model.execution_scalar_type(),
         model.device(),
         &identity,
@@ -127,25 +130,30 @@ pub(super) fn loaded_model_summary(model: &LoadedModel) -> String {
 
 pub(super) fn resolved_model_facts_summary(
     target: &str,
-    source_scalar_type: Option<ApplicationScalarType>,
+    configuration_declared_scalar_type: Option<ApplicationScalarType>,
     identity: &str,
 ) -> String {
-    let source_scalar = source_scalar_type.map_or("Unknown", scalar_type_label);
-    format!("{target} • Source scalar: {source_scalar} • Identity: {identity}")
+    configuration_declared_scalar_type.map_or_else(
+        || format!("{target} • Identity: {identity}"),
+        |scalar_type| {
+            format!(
+                "{target} • Configuration-declared scalar: {} • Identity: {identity}",
+                scalar_type_label(scalar_type)
+            )
+        },
+    )
 }
 
 pub(super) fn loaded_model_facts_summary(
     target: &str,
-    source_scalar_type: ApplicationScalarType,
     execution_scalar_type: ApplicationScalarType,
-    actual_device: ApplicationDevice,
+    execution_device: ApplicationDevice,
     identity: &str,
 ) -> String {
     format!(
-        "{target} • Source scalar: {} • Execution scalar: {} • Actual device: {} • Identity: {identity}",
-        scalar_type_label(source_scalar_type),
+        "{target} • Execution scalar: {} • Execution device: {} • Identity: {identity}",
         scalar_type_label(execution_scalar_type),
-        device_label(actual_device),
+        device_label(execution_device),
     )
 }
 

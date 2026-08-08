@@ -29,7 +29,14 @@ pub enum ApplicationEvent {
         /// Normalized failure.
         failure: ApplicationFailure,
     },
-    /// Tokenizer and model metadata were incompatible and unload was requested.
+    /// A model operation retains lower-owned resources pending explicit cleanup.
+    ModelCleanupPending {
+        /// Whether lower cleanup or application verification/retry policy is exhausted.
+        exhausted: bool,
+        /// Normalized primary-operation and retained-cleanup diagnostic.
+        failure: ApplicationFailure,
+    },
+    /// A successful lower receipt was incompatible and deterministic unload was requested.
     ModelCompatibilityFailed {
         /// Normalized compatibility diagnostic.
         failure: ApplicationFailure,

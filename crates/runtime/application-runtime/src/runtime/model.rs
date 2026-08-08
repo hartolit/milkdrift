@@ -2,7 +2,8 @@
 
 use candle_backend::CandleLlamaSource;
 use domain_contracts::{
-    ExecutionDevice, MemoryBudget, MemoryFootprint, ModelArchitecture, ModelId, QuantizationFormat,
+    BackendFailureKind, CapabilitySet, ExecutionDevice, LoadError, MemoryBudget, MemoryFootprint,
+    ModelArchitecture, ModelId, QuantizationFormat, ScalarType, ScalarTypeSet,
 };
 use hf_hub_adapter::{HubModelReference, ResolvedSafetensorsLlamaArtifacts};
 use hf_tokenizer::HfTokenizer;
@@ -13,10 +14,10 @@ use tokenization::Tokenizer;
 
 use crate::hub_worker::{HubCommand, HubEvent};
 use crate::local::{CANDLE_BACKEND_ID, application_device, execution_device};
-use crate::runtime::retained_cleanup::RetainedLoadCleanup;
+use crate::runtime::retained_cleanup::RetainedModelCleanup;
 use crate::support::{
-    application_scalar_type, application_source_scalar_type, candle_source_scalar_type,
-    hub_failure, model_source_failure, stored_settings, stored_source_scalar_type,
+    application_configuration_declared_scalar_type, application_scalar_type, domain_scalar_type,
+    hub_failure, model_source_failure, stored_configuration_declared_scalar_type, stored_settings,
     unix_milliseconds,
 };
 use crate::{
@@ -30,7 +31,7 @@ const MODEL_ID: ModelId = ModelId::new(1);
 #[derive(Clone, Copy)]
 pub(super) struct LoadAdmission {
     pub(super) ticket: CommandTicket,
-    pub(super) source_scalar_type: ApplicationScalarType,
+    pub(super) configuration_declared_scalar_type: Option<ApplicationScalarType>,
     pub(super) selected_device: ApplicationDevice,
     pub(super) execution_device: ExecutionDevice,
     pub(super) memory_budget: MemoryBudget,
@@ -57,8 +58,8 @@ impl ApplicationRuntime {
     ///
     /// # Errors
     ///
-    /// Returns an error when loading is not currently valid, the complete selection or source
-    /// scalar evidence changed, or the selected inference worker cannot accept the command.
+    /// Returns an error when loading is not currently valid, the complete selection or immutable
+    /// declaration evidence changed, or the selected inference worker cannot accept the command.
     pub fn load_model(&mut self, selection: &ModelSelection) -> Result<(), ApplicationError> {
         self.require_idle()?;
         if self.state.loaded().is_some() {
@@ -75,9 +76,7 @@ impl ApplicationRuntime {
         if !resolved.matches_selection(selection) {
             return Err(ApplicationError::SelectionChanged);
         }
-        let source_scalar_type = resolved
-            .source_scalar_type()
-            .ok_or(ApplicationError::UnknownScalarType)?;
+        let configuration_declared_scalar_type = resolved.configuration_declared_scalar_type();
         let selected_device = self.state.selected_device();
         self.refresh_selected_device()?;
         let requested_execution_device = execution_device(selected_device);
@@ -88,7 +87,7 @@ impl ApplicationRuntime {
         let source = CandleLlamaSource::new(
             artifacts.config_path.clone(),
             artifacts.weight_paths.clone(),
-            candle_source_scalar_type(source_scalar_type),
+            configuration_declared_scalar_type.map(domain_scalar_type),
         )
         .map_err(model_source_failure)?;
         let ticket = self.next_ticket()?;
@@ -100,7 +99,7 @@ impl ApplicationRuntime {
         })?;
         self.pending_load = Some(LoadAdmission {
             ticket,
-            source_scalar_type,
+            configuration_declared_scalar_type,
             selected_device,
             execution_device: requested_execution_device,
             memory_budget: self.memory_budget,
@@ -194,8 +193,8 @@ impl ApplicationRuntime {
             ImmutableModelIdentity::new(artifacts.repository.clone(), artifacts.commit.clone()),
             tokenizer.vocabulary_size(),
             artifacts
-                .declared_scalar_type
-                .map(application_source_scalar_type),
+                .configuration_declared_scalar_type
+                .map(application_configuration_declared_scalar_type),
             chat_compatibility,
         );
         let persistence_warning = self
@@ -234,28 +233,32 @@ impl ApplicationRuntime {
         let receipt = match result {
             Ok(receipt) => receipt,
             Err(error) => {
-                match &error {
+                let retained_cleanup_exhausted = match error {
                     inference_runtime::RuntimeError::CleanupFailed(_) => {
-                        self.retained_load_cleanup = Some(RetainedLoadCleanup::PendingInspection {
-                            submission_attempts: 0,
-                        });
-                        self.state.begin_unloading();
+                        self.retained_model_cleanup =
+                            Some(RetainedModelCleanup::PendingInspection {
+                                submission_attempts: 0,
+                            });
+                        Some(false)
                     }
                     inference_runtime::RuntimeError::CleanupRetryExhausted(_) => {
-                        self.retained_load_cleanup = Some(RetainedLoadCleanup::Exhausted);
-                        self.state.begin_unloading();
+                        self.retained_model_cleanup = Some(RetainedModelCleanup::Exhausted);
+                        Some(true)
                     }
-                    _ => {
-                        self.retained_load_cleanup = None;
-                        self.state.set_idle();
-                    }
+                    _ => None,
+                };
+                if let Some(exhausted) = retained_cleanup_exhausted {
+                    self.state.begin_unloading();
+                    return ApplicationEvent::ModelCleanupPending {
+                        exhausted,
+                        failure: retained_model_load_cleanup_failure(error, exhausted),
+                    };
                 }
+
+                self.retained_model_cleanup = None;
+                self.state.set_idle();
                 return ApplicationEvent::ModelLoadFailed {
-                    failure: ApplicationFailure::from_debug(
-                        ApplicationFailureKind::Inference,
-                        "model load failed",
-                        error,
-                    ),
+                    failure: model_load_failure(error),
                 };
             }
         };
@@ -263,10 +266,6 @@ impl ApplicationRuntime {
             return self.reject_incompatible_model(receipt.handle);
         };
         let descriptor = receipt.descriptor;
-        let Some(source_scalar_type) = application_scalar_type(descriptor.metadata.scalar_type)
-        else {
-            return self.reject_incompatible_model(receipt.handle);
-        };
         let Some(execution_scalar_type) = application_scalar_type(receipt.execution_scalar_type)
         else {
             return self.reject_incompatible_model(receipt.handle);
@@ -274,14 +273,8 @@ impl ApplicationRuntime {
         let Some(actual_device) = application_device(receipt.execution_device) else {
             return self.reject_incompatible_model(receipt.handle);
         };
-        if !self.loaded_compatibility_matches(
-            admission,
-            ticket,
-            &receipt,
-            &resolved,
-            source_scalar_type,
-            actual_device,
-        ) {
+        if !self.loaded_compatibility_matches(admission, ticket, &receipt, &resolved, actual_device)
+        {
             return self.reject_incompatible_model(receipt.handle);
         }
         let loaded = LoadedModel::new(
@@ -289,13 +282,12 @@ impl ApplicationRuntime {
             resolved.selection().clone(),
             resolved.identity().clone(),
             actual_device,
-            source_scalar_type,
             execution_scalar_type,
             descriptor.metadata.vocabulary_size,
             descriptor.capabilities.maximum_context_tokens,
             descriptor.capabilities.maximum_prefill_batch,
         );
-        self.retained_load_cleanup = None;
+        self.retained_model_cleanup = None;
         self.state.set_loaded(loaded.clone());
         ApplicationEvent::ModelLoaded { model: loaded }
     }
@@ -306,7 +298,6 @@ impl ApplicationRuntime {
         ticket: CommandTicket,
         receipt: &inference_runtime::LoadReceipt,
         resolved: &ResolvedModel,
-        source_scalar_type: ApplicationScalarType,
         actual_device: ApplicationDevice,
     ) -> bool {
         let Some(admission) = admission else {
@@ -320,25 +311,41 @@ impl ApplicationRuntime {
         };
         let descriptor = receipt.descriptor;
         let artifact_selection = ModelSelection::new(&artifacts.repository, &artifacts.revision);
-        let artifact_source_scalar_type = artifacts
-            .declared_scalar_type
-            .map(application_source_scalar_type);
-        let Some(execution_scalar_type) = application_scalar_type(receipt.execution_scalar_type)
-        else {
-            return false;
-        };
+        let artifact_configuration_declared_scalar_type = artifacts
+            .configuration_declared_scalar_type
+            .map(application_configuration_declared_scalar_type);
+        let descriptor_configuration_declared_scalar_type =
+            match descriptor.metadata.configuration_declared_scalar_type {
+                None => None,
+                Some(value) => {
+                    let Some(value) = application_scalar_type(value) else {
+                        return false;
+                    };
+                    Some(value)
+                }
+            };
+        let required_operations = CapabilitySet::PREFILL.union(CapabilitySet::INCREMENTAL_DECODE);
 
         admission.ticket == ticket
             && receipt.handle.id == MODEL_ID
-            && admission.source_scalar_type == source_scalar_type
+            && admission.configuration_declared_scalar_type
+                == descriptor_configuration_declared_scalar_type
+            && admission.configuration_declared_scalar_type
+                == resolved.configuration_declared_scalar_type()
+            && admission.configuration_declared_scalar_type
+                == artifact_configuration_declared_scalar_type
             && admission.selected_device == self.state.selected_device()
             && admission.selected_device == actual_device
             && admission.execution_device == receipt.execution_device
             && admission.memory_budget == self.memory_budget
             && Self::load_footprint_matches(admission, receipt.reserved_footprint)
-            && resolved.source_scalar_type() == Some(source_scalar_type)
-            && artifact_source_scalar_type == Some(source_scalar_type)
-            && source_and_execution_scalars_are_coherent(source_scalar_type, execution_scalar_type)
+            && observed_tensor_scalar_types_are_supported(
+                descriptor.metadata.observed_tensor_scalar_types,
+            )
+            && descriptor
+                .capabilities
+                .operations
+                .contains(required_operations)
             && resolved.selection() == &artifact_selection
             && resolved.identity().repository() == artifacts.repository
             && resolved.identity().commit() == artifacts.commit
@@ -358,16 +365,10 @@ impl ApplicationRuntime {
         admission: LoadAdmission,
         footprint: MemoryFootprint,
     ) -> bool {
-        let Some(host_bytes) = footprint
-            .host_weight_bytes
-            .checked_add(footprint.host_working_bytes)
-        else {
+        let Some(host_bytes) = footprint.checked_host_bytes() else {
             return false;
         };
-        let Some(device_bytes) = footprint
-            .device_weight_bytes
-            .checked_add(footprint.device_working_bytes)
-        else {
+        let Some(device_bytes) = footprint.checked_device_bytes() else {
             return false;
         };
         if host_bytes > admission.memory_budget.host_bytes
@@ -395,33 +396,75 @@ impl ApplicationRuntime {
         candidate.default_revision.clone_from(&artifacts.revision);
         self.storage.save_settings(&stored_settings(&candidate))?;
         self.preferences = candidate;
-        let Some(source_scalar_type) = artifacts.declared_scalar_type else {
-            return Ok(());
-        };
         self.storage.upsert_model(&ModelRecord {
             name: format!("{}@{}", artifacts.repository, artifacts.commit),
             repository: artifacts.repository.clone(),
             revision: artifacts.commit.clone(),
-            scalar_type: stored_source_scalar_type(source_scalar_type),
+            configuration_declared_scalar_type: artifacts
+                .configuration_declared_scalar_type
+                .map(stored_configuration_declared_scalar_type),
             last_used_unix_milliseconds: unix_milliseconds(),
         })
     }
 }
 
-const fn source_and_execution_scalars_are_coherent(
-    source_scalar_type: ApplicationScalarType,
-    execution_scalar_type: ApplicationScalarType,
-) -> bool {
-    match source_scalar_type {
-        ApplicationScalarType::F32 => {
-            matches!(execution_scalar_type, ApplicationScalarType::F32)
+const fn observed_tensor_scalar_types_are_supported(observed: ScalarTypeSet) -> bool {
+    let supported = ScalarTypeSet::from_scalar(ScalarType::F32)
+        .union(ScalarTypeSet::from_scalar(ScalarType::F16))
+        .union(ScalarTypeSet::from_scalar(ScalarType::Bf16));
+    !observed.is_empty() && observed.is_subset_of(supported)
+}
+
+fn model_load_failure(error: inference_runtime::RuntimeError) -> ApplicationFailure {
+    let kind = model_load_failure_kind(error);
+    let context = match kind {
+        ApplicationFailureKind::UnsupportedArtifact => "model artifact or layout is unsupported",
+        ApplicationFailureKind::MemoryAdmission => "model load exceeded memory admission",
+        _ => "model preparation or materialization failed",
+    };
+    ApplicationFailure::from_debug(kind, context, error)
+}
+
+const fn model_load_failure_kind(error: inference_runtime::RuntimeError) -> ApplicationFailureKind {
+    match error {
+        inference_runtime::RuntimeError::Load(error) => load_error_failure_kind(error),
+        inference_runtime::RuntimeError::InsufficientMemory { .. } => {
+            ApplicationFailureKind::MemoryAdmission
         }
-        ApplicationScalarType::F16 => {
-            matches!(execution_scalar_type, ApplicationScalarType::F16)
+        inference_runtime::RuntimeError::CleanupFailed(_)
+        | inference_runtime::RuntimeError::CleanupRetryExhausted(_) => {
+            ApplicationFailureKind::RetainedCleanup
         }
-        ApplicationScalarType::Bf16 => matches!(
-            execution_scalar_type,
-            ApplicationScalarType::Bf16 | ApplicationScalarType::F32
-        ),
+        _ => ApplicationFailureKind::ModelLoad,
     }
+}
+
+const fn load_error_failure_kind(error: LoadError) -> ApplicationFailureKind {
+    match error {
+        LoadError::InvalidSource
+        | LoadError::UnsupportedArchitecture
+        | LoadError::UnsupportedFormat
+        | LoadError::CapacityExhausted(_) => ApplicationFailureKind::UnsupportedArtifact,
+        LoadError::InsufficientMemory { .. } => ApplicationFailureKind::MemoryAdmission,
+        LoadError::Backend(failure) => match failure.kind {
+            BackendFailureKind::InvalidModel => ApplicationFailureKind::UnsupportedArtifact,
+            BackendFailureKind::HostMemory | BackendFailureKind::DeviceMemory => {
+                ApplicationFailureKind::MemoryAdmission
+            }
+            _ => ApplicationFailureKind::ModelLoad,
+        },
+        _ => ApplicationFailureKind::ModelLoad,
+    }
+}
+
+fn retained_model_load_cleanup_failure(
+    error: inference_runtime::RuntimeError,
+    exhausted: bool,
+) -> ApplicationFailure {
+    let context = if exhausted {
+        "model load failed and retained cleanup is exhausted"
+    } else {
+        "model load failed and retained cleanup is pending"
+    };
+    ApplicationFailure::from_debug(ApplicationFailureKind::RetainedCleanup, context, error)
 }

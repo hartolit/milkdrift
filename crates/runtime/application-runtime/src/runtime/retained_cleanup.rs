@@ -36,93 +36,121 @@ pub(super) enum IncompatibleModelUnload {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RetainedLoadCleanup {
+pub(super) enum RetainedModelCleanup {
     PendingInspection { submission_attempts: u8 },
     InspectionSubmitted { ticket: CommandTicket },
     Exhausted,
 }
 
 impl ApplicationRuntime {
-    pub(super) fn retry_retained_load_cleanup_inspection(&mut self) -> Option<ApplicationEvent> {
-        let submission_attempts = self
-            .retained_load_cleanup
-            .and_then(|cleanup| match cleanup {
-                RetainedLoadCleanup::PendingInspection {
-                    submission_attempts,
-                } => Some(submission_attempts),
-                RetainedLoadCleanup::InspectionSubmitted { .. }
-                | RetainedLoadCleanup::Exhausted => None,
-            })?;
+    pub(super) fn retry_retained_model_cleanup_inspection(&mut self) -> Option<ApplicationEvent> {
+        let submission_attempts =
+            self.retained_model_cleanup
+                .and_then(|cleanup| match cleanup {
+                    RetainedModelCleanup::PendingInspection {
+                        submission_attempts,
+                    } => Some(submission_attempts),
+                    RetainedModelCleanup::InspectionSubmitted { .. }
+                    | RetainedModelCleanup::Exhausted => None,
+                })?;
         let attempt = submission_attempts.saturating_add(1);
         let ticket = match self.next_ticket() {
             Ok(ticket) => ticket,
-            Err(error) => return Some(self.exhaust_load_cleanup_inspection(&error)),
+            Err(error) => return Some(self.exhaust_model_cleanup_inspection(&error)),
         };
         match self.submit_inference(RuntimeCommand::Snapshot { ticket }) {
             Ok(()) => {
-                self.retained_load_cleanup =
-                    Some(RetainedLoadCleanup::InspectionSubmitted { ticket });
+                self.retained_model_cleanup =
+                    Some(RetainedModelCleanup::InspectionSubmitted { ticket });
                 None
             }
             Err(ApplicationError::RuntimeBusy)
                 if attempt < MAXIMUM_LOAD_CLEANUP_INSPECTION_SUBMISSION_ATTEMPTS =>
             {
-                self.retained_load_cleanup = Some(RetainedLoadCleanup::PendingInspection {
+                self.retained_model_cleanup = Some(RetainedModelCleanup::PendingInspection {
                     submission_attempts: attempt,
                 });
                 None
             }
             Err(ApplicationError::RuntimeDisconnected) => {
-                self.retained_load_cleanup = None;
+                self.retained_model_cleanup = None;
                 if self.state.activity() == ApplicationActivity::Unloading {
                     self.state.set_idle();
                 }
                 Some(ApplicationEvent::RuntimeDisconnected)
             }
-            Err(error) => Some(self.exhaust_load_cleanup_inspection(&error)),
+            Err(error) => Some(self.exhaust_model_cleanup_inspection(&error)),
         }
     }
 
-    fn exhaust_load_cleanup_inspection(&mut self, error: &ApplicationError) -> ApplicationEvent {
-        self.retained_load_cleanup = Some(RetainedLoadCleanup::Exhausted);
+    fn exhaust_model_cleanup_inspection(&mut self, error: &ApplicationError) -> ApplicationEvent {
+        self.retained_model_cleanup = Some(RetainedModelCleanup::Exhausted);
         self.state.begin_unloading();
-        ApplicationEvent::ModelLoadFailed {
+        ApplicationEvent::ModelCleanupPending {
+            exhausted: true,
             failure: ApplicationFailure::new(
-                ApplicationFailureKind::Inference,
+                ApplicationFailureKind::RetainedCleanup,
                 format!(
-                    "retained model-load cleanup could not be inspected; device selection remains locked: {error}"
+                    "retained model cleanup could not be inspected; device selection remains locked: {error}"
                 ),
             ),
         }
     }
 
-    pub(super) fn process_retained_load_cleanup_snapshot(
+    pub(super) fn process_retained_model_cleanup_snapshot(
         &mut self,
         ticket: CommandTicket,
         snapshot: &inference_runtime::RuntimeSnapshot,
-    ) {
+    ) -> Option<ApplicationEvent> {
         if !matches!(
-            self.retained_load_cleanup,
-            Some(RetainedLoadCleanup::InspectionSubmitted { ticket: expected }) if expected == ticket
+            self.retained_model_cleanup,
+            Some(RetainedModelCleanup::InspectionSubmitted { ticket: expected }) if expected == ticket
         ) {
-            return;
+            return None;
         }
         let ownership_released = snapshot.loaded_models == 0
             && snapshot.active_requests == 0
             && snapshot.generation_workspaces == 0
             && snapshot.pending_cleanup_models == 0
             && snapshot.pending_cleanup_sequences == 0
+            && snapshot.exhausted_cleanup_models == 0
+            && snapshot.exhausted_cleanup_sequences == 0
+            && snapshot.maintenance_error.is_none()
             && snapshot.reserved_footprint == MemoryFootprint::default()
             && snapshot.reserved_generation_workspace == MemoryFootprint::default();
         if ownership_released {
-            self.retained_load_cleanup = None;
+            self.retained_model_cleanup = None;
+            self.release_incompatible_model_cleanup();
             if self.state.activity() == ApplicationActivity::Unloading {
                 self.state.set_idle();
             }
-        } else {
-            self.retained_load_cleanup = Some(RetainedLoadCleanup::Exhausted);
-            self.state.begin_unloading();
+            return None;
         }
+
+        let cleanup_is_still_retryable = snapshot.active_requests == 0
+            && snapshot.generation_workspaces == 0
+            && (snapshot.pending_cleanup_models > 0 || snapshot.pending_cleanup_sequences > 0)
+            && snapshot.exhausted_cleanup_models == 0
+            && snapshot.exhausted_cleanup_sequences == 0
+            && snapshot.maintenance_error.is_none()
+            && snapshot.reserved_generation_workspace == MemoryFootprint::default();
+        if cleanup_is_still_retryable {
+            self.retained_model_cleanup = Some(RetainedModelCleanup::PendingInspection {
+                submission_attempts: 0,
+            });
+            self.state.begin_unloading();
+            return None;
+        }
+
+        self.retained_model_cleanup = Some(RetainedModelCleanup::Exhausted);
+        self.state.begin_unloading();
+        Some(ApplicationEvent::ModelCleanupPending {
+            exhausted: true,
+            failure: ApplicationFailure::new(
+                ApplicationFailureKind::RetainedCleanup,
+                "retained model cleanup is exhausted or lower ownership facts are incompatible; device selection remains locked",
+            ),
+        })
     }
 
     pub(super) fn reject_incompatible_model(&mut self, handle: ModelHandle) -> ApplicationEvent {
@@ -130,8 +158,8 @@ impl ApplicationRuntime {
         self.resolved_artifacts = None;
         self.tokenizer = None;
         let failure = ApplicationFailure {
-            kind: ApplicationFailureKind::Inference,
-            message: "loaded-model compatibility failed because resolved identity, model handle, descriptor, tokenizer, source scalar, execution scalar, selected device, actual device, or reserved footprint evidence differs; deterministic unload was requested".to_owned(),
+            kind: ApplicationFailureKind::IncompatibleReceipt,
+            message: "loaded-model compatibility failed because immutable identity, model handle, descriptor, tokenizer, optional configuration declaration, observed scalar classification, execution facts, capabilities, or reserved footprint evidence differs; deterministic unload was requested".to_owned(),
         };
         self.incompatible_model_cleanup = Some(IncompatibleModelCleanup {
             handle,
@@ -145,15 +173,18 @@ impl ApplicationRuntime {
 
         match self.try_submit_incompatible_model_unload() {
             Ok(()) => ApplicationEvent::ModelCompatibilityFailed { failure },
+            Err(ApplicationError::RuntimeDisconnected)
+                if self.incompatible_model_cleanup.is_none() =>
+            {
+                self.state.set_idle();
+                ApplicationEvent::RuntimeDisconnected
+            }
             Err(error) => {
-                if self.incompatible_model_cleanup.is_none() {
-                    self.state.set_idle();
-                }
-                ApplicationEvent::ModelLoadFailed {
+                let exhausted = self.incompatible_unload_retry_exhausted();
+                ApplicationEvent::ModelCleanupPending {
+                    exhausted,
                     failure: Self::incompatible_unload_submission_failure(
-                        &failure,
-                        &error,
-                        self.incompatible_unload_retry_exhausted(),
+                        &failure, &error, exhausted,
                     ),
                 }
             }
@@ -182,13 +213,17 @@ impl ApplicationRuntime {
                 }
                 Some(ApplicationEvent::RuntimeDisconnected)
             }
-            Err(error) => Some(ApplicationEvent::ModelUnloadFailed {
-                failure: Self::incompatible_unload_submission_failure(
-                    &compatibility_failure,
-                    &error,
-                    self.incompatible_unload_retry_exhausted(),
-                ),
-            }),
+            Err(error) => {
+                let exhausted = self.incompatible_unload_retry_exhausted();
+                Some(ApplicationEvent::ModelCleanupPending {
+                    exhausted,
+                    failure: Self::incompatible_unload_submission_failure(
+                        &compatibility_failure,
+                        &error,
+                        exhausted,
+                    ),
+                })
+            }
         }
     }
 
@@ -222,7 +257,7 @@ impl ApplicationRuntime {
             Err(error) => {
                 if let Some(cleanup) = self.incompatible_model_cleanup.as_mut() {
                     let failure = ApplicationFailure {
-                        kind: ApplicationFailureKind::Inference,
+                        kind: ApplicationFailureKind::RetainedCleanup,
                         message: format!(
                             "automatic incompatible-model unload submission attempt {attempt}/{MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS} failed: {error}"
                         ),
@@ -265,7 +300,7 @@ impl ApplicationRuntime {
             "automatic unload submission will be retried"
         };
         ApplicationFailure {
-            kind: ApplicationFailureKind::Inference,
+            kind: ApplicationFailureKind::RetainedCleanup,
             message: format!("{compatibility_failure}; {disposition}: {error}"),
         }
     }
@@ -300,6 +335,37 @@ impl ApplicationRuntime {
                     }
                 }
             },
+            Err(
+                error @ (inference_runtime::RuntimeError::CleanupFailed(_)
+                | inference_runtime::RuntimeError::CleanupRetryExhausted(_)),
+            ) => {
+                let exhausted = matches!(
+                    error,
+                    inference_runtime::RuntimeError::CleanupRetryExhausted(_)
+                );
+                self.retained_model_cleanup = Some(if exhausted {
+                    RetainedModelCleanup::Exhausted
+                } else {
+                    RetainedModelCleanup::PendingInspection {
+                        submission_attempts: 0,
+                    }
+                });
+                self.state.clear_loaded();
+                self.state.begin_unloading();
+                let context = if exhausted {
+                    "model unload failed and retained cleanup is exhausted"
+                } else {
+                    "model unload failed and retained cleanup is pending"
+                };
+                ApplicationEvent::ModelCleanupPending {
+                    exhausted,
+                    failure: ApplicationFailure::from_debug(
+                        ApplicationFailureKind::RetainedCleanup,
+                        context,
+                        error,
+                    ),
+                }
+            }
             Err(error) => {
                 self.state.set_idle();
                 ApplicationEvent::ModelUnloadFailed {
@@ -325,7 +391,7 @@ impl ApplicationRuntime {
         match result {
             Ok(receipt) if expected_handle != Some(receipt.handle) => {
                 let failure = ApplicationFailure {
-                    kind: ApplicationFailureKind::Inference,
+                    kind: ApplicationFailureKind::RetainedCleanup,
                     message:
                         "automatic incompatible-model unload returned a different model handle"
                             .to_owned(),
@@ -351,7 +417,7 @@ impl ApplicationRuntime {
                     inference_runtime::RuntimeError::CleanupRetryExhausted(_)
                 );
                 let failure = ApplicationFailure::from_debug(
-                    ApplicationFailureKind::Inference,
+                    ApplicationFailureKind::RetainedCleanup,
                     "automatic incompatible-model unload failed",
                     error,
                 );
@@ -372,9 +438,19 @@ impl ApplicationRuntime {
                 last_failure: Some(failure.clone()),
                 retry_exhausted,
             };
+            self.retained_model_cleanup = Some(if retry_exhausted {
+                RetainedModelCleanup::Exhausted
+            } else {
+                RetainedModelCleanup::PendingInspection {
+                    submission_attempts: 0,
+                }
+            });
             self.state.begin_unloading();
         }
-        ApplicationEvent::ModelUnloadFailed { failure }
+        ApplicationEvent::ModelCleanupPending {
+            exhausted: retry_exhausted,
+            failure,
+        }
     }
 
     pub(crate) fn release_incompatible_model_cleanup(&mut self) {

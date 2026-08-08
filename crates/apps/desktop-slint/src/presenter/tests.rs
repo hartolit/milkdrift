@@ -36,9 +36,10 @@ fn repository_and_revision_map_to_model_selection() {
     assert!(summary.contains("Repository: owner/model"));
     assert!(summary.contains("Revision: main"));
     assert!(summary.contains("Selected device: CPU"));
+    assert!(!summary.contains("Configuration-declared scalar"));
     assert!(!summary.contains("Source scalar"));
     assert!(!summary.contains("Execution scalar"));
-    assert!(!summary.contains("Actual device"));
+    assert!(!summary.contains("Execution device"));
 }
 
 #[test]
@@ -130,7 +131,7 @@ fn unavailable_selected_cuda_row_is_retained_at_its_stable_index() {
 }
 
 #[test]
-fn resolved_summary_reports_source_scalar_without_execution_or_device() {
+fn resolved_summary_labels_configuration_declared_scalar() {
     let target = artifact_target_label(
         ApplicationEngine::Candle,
         ApplicationSource::HuggingFaceHub,
@@ -142,35 +143,63 @@ fn resolved_summary_reports_source_scalar_without_execution_or_device() {
         "Hub commit abc123 (owner/model)",
     );
 
-    assert!(resolved.contains("Source scalar: BF16"));
+    assert_eq!(
+        resolved,
+        "Engine: Candle • Source: Hugging Face Hub • Format: Safetensors • Configuration-declared scalar: BF16 • Identity: Hub commit abc123 (owner/model)"
+    );
+    assert!(!resolved.contains("Source scalar"));
     assert!(!resolved.contains("Execution scalar"));
-    assert!(!resolved.contains("Actual device"));
-    assert!(!resolved.contains("CPU"));
-    assert!(!resolved.contains("CUDA"));
+    assert!(!resolved.contains("Execution device"));
 }
 
 #[test]
-fn bf16_source_can_be_presented_as_f32_cpu_execution() {
+fn resolved_summary_omits_absent_configuration_declaration() {
     let target = artifact_target_label(
         ApplicationEngine::Candle,
         ApplicationSource::HuggingFaceHub,
         ApplicationModelFormat::Safetensors,
     );
+    let resolved = resolved_model_facts_summary(&target, None, "Hub commit abc123 (owner/model)");
+
+    assert_eq!(
+        resolved,
+        "Engine: Candle • Source: Hugging Face Hub • Format: Safetensors • Identity: Hub commit abc123 (owner/model)"
+    );
+    assert!(!resolved.contains("scalar"));
+    assert!(!resolved.contains("device"));
+}
+
+#[test]
+fn configuration_declaration_and_loaded_execution_are_presented_independently() {
+    let target = artifact_target_label(
+        ApplicationEngine::Candle,
+        ApplicationSource::HuggingFaceHub,
+        ApplicationModelFormat::Safetensors,
+    );
+    let resolved = resolved_model_facts_summary(
+        &target,
+        Some(ApplicationScalarType::Bf16),
+        "Hub commit abc123 (owner/model)",
+    );
     let loaded = loaded_model_facts_summary(
         &target,
-        ApplicationScalarType::Bf16,
         ApplicationScalarType::F32,
         ApplicationDevice::Cpu,
         "Hub commit abc123 (owner/model)",
     );
 
-    assert!(loaded.contains("Source scalar: BF16"));
-    assert!(loaded.contains("Execution scalar: F32"));
-    assert!(loaded.contains("Actual device: CPU"));
+    assert!(resolved.contains("Configuration-declared scalar: BF16"));
+    assert!(!resolved.contains("Execution scalar"));
+    assert_eq!(
+        loaded,
+        "Engine: Candle • Source: Hugging Face Hub • Format: Safetensors • Execution scalar: F32 • Execution device: CPU • Identity: Hub commit abc123 (owner/model)"
+    );
+    assert!(!loaded.contains("Configuration-declared scalar"));
+    assert!(!loaded.contains("Source scalar"));
 }
 
 #[test]
-fn bf16_source_can_be_presented_as_bf16_cuda_execution() {
+fn loaded_summary_reports_only_bf16_cuda_execution_facts() {
     let target = artifact_target_label(
         ApplicationEngine::Candle,
         ApplicationSource::HuggingFaceHub,
@@ -179,18 +208,18 @@ fn bf16_source_can_be_presented_as_bf16_cuda_execution() {
     let loaded = loaded_model_facts_summary(
         &target,
         ApplicationScalarType::Bf16,
-        ApplicationScalarType::Bf16,
         ApplicationDevice::Cuda { ordinal: 2 },
         "Hub commit abc123 (owner/model)",
     );
 
-    assert!(loaded.contains("Source scalar: BF16"));
     assert!(loaded.contains("Execution scalar: BF16"));
-    assert!(loaded.contains("Actual device: CUDA 2"));
+    assert!(loaded.contains("Execution device: CUDA 2"));
+    assert!(!loaded.contains("Configuration-declared scalar"));
+    assert!(!loaded.contains("Source scalar"));
 }
 
 #[test]
-fn selected_and_actual_loaded_device_formatting_remain_distinct() {
+fn selected_and_loaded_execution_device_formatting_remain_distinct() {
     let selection = map_model_selection("owner/model", "main");
     let selected =
         selected_model_summary(&selection, ApplicationDevice::Cuda { ordinal: 3 }, false);
@@ -201,7 +230,6 @@ fn selected_and_actual_loaded_device_formatting_remain_distinct() {
     );
     let loaded = loaded_model_facts_summary(
         &target,
-        ApplicationScalarType::Bf16,
         ApplicationScalarType::F32,
         ApplicationDevice::Cpu,
         "Hub commit abc123 (owner/model)",
@@ -209,14 +237,14 @@ fn selected_and_actual_loaded_device_formatting_remain_distinct() {
 
     assert!(selected.contains("Selected device: CUDA 3"));
     assert!(selected.contains("Availability: unavailable"));
-    assert!(!selected.contains("Actual device"));
-    assert!(loaded.contains("Actual device: CPU"));
+    assert!(!selected.contains("Execution device"));
+    assert!(loaded.contains("Execution device: CPU"));
     assert!(!loaded.contains("Selected device"));
     assert!(!loaded.contains("CUDA 3"));
 }
 
 #[test]
-fn unload_display_clears_loaded_facts_without_changing_selected_identity() {
+fn unload_display_clears_loaded_execution_facts_without_changing_selected_identity() {
     let selection = map_model_selection("owner/model", "main");
     let selected_before =
         selected_model_summary(&selection, ApplicationDevice::Cuda { ordinal: 3 }, false);
@@ -227,7 +255,6 @@ fn unload_display_clears_loaded_facts_without_changing_selected_identity() {
     );
     let loaded_before = loaded_model_facts_summary(
         &target,
-        ApplicationScalarType::Bf16,
         ApplicationScalarType::F32,
         ApplicationDevice::Cpu,
         "Hub commit abc123 (owner/model)",
@@ -236,7 +263,7 @@ fn unload_display_clears_loaded_facts_without_changing_selected_identity() {
         selected_model_summary(&selection, ApplicationDevice::Cuda { ordinal: 3 }, false);
 
     assert!(loaded_before.contains("Execution scalar: F32"));
-    assert!(loaded_before.contains("Actual device: CPU"));
+    assert!(loaded_before.contains("Execution device: CPU"));
     assert_eq!(UNLOADED_MODEL_SUMMARY, "Not loaded.");
     assert!(!UNLOADED_MODEL_SUMMARY.contains("scalar"));
     assert!(!UNLOADED_MODEL_SUMMARY.contains("device"));

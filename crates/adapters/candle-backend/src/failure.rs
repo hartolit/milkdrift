@@ -26,8 +26,6 @@ pub const CODE_CUDA_INITIALIZATION: u32 = 18;
 pub const CODE_CUDA_DISCOVERY: u32 = 19;
 pub const CODE_LOGITS_TRANSFER: u32 = 20;
 pub const CODE_UNSUPPORTED_SCALAR: u32 = 21;
-/// Safetensors header encoded a tensor dtype outside the reviewed float subset.
-pub const CODE_UNSUPPORTED_TENSOR_DTYPE: u32 = 22;
 /// A Safetensors length prefix, aggregate header bound, offset, or payload bound was invalid.
 pub const CODE_HEADER_BOUNDS: u32 = 23;
 /// A bounded Safetensors header could not be decoded.
