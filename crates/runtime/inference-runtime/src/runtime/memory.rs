@@ -27,11 +27,20 @@ where
     }
 }
 
-pub(super) const fn remaining_budget(limit: MemoryBudget, used: MemoryFootprint) -> MemoryBudget {
-    MemoryBudget {
-        host_bytes: limit.host_bytes.saturating_sub(used.host_bytes()),
-        device_bytes: limit.device_bytes.saturating_sub(used.device_bytes()),
-    }
+pub(super) fn remaining_budget(
+    limit: MemoryBudget,
+    used: MemoryFootprint,
+) -> Result<MemoryBudget, RuntimeError> {
+    let used_host = used
+        .checked_host_bytes()
+        .ok_or(RuntimeError::MemoryArithmeticOverflow)?;
+    let used_device = used
+        .checked_device_bytes()
+        .ok_or(RuntimeError::MemoryArithmeticOverflow)?;
+    Ok(MemoryBudget {
+        host_bytes: limit.host_bytes.saturating_sub(used_host),
+        device_bytes: limit.device_bytes.saturating_sub(used_device),
+    })
 }
 
 pub(super) fn admit_footprint(
@@ -40,7 +49,9 @@ pub(super) fn admit_footprint(
     budget: MemoryBudget,
 ) -> Result<MemoryFootprint, RuntimeError> {
     let next = checked_add_footprint(current, additional)?;
-    let required_host = next.host_bytes();
+    let required_host = next
+        .checked_host_bytes()
+        .ok_or(RuntimeError::MemoryArithmeticOverflow)?;
     if required_host > budget.host_bytes {
         return Err(RuntimeError::InsufficientMemory {
             kind: MemoryKind::Host,
@@ -48,7 +59,9 @@ pub(super) fn admit_footprint(
             available_bytes: budget.host_bytes,
         });
     }
-    let required_device = next.device_bytes();
+    let required_device = next
+        .checked_device_bytes()
+        .ok_or(RuntimeError::MemoryArithmeticOverflow)?;
     if required_device > budget.device_bytes {
         return Err(RuntimeError::InsufficientMemory {
             kind: MemoryKind::Device,

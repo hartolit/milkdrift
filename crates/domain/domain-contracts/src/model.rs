@@ -20,7 +20,7 @@ pub enum ModelArchitecture {
     Other(u32),
 }
 
-/// Scalar representation used for configuration-declared source metadata or backend execution tensors.
+/// Scalar representation used for configuration declarations, observed tensors, or execution.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ScalarType {
@@ -36,6 +36,73 @@ pub enum ScalarType {
     U8,
     /// Backend-defined scalar representation.
     Other(u16),
+}
+
+/// Fixed-size set of scalar categories observed or accepted by a portable boundary.
+///
+/// Every [`ScalarType::Other`] value occupies the same `Other` category bit. The
+/// six low-order bits returned by [`Self::bits`] correspond, in order, to
+/// [`ScalarType::F32`], [`ScalarType::F16`], [`ScalarType::Bf16`],
+/// [`ScalarType::I8`], [`ScalarType::U8`], and [`ScalarType::Other`].
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct ScalarTypeSet(u8);
+
+impl ScalarTypeSet {
+    /// Empty scalar-type set.
+    pub const EMPTY: Self = Self(0);
+
+    /// Creates a set containing one scalar category.
+    #[must_use]
+    pub const fn from_scalar(scalar_type: ScalarType) -> Self {
+        Self(Self::scalar_bit(scalar_type))
+    }
+
+    /// Returns the raw category bits.
+    #[must_use]
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+
+    /// Returns whether the set contains no scalar categories.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Returns whether the set contains the category for `scalar_type`.
+    #[must_use]
+    pub const fn contains(self, scalar_type: ScalarType) -> bool {
+        (self.0 & Self::scalar_bit(scalar_type)) != 0
+    }
+
+    /// Inserts the category for `scalar_type`.
+    pub const fn insert(&mut self, scalar_type: ScalarType) {
+        self.0 |= Self::scalar_bit(scalar_type);
+    }
+
+    /// Returns the union of two scalar-type sets.
+    #[must_use]
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    /// Returns whether every category in this set is present in `other`.
+    #[must_use]
+    pub const fn is_subset_of(self, other: Self) -> bool {
+        (self.0 & other.0) == self.0
+    }
+
+    const fn scalar_bit(scalar_type: ScalarType) -> u8 {
+        match scalar_type {
+            ScalarType::F32 => 1 << 0,
+            ScalarType::F16 => 1 << 1,
+            ScalarType::Bf16 => 1 << 2,
+            ScalarType::I8 => 1 << 3,
+            ScalarType::U8 => 1 << 4,
+            ScalarType::Other(_) => 1 << 5,
+        }
+    }
 }
 
 /// Stable quantization description.
@@ -148,26 +215,49 @@ pub struct ModelCapabilities {
     pub maximum_prefill_batch: u32,
 }
 
-/// Planned or accounted memory footprint in bytes.
+/// Deterministic tensor ownership and headroom for a named accounting phase.
 ///
-/// This value is an admission and accounting quantity, not a measurement of
-/// physical memory currently allocated or available on a device.
+/// The field or operation carrying a footprint names its phase, such as final
+/// post-load ownership or the loading transaction peak. A footprint includes
+/// only deterministic tensor ownership and explicitly planned deterministic
+/// tensor headroom for that phase. It excludes allocator bookkeeping and
+/// fragmentation, driver or device-context allocations, process RSS, and
+/// serialized headers, configuration, and other metadata.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MemoryFootprint {
-    /// Host-resident model weights.
+    /// Host-resident weight tensor ownership.
     pub host_weight_bytes: u64,
-    /// Device-resident model weights.
+    /// Device-resident weight tensor ownership.
     pub device_weight_bytes: u64,
-    /// Host working memory excluding weights.
+    /// Host tensor working memory and deterministic headroom excluding weights.
     pub host_working_bytes: u64,
-    /// Device working memory excluding weights and sequence caches.
+    /// Device tensor working memory and deterministic headroom excluding weights and caches.
     pub device_working_bytes: u64,
-    /// Sequence cache bytes required per token.
+    /// Sequence-cache tensor bytes required per token.
     pub cache_bytes_per_token: u64,
 }
 
 impl MemoryFootprint {
+    /// Returns the exact non-cache host byte total, or `None` on overflow.
+    ///
+    /// Exact admission must use this checked total rather than [`Self::host_bytes`].
+    #[must_use]
+    pub const fn checked_host_bytes(self) -> Option<u64> {
+        self.host_weight_bytes.checked_add(self.host_working_bytes)
+    }
+
+    /// Returns the exact non-cache device byte total, or `None` on overflow.
+    ///
+    /// Exact admission must use this checked total rather than [`Self::device_bytes`].
+    #[must_use]
+    pub const fn checked_device_bytes(self) -> Option<u64> {
+        self.device_weight_bytes
+            .checked_add(self.device_working_bytes)
+    }
+
     /// Returns the non-cache host byte total using saturating arithmetic.
+    ///
+    /// This convenience total is suitable for bounded reporting, not exact admission.
     #[must_use]
     pub const fn host_bytes(self) -> u64 {
         self.host_weight_bytes
@@ -175,6 +265,8 @@ impl MemoryFootprint {
     }
 
     /// Returns the non-cache device byte total using saturating arithmetic.
+    ///
+    /// This convenience total is suitable for bounded reporting, not exact admission.
     #[must_use]
     pub const fn device_bytes(self) -> u64 {
         self.device_weight_bytes
@@ -205,13 +297,19 @@ pub struct MemoryBudget {
 pub struct ModelMetadata {
     /// Model architecture family.
     pub architecture: ModelArchitecture,
-    /// Source scalar metadata declared by immutable model configuration.
+    /// Scalar type declared by immutable model configuration, when recognized.
     ///
-    /// This metadata is used by the current compatibility policy, but it does
-    /// not prove that every serialized tensor has this dtype. An observed tensor
-    /// dtype encoded in Safetensors and the scalar selected later for execution
-    /// are separate facts.
-    pub scalar_type: ScalarType,
+    /// This is evidence about producer intent only. It does not prove tensor
+    /// homogeneity, report any scalar type read from serialized tensor headers,
+    /// or select the scalar type used for backend execution. `None` means that
+    /// inspection found no recognized, trustworthy configuration declaration.
+    pub configuration_declared_scalar_type: Option<ScalarType>,
+    /// Scalar categories read directly from serialized tensor headers.
+    ///
+    /// This set records observed artifact facts and can contain multiple scalar
+    /// categories. It is independent of both the optional configuration
+    /// declaration and the scalar type later selected for backend execution.
+    pub observed_tensor_scalar_types: ScalarTypeSet,
     /// Weight quantization format.
     pub quantization: QuantizationFormat,
     /// Vocabulary size and required logits length.
@@ -229,7 +327,7 @@ pub struct ModelDescriptor {
     pub metadata: ModelMetadata,
     /// Backend capability report.
     pub capabilities: ModelCapabilities,
-    /// Device-independent estimated accounting footprint.
+    /// Inspection-phase, device-independent deterministic tensor footprint estimate.
     pub estimated_footprint: MemoryFootprint,
 }
 
@@ -244,15 +342,22 @@ pub struct LoadConfiguration {
     pub memory_budget: MemoryBudget,
 }
 
-/// Validated load plan produced before allocating model resources.
+/// Exact transaction plan exposed by a prepared model load.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LoadPlan {
-    /// Model descriptor accepted by the backend, including configuration-declared source scalar metadata.
+    /// Exact caller configuration accepted and bound to this load transaction.
+    pub accepted_configuration: LoadConfiguration,
+    /// Model descriptor accepted by the backend for this transaction.
     pub descriptor: ModelDescriptor,
-    /// Scalar type selected for backend execution tensors.
+    /// Scalar type selected for materialized backend execution tensors.
     pub execution_scalar_type: ScalarType,
-    /// Expected accounting footprint accepted for the load.
+    /// Exact final post-load accounted ownership transferred to the loaded model.
     pub expected_footprint: MemoryFootprint,
+    /// Exact component-wise deterministic tensor peak for this load transaction.
+    ///
+    /// This includes final ownership and transient tensor staging, conversion,
+    /// or duplicate-residency headroom required by the selected loading algorithm.
+    pub loading_peak_footprint: MemoryFootprint,
 }
 
 /// Validated configuration for one inference sequence.

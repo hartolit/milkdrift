@@ -5,7 +5,7 @@ use domain_contracts::{BackendFailure, BackendFailureKind, BackendId};
 pub const CODE_CONFIG_READ: u32 = 1;
 pub const CODE_CONFIG_DECODE: u32 = 2;
 pub const CODE_WEIGHT_METADATA: u32 = 3;
-pub const CODE_WEIGHT_LOAD: u32 = 4;
+
 pub const CODE_DUPLICATE_TENSOR: u32 = 5;
 pub const CODE_MODEL_LOAD: u32 = 6;
 pub const CODE_MODEL_LOAD_PANIC: u32 = 7;
@@ -26,6 +26,28 @@ pub const CODE_CUDA_INITIALIZATION: u32 = 18;
 pub const CODE_CUDA_DISCOVERY: u32 = 19;
 pub const CODE_LOGITS_TRANSFER: u32 = 20;
 pub const CODE_UNSUPPORTED_SCALAR: u32 = 21;
+/// Safetensors header encoded a tensor dtype outside the reviewed float subset.
+pub const CODE_UNSUPPORTED_TENSOR_DTYPE: u32 = 22;
+/// A Safetensors length prefix, aggregate header bound, offset, or payload bound was invalid.
+pub const CODE_HEADER_BOUNDS: u32 = 23;
+/// A bounded Safetensors header could not be decoded.
+pub const CODE_HEADER_DECODE: u32 = 24;
+/// Host allocation for bounded header inspection failed.
+pub const CODE_HEADER_ALLOCATION: u32 = 25;
+/// A required Candle Llama tensor was absent or had the wrong shape.
+pub const CODE_REQUIRED_TENSOR: u32 = 26;
+/// An inspected tensor payload could not be read exactly from its retained file.
+pub const CODE_PAYLOAD_READ: u32 = 27;
+/// A source tensor could not be materialized or converted on CPU.
+pub const CODE_TENSOR_MATERIALIZE: u32 = 28;
+/// A converted CPU tensor could not be transferred to the selected device.
+pub const CODE_TENSOR_TRANSFER: u32 = 29;
+/// A load-time device synchronization failed after materialization began.
+pub const CODE_LOAD_SYNCHRONIZE: u32 = 30;
+/// Retryable synchronization of a failed partial load did not complete.
+pub const CODE_PARTIAL_LOAD_SYNCHRONIZE: u32 = 31;
+/// A retained tensor payload no longer matched the content inspected for its preparation.
+pub const CODE_PREPARED_PAYLOAD_CHANGED: u32 = 32;
 
 pub const fn failure(backend: BackendId, kind: BackendFailureKind, code: u32) -> BackendFailure {
     BackendFailure::new(backend, kind, code)

@@ -9,7 +9,8 @@ use crate::{
 };
 
 use super::{
-    InferenceRuntime, PendingModel, cleanup::cleanup_retention_error, memory::checked_sub_footprint,
+    InferenceRuntime, PendingModel, PendingModelOwner, cleanup::cleanup_retention_error,
+    memory::checked_sub_footprint,
 };
 
 impl<L> InferenceRuntime<L>
@@ -266,7 +267,7 @@ where
             self.pending_models.insert(
                 model_id,
                 PendingModel {
-                    model: slot.model,
+                    owner: PendingModelOwner::Complete(slot.model),
                     footprint: slot.model_footprint,
                     failure: report,
                     attempts: 1,

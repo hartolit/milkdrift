@@ -22,7 +22,10 @@ candle-nn.workspace = true
 candle-transformers.workspace = true
 cudarc = { workspace = true, optional = true }
 domain-contracts.workspace = true
+safetensors.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 
 [lints]
 workspace = true

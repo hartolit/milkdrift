@@ -105,7 +105,7 @@ where
             .map(|state| state.failure)
     }
 
-    /// Returns the complete bounded retry state for one quarantined model.
+    /// Returns the complete bounded retry state for one quarantined model-level owner.
     #[must_use]
     pub fn model_cleanup_state(&self, model_id: ModelId) -> Option<CleanupRetryState> {
         self.pending_models
@@ -113,7 +113,7 @@ where
             .map(|pending| self.model_cleanup_retry_state(model_id, pending))
     }
 
-    /// Returns whether a model is retained only for explicit unload cleanup.
+    /// Returns whether a complete model or failed load is retained for explicit cleanup.
     #[must_use]
     pub fn is_model_cleanup_pending(&self, model_id: ModelId) -> bool {
         self.pending_models.contains_key(&model_id)
@@ -208,10 +208,10 @@ where
     const fn model_cleanup_retry_state(
         &self,
         model_id: ModelId,
-        pending: &PendingModel<L::Model>,
+        pending: &PendingModel<L::Model, L::Prepared>,
     ) -> CleanupRetryState {
         CleanupRetryState {
-            resource: CleanupResource::Model { model_id },
+            resource: pending.owner.cleanup_resource(model_id),
             failure: pending.failure,
             attempts: pending.attempts,
             maximum_attempts: self.maximum_cleanup_attempts(),

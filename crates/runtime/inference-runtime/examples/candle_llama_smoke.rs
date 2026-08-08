@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use candle_backend::{CandleLlamaLoader, CandleLlamaSource, CandleScalarType};
+use candle_backend::{CandleLlamaLoader, CandleLlamaSource};
 use domain_contracts::{
     BackendId, CancellationReason, DeviceId, DeviceKind, ExecutionDevice, FinishReason,
-    MemoryBudget, MemoryFootprint, ModelArchitecture, ModelHandle, ModelId, RequestId,
+    MemoryBudget, MemoryFootprint, ModelArchitecture, ModelHandle, ModelId, RequestId, ScalarType,
     SequenceConfiguration, SequenceId, TokenId, UnloadPolicy,
 };
 use host_runtime::TokenOutputRecordKind;
@@ -180,7 +180,7 @@ impl SmokeConfiguration {
                  {MAXIMUM_PREFILL_TOKENS} tokens"
             )));
         }
-        let source = CandleLlamaSource::new(config_path, vec![weight_path], CandleScalarType::F32)
+        let source = CandleLlamaSource::new(config_path, vec![weight_path], Some(ScalarType::F32))
             .map_err(|error| SmokeError::configuration(error.to_string()))?;
         Ok(Self {
             source,

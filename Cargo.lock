@@ -753,7 +753,10 @@ dependencies = [
  "candle-transformers",
  "cudarc 0.19.8",
  "domain-contracts",
+ "safetensors 0.8.0",
+ "serde",
  "serde_json",
+ "sha2 0.11.0",
 ]
 
 [[package]]

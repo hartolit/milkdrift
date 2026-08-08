@@ -11,8 +11,9 @@ use domain_contracts::{
     MemoryFootprint, ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError,
     ModelGeneration, ModelHandle, ModelId, ModelMetadata, PrefillBufferRequirements,
     PrefillBuffers, PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers,
-    QuantizationFormat, ScalarType, SequenceConfiguration, SequenceError, SequenceId, SequencePlan,
-    SequenceState, SynchronizationError, TokenId, decode_checked, prefill_checked,
+    QuantizationFormat, ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceError,
+    SequenceId, SequencePlan, SequenceState, SynchronizationError, TokenId, decode_checked,
+    prefill_checked,
 };
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, Stats, StatsAlloc};
 
@@ -63,7 +64,8 @@ impl LoadedModel for TestModel {
             backend: BackendId::new(1),
             metadata: ModelMetadata {
                 architecture: ModelArchitecture::Llama,
-                scalar_type: ScalarType::F32,
+                configuration_declared_scalar_type: Some(ScalarType::F32),
+                observed_tensor_scalar_types: ScalarTypeSet::from_scalar(ScalarType::F32),
                 quantization: QuantizationFormat::None,
                 vocabulary_size: METADATA_VOCABULARY_SIZE,
                 context_length: METADATA_CONTEXT_LENGTH,

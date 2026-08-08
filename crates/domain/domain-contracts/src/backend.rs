@@ -12,10 +12,84 @@ use crate::sequence::{
 };
 use crate::{CapacityExhausted, CapacityResource, ModelHandle, SequenceId};
 
+/// Backend-owned preparation for one exact model-load transaction.
+///
+/// A preparation that has not been passed to [`ModelLoader::load_prepared`] is
+/// unmaterialized. If its public plan is rejected, ordinary drop is safe and no
+/// explicit cleanup call is required. After a materialization attempt fails,
+/// the preparation returned as the cleanup owner must instead follow the
+/// retryable [`Self::cleanup`] contract.
+pub trait PreparedLoad: Sized {
+    /// Returns the exact plan bound to this preparation.
+    fn plan(&self) -> &LoadPlan;
+
+    /// Completes explicit cleanup after a failed materialization attempt.
+    ///
+    /// Cleanup is retryable. An error must leave this owner valid, as the sole
+    /// owner of any remaining backend resources, so the caller can try again.
+    /// Success authorizes the caller to drop the owner as fully released.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SynchronizationError`] when cleanup cannot yet complete or
+    /// backend synchronization or resource release fails.
+    fn cleanup(&mut self) -> Result<(), SynchronizationError>;
+}
+
+/// A model-load failure that retains the sole partial-load cleanup owner.
+///
+/// The primary error describes why materialization failed. `cleanup_owner` must
+/// remain reachable until [`PreparedLoad::cleanup`] succeeds; a cleanup failure
+/// leaves it valid for another attempt.
+#[must_use = "a failed load retains a cleanup owner that must be handled"]
+#[derive(Debug)]
+pub struct FailedLoad<P> {
+    /// Primary model-loading error.
+    pub primary: LoadError,
+    /// Sole owner of resources left by the failed materialization attempt.
+    pub cleanup_owner: P,
+}
+
+impl<P> FailedLoad<P> {
+    /// Creates a failed-load result from its primary error and cleanup owner.
+    pub const fn new(primary: LoadError, cleanup_owner: P) -> Self {
+        Self {
+            primary,
+            cleanup_owner,
+        }
+    }
+
+    /// Returns the primary model-loading error.
+    #[must_use]
+    pub const fn primary(&self) -> LoadError {
+        self.primary
+    }
+
+    /// Returns the retained cleanup owner.
+    #[must_use]
+    pub const fn cleanup_owner(&self) -> &P {
+        &self.cleanup_owner
+    }
+
+    /// Returns the retained cleanup owner mutably for a cleanup attempt.
+    #[must_use]
+    pub const fn cleanup_owner_mut(&mut self) -> &mut P {
+        &mut self.cleanup_owner
+    }
+
+    /// Separates the primary error from the retained cleanup owner.
+    #[must_use]
+    pub fn into_parts(self) -> (LoadError, P) {
+        (self.primary, self.cleanup_owner)
+    }
+}
+
 /// Cold-path model loader implemented by one concrete backend adapter.
 pub trait ModelLoader {
     /// Backend-specific model source descriptor.
     type Source;
+    /// Backend-owned exact load preparation.
+    type Prepared: PreparedLoad;
     /// Concrete loaded-model type produced by this loader.
     type Model: LoadedModel;
 
@@ -27,29 +101,38 @@ pub trait ModelLoader {
     /// inspection capacity, or cannot be inspected by the backend.
     fn inspect(&self, source: &Self::Source) -> Result<ModelDescriptor, LoadError>;
 
-    /// Validates configuration and reports resource requirements before loading.
+    /// Creates one exact source-and-configuration-bound load preparation.
+    ///
+    /// The returned preparation exposes the exact plan used for admission. An
+    /// unmaterialized preparation rejected by the caller is ordinary-drop-safe.
+    /// An error must leave no explicit backend ownership created by this
+    /// preparation attempt and therefore returns no cleanup owner.
     ///
     /// # Errors
     ///
-    /// Returns [`LoadError`] when the source or configuration is invalid or
-    /// unsupported, required capacity is unavailable, or backend planning fails.
-    fn plan_load(
-        &self,
-        source: &Self::Source,
-        configuration: &LoadConfiguration,
-    ) -> Result<LoadPlan, LoadError>;
-
-    /// Loads the model according to a previously validated configuration.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LoadError`] when validation or allocation fails, loading is
-    /// cancelled, or the backend cannot load the model.
-    fn load(
+    /// Returns [`LoadError`] when inspection, validation, exact planning, or
+    /// backend preparation fails.
+    fn prepare_load(
         &mut self,
         source: &Self::Source,
         configuration: &LoadConfiguration,
-    ) -> Result<Self::Model, LoadError>;
+    ) -> Result<Self::Prepared, LoadError>;
+
+    /// Consumes and materializes the exact accepted preparation without replanning.
+    ///
+    /// On success, the loaded model owns the plan's final accounted footprint.
+    /// On failure, [`FailedLoad`] returns the primary [`LoadError`] together with
+    /// the exact preparation as the sole cleanup owner; ownership must not be
+    /// discarded or replaced inside error conversion.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FailedLoad`] when validation, allocation, conversion,
+    /// synchronization, cancellation, or backend materialization fails.
+    fn load_prepared(
+        &mut self,
+        prepared: Self::Prepared,
+    ) -> Result<Self::Model, FailedLoad<Self::Prepared>>;
 }
 
 /// Sequence-owned cache and position state that never owns model weights.

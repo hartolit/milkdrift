@@ -8,13 +8,13 @@ use std::time::Duration;
 use domain_contracts::{
     BackendFailure, BackendFailureKind, BackendId, BackendSequence, CancellationReason,
     CapabilitySet, DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind,
-    DrainTimeout, ExecutionDevice, FinishReason, LoadConfiguration, LoadError, LoadPlan,
-    LoadedModel, MemoryBudget, MemoryFootprint, MemoryKind, ModelArchitecture, ModelCapabilities,
-    ModelDescriptor, ModelError, ModelHandle, ModelId, ModelLoader, ModelMetadata, MonotonicMillis,
-    PrefillBufferRequirements, PrefillInput, PrefillOutcome, PreparedDecodeBuffers,
-    PreparedPrefillBuffers, QuantizationFormat, RequestId, ScalarType, SequenceConfiguration,
-    SequenceError, SequenceId, SequencePlan, SequenceState, SynchronizationError, TokenId,
-    UnloadPolicy,
+    DrainTimeout, ExecutionDevice, FailedLoad, FinishReason, LoadConfiguration, LoadError,
+    LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint, MemoryKind, ModelArchitecture,
+    ModelCapabilities, ModelDescriptor, ModelError, ModelHandle, ModelId, ModelLoader,
+    ModelMetadata, MonotonicMillis, PrefillBufferRequirements, PrefillInput, PrefillOutcome,
+    PreparedDecodeBuffers, PreparedLoad, PreparedPrefillBuffers, QuantizationFormat, RequestId,
+    ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceError, SequenceId, SequencePlan,
+    SequenceState, SynchronizationError, TokenId, UnloadPolicy,
 };
 use inference_runtime::{
     CommandTicket, HostedRuntime, HostedRuntimeConfiguration, InferenceRuntime, LoadReceipt,
@@ -35,6 +35,22 @@ struct MockSource {
 
 #[derive(Clone, Copy)]
 struct MockLoader;
+
+struct MockPrepared {
+    source: MockSource,
+    configuration: LoadConfiguration,
+    plan: LoadPlan,
+}
+
+impl PreparedLoad for MockPrepared {
+    fn plan(&self) -> &LoadPlan {
+        &self.plan
+    }
+
+    fn cleanup(&mut self) -> Result<(), SynchronizationError> {
+        Ok(())
+    }
+}
 
 struct MockModel {
     _thread_confined: Rc<()>,
@@ -74,19 +90,23 @@ impl BackendSequence for MockSequence {
 
 impl ModelLoader for MockLoader {
     type Source = MockSource;
+    type Prepared = MockPrepared;
     type Model = MockModel;
 
     fn inspect(&self, source: &Self::Source) -> Result<ModelDescriptor, LoadError> {
         Ok(descriptor(*source))
     }
 
-    fn plan_load(
-        &self,
+    fn prepare_load(
+        &mut self,
         source: &Self::Source,
         configuration: &LoadConfiguration,
-    ) -> Result<LoadPlan, LoadError> {
+    ) -> Result<Self::Prepared, LoadError> {
         let descriptor = self.inspect(source)?;
-        let required = descriptor.estimated_footprint.host_bytes();
+        let required = descriptor
+            .estimated_footprint
+            .checked_host_bytes()
+            .ok_or(LoadError::InvalidSource)?;
         if required > configuration.memory_budget.host_bytes {
             return Err(LoadError::InsufficientMemory {
                 kind: MemoryKind::Host,
@@ -94,26 +114,32 @@ impl ModelLoader for MockLoader {
                 available_bytes: configuration.memory_budget.host_bytes,
             });
         }
-        Ok(LoadPlan {
+        let plan = LoadPlan {
+            accepted_configuration: *configuration,
             descriptor,
             execution_scalar_type: ScalarType::F32,
             expected_footprint: descriptor.estimated_footprint,
+            loading_peak_footprint: descriptor.estimated_footprint,
+        };
+        Ok(MockPrepared {
+            source: *source,
+            configuration: *configuration,
+            plan,
         })
     }
 
-    fn load(
+    fn load_prepared(
         &mut self,
-        source: &Self::Source,
-        configuration: &LoadConfiguration,
-    ) -> Result<Self::Model, LoadError> {
-        let descriptor = self.inspect(source)?;
+        prepared: Self::Prepared,
+    ) -> Result<Self::Model, FailedLoad<Self::Prepared>> {
+        let descriptor = descriptor(prepared.source);
         Ok(MockModel {
             _thread_confined: Rc::new(()),
-            handle: configuration.handle,
-            execution_device: configuration.execution_device,
+            handle: prepared.configuration.handle,
+            execution_device: prepared.configuration.execution_device,
             execution_scalar_type: ScalarType::F32,
             descriptor,
-            accounted_footprint: descriptor.estimated_footprint,
+            accounted_footprint: prepared.plan.expected_footprint,
             unloading: false,
             destroy_failure_consumed: false,
         })
@@ -898,7 +924,8 @@ const fn descriptor(source: MockSource) -> ModelDescriptor {
         backend: BACKEND_ID,
         metadata: ModelMetadata {
             architecture: ModelArchitecture::Llama,
-            scalar_type: ScalarType::F32,
+            configuration_declared_scalar_type: Some(ScalarType::F32),
+            observed_tensor_scalar_types: ScalarTypeSet::from_scalar(ScalarType::F32),
             quantization: QuantizationFormat::None,
             vocabulary_size: source.vocabulary_size,
             context_length: 128,

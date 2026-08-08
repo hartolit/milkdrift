@@ -4,11 +4,13 @@ use std::collections::BTreeMap;
 
 use domain_contracts::{
     BackendSequence, ExecutionDevice, GenerationUsage, LoadedModel, MemoryFootprint,
-    ModelDescriptor, ModelGeneration, ModelHandle, ModelId, ModelLifecycle, ModelLoader, RequestId,
-    ScalarType, SequenceId,
+    ModelDescriptor, ModelGeneration, ModelHandle, ModelId, ModelLifecycle, ModelLoader,
+    PreparedLoad, RequestId, ScalarType, SequenceId, SynchronizationError,
 };
 
-use crate::{CleanupFailureReport, CleanupRetryState, RuntimeError, RuntimeLimits};
+use crate::{
+    CleanupFailureReport, CleanupResource, CleanupRetryState, RuntimeError, RuntimeLimits,
+};
 
 mod admission;
 mod cleanup;
@@ -26,7 +28,7 @@ where
     loader: L,
     limits: RuntimeLimits,
     models: BTreeMap<ModelId, ModelSlot<L::Model>>,
-    pending_models: BTreeMap<ModelId, PendingModel<L::Model>>,
+    pending_models: BTreeMap<ModelId, PendingModel<L::Model, L::Prepared>>,
     request_index: BTreeMap<RequestId, ModelId>,
     sequence_index: BTreeMap<SequenceId, RequestId>,
     pending_request_index: BTreeMap<RequestId, ModelId>,
@@ -60,11 +62,45 @@ where
     cancelled_requests_during_unload: u32,
 }
 
-struct PendingModel<M>
+enum PendingModelOwner<M, P>
 where
     M: LoadedModel,
+    P: PreparedLoad,
 {
-    model: M,
+    Complete(M),
+    FailedLoad(P),
+}
+
+impl<M, P> PendingModelOwner<M, P>
+where
+    M: LoadedModel,
+    P: PreparedLoad,
+{
+    fn cleanup(&mut self) -> Result<(), SynchronizationError> {
+        match self {
+            Self::Complete(model) => model.prepare_unload(),
+            Self::FailedLoad(prepared) => prepared.cleanup(),
+        }
+    }
+
+    const fn cleanup_resource(&self, model_id: ModelId) -> CleanupResource {
+        match self {
+            Self::Complete(_) => CleanupResource::Model { model_id },
+            Self::FailedLoad(_) => CleanupResource::FailedLoad { model_id },
+        }
+    }
+
+    const fn is_complete(&self) -> bool {
+        matches!(self, Self::Complete(_))
+    }
+}
+
+struct PendingModel<M, P>
+where
+    M: LoadedModel,
+    P: PreparedLoad,
+{
+    owner: PendingModelOwner<M, P>,
     footprint: MemoryFootprint,
     failure: CleanupFailureReport,
     attempts: u32,

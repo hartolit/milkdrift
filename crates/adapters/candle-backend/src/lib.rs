@@ -16,6 +16,6 @@ mod model;
 mod source;
 
 pub use device::{CandleDeviceSummary, CudaComputeCapability};
-pub use loader::CandleLlamaLoader;
+pub use loader::{CandleLlamaLoader, CandleLlamaPreparedLoad};
 pub use model::{CandleLlamaModel, CandleLlamaSequence};
-pub use source::{CandleLlamaSource, CandleScalarType, SourceError};
+pub use source::{CandleLlamaSource, SourceError};

@@ -13,6 +13,8 @@ use crate::RuntimeCommand;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RuntimeOperation {
+    /// Materialization of one exact prepared model load.
+    ModelLoad,
     /// Validation after loading a native model.
     ModelAdmission,
     /// Validation after creating a native sequence.
@@ -29,6 +31,8 @@ pub enum RuntimeOperation {
     Cancellation,
     /// Sequence destruction.
     SequenceDestruction,
+    /// Cleanup of resources retained by a failed prepared load.
+    FailedLoadCleanup,
     /// Model unload preparation.
     ModelUnload,
     /// Runtime shutdown.
@@ -102,6 +106,11 @@ pub enum CleanupResource {
     /// One loaded model retained only for unload retry.
     Model {
         /// Logical model identity.
+        model_id: ModelId,
+    },
+    /// One failed prepared load retained only for partial-load cleanup retry.
+    FailedLoad {
+        /// Logical model identity assigned to the failed transaction.
         model_id: ModelId,
     },
     /// One backend sequence retained only for destruction retry.

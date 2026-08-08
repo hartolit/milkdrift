@@ -7,12 +7,12 @@ use std::rc::Rc;
 use domain_contracts::{
     BackendFailure, BackendFailureKind, BackendId, BackendSequence, CancellationReason,
     CapabilitySet, DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind,
-    ExecutionDevice, LoadConfiguration, LoadError, LoadPlan, LoadedModel, MemoryBudget,
+    ExecutionDevice, FailedLoad, LoadConfiguration, LoadError, LoadPlan, LoadedModel, MemoryBudget,
     MemoryFootprint, ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError,
     ModelHandle, ModelId, ModelLoader, ModelMetadata, MonotonicMillis, PrefillBufferRequirements,
-    PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers,
-    QuantizationFormat, RequestId, ScalarType, SequenceConfiguration, SequenceError, SequenceId,
-    SequencePlan, SequenceState, SynchronizationError, UnloadPolicy,
+    PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedLoad, PreparedPrefillBuffers,
+    QuantizationFormat, RequestId, ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceError,
+    SequenceId, SequencePlan, SequenceState, SynchronizationError, UnloadPolicy,
 };
 use inference_runtime::{
     CleanupPoll, CleanupResource, CleanupRetryPolicy, FailureClass, InferenceRuntime, RuntimeError,
@@ -24,7 +24,7 @@ const BACKEND_ID: BackendId = BackendId::new(92);
 type TestResult = Result<(), String>;
 
 #[derive(Clone, Copy, Default)]
-struct Faults(u32);
+struct Faults(u64);
 
 impl Faults {
     const WRONG_MODEL_HANDLE: Self = Self(1 << 0);
@@ -50,6 +50,16 @@ impl Faults {
     const SOURCE_SCALAR_AS_EXECUTION_SCALAR: Self = Self(1 << 20);
     const UNSUPPORTED_ACTUAL_EXECUTION_SCALAR: Self = Self(1 << 21);
     const FAIL_MODEL_CLEANUP_ONCE: Self = Self(1 << 22);
+    const WRONG_ACCEPTED_CONFIGURATION: Self = Self(1 << 23);
+    const EMPTY_OBSERVED_TENSOR_SET: Self = Self(1 << 24);
+    const OVERFLOWING_FINAL_FOOTPRINT: Self = Self(1 << 25);
+    const LOADING_PEAK_BELOW_FINAL: Self = Self(1 << 26);
+    const MISMATCHED_LOADING_CACHE: Self = Self(1 << 27);
+    const FAIL_LOAD: Self = Self(1 << 28);
+    const FAIL_FAILED_LOAD_CLEANUP: Self = Self(1 << 29);
+    const FAIL_FAILED_LOAD_CLEANUP_ONCE: Self = Self(1 << 30);
+    const OVERFLOWING_LOADING_PEAK: Self = Self(1 << 31);
+    const RECLASSIFIED_LOADING_PEAK: Self = Self(1 << 32);
 
     const fn contains(self, fault: Self) -> bool {
         self.0 & fault.0 != 0
@@ -62,8 +72,12 @@ impl Faults {
 
 #[derive(Default)]
 struct CleanupCounts {
+    preparations: Cell<u32>,
     model_loads: Cell<u32>,
     model_cleanups: Cell<u32>,
+    failed_load_cleanups: Cell<u32>,
+    successful_failed_load_cleanups: Cell<u32>,
+    retained_partial_load_bytes: Cell<u64>,
     sequence_creations: Cell<u32>,
     sequence_destructions: Cell<u32>,
 }
@@ -86,6 +100,50 @@ const BF16_SOURCE_WITH_F32_EXECUTION: FaultSource = FaultSource {
 struct FaultLoader {
     faults: Faults,
     counts: Rc<CleanupCounts>,
+}
+
+struct FaultPrepared {
+    plan: LoadPlan,
+    source: FaultSource,
+    faults: Faults,
+    counts: Rc<CleanupCounts>,
+    remaining_cleanup_failures: u32,
+    partial_resources_retained: bool,
+}
+
+impl PreparedLoad for FaultPrepared {
+    fn plan(&self) -> &LoadPlan {
+        &self.plan
+    }
+
+    fn cleanup(&mut self) -> Result<(), SynchronizationError> {
+        self.counts
+            .failed_load_cleanups
+            .set(self.counts.failed_load_cleanups.get().saturating_add(1));
+        if self.faults.contains(Faults::FAIL_FAILED_LOAD_CLEANUP)
+            || self.remaining_cleanup_failures > 0
+        {
+            self.remaining_cleanup_failures = self.remaining_cleanup_failures.saturating_sub(1);
+            return Err(SynchronizationError::Backend(backend_failure(4)));
+        }
+        if !self.partial_resources_retained {
+            return Err(SynchronizationError::InvalidState);
+        }
+        self.partial_resources_retained = false;
+        self.counts.successful_failed_load_cleanups.set(
+            self.counts
+                .successful_failed_load_cleanups
+                .get()
+                .saturating_add(1),
+        );
+        self.counts.retained_partial_load_bytes.set(
+            self.counts
+                .retained_partial_load_bytes
+                .get()
+                .saturating_sub(loading_peak_host_bytes()),
+        );
+        Ok(())
+    }
 }
 
 struct FaultModel {
@@ -125,6 +183,7 @@ impl BackendSequence for FaultSequence {
 
 impl ModelLoader for FaultLoader {
     type Source = FaultSource;
+    type Prepared = FaultPrepared;
     type Model = FaultModel;
 
     fn inspect(&self, source: &Self::Source) -> Result<ModelDescriptor, LoadError> {
@@ -159,31 +218,97 @@ impl ModelLoader for FaultLoader {
                 .maximum_context_tokens
                 .saturating_add(1);
         }
+        if self.faults.contains(Faults::EMPTY_OBSERVED_TENSOR_SET) {
+            descriptor.metadata.observed_tensor_scalar_types = ScalarTypeSet::EMPTY;
+        }
         Ok(descriptor)
     }
 
-    fn plan_load(
-        &self,
-        source: &Self::Source,
-        _configuration: &LoadConfiguration,
-    ) -> Result<LoadPlan, LoadError> {
-        let descriptor = self.inspect(source)?;
-        Ok(LoadPlan {
-            descriptor,
-            execution_scalar_type: source.planned_execution_scalar_type,
-            expected_footprint: descriptor.estimated_footprint,
-        })
-    }
-
-    fn load(
+    fn prepare_load(
         &mut self,
         source: &Self::Source,
         configuration: &LoadConfiguration,
-    ) -> Result<Self::Model, LoadError> {
+    ) -> Result<Self::Prepared, LoadError> {
+        self.counts
+            .preparations
+            .set(self.counts.preparations.get().saturating_add(1));
+        let descriptor = self.inspect(source)?;
+        let mut accepted_configuration = *configuration;
+        if self.faults.contains(Faults::WRONG_ACCEPTED_CONFIGURATION) {
+            accepted_configuration.execution_device.id = DeviceId::new(
+                accepted_configuration
+                    .execution_device
+                    .id
+                    .get()
+                    .saturating_add(1),
+            );
+        }
+        let mut expected_footprint = descriptor.estimated_footprint;
+        if self.faults.contains(Faults::OVERFLOWING_FINAL_FOOTPRINT) {
+            expected_footprint.host_weight_bytes = u64::MAX;
+            expected_footprint.host_working_bytes = 1;
+        }
+        let mut loading_peak_footprint = loading_peak_footprint();
+        if self.faults.contains(Faults::OVERFLOWING_LOADING_PEAK) {
+            loading_peak_footprint.host_weight_bytes = u64::MAX;
+            loading_peak_footprint.host_working_bytes = 1;
+        }
+        if self.faults.contains(Faults::LOADING_PEAK_BELOW_FINAL) {
+            loading_peak_footprint.host_working_bytes = 0;
+        }
+        if self.faults.contains(Faults::MISMATCHED_LOADING_CACHE) {
+            loading_peak_footprint.cache_bytes_per_token = loading_peak_footprint
+                .cache_bytes_per_token
+                .saturating_add(1);
+        }
+        if self.faults.contains(Faults::RECLASSIFIED_LOADING_PEAK) {
+            loading_peak_footprint.host_working_bytes = loading_peak_footprint
+                .host_working_bytes
+                .saturating_add(loading_peak_footprint.host_weight_bytes);
+            loading_peak_footprint.host_weight_bytes = 0;
+        }
+        Ok(FaultPrepared {
+            plan: LoadPlan {
+                accepted_configuration,
+                descriptor,
+                execution_scalar_type: source.planned_execution_scalar_type,
+                expected_footprint,
+                loading_peak_footprint,
+            },
+            source: *source,
+            faults: self.faults,
+            counts: Rc::clone(&self.counts),
+            remaining_cleanup_failures: u32::from(
+                self.faults.contains(Faults::FAIL_FAILED_LOAD_CLEANUP_ONCE),
+            ),
+            partial_resources_retained: false,
+        })
+    }
+
+    fn load_prepared(
+        &mut self,
+        mut prepared: Self::Prepared,
+    ) -> Result<Self::Model, FailedLoad<Self::Prepared>> {
         self.counts
             .model_loads
             .set(self.counts.model_loads.get().saturating_add(1));
-        let mut descriptor = self.inspect(source)?;
+        if self.faults.contains(Faults::FAIL_LOAD) {
+            prepared.partial_resources_retained = true;
+            self.counts.retained_partial_load_bytes.set(
+                self.counts
+                    .retained_partial_load_bytes
+                    .get()
+                    .saturating_add(loading_peak_host_bytes()),
+            );
+            return Err(FailedLoad::new(
+                LoadError::Backend(backend_failure(5)),
+                prepared,
+            ));
+        }
+
+        let source = prepared.source;
+        let configuration = prepared.plan.accepted_configuration;
+        let mut descriptor = prepared.plan.descriptor;
         if self.faults.contains(Faults::MISMATCHED_METADATA) {
             descriptor.metadata.vocabulary_size =
                 descriptor.metadata.vocabulary_size.saturating_add(1);
@@ -210,7 +335,10 @@ impl ModelLoader for FaultLoader {
             .faults
             .contains(Faults::SOURCE_SCALAR_AS_EXECUTION_SCALAR)
         {
-            descriptor.metadata.scalar_type
+            descriptor
+                .metadata
+                .configuration_declared_scalar_type
+                .unwrap_or(source.source_scalar_type)
         } else if self
             .faults
             .contains(Faults::UNSUPPORTED_ACTUAL_EXECUTION_SCALAR)
@@ -221,7 +349,7 @@ impl ModelLoader for FaultLoader {
         } else {
             source.planned_execution_scalar_type
         };
-        let mut accounted_footprint = descriptor.estimated_footprint;
+        let mut accounted_footprint = prepared.plan.expected_footprint;
         if self.faults.contains(Faults::WRONG_MODEL_FOOTPRINT) {
             accounted_footprint.host_working_bytes =
                 accounted_footprint.host_working_bytes.saturating_add(1);
@@ -430,7 +558,13 @@ fn planned_execution_scalar_is_published_independently_from_source_scalar() -> T
     let mut runtime = runtime(Faults::default(), Rc::clone(&counts));
 
     let loaded = load_source(&mut runtime, BF16_SOURCE_WITH_F32_EXECUTION).map_err(debug_error)?;
-    assert_eq!(loaded.descriptor.metadata.scalar_type, ScalarType::Bf16);
+    assert_eq!(
+        loaded
+            .descriptor
+            .metadata
+            .configuration_declared_scalar_type,
+        Some(ScalarType::Bf16)
+    );
     assert_eq!(loaded.execution_scalar_type, ScalarType::F32);
     assert_eq!(
         loaded.execution_device,
@@ -440,7 +574,13 @@ fn planned_execution_scalar_is_published_independently_from_source_scalar() -> T
     let snapshot = runtime
         .model_snapshot(loaded.handle)
         .ok_or_else(|| "loaded model snapshot missing".to_owned())?;
-    assert_eq!(snapshot.descriptor.metadata.scalar_type, ScalarType::Bf16);
+    assert_eq!(
+        snapshot
+            .descriptor
+            .metadata
+            .configuration_declared_scalar_type,
+        Some(ScalarType::Bf16)
+    );
     assert_eq!(snapshot.execution_scalar_type, ScalarType::F32);
     assert_eq!(snapshot.reserved_footprint, model_footprint());
 
@@ -476,7 +616,7 @@ fn wrong_execution_scalar_cleanup_failure_retains_accounting_until_successful_re
     let retained = runtime.snapshot();
     assert_eq!(retained.loaded_models, 0);
     assert_eq!(retained.pending_cleanup_models, 1);
-    assert_eq!(retained.reserved_footprint, model_footprint());
+    assert_eq!(retained.reserved_footprint, loading_peak_footprint());
     assert!(runtime.model_snapshots().is_empty());
     assert!(matches!(
         runtime.model_cleanup_state(ModelId::new(1)),
@@ -568,7 +708,200 @@ fn device_mismatch_cleanup_failure_preserves_primary_error_ownership_and_account
     let snapshot = runtime.snapshot();
     assert_eq!(snapshot.loaded_models, 0);
     assert_eq!(snapshot.pending_cleanup_models, 1);
-    assert_eq!(snapshot.reserved_footprint, model_footprint());
+    assert_eq!(snapshot.reserved_footprint, loading_peak_footprint());
+}
+
+#[test]
+fn exact_preparation_is_consumed_once_without_replanning() -> TestResult {
+    let counts = Rc::new(CleanupCounts::default());
+    let mut runtime = runtime(Faults::default(), Rc::clone(&counts));
+
+    let loaded = load(&mut runtime).map_err(debug_error)?;
+    assert_eq!(counts.preparations.get(), 1);
+    assert_eq!(counts.model_loads.get(), 1);
+    assert_eq!(counts.failed_load_cleanups.get(), 0);
+    assert_eq!(runtime.snapshot().reserved_footprint, model_footprint());
+
+    runtime
+        .unload_model(
+            loaded.handle,
+            UnloadPolicy::RejectIfBusy,
+            MonotonicMillis::new(0),
+        )
+        .map_err(debug_error)?;
+    assert_empty(&runtime);
+    Ok(())
+}
+
+#[test]
+fn invalid_prepared_plans_are_rejected_before_materialization() {
+    for fault in [
+        Faults::WRONG_ACCEPTED_CONFIGURATION,
+        Faults::EMPTY_OBSERVED_TENSOR_SET,
+        Faults::OVERFLOWING_FINAL_FOOTPRINT,
+        Faults::OVERFLOWING_LOADING_PEAK,
+        Faults::LOADING_PEAK_BELOW_FINAL,
+        Faults::MISMATCHED_LOADING_CACHE,
+        Faults::RECLASSIFIED_LOADING_PEAK,
+    ] {
+        let counts = Rc::new(CleanupCounts::default());
+        let mut runtime = runtime(fault, Rc::clone(&counts));
+
+        assert_eq!(
+            load(&mut runtime),
+            Err(RuntimeError::BackendContractViolation)
+        );
+        assert_eq!(counts.preparations.get(), 1);
+        assert_eq!(counts.model_loads.get(), 0);
+        assert_eq!(counts.failed_load_cleanups.get(), 0);
+        assert_eq!(counts.model_cleanups.get(), 0);
+        assert_empty(&runtime);
+    }
+}
+
+#[test]
+fn failed_load_immediate_cleanup_returns_exact_primary_and_restores_accounting() {
+    let counts = Rc::new(CleanupCounts::default());
+    let mut runtime = runtime(Faults::FAIL_LOAD, Rc::clone(&counts));
+
+    assert!(matches!(
+        load(&mut runtime),
+        Err(RuntimeError::Load(LoadError::Backend(failure))) if failure.code == 5
+    ));
+    assert_eq!(counts.preparations.get(), 1);
+    assert_eq!(counts.model_loads.get(), 1);
+    assert_eq!(counts.failed_load_cleanups.get(), 1);
+    assert_eq!(counts.successful_failed_load_cleanups.get(), 1);
+    assert_eq!(counts.retained_partial_load_bytes.get(), 0);
+    assert_empty(&runtime);
+}
+
+#[test]
+fn failed_load_cleanup_failure_retains_owner_and_full_loading_peak() {
+    let counts = Rc::new(CleanupCounts::default());
+    let faults = Faults::FAIL_LOAD.union(Faults::FAIL_FAILED_LOAD_CLEANUP_ONCE);
+    let mut runtime = runtime(faults, Rc::clone(&counts));
+
+    assert!(matches!(
+        load(&mut runtime),
+        Err(RuntimeError::CleanupFailed(report))
+            if report.primary_operation == RuntimeOperation::ModelLoad
+                && report.primary_failure == FailureClass::Load
+                && report.cleanup_operation == RuntimeOperation::FailedLoadCleanup
+                && report.cleanup_failure == FailureClass::Synchronization
+    ));
+    let snapshot = runtime.snapshot();
+    assert_eq!(snapshot.loaded_models, 0);
+    assert_eq!(snapshot.pending_cleanup_models, 1);
+    assert_eq!(snapshot.reserved_footprint, loading_peak_footprint());
+    assert!(runtime.model_snapshots().is_empty());
+    assert!(matches!(
+        runtime.model_cleanup_state(ModelId::new(1)),
+        Some(state)
+            if state.attempts == 1
+                && !state.exhausted()
+                && state.resource
+                    == (CleanupResource::FailedLoad {
+                        model_id: ModelId::new(1),
+                    })
+    ));
+    assert_eq!(counts.failed_load_cleanups.get(), 1);
+    assert_eq!(counts.successful_failed_load_cleanups.get(), 0);
+    assert_eq!(
+        counts.retained_partial_load_bytes.get(),
+        loading_peak_host_bytes()
+    );
+    assert_eq!(
+        load(&mut runtime),
+        Err(RuntimeError::ModelAlreadyLoaded(ModelId::new(1)))
+    );
+}
+
+#[test]
+fn failed_load_cleanup_retry_releases_owner_and_accounting_once() -> TestResult {
+    let counts = Rc::new(CleanupCounts::default());
+    let faults = Faults::FAIL_LOAD.union(Faults::FAIL_FAILED_LOAD_CLEANUP_ONCE);
+    let mut runtime = runtime(faults, Rc::clone(&counts));
+
+    assert!(matches!(
+        load(&mut runtime),
+        Err(RuntimeError::CleanupFailed(_))
+    ));
+    assert!(matches!(
+        runtime.poll_cleanup().map_err(debug_error)?,
+        CleanupPoll::Released(state)
+            if state.attempts == 2
+                && state.resource
+                    == (CleanupResource::FailedLoad {
+                        model_id: ModelId::new(1),
+                    })
+    ));
+    assert_eq!(
+        runtime.poll_cleanup().map_err(debug_error)?,
+        CleanupPoll::Idle
+    );
+    assert_eq!(counts.failed_load_cleanups.get(), 2);
+    assert_eq!(counts.successful_failed_load_cleanups.get(), 1);
+    assert_eq!(counts.retained_partial_load_bytes.get(), 0);
+    assert_empty(&runtime);
+    Ok(())
+}
+
+#[test]
+fn shutdown_releases_retryable_failed_load_without_counting_an_unloaded_model() -> TestResult {
+    let counts = Rc::new(CleanupCounts::default());
+    let faults = Faults::FAIL_LOAD.union(Faults::FAIL_FAILED_LOAD_CLEANUP_ONCE);
+    let mut runtime = runtime(faults, Rc::clone(&counts));
+
+    assert!(matches!(
+        load(&mut runtime),
+        Err(RuntimeError::CleanupFailed(_))
+    ));
+    let receipt = runtime.shutdown().map_err(debug_error)?;
+    assert_eq!(receipt.unloaded_models, 0);
+    assert_eq!(receipt.cancelled_requests, 0);
+    assert_eq!(counts.failed_load_cleanups.get(), 2);
+    assert_eq!(counts.successful_failed_load_cleanups.get(), 1);
+    assert_eq!(counts.retained_partial_load_bytes.get(), 0);
+    assert_empty(&runtime);
+    Ok(())
+}
+
+#[test]
+fn failed_load_cleanup_exhaustion_survives_shutdown_accounted_and_owned() {
+    let counts = Rc::new(CleanupCounts::default());
+    let faults = Faults::FAIL_LOAD.union(Faults::FAIL_FAILED_LOAD_CLEANUP);
+    let mut runtime = runtime_with_cleanup_attempts(faults, Rc::clone(&counts), 3);
+
+    assert!(matches!(
+        load(&mut runtime),
+        Err(RuntimeError::CleanupFailed(_))
+    ));
+    assert!(matches!(
+        runtime.shutdown(),
+        Err(RuntimeError::CleanupRetryExhausted(state))
+            if state.attempts == 3
+                && state.exhausted()
+                && state.resource
+                    == (CleanupResource::FailedLoad {
+                        model_id: ModelId::new(1),
+                    })
+                && state.failure.primary_operation == RuntimeOperation::ModelLoad
+                && state.failure.primary_failure == FailureClass::Load
+                && state.failure.cleanup_operation == RuntimeOperation::FailedLoadCleanup
+    ));
+    assert_eq!(counts.failed_load_cleanups.get(), 3);
+    assert_eq!(counts.successful_failed_load_cleanups.get(), 0);
+    assert_eq!(
+        counts.retained_partial_load_bytes.get(),
+        loading_peak_host_bytes()
+    );
+    let snapshot = runtime.snapshot();
+    assert!(snapshot.shutting_down);
+    assert_eq!(snapshot.loaded_models, 0);
+    assert_eq!(snapshot.pending_cleanup_models, 1);
+    assert_eq!(snapshot.exhausted_cleanup_models, 1);
+    assert_eq!(snapshot.reserved_footprint, loading_peak_footprint());
 }
 
 #[test]
@@ -1008,7 +1341,8 @@ const fn descriptor(source_scalar_type: ScalarType) -> ModelDescriptor {
         backend: BACKEND_ID,
         metadata: ModelMetadata {
             architecture: ModelArchitecture::Llama,
-            scalar_type: source_scalar_type,
+            configuration_declared_scalar_type: Some(source_scalar_type),
+            observed_tensor_scalar_types: ScalarTypeSet::from_scalar(source_scalar_type),
             quantization: QuantizationFormat::None,
             vocabulary_size: 4,
             context_length: 16,
@@ -1034,6 +1368,20 @@ const fn model_footprint() -> MemoryFootprint {
         device_working_bytes: 0,
         cache_bytes_per_token: 0,
     }
+}
+
+const fn loading_peak_footprint() -> MemoryFootprint {
+    MemoryFootprint {
+        host_weight_bytes: 100,
+        device_weight_bytes: 0,
+        host_working_bytes: 40,
+        device_working_bytes: 0,
+        cache_bytes_per_token: 0,
+    }
+}
+
+const fn loading_peak_host_bytes() -> u64 {
+    140
 }
 
 const fn checked_total_footprint() -> MemoryFootprint {

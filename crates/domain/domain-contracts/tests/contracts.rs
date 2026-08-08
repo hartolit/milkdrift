@@ -4,11 +4,12 @@ use core::num::NonZeroU32;
 
 use domain_contracts::{
     BackendSequence, CancellationReason, CancellationStatus, CapacityResource,
-    DecodeBufferRequirements, DecodeBuffers, DecodeInput, DecodeOutcome, DrainTimeout,
-    FinishReason, LifecycleAction, ModelLifecycle, ModelLifecycleState, MonotonicMillis,
+    DecodeBufferRequirements, DecodeBuffers, DecodeInput, DecodeOutcome, DrainTimeout, FailedLoad,
+    FinishReason, LifecycleAction, LoadConfiguration, LoadError, LoadPlan, MemoryBudget,
+    MemoryFootprint, ModelLifecycle, ModelLifecycleState, MonotonicMillis,
     PrefillBufferRequirements, PrefillBuffers, PrefillInput, PrefillOutcome, PreparedDecodeBuffers,
-    PreparedPrefillBuffers, SequenceId, SequenceState, TokenId, UnloadPolicy, decode_checked,
-    prefill_checked,
+    PreparedLoad, PreparedPrefillBuffers, ScalarType, ScalarTypeSet, SequenceId, SequenceState,
+    SynchronizationError, TokenId, UnloadPolicy, decode_checked, prefill_checked,
 };
 
 struct TestSequence {
@@ -55,7 +56,10 @@ impl domain_contracts::LoadedModel for TestModel {
             backend: domain_contracts::BackendId::new(1),
             metadata: domain_contracts::ModelMetadata {
                 architecture: domain_contracts::ModelArchitecture::Llama,
-                scalar_type: domain_contracts::ScalarType::F32,
+                configuration_declared_scalar_type: Some(domain_contracts::ScalarType::F32),
+                observed_tensor_scalar_types: domain_contracts::ScalarTypeSet::from_scalar(
+                    domain_contracts::ScalarType::F32,
+                ),
                 quantization: domain_contracts::QuantizationFormat::None,
                 vocabulary_size: 16,
                 context_length: 8,
@@ -200,6 +204,117 @@ impl domain_contracts::LoadedModel for TestModel {
     fn prepare_unload(&mut self) -> Result<(), domain_contracts::SynchronizationError> {
         Ok(())
     }
+}
+
+struct RetryablePreparation {
+    plan: LoadPlan,
+    cleanup_should_fail: bool,
+}
+
+impl PreparedLoad for RetryablePreparation {
+    fn plan(&self) -> &LoadPlan {
+        &self.plan
+    }
+
+    fn cleanup(&mut self) -> Result<(), SynchronizationError> {
+        if self.cleanup_should_fail {
+            self.cleanup_should_fail = false;
+            Err(SynchronizationError::InvalidState)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[test]
+fn scalar_type_set_tracks_all_portable_categories() {
+    let mut observed = ScalarTypeSet::default();
+    assert_eq!(observed, ScalarTypeSet::EMPTY);
+    assert!(observed.is_empty());
+
+    for scalar_type in [
+        ScalarType::F32,
+        ScalarType::F16,
+        ScalarType::Bf16,
+        ScalarType::I8,
+        ScalarType::U8,
+        ScalarType::Other(7),
+    ] {
+        observed.insert(scalar_type);
+        assert!(observed.contains(scalar_type));
+    }
+
+    assert_eq!(observed.bits(), 0b00_111111);
+    assert!(observed.contains(ScalarType::Other(u16::MAX)));
+
+    let floating = ScalarTypeSet::from_scalar(ScalarType::F32)
+        .union(ScalarTypeSet::from_scalar(ScalarType::F16))
+        .union(ScalarTypeSet::from_scalar(ScalarType::Bf16));
+    assert!(floating.is_subset_of(observed));
+    assert!(!observed.is_subset_of(floating));
+}
+
+#[test]
+fn memory_footprint_checked_totals_detect_overflow() {
+    let footprint = MemoryFootprint {
+        host_weight_bytes: 11,
+        device_weight_bytes: 13,
+        host_working_bytes: 17,
+        device_working_bytes: 19,
+        cache_bytes_per_token: 23,
+    };
+    assert_eq!(footprint.checked_host_bytes(), Some(28));
+    assert_eq!(footprint.checked_device_bytes(), Some(32));
+
+    let overflowing = MemoryFootprint {
+        host_weight_bytes: u64::MAX,
+        device_weight_bytes: u64::MAX - 1,
+        host_working_bytes: 1,
+        device_working_bytes: 2,
+        cache_bytes_per_token: 0,
+    };
+    assert_eq!(overflowing.checked_host_bytes(), None);
+    assert_eq!(overflowing.checked_device_bytes(), None);
+    assert_eq!(overflowing.host_bytes(), u64::MAX);
+    assert_eq!(overflowing.device_bytes(), u64::MAX);
+}
+
+#[test]
+fn failed_load_preserves_retryable_cleanup_ownership() {
+    let model = TestModel { vocabulary: 16 };
+    let plan = LoadPlan {
+        accepted_configuration: LoadConfiguration {
+            handle: domain_contracts::LoadedModel::handle(&model),
+            execution_device: domain_contracts::LoadedModel::execution_device(&model),
+            memory_budget: MemoryBudget {
+                host_bytes: 1,
+                device_bytes: 1,
+            },
+        },
+        descriptor: *domain_contracts::LoadedModel::descriptor(&model),
+        execution_scalar_type: ScalarType::F32,
+        expected_footprint: MemoryFootprint::default(),
+        loading_peak_footprint: MemoryFootprint::default(),
+    };
+    let mut failed = FailedLoad::new(
+        LoadError::InvalidSource,
+        RetryablePreparation {
+            plan,
+            cleanup_should_fail: true,
+        },
+    );
+
+    assert_eq!(failed.primary(), LoadError::InvalidSource);
+    assert_eq!(failed.cleanup_owner().plan(), &plan);
+    assert_eq!(
+        failed.cleanup_owner_mut().cleanup(),
+        Err(SynchronizationError::InvalidState)
+    );
+    assert_eq!(failed.cleanup_owner_mut().cleanup(), Ok(()));
+
+    let (primary, cleanup_owner) = failed.into_parts();
+    assert_eq!(primary, LoadError::InvalidSource);
+    assert_eq!(cleanup_owner.plan(), &plan);
 }
 
 #[test]

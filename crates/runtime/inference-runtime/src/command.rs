@@ -110,11 +110,11 @@ pub struct RuntimeSnapshot {
     pub generation_workspaces: u32,
     /// Host workspace bytes retained by active or terminal generation tasks.
     pub reserved_generation_workspace: MemoryFootprint,
-    /// Loaded models retained only for pending cleanup.
+    /// Model-level owners retained for complete-model or failed-load cleanup.
     pub pending_cleanup_models: u32,
     /// Sequences retained only for pending cleanup.
     pub pending_cleanup_sequences: u32,
-    /// Pending model cleanups whose automatic retry budget is exhausted.
+    /// Pending model-level cleanups whose automatic retry budget is exhausted.
     pub exhausted_cleanup_models: u32,
     /// Pending sequence cleanups whose automatic retry budget is exhausted.
     pub exhausted_cleanup_sequences: u32,

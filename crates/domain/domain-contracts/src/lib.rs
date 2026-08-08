@@ -13,7 +13,10 @@ pub mod output;
 pub mod sequence;
 pub mod time;
 
-pub use backend::{BackendSequence, LoadedModel, ModelLoader, decode_checked, prefill_checked};
+pub use backend::{
+    BackendSequence, FailedLoad, LoadedModel, ModelLoader, PreparedLoad, decode_checked,
+    prefill_checked,
+};
 pub use capacity::{CapacityExhausted, CapacityResource};
 pub use error::{
     BackendFailure, BackendFailureKind, LoadError, ModelError, SequenceError, SynchronizationError,
@@ -33,7 +36,8 @@ pub use lifecycle::{
 pub use model::{
     CapabilitySet, DeviceKind, ExecutionDevice, LoadConfiguration, LoadPlan, MemoryBudget,
     MemoryFootprint, MemoryKind, ModelArchitecture, ModelCapabilities, ModelDescriptor,
-    ModelMetadata, QuantizationFormat, ScalarType, SequenceConfiguration, SequencePlan,
+    ModelMetadata, QuantizationFormat, ScalarType, ScalarTypeSet, SequenceConfiguration,
+    SequencePlan,
 };
 pub use output::{ByteRange, OutputBatch, OutputCursor, OutputRecord, OutputRecordKind};
 pub use sequence::{

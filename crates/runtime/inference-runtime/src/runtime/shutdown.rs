@@ -24,8 +24,13 @@ where
     /// [`RuntimeError::CleanupRetryExhausted`] with the retained resource identity.
     pub fn shutdown(&mut self) -> Result<ShutdownReceipt, RuntimeError> {
         self.shutting_down = true;
+        let pending_complete_models = self
+            .pending_models
+            .values()
+            .filter(|pending| pending.owner.is_complete())
+            .count();
         let initial_models =
-            saturating_u32(self.models.len().saturating_add(self.pending_models.len()));
+            saturating_u32(self.models.len().saturating_add(pending_complete_models));
         let model_ids = self.models.keys().copied().collect::<Vec<_>>();
         let mut cancelled_requests = 0_u32;
 

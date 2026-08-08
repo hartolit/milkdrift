@@ -1,4 +1,4 @@
-//! Opt-in CUDA execution evidence for the committed synthetic Llama fixture.
+//! Opt-in CUDA execution evidence for homogeneous and mixed Llama fixtures.
 
 #![cfg(feature = "cuda")]
 
@@ -8,14 +8,14 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use candle_backend::{CandleLlamaLoader, CandleLlamaSource, CandleScalarType};
+use candle_backend::{CandleLlamaLoader, CandleLlamaSource};
 use candle_core::{DType, Device, Tensor};
 use domain_contracts::{
     BackendFailureKind, BackendId, CancellationStatus, DecodeBuffers, DecodeInput, DecodeOutcome,
     DeviceId, DeviceKind, ExecutionDevice, LoadConfiguration, LoadedModel, MemoryBudget,
     MemoryFootprint, ModelGeneration, ModelHandle, ModelId, ModelLoader, PrefillBuffers,
-    PrefillInput, PrefillOutcome, ScalarType, SequenceConfiguration, SequenceId, TokenId,
-    decode_checked, prefill_checked,
+    PrefillInput, PrefillOutcome, PreparedLoad, ScalarType, ScalarTypeSet, SequenceConfiguration,
+    SequenceId, TokenId, decode_checked, prefill_checked,
 };
 
 const BACKEND: BackendId = BackendId::new(501);
@@ -27,14 +27,20 @@ type TestResult<T = ()> = Result<T, String>;
 
 #[test]
 fn cuda_enabled_binary_can_explicitly_execute_cpu() -> TestResult {
-    let source = fixture_source(CandleScalarType::F32, fixture_weight_path())?;
+    let source = fixture_source(Some(ScalarType::F32), fixture_weight_path())?;
     let result = execute_fixture(&source, CPU)?;
 
-    assert_eq!(result.source_scalar_type, ScalarType::F32);
+    assert_eq!(result.declared_scalar_type, Some(ScalarType::F32));
+    assert_eq!(
+        result.observed_scalar_types,
+        ScalarTypeSet::from_scalar(ScalarType::F32)
+    );
     assert_eq!(result.execution_scalar_type, ScalarType::F32);
     assert_eq!(result.execution_device, CPU);
     assert!(result.accounted_footprint.host_weight_bytes > 0);
+    assert_eq!(result.accounted_footprint.host_working_bytes, 0);
     assert_eq!(result.accounted_footprint.device_weight_bytes, 0);
+    assert!(result.loading_peak_footprint.host_working_bytes > 0);
     assert!(result.sequence_footprint.host_working_bytes > 0);
     assert_eq!(result.sequence_footprint.device_working_bytes, 0);
     assert_eq!(
@@ -89,7 +95,6 @@ fn cuda_ordinal_zero_executes_fixture_and_matches_cpu_logits() -> TestResult {
             .available_memory_bytes
             .is_some_and(|bytes| bytes > 0)
     );
-
     assert!(matches!(
         loader.discover_device(ExecutionDevice::new(
             DeviceId::new(9_999),
@@ -99,24 +104,19 @@ fn cuda_ordinal_zero_executes_fixture_and_matches_cpu_logits() -> TestResult {
             if failure.kind == BackendFailureKind::DeviceInitialization
     ));
 
-    let cpu = execute_fixture(
-        &fixture_source(CandleScalarType::F32, fixture_weight_path())?,
-        CPU,
-    )?;
-    let cuda = execute_fixture(
-        &fixture_source(CandleScalarType::F32, fixture_weight_path())?,
-        CUDA_0,
-    )?;
+    let source = fixture_source(Some(ScalarType::F32), fixture_weight_path())?;
+    let cpu = execute_fixture(&source, CPU)?;
+    let cuda = execute_fixture(&source, CUDA_0)?;
 
-    assert_eq!(cuda.source_scalar_type, ScalarType::F32);
     assert_eq!(cuda.execution_scalar_type, ScalarType::F32);
     assert_eq!(cuda.execution_device, CUDA_0);
     assert_eq!(cuda.accounted_footprint.host_weight_bytes, 0);
+    assert_eq!(cuda.accounted_footprint.host_working_bytes, 0);
     assert!(cuda.accounted_footprint.device_weight_bytes > 0);
-    assert!(cuda.accounted_footprint.host_working_bytes > 0);
+    assert_eq!(cuda.accounted_footprint.device_working_bytes, 0);
+    assert!(cuda.loading_peak_footprint.host_working_bytes > 0);
     assert_eq!(cuda.sequence_footprint.host_working_bytes, 0);
     assert!(cuda.sequence_footprint.device_working_bytes > 0);
-    assert!(cuda.sequence_footprint.cache_bytes_per_token > 0);
     assert_logits_close(&cpu.prefill_logits, &cuda.prefill_logits, 1.0e-3)?;
     assert_logits_close(&cpu.decode_logits, &cuda.decode_logits, 1.0e-3)?;
     assert_eq!(maximum_logit_token(&cuda.prefill_logits)?, TokenId::new(2));
@@ -126,18 +126,20 @@ fn cuda_ordinal_zero_executes_fixture_and_matches_cpu_logits() -> TestResult {
 
 #[test]
 #[ignore = "requires MILKDRIFT_CUDA_TEST=1 and CUDA ordinal 0"]
-fn cuda_bf16_source_executes_as_bf16() -> TestResult {
+fn cuda_homogeneous_bf16_source_executes_as_bf16() -> TestResult {
     require_cuda_opt_in()?;
-    let converted = ConvertedFixture::bf16()?;
-    let source = fixture_source(CandleScalarType::Bf16, converted.weight_path.clone())?;
+    let converted = ConvertedFixture::create(DType::BF16, false)?;
+    let source = fixture_source(Some(ScalarType::Bf16), converted.weight_path.clone())?;
     let result = execute_fixture(&source, CUDA_0)?;
 
-    assert_eq!(result.source_scalar_type, ScalarType::Bf16);
+    assert_eq!(result.declared_scalar_type, Some(ScalarType::Bf16));
+    assert_eq!(
+        result.observed_scalar_types,
+        ScalarTypeSet::from_scalar(ScalarType::Bf16)
+    );
     assert_eq!(result.execution_scalar_type, ScalarType::Bf16);
-    assert_eq!(result.execution_device, CUDA_0);
     assert!(result.accounted_footprint.device_weight_bytes > 0);
     assert_eq!(result.accounted_footprint.host_weight_bytes, 0);
-    assert!(result.sequence_footprint.device_working_bytes > 0);
     assert_eq!(
         maximum_logit_token(&result.prefill_logits)?,
         TokenId::new(2)
@@ -145,11 +147,41 @@ fn cuda_bf16_source_executes_as_bf16() -> TestResult {
     Ok(())
 }
 
+#[test]
+#[ignore = "requires MILKDRIFT_CUDA_TEST=1 and CUDA ordinal 0"]
+fn cuda_mixed_f16_f32_executes_as_f16() -> TestResult {
+    require_cuda_opt_in()?;
+    let converted = ConvertedFixture::create(DType::F16, true)?;
+    let source = fixture_source(Some(ScalarType::F16), converted.weight_path.clone())?;
+    let result = execute_fixture(&source, CUDA_0)?;
+
+    assert_eq!(result.observed_scalar_types, mixed_set(ScalarType::F16));
+    assert_eq!(result.execution_scalar_type, ScalarType::F16);
+    assert_eq!(maximum_logit_token(&result.decode_logits)?, TokenId::new(3));
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires MILKDRIFT_CUDA_TEST=1 and CUDA ordinal 0"]
+fn cuda_mixed_bf16_f32_executes_as_bf16() -> TestResult {
+    require_cuda_opt_in()?;
+    let converted = ConvertedFixture::create(DType::BF16, true)?;
+    let source = fixture_source(Some(ScalarType::Bf16), converted.weight_path.clone())?;
+    let result = execute_fixture(&source, CUDA_0)?;
+
+    assert_eq!(result.observed_scalar_types, mixed_set(ScalarType::Bf16));
+    assert_eq!(result.execution_scalar_type, ScalarType::Bf16);
+    assert_eq!(maximum_logit_token(&result.decode_logits)?, TokenId::new(3));
+    Ok(())
+}
+
 struct FixtureExecution {
-    source_scalar_type: ScalarType,
+    declared_scalar_type: Option<ScalarType>,
+    observed_scalar_types: ScalarTypeSet,
     execution_scalar_type: ScalarType,
     execution_device: ExecutionDevice,
     accounted_footprint: MemoryFootprint,
+    loading_peak_footprint: MemoryFootprint,
     sequence_footprint: MemoryFootprint,
     prefill_logits: Vec<f32>,
     decode_logits: Vec<f32>,
@@ -168,15 +200,27 @@ fn execute_fixture(
             device_bytes: u64::MAX,
         },
     };
-    let source_scalar_type = domain_source_scalar_type(source.scalar_type());
-    let plan = loader
-        .plan_load(source, &configuration)
-        .map_err(|error| format!("plan fixture on {execution_device:?}: {error:?}"))?;
-    assert_eq!(plan.descriptor.metadata.scalar_type, source_scalar_type);
-    let mut model = loader
-        .load(source, &configuration)
-        .map_err(|error| format!("load fixture on {execution_device:?}: {error:?}"))?;
-    assert_eq!(model.descriptor().metadata.scalar_type, source_scalar_type);
+    let prepared = loader
+        .prepare_load(source, &configuration)
+        .map_err(|error| format!("prepare fixture on {execution_device:?}: {error:?}"))?;
+    let plan = *prepared.plan();
+    let declared_scalar_type = source.configuration_declared_scalar_type();
+    assert_eq!(
+        plan.descriptor.metadata.configuration_declared_scalar_type,
+        declared_scalar_type
+    );
+    let observed_scalar_types = plan.descriptor.metadata.observed_tensor_scalar_types;
+    let mut model = match loader.load_prepared(prepared) {
+        Ok(model) => model,
+        Err(mut failed) => {
+            let primary = failed.primary();
+            let cleanup = failed.cleanup_owner_mut().cleanup();
+            return Err(format!(
+                "load fixture on {execution_device:?}: {primary:?}; cleanup: {cleanup:?}"
+            ));
+        }
+    };
+    assert_eq!(model.descriptor(), &plan.descriptor);
     assert_eq!(model.execution_scalar_type(), plan.execution_scalar_type);
     assert_eq!(model.execution_device(), execution_device);
     assert_eq!(model.accounted_footprint(), plan.expected_footprint);
@@ -190,8 +234,7 @@ fn execute_fixture(
         .map_err(|error| format!("plan sequence: {error:?}"))?;
     assert_eq!(
         sequence_plan.expected_footprint.cache_bytes_per_token,
-        plan.expected_footprint.cache_bytes_per_token,
-        "sequence accounting must use the accepted execution dtype"
+        plan.expected_footprint.cache_bytes_per_token
     );
     let mut sequence = model
         .create_sequence(SequenceId::new(1), &sequence_configuration)
@@ -247,32 +290,26 @@ fn execute_fixture(
     drop(model);
 
     Ok(FixtureExecution {
-        source_scalar_type,
+        declared_scalar_type,
+        observed_scalar_types,
         execution_scalar_type,
         execution_device,
         accounted_footprint,
+        loading_peak_footprint: plan.loading_peak_footprint,
         sequence_footprint: sequence_plan.expected_footprint,
         prefill_logits,
         decode_logits,
     })
 }
 
-const fn domain_source_scalar_type(scalar_type: CandleScalarType) -> ScalarType {
-    match scalar_type {
-        CandleScalarType::F32 => ScalarType::F32,
-        CandleScalarType::F16 => ScalarType::F16,
-        CandleScalarType::Bf16 => ScalarType::Bf16,
-    }
-}
-
 fn fixture_source(
-    scalar_type: CandleScalarType,
+    configuration_declared_scalar_type: Option<ScalarType>,
     weight_path: PathBuf,
 ) -> TestResult<CandleLlamaSource> {
     CandleLlamaSource::new(
         fixture_directory().join("config.json"),
         vec![weight_path],
-        scalar_type,
+        configuration_declared_scalar_type,
     )
     .map_err(|error| error.to_string())
 }
@@ -323,24 +360,33 @@ fn maximum_logit_token(logits: &[f32]) -> TestResult<TokenId> {
     Ok(TokenId::new(token))
 }
 
+fn mixed_set(primary: ScalarType) -> ScalarTypeSet {
+    ScalarTypeSet::from_scalar(primary).union(ScalarTypeSet::from_scalar(ScalarType::F32))
+}
+
 struct ConvertedFixture {
     directory: PathBuf,
     weight_path: PathBuf,
 }
 
 impl ConvertedFixture {
-    fn bf16() -> TestResult<Self> {
+    fn create(primary_dtype: DType, mixed_f32: bool) -> TestResult<Self> {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| error.to_string())?
             .as_nanos();
         let directory = std::env::temp_dir().join(format!(
-            "milkdrift-cuda-bf16-{}-{nonce}",
+            "milkdrift-cuda-phase12-{}-{nonce}",
             std::process::id()
         ));
         fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
         let weight_path = directory.join("model.safetensors");
-        convert_weights_to_bf16(&fixture_weight_path(), &weight_path)?;
+        convert_weights(
+            &fixture_weight_path(),
+            &weight_path,
+            primary_dtype,
+            mixed_f32,
+        )?;
         Ok(Self {
             directory,
             weight_path,
@@ -354,18 +400,28 @@ impl Drop for ConvertedFixture {
     }
 }
 
-fn convert_weights_to_bf16(source: &Path, destination: &Path) -> TestResult {
+fn convert_weights(
+    source: &Path,
+    destination: &Path,
+    primary_dtype: DType,
+    mixed_f32: bool,
+) -> TestResult {
     let tensors = candle_core::safetensors::load(source, &Device::Cpu)
-        .map_err(|error| format!("load F32 fixture for BF16 conversion: {error}"))?;
+        .map_err(|error| format!("load F32 conversion source: {error}"))?;
     let converted = tensors
         .into_iter()
         .map(|(name, tensor)| {
+            let dtype = if mixed_f32 && name == "model.norm.weight" {
+                DType::F32
+            } else {
+                primary_dtype
+            };
             let tensor = tensor
-                .to_dtype(DType::BF16)
-                .map_err(|error| format!("convert {name} to BF16: {error}"))?;
+                .to_dtype(dtype)
+                .map_err(|error| format!("convert {name} to {dtype:?}: {error}"))?;
             Ok((name, tensor))
         })
         .collect::<TestResult<HashMap<String, Tensor>>>()?;
     candle_core::safetensors::save(&converted, destination)
-        .map_err(|error| format!("save BF16 fixture: {error}"))
+        .map_err(|error| format!("save converted fixture: {error}"))
 }

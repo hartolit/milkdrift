@@ -2,18 +2,18 @@ use std::collections::BTreeMap;
 
 use domain_contracts::{
     BackendSequence, CapabilitySet, CapacityExhausted, CapacityResource, ExecutionDevice,
-    GenerationUsage, LoadConfiguration, LoadedModel, MemoryFootprint, ModelDescriptor, ModelError,
-    ModelHandle, ModelId, ModelLifecycle, ModelLifecycleState, ModelLoader, RequestId,
-    SequenceConfiguration, SequenceId,
+    GenerationUsage, LoadConfiguration, LoadPlan, LoadedModel, MemoryFootprint, ModelDescriptor,
+    ModelError, ModelHandle, ModelId, ModelLifecycle, ModelLifecycleState, ModelLoader,
+    PreparedLoad, RequestId, SequenceConfiguration, SequenceId,
 };
 
 use crate::{
-    CleanupFailureReport, CleanupResource, CleanupRetryState, LoadReceipt, RequestStartReceipt,
-    RuntimeError, RuntimeOperation,
+    CleanupFailureReport, CleanupResource, CleanupRetryState, FailureClass, LoadReceipt,
+    RequestStartReceipt, RuntimeError, RuntimeOperation,
 };
 
 use super::{
-    InferenceRuntime, ModelSlot, PendingModel, PendingSequence, RequestSlot,
+    InferenceRuntime, ModelSlot, PendingModel, PendingModelOwner, PendingSequence, RequestSlot,
     cleanup::cleanup_retention_error,
     memory::{
         admit_footprint, checked_add_footprint, remaining_budget, saturating_u32, saturating_u64,
@@ -31,6 +31,10 @@ where
     /// Returns an error if shutdown has started; the model identity is already loaded;
     /// a model, generation, or memory limit is exceeded; a lifecycle transition fails;
     /// or the backend cannot plan or load a model that satisfies its declared contract.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "model admission keeps preparation, peak reservation, materialization, verification, rollback, quarantine, and final commit in one auditable transaction"
+    )]
     pub fn load_model(
         &mut self,
         model_id: ModelId,
@@ -54,7 +58,8 @@ where
         }
 
         let handle = self.next_handle(model_id)?;
-        let remaining_budget = remaining_budget(self.limits.memory_budget, self.reserved_footprint);
+        let previous_reserved = self.reserved_footprint;
+        let remaining_budget = remaining_budget(self.limits.memory_budget, previous_reserved)?;
         let configuration = LoadConfiguration {
             handle,
             execution_device,
@@ -62,22 +67,67 @@ where
         };
         let mut lifecycle = ModelLifecycle::new();
         lifecycle.begin_load()?;
-        let plan = self.loader.plan_load(source, &configuration)?;
-        validate_descriptor(&plan.descriptor)?;
-        let next_reserved = admit_footprint(
-            self.reserved_footprint,
+
+        let prepared = self.loader.prepare_load(source, &configuration)?;
+        let plan = *prepared.plan();
+        validate_load_plan(&plan, configuration)?;
+        let loading_reserved = admit_footprint(
+            previous_reserved,
+            plan.loading_peak_footprint,
+            self.limits.memory_budget,
+        )?;
+        let final_reserved = admit_footprint(
+            previous_reserved,
             plan.expected_footprint,
             self.limits.memory_budget,
         )?;
-        let mut model = self.loader.load(source, &configuration)?;
+        self.reserved_footprint = loading_reserved;
+
+        let mut model = match self.loader.load_prepared(prepared) {
+            Ok(model) => model,
+            Err(failed) => {
+                let (primary, mut cleanup_owner) = failed.into_parts();
+                if let Err(cleanup) = cleanup_owner.cleanup() {
+                    let report = CleanupFailureReport::new(
+                        RuntimeOperation::ModelLoad,
+                        FailureClass::Load,
+                        RuntimeOperation::FailedLoadCleanup,
+                        RuntimeError::Synchronization(cleanup).failure_class(),
+                    );
+                    let pending = PendingModel {
+                        owner: PendingModelOwner::FailedLoad(cleanup_owner),
+                        footprint: plan.loading_peak_footprint,
+                        failure: report,
+                        attempts: 1,
+                        cancelled_requests: 0,
+                    };
+                    let replaced = self.pending_models.insert(model_id, pending);
+                    debug_assert!(replaced.is_none(), "model admission was preflighted");
+                    self.generations.insert(model_id, handle.generation);
+                    let state = CleanupRetryState {
+                        resource: CleanupResource::FailedLoad { model_id },
+                        failure: report,
+                        attempts: 1,
+                        maximum_attempts: self.maximum_cleanup_attempts(),
+                    };
+                    self.last_cleanup = Some(state);
+                    return Err(cleanup_retention_error(state));
+                }
+                self.reserved_footprint = previous_reserved;
+                return Err(RuntimeError::Load(primary));
+            }
+        };
+
+        let actual_handle = model.handle();
+        let actual_descriptor = *model.descriptor();
         let actual_device = model.execution_device();
         let actual_execution_scalar_type = model.execution_scalar_type();
         let actual_accounted_footprint = model.accounted_footprint();
-        let validation = if model.handle() != handle
-            || model.descriptor() != &plan.descriptor
-            || execution_device != actual_device
-            || plan.execution_scalar_type != actual_execution_scalar_type
-            || plan.expected_footprint != actual_accounted_footprint
+        let validation = if actual_handle != handle
+            || actual_descriptor != plan.descriptor
+            || actual_device != execution_device
+            || actual_execution_scalar_type != plan.execution_scalar_type
+            || actual_accounted_footprint != plan.expected_footprint
         {
             Err(RuntimeError::BackendContractViolation)
         } else {
@@ -92,15 +142,15 @@ where
                     RuntimeError::Synchronization(cleanup).failure_class(),
                 );
                 let pending = PendingModel {
-                    model,
-                    footprint: plan.expected_footprint,
+                    owner: PendingModelOwner::Complete(model),
+                    footprint: plan.loading_peak_footprint,
                     failure: report,
                     attempts: 1,
                     cancelled_requests: 0,
                 };
-                self.pending_models.insert(model_id, pending);
+                let replaced = self.pending_models.insert(model_id, pending);
+                debug_assert!(replaced.is_none(), "model admission was preflighted");
                 self.generations.insert(model_id, handle.generation);
-                self.reserved_footprint = next_reserved;
                 let state = CleanupRetryState {
                     resource: CleanupResource::Model { model_id },
                     failure: report,
@@ -110,6 +160,7 @@ where
                 self.last_cleanup = Some(state);
                 return Err(cleanup_retention_error(state));
             }
+            self.reserved_footprint = previous_reserved;
             return Err(primary);
         }
 
@@ -130,7 +181,7 @@ where
         let replaced = self.models.insert(model_id, slot);
         debug_assert!(replaced.is_none(), "model admission was preflighted");
         self.generations.insert(model_id, handle.generation);
-        self.reserved_footprint = next_reserved;
+        self.reserved_footprint = final_reserved;
 
         Ok(LoadReceipt {
             handle,
@@ -517,10 +568,52 @@ where
     }
 }
 
+fn validate_load_plan(
+    plan: &LoadPlan,
+    configuration: LoadConfiguration,
+) -> Result<(), RuntimeError> {
+    if plan.accepted_configuration != configuration {
+        return Err(RuntimeError::BackendContractViolation);
+    }
+    validate_descriptor(&plan.descriptor)?;
+    let final_host = plan
+        .expected_footprint
+        .checked_host_bytes()
+        .ok_or(RuntimeError::BackendContractViolation)?;
+    let final_device = plan
+        .expected_footprint
+        .checked_device_bytes()
+        .ok_or(RuntimeError::BackendContractViolation)?;
+    let loading_host = plan
+        .loading_peak_footprint
+        .checked_host_bytes()
+        .ok_or(RuntimeError::BackendContractViolation)?;
+    let loading_device = plan
+        .loading_peak_footprint
+        .checked_device_bytes()
+        .ok_or(RuntimeError::BackendContractViolation)?;
+    let final_footprint = plan.expected_footprint;
+    let loading_footprint = plan.loading_peak_footprint;
+    let loading_components_contain_final_ownership = loading_footprint.host_weight_bytes
+        >= final_footprint.host_weight_bytes
+        && loading_footprint.device_weight_bytes >= final_footprint.device_weight_bytes
+        && loading_footprint.host_working_bytes >= final_footprint.host_working_bytes
+        && loading_footprint.device_working_bytes >= final_footprint.device_working_bytes;
+    if loading_host < final_host
+        || loading_device < final_device
+        || !loading_components_contain_final_ownership
+        || loading_footprint.cache_bytes_per_token != final_footprint.cache_bytes_per_token
+    {
+        return Err(RuntimeError::BackendContractViolation);
+    }
+    Ok(())
+}
+
 const fn validate_descriptor(descriptor: &ModelDescriptor) -> Result<(), RuntimeError> {
     let metadata = descriptor.metadata;
     let capabilities = descriptor.capabilities;
-    let numeric_limits_are_nonzero = metadata.vocabulary_size > 0
+    let numeric_limits_are_nonzero = !metadata.observed_tensor_scalar_types.is_empty()
+        && metadata.vocabulary_size > 0
         && metadata.context_length > 0
         && capabilities.maximum_context_tokens > 0
         && capabilities.maximum_sequences > 0

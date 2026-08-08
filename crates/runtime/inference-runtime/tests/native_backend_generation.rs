@@ -4,7 +4,7 @@ use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use candle_backend::{CandleLlamaLoader, CandleLlamaSource, CandleScalarType};
+use candle_backend::{CandleLlamaLoader, CandleLlamaSource};
 use domain_contracts::{
     BackendId, CancellationReason, CapabilitySet, DeviceId, DeviceKind, ExecutionDevice,
     FinishReason, MemoryBudget, MemoryFootprint, ModelArchitecture, ModelHandle, ModelId,
@@ -173,7 +173,7 @@ fn candle_cuda_fixture_covers_e0_generation_accounting_and_lifecycle() -> TestRe
     assert_eq!(loaded.execution_scalar_type, ScalarType::F32);
     assert_eq!(loaded.reserved_footprint.host_weight_bytes, 0);
     assert!(loaded.reserved_footprint.device_weight_bytes > 0);
-    assert!(loaded.reserved_footprint.host_working_bytes > 0);
+    assert_eq!(loaded.reserved_footprint.host_working_bytes, 0);
     let handle = loaded.handle;
 
     let request = generation_request(50, 150, 3, SamplingConfig::greedy(), 31, Box::new([]))?;
@@ -197,7 +197,7 @@ fn candle_fixture_source() -> TestResult<CandleLlamaSource> {
     CandleLlamaSource::new(
         directory.join("config.json"),
         vec![directory.join("model.safetensors")],
-        CandleScalarType::F32,
+        Some(ScalarType::F32),
     )
     .map_err(|error| error.to_string())
 }
@@ -311,7 +311,16 @@ fn assert_loaded_fixture(loaded: &LoadReceipt) {
     let descriptor = loaded.descriptor;
     assert_eq!(descriptor.backend, CANDLE_BACKEND);
     assert_eq!(descriptor.metadata.architecture, ModelArchitecture::Llama);
-    assert_eq!(descriptor.metadata.scalar_type, ScalarType::F32);
+    assert_eq!(
+        descriptor.metadata.configuration_declared_scalar_type,
+        Some(ScalarType::F32)
+    );
+    assert!(
+        descriptor
+            .metadata
+            .observed_tensor_scalar_types
+            .contains(ScalarType::F32)
+    );
     assert_eq!(descriptor.metadata.vocabulary_size, VOCABULARY_SIZE);
     assert_eq!(descriptor.metadata.context_length, CONTEXT_LENGTH);
     assert!(

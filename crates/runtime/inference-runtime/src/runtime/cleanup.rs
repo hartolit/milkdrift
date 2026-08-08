@@ -124,6 +124,12 @@ where
         let Some(model_id) = pending_model_id else {
             return Ok(CleanupPoll::Idle);
         };
+        let pending_footprint = self
+            .pending_models
+            .get(&model_id)
+            .ok_or(RuntimeError::ModelNotLoaded(model_id))?
+            .footprint;
+        let next_reserved = checked_sub_footprint(self.reserved_footprint, pending_footprint)?;
         let (state, released) = {
             let pending = self
                 .pending_models
@@ -134,12 +140,12 @@ where
                 .checked_add(1)
                 .ok_or(RuntimeError::BackendContractViolation)?;
             let state = CleanupRetryState {
-                resource: CleanupResource::Model { model_id },
+                resource: pending.owner.cleanup_resource(model_id),
                 failure: pending.failure,
                 attempts: pending.attempts,
                 maximum_attempts,
             };
-            let released = pending.model.prepare_unload().is_ok();
+            let released = pending.owner.cleanup().is_ok();
             (state, released)
         };
         self.last_cleanup = Some(state);
@@ -150,12 +156,12 @@ where
                 CleanupPoll::RetryFailed(state)
             });
         }
-        let pending = self
+        let removed = self
             .pending_models
             .remove(&model_id)
             .ok_or(RuntimeError::ModelNotLoaded(model_id))?;
-        self.reserved_footprint =
-            checked_sub_footprint(self.reserved_footprint, pending.footprint)?;
+        debug_assert_eq!(removed.footprint, pending_footprint);
+        self.reserved_footprint = next_reserved;
         Ok(CleanupPoll::Released(state))
     }
     #[expect(

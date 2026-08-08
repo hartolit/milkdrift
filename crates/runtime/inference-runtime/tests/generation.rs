@@ -8,13 +8,13 @@ use std::time::{Duration, Instant};
 use domain_contracts::{
     BackendFailure, BackendFailureKind, BackendId, BackendSequence, CapabilitySet,
     DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind, DrainTimeout,
-    ExecutionDevice, FinishReason, LoadConfiguration, LoadError, LoadPlan, LoadedModel,
+    ExecutionDevice, FailedLoad, FinishReason, LoadConfiguration, LoadError, LoadPlan, LoadedModel,
     MemoryBudget, MemoryFootprint, ModelArchitecture, ModelCapabilities, ModelDescriptor,
     ModelError, ModelGeneration, ModelHandle, ModelId, ModelLoader, ModelMetadata,
-    PrefillBufferRequirements, PrefillInput, PrefillOutcome, PreparedDecodeBuffers,
-    PreparedPrefillBuffers, QuantizationFormat, RequestId, ScalarType, SequenceConfiguration,
-    SequenceError, SequenceId, SequencePlan, SequenceState, SynchronizationError, TokenId,
-    UnloadPolicy,
+    PrefillBufferRequirements, PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedLoad,
+    PreparedPrefillBuffers, QuantizationFormat, RequestId, ScalarType, ScalarTypeSet,
+    SequenceConfiguration, SequenceError, SequenceId, SequencePlan, SequenceState,
+    SynchronizationError, TokenId, UnloadPolicy,
 };
 use host_runtime::TokenOutputRecordKind;
 use inference_runtime::{
@@ -79,6 +79,7 @@ struct FakeSource {
     no_candidate: bool,
     fail_prefill: bool,
     fail_decode_call: Option<u32>,
+    failed_load_cleanup_failures: Option<u32>,
     destroy_failures: u32,
     unload_failures: u32,
     logits_capacity: usize,
@@ -97,6 +98,7 @@ impl FakeSource {
             no_candidate: false,
             fail_prefill: false,
             fail_decode_call: None,
+            failed_load_cleanup_failures: None,
             destroy_failures: 0,
             unload_failures: 0,
             logits_capacity: 4,
@@ -138,11 +140,66 @@ struct Counters {
     sampling_opportunities: u32,
     active_sequences: u32,
     retained_memory_bytes: u64,
+    failed_load_cleanup_attempts: u32,
+    successful_failed_load_cleanups: u32,
+    prepared_drops: u32,
+    retained_prepared_drops: u32,
 }
 
 #[derive(Clone)]
 struct FakeLoader {
     counters: Arc<Mutex<Counters>>,
+}
+
+struct FakePrepared {
+    plan: LoadPlan,
+    source: FakeSource,
+    configuration: LoadConfiguration,
+    counters: Arc<Mutex<Counters>>,
+    remaining_failed_load_cleanup_failures: u32,
+    partial_resources_retained: bool,
+}
+
+impl PreparedLoad for FakePrepared {
+    fn plan(&self) -> &LoadPlan {
+        &self.plan
+    }
+
+    fn cleanup(&mut self) -> Result<(), SynchronizationError> {
+        let mut counters = self
+            .counters
+            .lock()
+            .map_err(|_| SynchronizationError::Backend(failure(16)))?;
+        counters.failed_load_cleanup_attempts =
+            counters.failed_load_cleanup_attempts.saturating_add(1);
+        if self.remaining_failed_load_cleanup_failures > 0 {
+            self.remaining_failed_load_cleanup_failures = self
+                .remaining_failed_load_cleanup_failures
+                .saturating_sub(1);
+            return Err(SynchronizationError::Backend(failure(17)));
+        }
+        if self.partial_resources_retained {
+            self.partial_resources_retained = false;
+            counters.successful_failed_load_cleanups =
+                counters.successful_failed_load_cleanups.saturating_add(1);
+            counters.retained_memory_bytes = counters
+                .retained_memory_bytes
+                .saturating_sub(model_footprint().host_bytes());
+        }
+        Ok(())
+    }
+}
+
+impl Drop for FakePrepared {
+    fn drop(&mut self) {
+        if let Ok(mut counters) = self.counters.lock() {
+            counters.prepared_drops = counters.prepared_drops.saturating_add(1);
+            if self.partial_resources_retained {
+                counters.retained_prepared_drops =
+                    counters.retained_prepared_drops.saturating_add(1);
+            }
+        }
+    }
 }
 
 struct FakeModel {
@@ -186,58 +243,97 @@ impl BackendSequence for FakeSequence {
 
 impl ModelLoader for FakeLoader {
     type Source = FakeSource;
+    type Prepared = FakePrepared;
     type Model = FakeModel;
 
     fn inspect(&self, source: &Self::Source) -> Result<ModelDescriptor, LoadError> {
         Ok(descriptor(source.operations))
     }
 
-    fn plan_load(
-        &self,
-        source: &Self::Source,
-        _configuration: &LoadConfiguration,
-    ) -> Result<LoadPlan, LoadError> {
-        Ok(LoadPlan {
-            descriptor: self.inspect(source)?,
-            execution_scalar_type: ScalarType::F32,
-            expected_footprint: model_footprint(),
-        })
-    }
-
-    fn load(
+    fn prepare_load(
         &mut self,
         source: &Self::Source,
         configuration: &LoadConfiguration,
-    ) -> Result<Self::Model, LoadError> {
-        if let Some(gate) = &source.load_gate {
-            gate.entered
-                .send(())
-                .map_err(|_| LoadError::Backend(failure(13)))?;
-            gate.release
-                .lock()
-                .map_err(|_| LoadError::Backend(failure(14)))?
-                .recv_timeout(Duration::from_secs(2))
-                .map_err(|_| LoadError::Backend(failure(15)))?;
-        }
-        let mut counters = self
-            .counters
-            .lock()
-            .map_err(|_| LoadError::Backend(failure(1)))?;
-        counters.loads = counters.loads.saturating_add(1);
-        counters.retained_memory_bytes = counters
-            .retained_memory_bytes
-            .saturating_add(model_footprint().host_bytes());
-        drop(counters);
-        Ok(FakeModel {
-            handle: configuration.handle,
-            execution_device: configuration.execution_device,
-            execution_scalar_type: ScalarType::F32,
-            descriptor: self.inspect(source)?,
-            accounted_footprint: model_footprint(),
+    ) -> Result<Self::Prepared, LoadError> {
+        Ok(FakePrepared {
+            plan: LoadPlan {
+                accepted_configuration: *configuration,
+                descriptor: self.inspect(source)?,
+                execution_scalar_type: ScalarType::F32,
+                expected_footprint: model_footprint(),
+                loading_peak_footprint: model_footprint(),
+            },
             source: source.clone(),
+            configuration: *configuration,
             counters: Arc::clone(&self.counters),
-            remaining_destroy_failures: source.destroy_failures,
-            remaining_unload_failures: source.unload_failures,
+            remaining_failed_load_cleanup_failures: source
+                .failed_load_cleanup_failures
+                .unwrap_or(0),
+            partial_resources_retained: false,
+        })
+    }
+
+    fn load_prepared(
+        &mut self,
+        mut prepared: Self::Prepared,
+    ) -> Result<Self::Model, FailedLoad<Self::Prepared>> {
+        if prepared.source.failed_load_cleanup_failures.is_some() {
+            let retained_bytes = model_footprint().host_bytes();
+            let retained = (|| {
+                let mut counters = self
+                    .counters
+                    .lock()
+                    .map_err(|_| LoadError::Backend(failure(18)))?;
+                counters.loads = counters.loads.saturating_add(1);
+                counters.retained_memory_bytes = counters
+                    .retained_memory_bytes
+                    .saturating_add(retained_bytes);
+                Ok::<(), LoadError>(())
+            })();
+            if let Err(primary) = retained {
+                return Err(FailedLoad::new(primary, prepared));
+            }
+            prepared.partial_resources_retained = true;
+            return Err(FailedLoad::new(LoadError::Backend(failure(19)), prepared));
+        }
+
+        let load_attempt = (|| {
+            if let Some(gate) = &prepared.source.load_gate {
+                gate.entered
+                    .send(())
+                    .map_err(|_| LoadError::Backend(failure(13)))?;
+                gate.release
+                    .lock()
+                    .map_err(|_| LoadError::Backend(failure(14)))?
+                    .recv_timeout(Duration::from_secs(2))
+                    .map_err(|_| LoadError::Backend(failure(15)))?;
+            }
+            let mut counters = self
+                .counters
+                .lock()
+                .map_err(|_| LoadError::Backend(failure(1)))?;
+            counters.loads = counters.loads.saturating_add(1);
+            counters.retained_memory_bytes = counters
+                .retained_memory_bytes
+                .saturating_add(model_footprint().host_bytes());
+            Ok::<(), LoadError>(())
+        })();
+        if let Err(primary) = load_attempt {
+            return Err(FailedLoad::new(primary, prepared));
+        }
+
+        let remaining_destroy_failures = prepared.source.destroy_failures;
+        let remaining_unload_failures = prepared.source.unload_failures;
+        Ok(FakeModel {
+            handle: prepared.configuration.handle,
+            execution_device: prepared.configuration.execution_device,
+            execution_scalar_type: ScalarType::F32,
+            descriptor: prepared.plan.descriptor,
+            accounted_footprint: prepared.plan.expected_footprint,
+            source: prepared.source.clone(),
+            counters: Arc::clone(&self.counters),
+            remaining_destroy_failures,
+            remaining_unload_failures,
             model_released: false,
         })
     }
@@ -662,6 +758,60 @@ fn shutdown_terminates_without_draining_backpressured_output() -> TestResult {
     assert_eq!(counters.retained_memory_bytes, 0);
     drop(counters);
 
+    Ok(())
+}
+
+#[test]
+fn exhausted_failed_preparation_is_retained_until_process_exit() -> TestResult {
+    let mut source = FakeSource::scripted([0; 8], 0);
+    source.failed_load_cleanup_failures = Some(u32::MAX);
+    let (hosted, thread, counters) = start_hosted(1, 8, NonZeroU32::MIN, NonZeroU32::MIN, 10_000)?;
+    hosted
+        .try_submit(RuntimeCommand::LoadModel {
+            ticket: CommandTicket::new(60),
+            model_id: MODEL,
+            source,
+            execution_device: cpu_device(),
+        })
+        .map_err(|_| "failed-load command rejected")?;
+    assert!(matches!(
+        hosted
+            .receive_timeout(Duration::from_secs(2))
+            .map_err(|error| format!("failed-load event: {error:?}"))?,
+        RuntimeEvent::ModelLoaded {
+            result: Err(RuntimeError::CleanupFailed(_)),
+            ..
+        }
+    ));
+
+    hosted
+        .try_submit(RuntimeCommand::Shutdown {
+            ticket: CommandTicket::new(61),
+        })
+        .map_err(|_| "failed-load shutdown command rejected")?;
+    assert!(matches!(
+        hosted
+            .receive_timeout(Duration::from_secs(2))
+            .map_err(|error| format!("failed-load shutdown event: {error:?}"))?,
+        RuntimeEvent::Shutdown {
+            result: Err(RuntimeError::CleanupRetryExhausted(state)),
+            ..
+        } if state.resource == (CleanupResource::FailedLoad { model_id: MODEL })
+    ));
+    drop(hosted);
+    thread.join().map_err(|error| error.to_string())?;
+
+    let counters = counters.lock().map_err(|_| "counter mutex poisoned")?;
+    assert_eq!(counters.loads, 1);
+    assert_eq!(counters.failed_load_cleanup_attempts, 3);
+    assert_eq!(counters.successful_failed_load_cleanups, 0);
+    assert_eq!(
+        counters.retained_memory_bytes,
+        model_footprint().host_bytes()
+    );
+    assert_eq!(counters.prepared_drops, 0);
+    assert_eq!(counters.retained_prepared_drops, 0);
+    drop(counters);
     Ok(())
 }
 
@@ -2037,7 +2187,8 @@ const fn descriptor(operations: CapabilitySet) -> ModelDescriptor {
         backend: BACKEND,
         metadata: ModelMetadata {
             architecture: ModelArchitecture::Llama,
-            scalar_type: ScalarType::F32,
+            configuration_declared_scalar_type: Some(ScalarType::F32),
+            observed_tensor_scalar_types: ScalarTypeSet::from_scalar(ScalarType::F32),
             quantization: QuantizationFormat::None,
             vocabulary_size: 4,
             context_length: 64,
