@@ -8,7 +8,7 @@ use domain_contracts::{
     BackendFailure, BackendFailureKind, BackendId, BackendSequence, CancellationReason,
     CapabilitySet, DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind,
     ExecutionDevice, FailedLoad, LoadConfiguration, LoadError, LoadPlan, LoadedModel, MemoryBudget,
-    MemoryFootprint, ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError,
+    MemoryFootprint, MemoryKind, ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError,
     ModelHandle, ModelId, ModelLoader, ModelMetadata, MonotonicMillis, PrefillBufferRequirements,
     PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedLoad, PreparedPrefillBuffers,
     QuantizationFormat, RequestId, ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceError,
@@ -760,6 +760,31 @@ fn invalid_prepared_plans_are_rejected_before_materialization() {
 }
 
 #[test]
+fn aggregate_loading_peak_budget_rejection_precedes_materialization() {
+    let counts = Rc::new(CleanupCounts::default());
+    let mut runtime = runtime_with_host_budget(
+        Faults::default(),
+        Rc::clone(&counts),
+        loading_peak_host_bytes() - 1,
+    );
+
+    assert!(matches!(
+        load(&mut runtime),
+        Err(RuntimeError::InsufficientMemory {
+            kind: MemoryKind::Host,
+            required_bytes,
+            available_bytes,
+        }) if required_bytes == loading_peak_host_bytes()
+            && available_bytes == loading_peak_host_bytes() - 1
+    ));
+    assert_eq!(counts.preparations.get(), 1);
+    assert_eq!(counts.model_loads.get(), 0);
+    assert_eq!(counts.failed_load_cleanups.get(), 0);
+    assert_eq!(counts.model_cleanups.get(), 0);
+    assert_empty(&runtime);
+}
+
+#[test]
 fn failed_load_immediate_cleanup_returns_exact_primary_and_restores_accounting() {
     let counts = Rc::new(CleanupCounts::default());
     let mut runtime = runtime(Faults::FAIL_LOAD, Rc::clone(&counts));
@@ -1243,6 +1268,23 @@ fn runtime_with_cleanup_attempts(
     counts: Rc<CleanupCounts>,
     maximum_attempts: u32,
 ) -> InferenceRuntime<FaultLoader> {
+    runtime_with_limits(faults, counts, maximum_attempts, 1_024)
+}
+
+fn runtime_with_host_budget(
+    faults: Faults,
+    counts: Rc<CleanupCounts>,
+    host_bytes: u64,
+) -> InferenceRuntime<FaultLoader> {
+    runtime_with_limits(faults, counts, 3, host_bytes)
+}
+
+fn runtime_with_limits(
+    faults: Faults,
+    counts: Rc<CleanupCounts>,
+    maximum_attempts: u32,
+    host_bytes: u64,
+) -> InferenceRuntime<FaultLoader> {
     let maximum_attempts = NonZeroU32::new(maximum_attempts).unwrap_or(NonZeroU32::MIN);
     InferenceRuntime::new(
         FaultLoader { faults, counts },
@@ -1250,7 +1292,7 @@ fn runtime_with_cleanup_attempts(
             NonZeroU32::MIN,
             NonZeroU32::new(2).unwrap_or(NonZeroU32::MIN),
             MemoryBudget {
-                host_bytes: 1_024,
+                host_bytes,
                 device_bytes: 0,
             },
         )

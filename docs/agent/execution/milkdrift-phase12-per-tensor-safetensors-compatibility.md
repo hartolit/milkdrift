@@ -1,15 +1,12 @@
 # Phase 12 — Per-tensor Safetensors scalar compatibility
 
-**Status:** Inactive implementation plan  
-**Activation:** Requires explicit project-owner approval  
-**Precondition:** Phase 11 and post-Phase 11 quality maintenance remain accepted  
-**Scope:** Broader compatibility inside the existing unquantized Candle Llama
-Safetensors path
+**Status:** Superseded historical planning input
+**Current execution authority:** [Phase 12 execution guide](milkdrift-phase12-execution-guide.md) and its [Segment 1](milkdrift-phase12-core-loader-runtime.md), [Segment 2](milkdrift-phase12-application-artifact-integration.md), and [Segment 3](milkdrift-phase12-validation-project-truth.md) specifications
+**Historical scope:** Broader compatibility inside the existing unquantized Candle Llama Safetensors path
 
-This file is both an implementation plan and the execution prompt to use when
-Phase 12 is deliberately activated.
+This is the original monolithic Phase 12 plan. It is retained without a wholesale rewrite so its planning rationale and discarded assumptions remain reviewable, but it is not active doctrine or an execution prompt. Phase 12 was activated and split by stable ownership boundaries; current status, commands, evidence requirements, and closure decisions come from the segmented guide/specifications and [current execution context](current.md).
 
-Committing or reading this plan does not activate the phase.
+Where this historical plan conflicts with the segmented authority or implemented contracts, follow the segmented authority and current code.
 
 ## Why this is a separate phase
 
@@ -787,7 +784,9 @@ Do not fragment work into many cosmetic commits.
 Do not start the next commit while the current ownership boundary is failing
 its focused checks.
 
-## Validation commands
+## Historical validation commands
+
+> This command list is preserved as original planning input. Use the current [validation procedure](../../project/validation.md) and Segment 3 specification for active execution; do not infer a pass from this list.
 
 ### CPU and repository gates
 
@@ -883,9 +882,11 @@ Observe both:
 - normal shared CPU quality workflow;
 - self-hosted CUDA hardware workflow.
 
-## Phase 12 acceptance criteria
+## Historical Phase 12 acceptance criteria
 
-Phase 12 is complete only when all of the following are true:
+The following was the monolithic plan's proposed closure checklist. It is not the active checklist; the segmented execution guide/specifications own current closure, including honest closure of deterministic compatibility when no suitable immutable license-reviewed external mixed checkpoint can be established.
+
+The historical plan required all of the following:
 
 - declared source scalar, observed tensor scalar set, and execution scalar are
   distinct in contracts and evidence;
@@ -910,9 +911,9 @@ Phase 12 is complete only when all of the following are true:
 - documentation claims only the exact executed compatibility boundary;
 - no unrelated engine, format, device, or public framework was added.
 
-## Closure status
+## Historical proposed closure status
 
-After all acceptance criteria pass, update current status to:
+The monolithic plan proposed the following wording. Do not use it as current status; see [current execution context](current.md):
 
 ```text
 Phase 10 complete.
@@ -923,10 +924,9 @@ unquantized Llama Safetensors matrix.
 No subsequent product phase is active.
 ```
 
-Before that point, Phase 12 remains active and mixed-dtype support remains
-unclaimed.
+That proposed wording and its external-checkpoint prerequisite are superseded by the segmented closure rules.
 
-## Final report
+## Historical proposed final report
 
 Report:
 

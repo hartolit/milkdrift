@@ -3,7 +3,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use candle_backend::{CandleLlamaSource, CandleScalarType};
+use candle_backend::CandleLlamaSource;
+use domain_contracts::ScalarType;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -94,7 +95,7 @@ impl VerifiedFixture {
         CandleLlamaSource::new(
             self.directory.join("config.json"),
             vec![self.directory.join("model.safetensors")],
-            CandleScalarType::F32,
+            Some(ScalarType::F32),
         )
         .map_err(|error| BenchmarkError::new(format!("fixture source is invalid: {error}")))
     }

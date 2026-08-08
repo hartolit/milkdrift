@@ -3621,6 +3621,7 @@ name = "inference-runtime"
 version = "0.1.0"
 dependencies = [
  "candle-backend",
+ "candle-core",
  "domain-contracts",
  "host-runtime",
  "sampling",

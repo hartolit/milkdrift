@@ -5,7 +5,7 @@ use serde::Serialize;
 use crate::memory::ProcessMemory;
 use crate::report::{GitMetadata, MemoryFootprintRecord, SystemMetadata, ToolchainMetadata};
 
-pub(super) const SCHEMA_VERSION: u32 = 3;
+pub(super) const SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct ExternalBaselineReport {
@@ -42,7 +42,8 @@ pub(super) struct ExecutionMetadata {
     pub(super) cuda_enabled: bool,
     pub(super) requested_device: DeviceIdentity,
     pub(super) cuda_device: Option<CudaDeviceMetadata>,
-    pub(super) execution_scalar: &'static str,
+    pub(super) planned_execution_scalar: &'static str,
+    pub(super) actual_execution_scalar: &'static str,
     pub(super) host_sampling: bool,
     pub(super) cuda_logits_to_host_limitation: Option<&'static str>,
     pub(super) cuda_memory_observation_scope: Option<&'static str>,
@@ -86,11 +87,21 @@ pub(super) struct ModelMetadata {
     pub(super) source: &'static str,
     pub(super) format: &'static str,
     pub(super) architecture: &'static str,
-    pub(super) source_scalar: &'static str,
+    pub(super) artifact_layout: ArtifactLayoutMetadata,
+    pub(super) configuration_declared_scalar: Option<&'static str>,
+    pub(super) observed_tensor_scalars: Vec<&'static str>,
     pub(super) vocabulary_size: u32,
     pub(super) maximum_context_tokens: u32,
     pub(super) maximum_prefill_batch: u32,
     pub(super) cache_state_before_resolution: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(super) struct ArtifactLayoutMetadata {
+    pub(super) configuration_file: &'static str,
+    pub(super) tokenizer_file: &'static str,
+    pub(super) safetensors_layout: &'static str,
+    pub(super) weight_files: Vec<&'static str>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -189,7 +200,7 @@ pub(super) struct LifecycleResult {
     pub(super) load_ns: u64,
     pub(super) selected_e1_device: DeviceIdentity,
     pub(super) actual_loaded_e0_device: DeviceIdentity,
-    pub(super) accounted_footprint: AccountedFootprintEvidence,
+    pub(super) prepared_load: PreparedLoadEvidence,
     pub(super) post_unload_e0_accounting_scope: &'static str,
     pub(super) unload: UnloadResult,
     pub(super) shutdown: ShutdownResult,
@@ -197,18 +208,20 @@ pub(super) struct LifecycleResult {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub(super) struct AccountedFootprintEvidence {
-    pub(super) independent_public_plan: MemoryFootprintRecord,
-    pub(super) e1_accepted_e0_load_contract: bool,
-    pub(super) reservation_snapshot_observed: bool,
+pub(super) struct PreparedLoadEvidence {
+    pub(super) planned_execution_device: DeviceIdentity,
+    pub(super) exact_final_footprint: MemoryFootprintRecord,
+    pub(super) loading_peak_footprint: MemoryFootprintRecord,
+    pub(super) e1_load_accepted: bool,
+    pub(super) e0_reserved_ownership_observed: bool,
     pub(super) provenance: &'static str,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(super) struct ResourceCheckpoint {
     pub(super) checkpoint: &'static str,
-    pub(super) host_memory: ProcessMemory,
-    pub(super) cuda_memory: Option<CudaMemoryObservation>,
+    pub(super) process_memory: ProcessMemory,
+    pub(super) whole_device_cuda_memory: Option<CudaMemoryObservation>,
 }
 
 #[expect(
@@ -390,13 +403,20 @@ mod tests {
         ordinal: Some(0),
     };
 
-    fn footprint() -> MemoryFootprintRecord {
+    fn final_footprint() -> MemoryFootprintRecord {
         MemoryFootprintRecord {
             host_weight_bytes: 0,
             device_weight_bytes: 2_200,
-            host_working_bytes: 2_200,
+            host_working_bytes: 0,
             device_working_bytes: 0,
             cache_bytes_per_token: 22,
+        }
+    }
+
+    fn loading_peak_footprint() -> MemoryFootprintRecord {
+        MemoryFootprintRecord {
+            host_working_bytes: 2_200,
+            ..final_footprint()
         }
     }
 
@@ -457,11 +477,13 @@ mod tests {
             load_ns: 3,
             selected_e1_device: CUDA_IDENTITY,
             actual_loaded_e0_device: CUDA_IDENTITY,
-            accounted_footprint: AccountedFootprintEvidence {
-                independent_public_plan: footprint(),
-                e1_accepted_e0_load_contract: true,
-                reservation_snapshot_observed: false,
-                provenance: "independent public plan accepted by E1",
+            prepared_load: PreparedLoadEvidence {
+                planned_execution_device: CUDA_IDENTITY,
+                exact_final_footprint: final_footprint(),
+                loading_peak_footprint: loading_peak_footprint(),
+                e1_load_accepted: true,
+                e0_reserved_ownership_observed: false,
+                provenance: "observer prepare_load followed by E1 acceptance",
             },
             post_unload_e0_accounting_scope: "separate direct E0 fixture proof",
             unload: UnloadResult {
@@ -486,11 +508,11 @@ mod tests {
             },
             resource_checkpoints: vec![ResourceCheckpoint {
                 checkpoint: "after-model-load",
-                host_memory: ProcessMemory {
+                process_memory: ProcessMemory {
                     vm_rss_bytes: Some(10_000),
                     vm_hwm_bytes: Some(12_000),
                 },
-                cuda_memory: Some(CudaMemoryObservation {
+                whole_device_cuda_memory: Some(CudaMemoryObservation {
                     total_bytes: 16_000,
                     free_bytes: 10_000,
                     used_bytes: 6_000,
@@ -560,7 +582,8 @@ mod tests {
                 },
                 total_memory_bytes: 16_000,
             }),
-            execution_scalar: "BF16",
+            planned_execution_scalar: "BF16",
+            actual_execution_scalar: "BF16",
             host_sampling: true,
             cuda_logits_to_host_limitation: Some("host sampling"),
             cuda_memory_observation_scope: Some("whole device"),
@@ -582,7 +605,14 @@ mod tests {
             source: "Hugging Face Hub",
             format: "Safetensors",
             architecture: "Llama",
-            source_scalar: "BF16",
+            artifact_layout: ArtifactLayoutMetadata {
+                configuration_file: "config.json",
+                tokenizer_file: "tokenizer.json",
+                safetensors_layout: "single_file",
+                weight_files: vec!["model.safetensors"],
+            },
+            configuration_declared_scalar: Some("BF16"),
+            observed_tensor_scalars: vec!["BF16"],
             vocabulary_size: 32_000,
             maximum_context_tokens: 2_048,
             maximum_prefill_batch: 2_048,
@@ -705,7 +735,10 @@ mod tests {
                     assert!(
                         ![
                             "scalar_type",
+                            "source_scalar",
+                            "execution_scalar",
                             "execution_dtype",
+                            "independent_public_plan",
                             "decoded_text",
                             "generated_text",
                             "token_ids",
@@ -737,15 +770,23 @@ mod tests {
     }
 
     #[test]
-    fn schema_three_serializes_explicit_scalar_and_device_facts() -> Result<(), String> {
+    fn schema_four_serializes_declared_observed_planned_and_actual_facts() -> Result<(), String> {
         let value = serde_json::to_value(fixture_report()).map_err(|error| error.to_string())?;
-        assert_eq!(value_at(&value, &["schema_version"])?.as_u64(), Some(3));
+        assert_eq!(value_at(&value, &["schema_version"])?.as_u64(), Some(4));
         assert_eq!(
-            value_at(&value, &["model", "source_scalar"])?.as_str(),
+            value_at(&value, &["model", "configuration_declared_scalar"])?.as_str(),
+            Some("BF16")
+        );
+        let observed = value_at(&value, &["model", "observed_tensor_scalars"])?
+            .as_array()
+            .ok_or_else(|| "observed tensor scalars were not an array".to_owned())?;
+        assert_eq!(observed.first().and_then(Value::as_str), Some("BF16"));
+        assert_eq!(
+            value_at(&value, &["execution", "planned_execution_scalar"])?.as_str(),
             Some("BF16")
         );
         assert_eq!(
-            value_at(&value, &["execution", "execution_scalar"])?.as_str(),
+            value_at(&value, &["execution", "actual_execution_scalar"])?.as_str(),
             Some("BF16")
         );
         assert_eq!(
@@ -797,32 +838,48 @@ mod tests {
     }
 
     #[test]
-    fn accounting_and_physical_memory_serialize_as_separate_evidence() -> Result<(), String> {
+    fn plan_reserved_ownership_rss_and_whole_device_cuda_remain_distinct() -> Result<(), String> {
         let value = serde_json::to_value(fixture_report()).map_err(|error| error.to_string())?;
         let lifecycle = value_at(&value, &["results", "primary_cycle", "lifecycle"])?;
-        let accounted = value_at(lifecycle, &["accounted_footprint"])?;
+        let prepared = value_at(lifecycle, &["prepared_load"])?;
         let checkpoints = value_at(lifecycle, &["resource_checkpoints"])?
             .as_array()
             .ok_or_else(|| "resource checkpoints were not an array".to_owned())?;
         let first = checkpoints
             .first()
             .ok_or_else(|| "resource checkpoints were empty".to_owned())?;
-        let physical = value_at(first, &["cuda_memory"])?;
+        let process = value_at(first, &["process_memory"])?;
+        let whole_device = value_at(first, &["whole_device_cuda_memory"])?;
         assert_eq!(
-            value_at(
-                accounted,
-                &["independent_public_plan", "device_weight_bytes"],
-            )?
-            .as_u64(),
+            value_at(prepared, &["exact_final_footprint", "device_weight_bytes"])?.as_u64(),
             Some(2_200)
         );
-        assert_eq!(value_at(physical, &["used_bytes"])?.as_u64(), Some(6_000));
-        assert!(accounted.get("used_bytes").is_none());
-        assert!(physical.get("device_weight_bytes").is_none());
         assert_eq!(
-            value_at(accounted, &["reservation_snapshot_observed"])?.as_bool(),
+            value_at(prepared, &["loading_peak_footprint", "host_working_bytes"])?.as_u64(),
+            Some(2_200)
+        );
+        assert_eq!(
+            value_at(prepared, &["e0_reserved_ownership_observed"])?.as_bool(),
             Some(false)
         );
+        assert_eq!(value_at(process, &["vm_rss_bytes"])?.as_u64(), Some(10_000));
+        assert_eq!(
+            value_at(whole_device, &["used_bytes"])?.as_u64(),
+            Some(6_000)
+        );
+        assert!(prepared.get("vm_rss_bytes").is_none());
+        assert!(prepared.get("used_bytes").is_none());
+        assert!(process.get("device_weight_bytes").is_none());
+        assert!(whole_device.get("device_weight_bytes").is_none());
         Ok(())
+    }
+
+    #[test]
+    fn external_schema_history_remains_documented_without_a_legacy_parser() {
+        let readme = include_str!("../../README.md");
+        assert!(readme.contains("**External schema 1 (historical):**"));
+        assert!(readme.contains("**External schema 2 (historical):**"));
+        assert!(readme.contains("**External schema 3 (historical):**"));
+        assert!(readme.contains("**External schema 4 (current):**"));
     }
 }

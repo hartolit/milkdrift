@@ -1,14 +1,18 @@
 //! Download-free Candle real-fixture coverage for E0 generation and lifecycle.
 
+use std::collections::HashMap;
+use std::fs;
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use candle_backend::{CandleLlamaLoader, CandleLlamaSource};
+use candle_core::{DType, Device, Tensor};
 use domain_contracts::{
     BackendId, CancellationReason, CapabilitySet, DeviceId, DeviceKind, ExecutionDevice,
-    FinishReason, MemoryBudget, MemoryFootprint, ModelArchitecture, ModelHandle, ModelId,
-    RequestId, ScalarType, SequenceConfiguration, SequenceId, TokenId, UnloadPolicy, YieldReason,
+    FinishReason, LoadConfiguration, LoadPlan, MemoryBudget, MemoryFootprint, ModelArchitecture,
+    ModelGeneration, ModelHandle, ModelId, ModelLoader, PreparedLoad, RequestId, ScalarType,
+    ScalarTypeSet, SequenceConfiguration, SequenceId, TokenId, UnloadPolicy, YieldReason,
 };
 
 use host_runtime::TokenOutputRecordKind;
@@ -34,6 +38,9 @@ const SHUTDOWN_TICKET: CommandTicket = CommandTicket::new(92);
 
 const REQUIRED_GENERATION_OPERATIONS: CapabilitySet =
     CapabilitySet::PREFILL.union(CapabilitySet::INCREMENTAL_DECODE);
+const MIXED_EXECUTION_WEIGHT_BYTES: u64 = 1_840;
+const MIXED_CACHE_BYTES_PER_TOKEN: u64 = 32;
+const MIXED_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 513;
 
 type TestResult<T = ()> = Result<T, String>;
 type CandleRuntime = HostedRuntime<CandleLlamaSource>;
@@ -57,7 +64,13 @@ fn candle_fixture_covers_generation_sampling_eos_and_lifecycle() -> TestResult {
     )?;
     assert_eq!(greedy_output.tokens, vec![EXPECTED_GREEDY_TOKEN; 3]);
     assert_finished(&greedy_output, FinishReason::TokenLimit);
-    assert_released_snapshot(&hosted, handle, CommandTicket::new(20))?;
+    assert_released_snapshot(
+        &hosted,
+        handle,
+        loaded.execution_scalar_type,
+        loaded.reserved_footprint,
+        CommandTicket::new(20),
+    )?;
 
     let sampling = stochastic_sampling();
     let first_seeded = generation_request(2, 102, 5, sampling, 0x5eed, Box::new([]))?;
@@ -76,7 +89,13 @@ fn candle_fixture_covers_generation_sampling_eos_and_lifecycle() -> TestResult {
             .all(|token| token.get() < VOCABULARY_SIZE)
     );
     assert_finished(&first_seeded_output, FinishReason::TokenLimit);
-    assert_released_snapshot(&hosted, handle, CommandTicket::new(21))?;
+    assert_released_snapshot(
+        &hosted,
+        handle,
+        loaded.execution_scalar_type,
+        loaded.reserved_footprint,
+        CommandTicket::new(21),
+    )?;
 
     let second_seeded = generation_request(3, 103, 5, sampling, 0x5eed, Box::new([]))?;
     submit_generation(&hosted, handle, CommandTicket::new(12), &second_seeded)?;
@@ -89,7 +108,13 @@ fn candle_fixture_covers_generation_sampling_eos_and_lifecycle() -> TestResult {
     assert_eq!(second_seeded_output.tokens.len(), 5);
     assert_eq!(first_seeded_output.tokens, second_seeded_output.tokens);
     assert_finished(&second_seeded_output, FinishReason::TokenLimit);
-    assert_released_snapshot(&hosted, handle, CommandTicket::new(22))?;
+    assert_released_snapshot(
+        &hosted,
+        handle,
+        loaded.execution_scalar_type,
+        loaded.reserved_footprint,
+        CommandTicket::new(22),
+    )?;
 
     let eos = generation_request(
         4,
@@ -111,7 +136,48 @@ fn candle_fixture_covers_generation_sampling_eos_and_lifecycle() -> TestResult {
         &eos_output,
         FinishReason::EndOfSequence(EXPECTED_GREEDY_TOKEN),
     );
-    assert_released_snapshot(&hosted, handle, CommandTicket::new(23))?;
+    assert_released_snapshot(
+        &hosted,
+        handle,
+        loaded.execution_scalar_type,
+        loaded.reserved_footprint,
+        CommandTicket::new(23),
+    )?;
+
+    unload_model(&hosted, handle)?;
+    shutdown(hosted, thread)
+}
+
+#[test]
+fn mixed_f16_f32_fixture_covers_e0_generation_accounting_and_lifecycle() -> TestResult {
+    let converted = ConvertedFixture::create(DType::F16, true)?;
+    let source = mixed_fixture_source(&converted, ScalarType::F16)?;
+    let execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu);
+    let plan = prepare_plan(&source, execution_device)?;
+    assert_mixed_f16_plan(&plan, execution_device)?;
+
+    let (hosted, thread) = hosted_runtime(16, 64)?;
+    let loaded = load_model(&hosted, source)?;
+    assert_mixed_f16_receipt(&loaded, &plan, execution_device);
+    let handle = loaded.handle;
+
+    let request = generation_request(5, 105, 3, SamplingConfig::greedy(), 37, Box::new([]))?;
+    submit_generation(&hosted, handle, CommandTicket::new(14), &request)?;
+    let output = collect_until_released(
+        &hosted,
+        request.request_id,
+        OUTPUT_TIMEOUT,
+        CollectedOutput::default(),
+    )?;
+    assert_eq!(output.tokens, vec![EXPECTED_GREEDY_TOKEN; 3]);
+    assert_finished(&output, FinishReason::TokenLimit);
+    assert_released_snapshot(
+        &hosted,
+        handle,
+        ScalarType::F16,
+        plan.expected_footprint,
+        CommandTicket::new(24),
+    )?;
 
     unload_model(&hosted, handle)?;
     shutdown(hosted, thread)
@@ -132,7 +198,13 @@ fn candle_fixture_covers_output_backpressure_and_cancellation() -> TestResult {
     assert_eq!(backpressured_output.tokens, vec![EXPECTED_GREEDY_TOKEN; 4]);
     assert_output_backpressure(&backpressured_output);
     assert_finished(&backpressured_output, FinishReason::TokenLimit);
-    assert_released_snapshot(&hosted, handle, CommandTicket::new(40))?;
+    assert_released_snapshot(
+        &hosted,
+        handle,
+        loaded.execution_scalar_type,
+        loaded.reserved_footprint,
+        CommandTicket::new(40),
+    )?;
 
     let cancelled = generation_request(11, 111, 12, SamplingConfig::greedy(), 29, Box::new([]))?;
     submit_generation(&hosted, handle, CommandTicket::new(31), &cancelled)?;
@@ -153,7 +225,13 @@ fn candle_fixture_covers_output_backpressure_and_cancellation() -> TestResult {
         &cancelled_output,
         FinishReason::Cancelled(CancellationReason::UserRequested),
     );
-    assert_released_snapshot(&hosted, handle, CommandTicket::new(41))?;
+    assert_released_snapshot(
+        &hosted,
+        handle,
+        loaded.execution_scalar_type,
+        loaded.reserved_footprint,
+        CommandTicket::new(41),
+    )?;
 
     unload_model(&hosted, handle)?;
     shutdown(hosted, thread)
@@ -162,18 +240,17 @@ fn candle_fixture_covers_output_backpressure_and_cancellation() -> TestResult {
 #[cfg(feature = "cuda")]
 #[test]
 #[ignore = "requires MILKDRIFT_CUDA_TEST=1 and CUDA ordinal 0"]
-fn candle_cuda_fixture_covers_e0_generation_accounting_and_lifecycle() -> TestResult {
+fn candle_mixed_cuda_fixture_covers_e0_generation_accounting_and_lifecycle() -> TestResult {
     require_cuda_opt_in()?;
+    let converted = ConvertedFixture::create(DType::F16, true)?;
+    let source = mixed_fixture_source(&converted, ScalarType::F16)?;
+    let execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda);
+    let plan = prepare_plan(&source, execution_device)?;
+    assert_mixed_f16_plan(&plan, execution_device)?;
+
     let (hosted, thread) = hosted_cuda_runtime()?;
-    let loaded = load_cuda_model(&hosted, candle_fixture_source()?)?;
-    assert_eq!(
-        loaded.execution_device,
-        ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda)
-    );
-    assert_eq!(loaded.execution_scalar_type, ScalarType::F32);
-    assert_eq!(loaded.reserved_footprint.host_weight_bytes, 0);
-    assert!(loaded.reserved_footprint.device_weight_bytes > 0);
-    assert_eq!(loaded.reserved_footprint.host_working_bytes, 0);
+    let loaded = load_cuda_model(&hosted, source)?;
+    assert_mixed_f16_receipt(&loaded, &plan, execution_device);
     let handle = loaded.handle;
 
     let request = generation_request(50, 150, 3, SamplingConfig::greedy(), 31, Box::new([]))?;
@@ -186,7 +263,7 @@ fn candle_cuda_fixture_covers_e0_generation_accounting_and_lifecycle() -> TestRe
     )?;
     assert_eq!(output.tokens, vec![EXPECTED_GREEDY_TOKEN; 3]);
     assert_finished(&output, FinishReason::TokenLimit);
-    assert_cuda_released_snapshot(&hosted, handle, loaded.reserved_footprint)?;
+    assert_cuda_released_snapshot(&hosted, handle, ScalarType::F16, loaded.reserved_footprint)?;
 
     unload_model(&hosted, handle)?;
     shutdown(hosted, thread)
@@ -200,6 +277,126 @@ fn candle_fixture_source() -> TestResult<CandleLlamaSource> {
         Some(ScalarType::F32),
     )
     .map_err(|error| error.to_string())
+}
+
+fn mixed_fixture_source(
+    fixture: &ConvertedFixture,
+    configuration_declared_scalar_type: ScalarType,
+) -> TestResult<CandleLlamaSource> {
+    CandleLlamaSource::new(
+        candle_fixture_directory().join("config.json"),
+        vec![fixture.weight_path.clone()],
+        Some(configuration_declared_scalar_type),
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn prepare_plan(
+    source: &CandleLlamaSource,
+    execution_device: ExecutionDevice,
+) -> TestResult<LoadPlan> {
+    let mut loader = CandleLlamaLoader::new(CANDLE_BACKEND);
+    let configuration = LoadConfiguration {
+        handle: ModelHandle::new(MODEL, ModelGeneration::new(1)),
+        execution_device,
+        memory_budget: MemoryBudget {
+            host_bytes: u64::MAX,
+            device_bytes: u64::MAX,
+        },
+    };
+    let prepared = loader
+        .prepare_load(source, &configuration)
+        .map_err(|error| format!("prepare mixed fixture: {error:?}"))?;
+    let plan = *prepared.plan();
+    drop(prepared);
+    Ok(plan)
+}
+
+fn assert_mixed_f16_plan(plan: &LoadPlan, execution_device: ExecutionDevice) -> TestResult {
+    assert_eq!(
+        plan.accepted_configuration.execution_device,
+        execution_device
+    );
+    assert_eq!(plan.execution_scalar_type, ScalarType::F16);
+    assert_eq!(
+        plan.descriptor.metadata.configuration_declared_scalar_type,
+        Some(ScalarType::F16)
+    );
+    assert_eq!(
+        plan.descriptor.metadata.observed_tensor_scalar_types,
+        ScalarTypeSet::from_scalar(ScalarType::F16)
+            .union(ScalarTypeSet::from_scalar(ScalarType::F32))
+    );
+
+    let expected_final = match execution_device.kind {
+        DeviceKind::Cpu => MemoryFootprint {
+            host_weight_bytes: MIXED_EXECUTION_WEIGHT_BYTES,
+            device_weight_bytes: 0,
+            host_working_bytes: 0,
+            device_working_bytes: 0,
+            cache_bytes_per_token: MIXED_CACHE_BYTES_PER_TOKEN,
+        },
+        DeviceKind::Cuda => MemoryFootprint {
+            host_weight_bytes: 0,
+            device_weight_bytes: MIXED_EXECUTION_WEIGHT_BYTES,
+            host_working_bytes: 0,
+            device_working_bytes: 0,
+            cache_bytes_per_token: MIXED_CACHE_BYTES_PER_TOKEN,
+        },
+        _ => return Err("mixed fixture test selected an unsupported execution device".to_owned()),
+    };
+    assert_eq!(plan.expected_footprint, expected_final);
+    assert_eq!(
+        plan.descriptor.estimated_footprint,
+        MemoryFootprint {
+            host_weight_bytes: MIXED_EXECUTION_WEIGHT_BYTES,
+            device_weight_bytes: 0,
+            host_working_bytes: 0,
+            device_working_bytes: 0,
+            cache_bytes_per_token: MIXED_CACHE_BYTES_PER_TOKEN,
+        }
+    );
+    assert_eq!(
+        plan.loading_peak_footprint.cache_bytes_per_token,
+        MIXED_CACHE_BYTES_PER_TOKEN
+    );
+
+    match execution_device.kind {
+        DeviceKind::Cpu => {
+            assert_eq!(
+                plan.loading_peak_footprint.host_weight_bytes,
+                MIXED_EXECUTION_WEIGHT_BYTES
+            );
+            assert_eq!(plan.loading_peak_footprint.device_weight_bytes, 0);
+            assert!(plan.loading_peak_footprint.host_working_bytes > 0);
+            assert_eq!(plan.loading_peak_footprint.device_working_bytes, 0);
+        }
+        DeviceKind::Cuda => {
+            assert_eq!(plan.loading_peak_footprint.host_weight_bytes, 0);
+            assert_eq!(
+                plan.loading_peak_footprint.device_weight_bytes,
+                MIXED_EXECUTION_WEIGHT_BYTES
+            );
+            assert_eq!(
+                plan.loading_peak_footprint.host_working_bytes,
+                MIXED_CUDA_HOST_LOADING_PEAK_BYTES
+            );
+            assert_eq!(plan.loading_peak_footprint.device_working_bytes, 0);
+        }
+        _ => return Err("mixed fixture test selected an unsupported execution device".to_owned()),
+    }
+    Ok(())
+}
+
+fn assert_mixed_f16_receipt(
+    loaded: &LoadReceipt,
+    plan: &LoadPlan,
+    execution_device: ExecutionDevice,
+) {
+    assert_eq!(loaded.execution_device, execution_device);
+    assert_eq!(loaded.execution_scalar_type, ScalarType::F16);
+    assert_eq!(loaded.descriptor, plan.descriptor);
+    assert_eq!(loaded.reserved_footprint, plan.expected_footprint);
 }
 
 fn hosted_runtime(
@@ -567,6 +764,8 @@ fn assert_output_backpressure(output: &CollectedOutput) {
 fn assert_released_snapshot(
     hosted: &CandleRuntime,
     handle: ModelHandle,
+    execution_scalar_type: ScalarType,
+    model_footprint: MemoryFootprint,
     ticket: CommandTicket,
 ) -> TestResult {
     hosted
@@ -583,6 +782,7 @@ fn assert_released_snapshot(
         } if event_ticket == ticket => {
             assert_eq!(runtime.loaded_models, 1);
             assert_eq!(runtime.active_requests, 0);
+            assert_eq!(runtime.reserved_footprint, model_footprint);
             assert_eq!(runtime.generation_workspaces, 0);
             assert_eq!(
                 runtime.reserved_generation_workspace,
@@ -600,7 +800,8 @@ fn assert_released_snapshot(
                 model.execution_device,
                 ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu)
             );
-            assert_eq!(model.execution_scalar_type, ScalarType::F32);
+            assert_eq!(model.execution_scalar_type, execution_scalar_type);
+            assert_eq!(model.reserved_footprint, model_footprint);
             assert_eq!(model.active_requests, 0);
             assert_eq!(model.pending_cleanup_sequences, 0);
             assert_eq!(model.exhausted_cleanup_sequences, 0);
@@ -618,6 +819,7 @@ fn assert_released_snapshot(
 fn assert_cuda_released_snapshot(
     hosted: &CandleRuntime,
     handle: ModelHandle,
+    execution_scalar_type: ScalarType,
     model_footprint: MemoryFootprint,
 ) -> TestResult {
     let ticket = CommandTicket::new(51);
@@ -650,7 +852,7 @@ fn assert_cuda_released_snapshot(
                 model.execution_device,
                 ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda)
             );
-            assert_eq!(model.execution_scalar_type, ScalarType::F32);
+            assert_eq!(model.execution_scalar_type, execution_scalar_type);
             assert_eq!(model.reserved_footprint, model_footprint);
             assert_eq!(model.active_requests, 0);
             assert!(!model.degraded);
@@ -776,6 +978,68 @@ fn require_cuda_opt_in() -> TestResult {
 
 fn candle_fixture_directory() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/candle-llama")
+}
+
+struct ConvertedFixture {
+    directory: PathBuf,
+    weight_path: PathBuf,
+}
+
+impl ConvertedFixture {
+    fn create(primary_dtype: DType, mixed_f32: bool) -> TestResult<Self> {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "milkdrift-e0-phase12-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let weight_path = directory.join("model.safetensors");
+        convert_weights(
+            &candle_fixture_directory().join("model.safetensors"),
+            &weight_path,
+            primary_dtype,
+            mixed_f32,
+        )?;
+        Ok(Self {
+            directory,
+            weight_path,
+        })
+    }
+}
+
+impl Drop for ConvertedFixture {
+    fn drop(&mut self) {
+        let _ignored = fs::remove_dir_all(&self.directory);
+    }
+}
+
+fn convert_weights(
+    source: &Path,
+    destination: &Path,
+    primary_dtype: DType,
+    mixed_f32: bool,
+) -> TestResult {
+    let tensors = candle_core::safetensors::load(source, &Device::Cpu)
+        .map_err(|error| format!("load F32 conversion source: {error}"))?;
+    let converted = tensors
+        .into_iter()
+        .map(|(name, tensor)| {
+            let dtype = if mixed_f32 && name == "model.norm.weight" {
+                DType::F32
+            } else {
+                primary_dtype
+            };
+            let tensor = tensor
+                .to_dtype(dtype)
+                .map_err(|error| format!("convert {name} to {dtype:?}: {error}"))?;
+            Ok((name, tensor))
+        })
+        .collect::<TestResult<HashMap<String, Tensor>>>()?;
+    candle_core::safetensors::save(&converted, destination)
+        .map_err(|error| format!("save converted fixture: {error}"))
 }
 
 fn deadline(timeout: Duration) -> TestResult<Instant> {

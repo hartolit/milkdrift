@@ -52,6 +52,11 @@ pub(super) fn resolve_model(
                         "exact Hub resolution failed for {MODEL_REPOSITORY}@{MODEL_REVISION}: {failure}"
                     )));
                 }
+                ApplicationEvent::ModelCleanupPending { exhausted, failure } => {
+                    return Err(BenchmarkError::new(format!(
+                        "model cleanup retained E0 ownership during immutable resolution (exhausted={exhausted}): {failure}"
+                    )));
+                }
                 ApplicationEvent::HubDisconnected => {
                     return Err(BenchmarkError::new(
                         "Hub worker disconnected during exact immutable resolution",
@@ -77,8 +82,8 @@ pub(super) fn validate_resolved_state(
     runtime: &ApplicationRuntime,
     model: &ResolvedModel,
     selection: &ModelSelection,
-) -> BenchmarkResult<ApplicationScalarType> {
-    let source_scalar_type = validate_resolved_facts(model, selection)?;
+) -> BenchmarkResult<Option<ApplicationScalarType>> {
+    let configuration_declared_scalar_type = validate_resolved_facts(model, selection)?;
     let state = runtime.state();
     if state.activity() != ApplicationActivity::Idle
         || state.resolved() != Some(model)
@@ -91,7 +96,7 @@ pub(super) fn validate_resolved_state(
             "public E1 state did not retain the clean exact immutable resolution",
         ));
     }
-    Ok(source_scalar_type)
+    Ok(configuration_declared_scalar_type)
 }
 
 fn validate_resolution_ready(

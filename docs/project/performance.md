@@ -13,9 +13,9 @@ Hard harness timeouts stop hangs only. Lifecycle, fixture, identity, output, cle
 | Deterministic allocation | Harness-free `domain-contracts` allocation executable and the sampling allocator test | Project-global allocator behavior within the named preallocated regions | Candle/native/driver/OS/device allocation behavior |
 | Sampling component | `crates/domain/sampling/benches/sampling_pipeline.rs` | Comparative timing of public sampling and stop matching with caller-owned prepared storage | E0/E1 latency, product throughput, or allocation attribution |
 | Hosted E0 component-like | `benchmarks/runtime/benches/runtime.rs` | Public command submission through matching completion event, including bounded transport and dispatch | Raw Candle kernel timing, E1/product latency, RSS, or full-generation throughput |
-| Synthetic system/integration | `benchmarks/runtime` normal `baseline` binary | Download-free hosted-E0 lifecycle/output/accounting/RSS observations and fresh E1 start/shutdown cycles | Product-model speed or quality, representative scale, steady-state serving, or device memory |
+| Synthetic system/integration | `benchmarks/runtime` normal `baseline` binary; current synthetic schema 3 | Download-free hosted-E0 lifecycle/output plus separate prepared declared/observed/planned facts, actual E0 receipt/reserved ownership, exact final/loading-peak plans, process RSS, and fresh E1 start/shutdown cycles | Product-model speed or quality, representative scale, steady-state serving, physical residency, or device memory |
 | Compile-only | Workspace benchmark compilation | Target/API compatibility | Runtime correctness or performance |
-| External real-product | `runtime-benchmarks` `external-baseline` binary plus focused E0/E1 device and accounting validation | Schema-3 evidence infrastructure for the exact TinyLlama lifecycle, explicit source/execution scalars, direct-completion, cancellation, accounted footprint, process RSS, and whole-device CUDA observations; the curated CPU/CUDA measurements remain the preserved schema-2 Commit E evidence below, and historical CPU-only Commit C evidence remains below | Model quality, other hosts/models/scalars/devices, serving capacity, GPU sampling, process-attributed device memory, generic NVIDIA behavior, leak/non-leak proof, or a portable regression threshold |
+| External real-product | `runtime-benchmarks` `external-baseline` binary plus focused E0/E1 device and ownership validation; current external schema 4 | Current report semantics for the exact homogeneous TinyLlama profile: declared/observed/planned/actual facts, exact final/loading-peak preparation, E1 acceptance without fabricated direct E0 ownership, process RSS, and whole-device CUDA observations. Curated CPU/CUDA timings remain the preserved schema-2 Commit E evidence below; historical CPU-only Commit C and schema-3 regression evidence also remain below. | Mixed-checkpoint evidence, model quality, other hosts/models/layouts/devices, serving capacity, GPU sampling, process-attributed device memory, generic NVIDIA behavior, leak/non-leak proof, or a portable regression threshold |
 
 ## Sampling methodology
 
@@ -104,6 +104,25 @@ The fixture is Candle / Llama / Safetensors / unquantized F32 with vocabulary an
 The runner writes one schema-versioned JSON document to stdout and compact progress/summary information to stderr. It records allowlisted Git, toolchain, host, workload, fixture, lifecycle, accounting, and process-memory data; it excludes generated text/token IDs, credentials, secrets, and broad environment dumps.
 
 Raw JSON, Criterion reports, profiles, caches, and compiler output remain beneath root `target` or outside the repository. The runner writes no result file itself.
+
+### Current synthetic schema 3 contract
+
+Phase 12 advances the normal synthetic report independently from schema 2 to **synthetic schema 3**. This is a structural evidence change; no Phase 10 timing or RSS value below is rewritten as a Phase 12 measurement. The closure-tree `runtime-benchmarks` tests passed the schema contract, but no new controlled synthetic report is curated here.
+
+Each E0 cycle records two related but distinct evidence groups:
+
+| Evidence | Meaning |
+|---|---|
+| `prepared.configuration_declared_scalar` | Optional configuration metadata describing producer intent; not proof of tensor homogeneity. |
+| `prepared.observed_tensor_scalars` | Stable compact set observed from all selected Safetensors tensor headers. |
+| `prepared.planned_execution_scalar` / `planned_execution_device` | Device-aware execution facts selected by that exact unmaterialized prepared transaction. |
+| `prepared.exact_final_footprint` | Exact deterministic tensor ownership expected after successful load. |
+| `prepared.loading_peak_footprint` | Separate component-wise deterministic admission peak while materializing/converting; it is not post-load ownership. |
+| `receipt.actual_execution_scalar` / `actual_execution_device` | Actual loaded facts verified by E0 against its accepted transaction. |
+| `receipt.reserved_footprint` | Direct E0 post-load ownership reservation, required to equal the exact final footprint. |
+| snapshot `process_memory` | Sampled whole-process RSS/HWM, independent of plan and ownership accounting. |
+
+The committed synthetic artifact remains homogeneous F32, so its truthful schema-3 facts are declared `F32`, observed `{F32}`, planned F32/CPU, and actual F32/CPU. The schema does not turn that fixture into mixed-layout evidence. Synthetic schemas 1 and 2 retain their historical meanings; no legacy report parser was introduced.
 
 ## Commit A controlled baseline
 
@@ -225,9 +244,43 @@ Elevated post-unload RSS was not treated as retained model ownership because all
 
 ## External product evidence
 
-### Post-Phase 11 schema-3 observation contract
+### Current Phase 12 external schema-4 contract
 
-The sole device-parameterized external runner now emits schema version 3. The serialized change is structural and does not revise the fixed model, revision, workload, lifecycle timing boundaries, cancellation boundary, or canonical Commit E measurements below. Schema version 2 remains historical evidence with its original field meanings.
+Phase 12 advances the external report independently to **external schema 4**. Closure-tree unit tests validate serialization and semantic separation, but no schema-4 CPU or CUDA product run is accepted here. Therefore every Phase 10/11 timing and memory table below remains attributed to its original code, report schema, and environment.
+
+Schema 4 records:
+
+- optional `configuration_declared_scalar` separately from `observed_tensor_scalars` read through the adapter's prepared-load descriptor;
+- `planned_execution_scalar` separately from E1's `actual_execution_scalar` after E0 receipt verification;
+- requested device, each prepared transaction's planned device, selected E1 device, and actual loaded E0 device as separate facts;
+- fixed repository/revision/license provenance and explicit artifact layout;
+- `prepared_load.exact_final_footprint` separately from `prepared_load.loading_peak_footprint`;
+- E1 acceptance of the prepared load contract while requiring `e0_reserved_ownership_observed: false`, because the observer preparation is independent of the product worker and cannot fabricate a same-worker E0 snapshot;
+- sampled process RSS/HWM only under `process_memory`;
+- qualified whole-device driver total/free/used observations only under `whole_device_cuda_memory`, never as process-attributed ownership;
+- bounded cold CUDA discovery/context-call counts as audit evidence, not a threshold.
+
+The evidence classes must remain distinct:
+
+| Fact | Evidence owner | Interpretation limit |
+|---|---|---|
+| Declared scalar | Immutable configuration metadata | Producer intent only. |
+| Observed scalar set | Safetensors header inspection in the exact preparation | Compact source-layout fact, not execution. |
+| Planned scalar/device | Prepared `LoadPlan` | Selected policy before materialization. |
+| Actual scalar/device | E0-verified receipt surfaced through E1 | Loaded execution fact. |
+| Exact final footprint | Prepared plan | Deterministic successful-load tensor ownership. |
+| Loading-peak footprint | Prepared plan | Deterministic aggregate admission peak during loading/conversion. |
+| E0 reserved ownership | Direct E0 receipt/snapshot only | Runtime ownership/accounting; absent from the external E1 worker unless directly observed. |
+| Process RSS/HWM | Linux process checkpoint | Sampled whole-process residency, not owner attribution. |
+| Whole-device CUDA memory | Driver checkpoint | Entire-device observation, not process attribution. |
+
+The pinned `TinyLlama/TinyLlama-1.1B-Chat-v1.0` revision is configuration-declared BF16 and observed homogeneous `{BF16}`. It remains the established lifecycle/chat profile and is **not mixed-checkpoint evidence**. No suitable immutable, license-reviewed external mixed-dtype Llama profile with an auditable direct-completion procedure has been established, so external mixed CPU/CUDA evidence remains absent. A missing network path or credential would be an acquisition failure, not model incompatibility; only an acquired artifact that fails inspection/preparation/execution can support an incompatibility finding.
+
+External schemas 1–3 retain their historical field meanings. No legacy parser was added merely to reinterpret old reports.
+
+### Historical post-Phase 11 external schema-3 observation contract
+
+The sole device-parameterized external runner emitted schema version 3 on the recorded post-Phase 11 regression tree. That structural change did not revise the fixed model, revision, workload, lifecycle timing boundaries, cancellation boundary, or canonical Commit E measurements below. Schema version 2 remains historical evidence with its original field meanings.
 
 Schema 3 records:
 
@@ -242,9 +295,9 @@ Each counted CUDA discovery constructs a temporary Candle CUDA device and cudarc
 
 The clean schema-3 CUDA regression on commit `7dd7a72565cfb976bf123ed664296e9332af0e70`, tree `766682d96b89a3e6fb4b0d14282e44e318244a56`, recorded exactly 51 safe discovery calls: two before lifecycle execution, 19 in the primary cycle, and 15 in each reduced stability cycle. The same report classified retained whole-device growth as not strictly monotonic. These facts validate the observation schedule and finite stability classifier only; they do not revise canonical performance numbers or establish a leak/non-leak conclusion.
 
-### Phase 11 controlled CPU-vs-CUDA product evidence
+### Historical Phase 11 controlled CPU-vs-CUDA product evidence
 
-The schema-2 Commit E reports and exact curated tables below are the canonical current CPU/CUDA product evidence. The CPU and CUDA primary runs use the same BF16-source model and application workload, but they are product-path observations rather than precision-matched hardware microbenchmarks: CPU uses F32 execution, supported CUDA uses BF16 execution, and CUDA generation includes full-vocabulary-logit transfer for host F32 sampling.
+The schema-2 Commit E reports and exact curated tables below remain the canonical executed Phase 11 CPU/CUDA product evidence. The CPU and CUDA primary runs use the same BF16-source model and application workload, but they are product-path observations rather than precision-matched hardware microbenchmarks: CPU uses F32 execution, supported CUDA uses BF16 execution, and CUDA generation includes full-vocabulary-logit transfer for host F32 sampling.
 
 #### Exact code, model, and report identity
 

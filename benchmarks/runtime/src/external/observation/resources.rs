@@ -39,8 +39,8 @@ impl ResourceState {
         };
         Ok(ResourceCheckpoint {
             checkpoint,
-            host_memory,
-            cuda_memory,
+            process_memory: host_memory,
+            whole_device_cuda_memory: cuda_memory,
         })
     }
 
@@ -68,8 +68,8 @@ impl ResourceState {
         };
         Ok(ResourceCheckpoint {
             checkpoint,
-            host_memory,
-            cuda_memory,
+            process_memory: host_memory,
+            whole_device_cuda_memory: cuda_memory,
         })
     }
 }
@@ -285,7 +285,7 @@ fn checkpoint_cuda_usage(
     require_pre_load_delta: bool,
     context: &'static str,
 ) -> BenchmarkResult<(Option<u64>, Option<i64>)> {
-    match (requested, checkpoint.cuda_memory) {
+    match (requested, checkpoint.whole_device_cuda_memory) {
         (RequestedDevice::Cpu, None) => Ok((None, None)),
         (RequestedDevice::Cpu, Some(_)) => Err(BenchmarkError::new(format!(
             "{context} unexpectedly contained CUDA memory for a CPU cycle"
@@ -383,8 +383,8 @@ mod tests {
     fn checkpoint_interpretation_keeps_cpu_and_cuda_shapes_distinct() -> Result<(), String> {
         let cpu = crate::external::report::ResourceCheckpoint {
             checkpoint: "cpu",
-            host_memory: crate::memory::ProcessMemory::default(),
-            cuda_memory: None,
+            process_memory: crate::memory::ProcessMemory::default(),
+            whole_device_cuda_memory: None,
         };
         validate_pre_load_checkpoint(RequestedDevice::Cpu, &cpu)
             .map_err(|error| error.to_string())?;
@@ -395,8 +395,8 @@ mod tests {
 
         let cuda = crate::external::report::ResourceCheckpoint {
             checkpoint: "cuda",
-            host_memory: crate::memory::ProcessMemory::default(),
-            cuda_memory: Some(CudaMemoryObservation {
+            process_memory: crate::memory::ProcessMemory::default(),
+            whole_device_cuda_memory: Some(CudaMemoryObservation {
                 total_bytes: 16_000,
                 free_bytes: 12_000,
                 used_bytes: 4_000,

@@ -11,10 +11,11 @@ use std::time::{Duration, Instant};
 use application_runtime::{
     ApplicationRuntime, ApplicationScalarType, LoadedModel, ModelSelection, ResolvedModel,
 };
+use domain_contracts::ScalarTypeSet;
 
 use super::cli::RequestedDevice;
 use super::observation::DeviceObserver;
-use super::report::{AccountedFootprintEvidence, UnloadResult};
+use super::report::{PreparedLoadEvidence, UnloadResult};
 use crate::error::{BenchmarkError, BenchmarkResult};
 
 /// Exact external-product repository identity.
@@ -26,17 +27,18 @@ pub(super) const MODEL_ARCHITECTURE: &str = "Llama";
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
-/// Independent public-adapter plan evidence retained until exact E1 load acceptance.
+/// Observer-owned prepared-load evidence retained until exact E1 load acceptance.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct PlannedModelEvidence {
-    /// Accounted footprint from the independent public plan and its later E1 acceptance state.
-    pub(super) accounted_footprint: AccountedFootprintEvidence,
-    /// Explicit source scalar validated across resolution and the independent adapter plan.
-    pub(super) source_scalar_type: ApplicationScalarType,
-    /// Explicit execution scalar selected by `LoadPlan::execution_scalar_type`.
-    pub(super) execution_scalar_type: ApplicationScalarType,
+    /// Exact final and loading-peak quantities from an unmaterialized `prepare_load` transaction.
+    pub(super) prepared_load: PreparedLoadEvidence,
+    /// Optional configuration declaration matched across E1 resolution and adapter preparation.
+    pub(super) configuration_declared_scalar_type: Option<ApplicationScalarType>,
+    /// Scalar categories observed by adapter preparation in every selected tensor header.
+    pub(super) observed_tensor_scalar_types: ScalarTypeSet,
+    /// Execution scalar selected by `LoadPlan::execution_scalar_type`.
+    pub(super) planned_execution_scalar_type: ApplicationScalarType,
     requested_device: RequestedDevice,
-    source_weight_bytes: u64,
 }
 
 /// Resolves and validates the built-in immutable model selection through public E1 events.
@@ -64,6 +66,14 @@ pub(super) fn load_model(
     observer: &DeviceObserver,
 ) -> BenchmarkResult<(LoadedModel, Duration)> {
     lifecycle::load_model(runtime, selection, planned, observer)
+}
+
+/// Validates that observer preparation remains coherent after E1 load acceptance.
+pub(super) fn validate_verified_plan(
+    planned: &PlannedModelEvidence,
+    observer: &DeviceObserver,
+) -> BenchmarkResult {
+    planning::validate_verified_plan(planned, observer)
 }
 
 /// Unloads the released model and validates the terminal public E1 contract.

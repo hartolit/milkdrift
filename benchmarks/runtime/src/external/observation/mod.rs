@@ -74,14 +74,19 @@ impl DeviceObserver {
         self.device.validate_actual_loaded(actual)
     }
 
-    pub(super) fn execution_metadata(&self, execution_scalar: &'static str) -> ExecutionMetadata {
+    pub(super) fn execution_metadata(
+        &self,
+        planned_execution_scalar: &'static str,
+        actual_execution_scalar: &'static str,
+    ) -> ExecutionMetadata {
         let cuda_enabled = cfg!(feature = "cuda");
         let cuda_requested = self.device.requested() == RequestedDevice::Cuda0;
         ExecutionMetadata {
             cuda_enabled,
             requested_device: self.requested_identity(),
             cuda_device: self.cuda_device_metadata(),
-            execution_scalar,
+            planned_execution_scalar,
+            actual_execution_scalar,
             host_sampling: true,
             cuda_logits_to_host_limitation: cuda_requested
                 .then_some(CUDA_LOGITS_TO_HOST_LIMITATION),
@@ -160,7 +165,7 @@ mod tests {
         assert_eq!(observer.cuda_device_metadata(), None);
         assert_eq!(observer.cuda_discovery_count(), 0);
 
-        let execution = observer.execution_metadata("F32");
+        let execution = observer.execution_metadata("F32", "F32");
         assert_eq!(execution.cuda_enabled, cfg!(feature = "cuda"));
         assert_eq!(
             execution.requested_device,
@@ -171,7 +176,8 @@ mod tests {
             }
         );
         assert_eq!(execution.cuda_device, None);
-        assert_eq!(execution.execution_scalar, "F32");
+        assert_eq!(execution.planned_execution_scalar, "F32");
+        assert_eq!(execution.actual_execution_scalar, "F32");
         assert!(execution.host_sampling);
         assert_eq!(execution.cuda_logits_to_host_limitation, None);
         assert_eq!(execution.cuda_memory_observation_scope, None);
@@ -217,9 +223,10 @@ mod tests {
             })
         );
 
-        let execution = observer.execution_metadata("BF16");
+        let execution = observer.execution_metadata("BF16", "BF16");
         assert_eq!(execution.cuda_enabled, cfg!(feature = "cuda"));
-        assert_eq!(execution.execution_scalar, "BF16");
+        assert_eq!(execution.planned_execution_scalar, "BF16");
+        assert_eq!(execution.actual_execution_scalar, "BF16");
         assert_eq!(
             execution.cuda_logits_to_host_limitation,
             Some(CUDA_LOGITS_TO_HOST_LIMITATION)

@@ -2,58 +2,106 @@
 
 ## Responsibility
 
-`application-runtime` is the E1 frontend-neutral application coordinator. It owns application semantics shared by frontends while delegating token-level inference and independently stateful capabilities to their own owners.
+`application-runtime` is E1: the frontend-neutral coordinator for the current reference application kit. It owns application semantics shared by native hosts while delegating token-level inference and independently stateful capabilities to their real owners.
 
-It currently owns:
+Milkdrift remains workflow-first. E1 is not the future general workflow runtime, workspace, plugin API, provider/peer target boundary, or control plane. It is the current concrete local vertical slice used to prove application behavior above the lifecycle-safe E0 kernel.
+
+E1 currently owns:
 
 - persisted application preferences and model catalogue state;
-- a `ModelSelection` containing a normalized Hugging Face repository and revision;
-- application-owned CPU/CUDA selection, bounded discovery, availability diagnostics, and accelerator-memory policy;
+- normalized Hugging Face repository/revision selection;
+- application-owned CPU/CUDA selection, bounded discovery, availability, and accelerator-memory policy;
 - one bounded synchronous Hub resolver worker;
 - immutable artifact identity, tokenizer validation, vocabulary compatibility, and complete-selection checks;
-- one process-hosted, monomorphized Candle E0 worker/thread behind a private local composition boundary;
-- explicit single-model residency;
-- model load plus application-owned reject/cancel/drain unload behavior;
-- direct-completion prompt encoding and concrete Hugging Face streaming decode;
-- frontend-neutral in-memory conversation records and response-attempt provenance;
-- exact immutable-artifact TinyLlama Chat v1 prompt/termination compatibility;
-- turn-atomic context derivation, deterministic planning, exact-token correction, and diagnostics;
-- submit, regenerate, clear, and cancellation semantics for compatible conversation turns;
-- stable application-level generation settings and translation to E0 contracts;
-- bounded token-to-text translation and frontend text pulls;
-- public model metadata, generation state, usage, terminal results, and cleanup events;
-- transactional rollback of the already-started inference worker when Hub-worker startup fails;
-- private retention and cleanup accounting for an incompatible loaded-model handle;
-- bounded shutdown with retryable joins and retained terminal inference failure.
+- one process-hosted monomorphized Candle E0 worker/thread behind private composition;
+- one resident-model application lifecycle;
+- load, reject/cancel/drain unload, and retained model-cleanup coordination;
+- direct-completion encoding and request-local Hugging Face streaming decode;
+- frontend-neutral conversation, exact TinyLlama chat, context planning, generation settings, text output, events, and shutdown.
 
-It does not own Slint or transport presentation types, model tensors/logits/backend sequences, per-token scheduling, corrective workflow execution, provider/peer transports, or OS-specific application-data path policy.
+It does not own Slint types, Safetensors parsing, tensor dtypes/names/offsets, the inferred primary scalar, per-tensor conversion, model tensors/logits/backend sequences, per-token scheduling, corrective-workflow execution, provider/peer transports, or OS-specific data-path policy.
 
-No `application-api`, hosted-provider, peer-execution, local-file, multiple-model, Metal, or generic GPU abstraction is implemented; no generic `gpu` feature alias exists.
+## Selection, resolution, and scalar facts
 
-Conversation semantics live in E1 because every frontend must observe the same raw history, active-context policy, regeneration behavior, and cancellation state. Context selection remains in `context-planner`; the verified prompt renderer is internal compatibility logic; corrective workflows remain in `corrective-workflow`. Coordination does not imply implementation ownership.
-
-## Model selection, device selection, resolution, and reported facts
-
-`ModelSelection` is a structure containing only:
+`ModelSelection` contains only:
 
 ```text
 repository
 revision
 ```
 
-Execution-device selection is separate application state. Its public vocabulary is `ApplicationDevice::{Cpu, Cuda { ordinal: u32 }}` plus `ApplicationDeviceSummary` and application-owned compute-capability, unavailability, and discovery-diagnostic values. No Candle or `cudarc` type crosses public E1. CPU always exists in the bounded catalogue and is the fresh-install default.
+Execution-device selection is separate E1 state using `ApplicationDevice::{Cpu, Cuda { ordinal: u32 }}`. CPU always exists and is the fresh-install default. Initial bounded discovery probes CUDA 0 and, when different, a persisted selected CUDA ordinal. Structured failure leaves unavailable persisted CUDA visible and selected. `select_device` follows `can_select_device`; load re-probes the exact selection and never falls back to CPU.
 
-Initial bounded discovery probes CUDA ordinal 0. When persisted selection names a different CUDA ordinal, E1 also probes that ordinal so the persisted identity remains represented. Probe failures become structured application-owned summaries/diagnostics. An unavailable persisted CUDA device remains selected and visible; E1 neither migrates it to CPU nor silently falls back. `ApplicationRuntime::select_device` changes selection only while `ApplicationState::can_select_device` permits it.
+`resolve_model` sends the complete selection to the bounded Hub worker. `hf-hub-adapter` pins it to an immutable Hub commit and resolves the matching configuration, tokenizer, index when present, and ordered Safetensors shards. Recognized `dtype` or legacy `torch_dtype` becomes an optional **configuration-declared scalar**. It is producer-intent metadata, not verified tensor homogeneity.
 
-`resolve_model` validates the repository/revision selection and sends it to the bounded Hub worker. `hf-hub-adapter` resolves the requested branch, tag, reference, or commit to an immutable Hub commit before downloading required artifacts. E1 loads the matching `tokenizer.json`, retains the exact resolution, and permits loading only while the complete visible repository/revision selection still matches.
+### `ResolvedModel`
 
-Resolution is device-independent. `ResolvedModel` reports only resolved artifacts, source, format, source scalar, tokenizer evidence, immutable identity, and compatibility evidence. It contains neither selected-device state nor an execution scalar or actual execution device. `LoadedModel` reports the verified source scalar plus the actual execution scalar and device only after E0 returns a receipt and E1 validates them. Source and execution scalars may differ; E1 does not reproduce Candle's device-aware scalar policy or require equality. Unloading clears the loaded source scalar, execution scalar, and actual-device facts while preserving application selection and the resolved source evidence.
+Resolution is device-independent. Public `ResolvedModel` exposes:
 
-The public API does not accept arbitrary engine, source, format, or device cross-products. The implemented compatibility path is Llama through Candle with immutable Hugging Face Safetensors; GGUF is unsupported and requires a separate reviewed implementation.
+- normalized selection and immutable identity;
+- Candle/Hub/Safetensors application categories;
+- tokenizer vocabulary and exact chat compatibility;
+- optional configuration-declared scalar metadata.
+
+It exposes no observed tensor scalar set, inferred primary, execution scalar, selected/actual device, or per-tensor details. Absence of a recognized declaration no longer makes an otherwise complete resolution unloadable.
+
+### `LoadedModel`
+
+Public E1 `LoadedModel` exposes:
+
+- generation-safe handle, selection, and immutable identity;
+- actual execution device verified through E0's receipt;
+- actual execution scalar verified through E0's receipt;
+- vocabulary, context, and prefill limits.
+
+Scalar-wise, it exposes execution only. It deliberately does not repeat the configuration declaration and does not expose the observed tensor set or inferred primary. Those are artifact/preparation facts carried in lower descriptors for verification, not required application state.
+
+Successful unload clears loaded execution scalar/device and model limits while preserving the separate resolution and selected device.
+
+## E1 does not choose per-tensor conversion
+
+E1 constructs `CandleLlamaSource` from immutable artifact paths plus the optional configuration declaration and sends the exact selected `ExecutionDevice` to E0. Candle owns complete Safetensors inspection, exact accepted sets, primary inference, execution-scalar selection, per-tensor casts/transfers, and final/loading-peak calculation. E0 owns exact preparation admission and loaded-result verification.
+
+E1 does not:
+
+- infer a primary scalar from the observed set;
+- compare the declaration with every tensor dtype;
+- compare the declaration with execution scalar;
+- select F32/F16/BF16 conversion by device;
+- duplicate Candle's exact `{F32}`, `{F16}`, `{F16,F32}`, `{BF16}`, `{BF16,F32}` matrix;
+- infer execution scalar from CPU/CUDA selection;
+- repair a lower mismatch by falling back.
+
+This prevents application policy from becoming a second model loader.
+
+## Load admission and receipt validation
+
+`load_model` requires idle state, no resident model, an available inference worker, an exact current resolution/selection match, and a currently available selected device. It re-probes that device, builds the exact source, submits one E0 command, and retains a `LoadAdmission` containing:
+
+- command ticket;
+- optional configuration declaration;
+- selected E1 device and exact domain execution device;
+- startup-fixed E0 memory budget.
+
+A successful E0 receipt is not automatically a public model. Before publication E1 validates:
+
+- pending ticket and logical model ID/handle;
+- immutable selection, repository, revision, artifact set, and commit identity;
+- optional configuration declaration agreement across pending admission, resolved model, Hub artifacts, and E0 descriptor;
+- a nonempty observed `ScalarTypeSet` containing only application-recognized F32/F16/BF16 categories;
+- representable receipt execution scalar and actual device;
+- selected versus current selected versus actual device and exact requested domain device;
+- unchanged application/E0 memory budget;
+- checked final reserved footprint within that budget and in the expected CPU/CUDA memory domain;
+- Candle backend, Llama architecture, unquantized Safetensors category, required capabilities, ordered nonzero limits, and tokenizer vocabulary.
+
+E0 has already verified the complete descriptor, planned/actual execution scalar/device, and final accounted footprint against the exact prepared load. E1 relies on that ownership boundary rather than trying to reconstruct the loading peak or per-tensor algorithm from a receipt.
+
+Only after all checks pass does E1 construct public `LoadedModel`. Any mismatch publishes no resident model and enters the existing private incompatible-receipt unload/retention path.
 
 ## Public boundary
 
-Frontends construct `ApplicationRuntimeConfiguration`, start `ApplicationRuntime`, inspect `ApplicationState` including the device catalogue/selection, submit coarse model/generation operations, pull bounded output, and explicitly shut down:
+Frontends construct `ApplicationRuntimeConfiguration`, start `ApplicationRuntime`, inspect `ApplicationState`, submit coarse operations, pull bounded output, and explicitly shut down:
 
 ```text
 select_device(application_device)
@@ -73,39 +121,35 @@ pull_output(callback)
 shutdown()
 ```
 
-`unload_model()` is the default bounded-drain path. `ModelUnloadBehavior` provides `RejectIfBusy`, `CancelActive`, and `Drain` without exposing E0's unload policy type.
+`unload_model()` remains the bounded-drain convenience path. `ModelUnloadBehavior::{RejectIfBusy, CancelActive, Drain}` does not expose E0 policy types.
 
-`GenerationSettings` is owned by E1. Direct completion validates settings, encodes ordinary prompt text without automatic boundary tokens, and translates the result to E0. Chat preserves sampling controls but its compatibility profile replaces caller EOS/text-stop values with the tested assistant-turn termination policy.
+Immediate validation/submission failures return `ApplicationError`. Worker outcomes arrive as stable `ApplicationEvent` values. High-frequency decoded text remains in borrowed bounded pulls. Candle, Safetensors, filesystem, and driver failures are normalized into application-owned categories such as unsupported artifact/layout, memory admission, model load, retained cleanup, and incompatible receipt.
 
-Immediate admission or queue failures return `ApplicationError`. Asynchronous worker outcomes return structured `ApplicationEvent` values. High-frequency decoded text is pulled separately in borrowed bounded batches. Vendor failures are normalized into `ApplicationFailure` with a stable category and owned cold-path diagnostic. Hub access tokens are redacted from adapter and application configuration `Debug` output.
+## Model cleanup events and retained ownership
 
-## Completion and exact chat compatibility
+Phase 12 makes model cleanup truth explicit:
 
-Direct completion is available for every successfully loaded model.
+- `ModelLoadFailed` means no public model became available and E1 has not been told that lower ownership remains retained.
+- `ModelCleanupPending { exhausted: false, failure }` means a failed load, unload, or incompatible receipt still has lower-owned resources under retry/verification.
+- `ModelCleanupPending { exhausted: true, failure }` means lower cleanup or E1's bounded verification/submission policy is exhausted; ownership is not reported as released.
+- `ModelCompatibilityFailed` reports a successful lower receipt that E1 rejected and for which deterministic unload was requested.
+- `ModelUnloaded` reports successful unload or confirmed absence.
 
-The only built-in chat profile is:
+For an E0 load error carrying retained cleanup, E1 enters `ApplicationActivity::Unloading`, emits `ModelCleanupPending`, and locks device selection. Retryable cleanup triggers bounded private snapshot inspection. E1 returns to idle only when the snapshot proves all of the following are zero/empty:
 
-- repository: `TinyLlama/TinyLlama-1.1B-Chat-v1.0`;
-- immutable commit: `fe8a4ea1ffedaf415f4da2f062534de366a451e6`;
-- tokenizer requirement: `</s>` maps to token ID 2;
-- rendering: the verified TinyLlama role markers;
-- termination: EOS token 2.
+- loaded models and active requests;
+- generation workspaces and their reservation;
+- pending and exhausted model/sequence cleanup;
+- aggregate reserved footprint;
+- maintenance error.
 
-Unknown repositories, other commits, or incompatible tokenizer metadata return `UnsupportedChatCompatibility`; E1 never infers a template from model name or vocabulary size. Direct completion remains available when chat compatibility is unsupported.
+A snapshot showing only non-exhausted retained cleanup schedules another bounded inspection. Inspection submission has a finite three-attempt policy. Inspection failure, incompatible/nonzero ownership facts, lower exhaustion, or submission exhaustion remains explicit and locked.
 
-## Conversation and context semantics
+A post-receipt compatibility failure retains the exact `ModelHandle`, compatibility diagnostic, unload ticket/submission state, and later lower cleanup state. Automatic unload submission is bounded to three attempts. Submission or E0 cleanup exhaustion never discards the private record. Confirmed model absence, inference disconnection, or confirmed worker stop is required before release can be inferred.
 
-Raw `ConversationRecord` values have stable record/attempt identities, monotonic order, semantic role/content, provenance, retention policy, token estimate, and assistant terminal state. Records contain no local model handle, provider DTO, peer connection, or transport state. Successful unsuperseded assistant attempts enter the default active-context view; streaming, failed, cancelled, and superseded attempts remain inspectable but are excluded.
-
-For each chat request E1 derives temporary planning units and `ContextEntry` values, pins the target user and stored pinned content, reserves output positions, and invokes `context-planner`. A completed historical user message and its active successful assistant response form one atomic unit: both records are selected or dropped together. Diagnostics expand units back to raw `ConversationRecordId` values.
-
-Selected records render in conversation order and are exactly tokenized against the smaller of model context and prefill capacity. Overflow removes exactly one planner-selected non-pinned unit per retry. Attempts are bounded by the initially selected droppable-unit count plus one; pinned-only overflow and unchanged correction fail explicitly. `ContextDiagnostics` exposes the final estimate, exact admitted token count, selected/dropped records, reserved output, and render-attempt count.
-
-Regeneration creates a new attempt only when the newest semantic record is an assistant response attempt. A later unanswered user record blocks regeneration of an older turn. Prior attempts are superseded without deletion. Clearing is rejected until generation, including backend cleanup, reaches release. Conversation persistence and a general branch tree are intentionally absent.
+Generation completion remains separate from sequence cleanup exactly as before: E1 preserves terminal, cleanup-pending/exhausted, and released states and blocks conversation clearing until release.
 
 ## Private concrete composition
-
-`ApplicationRuntime` remains the local composition root because it is the only consumer and no independent local-composition lifecycle or API has been demonstrated.
 
 ```text
 ApplicationRuntime
@@ -114,57 +158,76 @@ ApplicationRuntime
 │   └── one inference RuntimeThread
 ├── one bounded Hub worker/thread
 ├── one resolved HfTokenizer
-├── one request-local HfOwnedStreamingDecoder per generation
+├── one HfOwnedStreamingDecoder per request
 ├── one resident-model/application lifecycle
 └── redb application persistence
 ```
 
-`local.rs` owns only the concrete Candle E0 endpoint. It maps the selected `ApplicationDevice` to the exact domain `ExecutionDevice`; it has no active-backend switch, dispatch enum, dormant worker, or placeholder backend variant. E1 generation is internally split by responsibility into admission, the E0/text bridge, bounded output, and settings. Runtime coordination is privately organized around startup, devices, model operations, retained cleanup, and event lifecycle. That source organization does not create a new layer or imply new public façade operations. [ADR-0013](../agent/decisions/0013-candle-only-local-execution.md) supersedes the former two-worker Phase 8 composition while retaining private static dispatch and the non-generic façade.
+`local.rs` maps `ApplicationDevice` to the exact domain `ExecutionDevice`. It contains no active-backend switch, dormant worker, dynamic token-path dispatch, generic GPU alias, or fallback branch. Static Candle execution and the non-generic façade remain governed by [ADR-0013](../agent/decisions/0013-candle-only-local-execution.md).
 
-Startup is a transaction across the two worker creations. Configuration, output storage, persistence, preferences, and bounded device discovery are prepared first; E1 then starts local inference and the Hub worker. If Hub startup fails after inference has started, E1 attempts bounded inference shutdown/join before returning the primary Hub startup failure. If the rollback bound expires, the complete `LocalInference` owner and timing policy remain in a private process-level cleanup quarantine; a later production startup retries one quarantined cleanup without holding the registry lock during the wait.
+Startup remains transactional across worker creation. If Hub startup fails after inference starts, E1 attempts bounded E0 shutdown/join before returning the primary Hub failure. Timeout retains the complete `LocalInference` owner in private startup cleanup for later bounded reap rather than detaching it.
 
-## Accelerator memory and persistence
+## Accelerator memory policy
 
-`AcceleratorMemoryPolicy` is explicit: `Automatic` or `Limit { bytes: NonZeroU64 }`. E0's aggregate budget is fixed at startup, so `Automatic` uses the least reported physical total across every CUDA row in the bounded startup catalogue; an unavailable row or a row without a physical total contributes zero and therefore fails closed. `Limit` applies the lower of that safe capacity and the user cap. Before load, E1 re-probes the selected CUDA device and admits work only when the fixed budget is nonzero and does not exceed the latest physical total; a changed or newly discovered capacity that cannot bound the process budget requires restart and produces a structured no-fallback error. Existing CPU host-memory budget behavior is unchanged. Candle planning separately checks current available VRAM before partial residency begins. E1 does not infer accelerator capacity from host RAM and does not use an undocumented `u64::MAX` device-budget shortcut. The product still admits at most one resident model.
+`AcceleratorMemoryPolicy` is `Automatic` or `Limit { bytes: NonZeroU64 }`. E0's aggregate budget is fixed at startup:
 
-Application settings use the `LAS1` schema at version 2. Version 2 explicitly tags selected CPU/CUDA identity and accelerator-memory policy. Exact version 1 records remain readable: they select CPU, map zero legacy device bytes to `Automatic`, and map a nonzero value to `Limit`. New writes are version 2. A fresh database with an empty default repository is valid. Model catalogue records remain `LAM1` version 1 and persist source scalar only; device-dependent execution scalar is not persisted. Loading settings never rewrites an unavailable persisted CUDA selection to CPU.
+- `Automatic` uses the least physical total across every CUDA row in the bounded startup catalogue;
+- unavailable rows or missing totals contribute zero and fail closed;
+- `Limit` applies the lower of that capacity and the user cap.
 
-## Bounded output, cleanup, and unload
+Before load, E1 re-probes the selected CUDA device and requires the fixed budget to remain nonzero and no greater than the latest physical total. Incompatible capacity change requires restart and produces a structured no-fallback error. CPU host budgeting is unchanged. Candle preparation independently admits its exact Phase 12 loading peak against the remaining E0 budget and current device availability before materialization. E1 validates the successful final receipt footprint; it does not mislabel the loading peak as loaded residency.
 
-Generated token IDs remain private below E1. E1 pulls bounded E0 token/state batches, advances the active request's `HfOwnedStreamingDecoder`, appends each decoded fragment exactly once, and republishes bounded UTF-8 text plus compact generation state. A fragment that cannot yet be published remains pending until frontend capacity becomes available; no frontend command drives an individual token step.
+Host RAM is not used as accelerator capacity, no undocumented `u64::MAX` device shortcut is used, and one resident model remains the product limit.
 
-Generation completion and E0 resource release remain distinct. Pulled output preserves `Terminal`, optional `CleanupPending`, optional `CleanupExhausted`, and `Released` states. E1 keeps the generation lifecycle active until release so unresolved ownership remains visible and conversation clearing stays blocked. Cleanup retry/exhaustion and accounting semantics are owned by E0 and described in [inference runtime](inference-runtime.md).
+## Persistence
 
-Load admission passes the exact selected domain `ExecutionDevice` and retained source scalar evidence to E0. A model-load receipt is not equivalent to a published resident model: E1 validates the admission ticket, logical model ID and handle, immutable resolution and artifact set, resolved/descriptor/artifact source scalar agreement, a supported and source-coherent receipt-reported execution scalar, Llama/Candle/Safetensors compatibility evidence, tokenizer vocabulary, selected device versus requested and receipt-reported actual device, and bounded reserved footprint. That reserved footprint is E0 admission/ownership accounting, not physical residency. E0 has already verified the execution scalar against its accepted load plan and loaded backend model; E1 validates only the source/execution evidence pair, without inferring scalar from device or reproducing Candle's device-aware planner. Unsupported execution scalar or any other receipt disagreement uses the private incompatible-model cleanup path. Loading re-probes the selected device first; an unavailable selection or a latest physical total that cannot bound the startup-fixed budget produces a structured error, remains selected, and is not replaced by CPU.
+Application settings continue to use `LAS1`:
 
-On any receipt mismatch, public `LoadedModel` state remains empty while E1 uses the existing private incompatible-model unload/retention path. It stores the exact `ModelHandle`, compatibility failure, and automatic-unload state while E0 continues to own and account for the model. E1 retries bounded unload submission, and neither submission exhaustion nor E0 cleanup exhaustion discards the handle; the record remains private and accounted until absence, inference disconnection, or confirmed worker stop permits release. A failed E0 load that itself reports retained cleanup likewise leaves E1 unloading and keeps device selection locked. For a retryable cleanup failure, E1 submits one bounded private snapshot inspection and returns to idle only when aggregate E0 state proves zero retained model, request, cleanup, and reservation ownership; inspection failure, nonzero ownership, or cleanup exhaustion stays locked.
+- new writes are version 2 with explicit selected device and accelerator-memory policy;
+- exact version 1 remains readable as CPU, with zero legacy device bytes mapped to `Automatic` and nonzero bytes mapped to `Limit`;
+- unavailable persisted CUDA is not migrated to CPU.
 
-The application configures E0 for one resident model and does not expose a misleading model-count setting. Successful unload clears the loaded source scalar, receipt-verified execution scalar, and receipt-verified actual device while preserving resolved source evidence and the separately selected application device. Multi-model application state is outside the current product boundary.
+Model catalogue records now use `LAM1` version 2 for new writes. Version 2 stores optional configuration-declared scalar metadata:
+
+```text
+F32 | F16 | BF16 | None
+```
+
+Exact `LAM1` version 1 records remain readable. Their mandatory scalar code is interpreted in memory as a present declaration (`Some(F32|F16|BF16)`) without rewriting the old record. Observed tensor layouts, inferred primary, execution scalar/device, loading/final footprints, and cache paths are not persisted.
+
+## Completion, chat, and conversation
+
+Direct completion remains available for every successfully loaded model. It encodes ordinary prompt text once and translates stable E1 generation settings into E0 contracts.
+
+The only built-in chat profile remains:
+
+- repository `TinyLlama/TinyLlama-1.1B-Chat-v1.0`;
+- immutable commit `fe8a4ea1ffedaf415f4da2f062534de366a451e6`;
+- tokenizer `</s>` mapped to EOS token ID 2;
+- verified TinyLlama role rendering and EOS policy.
+
+Broader scalar-layout compatibility does not broaden chat compatibility. Unknown repositories/commits/tokenizer evidence return `UnsupportedChatCompatibility`, while direct completion remains available.
+
+Raw conversation and context-planning semantics are unchanged. Completed historical user/assistant turns remain atomic planning units; selected units are rendered in order, exactly tokenized, and corrected through a strictly shrinking bounded retry set. Regeneration preserves/supersedes attempts without deletion, and conversation persistence/general branch trees remain absent.
+
+## Thin Slint host
+
+Slint remains presentation-only. It receives `ApplicationState` and events, maps stable Rust-owned device identities to indices, and never parses labels for semantics.
+
+- Resolved summaries may show optional configuration-declared metadata.
+- Loaded summaries show only verified execution scalar and execution device.
+- No tensor table, primary-scalar inference, conversion selector, fallback policy, or new workflow responsibility was added.
+
+The frontend still owns only event-loop integration, callbacks, frame-batched output presentation, and platform path selection.
 
 ## Shutdown
 
-Normal closure must call `ApplicationRuntime::shutdown`; `Drop` does not perform an unbounded join.
+Normal closure calls `ApplicationRuntime::shutdown`; `Drop` is not an unbounded join protocol. The private controller retains running, stopping, cleanly stopped, retryable failure, and terminal failure.
 
-The private shutdown controller tracks running, stopping, cleanly stopped, retryable failure, and terminal failure. Shutdown:
+A command/event/join timeout keeps unfinished worker handles owned so a later call can retry. A terminal E0 cleanup failure remains sticky independently from join handles. E0 may terminate after publishing `CleanupRetryExhausted` while deliberately retaining native ownership until process exit; E1 never infers clean success from handle absence. Clean idempotent success requires observed clean E0 shutdown and confirmed worker joins. [ADR-0006](../agent/decisions/0006-explicit-bounded-shutdown.md) remains unchanged by Phase 12.
 
-1. stops application admission and requests cooperative Hub shutdown;
-2. sends one ticketed shutdown command to the Candle E0 worker, retaining that ticket across retries;
-3. waits only to configured checked deadlines;
-4. attempts the inference-worker join and Hub-worker join even when an earlier step reports an error;
-5. takes and joins a worker handle only after the worker is observed finished;
-6. independently retains any terminal inference shutdown failure while continuing joins;
-7. returns a retained terminal failure in preference to treating handle absence as cleanup success, otherwise returns the first bounded retryable failure.
+## Execution and validation boundary
 
-If command submission, event wait, or worker join times out, status becomes retryable failure and every unfinished worker handle remains owned by `ApplicationRuntime`. A later `shutdown()` resumes the remaining stop/join work; a timeout does not detach a worker and may later become clean success when the E0 result was successful.
+CPU remains mandatory/default. `application-runtime/cuda` forwards only to `candle-backend/cuda`; no default feature graph reaches CUDA and explicit CUDA failure never falls back.
 
-If E0 returns a shutdown failure, the E0 worker terminates after publishing that result. When cleanup is exhausted and backend resources remain, E0 deliberately retains its runtime allocation until process exit. E1 stores the structured `RuntimeError` as terminal state independently from the join handle, joins the worker normally when possible, and returns the normalized failure on every later shutdown call. A missing handle or endpoint disconnection cannot overwrite that terminal state or establish clean completion. Clean idempotent success requires both observed clean E0 shutdown and confirmed joins.
-
-Shutdown and join timeouts are validated before any worker starts as nonzero and no greater than 24 hours. Runtime deadline construction retains checked arithmetic as defense in depth, so invalid timing cannot enter the startup-cleanup quarantine.
-
-An in-flight synchronous Hub operation has no upstream global cancellation handle, and the same safe-Rust limitation applies to an uncooperative in-process backend call. The bounded call may therefore return before the worker finishes, but ownership of the handle remains available for shutdown retry. After explicit backend cleanup exhaustion, process termination—not ordinary Rust drop—is the retained allocation's reclamation boundary. [ADR-0006](../agent/decisions/0006-explicit-bounded-shutdown.md) records the policy.
-
-## Model execution targets
-
-The implemented local target is Candle through E0 with explicit CPU or feature-gated CUDA selection. CPU remains the fresh-install and default-build path. `application-runtime/cuda` forwards only to `candle-backend/cuda`; the complete desktop feature chain and exclusions are canonical in [dependency policy](dependency-policy.md). Explicit CUDA failure never falls back to CPU.
-
-A future peer or hosted target would use a coarse boundary above E0 for complete request admission, target capabilities, cancellation intent, bounded output, usage, and terminal state. It must not be represented as a local E0 backend. See [ADR-0008](../agent/decisions/0008-capability-and-execution-boundaries.md).
+Focused, download-free Phase 12 CPU tests and the canonical clean-target gate passed on the closure tree, including optional/absent declarations, mixed-layout receipt acceptance without policy duplication, incompatible receipt cleanup, `ModelCleanupPending`, persistence v1/v2 behavior, completion/chat regressions, and thin presenter adaptation. The exact CUDA compile chain also passed. On the exact RTX 5070 Ti row, the E1 explicit no-fallback test and guarded CUDA fixture load/device/scalar/unload/shutdown lifecycle test passed locally. The Phase 12 GitHub self-hosted workflow has not run, and no external mixed-checkpoint claim is made. See [implementation status](implementation-status.md).

@@ -18,6 +18,7 @@ sampling.workspace = true
 
 [dev-dependencies]
 candle-backend.workspace = true
+candle-core.workspace = true
 
 [lints]
 workspace = true

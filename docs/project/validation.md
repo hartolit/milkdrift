@@ -16,6 +16,25 @@ A command that passed on another commit or an earlier dirty tree is not evidence
 
 Use one Cargo process at a time. Do not run `cargo clean`. Keep generated output under the root `target/` or outside the repository.
 
+## Phase 12 closure evidence
+
+Phase 12 Segment 1 is commit `58490fe693fef7a2635956181088664cd90685e8`; Segment 2 is commit `12510695aa29be6a2665dbf3777cccbb8172c2d1`; Segment 3 is this coherent validation/project-truth closure commit.
+
+On 2026-08-08, these sequential download-free CPU commands passed on the closure tree:
+
+```sh
+cargo test --locked -p candle-backend --test llama_cpu
+cargo test --locked -p inference-runtime --test native_backend_generation
+cargo test --locked -p inference-runtime --test fault_injection
+cargo test --locked -p runtime-benchmarks
+```
+
+The observed results were respectively 20, 3, 32, and 78 passing tests with no failures or ignored CPU tests. They cover the exact homogeneous/mixed adapter policy, mixed hosted-E0 lifecycle, loading-peak budget admission, retained/retry/exhausted fault paths, and synthetic-schema-3/external-schema-4 serialization contracts described below.
+
+These CPU and canonical gates ran locally on Linux 7.1.5-arch1-2 x86_64 with an AMD Ryzen 9 5950X (16 cores/32 threads), Rust 1.96.1, and Cargo 1.96.1. The canonical `cargo xtask verify` gate passed from a previously absent Cargo target directory. Both `wasm32-unknown-unknown` and `thumbv7em-none-eabihf` checks passed for all five domain crates; locked cargo-deny policy passed; and offline Lychee checked 276 links with 0 errors. The exact CUDA compile chain passed with `CUDA_COMPUTE_CAP=120`.
+
+The complete local deterministic hardware matrix passed on NVIDIA GeForce RTX 5070 Ti ordinal 0, driver/KMD 610.43.03, CUDA UMD/toolkit 13.3, `nvcc` 13.3.73, compute capability 12.0, and build cap 120. The Phase 12 GitHub self-hosted workflow has not run, so no remote workflow provenance is claimed. No suitable immutable, license-reviewed external mixed-dtype Llama checkpoint was established; the mixed-layout claim remains limited to deterministic project-authored fixtures.
+
 ## Canonical repository gate
 
 The ordinary composite gate is:
@@ -199,18 +218,28 @@ cargo xtask hygiene
 
 Architecture validates the typed locked workspace graph and exact role/dependency registries. Hygiene validates tracked operational surfaces, manifests, selected dependencies, benchmark layout, nested locks/targets, generated results, caches, and source-tree artifacts. See [dependency policy](dependency-policy.md).
 
-## Download-free focused validation
+## Download-free focused CPU validation
 
-Ordinary tests and the canonical gate do not resolve or download external models. Useful focused commands are:
+Ordinary tests and the canonical gate do not resolve or download external models. Run focused Phase 12 checks sequentially:
 
 ```sh
-cargo test --locked -p candle-backend
+cargo test --locked -p candle-backend --test llama_cpu
 cargo test --locked -p inference-runtime --test native_backend_generation
-cargo test --locked -p application-runtime
-cargo test --locked -p desktop-slint
+cargo test --locked -p inference-runtime --test fault_injection
+cargo test --locked -p application-runtime --lib \
+    controlled_mixed_dtype_receipt_allows_bf16_declaration_with_f32_execution
+cargo test --locked -p application-runtime --lib \
+    unavailable_selected_cuda_blocks_load_without_fallback
+cargo test --locked -p runtime-benchmarks
 ```
 
-These commands exercise the default CPU fixture plus E0/E1/frontend lifecycle behavior. They do not establish external artifact availability, language quality, product performance, CUDA hardware execution, or allocation freedom inside upstream libraries.
+The adapter suite is the deterministic owner for homogeneous `{F32}`, `{F16}`, and `{BF16}` plus mixed `{F16, F32}` and `{BF16, F32}` inspection, conversion, execution, exact final/loading-peak planning, supported auxiliary F32 headroom, declaration handling, and rejection of F16/BF16 mixtures, unsupported dtypes, malformed headers, duplicate tensors, invalid bounds/shapes, and overflow. Its host-budget test requires aggregate loading-peak rejection before materialization.
+
+The native E0 suite includes `mixed_f16_f32_fixture_covers_e0_generation_accounting_and_lifecycle`. It compares the independent preparation with the E0 receipt, exercises hosted prefill/decode and generation, restores model-only reserved ownership after release, unloads to exact empty model/request/workspace/cleanup accounting, and completes bounded shutdown and join.
+
+The fault suite deterministically covers invalid preparations, loading-peak admission before materialization, immediate failed-load cleanup, retained ownership and full loading-peak accounting when cleanup fails, retry release exactly once, cleanup exhaustion through shutdown, and no model publication on contract failure. The focused E1 checks keep a controlled mixed declaration distinct from actual F32 execution and prove that an unavailable selected CUDA target blocks load without CPU fallback. The benchmark package tests the report contracts without running a model download or statistical measurement.
+
+These commands establish only their named download-free CPU contracts. They do not establish external artifact availability, language quality, product performance, CUDA compilation or hardware execution, allocation freedom inside upstream libraries, or a full repository gate.
 
 Fixture regeneration is an explicit maintenance operation, not ordinary validation:
 
@@ -222,75 +251,55 @@ Run it only when intentionally replacing the fixture, then review generated file
 
 ## Download-free CUDA hardware validation
 
-The canonical repository gate uses the mandatory default CPU feature graph. CUDA validation is separate, sequential, Linux x86_64 only, and requires no model download. Before any CUDA Cargo command, require an NVIDIA driver that recognizes the intended device, CUDA Toolkit 12.8 or newer, and the Blackwell build capability:
+The canonical repository gate uses the mandatory default CPU feature graph. CUDA validation is a separate, sequential, download-free evidence class. **Compilation proves only feature/API compatibility; it does not prove device execution.** Hardware claims require the later opted-in tests on the exact accepted Linux x86_64 row.
+
+Before the CUDA chain, require an NVIDIA driver that recognizes the intended device, CUDA Toolkit 12.8 or newer, and build capability 120:
 
 ```sh
 nvidia-smi
 nvcc --version
 printf 'CUDA_COMPUTE_CAP=%s\n' "${CUDA_COMPUTE_CAP:-unset}"
+export CUDA_COMPUTE_CAP=120
 ```
 
-For the first executed target, set `CUDA_COMPUTE_CAP=120` for every Cargo invocation. Compile the adapter feature without enabling workspace-wide features:
+The exact current workflow compile chain is:
 
 ```sh
-CUDA_COMPUTE_CAP=120 cargo check --locked \
+cargo metadata --locked --format-version 1 --no-deps > /dev/null
+cargo xtask architecture
+cargo xtask hygiene
+
+cargo check --locked \
     -p candle-backend \
+    -p inference-runtime \
+    -p application-runtime \
+    -p desktop-slint \
+    -p runtime-benchmarks \
     --all-targets \
     --features cuda
 
-CUDA_COMPUTE_CAP=120 cargo test --locked \
+cargo test --locked \
     -p candle-backend \
+    -p inference-runtime \
+    -p application-runtime \
+    -p runtime-benchmarks \
     --features cuda \
     --no-run
 
-CUDA_COMPUTE_CAP=120 cargo clippy --locked \
+cargo clippy --locked \
     -p candle-backend \
-    --all-targets \
-    --features cuda \
-    -- -D warnings
-```
-
-Compile the E1 and Slint opt-in graphs independently. These commands exercise the exact `application-runtime/cuda -> candle-backend/cuda` and `desktop-slint/cuda -> application-runtime/cuda` forwarding paths without enabling workspace-wide features:
-
-```sh
-CUDA_COMPUTE_CAP=120 cargo check --locked \
+    -p inference-runtime \
     -p application-runtime \
-    --all-targets \
-    --features cuda
-
-CUDA_COMPUTE_CAP=120 cargo test --locked \
-    -p application-runtime \
-    --features cuda \
-    --no-run
-
-CUDA_COMPUTE_CAP=120 cargo clippy --locked \
-    -p application-runtime \
-    --all-targets \
-    --features cuda \
-    -- -D warnings
-
-CUDA_COMPUTE_CAP=120 cargo check --locked \
     -p desktop-slint \
-    --all-targets \
-    --features cuda
-
-CUDA_COMPUTE_CAP=120 cargo clippy --locked \
-    -p desktop-slint \
+    -p runtime-benchmarks \
     --all-targets \
     --features cuda \
     -- -D warnings
 ```
 
-A CUDA-enabled binary must also prove that explicit CPU selection remains usable:
+Do not use workspace `--all-features`; the exact graph is `runtime-benchmarks/cuda -> application-runtime/cuda -> candle-backend/cuda`, `desktop-slint/cuda -> application-runtime/cuda`, plus the development-only `inference-runtime/cuda -> candle-backend/cuda` test edge. This exact compile chain passed locally on 2026-08-08 with `CUDA_COMPUTE_CAP=120`.
 
-```sh
-CUDA_COMPUTE_CAP=120 cargo test --locked \
-    -p candle-backend \
-    --features cuda \
-    --test llama_cuda
-```
-
-Hardware execution is ignored by default and additionally requires `MILKDRIFT_CUDA_TEST=1`. Run the adapter proofs separately so no CUDA fixture tests overlap. They establish that explicit CPU execution remains usable in a CUDA build, CUDA 0 matches CPU fixture logits, and BF16 source weights execute as BF16 on the required CUDA device:
+Hardware execution is ignored by default and additionally requires `MILKDRIFT_CUDA_TEST=1`. First run the non-ignored explicit-CPU proof in the CUDA build:
 
 ```sh
 CUDA_VISIBLE_DEVICES=0 \
@@ -303,35 +312,51 @@ cargo test --release --locked \
     --exact cuda_enabled_binary_can_explicitly_execute_cpu \
     --nocapture \
     --test-threads=1
-
-CUDA_VISIBLE_DEVICES=0 \
-MILKDRIFT_CUDA_TEST=1 \
-CUDA_COMPUTE_CAP=120 \
-cargo test --release --locked \
-    -p candle-backend \
-    --features cuda \
-    --test llama_cuda \
-    -- \
-    --ignored \
-    --exact cuda_ordinal_zero_executes_fixture_and_matches_cpu_logits \
-    --nocapture \
-    --test-threads=1
-
-CUDA_VISIBLE_DEVICES=0 \
-MILKDRIFT_CUDA_TEST=1 \
-CUDA_COMPUTE_CAP=120 \
-cargo test --release --locked \
-    -p candle-backend \
-    --features cuda \
-    --test llama_cuda \
-    -- \
-    --ignored \
-    --exact cuda_bf16_source_executes_as_bf16 \
-    --nocapture \
-    --test-threads=1
 ```
 
-The E0 hardware target proves verified receipt/snapshot identity, scheduled prefill and incremental decode, CPU-side sampling from exact transferred logits, sequence cleanup, model unload, and zero post-unload accounting:
+Then verify and execute the **complete all-ignored adapter matrix**. The expected ignored tests are exactly:
+
+- `cuda_ordinal_zero_executes_fixture_and_matches_cpu_logits`;
+- `cuda_homogeneous_bf16_source_executes_as_bf16`;
+- `cuda_mixed_f16_f32_executes_as_f16`;
+- `cuda_mixed_bf16_f32_executes_as_bf16`.
+
+```sh
+CUDA_VISIBLE_DEVICES=0 \
+MILKDRIFT_CUDA_TEST=1 \
+CUDA_COMPUTE_CAP=120 \
+cargo test --release --locked \
+    -p candle-backend \
+    --features cuda \
+    --test llama_cuda \
+    -- \
+    --ignored \
+    --list
+
+for test_name in \
+    cuda_ordinal_zero_executes_fixture_and_matches_cpu_logits \
+    cuda_homogeneous_bf16_source_executes_as_bf16 \
+    cuda_mixed_f16_f32_executes_as_f16 \
+    cuda_mixed_bf16_f32_executes_as_bf16
+do
+    CUDA_VISIBLE_DEVICES=0 \
+    MILKDRIFT_CUDA_TEST=1 \
+    CUDA_COMPUTE_CAP=120 \
+    cargo test --release --locked \
+        -p candle-backend \
+        --features cuda \
+        --test llama_cuda \
+        -- \
+        --include-ignored \
+        --exact "${test_name}" \
+        --nocapture \
+        --test-threads=1
+done
+```
+
+The workflow requires the ignored-test list to contain exactly these four names, then runs each name separately with `--include-ignored --exact`. A rename, accidental de-ignoring, or extra ignored test therefore cannot silently reduce or expand the trusted runner workload. The matrix checks actual device/scalar facts and exact final/loading-peak footprints for the mixed fixtures. The complete guarded four-test adapter matrix passed locally on 2026-08-08 on the exact RTX 5070 Ti row.
+
+The E0 hardware target proves verified preparation/receipt/snapshot identity, mixed F16/F32 execution, scheduled prefill and incremental decode, host-side sampling from transferred logits, sequence cleanup, model unload, and zero post-unload ownership accounting:
 
 ```sh
 CUDA_VISIBLE_DEVICES=0 \
@@ -343,12 +368,50 @@ cargo test --release --locked \
     --test native_backend_generation \
     -- \
     --ignored \
-    --exact candle_cuda_fixture_covers_e0_generation_accounting_and_lifecycle \
+    --list
+
+CUDA_VISIBLE_DEVICES=0 \
+MILKDRIFT_CUDA_TEST=1 \
+CUDA_COMPUTE_CAP=120 \
+cargo test --release --locked \
+    -p inference-runtime \
+    --features cuda \
+    --test native_backend_generation \
+    -- \
+    --include-ignored \
+    --exact candle_mixed_cuda_fixture_covers_e0_generation_accounting_and_lifecycle \
     --nocapture \
     --test-threads=1
 ```
 
-The ignored E1 fixture test is separately guarded by `MILKDRIFT_CUDA_TEST=1`. It exercises discovery, explicit E1 CUDA selection, fixture load, source/execution scalar truth, selected-versus-receipt-verified actual device reporting, unload, and bounded shutdown:
+Run deterministic failed-load ownership/accounting faults and the explicit application no-fallback policy separately. These tests are download-free; their use in the CUDA job proves the exact feature graph still preserves the same cleanup and selection contracts:
+
+```sh
+CUDA_VISIBLE_DEVICES=0 \
+MILKDRIFT_CUDA_TEST=1 \
+CUDA_COMPUTE_CAP=120 \
+cargo test --release --locked \
+    -p inference-runtime \
+    --features cuda \
+    --test fault_injection \
+    -- \
+    --nocapture \
+    --test-threads=1
+
+CUDA_VISIBLE_DEVICES=0 \
+MILKDRIFT_CUDA_TEST=1 \
+CUDA_COMPUTE_CAP=120 \
+cargo test --release --locked \
+    -p application-runtime \
+    --features cuda \
+    --lib \
+    -- \
+    --exact runtime::tests::devices::unavailable_selected_cuda_blocks_load_without_fallback \
+    --nocapture \
+    --test-threads=1
+```
+
+The ignored E1 fixture test is separately guarded by `MILKDRIFT_CUDA_TEST=1`. It exercises discovery, explicit E1 CUDA selection, fixture load, configuration-declared versus actual execution scalar truth, selected-versus-receipt-verified actual device reporting, unload, and bounded shutdown:
 
 ```sh
 CUDA_VISIBLE_DEVICES=0 \
@@ -360,12 +423,23 @@ cargo test --release --locked \
     --lib \
     -- \
     --ignored \
+    --list
+
+CUDA_VISIBLE_DEVICES=0 \
+MILKDRIFT_CUDA_TEST=1 \
+CUDA_COMPUTE_CAP=120 \
+cargo test --release --locked \
+    -p application-runtime \
+    --features cuda \
+    --lib \
+    -- \
+    --include-ignored \
     --exact runtime::tests::devices::cuda_fixture_load_reports_the_selected_and_actual_e1_device \
     --nocapture \
     --test-threads=1
 ```
 
-Do not run these tests in ordinary CPU CI, do not use `--all-features` for the workspace, and do not interpret compilation as hardware execution evidence. Executed evidence must name the exact commit, hardware, and local or Actions run rather than being inferred from this procedure.
+Do not run the ignored hardware tests in ordinary CPU CI, do not use workspace `--all-features`, and do not interpret source presence, test listing, or compilation as hardware execution. On 2026-08-08, the complete local Phase 12 matrix passed on NVIDIA GeForce RTX 5070 Ti ordinal 0, driver/KMD 610.43.03, CUDA UMD/toolkit 13.3, `nvcc` 13.3.73, compute capability 12.0, and build cap 120. The explicit CPU-in-CUDA adapter test passed; all four ignored adapter tests passed; the mixed F16/F32 hosted-E0 lifecycle passed; all 32 fault tests passed under the CUDA feature graph; E1 explicit no-fallback passed; and the guarded E1 CUDA fixture lifecycle passed. These are local deterministic fixture results. The Phase 12 GitHub self-hosted workflow has not run and remains unclaimed.
 
 ## Self-hosted CUDA hardware correctness gate
 
@@ -373,7 +447,7 @@ Do not run these tests in ordinary CPU CI, do not use `--all-features` for the w
 
 The security boundary is deliberate:
 
-- triggers are pushes to `main` filtered by stable ownership roots for every crate, the runtime benchmark, xtask, and Cargo/toolchain policy, plus owner-dispatched runs of the `main` ref only; documentation-only changes do not schedule push runs;
+- triggers are pushes to `main` filtered by `.github/workflows/**`, `.gitignore`, `.cargo/**`, root `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `crates/**`, `benchmarks/runtime/**`, and `tools/xtask/**`, plus owner-dispatched runs of the `main` ref only; documentation-only changes do not schedule push runs;
 - neither `pull_request` nor `pull_request_target` can schedule the machine, so fork or other untrusted PR code is never checked out there;
 - path-filtered pushes trust code already landed on `main`; anyone able to land matching code on `main` is inside the machine-execution boundary, so repository write and branch controls remain part of runner security;
 - workflow permissions are `contents: read`, checkout credentials are not persisted, and no repository secret or command input is used;
@@ -382,13 +456,15 @@ The security boundary is deliberate:
 
 The runner administrator maintains `/var/tmp/milkdrift-cargo-home` as a dependency-only Cargo cache seeded out of band from a trusted locked checkout. Refresh that cache before a trusted dependency update reaches `main`; do not expose credentials in it or relax the workflow's offline setting. The job fails before compilation when the maintained cache is missing or inaccessible.
 
-The job validates the exact RTX 5070 Ti / CUDA ordinal 0 / compute capability 12.0 / Toolkit 12.8+ / build-cap-120 matrix, then runs metadata, architecture, hygiene, the five-package CUDA check and Clippy graph, and the sequential adapter, hosted-E0, and E1 fixture tests listed above. It does not run TinyLlama, Hugging Face resolution, Criterion, elapsed-time thresholds, Slint interaction, or any arbitrary model. Its Toolkit 12.8+ fixture preflight range does not broaden product support beyond the exact observed Toolkit 13.3 row in implementation status.
+The job validates the exact RTX 5070 Ti / CUDA ordinal 0 / compute capability 12.0 / Toolkit 12.8+ / build-cap-120 matrix, then runs metadata, architecture, hygiene, the five-package CUDA check/Clippy graph, four-package test compilation, guarded explicit CPU-in-CUDA execution, the guarded exact four-test homogeneous/mixed adapter matrix, the guarded renamed mixed hosted-E0 lifecycle, deterministic cleanup faults, guarded exact no-fallback, and guarded E1 device/scalar lifecycle. It does not run TinyLlama, Hugging Face resolution, Criterion, elapsed-time thresholds, Slint interaction, or any arbitrary model. Its Toolkit 12.8+ fixture preflight range does not broaden product support beyond the exact locally observed Phase 12 Toolkit 13.3 row. The local command matrix passed, but the updated Phase 12 GitHub workflow has not run; workflow-source presence is not remote execution evidence.
 
 ## Controlled CPU and CUDA external product evidence
 
 `runtime-benchmarks` owns the single external E1 orchestration path for both devices. The external binary requires exactly `--device cpu` or `--device cuda:0`, never substitutes a device, and never falls back to CPU. It fixes `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`; repository and revision overrides are rejected. The pinned revision's [model-card metadata](https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/raw/fe8a4ea1ffedaf415f4da2f062534de366a451e6/README.md) declares `apache-2.0`. Record that upstream declaration and source without making a broader legal conclusion.
 
-This procedure is the only ordinary exception to the download-free rule. It requires explicit authorization to contact Hugging Face for that exact model/revision. Shared CI and ordinary tests compile the CPU path but never execute the external binary, contact the network, require its cache, load TinyLlama, or require CUDA hardware.
+That exact TinyLlama profile is configuration-declared BF16 and observed homogeneous `{BF16}`. It remains useful for the established product lifecycle, chat, timing, and CPU/CUDA comparison, but it is **not mixed-layout checkpoint evidence** and cannot substitute for an external F16/F32 or BF16/F32 checkpoint.
+
+This procedure is the only ordinary exception to the download-free rule. It requires explicit authorization to contact Hugging Face for that exact model/revision. Shared CI and ordinary tests compile the CPU path but never execute the external binary, contact the network, require its cache, load TinyLlama, or require CUDA hardware. No current-tree external execution result is claimed.
 
 ### Preflight and code-under-test identity
 
@@ -422,17 +498,17 @@ Stop rather than measuring when the matrix or resources do not match. Use one Ca
 Use separate root-target children so the CPU and CUDA executables cannot be confused. The explicit cache must already exist. A cache outside the repository is also allowed; a cache inside the source tree but outside root `target/` is rejected.
 
 ```sh
-mkdir -p target/phase11-cpu
-mkdir -p target/phase11-cuda
-mkdir -p target/phase11-evidence
+mkdir -p target/phase12-cpu
+mkdir -p target/phase12-cuda
+mkdir -p target/phase12-evidence
 
-CARGO_TARGET_DIR="$PWD/target/phase11-cpu" \
+CARGO_TARGET_DIR="$PWD/target/phase12-cpu" \
 cargo build --release --locked \
     -p runtime-benchmarks \
     --bin external-baseline
 
 CUDA_COMPUTE_CAP=120 \
-CARGO_TARGET_DIR="$PWD/target/phase11-cuda" \
+CARGO_TARGET_DIR="$PWD/target/phase12-cuda" \
 cargo build --release --locked \
     -p runtime-benchmarks \
     --features cuda \
@@ -442,48 +518,58 @@ cargo build --release --locked \
 Execute the produced binaries directly and sequentially so no compiler process overlaps loaded-model ownership:
 
 ```sh
-target/phase11-cpu/release/external-baseline \
+target/phase12-cpu/release/external-baseline \
     --allow-network \
     --cache-dir target/phase10-external-cache \
     --device cpu \
-    > target/phase11-evidence/cpu.json
+    > target/phase12-evidence/tinyllama-cpu-schema4.json
 
-target/phase11-cuda/release/external-baseline \
+target/phase12-cuda/release/external-baseline \
     --allow-network \
     --cache-dir target/phase10-external-cache \
     --device cuda:0 \
-    > target/phase11-evidence/cuda.json
+    > target/phase12-evidence/tinyllama-cuda-schema4.json
 ```
 
 The executable writes no result file itself: stdout is exactly one structured report, stderr carries progress and concise diagnostics, and the redirect owns the ignored raw artifact. Do not edit generated JSON.
 
 The primary cycle on each device must prove the exact model/revision, non-empty compatible chat, one direct-completion warmup, three measured 32-token completions, matching request identities, exact terminal/released outcomes and usage, one cancellation after decoded progress, zero cleanup-pending/exhausted events, synchronized zero-cancellation unload, and bounded shutdown. CUDA additionally performs two reduced stability cycles containing load, direct generation/release, separate cancellation/release, unload, synchronization, shutdown, and owner drop. Together with the primary cycle this is three complete CUDA lifecycle cycles; warmup timing remains separate from measured samples.
 
-Review both schema-3 reports programmatically without printing generated text or token identifiers. Require:
+Review both current external schema-4 reports programmatically without printing generated text or token identifiers. Require:
 
 - the same clean code-under-test Git commit/tree and `dirty: false`;
-- the same exact model, revision, prompt hashes, sampling settings, and primary workload;
-- requested, selected E1, and actual loaded E0 identities all CPU in one report and all CUDA ordinal 0 in the other;
+- the same exact model, revision, fixed artifact layout, prompt hashes, sampling settings, and primary workload;
+- configuration-declared `BF16` and observed tensor scalars exactly `["BF16"]`, proving this profile is homogeneous;
+- planned CPU F32 versus planned CUDA BF16 execution, with actual E1/E0-verified execution matching each plan;
+- requested device, prepared-load device, selected E1 device, and actual loaded E0 device all CPU in one report and all CUDA ordinal 0 in the other;
+- `prepared_load.exact_final_footprint` and `prepared_load.loading_peak_footprint` as separate deterministic plan quantities;
+- `e1_load_accepted: true` and `e0_reserved_ownership_observed: false`, because this independent observer preparation is not the product worker's direct E0 snapshot;
+- process RSS/HWM only under `process_memory`, and whole-device CUDA total/free/used only under `whole_device_cuda_memory`;
 - `cuda_enabled: false` for the CPU build and `cuda_enabled: true` for the CUDA build;
-- explicit BF16 `source_scalar` in both reports, CPU F32 `execution_scalar`, and CUDA BF16 `execution_scalar`;
 - RTX 5070 Ti identity, driver/toolkit metadata, compute capability 12.0, and build target 120 only in the CUDA report;
 - complete cancellation, unload, shutdown, workspace-removal, and three-cycle CUDA stability results.
 
-CUDA total/free/used values are safe driver observations for the whole device, not process-attributed usage. Every cycle establishes a new immediately-pre-load baseline. Interpret post-unload and post-owner-drop retained deltas together with the absolute observations; desktop or other GPU activity can perturb either. The external report records `accounted_footprint` as an independent public adapter plan with validated E1 acceptance of the E0 load contract, but public E1 does not expose a same-worker E0 reservation or post-unload `RuntimeSnapshot`. Do not synthesize those fields or call the E1 state a direct accounting snapshot. Execute and record the direct opted-in E0 CUDA hardware snapshot test in [download-free CUDA hardware validation](#download-free-cuda-hardware-validation) separately; that test owns exact zero model/request/workspace/cleanup accounting evidence.
+The exact final footprint is the prepared transaction's deterministic post-load tensor ownership. The loading peak is the separate aggregate admission requirement during materialization. Neither is process RSS or physical whole-device memory. Public E1 accepts the E0 load contract but does not expose a same-worker E0 `RuntimeSnapshot`, so external schema 4 deliberately does not claim direct E0 reserved ownership or post-unload zero accounting. The opted-in E0 fixture test remains the owner for exact zero model/request/workspace/cleanup accounting.
 
-Schema 3 also records the exact number of safe Candle `discover_device` calls. Each call initializes a temporary Candle CUDA device and cudarc context; these observations are bounded to cold identity/resource checkpoints and never occur per token. Review the count as context-churn audit evidence only, not as a timing or performance threshold.
+Each CUDA cycle establishes a new whole-device pre-load baseline. Interpret post-unload and post-owner-drop retained deltas with absolute observations; desktop or other GPU activity can perturb either. Safe Candle `discover_device` calls and their temporary contexts remain bounded cold observations recorded as audit evidence, never per-token work or a threshold.
 
-Exact measured values belong only in [performance evidence](performance.md#external-product-evidence).
+No schema-4 product report has been accepted on the Phase 12 closure tree, so no new measured values replace the historical Phase 10/11 evidence in [performance evidence](performance.md#external-product-evidence).
+
+### External mixed-checkpoint evidence gap
+
+No immutable, license-reviewed, Llama-compatible mixed-dtype checkpoint with a suitable direct-completion profile has been established for current Phase 12 evidence. Therefore no external mixed CPU or CUDA compatibility result is claimed. The deterministic project-authored adapter/E0/E1 fixtures own the current reviewed layout evidence.
+
+A missing network route, unavailable Hugging Face service, gated-repository credential, or absent local cache is an acquisition/precondition failure. It must be reported separately and must not be classified as model incompatibility. Conversely, only an acquired immutable artifact that reaches inspection/preparation and fails the reviewed product contract can provide incompatibility evidence.
 
 ### Manual Slint acceptance
 
 Use an isolated application data root that does not exist before the session:
 
 ```sh
-test ! -e target/phase11-slint-data
-mkdir -p target/phase11-slint-data
+test ! -e target/phase12-slint-data
+mkdir -p target/phase12-slint-data
 
-XDG_DATA_HOME="$PWD/target/phase11-slint-data" \
+XDG_DATA_HOME="$PWD/target/phase12-slint-data" \
 CUDA_COMPUTE_CAP=120 \
 cargo run --release --locked \
     -p desktop-slint \
@@ -505,7 +591,7 @@ Record only the behavioral result. Do not retain screenshots containing generate
 
 ### Final CPU and CUDA acceptance procedure
 
-Run the ordinary CPU gates sequentially:
+The following commands remain the canonical reproducibility procedure for the locally passed Phase 12 closure classes. Run the ordinary CPU gates sequentially:
 
 ```sh
 cargo xtask verify
@@ -551,7 +637,7 @@ cargo clippy --locked \
     -- -D warnings
 ```
 
-Run every explicitly opted-in CUDA hardware test listed in [download-free CUDA hardware validation](#download-free-cuda-hardware-validation), then run the controlled external CPU and CUDA baselines above. Confirm artifact hygiene:
+Run every explicitly opted-in CUDA hardware test listed in [download-free CUDA hardware validation](#download-free-cuda-hardware-validation). The homogeneous TinyLlama schema-4 CPU/CUDA baseline remains an optional current product regression and is not mixed evidence; run it only with explicit network authorization. Absence of a suitable reviewed external mixed profile remains a documented evidence gap rather than a reason to substitute TinyLlama. Confirm artifact hygiene:
 
 ```sh
 test ! -e benchmarks/runtime/Cargo.lock
@@ -565,7 +651,7 @@ git status --short --untracked-files=all
 git status --short --ignored
 ```
 
-Only root `target/` and its descendants may contain build artifacts, generated CUDA kernels, model cache, temporary application state, and raw evidence. After reviewing successful results, update canonical evidence/status/execution documents in a separate documentation-only evidence commit. Re-run the documentation and canonical gates on that commit. Push only when requested; local success and an observed run on an earlier executable tree must remain separately identified.
+Only root `target/` and its descendants may contain build artifacts, generated CUDA kernels, model cache, temporary application state, and raw evidence. After reviewing successful results, update canonical evidence/status/execution documents in the same coherent closure commit and re-run the documentation and canonical gates before creating it. Push only when requested; local success and an observed run on an earlier executable tree must remain separately identified.
 
 ## Dependency, link, and graph audits
 

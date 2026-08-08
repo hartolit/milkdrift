@@ -59,14 +59,19 @@ pub(super) fn load_model(
                     validate_loaded_state(
                         runtime, &model, &resolved, selection, planned, observer,
                     )?;
-                    // This transition follows complete exact event/state, source-scalar,
-                    // execution-scalar, device, identity, and capacity validation.
-                    planned.record_verified_receipt()?;
+                    // This transition follows complete resolved declaration, prepared layout,
+                    // planned/actual execution, device, identity, and capacity validation.
+                    planned.record_e1_load_acceptance()?;
                     return Ok((model, started_at.elapsed()));
                 }
                 ApplicationEvent::ModelLoadFailed { failure } => {
                     return Err(BenchmarkError::new(format!(
                         "exact Candle model load failed: {failure}"
+                    )));
+                }
+                ApplicationEvent::ModelCleanupPending { exhausted, failure } => {
+                    return Err(BenchmarkError::new(format!(
+                        "exact Candle model load retained E0 cleanup ownership (exhausted={exhausted}): {failure}"
                     )));
                 }
                 ApplicationEvent::ModelCompatibilityFailed { failure } => {
@@ -167,6 +172,11 @@ pub(super) fn unload_model(
                         "RejectIfBusy model unload failed: {failure}"
                     )));
                 }
+                ApplicationEvent::ModelCleanupPending { exhausted, failure } => {
+                    return Err(BenchmarkError::new(format!(
+                        "model cleanup retained E0 ownership during unload (exhausted={exhausted}): {failure}"
+                    )));
+                }
                 ApplicationEvent::GenerationCleanupPending {
                     request_id,
                     exhausted,
@@ -206,16 +216,15 @@ fn validate_loaded_state(
     planned: &PlannedModelEvidence,
     observer: &DeviceObserver,
 ) -> BenchmarkResult {
-    let resolved_source_scalar = validate_resolved_facts(resolved, selection)?;
+    let resolved_declaration = validate_resolved_facts(resolved, selection)?;
     validate_unverified_plan(planned, observer)?;
     observer.validate_selected_e1(runtime)?;
     observer.validate_actual_loaded(loaded.device())?;
 
     validate_loaded_scalar_facts(
-        resolved_source_scalar,
-        planned.source_scalar_type,
-        planned.execution_scalar_type,
-        loaded.source_scalar_type(),
+        resolved_declaration,
+        planned.configuration_declared_scalar_type,
+        planned.planned_execution_scalar_type,
         loaded.execution_scalar_type(),
     )?;
 
@@ -255,20 +264,19 @@ fn validate_loaded_state(
 }
 
 fn validate_loaded_scalar_facts(
-    resolved_source: ApplicationScalarType,
-    planned_source: ApplicationScalarType,
+    resolved_declaration: Option<ApplicationScalarType>,
+    prepared_declaration: Option<ApplicationScalarType>,
     planned_execution: ApplicationScalarType,
-    loaded_source: ApplicationScalarType,
-    loaded_execution: ApplicationScalarType,
+    actual_execution: ApplicationScalarType,
 ) -> BenchmarkResult {
-    if planned_source != resolved_source || loaded_source != resolved_source {
+    if prepared_declaration != resolved_declaration {
         return Err(BenchmarkError::new(format!(
-            "loaded source scalar did not match explicit resolved and independent-plan evidence: resolved={resolved_source:?}, plan={planned_source:?}, loaded={loaded_source:?}"
+            "prepared configuration declaration did not match optional E1 resolution metadata: resolved={resolved_declaration:?}, prepared={prepared_declaration:?}"
         )));
     }
-    if loaded_execution != planned_execution {
+    if actual_execution != planned_execution {
         return Err(BenchmarkError::new(format!(
-            "E1 loaded execution scalar {loaded_execution:?} did not match independent LoadPlan execution scalar {planned_execution:?}"
+            "actual E1 execution scalar {actual_execution:?} did not match prepare_load execution scalar {planned_execution:?}"
         )));
     }
     Ok(())
@@ -290,19 +298,17 @@ mod tests {
     use super::validate_loaded_scalar_facts;
 
     #[test]
-    fn loaded_scalars_match_explicit_resolved_and_independent_plan_facts() -> Result<(), String> {
+    fn loaded_facts_match_optional_resolution_and_prepared_execution() -> Result<(), String> {
         validate_loaded_scalar_facts(
-            ApplicationScalarType::Bf16,
-            ApplicationScalarType::Bf16,
+            Some(ApplicationScalarType::Bf16),
+            Some(ApplicationScalarType::Bf16),
             ApplicationScalarType::F32,
-            ApplicationScalarType::Bf16,
             ApplicationScalarType::F32,
         )
         .map_err(|error| error.to_string())?;
         validate_loaded_scalar_facts(
-            ApplicationScalarType::Bf16,
-            ApplicationScalarType::Bf16,
-            ApplicationScalarType::Bf16,
+            None,
+            None,
             ApplicationScalarType::Bf16,
             ApplicationScalarType::Bf16,
         )
@@ -313,9 +319,8 @@ mod tests {
     fn loaded_execution_scalar_mismatch_is_rejected_before_receipt_verification() {
         assert!(
             validate_loaded_scalar_facts(
-                ApplicationScalarType::Bf16,
-                ApplicationScalarType::Bf16,
-                ApplicationScalarType::Bf16,
+                Some(ApplicationScalarType::Bf16),
+                Some(ApplicationScalarType::Bf16),
                 ApplicationScalarType::Bf16,
                 ApplicationScalarType::F32,
             )
@@ -323,9 +328,8 @@ mod tests {
         );
         assert!(
             validate_loaded_scalar_facts(
-                ApplicationScalarType::Bf16,
-                ApplicationScalarType::Bf16,
-                ApplicationScalarType::F32,
+                Some(ApplicationScalarType::Bf16),
+                Some(ApplicationScalarType::F32),
                 ApplicationScalarType::F32,
                 ApplicationScalarType::F32,
             )

@@ -5,7 +5,8 @@ on:
     branches:
       - main
     paths:
-      - .github/workflows/cuda-hardware.yml
+      - .github/workflows/**
+      - .gitignore
       - .cargo/**
       - Cargo.toml
       - Cargo.lock
@@ -105,6 +106,17 @@ jobs:
             --all-targets \
             --features cuda
 
+      - name: Compile exact CUDA test graph
+        run: |
+          set -eu
+          cargo test --locked \
+            -p candle-backend \
+            -p inference-runtime \
+            -p application-runtime \
+            -p runtime-benchmarks \
+            --features cuda \
+            --no-run
+
       - name: Clippy exact CUDA feature graph
         run: |
           set -eu
@@ -121,6 +133,27 @@ jobs:
       - name: Prove CPU execution in the CUDA build
         run: |
           set -eu
+          test_list="$(cargo test --release --locked \
+            -p candle-backend \
+            --features cuda \
+            --test llama_cuda \
+            -- \
+            --list)"
+          printf '%s\n' "${test_list}" \
+            | grep -Fqx 'cuda_enabled_binary_can_explicitly_execute_cpu: test'
+          ignored_test_list="$(cargo test --release --locked \
+            -p candle-backend \
+            --features cuda \
+            --test llama_cuda \
+            -- \
+            --ignored \
+            --list)"
+          if printf '%s\n' "${ignored_test_list}" \
+            | grep -Fqx 'cuda_enabled_binary_can_explicitly_execute_cpu: test'
+          then
+            echo 'explicit CPU-in-CUDA test must remain non-ignored' >&2
+            exit 1
+          fi
           cargo test --release --locked \
             -p candle-backend \
             --features cuda \
@@ -130,54 +163,115 @@ jobs:
             --nocapture \
             --test-threads=1
 
-      - name: Prove CUDA fixture logits on ordinal zero
+      - name: Prove homogeneous and mixed CUDA adapter matrix
         run: |
           set -eu
-          cargo test --release --locked \
+          ignored_test_list="$(cargo test --release --locked \
             -p candle-backend \
             --features cuda \
             --test llama_cuda \
             -- \
             --ignored \
-            --exact cuda_ordinal_zero_executes_fixture_and_matches_cpu_logits \
-            --nocapture \
-            --test-threads=1
-
-      - name: Prove BF16 source and execution scalars
-        run: |
-          set -eu
-          cargo test --release --locked \
-            -p candle-backend \
-            --features cuda \
-            --test llama_cuda \
-            -- \
-            --ignored \
-            --exact cuda_bf16_source_executes_as_bf16 \
-            --nocapture \
-            --test-threads=1
+            --list)"
+          test "$(printf '%s\n' "${ignored_test_list}" | grep -Fc ': test')" -eq 4
+          for test_name in \
+            cuda_ordinal_zero_executes_fixture_and_matches_cpu_logits \
+            cuda_homogeneous_bf16_source_executes_as_bf16 \
+            cuda_mixed_f16_f32_executes_as_f16 \
+            cuda_mixed_bf16_f32_executes_as_bf16
+          do
+            printf '%s\n' "${ignored_test_list}" | grep -Fqx "${test_name}: test"
+            cargo test --release --locked \
+              -p candle-backend \
+              --features cuda \
+              --test llama_cuda \
+              -- \
+              --include-ignored \
+              --exact "${test_name}" \
+              --nocapture \
+              --test-threads=1
+          done
 
       - name: Prove hosted E0 CUDA lifecycle and zero accounting
         run: |
           set -eu
-          cargo test --release --locked \
+          ignored_test_list="$(cargo test --release --locked \
             -p inference-runtime \
             --features cuda \
             --test native_backend_generation \
             -- \
             --ignored \
-            --exact candle_cuda_fixture_covers_e0_generation_accounting_and_lifecycle \
+            --list)"
+          printf '%s\n' "${ignored_test_list}" \
+            | grep -Fqx 'candle_mixed_cuda_fixture_covers_e0_generation_accounting_and_lifecycle: test'
+          cargo test --release --locked \
+            -p inference-runtime \
+            --features cuda \
+            --test native_backend_generation \
+            -- \
+            --include-ignored \
+            --exact candle_mixed_cuda_fixture_covers_e0_generation_accounting_and_lifecycle \
+            --nocapture \
+            --test-threads=1
+
+      - name: Prove deterministic failure cleanup and explicit no-fallback policy
+        run: |
+          set -eu
+          cargo test --release --locked \
+            -p inference-runtime \
+            --features cuda \
+            --test fault_injection \
+            -- \
+            --nocapture \
+            --test-threads=1
+          test_list="$(cargo test --release --locked \
+            -p application-runtime \
+            --features cuda \
+            --lib \
+            -- \
+            --list)"
+          printf '%s\n' "${test_list}" \
+            | grep -Fqx 'runtime::tests::devices::unavailable_selected_cuda_blocks_load_without_fallback: test'
+          ignored_test_list="$(cargo test --release --locked \
+            -p application-runtime \
+            --features cuda \
+            --lib \
+            -- \
+            --ignored \
+            --list)"
+          if printf '%s\n' "${ignored_test_list}" \
+            | grep -Fqx 'runtime::tests::devices::unavailable_selected_cuda_blocks_load_without_fallback: test'
+          then
+            echo 'explicit no-fallback test must remain non-ignored' >&2
+            exit 1
+          fi
+          cargo test --release --locked \
+            -p application-runtime \
+            --features cuda \
+            --lib \
+            -- \
+            --exact runtime::tests::devices::unavailable_selected_cuda_blocks_load_without_fallback \
             --nocapture \
             --test-threads=1
 
       - name: Prove E1 CUDA discovery selection scalar truth and shutdown
         run: |
           set -eu
-          cargo test --release --locked \
+          ignored_test_list="$(cargo test --release --locked \
             -p application-runtime \
             --features cuda \
             --lib \
             -- \
             --ignored \
+            --list)"
+          printf '%s\n' "${ignored_test_list}" \
+            | grep -Fqx 'runtime::tests::devices::cuda_fixture_load_reports_the_selected_and_actual_e1_device: test'
+          cargo test --release --locked \
+            -p application-runtime \
+            --features cuda \
+            --lib \
+            -- \
+            --include-ignored \
             --exact runtime::tests::devices::cuda_fixture_load_reports_the_selected_and_actual_e1_device \
             --nocapture \
             --test-threads=1

@@ -14,6 +14,7 @@ mod cli;
 pub mod e0;
 mod e1;
 mod error;
+mod evidence;
 mod external;
 mod fixture;
 mod memory;
@@ -102,7 +103,6 @@ fn run_configuration(configuration: Configuration) -> BenchmarkResult {
                 backend: "Candle",
                 architecture: "Llama",
                 format: "Safetensors",
-                scalar_type: "F32",
                 vocabulary_size: fixture::VOCABULARY_SIZE,
                 context_capacity: fixture::CONTEXT_CAPACITY,
             },

@@ -8,11 +8,11 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use candle_backend::{CandleLlamaLoader, CandleLlamaSource};
+use candle_backend::{CandleLlamaLoader, CandleLlamaModel, CandleLlamaSource};
 use candle_core::{DType, Device, Tensor};
 use domain_contracts::{
     BackendFailureKind, BackendId, CancellationStatus, DecodeBuffers, DecodeInput, DecodeOutcome,
-    DeviceId, DeviceKind, ExecutionDevice, LoadConfiguration, LoadedModel, MemoryBudget,
+    DeviceId, DeviceKind, ExecutionDevice, LoadConfiguration, LoadPlan, LoadedModel, MemoryBudget,
     MemoryFootprint, ModelGeneration, ModelHandle, ModelId, ModelLoader, PrefillBuffers,
     PrefillInput, PrefillOutcome, PreparedLoad, ScalarType, ScalarTypeSet, SequenceConfiguration,
     SequenceId, TokenId, decode_checked, prefill_checked,
@@ -22,6 +22,9 @@ const BACKEND: BackendId = BackendId::new(501);
 const CPU: ExecutionDevice = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu);
 const CUDA_0: ExecutionDevice = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda);
 const VOCABULARY_SIZE: usize = 16;
+const MIXED_EXECUTION_WEIGHT_BYTES: u64 = 1_840;
+const MIXED_CACHE_BYTES_PER_TOKEN: u64 = 32;
+const MIXED_HOST_LOADING_PEAK_BYTES: u64 = 513;
 
 type TestResult<T = ()> = Result<T, String>;
 
@@ -155,8 +158,11 @@ fn cuda_mixed_f16_f32_executes_as_f16() -> TestResult {
     let source = fixture_source(Some(ScalarType::F16), converted.weight_path.clone())?;
     let result = execute_fixture(&source, CUDA_0)?;
 
+    assert_eq!(result.declared_scalar_type, Some(ScalarType::F16));
     assert_eq!(result.observed_scalar_types, mixed_set(ScalarType::F16));
     assert_eq!(result.execution_scalar_type, ScalarType::F16);
+    assert_eq!(result.execution_device, CUDA_0);
+    assert_exact_mixed_cuda_footprints(&result);
     assert_eq!(maximum_logit_token(&result.decode_logits)?, TokenId::new(3));
     Ok(())
 }
@@ -169,10 +175,36 @@ fn cuda_mixed_bf16_f32_executes_as_bf16() -> TestResult {
     let source = fixture_source(Some(ScalarType::Bf16), converted.weight_path.clone())?;
     let result = execute_fixture(&source, CUDA_0)?;
 
+    assert_eq!(result.declared_scalar_type, Some(ScalarType::Bf16));
     assert_eq!(result.observed_scalar_types, mixed_set(ScalarType::Bf16));
     assert_eq!(result.execution_scalar_type, ScalarType::Bf16);
+    assert_eq!(result.execution_device, CUDA_0);
+    assert_exact_mixed_cuda_footprints(&result);
     assert_eq!(maximum_logit_token(&result.decode_logits)?, TokenId::new(3));
     Ok(())
+}
+
+fn assert_exact_mixed_cuda_footprints(result: &FixtureExecution) {
+    assert_eq!(
+        result.accounted_footprint,
+        MemoryFootprint {
+            host_weight_bytes: 0,
+            device_weight_bytes: MIXED_EXECUTION_WEIGHT_BYTES,
+            host_working_bytes: 0,
+            device_working_bytes: 0,
+            cache_bytes_per_token: MIXED_CACHE_BYTES_PER_TOKEN,
+        }
+    );
+    assert_eq!(
+        result.loading_peak_footprint,
+        MemoryFootprint {
+            host_weight_bytes: 0,
+            device_weight_bytes: MIXED_EXECUTION_WEIGHT_BYTES,
+            host_working_bytes: MIXED_HOST_LOADING_PEAK_BYTES,
+            device_working_bytes: 0,
+            cache_bytes_per_token: MIXED_CACHE_BYTES_PER_TOKEN,
+        }
+    );
 }
 
 struct FixtureExecution {
@@ -191,40 +223,12 @@ fn execute_fixture(
     source: &CandleLlamaSource,
     execution_device: ExecutionDevice,
 ) -> TestResult<FixtureExecution> {
-    let mut loader = CandleLlamaLoader::new(BACKEND);
-    let configuration = LoadConfiguration {
-        handle: ModelHandle::new(ModelId::new(1), ModelGeneration::new(1)),
-        execution_device,
-        memory_budget: MemoryBudget {
-            host_bytes: u64::MAX,
-            device_bytes: u64::MAX,
-        },
-    };
-    let prepared = loader
-        .prepare_load(source, &configuration)
-        .map_err(|error| format!("prepare fixture on {execution_device:?}: {error:?}"))?;
-    let plan = *prepared.plan();
-    let declared_scalar_type = source.configuration_declared_scalar_type();
-    assert_eq!(
-        plan.descriptor.metadata.configuration_declared_scalar_type,
-        declared_scalar_type
-    );
-    let observed_scalar_types = plan.descriptor.metadata.observed_tensor_scalar_types;
-    let mut model = match loader.load_prepared(prepared) {
-        Ok(model) => model,
-        Err(mut failed) => {
-            let primary = failed.primary();
-            let cleanup = failed.cleanup_owner_mut().cleanup();
-            return Err(format!(
-                "load fixture on {execution_device:?}: {primary:?}; cleanup: {cleanup:?}"
-            ));
-        }
-    };
-    assert_eq!(model.descriptor(), &plan.descriptor);
-    assert_eq!(model.execution_scalar_type(), plan.execution_scalar_type);
-    assert_eq!(model.execution_device(), execution_device);
-    assert_eq!(model.accounted_footprint(), plan.expected_footprint);
-
+    let LoadedFixture {
+        mut model,
+        plan,
+        declared_scalar_type,
+        observed_scalar_types,
+    } = load_fixture(source, execution_device)?;
     let sequence_configuration = SequenceConfiguration::new(
         NonZeroU32::new(16).ok_or_else(|| "maximum tokens must be nonzero".to_owned())?,
         NonZeroU32::new(8).ok_or_else(|| "maximum prefill must be nonzero".to_owned())?,
@@ -299,6 +303,59 @@ fn execute_fixture(
         sequence_footprint: sequence_plan.expected_footprint,
         prefill_logits,
         decode_logits,
+    })
+}
+
+struct LoadedFixture {
+    model: CandleLlamaModel,
+    plan: LoadPlan,
+    declared_scalar_type: Option<ScalarType>,
+    observed_scalar_types: ScalarTypeSet,
+}
+
+fn load_fixture(
+    source: &CandleLlamaSource,
+    execution_device: ExecutionDevice,
+) -> TestResult<LoadedFixture> {
+    let mut loader = CandleLlamaLoader::new(BACKEND);
+    let configuration = LoadConfiguration {
+        handle: ModelHandle::new(ModelId::new(1), ModelGeneration::new(1)),
+        execution_device,
+        memory_budget: MemoryBudget {
+            host_bytes: u64::MAX,
+            device_bytes: u64::MAX,
+        },
+    };
+    let prepared = loader
+        .prepare_load(source, &configuration)
+        .map_err(|error| format!("prepare fixture on {execution_device:?}: {error:?}"))?;
+    let plan = *prepared.plan();
+    let declared_scalar_type = source.configuration_declared_scalar_type();
+    assert_eq!(
+        plan.descriptor.metadata.configuration_declared_scalar_type,
+        declared_scalar_type
+    );
+    let observed_scalar_types = plan.descriptor.metadata.observed_tensor_scalar_types;
+    let model = match loader.load_prepared(prepared) {
+        Ok(model) => model,
+        Err(mut failed) => {
+            let primary = failed.primary();
+            let cleanup = failed.cleanup_owner_mut().cleanup();
+            return Err(format!(
+                "load fixture on {execution_device:?}: {primary:?}; cleanup: {cleanup:?}"
+            ));
+        }
+    };
+    assert_eq!(model.descriptor(), &plan.descriptor);
+    assert_eq!(model.execution_scalar_type(), plan.execution_scalar_type);
+    assert_eq!(model.execution_device(), execution_device);
+    assert_eq!(model.accounted_footprint(), plan.expected_footprint);
+
+    Ok(LoadedFixture {
+        model,
+        plan,
+        declared_scalar_type,
+        observed_scalar_types,
     })
 }
 

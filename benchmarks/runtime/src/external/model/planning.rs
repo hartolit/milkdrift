@@ -1,4 +1,4 @@
-//! Independent public Candle planning and accounted-footprint validation.
+//! Observer-owned Candle preparation and exact public load-plan validation.
 
 use std::path::Path;
 
@@ -9,30 +9,33 @@ use candle_backend::{CandleLlamaLoader, CandleLlamaSource};
 use domain_contracts::{
     BackendId, CapabilitySet, DeviceId, DeviceKind, ExecutionDevice, LoadConfiguration, LoadPlan,
     MemoryBudget, MemoryFootprint, ModelArchitecture, ModelGeneration, ModelHandle, ModelId,
-    ModelLoader, QuantizationFormat, ScalarType,
+    ModelLoader, PreparedLoad, QuantizationFormat, ScalarType, ScalarTypeSet,
 };
 
 use super::super::cli::RequestedDevice;
 use super::super::observation::DeviceObserver;
-use super::super::report::{AccountedFootprintEvidence, DeviceIdentity};
+use super::super::report::{DeviceIdentity, PreparedLoadEvidence};
 use crate::error::{BenchmarkError, BenchmarkResult};
+use crate::evidence::{application_scalar_type, footprint_record, validate_prepared_load_plan};
 use crate::report::MemoryFootprintRecord;
 
 use super::PlannedModelEvidence;
 use super::identity::{
-    EXPECTED_CONTEXT_TOKENS, EXPECTED_VOCABULARY_SIZE, MODEL_CANDLE_SOURCE_SCALAR,
-    MODEL_DOMAIN_SOURCE_SCALAR, MODEL_SOURCE_SCALAR, canonical_snapshot_artifacts,
+    EXPECTED_CONTEXT_TOKENS, EXPECTED_VOCABULARY_SIZE, MODEL_CONFIGURATION_DECLARED_SCALAR,
+    MODEL_DOMAIN_CONFIGURATION_DECLARED_SCALAR, MODEL_OBSERVED_TENSOR_SCALARS,
+    canonical_snapshot_artifacts,
 };
 use super::resolution::validate_resolved_state;
 
-const ADAPTER_PLAN_BACKEND: BackendId = BackendId::new(10_003);
-const ADAPTER_PLAN_HANDLE: ModelHandle = ModelHandle::new(ModelId::new(1), ModelGeneration::new(1));
+const ADAPTER_PREPARATION_BACKEND: BackendId = BackendId::new(10_003);
+const ADAPTER_PREPARATION_HANDLE: ModelHandle =
+    ModelHandle::new(ModelId::new(1), ModelGeneration::new(1));
 const CPU_EXECUTION_DEVICE: ExecutionDevice =
     ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu);
 const CUDA_ZERO_EXECUTION_DEVICE: ExecutionDevice =
     ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda);
 
-const E0_FOOTPRINT_PROVENANCE: &str = "independent public Candle plan_load plus validated E1 ModelLoaded acceptance of the E0 load contract; no same-worker reservation snapshot is exposed by public E1 APIs";
+const PREPARED_LOAD_PROVENANCE: &str = "observer-owned unmaterialized Candle prepare_load plan plus public E1 ModelLoaded acceptance; E1 exposes actual execution scalar/device but no same-worker E0 reserved-ownership snapshot";
 
 pub(super) fn plan_resolved_model(
     cache_directory: &Path,
@@ -42,12 +45,12 @@ pub(super) fn plan_resolved_model(
     let resolved = runtime
         .state()
         .resolved()
-        .ok_or_else(|| BenchmarkError::new("adapter planning requires an E1-resolved model"))?;
-    let resolved_source_scalar = validate_resolved_state(runtime, resolved, resolved.selection())?;
+        .ok_or_else(|| BenchmarkError::new("adapter preparation requires an E1-resolved model"))?;
+    let resolved_declaration = validate_resolved_state(runtime, resolved, resolved.selection())?;
     let configuration = planning_configuration(runtime, requested_device)?;
     if !runtime.state().can_load(resolved.selection()) {
         return Err(BenchmarkError::new(
-            "public E1 state did not admit the exact resolved model for adapter planning",
+            "public E1 state did not admit the exact resolved model for observer preparation",
         ));
     }
 
@@ -55,72 +58,64 @@ pub(super) fn plan_resolved_model(
     let source = CandleLlamaSource::new(
         artifacts.config_path,
         vec![artifacts.weight_path],
-        MODEL_CANDLE_SOURCE_SCALAR,
+        MODEL_DOMAIN_CONFIGURATION_DECLARED_SCALAR,
     )
     .map_err(|error| {
         BenchmarkError::new(format!(
-            "fixed BF16 Candle Llama source could not be constructed: {error}"
+            "fixed TinyLlama Candle source could not be constructed for observer preparation: {error}"
         ))
     })?;
-    let loader = CandleLlamaLoader::new(ADAPTER_PLAN_BACKEND);
-    let plan = loader.plan_load(&source, &configuration).map_err(|error| {
-        BenchmarkError::new(format!(
-            "public Candle plan_load failed for the exact {} device: {error:?}",
-            requested_device_label(requested_device)
-        ))
-    })?;
-    let (source_scalar_type, execution_scalar_type) = validate_exact_adapter_plan(
-        &plan,
-        resolved,
-        resolved_source_scalar,
-        requested_device,
-        artifacts.weight_bytes,
-    )?;
+    let mut loader = CandleLlamaLoader::new(ADAPTER_PREPARATION_BACKEND);
+    let prepared = loader
+        .prepare_load(&source, &configuration)
+        .map_err(|error| {
+            BenchmarkError::new(format!(
+                "public Candle prepare_load failed for the exact {} device: {error:?}",
+                requested_device_label(requested_device)
+            ))
+        })?;
+    let plan = *prepared.plan();
+    drop(prepared);
 
-    Ok(PlannedModelEvidence::new(
-        plan.expected_footprint,
-        source_scalar_type,
-        execution_scalar_type,
+    let scalar_facts = validate_exact_adapter_plan(
+        &plan,
+        &configuration,
+        resolved,
+        resolved_declaration,
         requested_device,
-        artifacts.weight_bytes,
-    ))
+    )?;
+    let planned = PlannedModelEvidence {
+        prepared_load: PreparedLoadEvidence {
+            planned_execution_device: requested_device_identity(requested_device),
+            exact_final_footprint: footprint_record(plan.expected_footprint),
+            loading_peak_footprint: footprint_record(plan.loading_peak_footprint),
+            e1_load_accepted: false,
+            e0_reserved_ownership_observed: false,
+            provenance: PREPARED_LOAD_PROVENANCE,
+        },
+        configuration_declared_scalar_type: scalar_facts.configuration_declared_scalar_type,
+        observed_tensor_scalar_types: scalar_facts.observed_tensor_scalar_types,
+        planned_execution_scalar_type: scalar_facts.planned_execution_scalar_type,
+        requested_device,
+    };
+    validate_plan_state(&planned, false)?;
+    Ok(planned)
 }
 
 impl PlannedModelEvidence {
-    fn new(
-        planned: MemoryFootprint,
-        source_scalar_type: ApplicationScalarType,
-        execution_scalar_type: ApplicationScalarType,
-        requested_device: RequestedDevice,
-        source_weight_bytes: u64,
-    ) -> Self {
-        Self {
-            accounted_footprint: AccountedFootprintEvidence {
-                independent_public_plan: footprint_record(planned),
-                e1_accepted_e0_load_contract: false,
-                reservation_snapshot_observed: false,
-                provenance: E0_FOOTPRINT_PROVENANCE,
-            },
-            source_scalar_type,
-            execution_scalar_type,
-            requested_device,
-            source_weight_bytes,
-        }
-    }
-
-    pub(super) fn record_verified_receipt(&mut self) -> BenchmarkResult {
-        if self.accounted_footprint.e1_accepted_e0_load_contract {
+    pub(super) fn record_e1_load_acceptance(&mut self) -> BenchmarkResult {
+        if self.prepared_load.e1_load_accepted {
             return Err(BenchmarkError::new(
-                "E0 load-contract evidence was already populated before ModelLoaded integration",
+                "E1 load acceptance was already recorded for this observer preparation",
             ));
         }
-        if self.accounted_footprint.reservation_snapshot_observed {
+        if self.prepared_load.e0_reserved_ownership_observed {
             return Err(BenchmarkError::new(
-                "external E1 orchestration cannot claim a direct same-worker E0 reservation snapshot",
+                "external E1 orchestration cannot claim direct same-worker E0 reserved ownership",
             ));
         }
-        self.accounted_footprint.e1_accepted_e0_load_contract = true;
-        Ok(())
+        self.prepared_load.e1_load_accepted = true;
+        validate_plan_state(self, true)
     }
 }
 
@@ -128,36 +123,52 @@ pub(super) fn validate_unverified_plan(
     planned: &PlannedModelEvidence,
     observer: &DeviceObserver,
 ) -> BenchmarkResult {
-    if planned.accounted_footprint.e1_accepted_e0_load_contract
-        || planned.accounted_footprint.reservation_snapshot_observed
-    {
-        return Err(BenchmarkError::new(
-            "model load requires an independent plan whose E0 load contract is still unverified and whose reservation has not been misrepresented as directly observed",
-        ));
-    }
+    validate_observer_identity(planned, observer)?;
+    validate_plan_state(planned, false)
+}
+
+pub(super) fn validate_verified_plan(
+    planned: &PlannedModelEvidence,
+    observer: &DeviceObserver,
+) -> BenchmarkResult {
+    validate_observer_identity(planned, observer)?;
+    validate_plan_state(planned, true)
+}
+
+fn validate_observer_identity(
+    planned: &PlannedModelEvidence,
+    observer: &DeviceObserver,
+) -> BenchmarkResult {
     if observer.requested_identity() != requested_device_identity(planned.requested_device) {
         return Err(BenchmarkError::new(
-            "adapter plan and device observer address different requested execution devices",
+            "observer preparation and device observer address different requested execution devices",
         ));
     }
-    if planned.source_scalar_type != MODEL_SOURCE_SCALAR {
-        return Err(BenchmarkError::new(format!(
-            "independent adapter plan source scalar changed before load: expected {MODEL_SOURCE_SCALAR:?}, recorded {:?}",
-            planned.source_scalar_type
-        )));
+    Ok(())
+}
+
+fn validate_plan_state(
+    planned: &PlannedModelEvidence,
+    expected_e1_acceptance: bool,
+) -> BenchmarkResult {
+    let expected_device = requested_device_identity(planned.requested_device);
+    if planned.prepared_load.e1_load_accepted != expected_e1_acceptance
+        || planned.prepared_load.e0_reserved_ownership_observed
+        || planned.prepared_load.planned_execution_device != expected_device
+        || planned.configuration_declared_scalar_type != MODEL_CONFIGURATION_DECLARED_SCALAR
+        || planned.observed_tensor_scalar_types != MODEL_OBSERVED_TENSOR_SCALARS
+        || planned.planned_execution_scalar_type
+            != expected_execution_scalar(planned.requested_device)
+        || planned.prepared_load.provenance.is_empty()
+    {
+        return Err(BenchmarkError::new(
+            "retained observer preparation changed its declared, observed, planned-execution, acceptance, device, or ownership-scope facts",
+        ));
     }
-    let expected_execution = expected_execution_scalar(planned.requested_device);
-    if planned.execution_scalar_type != expected_execution {
-        return Err(BenchmarkError::new(format!(
-            "independent adapter plan execution scalar changed before load: expected {expected_execution:?}, recorded {:?}",
-            planned.execution_scalar_type
-        )));
-    }
-    validate_bf16_weight_accounting(
+    validate_recorded_footprints(
         planned.requested_device,
-        memory_footprint(planned.accounted_footprint.independent_public_plan),
-        planned.source_weight_bytes,
-        "retained independent public Candle plan",
+        planned.prepared_load.exact_final_footprint,
+        planned.prepared_load.loading_peak_footprint,
     )
 }
 
@@ -171,7 +182,7 @@ fn planning_configuration(
         || state.selected_device() != expected_application_device
     {
         return Err(BenchmarkError::new(format!(
-            "adapter planning requested {expected_application_device:?}, but E1 preferences/state selected {:?}/{:?}",
+            "observer preparation requested {expected_application_device:?}, but E1 preferences/state selected {:?}/{:?}",
             runtime.preferences().selected_device,
             state.selected_device()
         )));
@@ -190,11 +201,9 @@ fn planning_configuration(
     let host_bytes = runtime.preferences().maximum_host_memory_bytes;
     if host_bytes == 0 {
         return Err(BenchmarkError::new(
-            "runtime host-memory limit was zero during adapter planning",
+            "runtime host-memory limit was zero during observer preparation",
         ));
     }
-    // This is a physical-capacity observation used only to bound admission. It is not the
-    // adapter's accounted footprint and is never represented as a same-worker reservation.
     let observed_device_capacity_bytes = match requested_device {
         RequestedDevice::Cpu => 0,
         RequestedDevice::Cuda0 => summary
@@ -202,13 +211,13 @@ fn planning_configuration(
             .filter(|capacity| *capacity > 0)
             .ok_or_else(|| {
                 BenchmarkError::new(
-                    "E1 CUDA ordinal 0 summary omitted a nonzero total capacity for adapter planning",
+                    "E1 CUDA ordinal 0 summary omitted a nonzero total capacity for observer preparation",
                 )
             })?,
     };
 
     Ok(LoadConfiguration {
-        handle: ADAPTER_PLAN_HANDLE,
+        handle: ADAPTER_PREPARATION_HANDLE,
         execution_device: requested_execution_device(requested_device),
         memory_budget: MemoryBudget {
             host_bytes,
@@ -217,21 +226,28 @@ fn planning_configuration(
     })
 }
 
+struct ValidatedScalarFacts {
+    configuration_declared_scalar_type: Option<ApplicationScalarType>,
+    observed_tensor_scalar_types: ScalarTypeSet,
+    planned_execution_scalar_type: ApplicationScalarType,
+}
+
 fn validate_exact_adapter_plan(
     plan: &LoadPlan,
+    configuration: &LoadConfiguration,
     resolved: &ResolvedModel,
-    resolved_source_scalar: ApplicationScalarType,
+    resolved_declaration: Option<ApplicationScalarType>,
     requested_device: RequestedDevice,
-    source_weight_bytes: u64,
-) -> BenchmarkResult<(ApplicationScalarType, ApplicationScalarType)> {
+) -> BenchmarkResult<ValidatedScalarFacts> {
+    validate_prepared_load_plan(plan)?;
     let descriptor = plan.descriptor;
     let required_operations = CapabilitySet::PREFILL
         .union(CapabilitySet::INCREMENTAL_DECODE)
         .union(CapabilitySet::MULTIPLE_SEQUENCES)
         .union(CapabilitySet::EXPLICIT_SYNCHRONIZATION);
-    if descriptor.backend != ADAPTER_PLAN_BACKEND
+    if plan.accepted_configuration != *configuration
+        || descriptor.backend != ADAPTER_PREPARATION_BACKEND
         || descriptor.metadata.architecture != ModelArchitecture::Llama
-        || descriptor.metadata.scalar_type != MODEL_DOMAIN_SOURCE_SCALAR
         || descriptor.metadata.quantization != QuantizationFormat::None
         || descriptor.metadata.vocabulary_size != EXPECTED_VOCABULARY_SIZE
         || descriptor.metadata.vocabulary_size != resolved.vocabulary_size()
@@ -245,96 +261,105 @@ fn validate_exact_adapter_plan(
             .contains(required_operations)
     {
         return Err(BenchmarkError::new(format!(
-            "public Candle plan_load did not retain the exact unquantized BF16 Llama descriptor and capabilities: {descriptor:?}"
+            "public Candle prepare_load did not retain the exact unquantized TinyLlama descriptor, configuration, and capabilities: {plan:?}"
         )));
     }
 
-    let scalar_facts = validate_explicit_plan_scalars(
-        resolved_source_scalar,
-        descriptor.metadata.scalar_type,
+    let scalar_facts = validate_scalar_facts(
+        resolved_declaration,
+        descriptor.metadata.configuration_declared_scalar_type,
+        descriptor.metadata.observed_tensor_scalar_types,
         plan.execution_scalar_type,
         requested_device,
     )?;
-
-    validate_bf16_weight_accounting(
-        RequestedDevice::Cpu,
-        descriptor.estimated_footprint,
-        source_weight_bytes,
-        "Candle artifact inspection",
-    )?;
-    validate_bf16_weight_accounting(
-        requested_device,
-        plan.expected_footprint,
-        source_weight_bytes,
-        "public Candle load plan",
-    )?;
+    validate_inspection_footprint(descriptor.estimated_footprint)?;
+    if requested_device == RequestedDevice::Cpu
+        && descriptor.estimated_footprint != plan.expected_footprint
+    {
+        return Err(BenchmarkError::new(
+            "CPU prepare_load exact final footprint differed from the same source's exact CPU inspection footprint",
+        ));
+    }
     Ok(scalar_facts)
 }
 
-fn validate_explicit_plan_scalars(
-    resolved_source_scalar: ApplicationScalarType,
-    plan_source_scalar: ScalarType,
+fn validate_scalar_facts(
+    resolved_declaration: Option<ApplicationScalarType>,
+    plan_declaration: Option<ScalarType>,
+    observed_tensor_scalar_types: ScalarTypeSet,
     plan_execution_scalar: ScalarType,
     requested_device: RequestedDevice,
-) -> BenchmarkResult<(ApplicationScalarType, ApplicationScalarType)> {
-    let source_scalar_type = application_scalar_type(plan_source_scalar, "plan source")?;
-    let execution_scalar_type = application_scalar_type(plan_execution_scalar, "plan execution")?;
-    if resolved_source_scalar != MODEL_SOURCE_SCALAR
-        || source_scalar_type != MODEL_SOURCE_SCALAR
-        || source_scalar_type != resolved_source_scalar
+) -> BenchmarkResult<ValidatedScalarFacts> {
+    let plan_declaration = plan_declaration
+        .map(|scalar| application_scalar_type(scalar, "prepared configuration declaration"))
+        .transpose()?;
+    let planned_execution_scalar_type =
+        application_scalar_type(plan_execution_scalar, "prepared execution scalar")?;
+    if resolved_declaration != MODEL_CONFIGURATION_DECLARED_SCALAR
+        || plan_declaration != MODEL_CONFIGURATION_DECLARED_SCALAR
+        || plan_declaration != resolved_declaration
+        || observed_tensor_scalar_types != MODEL_OBSERVED_TENSOR_SCALARS
+        || planned_execution_scalar_type != expected_execution_scalar(requested_device)
     {
         return Err(BenchmarkError::new(format!(
-            "independent plan source scalar did not match explicit resolved BF16 evidence: resolved={resolved_source_scalar:?}, plan={source_scalar_type:?}"
-        )));
-    }
-    let expected_execution = expected_execution_scalar(requested_device);
-    if execution_scalar_type != expected_execution {
-        return Err(BenchmarkError::new(format!(
-            "independent plan execution scalar for {} was {execution_scalar_type:?}, expected {expected_execution:?}",
+            "fixed TinyLlama preparation did not preserve optional declared BF16, homogeneous observed {{BF16}}, and expected {} execution: resolved={resolved_declaration:?}, prepared_declaration={plan_declaration:?}, observed={observed_tensor_scalar_types:?}, execution={planned_execution_scalar_type:?}",
             requested_device_label(requested_device)
         )));
     }
-    Ok((source_scalar_type, execution_scalar_type))
+    Ok(ValidatedScalarFacts {
+        configuration_declared_scalar_type: plan_declaration,
+        observed_tensor_scalar_types,
+        planned_execution_scalar_type,
+    })
 }
 
-fn validate_bf16_weight_accounting(
-    requested_device: RequestedDevice,
-    footprint: MemoryFootprint,
-    source_weight_bytes: u64,
-    context: &'static str,
-) -> BenchmarkResult {
-    if source_weight_bytes == 0 {
-        return Err(BenchmarkError::new(format!(
-            "{context} cannot validate BF16 weight accounting for an empty artifact"
-        )));
+fn validate_inspection_footprint(footprint: MemoryFootprint) -> BenchmarkResult {
+    if footprint.checked_host_bytes().is_none()
+        || footprint.checked_device_bytes().is_none()
+        || footprint.host_weight_bytes == 0
+        || footprint.device_weight_bytes != 0
+        || footprint.device_working_bytes != 0
+        || footprint.cache_bytes_per_token == 0
+    {
+        return Err(BenchmarkError::new(
+            "device-independent inspection did not expose a nonzero exact CPU tensor footprint",
+        ));
     }
-    match requested_device {
+    Ok(())
+}
+
+fn validate_recorded_footprints(
+    requested_device: RequestedDevice,
+    exact_final: MemoryFootprintRecord,
+    loading_peak: MemoryFootprintRecord,
+) -> BenchmarkResult {
+    let final_footprint = memory_footprint(exact_final);
+    let loading_footprint = memory_footprint(loading_peak);
+    let contains_final = loading_footprint.host_weight_bytes >= final_footprint.host_weight_bytes
+        && loading_footprint.device_weight_bytes >= final_footprint.device_weight_bytes
+        && loading_footprint.host_working_bytes >= final_footprint.host_working_bytes
+        && loading_footprint.device_working_bytes >= final_footprint.device_working_bytes
+        && loading_footprint.cache_bytes_per_token == final_footprint.cache_bytes_per_token;
+    let placement_matches = match requested_device {
         RequestedDevice::Cpu => {
-            let expected_host_weight_bytes =
-                source_weight_bytes.checked_mul(2).ok_or_else(|| {
-                    BenchmarkError::new(format!(
-                        "{context} CPU F32 weight-byte accounting overflowed the BF16 source length"
-                    ))
-                })?;
-            if footprint.host_weight_bytes != expected_host_weight_bytes
-                || footprint.device_weight_bytes != 0
-            {
-                return Err(BenchmarkError::new(format!(
-                    "{context} did not account for fixed BF16 source weights as exact F32 host bytes: source={source_weight_bytes}, host={}, device={}",
-                    footprint.host_weight_bytes, footprint.device_weight_bytes
-                )));
-            }
+            final_footprint.host_weight_bytes > 0
+                && final_footprint.device_weight_bytes == 0
+                && final_footprint.device_working_bytes == 0
         }
         RequestedDevice::Cuda0 => {
-            if footprint.host_weight_bytes != 0
-                || footprint.device_weight_bytes != source_weight_bytes
-            {
-                return Err(BenchmarkError::new(format!(
-                    "{context} did not account for fixed BF16 source weights as exact BF16 device bytes: source={source_weight_bytes}, host={}, device={}",
-                    footprint.host_weight_bytes, footprint.device_weight_bytes
-                )));
-            }
+            final_footprint.host_weight_bytes == 0 && final_footprint.device_weight_bytes > 0
         }
+    };
+    if final_footprint.checked_host_bytes().is_none()
+        || final_footprint.checked_device_bytes().is_none()
+        || loading_footprint.checked_host_bytes().is_none()
+        || loading_footprint.checked_device_bytes().is_none()
+        || !contains_final
+        || !placement_matches
+    {
+        return Err(BenchmarkError::new(
+            "serialized prepare_load final and loading-peak footprints lost exact plan coherence",
+        ));
     }
     Ok(())
 }
@@ -343,20 +368,6 @@ const fn expected_execution_scalar(requested: RequestedDevice) -> ApplicationSca
     match requested {
         RequestedDevice::Cpu => ApplicationScalarType::F32,
         RequestedDevice::Cuda0 => ApplicationScalarType::Bf16,
-    }
-}
-
-fn application_scalar_type(
-    scalar: ScalarType,
-    context: &'static str,
-) -> BenchmarkResult<ApplicationScalarType> {
-    match scalar {
-        ScalarType::F32 => Ok(ApplicationScalarType::F32),
-        ScalarType::F16 => Ok(ApplicationScalarType::F16),
-        ScalarType::Bf16 => Ok(ApplicationScalarType::Bf16),
-        unsupported => Err(BenchmarkError::new(format!(
-            "{context} used unsupported scalar {unsupported:?}"
-        ))),
     }
 }
 
@@ -391,18 +402,8 @@ const fn requested_device_identity(requested: RequestedDevice) -> DeviceIdentity
 
 const fn requested_device_label(requested: RequestedDevice) -> &'static str {
     match requested {
-        RequestedDevice::Cpu => "CPU",
-        RequestedDevice::Cuda0 => "CUDA ordinal 0",
-    }
-}
-
-const fn footprint_record(value: MemoryFootprint) -> MemoryFootprintRecord {
-    MemoryFootprintRecord {
-        host_weight_bytes: value.host_weight_bytes,
-        device_weight_bytes: value.device_weight_bytes,
-        host_working_bytes: value.host_working_bytes,
-        device_working_bytes: value.device_working_bytes,
-        cache_bytes_per_token: value.cache_bytes_per_token,
+        RequestedDevice::Cpu => "CPU/F32",
+        RequestedDevice::Cuda0 => "CUDA ordinal 0/BF16",
     }
 }
 
@@ -419,133 +420,68 @@ const fn memory_footprint(value: MemoryFootprintRecord) -> MemoryFootprint {
 #[cfg(test)]
 mod tests {
     use application_runtime::ApplicationScalarType;
-    use domain_contracts::{MemoryFootprint, ScalarType};
+    use domain_contracts::{ScalarType, ScalarTypeSet};
 
     use super::super::super::cli::RequestedDevice;
-    use super::{
-        MODEL_DOMAIN_SOURCE_SCALAR, MODEL_SOURCE_SCALAR, PlannedModelEvidence,
-        validate_bf16_weight_accounting, validate_explicit_plan_scalars,
-    };
+    use super::{MODEL_OBSERVED_TENSOR_SCALARS, validate_scalar_facts};
 
     #[test]
-    fn explicit_plan_scalars_preserve_bf16_source_with_cpu_f32_execution() -> Result<(), String> {
-        let (source, execution) = validate_explicit_plan_scalars(
-            MODEL_SOURCE_SCALAR,
-            MODEL_DOMAIN_SOURCE_SCALAR,
+    fn fixed_profile_preserves_optional_declaration_observation_and_cpu_execution()
+    -> Result<(), String> {
+        let facts = validate_scalar_facts(
+            Some(ApplicationScalarType::Bf16),
+            Some(ScalarType::Bf16),
+            MODEL_OBSERVED_TENSOR_SCALARS,
             ScalarType::F32,
             RequestedDevice::Cpu,
         )
         .map_err(|error| error.to_string())?;
-        assert_eq!(source, ApplicationScalarType::Bf16);
-        assert_eq!(execution, ApplicationScalarType::F32);
+        assert_eq!(
+            facts.configuration_declared_scalar_type,
+            Some(ApplicationScalarType::Bf16)
+        );
+        assert_eq!(
+            facts.observed_tensor_scalar_types,
+            ScalarTypeSet::from_scalar(ScalarType::Bf16)
+        );
+        assert_eq!(
+            facts.planned_execution_scalar_type,
+            ApplicationScalarType::F32
+        );
         Ok(())
     }
 
     #[test]
-    fn explicit_plan_scalars_preserve_bf16_source_with_cuda_bf16_execution() -> Result<(), String> {
-        let (source, execution) = validate_explicit_plan_scalars(
-            MODEL_SOURCE_SCALAR,
-            MODEL_DOMAIN_SOURCE_SCALAR,
+    fn fixed_profile_preserves_optional_declaration_observation_and_cuda_execution()
+    -> Result<(), String> {
+        let facts = validate_scalar_facts(
+            Some(ApplicationScalarType::Bf16),
+            Some(ScalarType::Bf16),
+            MODEL_OBSERVED_TENSOR_SCALARS,
             ScalarType::Bf16,
             RequestedDevice::Cuda0,
         )
         .map_err(|error| error.to_string())?;
-        assert_eq!(source, ApplicationScalarType::Bf16);
-        assert_eq!(execution, ApplicationScalarType::Bf16);
-        Ok(())
-    }
-
-    #[test]
-    fn explicit_plan_scalars_reject_source_or_execution_substitution() {
-        assert!(
-            validate_explicit_plan_scalars(
-                MODEL_SOURCE_SCALAR,
-                ScalarType::F32,
-                ScalarType::F32,
-                RequestedDevice::Cpu,
-            )
-            .is_err()
-        );
-        assert!(
-            validate_explicit_plan_scalars(
-                MODEL_SOURCE_SCALAR,
-                MODEL_DOMAIN_SOURCE_SCALAR,
-                ScalarType::Bf16,
-                RequestedDevice::Cpu,
-            )
-            .is_err()
-        );
-        assert!(
-            validate_explicit_plan_scalars(
-                MODEL_SOURCE_SCALAR,
-                MODEL_DOMAIN_SOURCE_SCALAR,
-                ScalarType::F32,
-                RequestedDevice::Cuda0,
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn bf16_accounting_requires_exact_cpu_and_cuda_weight_scaling() -> Result<(), String> {
-        let cpu = MemoryFootprint {
-            host_weight_bytes: 200,
-            ..MemoryFootprint::default()
-        };
-        validate_bf16_weight_accounting(RequestedDevice::Cpu, cpu, 100, "test CPU accounting")
-            .map_err(|error| error.to_string())?;
-
-        let cuda = MemoryFootprint {
-            device_weight_bytes: 100,
-            ..MemoryFootprint::default()
-        };
-        validate_bf16_weight_accounting(RequestedDevice::Cuda0, cuda, 100, "test CUDA accounting")
-            .map_err(|error| error.to_string())?;
-
-        let unexpanded_cpu = MemoryFootprint {
-            host_weight_bytes: 100,
-            ..MemoryFootprint::default()
-        };
-        assert!(
-            validate_bf16_weight_accounting(
-                RequestedDevice::Cpu,
-                unexpanded_cpu,
-                100,
-                "test CPU accounting",
-            )
-            .is_err()
-        );
-        let expanded_cuda = MemoryFootprint {
-            device_weight_bytes: 200,
-            ..MemoryFootprint::default()
-        };
-        assert!(
-            validate_bf16_weight_accounting(
-                RequestedDevice::Cuda0,
-                expanded_cuda,
-                100,
-                "test CUDA accounting",
-            )
-            .is_err()
-        );
-        assert!(
-            validate_bf16_weight_accounting(RequestedDevice::Cpu, cpu, u64::MAX, "test overflow",)
-                .is_err()
+        assert_eq!(
+            facts.planned_execution_scalar_type,
+            ApplicationScalarType::Bf16
         );
         Ok(())
     }
 
     #[test]
-    fn receipt_verification_never_accepts_a_same_worker_snapshot_claim() {
-        let mut planned = PlannedModelEvidence::new(
-            MemoryFootprint::default(),
-            ApplicationScalarType::Bf16,
-            ApplicationScalarType::F32,
-            RequestedDevice::Cpu,
-            1,
+    fn homogeneous_tinyllama_profile_is_not_mixed_checkpoint_evidence() {
+        let mixed =
+            MODEL_OBSERVED_TENSOR_SCALARS.union(ScalarTypeSet::from_scalar(ScalarType::F32));
+        assert!(
+            validate_scalar_facts(
+                Some(ApplicationScalarType::Bf16),
+                Some(ScalarType::Bf16),
+                mixed,
+                ScalarType::F32,
+                RequestedDevice::Cpu,
+            )
+            .is_err()
         );
-        planned.accounted_footprint.reservation_snapshot_observed = true;
-        assert!(planned.record_verified_receipt().is_err());
-        assert!(!planned.accounted_footprint.e1_accepted_e0_load_contract);
     }
 }

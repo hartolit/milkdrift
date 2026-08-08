@@ -7,7 +7,9 @@ use super::generation::{
     measure_cancellation, measure_first_token_and_proxy,
 };
 use super::harness::{HostedE0Harness, ShutdownDurations};
-use super::lifecycle::{checked_prefill_iteration, load_fixture, unload_loaded_model};
+use super::lifecycle::{
+    LoadedFixture, checked_prefill_iteration, load_fixture, unload_loaded_model,
+};
 use super::observation::{
     capture_snapshot, validate_empty_snapshot, validate_loaded_idle_snapshot,
 };
@@ -15,7 +17,7 @@ use crate::error::{BenchmarkError, BenchmarkResult};
 use crate::fixture::{VOCABULARY_SIZE, VerifiedFixture};
 use crate::report::{
     BackpressureMeasurement, CancellationMeasurement, CycleSet, ShutdownMeasurement,
-    SnapshotCheckpoint, SyntheticCycle, duration_ns,
+    SnapshotCheckpoint, SyntheticCycle, SyntheticLoadEvidence, duration_ns,
 };
 
 pub(crate) fn run_cycles(
@@ -54,6 +56,7 @@ fn run_cycle(fixture: &VerifiedFixture) -> BenchmarkResult<SyntheticCycle> {
 
 struct CycleBody {
     model_load: Duration,
+    load_evidence: SyntheticLoadEvidence,
     checked_prefill: Duration,
     first_token: Duration,
     post_first_token_proxy: Duration,
@@ -74,7 +77,11 @@ fn run_cycle_body(
     validate_empty_snapshot(&before_load, "before load")?;
     snapshots.push(before_load.record);
 
-    let (loaded, model_load) = load_fixture(harness, fixture)?;
+    let LoadedFixture {
+        receipt: loaded,
+        elapsed: model_load,
+        evidence: load_evidence,
+    } = load_fixture(harness, fixture)?;
     let handle = loaded.handle;
     let loaded_footprint = loaded.reserved_footprint;
 
@@ -138,6 +145,7 @@ fn run_cycle_body(
 
     Ok(CycleBody {
         model_load,
+        load_evidence,
         checked_prefill,
         first_token,
         post_first_token_proxy: post_first_proxy,
@@ -157,6 +165,7 @@ fn to_report(
     SyntheticCycle {
         e0_start_ns: duration_ns(start_duration),
         model_load_ns: duration_ns(body.model_load),
+        load_evidence: body.load_evidence,
         checked_prefill_ns: duration_ns(body.checked_prefill),
         first_token_ns: duration_ns(body.first_token),
         post_first_token_proxy_ns: duration_ns(body.post_first_token_proxy),

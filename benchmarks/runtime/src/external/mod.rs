@@ -9,17 +9,18 @@ mod report;
 
 use std::ffi::OsString;
 
-use application_runtime::ApplicationScalarType;
 use sha2::{Digest, Sha256};
 
 use crate::error::{BenchmarkError, BenchmarkResult};
+use crate::evidence::{application_scalar_type_label, scalar_type_set_labels};
 use crate::metadata;
 use crate::workspace::{TemporaryWorkspace, repository_root};
 
 use observation::DeviceObserver;
 use report::{
-    CancellationWorkloadMetadata, ChatWorkloadMetadata, DirectCompletionWorkloadMetadata,
-    ExternalBaselineReport, LifecycleCounts, ModelMetadata, Provenance, Results, WorkloadMetadata,
+    ArtifactLayoutMetadata, CancellationWorkloadMetadata, ChatWorkloadMetadata,
+    DirectCompletionWorkloadMetadata, ExternalBaselineReport, LifecycleCounts, ModelMetadata,
+    Provenance, Results, WorkloadMetadata,
 };
 
 pub(crate) use cli::{Action, HELP};
@@ -72,7 +73,10 @@ pub(crate) fn run_configuration(
 
     let cuda_stability_cycle_count = u32::try_from(lifecycle.cuda_stability_cycles.len())
         .map_err(|_| BenchmarkError::new("CUDA stability-cycle count conversion failed"))?;
-    let execution = observer.execution_metadata(scalar_label(lifecycle.execution_scalar));
+    let execution = observer.execution_metadata(
+        application_scalar_type_label(lifecycle.planned_execution_scalar),
+        application_scalar_type_label(lifecycle.actual_execution_scalar),
+    );
     let model = model_metadata(&lifecycle, initial_cache_state);
     let workload = workload_metadata(cuda_stability_cycle_count)?;
 
@@ -113,7 +117,16 @@ fn model_metadata(
         source: "Hugging Face Hub",
         format: "Safetensors",
         architecture: model::MODEL_ARCHITECTURE,
-        source_scalar: scalar_label(lifecycle.source_scalar),
+        artifact_layout: ArtifactLayoutMetadata {
+            configuration_file: "config.json",
+            tokenizer_file: "tokenizer.json",
+            safetensors_layout: "single_file",
+            weight_files: vec!["model.safetensors"],
+        },
+        configuration_declared_scalar: lifecycle
+            .configuration_declared_scalar
+            .map(application_scalar_type_label),
+        observed_tensor_scalars: scalar_type_set_labels(lifecycle.observed_tensor_scalars),
         vocabulary_size: lifecycle.vocabulary_size,
         maximum_context_tokens: lifecycle.maximum_context_tokens,
         maximum_prefill_batch: lifecycle.maximum_prefill_batch,
@@ -161,14 +174,6 @@ fn workload_metadata(cuda_stability_cycles: u32) -> BenchmarkResult<WorkloadMeta
             total_cycles,
         },
     })
-}
-
-const fn scalar_label(scalar: ApplicationScalarType) -> &'static str {
-    match scalar {
-        ApplicationScalarType::F32 => "F32",
-        ApplicationScalarType::F16 => "F16",
-        ApplicationScalarType::Bf16 => "BF16",
-    }
 }
 
 pub(crate) fn print_human_summary(report: &ExternalBaselineReport) {

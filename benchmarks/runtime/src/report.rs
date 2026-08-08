@@ -8,7 +8,7 @@ use serde::Serialize;
 use crate::fixture::FixtureIdentity;
 use crate::memory::ProcessMemory;
 
-pub(crate) const SCHEMA_VERSION: u32 = 2;
+pub(crate) const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Serialize)]
 pub(crate) struct BaselineReport {
@@ -59,7 +59,6 @@ pub(crate) struct SyntheticFixtureMetadata {
     pub(crate) backend: &'static str,
     pub(crate) architecture: &'static str,
     pub(crate) format: &'static str,
-    pub(crate) scalar_type: &'static str,
     pub(crate) vocabulary_size: u32,
     pub(crate) context_capacity: u32,
 }
@@ -104,6 +103,7 @@ pub(crate) struct ApplicationLifecycleCycle {
 pub(crate) struct SyntheticCycle {
     pub(crate) e0_start_ns: u64,
     pub(crate) model_load_ns: u64,
+    pub(crate) load_evidence: SyntheticLoadEvidence,
     pub(crate) checked_prefill_ns: u64,
     pub(crate) first_token_ns: u64,
     pub(crate) post_first_token_proxy_ns: u64,
@@ -112,6 +112,35 @@ pub(crate) struct SyntheticCycle {
     pub(crate) model_unload_ns: u64,
     pub(crate) shutdown: ShutdownMeasurement,
     pub(crate) snapshots: Vec<SnapshotCheckpoint>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct SyntheticLoadEvidence {
+    pub(crate) prepared: PreparedLoadRecord,
+    pub(crate) receipt: E0LoadReceiptRecord,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct PreparedLoadRecord {
+    pub(crate) configuration_declared_scalar: Option<&'static str>,
+    pub(crate) observed_tensor_scalars: Vec<&'static str>,
+    pub(crate) planned_execution_scalar: &'static str,
+    pub(crate) planned_execution_device: ExecutionDeviceRecord,
+    pub(crate) exact_final_footprint: MemoryFootprintRecord,
+    pub(crate) loading_peak_footprint: MemoryFootprintRecord,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct E0LoadReceiptRecord {
+    pub(crate) actual_execution_scalar: &'static str,
+    pub(crate) actual_execution_device: ExecutionDeviceRecord,
+    pub(crate) reserved_footprint: MemoryFootprintRecord,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ExecutionDeviceRecord {
+    pub(crate) kind: &'static str,
+    pub(crate) id: u64,
 }
 
 #[derive(Serialize)]
@@ -186,4 +215,120 @@ pub(crate) struct ModelAccounting {
 
 pub(crate) fn duration_ns(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::{
+        E0LoadReceiptRecord, ExecutionDeviceRecord, MemoryFootprintRecord, PreparedLoadRecord,
+        SCHEMA_VERSION, SyntheticLoadEvidence,
+    };
+
+    const CPU: ExecutionDeviceRecord = ExecutionDeviceRecord { kind: "cpu", id: 0 };
+
+    const fn footprint(host_weight_bytes: u64, host_working_bytes: u64) -> MemoryFootprintRecord {
+        MemoryFootprintRecord {
+            host_weight_bytes,
+            device_weight_bytes: 0,
+            host_working_bytes,
+            device_working_bytes: 0,
+            cache_bytes_per_token: 64,
+        }
+    }
+
+    #[test]
+    fn schema_three_serializes_prepared_and_actual_e0_load_facts_separately() -> Result<(), String>
+    {
+        let evidence = SyntheticLoadEvidence {
+            prepared: PreparedLoadRecord {
+                configuration_declared_scalar: Some("F32"),
+                observed_tensor_scalars: vec!["F32"],
+                planned_execution_scalar: "F32",
+                planned_execution_device: CPU,
+                exact_final_footprint: footprint(4_000, 0),
+                loading_peak_footprint: footprint(4_000, 800),
+            },
+            receipt: E0LoadReceiptRecord {
+                actual_execution_scalar: "F32",
+                actual_execution_device: CPU,
+                reserved_footprint: footprint(4_000, 0),
+            },
+        };
+        let value = serde_json::to_value(evidence).map_err(|error| error.to_string())?;
+        assert_eq!(SCHEMA_VERSION, 3);
+        assert_eq!(
+            value_at(&value, &["prepared", "configuration_declared_scalar"])?.as_str(),
+            Some("F32")
+        );
+        let observed = value_at(&value, &["prepared", "observed_tensor_scalars"])?
+            .as_array()
+            .ok_or_else(|| "observed tensor scalars were not an array".to_owned())?;
+        assert_eq!(observed.first().and_then(Value::as_str), Some("F32"));
+        assert_eq!(
+            value_at(&value, &["prepared", "planned_execution_scalar"])?.as_str(),
+            Some("F32")
+        );
+        assert_eq!(
+            value_at(&value, &["receipt", "actual_execution_scalar"])?.as_str(),
+            Some("F32")
+        );
+        assert_eq!(
+            value_at(
+                &value,
+                &["prepared", "exact_final_footprint", "host_weight_bytes"],
+            )?
+            .as_u64(),
+            Some(4_000)
+        );
+        assert_eq!(
+            value_at(
+                &value,
+                &["prepared", "loading_peak_footprint", "host_working_bytes",],
+            )?
+            .as_u64(),
+            Some(800)
+        );
+        assert_eq!(
+            value_at(
+                &value,
+                &["receipt", "reserved_footprint", "host_weight_bytes"],
+            )?
+            .as_u64(),
+            Some(4_000)
+        );
+        assert!(find_key(&value, "scalar_type").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn synthetic_schema_history_remains_documented_without_a_legacy_parser() {
+        let readme = include_str!("../README.md");
+        assert!(readme.contains("**Synthetic schema 1 (historical):**"));
+        assert!(readme.contains("**Synthetic schema 2 (historical):**"));
+        assert!(readme.contains("**Synthetic schema 3 (current):**"));
+    }
+
+    fn value_at<'a>(value: &'a Value, path: &[&str]) -> Result<&'a Value, String> {
+        let mut current = value;
+        for key in path {
+            current = current
+                .get(*key)
+                .ok_or_else(|| format!("serialized evidence omitted key {key:?} in {path:?}"))?;
+        }
+        Ok(current)
+    }
+
+    fn find_key<'a>(value: &'a Value, expected: &str) -> Option<&'a Value> {
+        match value {
+            Value::Object(fields) => fields.iter().find_map(|(key, nested)| {
+                (key == expected)
+                    .then_some(nested)
+                    .or_else(|| find_key(nested, expected))
+            }),
+            Value::Array(values) => values.iter().find_map(|nested| find_key(nested, expected)),
+            _ => None,
+        }
+    }
 }

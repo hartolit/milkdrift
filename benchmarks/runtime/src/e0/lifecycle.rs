@@ -3,16 +3,20 @@
 use std::num::NonZeroU32;
 use std::time::Duration;
 
+use candle_backend::{CandleLlamaLoader, CandleLlamaSource};
 use domain_contracts::{
     CapabilitySet, DecodeOutcome, DeviceId, DeviceKind, ExecutionDevice, FinishReason,
-    MemoryFootprint, ModelArchitecture, PrefillOutcome, QuantizationFormat, RequestId, ScalarType,
-    SequenceConfiguration, TokenId, UnloadPolicy,
+    LoadConfiguration, LoadPlan, MemoryBudget, MemoryFootprint, ModelArchitecture, ModelGeneration,
+    ModelHandle, ModelLoader, PrefillOutcome, PreparedLoad, QuantizationFormat, RequestId,
+    ScalarType, ScalarTypeSet, SequenceConfiguration, TokenId, UnloadPolicy,
 };
 use inference_runtime::{LoadReceipt, RuntimeCommand, RuntimeEvent, UnloadStatus};
 
 use super::harness::{CANDLE_BACKEND, FIXTURE_MODEL_ID, HostedE0Harness, TimedEvent};
 use crate::error::{BenchmarkError, BenchmarkResult};
+use crate::evidence::{e0_load_receipt_record, prepared_load_record};
 use crate::fixture::{CONTEXT_CAPACITY, VOCABULARY_SIZE, VerifiedFixture};
+use crate::report::SyntheticLoadEvidence;
 
 const CPU_DEVICE: DeviceId = DeviceId::new(0);
 pub(crate) const CHECKED_PREFILL_TOKEN_COUNT: u32 = 4;
@@ -21,11 +25,18 @@ pub(crate) const GENERATION_PROMPT_TOKEN_COUNT: u32 = 2;
 #[doc(hidden)]
 pub const CRITERION_VOCABULARY_SIZE: usize = 16;
 
+pub(super) struct LoadedFixture {
+    pub(super) receipt: LoadReceipt,
+    pub(super) elapsed: Duration,
+    pub(super) evidence: SyntheticLoadEvidence,
+}
+
 pub(super) fn load_fixture(
     harness: &mut HostedE0Harness,
     fixture: &VerifiedFixture,
-) -> BenchmarkResult<(LoadReceipt, Duration)> {
+) -> BenchmarkResult<LoadedFixture> {
     let source = fixture.source()?;
+    let plan = prepare_fixture_load(&source)?;
     let ticket = harness.ticket()?;
     let command = RuntimeCommand::LoadModel {
         ticket,
@@ -36,9 +47,13 @@ pub(super) fn load_fixture(
     let TimedEvent { event, elapsed } =
         harness.timed_exchange(ticket, command, "fixture model load")?;
     let loaded = loaded_receipt(&event)?;
-    validate_loaded_fixture(&loaded)?;
+    let evidence = validate_loaded_fixture(&loaded, &plan)?;
     harness.record_loaded_model(loaded.handle)?;
-    Ok((loaded, elapsed))
+    Ok(LoadedFixture {
+        receipt: loaded,
+        elapsed,
+        evidence,
+    })
 }
 
 fn loaded_receipt(event: &RuntimeEvent) -> BenchmarkResult<LoadReceipt> {
@@ -58,13 +73,46 @@ fn loaded_receipt(event: &RuntimeEvent) -> BenchmarkResult<LoadReceipt> {
     }
 }
 
-fn validate_loaded_fixture(loaded: &LoadReceipt) -> BenchmarkResult {
+fn prepare_fixture_load(source: &CandleLlamaSource) -> BenchmarkResult<LoadPlan> {
+    let configuration = LoadConfiguration {
+        handle: ModelHandle::new(FIXTURE_MODEL_ID, ModelGeneration::new(1)),
+        execution_device: ExecutionDevice::new(CPU_DEVICE, DeviceKind::Cpu),
+        memory_budget: MemoryBudget {
+            host_bytes: u64::MAX,
+            device_bytes: 0,
+        },
+    };
+    let mut loader = CandleLlamaLoader::new(CANDLE_BACKEND);
+    let prepared = loader
+        .prepare_load(source, &configuration)
+        .map_err(|error| {
+            BenchmarkError::new(format!(
+                "observer prepare_load failed for the deterministic fixture: {error:?}"
+            ))
+        })?;
+    let plan = *prepared.plan();
+    drop(prepared);
+    if plan.accepted_configuration != configuration {
+        return Err(BenchmarkError::new(
+            "fixture prepare_load did not retain its exact observer configuration",
+        ));
+    }
+    prepared_load_record(&plan)?;
+    Ok(plan)
+}
+
+fn validate_loaded_fixture(
+    loaded: &LoadReceipt,
+    plan: &LoadPlan,
+) -> BenchmarkResult<SyntheticLoadEvidence> {
     let descriptor = loaded.descriptor;
     let required = CapabilitySet::PREFILL.union(CapabilitySet::INCREMENTAL_DECODE);
     if loaded.handle.id != FIXTURE_MODEL_ID
         || descriptor.backend != CANDLE_BACKEND
         || descriptor.metadata.architecture != ModelArchitecture::Llama
-        || descriptor.metadata.scalar_type != ScalarType::F32
+        || descriptor.metadata.configuration_declared_scalar_type != Some(ScalarType::F32)
+        || descriptor.metadata.observed_tensor_scalar_types
+            != ScalarTypeSet::from_scalar(ScalarType::F32)
         || descriptor.metadata.quantization != QuantizationFormat::None
         || descriptor.metadata.vocabulary_size != VOCABULARY_SIZE
         || descriptor.metadata.context_length != CONTEXT_CAPACITY
@@ -72,13 +120,18 @@ fn validate_loaded_fixture(loaded: &LoadReceipt) -> BenchmarkResult {
         || descriptor.capabilities.maximum_context_tokens < CONTEXT_CAPACITY
         || descriptor.capabilities.maximum_prefill_batch < CHECKED_PREFILL_TOKEN_COUNT
         || descriptor.capabilities.maximum_sequences < 1
+        || loaded.execution_scalar_type != ScalarType::F32
+        || loaded.execution_device != ExecutionDevice::new(CPU_DEVICE, DeviceKind::Cpu)
         || loaded.reserved_footprint == MemoryFootprint::default()
     {
         return Err(BenchmarkError::new(
-            "loaded public E0 descriptor does not match the reviewed Candle/Llama/Safetensors/F32/vocab16/context16 fixture",
+            "loaded public E0 facts do not match the reviewed Candle/Llama/Safetensors fixture with declared F32, observed {F32}, actual F32 CPU execution, and exact reserved ownership",
         ));
     }
-    Ok(())
+    Ok(SyntheticLoadEvidence {
+        prepared: prepared_load_record(plan)?,
+        receipt: e0_load_receipt_record(plan, loaded)?,
+    })
 }
 
 /// Starts one loaded fixture harness for a Criterion target.

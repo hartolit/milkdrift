@@ -24,6 +24,7 @@ Accepted ADRs remain part of the project architecture until superseded. A supers
 - [ADR-0016: Use a virtual workspace and a focused `xtask`](0016-virtual-workspace-focused-xtask.md)
 - [ADR-0017: Keep stable Clippy lints mandatory and nursery exploratory](0017-stable-clippy-gate-exploratory-nursery.md)
 - [ADR-0018: Separate benchmark roles and govern measurement artifacts](0018-benchmark-and-model-fixture-policy.md)
-- [ADR-0019: Add explicit feature-gated CUDA execution with application-owned selection](0019-explicit-cuda-execution-foundation.md)
+- [ADR-0019: Add explicit feature-gated CUDA execution with application-owned selection](0019-explicit-cuda-execution-foundation.md) — Phase 12 loading/scalar clauses amended by ADR-0020
+- [ADR-0020: Use transaction-bound prepared model loading](0020-transactional-prepared-model-loading.md)
 
 For current applied structure, see [project architecture](../../project/architecture.md). For the reusable selectable model, see the [architecture blueprint](../../architecture.md).

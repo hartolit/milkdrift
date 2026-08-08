@@ -187,6 +187,12 @@ const REVIEWED_EXTERNAL_DEPENDENCIES: &[ReviewedDependency] = &[
         rationale: "the optional CUDA adapter uses Candle's exact cudarc version only for safe device identity, capability, memory discovery, and native OOM classification",
     },
     ReviewedDependency {
+        source: "inference-runtime",
+        target: "candle-core",
+        kind: DependencyKind::Development,
+        rationale: "download-free hosted E0 compatibility tests derive temporary mixed-dtype Safetensors fixtures from the project-authored F32 fixture through Candle's safe CPU conversion APIs",
+    },
+    ReviewedDependency {
         source: "domain-contracts",
         target: "stats_alloc",
         kind: DependencyKind::Development,
@@ -1498,6 +1504,15 @@ mod tests {
                 "sampling",
                 Layer::FeatureAlgorithm,
                 "criterion",
+                DependencyKind::Development,
+            )
+            .is_none()
+        );
+        assert!(
+            external_policy(
+                "inference-runtime",
+                Layer::EngineFoundation,
+                "candle-core",
                 DependencyKind::Development,
             )
             .is_none()

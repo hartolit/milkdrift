@@ -138,31 +138,20 @@ The visual control center is a replaceable host over these schemas and APIs. It 
 
 ## Current implementation
 
-At the current reviewed foundation, Milkdrift already provides:
+The current foundation provides:
 
 - portable domain contracts and algorithms;
-- a backend-independent local inference runtime;
-- exclusive model ownership and request scheduling;
-- bounded token and text output paths;
-- cancellation, cleanup quarantine, unload, and explicit shutdown;
-- a first-party Candle adapter;
-- mandatory/default CPU execution;
-- explicitly selected CUDA execution for the exact validated matrix;
-- Hugging Face model acquisition and tokenizer integration;
-- a frontend-neutral application/reference composition;
-- redb-backed preferences and model catalogue state;
-- a thin Slint reference host;
-- an incubating task graph and corrective workflow vertical slice.
+- a backend-independent local inference runtime with exclusive ownership, bounded scheduling, cancellation, cleanup quarantine, unload, and explicit shutdown;
+- a first-party Candle adapter with mandatory/default CPU execution and explicitly selected CUDA ordinal 0, with Phase 12 support limited to the exact locally executed RTX 5070 Ti row;
+- immutable Hugging Face artifact resolution, tokenizer integration, and redb-backed application state;
+- a frontend-neutral application/reference composition and thin Slint host;
+- incubating task-graph and corrective-workflow foundations.
 
-Important limitations currently include:
+Phase 12 implements per-tensor Safetensors inspection, prepared-load transactions, exact final and loading-peak planning, and retained partial-load cleanup. Download-free CPU validation and the canonical clean-target gate passed for homogeneous `{F32}`, `{F16}`, and `{BF16}` layouts plus mixed `{F16, F32}` and `{BF16, F32}` layouts. CPU execution is respectively F32, F16, and F32 for the primary F32, F16, and BF16 policies. F16/BF16 mixtures, integer or unknown tensors, quantized formats, and contradictory declarations remain rejected.
 
-- Candle is the sole local model backend;
-- the supported model path is narrow unquantized Llama Safetensors;
-- mixed-dtype repositories are not generally supported yet;
-- workflow definitions, workspaces, plugins, external targets, peer execution, and the control center are not yet general product paths;
-- current chat and conversation behavior belongs to the reference application layer, not the final workflow API.
+The exact CUDA compile chain and deterministic fixture matrix also passed locally on the accepted RTX 5070 Ti row. This is narrow local hardware evidence, not generic NVIDIA support or a successful Phase 12 GitHub self-hosted workflow run. The pinned TinyLlama profile is homogeneous BF16 and is not mixed-layout evidence; no suitable immutable, license-reviewed external mixed checkpoint has been established.
 
-The implementation-status document is authoritative for the exact support matrix.
+Workflow definitions, workspaces, plugins, external targets, peer execution, and the control center are not yet general product paths. Current chat and conversation behavior belongs to the reference application layer, not the final workflow API. See [implementation status](docs/project/implementation-status.md) for the current Phase 12 support/evidence boundary and [current execution context](docs/agent/execution/current.md) for the next program direction.
 
 ## Why not just use Candle?
 
@@ -199,32 +188,28 @@ A future `crates/core/` root is appropriate only for portable, vendor-neutral sc
 
 ## Roadmap
 
-### Now — identity and local-execution correctness
+### Completed boundary — Phase 12 local-target truth
 
-- ratify the operator-programmable workflow identity;
-- extend the authentic vision and rewrite the public documentation spine;
-- keep task-graph and corrective-workflow as incubating foundations;
-- complete Phase 12 mixed-dtype inspection, planning, loading, and cleanup work;
-- tighten the local inference API and repository boundaries.
+- canonical CPU, portability, policy, link, and exact local CUDA gates passed;
+- the Phase 12 GitHub self-hosted workflow remains unrun and external mixed-checkpoint evidence remains absent;
+- compatibility stops at the reviewed unquantized Llama layout boundary.
 
-### Next — workflow and workspace foundation
+### Next major program — workflow, workspace, and authority
 
-- define versioned workflow, node, port, artifact, workspace, authority, capability, budget, and target schemas;
-- implement a minimal general workflow runtime;
-- add a headless host;
-- express direct completion through a public workflow template.
+- ratify versioned workflow, node, port, artifact, workspace, authority, capability, budget, and target schemas;
+- implement a minimal general workflow runtime and headless host;
+- express direct completion and corrective behavior as public workflow templates;
+- keep task-graph and corrective-workflow as incubating inputs rather than hidden framework procedure.
 
-### Then — configurable correction and durable context
+### Then — durable context and configurable execution
 
-- migrate corrective behavior into a general template;
-- add persistent runs, workspace artifacts, context search, child workspaces, triggers, subscriptions, and external commit connectors;
-- prove correction count, validator, target, and sink can change without scheduler code changes.
+- add persistent runs, workspace artifacts, provenance, context search, child workspaces, triggers, subscriptions, and explicit commit connectors;
+- prove validator, target, correction count, evidence source, and sink can change without scheduler rewrites.
 
 ### Later — plugins, external targets, peers, and control center
 
-- publish a plugin/connector SDK;
-- add one real external execution target;
-- add trusted peer execution over operator-provided connectivity;
+- publish a capability-scoped plugin/connector SDK;
+- add one real external execution target and trusted peer execution;
 - build a Blueprint/ComfyUI-like control center over stable schemas;
 - experiment with spatial memory, advanced placement, and long-lived cooperating agents.
 

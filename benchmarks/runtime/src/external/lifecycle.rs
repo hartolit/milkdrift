@@ -7,6 +7,7 @@ use application_runtime::{
     ApplicationActivity, ApplicationDevice, ApplicationRuntime, ApplicationRuntimeConfiguration,
     ApplicationScalarType, GenerationTerminalOutcome, LoadedModel, ModelSelection,
 };
+use domain_contracts::ScalarTypeSet;
 
 use super::cli::{self, RequestedDevice};
 use super::generation::{self, PrimaryWorkloadEvidence};
@@ -16,13 +17,12 @@ use super::observation::{
     summarize_stability, validate_pre_load_checkpoint,
 };
 use super::report::{
-    AccountedFootprintEvidence, CancellationResult, DeviceIdentity, DirectCompletionSample,
-    LifecycleResult, PrimaryCycleResult, ResourceCheckpoint, ShutdownOwnershipState,
+    CancellationResult, DeviceIdentity, DirectCompletionSample, LifecycleResult,
+    PreparedLoadEvidence, PrimaryCycleResult, ResourceCheckpoint, ShutdownOwnershipState,
     ShutdownResult, ShutdownWorkerState, StabilityCycleResult, StabilitySummary, UnloadResult,
 };
 use crate::e1::cleanup_runtime_after_failure;
 use crate::error::{BenchmarkError, BenchmarkResult};
-use crate::report::MemoryFootprintRecord;
 use crate::workspace::TemporaryWorkspace;
 
 const PRIMARY_CYCLE_ORDINAL: u32 = 1;
@@ -48,8 +48,10 @@ const POST_UNLOAD_ACCOUNTING_SCOPE: &str = "complete same-worker E0 RuntimeSnaps
 
 pub(super) struct LifecycleEvidence {
     pub(super) resolved_commit: String,
-    pub(super) source_scalar: ApplicationScalarType,
-    pub(super) execution_scalar: ApplicationScalarType,
+    pub(super) configuration_declared_scalar: Option<ApplicationScalarType>,
+    pub(super) observed_tensor_scalars: ScalarTypeSet,
+    pub(super) planned_execution_scalar: ApplicationScalarType,
+    pub(super) actual_execution_scalar: ApplicationScalarType,
     pub(super) vocabulary_size: u32,
     pub(super) maximum_context_tokens: u32,
     pub(super) maximum_prefill_batch: u32,
@@ -61,12 +63,14 @@ pub(super) struct LifecycleEvidence {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CycleModelFacts {
     resolved_commit: String,
-    source_scalar: ApplicationScalarType,
-    execution_scalar: ApplicationScalarType,
+    configuration_declared_scalar: Option<ApplicationScalarType>,
+    observed_tensor_scalars: ScalarTypeSet,
+    planned_execution_scalar: ApplicationScalarType,
+    actual_execution_scalar: ApplicationScalarType,
     vocabulary_size: u32,
     maximum_context_tokens: u32,
     maximum_prefill_batch: u32,
-    accounted_footprint: AccountedFootprintEvidence,
+    prepared_load: PreparedLoadEvidence,
 }
 
 #[derive(Clone, Copy)]
@@ -200,8 +204,10 @@ pub(super) fn run(
 
     Ok(LifecycleEvidence {
         resolved_commit: primary_model.resolved_commit,
-        source_scalar: primary_model.source_scalar,
-        execution_scalar: primary_model.execution_scalar,
+        configuration_declared_scalar: primary_model.configuration_declared_scalar,
+        observed_tensor_scalars: primary_model.observed_tensor_scalars,
+        planned_execution_scalar: primary_model.planned_execution_scalar,
+        actual_execution_scalar: primary_model.actual_execution_scalar,
         vocabulary_size: primary_model.vocabulary_size,
         maximum_context_tokens: primary_model.maximum_context_tokens,
         maximum_prefill_batch: primary_model.maximum_prefill_batch,
@@ -303,7 +309,7 @@ fn execute_started_cycle(
             load_ns: generation::duration_ns(load_elapsed, "E1 model load acceptance")?,
             selected_e1_device: application_device_identity(runtime.state().selected_device()),
             actual_loaded_e0_device: application_device_identity(loaded.device()),
-            accounted_footprint: planned.accounted_footprint,
+            prepared_load: planned.prepared_load,
             post_unload_e0_accounting_scope: POST_UNLOAD_ACCOUNTING_SCOPE,
             unload,
             shutdown,
@@ -323,22 +329,24 @@ fn validated_model_facts(
 ) -> BenchmarkResult<CycleModelFacts> {
     observer.validate_selected_e1(runtime)?;
     observer.validate_actual_loaded(loaded.device())?;
-    validate_accounted_footprint(&planned.accounted_footprint)?;
-    if loaded.source_scalar_type() != planned.source_scalar_type
-        || loaded.execution_scalar_type() != planned.execution_scalar_type
+    model::validate_verified_plan(planned, observer)?;
+    if resolved.configuration_declared_scalar_type() != planned.configuration_declared_scalar_type
+        || loaded.execution_scalar_type() != planned.planned_execution_scalar_type
     {
         return Err(BenchmarkError::new(
-            "loaded source/execution scalar facts changed after exact E1 load acceptance",
+            "resolved declaration or actual execution scalar changed after exact E1 load acceptance",
         ));
     }
     Ok(CycleModelFacts {
         resolved_commit: resolved.identity().commit().to_owned(),
-        source_scalar: loaded.source_scalar_type(),
-        execution_scalar: loaded.execution_scalar_type(),
+        configuration_declared_scalar: planned.configuration_declared_scalar_type,
+        observed_tensor_scalars: planned.observed_tensor_scalar_types,
+        planned_execution_scalar: planned.planned_execution_scalar_type,
+        actual_execution_scalar: loaded.execution_scalar_type(),
         vocabulary_size: loaded.vocabulary_size(),
         maximum_context_tokens: loaded.maximum_context_tokens(),
         maximum_prefill_batch: loaded.maximum_prefill_batch(),
-        accounted_footprint: planned.accounted_footprint,
+        prepared_load: planned.prepared_load,
     })
 }
 
@@ -504,19 +512,6 @@ fn validate_observer_request(
     Ok(())
 }
 
-fn validate_accounted_footprint(evidence: &AccountedFootprintEvidence) -> BenchmarkResult {
-    if !evidence.e1_accepted_e0_load_contract
-        || evidence.reservation_snapshot_observed
-        || footprint_is_zero(&evidence.independent_public_plan)
-        || evidence.provenance.is_empty()
-    {
-        return Err(BenchmarkError::new(
-            "accounted footprint evidence must be a nonzero independent public plan plus validated E1 acceptance, without claiming a same-worker reservation snapshot",
-        ));
-    }
-    Ok(())
-}
-
 fn validate_unload_contract(unload: &UnloadResult) -> BenchmarkResult {
     if unload.cancelled_requests != 0
         || !unload.loaded_model_absent
@@ -538,7 +533,7 @@ fn validate_model_consistency(
 ) -> BenchmarkResult {
     if observed != primary {
         return Err(BenchmarkError::new(format!(
-            "cycle {ordinal} changed immutable model, scalar, or accounted-footprint facts relative to primary cycle 1: primary={primary:?}, observed={observed:?}"
+            "cycle {ordinal} changed immutable model, declared/observed/planned/actual scalar, or prepared-load facts relative to primary cycle 1: primary={primary:?}, observed={observed:?}"
         )));
     }
     Ok(())
@@ -609,14 +604,6 @@ const fn requested_device_label(requested: RequestedDevice) -> &'static str {
         RequestedDevice::Cpu => "CPU",
         RequestedDevice::Cuda0 => "CUDA ordinal 0",
     }
-}
-
-const fn footprint_is_zero(footprint: &MemoryFootprintRecord) -> bool {
-    footprint.host_weight_bytes == 0
-        && footprint.device_weight_bytes == 0
-        && footprint.host_working_bytes == 0
-        && footprint.device_working_bytes == 0
-        && footprint.cache_bytes_per_token == 0
 }
 
 #[cfg(test)]

@@ -34,6 +34,7 @@ enum WeightProfile {
     HomogeneousBf16,
     MixedF16F32,
     MixedBf16F32,
+    MixedF16Bf16,
     MixedF16F32WithExtra,
     UnsupportedU8,
 }
@@ -42,9 +43,10 @@ impl WeightProfile {
     const fn primary_scalar(self) -> ScalarType {
         match self {
             Self::HomogeneousF32 | Self::UnsupportedU8 => ScalarType::F32,
-            Self::HomogeneousF16 | Self::MixedF16F32 | Self::MixedF16F32WithExtra => {
-                ScalarType::F16
-            }
+            Self::HomogeneousF16
+            | Self::MixedF16F32
+            | Self::MixedF16Bf16
+            | Self::MixedF16F32WithExtra => ScalarType::F16,
             Self::HomogeneousBf16 | Self::MixedBf16F32 => ScalarType::Bf16,
         }
     }
@@ -64,6 +66,13 @@ impl WeightProfile {
             Self::MixedBf16F32 => {
                 if is_f32_auxiliary(name) {
                     DType::F32
+                } else {
+                    DType::BF16
+                }
+            }
+            Self::MixedF16Bf16 => {
+                if name == "model.norm.weight" {
+                    DType::F16
                 } else {
                     DType::BF16
                 }
@@ -169,6 +178,22 @@ fn contradictory_and_unsupported_declarations_are_unsupported_not_corrupt() -> T
         loader.inspect(&unsupported),
         Err(LoadError::UnsupportedFormat)
     );
+    Ok(())
+}
+
+#[test]
+fn f16_bf16_tensor_mixture_is_rejected_before_device_initialization() -> TestResult {
+    let fixture = TinyLlamaFixture::create(WeightProfile::MixedF16Bf16)?;
+    let source = fixture.source(None)?;
+    let mut loader = CandleLlamaLoader::new(BACKEND);
+    let mut configuration = load_configuration();
+    configuration.execution_device = ExecutionDevice::new(DeviceId::new(1), DeviceKind::Cpu);
+
+    assert_eq!(loader.inspect(&source), Err(LoadError::UnsupportedFormat));
+    assert!(matches!(
+        loader.prepare_load(&source, &configuration),
+        Err(LoadError::UnsupportedFormat)
+    ));
     Ok(())
 }
 
@@ -967,6 +992,8 @@ fn expected_observed_set(profile: WeightProfile) -> ScalarTypeSet {
             mixed_set(ScalarType::F16)
         }
         WeightProfile::MixedBf16F32 => mixed_set(ScalarType::Bf16),
+        WeightProfile::MixedF16Bf16 => ScalarTypeSet::from_scalar(ScalarType::F16)
+            .union(ScalarTypeSet::from_scalar(ScalarType::Bf16)),
         WeightProfile::UnsupportedU8 => ScalarTypeSet::from_scalar(ScalarType::U8)
             .union(ScalarTypeSet::from_scalar(ScalarType::F32)),
     }

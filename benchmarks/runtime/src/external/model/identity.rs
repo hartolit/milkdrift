@@ -7,8 +7,7 @@ use application_runtime::{
     ApplicationEngine, ApplicationModelFormat, ApplicationScalarType, ApplicationSource,
     ChatCompatibility, ModelSelection, PromptCompatibilityProfile, ResolvedModel,
 };
-use candle_backend::CandleScalarType;
-use domain_contracts::ScalarType;
+use domain_contracts::{ScalarType, ScalarTypeSet};
 
 use crate::error::{BenchmarkError, BenchmarkResult};
 
@@ -16,9 +15,12 @@ use super::{MODEL_REPOSITORY, MODEL_REVISION};
 
 pub(super) const EXPECTED_VOCABULARY_SIZE: u32 = 32_000;
 pub(super) const EXPECTED_CONTEXT_TOKENS: u32 = 2_048;
-pub(super) const MODEL_SOURCE_SCALAR: ApplicationScalarType = ApplicationScalarType::Bf16;
-pub(super) const MODEL_CANDLE_SOURCE_SCALAR: CandleScalarType = CandleScalarType::Bf16;
-pub(super) const MODEL_DOMAIN_SOURCE_SCALAR: ScalarType = ScalarType::Bf16;
+pub(super) const MODEL_CONFIGURATION_DECLARED_SCALAR: Option<ApplicationScalarType> =
+    Some(ApplicationScalarType::Bf16);
+pub(super) const MODEL_DOMAIN_CONFIGURATION_DECLARED_SCALAR: Option<ScalarType> =
+    Some(ScalarType::Bf16);
+pub(super) const MODEL_OBSERVED_TENSOR_SCALARS: ScalarTypeSet =
+    ScalarTypeSet::from_scalar(ScalarType::Bf16);
 
 const CONFIG_FILE: &str = "config.json";
 const WEIGHT_FILE: &str = "model.safetensors";
@@ -26,7 +28,6 @@ const WEIGHT_FILE: &str = "model.safetensors";
 pub(super) struct SnapshotArtifacts {
     pub(super) config_path: PathBuf,
     pub(super) weight_path: PathBuf,
-    pub(super) weight_bytes: u64,
 }
 
 pub(super) fn validate_exact_selection(selection: &ModelSelection) -> BenchmarkResult {
@@ -43,30 +44,25 @@ pub(super) fn validate_exact_selection(selection: &ModelSelection) -> BenchmarkR
 pub(super) fn validate_resolved_facts(
     model: &ResolvedModel,
     selection: &ModelSelection,
-) -> BenchmarkResult<ApplicationScalarType> {
+) -> BenchmarkResult<Option<ApplicationScalarType>> {
     validate_exact_selection(selection)?;
-    let source_scalar_type = model.source_scalar_type().ok_or_else(|| {
-        BenchmarkError::new(
-            "resolved model omitted the explicit immutable source scalar required for loading",
-        )
-    })?;
+    let configuration_declared_scalar_type = model.configuration_declared_scalar_type();
     if model.selection() != selection
         || model.identity().repository() != MODEL_REPOSITORY
         || model.identity().commit() != MODEL_REVISION
         || model.engine() != ApplicationEngine::Candle
         || model.source() != ApplicationSource::HuggingFaceHub
         || model.format() != ApplicationModelFormat::Safetensors
-        || source_scalar_type != MODEL_SOURCE_SCALAR
-        || !model.is_loadable()
+        || configuration_declared_scalar_type != MODEL_CONFIGURATION_DECLARED_SCALAR
         || model.vocabulary_size() != EXPECTED_VOCABULARY_SIZE
         || model.chat_compatibility()
             != ChatCompatibility::Supported(PromptCompatibilityProfile::TinyLlamaChatV1)
     {
         return Err(BenchmarkError::new(format!(
-            "resolved model did not retain the exact immutable TinyLlama Candle/Hub/Safetensors/BF16/chat facts: {model:?}"
+            "resolved model did not retain the exact immutable TinyLlama Candle/Hub/Safetensors/optional-BF16-declaration/chat facts: {model:?}"
         )));
     }
-    Ok(source_scalar_type)
+    Ok(configuration_declared_scalar_type)
 }
 
 pub(super) fn canonical_snapshot_artifacts(
@@ -112,7 +108,6 @@ pub(super) fn canonical_snapshot_artifacts(
     Ok(SnapshotArtifacts {
         config_path,
         weight_path,
-        weight_bytes,
     })
 }
 
@@ -204,7 +199,12 @@ mod tests {
             artifacts.weight_path,
             weights.canonicalize().map_err(|error| error.to_string())?
         );
-        assert_eq!(artifacts.weight_bytes, 8);
+        assert_eq!(
+            fs::metadata(&artifacts.weight_path)
+                .map_err(|error| error.to_string())?
+                .len(),
+            8
+        );
         Ok(())
     }
 

@@ -1,9 +1,8 @@
 # Inference runtime
 
-`crates/runtime/inference-runtime` is the E0 single-owner model registry and
-backend-independent generation scheduler. It is generic over one concrete
-`ModelLoader` and owns every loaded model, backend sequence, generation workspace,
-lifecycle transition, and aggregate memory reservation.
+`crates/runtime/inference-runtime` is E0: the backend-independent, single-owner local inference registry and generation scheduler. It is generic over one concrete `ModelLoader` and owns every prepared/loaded model transaction, backend sequence, generation workspace, lifecycle transition, cleanup quarantine, and aggregate reservation.
+
+E0 is an execution kernel below the current application kit and future workflow control plane. It does not own artifact download, tokenizers, conversations, workflow definitions, provider/peer transports, or presentation.
 
 ## Ownership and accounting
 
@@ -12,163 +11,164 @@ Hosted worker
 ├── InferenceRuntime<L>
 │   ├── normal model registry
 │   │   └── ModelSlot<L::Model>
-│   │       ├── exclusively owned model
+│   │       ├── exclusively owned complete model
+│   │       ├── verified descriptor/device/execution scalar
+│   │       ├── final model reservation
 │   │       ├── ModelLifecycle
 │   │       ├── active request sequences
 │   │       └── quarantined sequences
-│   ├── quarantined post-load models
+│   ├── pending model cleanup
+│   │   ├── Complete(L::Model) after post-load/unload failure
+│   │   └── FailedLoad(L::Prepared) after materialization failure
 │   ├── active and pending-cleanup identity indexes
-│   ├── aggregate normal + quarantined memory accounting
+│   ├── aggregate normal + quarantined reservation
 │   └── generation-workspace accounting retained through output release
 ├── fair generation scheduler
 └── nonblocking token-output producer
 ```
 
-Models and sequences are never placed in `Arc` or borrowed across the command
-boundary. Public clients retain only typed identifiers and generation-safe model
-handles. A resource remains counted until its explicit backend cleanup succeeds.
-`RuntimeSnapshot` distinguishes active requests, retained generation workspaces,
-pending model cleanup, pending sequence cleanup, exhausted cleanup, and aggregate
-reserved footprint. Per-model snapshots expose the verified execution scalar, degraded
-state, and pending sequence counts.
+Models, prepared-load owners, and sequences are never placed in public `Arc` ownership or borrowed across the command boundary. Public clients retain typed identifiers and generation-safe handles only. A resource remains counted until its explicit backend cleanup succeeds.
 
-## Transaction and cleanup semantics
+`RuntimeSnapshot` distinguishes loaded models, active requests, generation workspaces, pending/exhausted model and sequence cleanup, the last maintenance error, aggregate reserved footprint, and reserved generation workspace. Normal per-model snapshots expose only committed models and their verified descriptor, execution scalar/device, final reservation, request counts, and degraded state. A failed prepared load is visible through pending/exhausted aggregate cleanup and `CleanupResource::FailedLoad`, not misreported as a resident model.
 
-Model and sequence admission follow prepare, validate, commit. Host-side generation
-workspaces are reserved before sequence creation. Registry indexes, lifecycle state,
-and normal active-request accounting are published only after validation succeeds.
+## Exact prepared-load transaction
 
-Cleanup failure does not imply release:
+Model admission is one prepare, validate, reserve, materialize, verify, commit transaction:
 
-- a model that fails post-load validation and `prepare_unload` is retained outside
-  the normal model registry;
-- an uncommitted sequence whose `destroy_sequence` fails is retained outside the
-  active request registry;
-- a terminal request whose sequence destruction fails moves from active ownership
-  to quarantine;
-- quarantined bytes and sequence slots remain admitted against hard limits;
-- an affected model is degraded and rejects new requests;
-- `poll_cleanup` attempts at most one retained operation per call;
-- the initial failure counts as attempt one and the configurable total-attempt
-  limit defaults to three;
-- exhausted resources are skipped by later automatic maintenance and remain
-  quarantined and accounted;
-- successful retry releases identity, capacity, and memory exactly once.
+```text
+preflight identity and model-count limits
+-> derive exact handle and remaining aggregate budget
+-> loader.prepare_load(source, exact LoadConfiguration)
+-> copy and validate that preparation's LoadPlan
+-> admit both loading peak and final footprint
+-> reserve loading peak
+-> loader.load_prepared(the same preparation)
+-> verify complete loaded result
+-> commit model slot and replace peak with final reservation
+-> publish LoadReceipt
+```
 
-`CleanupFailureReport` is allocation-free and preserves the primary operation and
-failure class independently from the cleanup operation and failure class. It avoids
-recursive boxed error chains while retaining stable categories for later E1
-translation.
+`ModelLoader::prepare_load` returns an opaque associated `PreparedLoad`. Its public `plan()` is bound to the exact source, handle, execution device, and remaining memory budget. `load_prepared` consumes that same value and may not replan or switch artifacts. If E0 rejects the plan or aggregate peak before materialization, the unmaterialized preparation is ordinary-drop-safe and no explicit cleanup owner exists.
 
-Backend cleanup hooks are retry contracts: `destroy_sequence(&mut sequence)` must
-leave the borrowed sequence valid after failure, and `prepare_unload(&mut model)`
-must leave the model valid after failure. The runtime never treats unverified
-`Drop` behavior as successful explicit cleanup.
+E0 validates a prepared plan before any backend materialization:
+
+- `accepted_configuration` exactly equals E0's handle/device/budget configuration;
+- the descriptor has a nonempty observed tensor scalar set, nonzero ordered limits, and coherent capabilities;
+- checked final and loading host/device totals do not overflow;
+- every loading-peak ownership component contains the corresponding final component;
+- loading host/device totals are at least final totals;
+- final and loading phases report the same cache bytes per token.
+
+E0 deliberately does not reproduce Candle's per-tensor layout or conversion matrix. The descriptor and aggregate plan are portable claims; adapter-specific Safetensors policy remains in `candle-backend`.
+
+## E0 peak admission
+
+Let:
+
+- `R₀` be E0's reservation before the load;
+- `P` be `LoadPlan::loading_peak_footprint`;
+- `F` be `LoadPlan::expected_footprint` (the final footprint);
+- `B` be the process-wide `RuntimeLimits::memory_budget`.
+
+E0 first gives the adapter a remaining budget formed from checked host/device totals of `R₀`, using saturating subtraction from `B`. After preparation it independently computes, component by component with checked arithmetic:
+
+```text
+loading reservation = R₀ + P
+final reservation   = R₀ + F
+```
+
+Both totals must fit `B`. E0 sets the aggregate reservation to `R₀ + P` before calling `load_prepared`. This is the Phase 12 peak-admission invariant: partial materialization cannot create resources before their deterministic loading peak is represented in E0 ownership accounting.
+
+On complete success, the committed model stores `F` and the aggregate reservation becomes `R₀ + F`. `LoadReceipt::reserved_footprint`, `ModelSnapshot::reserved_footprint`, and backend `accounted_footprint()` then all refer to the exact final deterministic ownership, not the loading peak or physical memory.
+
+The complete per-tensor CPU/CUDA formulas that produce `P` and `F` are owned by [Candle backend](candle-backend.md). E0 validates their generic phase relationship but does not derive them.
+
+## `FailedLoad<PreparedLoad>` cleanup
+
+`load_prepared` returns either a complete model or `FailedLoad<L::Prepared>`. The failed value separates:
+
+- `primary`: why exact materialization failed;
+- `cleanup_owner`: the sole owner of completed/pending tensors, retained device work, open shards, and any partially constructed backend model.
+
+E0 immediately calls `cleanup_owner.cleanup()` while the loading peak remains reserved.
+
+### Immediate cleanup succeeds
+
+E0 restores `R₀`, publishes no receipt or model slot, and returns the original `RuntimeError::Load(primary)`. The cleanup result does not replace or obscure the primary failure.
+
+### Cleanup fails
+
+E0 moves the preparation into `pending_models` as `PendingModelOwner::FailedLoad`, retains the full loading-peak footprint `P`, reserves the model identity/generation, and returns structured retained-cleanup state:
+
+```text
+primary operation: ModelLoad
+primary class:     Load
+cleanup operation: FailedLoadCleanup
+cleanup class:     the synchronization/cleanup failure class
+resource:          FailedLoad { model_id }
+attempts:          1
+```
+
+The initial failed cleanup is attempt one. `poll_cleanup` performs at most one additional non-exhausted retained operation per call. The total-attempt limit is configurable and defaults to three. A retry failure returns `RetryFailed` or `Exhausted`; later automatic maintenance skips exhausted ownership. Success removes the owner, identity, capacity, and exact peak reservation once. A second load of the same model ID is blocked while cleanup remains retained.
+
+A complete native model that fails E0's post-load verification is handled similarly through `PendingModelOwner::Complete`. E0 calls `prepare_unload`; if that fails, it conservatively retains the loading peak rather than downgrading accounting to final ownership without proven cleanup.
+
+Cleanup exhaustion remains owned and accounted. During terminal shutdown, the remaining finite budget is consumed; if native ownership survives, shutdown returns `CleanupRetryExhausted` and the worker uses the existing `RetainUntilProcessExit` disposition from [ADR-0006](../agent/decisions/0006-explicit-bounded-shutdown.md). This Phase 12 transaction does not create an adapter-local hidden `mem::forget` path.
 
 ## Backend contract verification
 
-Rust trait conformance is necessary but not sufficient for backend substitution.
-During model admission E0 validates internally ordered non-zero descriptor limits,
-capability consistency, and equality between the accepted plan and the complete
-descriptor retained by the loaded model. After native loading, validation is ordered
-as handle, descriptor, requested versus actual `ExecutionDevice`, planned versus
-actual execution scalar, planned versus actual accounted footprint, and finally the
-load lifecycle transition. The inspected descriptor's source scalar is not used as a
-substitute for the independently planned execution scalar. No receipt or model slot
-is published before all checks succeed.
+Rust trait conformance is necessary but not sufficient. After `load_prepared` returns a complete model, E0 reads and verifies in order:
 
-Device, execution scalar, or accounted footprint mismatch uses the same explicit
-unload/quarantine transaction as any other post-load contract violation. If cleanup
-fails, the runtime retains the complete planned footprint in aggregate accounting
-until a bounded cleanup retry succeeds; exhausted cleanup remains quarantined and
-accounted. Sequence requests and backend plans must remain within the descriptor's
-context and prefill limits.
+1. model handle/generation;
+2. complete descriptor, including optional configuration declaration and observed scalar set;
+3. requested versus actual `ExecutionDevice`;
+4. planned versus actual execution scalar;
+5. final planned versus adapter-reported accounted footprint;
+6. load lifecycle completion.
 
-A successful prefill or decode result is accepted only when it:
+No normal model slot or receipt is published before every check succeeds. The inspected declaration or observed set is never substituted for the independently planned execution scalar. A mismatch uses explicit unload/quarantine and peak-retention semantics rather than selecting another scalar or falling back to CPU. [ADR-0010](../agent/decisions/0010-verify-backend-contracts-at-e0.md) remains the governing substitution rule; [ADR-0020](../agent/decisions/0020-transactional-prepared-model-loading.md) extends it to exact preparation and partial-load ownership.
+
+Sequence plans and operation results remain claims as well. A successful prefill or decode result is accepted only when it:
 
 - uses an advertised operation;
-- preserves the admitted sequence identity and fixed token capacity;
+- preserves admitted sequence identity and fixed token capacity;
 - leaves the sequence in `Ready` state;
 - advances the exact expected position;
 - reports the exact consumed prompt count where applicable;
-- writes exactly the model vocabulary's logits when logits are requested.
+- writes exactly the model vocabulary's logits when requested.
 
-A contradiction becomes `BackendContractViolation` before sampling. The request then
-uses the ordinary explicit destruction/quarantine path, so a malformed adapter cannot
-bypass ownership cleanup. Unsupported caller requests and missing advertised
-operations remain explicit unsupported-operation failures. The decision and rejected
-alternatives are recorded in [ADR-0010](../agent/decisions/0010-verify-backend-contracts-at-e0.md).
+A contradiction becomes `BackendContractViolation` before sampling and enters ordinary explicit sequence destruction/quarantine.
 
-## Generation admission
+## Sequence and generation admission
 
-`RuntimeCommand::Generate` carries the minimum token-level runtime request:
+`RuntimeCommand::Generate` carries token-level execution facts only:
 
-- request and sequence identity;
+- request/sequence identity;
 - prompt token storage;
-- sequence capacity and maximum generated tokens;
+- sequence capacity and generated-token limit;
 - sampling configuration and seed;
 - EOS tokens and owned token stop patterns;
 - scheduler quantum;
-- minimum token and record capacity required from the shared pull accumulator.
+- required token/record output capacity.
 
-It does not carry tokenizer objects, decoded text, paths, display strings, frontend
-DTOs, or UI state. Before backend sequence creation, E0 validates prompt and total
-sequence length, model state, identities, required prefill/decode capabilities,
-advertised context/prefill limits, and sampling configuration, then reserves:
+It carries no tokenizer, text, path, display, workflow, frontend, or provider DTO. Before native sequence creation, E0 validates identities, prompt/total lengths, model lifecycle, required capabilities, advertised context/prefill limits, sampling, and output policy. It preflights and reserves backend sequence memory plus caller-owned generation workspaces for logits, sampling indices/epochs, repetition/prompt/generated history, EOS/stop storage, and terminal/backpressure state.
 
-- vocabulary-sized logits;
-- sampling indices and repetition epochs;
-- prompt/repetition history;
-- generated-token history;
-- caller-owned prompt and EOS token storage;
-- stop-pattern descriptors and token storage;
-- terminal and backpressure state.
+The backend still produces its exact `SequencePlan`. E0 repeats configuration, logits-capacity, identity, state, and footprint checks at commit. Generation workspace bytes remain reserved until the `Released` record is published and scheduler task storage is dropped, so downstream backpressure cannot make retained allocations appear available prematurely.
 
-The backend still prepares its sequence-owned prefill/decode workspace through its
-normal `SequencePlan`. No vector resize occurs in the scheduler decode loop.
-Workspace payload bytes remain in aggregate admission accounting until the
-`Released` record has been published and the scheduler drops the terminal task.
-This prevents output backpressure from making retained host allocations appear
-available prematurely.
+## Scheduler, sampling, and output
 
-## Scheduler lifecycle and fairness
-
-A scheduled request moves through explicit phases:
+A scheduled request moves through:
 
 ```text
 admitted -> prefill -> pending token publication -> decode
     -> terminal publication -> cleanup pending (optional) -> released
 ```
 
-The worker checks one control command, advances one request by a bounded opportunity,
-processes one cleanup retry and unload maintenance, and flushes bounded events on
-each loop. Request selection uses a rotating ordered cursor, so runnable requests
-each receive an opportunity. A request waiting on full output does not perform
-another backend step and therefore cannot monopolize model execution.
+Each worker loop checks one control command, advances one request by a bounded opportunity, processes one cleanup retry/unload maintenance operation, and flushes bounded events. A rotating ordered cursor gives each runnable request an opportunity. A request blocked on full output performs no backend step.
 
-The current scheduler intentionally performs at most one token-producing backend
-step before token publication even if a larger configured quantum is retained. This
-is the correctness baseline; later measured tuning may batch a small number of
-steps without changing the contract.
+The current correctness baseline performs at most one token-producing backend step before token publication. Prefill occurs once. E0 samples immediately from verified caller-owned host F32 logits using request-owned `sampling::Sampler` state. CPU Candle uses contiguous host copies; CUDA uses Candle's safe device-to-host path. Upstream transfer may allocate a temporary CPU tensor, so no allocation-free CUDA hot-path claim is made.
 
-Prefill occurs once. Sampling runs inside E0 immediately from checked caller-owned
-host `f32` logits using request-owned `sampling::Sampler` state. CPU Candle tensors
-use the existing contiguous-storage copy. CUDA tensors are converted and transferred
-through Candle's safe device-to-host API before E0 samples; Candle may allocate a
-temporary upstream CPU tensor for this transfer, so no allocation-free CUDA hot-path
-claim is made. The selected token is appended to bounded history before any subsequent
-decode. EOS, generated-token limit, and token stop suffixes are checked after ordered
-token publication.
-
-## Pull output and backpressure
-
-`host-runtime` supplies a separate token accumulator rather than encoding token IDs
-as UTF-8 byte ranges. It preallocates token and record vectors during worker setup.
-The producer uses `try_lock`; the application pulls a borrowed batch and clears its
-logical contents while retaining both allocations.
-
-Records preserve request identity and contain either an absolute monotonic token
-range or one `GenerationOutputState`:
+`host-runtime` supplies a bounded token accumulator with preallocated token and record vectors. Records preserve request identity and ordered state:
 
 - `Yielded(OutputBackpressure)`;
 - `Terminal(original outcome)`;
@@ -176,62 +176,32 @@ range or one `GenerationOutputState`:
 - `CleanupExhausted { original outcome, failure report, retry state }`;
 - `Released(original outcome)`.
 
-When token or record capacity is full, the sampled token remains request-owned,
-no decode step is performed, and no token is discarded or emitted twice. After a
-pull frees capacity, the yield record and exact pending token are published before
-decode resumes. Generation completion and backend resource release are therefore
-observable as separate ordered facts.
+A sampled token blocked by output capacity remains request-owned; no decode step runs and no token is dropped or duplicated. Generation completion and backend resource release remain separate observable facts.
 
 ## Cancellation, unload, and shutdown
 
-User cancellation is recorded as a control operation and observed before the next
-backend step. Latency is bounded by one currently executing backend operation, the
-one-step correctness quantum, and the worker command polling cadence. Cancellation
-always enters the same terminal cleanup path as EOS, token limits, stop patterns,
-and failures.
+User cancellation is observed before the next backend operation; latency is bounded by the currently executing backend call, one-step quantum, and command polling cadence. EOS, token limits, stop patterns, cancellation, model unload, and drain timeout all enter the same explicit sequence cleanup path.
 
-Immediate model unload marks scheduled requests with `ModelUnload`; drain timeout
-maintenance marks them with `DrainTimeout`. The runtime may have already destroyed
-the sequence at that safe boundary, but the scheduler still publishes the stable
-cancellation outcome during normal operation. Candle sequence destruction and model
-unload explicitly synchronize the actual selected device before ownership may be
-dropped; a failed CUDA synchronization enters the existing bounded cleanup-retention
-path.
+Immediate unload marks active work with `ModelUnload`; drain expiration marks it with `DrainTimeout`. Candle sequence destruction and model unload synchronize the actual selected device before release. A synchronization failure enters bounded retained cleanup.
 
-Explicit runtime shutdown is a terminal worker transition. It performs bounded
-sequence and model cleanup, releases retained generation-workspace accounting, and
-discards unpublished scheduler records rather than waiting for downstream token
-capacity. Shutdown therefore cannot depend on the UI continuing to drain output.
-The worker sends exactly one shutdown result and terminates after that event is
-delivered.
+Explicit shutdown is terminal. It performs bounded sequence, complete-model, and failed-prepared-load cleanup, releases scheduler workspaces without waiting for frontend output draining, publishes exactly one shutdown result, and stops the worker. Retryable client-side join/wait behavior remains an E1 concern; unresolved E0 ownership at exhausted shutdown remains fail-closed until process exit.
 
-Shutdown consumes the remaining finite retry budget. If ownership still remains,
-it returns `CleanupRetryExhausted` and does not report successful shutdown. The
-worker disposition is `RetainUntilProcessExit`: after the structured result is
-published, the complete runtime is deliberately forgotten and the worker exits.
-This is terminal failure, not a cleanup retry. No owner remains to inspect or retry
-the retained allocation, and process termination is its reclamation boundary.
-The same fail-closed retention rule applies when client endpoints disconnect before
-cleanup can complete, although no endpoint remains to receive the result.
+## Production Candle integration and tests
 
-## Production Candle integration and backend-independent tests
+Backend-independent deterministic loaders in `tests/generation.rs`, `tests/runtime.rs`, and `tests/fault_injection.rs` cover transaction validation, sampling, fairness, cancellation, output backpressure, cleanup retry/exhaustion, unload, accounting, disconnection, and shutdown.
 
-Ordinary scheduler and fault-injection coverage remains backend-independent. Deterministic test loaders in `tests/generation.rs`, `tests/runtime.rs`, and `tests/fault_injection.rs` exercise transaction rollback, descriptor/receipt verification, sampling, fairness, cancellation, output backpressure, cleanup retry/exhaustion, unload, accounting, disconnection, and shutdown without requiring another production engine.
+Phase 12 fault injection additionally covers:
 
-`tests/native_backend_generation.rs` is the download-free real-adapter E0 contract. It drives the committed project-generated synthetic Safetensors fixture through `CandleLlamaLoader` and the hosted scheduler. The fixture uses no external weights or tokenizer assets; its deterministic Rust/Cargo generator, tensor construction, Apache-2.0 licensing, exact sizes/hashes, provenance audit, and integration-only scope are recorded in [`tests/fixtures/candle-llama/PROVENANCE.md`](../../crates/runtime/inference-runtime/tests/fixtures/candle-llama/PROVENANCE.md). The two tests cover:
+- exact preparation consumed once without replanning;
+- invalid accepted configuration, empty observed set, checked overflow, component-wise peak/final contradiction, cache mismatch, and reclassified peak rejection before materialization;
+- aggregate loading-peak budget rejection before materialization;
+- immediate failed-load cleanup preserving the primary error;
+- failed-load cleanup retention with the full peak and `CleanupResource::FailedLoad`;
+- bounded retry success, exact single release, and exhaustion;
+- post-load contract mismatch retaining peak accounting when unload cleanup fails.
 
-- model inspection, admission, load, and descriptor verification;
-- prompt prefill and incremental decode through `RuntimeCommand::Generate`;
-- deterministic greedy output and token-limit finish;
-- repeatable seeded sampling;
-- EOS finish and ordered terminal/released publication;
-- observable output backpressure without token loss;
-- user cancellation at a backend boundary;
-- sequence destruction plus complete request, generation-workspace, cleanup, and memory accounting release;
-- model unload, an empty post-unload runtime/model snapshot, terminal shutdown, and worker join.
+`tests/native_backend_generation.rs` drives the committed project-authored F32 fixture and temporary deterministic mixed F16/F32 derivative through the real `CandleLlamaLoader` and hosted scheduler. It verifies exact prepared plan/receipt/snapshot scalar and footprint facts, generation, sampling, backpressure, cancellation, release, unload, empty accounting, shutdown, and join. The temporary derivative strategy and non-claims are recorded in fixture [`PROVENANCE.md`](../../crates/runtime/inference-runtime/tests/fixtures/candle-llama/PROVENANCE.md).
 
-The fixture requires no network access and validates execution and lifecycle contracts rather than language quality. The default CPU suite does not require a GPU or establish an allocation-free Candle hot path. With the non-default test-only `inference-runtime/cuda` feature and explicit `MILKDRIFT_CUDA_TEST=1` opt-in, an ignored release test drives the same fixture through CUDA ordinal 0, verifies the E0 receipt/snapshot device, device-weight and device-sequence accounting, prefill, incremental decode, host-logit sampling, explicit synchronization, sequence destruction, unload, and zero post-unload accounting. See [download-free focused validation](validation.md#download-free-focused-validation).
+Focused, download-free CPU tests passed on the Phase 12 closure tree. The exact CUDA compile chain passed, and the guarded temporary mixed F16/F32 hosted-E0 lifecycle test passed locally under `MILKDRIFT_CUDA_TEST=1` on the exact RTX 5070 Ti row. The 32-test fault-injection suite also passed under the CUDA feature graph, preserving deterministic preparation, accounting, cleanup, and no-publication contracts. These are local results; the Phase 12 GitHub self-hosted workflow remains unrun.
 
-External artifact resolution belongs to E1 rather than E0. The opt-in [controlled CPU and CUDA external product evidence](validation.md#controlled-cpu-and-cuda-external-product-evidence) runner resolves one exact immutable Hub revision through the production Hub worker and exercises E1, E0, and Candle on an explicitly selected device. The E0-only `candle_llama_smoke` example remains a local diagnostic for artifacts that are already resolved; it performs no network or Hub work.
-
-Product-level composition and unsupported capabilities are tracked in [implementation status](implementation-status.md); this guide remains focused on E0 behavior rather than roadmap sequencing.
+External resolution remains above E0 in E1. No external mixed-dtype checkpoint has been accepted. Product/evidence status is canonical in [implementation status](implementation-status.md).
