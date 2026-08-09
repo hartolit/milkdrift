@@ -12,14 +12,14 @@ E1 currently owns:
 - normalized Hugging Face repository/revision selection;
 - application-owned CPU/CUDA selection, bounded discovery, availability, and accelerator-memory policy;
 - one bounded synchronous Hub resolver worker;
-- immutable artifact identity, tokenizer validation, vocabulary compatibility, and complete-selection checks;
+- resolved artifact identity, identity-bearing weight shards, tokenizer validation, vocabulary compatibility, and complete-selection checks;
 - one process-hosted monomorphized Candle E0 worker/thread behind private composition;
 - one resident-model application lifecycle;
 - load, reject/cancel/drain unload, and retained model-cleanup coordination;
 - direct-completion encoding and request-local Hugging Face streaming decode;
 - frontend-neutral conversation, exact TinyLlama chat, context planning, generation settings, text output, events, and shutdown.
 
-It does not own Slint types, Safetensors parsing, tensor dtypes/names/offsets, the inferred primary scalar, per-tensor conversion, model tensors/logits/backend sequences, per-token scheduling, corrective-workflow execution, provider/peer transports, or OS-specific data-path policy.
+It does not own Slint types, Safetensors parsing, tensor dtypes/names/offsets, the required primary scalar, per-tensor conversion, model tensors/logits/backend sequences, per-token scheduling, corrective-workflow execution, provider/peer transports, or OS-specific data-path policy.
 
 ## Selection, resolution, and scalar facts
 
@@ -43,7 +43,7 @@ Resolution is device-independent. Public `ResolvedModel` exposes:
 - tokenizer vocabulary and exact chat compatibility;
 - optional configuration-declared scalar metadata.
 
-It exposes no observed tensor scalar set, inferred primary, execution scalar, selected/actual device, or per-tensor details. Absence of a recognized declaration no longer makes an otherwise complete resolution unloadable.
+It exposes no complete observed tensor scalar set, required primary, execution scalar, selected/actual device, or per-tensor details. Absence of a recognized declaration no longer makes an otherwise complete resolution unloadable.
 
 ### `LoadedModel`
 
@@ -54,21 +54,21 @@ Public E1 `LoadedModel` exposes:
 - actual execution scalar verified through E0's receipt;
 - vocabulary, context, and prefill limits.
 
-Scalar-wise, it exposes execution only. It deliberately does not repeat the configuration declaration and does not expose the observed tensor set or inferred primary. Those are artifact/preparation facts carried in lower descriptors for verification, not required application state.
+Scalar-wise, it exposes execution only. It deliberately does not repeat the configuration declaration and does not expose the complete observed tensor set or required primary. Those are artifact/preparation facts carried in lower descriptors for verification, not required application state.
 
 Successful unload clears loaded execution scalar/device and model limits while preserving the separate resolution and selected device.
 
 ## E1 does not choose per-tensor conversion
 
-E1 constructs `CandleLlamaSource` from immutable artifact paths plus the optional configuration declaration and sends the exact selected `ExecutionDevice` to E0. Candle owns complete Safetensors inspection, exact accepted sets, primary inference, execution-scalar selection, per-tensor casts/transfers, and final/loading-peak calculation. E0 owns exact preparation admission and loaded-result verification.
+E1 constructs `CandleLlamaSource` from the resolved configuration path and identity-bearing weight shards, mapping Hub LFS proof to verified-immutable authority and project-established hashes to the mutable-source authority. It never injects a declaration; Candle derives it from bounded config bytes. Candle owns complete Safetensors inspection, required-set/primary policy, selective required-tensor casts/transfers, execution selection, and final/loading-peak calculation. E0 owns exact preparation admission and loaded-result verification.
 
 E1 does not:
 
-- infer a primary scalar from the observed set;
+- infer a required primary from the complete observed set;
 - compare the declaration with every tensor dtype;
 - compare the declaration with execution scalar;
 - select F32/F16/BF16 conversion by device;
-- duplicate Candle's exact `{F32}`, `{F16}`, `{F16,F32}`, `{BF16}`, `{BF16,F32}` matrix;
+- duplicate Candle's exact required `{F32}`, `{F16}`, `{F16,F32}`, `{BF16}`, `{BF16,F32}` matrix;
 - infer execution scalar from CPU/CUDA selection;
 - repair a lower mismatch by falling back.
 
@@ -88,7 +88,7 @@ A successful E0 receipt is not automatically a public model. Before publication 
 - pending ticket and logical model ID/handle;
 - immutable selection, repository, revision, artifact set, and commit identity;
 - optional configuration declaration agreement across pending admission, resolved model, Hub artifacts, and E0 descriptor;
-- a nonempty observed `ScalarTypeSet` containing only application-recognized F32/F16/BF16 categories;
+- a nonempty complete observed `ScalarTypeSet`; unused integer or `Other` categories do not become E1 rejection policy;
 - representable receipt execution scalar and actual device;
 - selected versus current selected versus actual device and exact requested domain device;
 - unchanged application/E0 memory budget;
@@ -193,7 +193,7 @@ Model catalogue records now use `LAM1` version 2 for new writes. Version 2 store
 F32 | F16 | BF16 | None
 ```
 
-Exact `LAM1` version 1 records remain readable. Their mandatory scalar code is interpreted in memory as a present declaration (`Some(F32|F16|BF16)`) without rewriting the old record. Observed tensor layouts, inferred primary, execution scalar/device, loading/final footprints, and cache paths are not persisted.
+Exact `LAM1` version 1 records remain readable. Their mandatory scalar code is interpreted in memory as a present declaration (`Some(F32|F16|BF16)`) without rewriting the old record. Observed tensor layouts, required primary, execution scalar/device, loading/final footprints, shard identities, and cache paths are not persisted.
 
 ## Completion, chat, and conversation
 
@@ -216,7 +216,7 @@ Slint remains presentation-only. It receives `ApplicationState` and events, maps
 
 - Resolved summaries may show optional configuration-declared metadata.
 - Loaded summaries show only verified execution scalar and execution device.
-- No tensor table, primary-scalar inference, conversion selector, fallback policy, or new workflow responsibility was added.
+- No tensor table, required-primary inference, conversion selector, fallback policy, or new workflow responsibility was added.
 
 The frontend still owns only event-loop integration, callbacks, frame-batched output presentation, and platform path selection.
 
@@ -230,4 +230,4 @@ A command/event/join timeout keeps unfinished worker handles owned so a later ca
 
 CPU remains mandatory/default. `application-runtime/cuda` forwards only to `candle-backend/cuda`; no default feature graph reaches CUDA and explicit CUDA failure never falls back.
 
-Focused, download-free Phase 12 CPU tests and the canonical clean-target gate passed on the closure tree, including optional/absent declarations, mixed-layout receipt acceptance without policy duplication, incompatible receipt cleanup, `ModelCleanupPending`, persistence v1/v2 behavior, completion/chat regressions, and thin presenter adaptation. The exact CUDA compile chain also passed. On the exact RTX 5070 Ti row, the E1 explicit no-fallback test and guarded CUDA fixture load/device/scalar/unload/shutdown lifecycle test passed locally. The Phase 12 GitHub self-hosted workflow has not run, and no external mixed-checkpoint claim is made. See [implementation status](implementation-status.md).
+The 2026-08-10 artifact-loading amendment passed the full targeted `application-runtime` suite, exact CUDA compile graph, E1 explicit no-fallback test, and guarded CUDA fixture load/device/scalar/unload/shutdown lifecycle locally on the exact RTX 5070 Ti row. The complete canonical clean-target gate remains historical to the 2026-08-08 Phase 12 closure tree. No GitHub self-hosted run or external mixed-checkpoint claim is made. See [implementation status](implementation-status.md).

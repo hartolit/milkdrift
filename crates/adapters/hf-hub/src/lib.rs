@@ -2,14 +2,23 @@
 
 #![forbid(unsafe_code)]
 
+mod bounded;
+mod configuration;
+mod discovery;
+mod identity;
+mod weights;
+
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
-use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::io;
+use std::path::PathBuf;
 
+use configuration::read_configuration_declared_scalar_type;
+use discovery::resolve_commit_and_files;
 use hf_hub::{HFClient, HFClientSync, HFError, HFRepositorySync, RepoTypeModel, split_id};
-use serde::Deserialize;
+use identity::{resolve_weight_shard, selected_weight_metadata};
+use weights::{direct_weights, indexed_weights, read_index, validate_artifact_path};
 
 const CONFIG_FILE: &str = "config.json";
 const TOKENIZER_FILE: &str = "tokenizer.json";
@@ -86,7 +95,7 @@ impl HubModelReference {
     }
 }
 
-/// Local immutable artifact paths resolved from one Hub revision.
+/// Local artifact paths and content identity resolved from one immutable Hub commit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedSafetensorsLlamaArtifacts {
     /// Requested repository.
@@ -104,8 +113,37 @@ pub struct ResolvedSafetensorsLlamaArtifacts {
     pub config_path: PathBuf,
     /// Cached serialized tokenizer.
     pub tokenizer_path: PathBuf,
-    /// Ordered cached Safetensors shards.
-    pub weight_paths: Vec<PathBuf>,
+    /// Ordered cached Safetensors shards with reusable whole-file identities.
+    pub weight_shards: Vec<ResolvedSafetensorsShard>,
+}
+
+/// One cached Safetensors shard and the whole-file identity Candle must verify while reading it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedSafetensorsShard {
+    /// Cached local shard path.
+    pub path: PathBuf,
+    /// Expected whole-file content identity.
+    pub content_identity: ArtifactContentIdentity,
+}
+
+/// Whole-file SHA-256 identity and exact byte length for one artifact.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ArtifactContentIdentity {
+    /// Exact whole-file byte length.
+    pub byte_length: u64,
+    /// Raw whole-file SHA-256 digest.
+    pub sha256: [u8; 32],
+    /// Authority by which the identity was established.
+    pub authority: ArtifactContentIdentityAuthority,
+}
+
+/// Authority for an artifact content identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArtifactContentIdentityAuthority {
+    /// SHA-256 came from Git LFS metadata at the resolved Hub commit.
+    HuggingFaceLfs,
+    /// SHA-256 was established by streaming the downloaded local file.
+    ProjectEstablished,
 }
 
 /// Scalar type declared by a Hugging Face model configuration.
@@ -119,6 +157,45 @@ pub enum ArtifactScalarType {
     Bf16,
 }
 
+/// Bounded artifact structure whose configured limit was exceeded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HubStructuralLimit {
+    /// Model configuration bytes.
+    ConfigurationBytes,
+    /// Safetensors weight-index bytes.
+    WeightIndexBytes,
+    /// Weight-map entries in one Safetensors index.
+    WeightIndexEntries,
+    /// Bytes in one weight-map tensor name.
+    WeightIndexTensorNameBytes,
+    /// Bytes in one repository-relative artifact path.
+    RepositoryPathBytes,
+    /// Number of entries returned by recursive repository discovery.
+    RepositoryEntries,
+    /// Bytes in one repository-tree entry path.
+    RepositoryEntryPathBytes,
+    /// Aggregate bytes across repository-tree entry paths.
+    RepositoryAggregatePathBytes,
+    /// Number of selected Safetensors shards.
+    SelectedWeightShards,
+}
+
+impl HubStructuralLimit {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::ConfigurationBytes => "model configuration bytes",
+            Self::WeightIndexBytes => "Safetensors weight-index bytes",
+            Self::WeightIndexEntries => "Safetensors weight-index entries",
+            Self::WeightIndexTensorNameBytes => "Safetensors weight-index tensor-name bytes",
+            Self::RepositoryPathBytes => "repository artifact-path bytes",
+            Self::RepositoryEntries => "repository tree entries",
+            Self::RepositoryEntryPathBytes => "repository tree entry-path bytes",
+            Self::RepositoryAggregatePathBytes => "aggregate repository tree path bytes",
+            Self::SelectedWeightShards => "selected Safetensors shards",
+        }
+    }
+}
+
 /// Stable Hub adapter failures.
 #[derive(Debug)]
 pub enum HubError {
@@ -130,24 +207,50 @@ pub enum HubError {
     Client(HFError),
     /// Repository metadata could not be inspected.
     RepositoryInfo(HFError),
+    /// Exact selected-file metadata could not be inspected.
+    ArtifactMetadata(HFError),
     /// Repository metadata omitted the immutable commit identifier.
     MissingCommit,
     /// Repository metadata omitted its file listing.
     MissingFileListing,
+    /// Repository metadata returned a non-canonical immutable commit identifier.
+    InvalidCommit,
+    /// Recursive repository metadata repeated one file path.
+    DuplicateRepositoryFilePath,
     /// A required file is absent from the selected revision.
     MissingArtifact(&'static str),
     /// The repository does not provide supported unquantized Safetensors weights.
     UnsupportedWeightLayout,
     /// A Hub filename attempted to escape the repository namespace.
     UnsafeArtifactPath(String),
+    /// A configured bounded artifact structure exceeded its limit.
+    StructuralLimitExceeded(HubStructuralLimit),
     /// A cached model configuration could not be read.
-    ReadConfiguration(std::io::Error),
-    /// The model configuration JSON was malformed.
-    InvalidConfiguration(serde_json::Error),
+    ReadConfiguration(io::Error),
+    /// The model configuration JSON or declaration field type was malformed.
+    InvalidConfiguration,
+    /// A present scalar declaration was not recognized by this adapter.
+    UnsupportedScalarDeclaration,
+    /// Modern and legacy scalar declarations were both recognized but disagreed.
+    ConflictingScalarDeclarations,
     /// The weight index could not be read.
-    ReadIndex(std::io::Error),
-    /// The weight index JSON was malformed.
-    InvalidIndex(serde_json::Error),
+    ReadIndex(io::Error),
+    /// The weight index JSON or required value shape was malformed.
+    InvalidIndex,
+    /// Selected-file metadata omitted one requested shard.
+    MissingShardMetadata,
+    /// Selected-file metadata repeated one requested shard.
+    DuplicateShardMetadata,
+    /// Selected-file metadata returned a path or entry type that was not requested.
+    UnexpectedShardMetadata,
+    /// Git LFS metadata contained a malformed SHA-256 value.
+    InvalidLfsContentIdentity,
+    /// Hub-reported, LFS-reported, cached, or streamed shard lengths disagreed.
+    ShardLengthMismatch,
+    /// A cached weight shard was not a regular file.
+    InvalidWeightFile,
+    /// A cached weight shard could not be inspected or streamed.
+    ReadWeight(io::Error),
     /// A required cached artifact could not be resolved or downloaded.
     Download {
         /// Repository-relative filename.
@@ -166,11 +269,23 @@ impl Display for HubError {
             Self::RepositoryInfo(error) => {
                 write!(formatter, "failed to inspect Hub repository: {error}")
             }
+            Self::ArtifactMetadata(error) => {
+                write!(
+                    formatter,
+                    "failed to inspect selected Hub artifacts: {error}"
+                )
+            }
             Self::MissingCommit => {
                 formatter.write_str("Hub repository metadata omitted the commit identifier")
             }
             Self::MissingFileListing => {
                 formatter.write_str("Hub repository metadata omitted the file listing")
+            }
+            Self::InvalidCommit => {
+                formatter.write_str("Hub repository metadata returned an invalid commit identifier")
+            }
+            Self::DuplicateRepositoryFilePath => {
+                formatter.write_str("Hub repository metadata repeated a file path")
             }
             Self::MissingArtifact(filename) => {
                 write!(formatter, "required Hub artifact is missing: {filename}")
@@ -181,14 +296,50 @@ impl Display for HubError {
             Self::UnsafeArtifactPath(filename) => {
                 write!(formatter, "unsafe repository artifact path: {filename}")
             }
+            Self::StructuralLimitExceeded(limit) => {
+                write!(
+                    formatter,
+                    "artifact structural limit exceeded: {}",
+                    limit.label()
+                )
+            }
             Self::ReadConfiguration(error) => {
                 write!(formatter, "failed to read model configuration: {error}")
             }
-            Self::InvalidConfiguration(error) => {
-                write!(formatter, "invalid model configuration: {error}")
-            }
+            Self::InvalidConfiguration => formatter.write_str(
+                "model configuration JSON or scalar declaration field type is malformed",
+            ),
+            Self::UnsupportedScalarDeclaration => formatter
+                .write_str("model configuration contains an unsupported scalar declaration"),
+            Self::ConflictingScalarDeclarations => formatter.write_str(
+                "model configuration contains conflicting modern and legacy scalar declarations",
+            ),
             Self::ReadIndex(error) => write!(formatter, "failed to read weight index: {error}"),
-            Self::InvalidIndex(error) => write!(formatter, "invalid weight index: {error}"),
+            Self::InvalidIndex => formatter.write_str("invalid Safetensors weight index"),
+            Self::MissingShardMetadata => {
+                formatter.write_str("selected Hub metadata omitted a Safetensors shard")
+            }
+            Self::DuplicateShardMetadata => {
+                formatter.write_str("selected Hub metadata repeated a Safetensors shard")
+            }
+            Self::UnexpectedShardMetadata => {
+                formatter.write_str("selected Hub metadata returned an unexpected artifact entry")
+            }
+            Self::InvalidLfsContentIdentity => {
+                formatter.write_str("Hub LFS metadata contains an invalid SHA-256 identity")
+            }
+            Self::ShardLengthMismatch => formatter.write_str(
+                "Hub-reported, LFS-reported, cached, or streamed shard lengths disagree",
+            ),
+            Self::InvalidWeightFile => {
+                formatter.write_str("cached Safetensors shard is not a regular file")
+            }
+            Self::ReadWeight(error) => {
+                write!(
+                    formatter,
+                    "failed to inspect or stream cached Safetensors shard: {error}"
+                )
+            }
             Self::Download { filename, source } => {
                 write!(formatter, "failed to resolve {filename}: {source}")
             }
@@ -199,17 +350,33 @@ impl Display for HubError {
 impl Error for HubError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Client(error) | Self::RepositoryInfo(error) => Some(error),
-            Self::ReadConfiguration(error) | Self::ReadIndex(error) => Some(error),
-            Self::InvalidConfiguration(error) | Self::InvalidIndex(error) => Some(error),
+            Self::Client(error) | Self::RepositoryInfo(error) | Self::ArtifactMetadata(error) => {
+                Some(error)
+            }
+            Self::ReadConfiguration(error) | Self::ReadIndex(error) | Self::ReadWeight(error) => {
+                Some(error)
+            }
             Self::Download { source, .. } => Some(source),
             Self::InvalidRepository
             | Self::InvalidRevision
             | Self::MissingCommit
             | Self::MissingFileListing
+            | Self::InvalidCommit
+            | Self::DuplicateRepositoryFilePath
             | Self::MissingArtifact(_)
             | Self::UnsupportedWeightLayout
-            | Self::UnsafeArtifactPath(_) => None,
+            | Self::UnsafeArtifactPath(_)
+            | Self::StructuralLimitExceeded(_)
+            | Self::InvalidConfiguration
+            | Self::UnsupportedScalarDeclaration
+            | Self::ConflictingScalarDeclarations
+            | Self::InvalidIndex
+            | Self::MissingShardMetadata
+            | Self::DuplicateShardMetadata
+            | Self::UnexpectedShardMetadata
+            | Self::InvalidLfsContentIdentity
+            | Self::ShardLengthMismatch
+            | Self::InvalidWeightFile => None,
         }
     }
 }
@@ -245,48 +412,43 @@ impl HubClient {
     ///
     /// Returns a [`HubError`] if repository inspection fails, metadata or required artifacts are
     /// missing, the weight layout or an artifact path is invalid, configuration or index data
-    /// cannot be read or parsed, or an artifact cannot be downloaded.
+    /// cannot be read or parsed, shard identity cannot be established, or an artifact cannot be
+    /// downloaded.
     pub fn resolve_safetensors_llama(
         &self,
         reference: &HubModelReference,
     ) -> Result<ResolvedSafetensorsLlamaArtifacts, HubError> {
         let (owner, name) = split_id(reference.repository.as_str());
         let repository = self.client.model(owner, name);
-        let information = repository
-            .info()
-            .revision(reference.revision.clone())
-            .send()
-            .map_err(HubError::RepositoryInfo)?;
-        let filenames: BTreeSet<String> = information
-            .siblings
-            .ok_or(HubError::MissingFileListing)?
-            .into_iter()
-            .map(|sibling| sibling.rfilename)
-            .collect();
+        let (commit, filenames) =
+            resolve_commit_and_files(&repository, reference.revision.as_str())?;
 
         require_file(&filenames, CONFIG_FILE)?;
         require_file(&filenames, TOKENIZER_FILE)?;
-
-        let commit = information.sha.ok_or(HubError::MissingCommit)?;
         let weight_filenames = if filenames.contains(WEIGHT_INDEX_FILE) {
             let index_path = resolve_file(&repository, commit.as_str(), WEIGHT_INDEX_FILE)?;
-            let bytes = fs::read(index_path).map_err(HubError::ReadIndex)?;
+            let bytes = read_index(index_path.as_path())?;
             indexed_weights(bytes.as_slice(), &filenames)?
         } else {
             direct_weights(&filenames)?
         };
+        let mut weight_metadata =
+            selected_weight_metadata(&repository, commit.as_str(), weight_filenames.as_slice())?;
 
         let config_path = resolve_file(&repository, commit.as_str(), CONFIG_FILE)?;
         let configuration_declared_scalar_type =
             read_configuration_declared_scalar_type(config_path.as_path())?;
         let tokenizer_path = resolve_file(&repository, commit.as_str(), TOKENIZER_FILE)?;
-        let mut weight_paths = Vec::with_capacity(weight_filenames.len());
+        let mut weight_shards = Vec::with_capacity(weight_filenames.len());
         for filename in weight_filenames {
-            weight_paths.push(resolve_file(
-                &repository,
-                commit.as_str(),
-                filename.as_str(),
-            )?);
+            let metadata = weight_metadata
+                .remove(filename.as_str())
+                .ok_or(HubError::MissingShardMetadata)?;
+            let path = resolve_file(&repository, commit.as_str(), filename.as_str())?;
+            weight_shards.push(resolve_weight_shard(path, metadata)?);
+        }
+        if !weight_metadata.is_empty() {
+            return Err(HubError::UnexpectedShardMetadata);
         }
 
         Ok(ResolvedSafetensorsLlamaArtifacts {
@@ -296,120 +458,9 @@ impl HubClient {
             configuration_declared_scalar_type,
             config_path,
             tokenizer_path,
-            weight_paths,
+            weight_shards,
         })
     }
-}
-
-#[derive(Deserialize)]
-struct SafetensorsIndex {
-    weight_map: std::collections::BTreeMap<String, String>,
-}
-
-#[derive(Deserialize)]
-struct ModelConfiguration {
-    #[serde(default)]
-    dtype: Option<String>,
-    #[serde(default)]
-    torch_dtype: Option<String>,
-}
-
-fn read_configuration_declared_scalar_type(
-    path: &Path,
-) -> Result<Option<ArtifactScalarType>, HubError> {
-    let bytes = fs::read(path).map_err(HubError::ReadConfiguration)?;
-    parse_configuration_declared_scalar_type(bytes.as_slice())
-        .map_err(HubError::InvalidConfiguration)
-}
-
-fn parse_configuration_declared_scalar_type(
-    bytes: &[u8],
-) -> Result<Option<ArtifactScalarType>, serde_json::Error> {
-    let configuration: ModelConfiguration = serde_json::from_slice(bytes)?;
-    Ok(configuration
-        .dtype
-        .as_deref()
-        .and_then(parse_scalar_type)
-        .or_else(|| {
-            configuration
-                .torch_dtype
-                .as_deref()
-                .and_then(parse_scalar_type)
-        }))
-}
-
-fn parse_scalar_type(value: &str) -> Option<ArtifactScalarType> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "float32" | "f32" => Some(ArtifactScalarType::F32),
-        "float16" | "half" | "f16" => Some(ArtifactScalarType::F16),
-        "bfloat16" | "bf16" => Some(ArtifactScalarType::Bf16),
-        _ => None,
-    }
-}
-
-fn indexed_weights(bytes: &[u8], available: &BTreeSet<String>) -> Result<Vec<String>, HubError> {
-    let index: SafetensorsIndex = serde_json::from_slice(bytes).map_err(HubError::InvalidIndex)?;
-    let mut weights = BTreeSet::new();
-    for filename in index.weight_map.into_values() {
-        validate_artifact_path(filename.as_str())?;
-        if !filename.ends_with(".safetensors") || !available.contains(&filename) {
-            return Err(HubError::UnsupportedWeightLayout);
-        }
-        weights.insert(filename);
-    }
-    if weights.is_empty() {
-        return Err(HubError::UnsupportedWeightLayout);
-    }
-    Ok(weights.into_iter().collect())
-}
-
-fn direct_weights(available: &BTreeSet<String>) -> Result<Vec<String>, HubError> {
-    if available.contains(SINGLE_WEIGHT_FILE) {
-        return Ok(vec![SINGLE_WEIGHT_FILE.to_owned()]);
-    }
-
-    let mut shards = Vec::new();
-    for filename in available {
-        if let Some((index, total)) = parse_standard_shard(filename) {
-            shards.push((index, total, filename.clone()));
-        }
-    }
-    let Some(expected_total) = shards.first().map(|(_, total, _)| *total) else {
-        return Err(HubError::UnsupportedWeightLayout);
-    };
-    if expected_total == 0
-        || shards.len() != expected_total
-        || shards.iter().any(|(_, total, _)| *total != expected_total)
-    {
-        return Err(HubError::UnsupportedWeightLayout);
-    }
-    shards.sort_unstable_by_key(|(index, _, _)| *index);
-    if shards
-        .iter()
-        .enumerate()
-        .any(|(offset, (index, _, _))| *index != offset + 1)
-    {
-        return Err(HubError::UnsupportedWeightLayout);
-    }
-    Ok(shards
-        .into_iter()
-        .map(|(_, _, filename)| filename)
-        .collect())
-}
-
-fn parse_standard_shard(filename: &str) -> Option<(usize, usize)> {
-    let stem = filename
-        .strip_prefix("model-")?
-        .strip_suffix(".safetensors")?;
-    let (index, total) = stem.split_once("-of-")?;
-    if index.len() != 5
-        || total.len() != 5
-        || !index.bytes().all(|byte| byte.is_ascii_digit())
-        || !total.bytes().all(|byte| byte.is_ascii_digit())
-    {
-        return None;
-    }
-    Some((index.parse().ok()?, total.parse().ok()?))
 }
 
 fn require_file(available: &BTreeSet<String>, filename: &'static str) -> Result<(), HubError> {
@@ -418,19 +469,6 @@ fn require_file(available: &BTreeSet<String>, filename: &'static str) -> Result<
     } else {
         Err(HubError::MissingArtifact(filename))
     }
-}
-
-fn validate_artifact_path(filename: &str) -> Result<(), HubError> {
-    let path = Path::new(filename);
-    if filename.is_empty()
-        || path.is_absolute()
-        || path
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return Err(HubError::UnsafeArtifactPath(filename.to_owned()));
-    }
-    Ok(())
 }
 
 fn resolve_file(
@@ -452,11 +490,7 @@ fn resolve_file(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ArtifactScalarType, HubClientConfiguration, direct_weights, indexed_weights,
-        parse_configuration_declared_scalar_type, parse_scalar_type,
-    };
-    use std::collections::BTreeSet;
+    use super::{HubClientConfiguration, HubError, HubModelReference};
 
     #[test]
     fn client_configuration_debug_redacts_access_tokens() {
@@ -473,98 +507,18 @@ mod tests {
     }
 
     #[test]
-    fn index_deduplicates_and_orders_shards() {
-        let available = BTreeSet::from([
-            "model-00001-of-00002.safetensors".to_owned(),
-            "model-00002-of-00002.safetensors".to_owned(),
-        ]);
-        let index = br#"{
-            "weight_map": {
-                "layer.1": "model-00002-of-00002.safetensors",
-                "layer.0": "model-00001-of-00002.safetensors",
-                "layer.2": "model-00002-of-00002.safetensors"
-            }
-        }"#;
-        let result = indexed_weights(index, &available);
-        assert!(result.is_ok());
-        assert_eq!(
-            result.ok(),
-            Some(vec![
-                "model-00001-of-00002.safetensors".to_owned(),
-                "model-00002-of-00002.safetensors".to_owned(),
-            ])
-        );
-    }
-
-    #[test]
-    fn direct_layout_rejects_unrelated_safetensors() {
-        let available = BTreeSet::from(["adapter_model.safetensors".to_owned()]);
-        assert!(direct_weights(&available).is_err());
-    }
-
-    #[test]
-    fn direct_layout_rejects_incomplete_shards() {
-        let available = BTreeSet::from([
-            "model-00001-of-00003.safetensors".to_owned(),
-            "model-00003-of-00003.safetensors".to_owned(),
-        ]);
-        assert!(direct_weights(&available).is_err());
-    }
-
-    #[test]
-    fn scalar_type_parser_is_explicit() {
-        assert_eq!(parse_scalar_type("float32"), Some(ArtifactScalarType::F32));
-        assert_eq!(parse_scalar_type("HALF"), Some(ArtifactScalarType::F16));
-        assert_eq!(parse_scalar_type(" bf16 "), Some(ArtifactScalarType::Bf16));
-        assert_eq!(parse_scalar_type("float8_e4m3fn"), None);
-    }
-
-    #[test]
-    fn configuration_parser_recognizes_modern_and_legacy_declarations()
-    -> Result<(), serde_json::Error> {
-        assert_eq!(
-            parse_configuration_declared_scalar_type(br#"{"dtype":"bfloat16"}"#)?,
-            Some(ArtifactScalarType::Bf16)
-        );
-        assert_eq!(
-            parse_configuration_declared_scalar_type(br#"{"torch_dtype":"float16"}"#)?,
-            Some(ArtifactScalarType::F16)
-        );
+    fn model_reference_validation_is_explicit() -> Result<(), HubError> {
+        let reference = HubModelReference::new(" owner/model ", " revision ")?;
+        assert_eq!(reference.repository(), "owner/model");
+        assert_eq!(reference.revision(), "revision");
+        assert!(matches!(
+            HubModelReference::new(" ", "main"),
+            Err(HubError::InvalidRepository)
+        ));
+        assert!(matches!(
+            HubModelReference::new("owner/model", " "),
+            Err(HubError::InvalidRevision)
+        ));
         Ok(())
-    }
-
-    #[test]
-    fn configuration_parser_retains_absent_declaration() -> Result<(), serde_json::Error> {
-        assert_eq!(parse_configuration_declared_scalar_type(br"{}")?, None);
-        assert_eq!(
-            parse_configuration_declared_scalar_type(br#"{"dtype":null,"torch_dtype":null}"#)?,
-            None
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn configuration_parser_prefers_recognized_dtype_then_legacy_fallback()
-    -> Result<(), serde_json::Error> {
-        assert_eq!(
-            parse_configuration_declared_scalar_type(
-                br#"{"dtype":"bfloat16","torch_dtype":"float16"}"#
-            )?,
-            Some(ArtifactScalarType::Bf16)
-        );
-        assert_eq!(
-            parse_configuration_declared_scalar_type(
-                br#"{"dtype":"float8_e4m3fn","torch_dtype":"float16"}"#
-            )?,
-            Some(ArtifactScalarType::F16)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn unsafe_artifact_paths_are_rejected() {
-        assert!(super::validate_artifact_path("../model.safetensors").is_err());
-        assert!(super::validate_artifact_path("/tmp/model.safetensors").is_err());
-        assert!(super::validate_artifact_path("weights/model.safetensors").is_ok());
     }
 }

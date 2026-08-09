@@ -151,7 +151,7 @@ fn candle_fixture_covers_generation_sampling_eos_and_lifecycle() -> TestResult {
 #[test]
 fn mixed_f16_f32_fixture_covers_e0_generation_accounting_and_lifecycle() -> TestResult {
     let converted = ConvertedFixture::create(DType::F16, true)?;
-    let source = mixed_fixture_source(&converted, ScalarType::F16)?;
+    let source = mixed_fixture_source(&converted)?;
     let execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu);
     let plan = prepare_plan(&source, execution_device)?;
     assert_mixed_f16_plan(&plan, execution_device)?;
@@ -243,7 +243,7 @@ fn candle_fixture_covers_output_backpressure_and_cancellation() -> TestResult {
 fn candle_mixed_cuda_fixture_covers_e0_generation_accounting_and_lifecycle() -> TestResult {
     require_cuda_opt_in()?;
     let converted = ConvertedFixture::create(DType::F16, true)?;
-    let source = mixed_fixture_source(&converted, ScalarType::F16)?;
+    let source = mixed_fixture_source(&converted)?;
     let execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda);
     let plan = prepare_plan(&source, execution_device)?;
     assert_mixed_f16_plan(&plan, execution_device)?;
@@ -271,22 +271,17 @@ fn candle_mixed_cuda_fixture_covers_e0_generation_accounting_and_lifecycle() -> 
 
 fn candle_fixture_source() -> TestResult<CandleLlamaSource> {
     let directory = candle_fixture_directory();
-    CandleLlamaSource::new(
+    CandleLlamaSource::from_local_files(
         directory.join("config.json"),
         vec![directory.join("model.safetensors")],
-        Some(ScalarType::F32),
     )
     .map_err(|error| error.to_string())
 }
 
-fn mixed_fixture_source(
-    fixture: &ConvertedFixture,
-    configuration_declared_scalar_type: ScalarType,
-) -> TestResult<CandleLlamaSource> {
-    CandleLlamaSource::new(
-        candle_fixture_directory().join("config.json"),
+fn mixed_fixture_source(fixture: &ConvertedFixture) -> TestResult<CandleLlamaSource> {
+    CandleLlamaSource::from_local_files(
+        fixture.config_path.clone(),
         vec![fixture.weight_path.clone()],
-        Some(configuration_declared_scalar_type),
     )
     .map_err(|error| error.to_string())
 }
@@ -982,6 +977,7 @@ fn candle_fixture_directory() -> PathBuf {
 
 struct ConvertedFixture {
     directory: PathBuf,
+    config_path: PathBuf,
     weight_path: PathBuf,
 }
 
@@ -996,7 +992,9 @@ impl ConvertedFixture {
             std::process::id()
         ));
         fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let config_path = directory.join("config.json");
         let weight_path = directory.join("model.safetensors");
+        write_converted_configuration(&config_path, primary_dtype)?;
         convert_weights(
             &candle_fixture_directory().join("model.safetensors"),
             &weight_path,
@@ -1005,6 +1003,7 @@ impl ConvertedFixture {
         )?;
         Ok(Self {
             directory,
+            config_path,
             weight_path,
         })
     }
@@ -1014,6 +1013,30 @@ impl Drop for ConvertedFixture {
     fn drop(&mut self) {
         let _ignored = fs::remove_dir_all(&self.directory);
     }
+}
+
+fn write_converted_configuration(destination: &Path, primary_dtype: DType) -> TestResult {
+    let declaration = match primary_dtype {
+        DType::F16 => "float16",
+        DType::BF16 => "bfloat16",
+        DType::F32 => "float32",
+        _ => {
+            return Err(format!(
+                "unsupported converted fixture dtype: {primary_dtype:?}"
+            ));
+        }
+    };
+    let source = candle_fixture_directory().join("config.json");
+    let configuration = fs::read_to_string(&source)
+        .map_err(|error| format!("read converted fixture configuration source: {error}"))?;
+    let expected = "\"dtype\": \"float32\"";
+    if configuration.matches(expected).count() != 1 {
+        return Err("committed fixture configuration has unexpected dtype declaration".to_owned());
+    }
+    let replacement = format!("\"dtype\": \"{declaration}\"");
+    let converted = configuration.replacen(expected, replacement.as_str(), 1);
+    fs::write(destination, converted)
+        .map_err(|error| format!("write converted fixture configuration: {error}"))
 }
 
 fn convert_weights(

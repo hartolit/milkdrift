@@ -8,6 +8,7 @@ use candle_core::{DType, Device, Tensor};
 
 const CONFIG: &str = r#"{
   "model_type": "llama",
+  "dtype": "float32",
   "vocab_size": 16,
   "hidden_size": 8,
   "intermediate_size": 16,
@@ -26,6 +27,22 @@ const CONFIG: &str = r#"{
 const TOKEN_MATRIX_MAGNITUDE: f32 = 0.5;
 
 type TestResult = Result<(), String>;
+
+#[test]
+fn committed_configuration_matches_generator() -> TestResult {
+    let path = fixture_directory().join("config.json");
+    let committed = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "failed to read committed fixture config {}: {error}",
+            path.display()
+        )
+    })?;
+    if committed == CONFIG {
+        Ok(())
+    } else {
+        Err("committed fixture config differs from generator output".to_owned())
+    }
+}
 
 #[test]
 #[ignore = "explicit source-tree fixture maintenance operation"]

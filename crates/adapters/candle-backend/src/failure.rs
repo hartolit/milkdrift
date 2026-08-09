@@ -44,8 +44,36 @@ pub const CODE_TENSOR_TRANSFER: u32 = 29;
 pub const CODE_LOAD_SYNCHRONIZE: u32 = 30;
 /// Retryable synchronization of a failed partial load did not complete.
 pub const CODE_PARTIAL_LOAD_SYNCHRONIZE: u32 = 31;
-/// A retained tensor payload no longer matched the content inspected for its preparation.
-pub const CODE_PREPARED_PAYLOAD_CHANGED: u32 = 32;
+/// A retained whole shard did not match its accepted SHA-256 identity.
+pub const CODE_SOURCE_IDENTITY_MISMATCH: u32 = 32;
+/// The bounded model configuration exceeded one MiB.
+pub const CODE_CONFIG_LIMIT: u32 = 33;
+/// Host allocation for bounded configuration bytes failed.
+pub const CODE_CONFIG_ALLOCATION: u32 = 34;
+/// A scalar declaration was duplicated or had the wrong JSON type.
+pub const CODE_DECLARATION_MALFORMED: u32 = 35;
+/// A present scalar declaration string was not in the reviewed vocabulary.
+pub const CODE_DECLARATION_UNSUPPORTED: u32 = 36;
+/// Modern and legacy recognized scalar declarations disagreed.
+pub const CODE_DECLARATION_CONFLICT: u32 = 37;
+/// Explicit Llama model identity was absent, malformed, or contradictory.
+pub const CODE_ARCHITECTURE: u32 = 38;
+/// A per-shard or aggregate Safetensors header ceiling was exceeded.
+pub const CODE_HEADER_LIMIT: u32 = 39;
+/// A tensor count, name, rank, or aggregate shape ceiling was exceeded.
+pub const CODE_TENSOR_LIMIT: u32 = 40;
+/// A Safetensors metadata entry/string ceiling was exceeded.
+pub const CODE_METADATA_LIMIT: u32 = 41;
+/// The final owned inspection inventory ceiling was exceeded.
+pub const CODE_INSPECTION_INVENTORY_LIMIT: u32 = 42;
+/// Host allocation for bounded inspection inventory failed.
+pub const CODE_INSPECTION_ALLOCATION: u32 = 43;
+/// The retained Safetensors prefix/header changed after inspection.
+pub const CODE_HEADER_IDENTITY_MISMATCH: u32 = 44;
+/// A supplied or observed whole-shard length disagreed with the retained file.
+pub const CODE_SOURCE_IDENTITY_LENGTH: u32 = 45;
+/// Host allocation for the pre-sized final required-tensor map failed.
+pub const CODE_TENSOR_MAP_ALLOCATION: u32 = 46;
 
 pub const fn failure(backend: BackendId, kind: BackendFailureKind, code: u32) -> BackendFailure {
     BackendFailure::new(backend, kind, code)

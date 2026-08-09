@@ -2,8 +2,9 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-08
-- **Phase:** 12
-- **Implementation:** `58490fe693fef7a2635956181088664cd90685e8` and `12510695aa29be6a2665dbf3777cccbb8172c2d1`
+- **Amended:** 2026-08-10
+- **Phase:** 12 plus post-audit artifact-loading hardening
+- **Implementation:** `58490fe693fef7a2635956181088664cd90685e8`, `12510695aa29be6a2665dbf3777cccbb8172c2d1`, and the pristine artifact-loading amendment recorded by this revision
 - **Amends:** [ADR-0019](0019-explicit-cuda-execution-foundation.md) for scalar/source terminology, load planning/materialization, E1 loaded facts, model-catalogue persistence, and Phase 12 evidence claims
 - **Preserves:** [ADR-0006](0006-explicit-bounded-shutdown.md), [ADR-0010](0010-verify-backend-contracts-at-e0.md), and [ADR-0013](0013-candle-only-local-execution.md)
 
@@ -28,36 +29,40 @@ The correction must strengthen one local Candle endpoint without changing Milkdr
 
 The architecture uses four distinct meanings:
 
-1. **Configuration-declared optional scalar** is recognized immutable `dtype` or legacy `torch_dtype` metadata. It is `Option<ScalarType>`, may be absent, and is evidence of producer intent only.
-2. **Observed tensor scalar set** is a fixed-size, allocation-free `ScalarTypeSet` built from every selected Safetensors tensor header. It crosses the adapter boundary only as compact format-neutral descriptor evidence.
-3. **Inferred primary scalar** is an adapter-private result derived from the exact observed set. It is not an E0, E1, persistence, or frontend policy axis.
-4. **Execution scalar** is selected by exact device-aware preparation, materialized for backend execution tensors, reported by the loaded backend model, and verified by E0.
+1. **Configuration declaration** is optional recognized `dtype`/`torch_dtype` producer intent derived from the same bounded `config.json` bytes Candle decodes. Callers cannot inject it.
+2. **Complete observed scalar set** is a fixed-size, allocation-free `ScalarTypeSet` built from every structurally valid tensor header in every selected shard, including unused auxiliary tensors.
+3. **Required scalar set and required primary** are adapter-private facts derived only from tensors consumed by the supported Llama schema. They alone drive declaration compatibility and execution policy.
+4. **Execution scalar** is selected by exact device-aware preparation, materialized only for required execution tensors, reported by the loaded backend model, and verified by E0.
 
-The optional declaration never substitutes for observed headers. The observed set never substitutes for execution. Detailed tensor names, offsets, shard paths, shapes, source dtypes, and payload digests remain adapter-private.
+The declaration never substitutes for observed headers. Complete observed evidence never selects precision. Unused extras cannot downcast required F32 weights or make a matching declaration contradictory. Detailed tensor names, offsets, shard paths, shapes, source dtypes, and whole-shard identities remain adapter-private.
 
-### Accept only the reviewed initial layouts
+### Treat declaration presence and precedence honestly
 
-The Candle Llama/Safetensors adapter accepts exactly:
+Modern `dtype` has no silent fallback semantics. Both declaration fields absent/null means absence; one recognized field plus one absent/null field selects the recognized value; two equal recognized fields select that value. Any present unsupported value fails, including unsupported modern `dtype` paired with recognized legacy `torch_dtype`. Two different recognized values conflict. Duplicate fields, wrong JSON types, and malformed JSON fail explicitly. Raw vendor strings remain inside the artifact adapters and are never persisted as preferences.
 
-| Observed set | Inferred primary | Permitted recognized declaration |
+### Accept only the reviewed required layouts
+
+The Candle Llama/Safetensors adapter accepts exactly these **required** sets:
+
+| Required set | Required primary | Permitted recognized declaration |
 |---|---|---|
-| `{F32}` | F32 | `None` or F32 |
-| `{F16}` | F16 | `None` or F16 |
-| `{F16,F32}` | F16 | `None` or F16 |
-| `{BF16}` | BF16 | `None` or BF16 |
-| `{BF16,F32}` | BF16 | `None` or BF16 |
+| `{F32}` | F32 | absent or F32 |
+| `{F16}` | F16 | absent or F16 |
+| `{F16,F32}` | F16 | absent or F16 |
+| `{BF16}` | BF16 | absent or BF16 |
+| `{BF16,F32}` | BF16 | absent or BF16 |
 
-Every other set is rejected. In particular, F16+BF16 is not accepted, with or without F32. Empty, FP8, integer, boolean, unknown, and quantized tensor categories are unsupported. A present recognized declaration must equal the inferred primary; a contradictory or unsupported present declaration is unsupported format rather than evidence that every byte is corrupt.
+A genuine required F16+BF16 mixture remains rejected, with or without F32. An empty required set or a required integer, boolean, FP8, bit-packed, complex, or otherwise non-executable category is rejected before device initialization. Structurally understood **unused** tensors may use any Safetensors 0.8 dtype: they remain in complete observed evidence but do not affect compatibility, execution, transfer, or footprint policy.
 
 The execution policy is:
 
-| Inferred primary | CPU | Supported CUDA policy |
+| Required primary | CPU | Supported CUDA policy |
 |---|---|---|
 | F32 | F32 | F32 |
 | F16 | F16 | F16 |
 | BF16 | F32 | BF16 only when the selected device reports support |
 
-Every accepted tensor is independently converted to the selected execution dtype when required. Vocabulary logits still cross to E0 as host F32.
+Each required tensor is independently converted to the selected execution dtype when needed. Vocabulary logits still cross to E0 as host F32.
 
 ### Replace `plan_load`/`load` with one prepared transaction
 
@@ -70,47 +75,59 @@ An unmaterialized preparation is ordinary-drop-safe. This permits E0 to reject a
 
 After materialization begins, failure returns `FailedLoad<Prepared>` containing both the primary `LoadError` and the sole cleanup owner. `PreparedLoad::cleanup(&mut self)` is explicit and retryable: failure leaves the owner valid and complete; success authorizes drop as fully released.
 
-### Bind accepted weight facts to retained files and digests
+### Bind accepted weight facts to retained files and whole-shard identities
 
-Candle preparation completes all selected shard-header inspection before device initialization. It sorts paths, bounds shard/header processing, opens and retains every weight file, validates all tensor metadata and required Llama shapes, and records each tensor's exact range and SHA-256 payload digest.
+Candle completes bounded selected-shard/header inspection before device initialization. It sorts complete path/identity pairs, opens and retains every shard, validates all tensor metadata and required Llama shapes, and records exact ranges plus the retained prefix/header digest. It does not scan payloads merely to inspect structure.
 
-Materialization reads from the retained open files rather than reopening paths. It rechecks each retained file length and each payload digest. Therefore deleting or replacing a path cannot redirect an accepted preparation, while same-inode payload mutation is detected before the changed tensor is accepted. The parsed configuration, exact load configuration, selected device, inspected shards, and plan remain in the opaque preparation.
+There are two identity paths:
+
+- `VerifiedImmutable` carries exact length and whole-file SHA-256 from a source whose content-addressing and immutability contract is proven. Only this authority skips a pre-admission baseline pass.
+- `ProjectEstablished` and `Unverified` are mutable-source fallbacks. Candle hashes its retained file sequentially before admission; a supplied project digest must match, while an unverified source establishes a fresh baseline.
+
+A Hugging Face LFS SHA-256 paired with exact file size at the resolved commit is the current provider-verified authority. Cache names, symlink targets, ETags, Git object IDs, inode/mtime facts, and provider conventions are not cryptographic proof. When Hub LFS identity is unavailable, the Hub adapter establishes a local whole-file digest, marks it project-established, and Candle revalidates it before admission.
+
+Materialization reads every retained shard sequentially from byte zero. It verifies the retained header before payload processing, hashes ignored ranges through one fixed 64 KiB buffer, stages only required ranges, and compares exact EOF/length and the accepted whole-shard digest before model construction/publication. There are no per-tensor seeks, payload digests, mmap, unsafe code, or whole-model host retention. Deleting or replacing the path cannot redirect the retained file; same-inode mutation, truncation, and extension fail before publication. The parsed configuration, exact load configuration, selected device, inspected shards, and plan remain in the opaque preparation.
+
+### Bound inspection metadata independently
+
+One private production limit set rejects hostile growth before device initialization: at most 256 shards; 8 MiB per header and 64 MiB aggregate headers; 16,384 tensors; 512 bytes per name and 8 MiB aggregate names; rank 8; dimension extent 1,048,576 and 131,072 aggregate dimensions; 1,024 metadata entries with 256-byte keys, 4 KiB values, and 4 MiB aggregate metadata strings; and 64 MiB final owned inspection inventory. Configuration bytes are capped at 1 MiB. Custom deserializers enforce these limits while traversing JSON, fixed-rank shape storage avoids per-shape vectors, and checked reservations turn allocation failures into deterministic adapter failures. These resources are separately bounded rather than folded into tensor `MemoryFootprint`. Required-name/load-map metadata is also bounded by the tensor/name ceilings: one name clone is transient per required tensor, and failure-safe model construction temporarily duplicates one map's names and shallow tensor handles under the same bounds. Platform-dependent map bucket overhead remains outside exact tensor accounting but cannot exceed the bounded entry count.
 
 ### Distinguish exact final ownership from the loading peak
 
-`LoadPlan::expected_footprint` is the exact final post-load required execution-tensor ownership plus cache bytes per token. `LoadPlan::loading_peak_footprint` is the exact component-wise deterministic tensor peak for the chosen loading algorithm. Neither is physical RSS/VRAM or allocator/driver accounting.
+`LoadPlan::expected_footprint` is exact final required execution-tensor ownership plus cache bytes per token. `LoadPlan::loading_peak_footprint` is the exact component-wise deterministic tensor peak for selective materialization. Neither is physical RSS/VRAM or allocator/driver accounting.
 
-For tensor `i`, let:
+For required tensor `i`, let:
 
 - `S_i` be exact source payload bytes;
 - `E_i` be exact execution bytes;
-- `A_i = S_i + alignment_i - 1` be aligned staging allocation;
-- `P_i` be execution bytes already retained before tensor `i`;
-- `R` be required-Llama execution bytes;
-- `M` be execution bytes for every selected tensor, including supported extras;
+- `A_i = S_i + alignment_i - 1` be the aligned staging allocation bound;
+- `P_i` be required execution bytes already retained before tensor `i`;
+- `R = sum(E_i)` be all required Llama execution bytes;
 - `C` be exact cache bytes per token at execution width.
 
-The CPU final footprint owns `R` host weight bytes and no working bytes. Its host loading peak is:
+Unused tensors enter no formula. The CPU final footprint owns `R` host weight bytes. Its host loading peak is:
 
 ```text
 Hcpu = max(
-    M,
+    R,
     max_i(P_i + A_i + S_i),
-    max_i(P_i + S_i + E_i) for casts
+    max_cast_i(P_i + S_i + E_i)
 )
 ```
 
-The CPU loading footprint records `R` as host weight and `Hcpu - R` as host working headroom.
+The CPU loading footprint records `R` host weight bytes and `Hcpu - R` host working bytes.
 
-The CUDA final footprint owns `R` device weight bytes and no working bytes. Its host staging peak is:
+The CUDA final footprint owns `R` device weight bytes. Its host staging peak is:
 
 ```text
-Hcuda = max_i(A_i + S_i, E_i, S_i + E_i for casts)
+Hcuda = max(
+    max_i(A_i + S_i),
+    max_i(E_i),
+    max_cast_i(S_i + E_i)
+)
 ```
 
-The CUDA loading footprint records `Hcuda` host working bytes, `R` device weight bytes, and `M - R` device working headroom for selected extras. Both phases carry the same `C`. Every operation uses checked arithmetic.
-
-The quantities exclude headers/configuration, file/digest metadata, allocator bookkeeping/fragmentation, driver/context allocations, process RSS, and whole-device observations.
+The CUDA loading footprint records `Hcuda` host working bytes, `R` device weight bytes, and zero device working bytes. Final and loading phases carry the same `C`. Every operation uses checked arithmetic. The fixed 64 KiB verification buffer and bounded config/header/inspection metadata are governed by separate structural ceilings rather than `MemoryFootprint`; allocator bookkeeping/fragmentation, driver/context allocation, process RSS, and whole-device observations remain outside deterministic tensor accounting.
 
 ### Admit the peak at E0 before materialization
 
@@ -143,9 +160,9 @@ ADR-0006 remains authoritative for terminal shutdown: if the finite explicit cle
 E1 receives lower descriptor/receipt facts but does not reproduce Candle policy.
 
 - `ResolvedModel` exposes immutable identity and optional configuration-declared metadata.
-- Public E1 `LoadedModel` exposes the E0-verified execution scalar and actual execution device, but no declaration, observed set, inferred primary, or per-tensor inventory.
-- E1 checks declaration agreement across artifact/admission/descriptor evidence, a nonempty observed set within its compact F32/F16/BF16 vocabulary, receipt identity/capabilities/device, and final reserved footprint.
-- E1 does not infer primary, choose per-tensor conversion, compare declaration with execution, or fall back.
+- Public E1 `LoadedModel` exposes the E0-verified execution scalar and actual execution device, but no declaration, observed set, required primary, or per-tensor inventory.
+- E1 checks declaration agreement across artifact/admission/descriptor evidence, a nonempty complete observed set, receipt identity/capabilities/device, and final reserved footprint. Integer or `Other` bits from unused tensors are truthful evidence rather than an E1 compatibility policy.
+- E1 does not infer required primary, choose per-tensor conversion, compare declaration with execution, or fall back.
 - Retained lower model ownership is reported as `ModelCleanupPending { exhausted, failure }`; ordinary owner-free failure remains `ModelLoadFailed`.
 - Slint may display the optional declaration in a resolved summary and execution scalar/device in a loaded summary. It gains no tensor table, conversion control, or backend responsibility.
 
@@ -153,7 +170,7 @@ This preserves ADR-0013: Candle remains the sole local engine, E0 remains generi
 
 ### Persist declaration only
 
-New `LAM1` writes use version 2 and store optional configuration-declared scalar metadata. Exact version 1 reads remain supported and decode their mandatory scalar as a present declaration. Observed sets, inferred primary, execution scalar/device, per-tensor inventory, footprints, and cache paths are not persisted.
+New `LAM1` writes use version 2 and store optional configuration-declared scalar metadata. Exact version 1 reads remain supported and decode their mandatory scalar as a present declaration. Observed sets, required primary, execution scalar/device, per-tensor inventory, footprints, shard identities, and cache paths are not persisted.
 
 `LAS1` settings semantics remain unchanged: version 2 writes and exact version 1 reads continue to own device selection and accelerator-memory policy.
 
@@ -179,9 +196,10 @@ No default feature reaches CUDA. Explicit CUDA failure never falls back to CPU. 
 ## Consequences
 
 - Exact preparation, aggregate admission, materialization, and cleanup now share one owner and one plan.
-- Mixed F16/F32 and BF16/F32 layouts are supported only under the exact reviewed set/declaration policy.
+- Mixed F16/F32 and BF16/F32 **required** layouts are supported only under the exact reviewed declaration policy; complete observed extras cannot select execution.
+- Structurally understood unused tensors are inspected and identity-bound but never staged, converted, transferred, or retained.
 - CPU behavior remains F32→F32, F16→F16, and BF16→F32; CUDA policy remains explicit and capability-checked.
-- Final ownership is no longer inflated by transient loading headroom; failed cleanup retains the conservative loading peak.
+- Final and loading ownership exclude ignored extras; failed cleanup retains the exact admitted loading peak.
 - E0 can retry or exhaust a failed partial load without publishing a model or losing identity/accounting.
 - E1 and Slint become simpler: resolved declaration and loaded execution facts are no longer collapsed into one source-scalar label.
 - Persistence can represent absent declarations without storing per-tensor runtime evidence.

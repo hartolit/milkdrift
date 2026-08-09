@@ -17,8 +17,7 @@ pub(super) const EXPECTED_VOCABULARY_SIZE: u32 = 32_000;
 pub(super) const EXPECTED_CONTEXT_TOKENS: u32 = 2_048;
 pub(super) const MODEL_CONFIGURATION_DECLARED_SCALAR: Option<ApplicationScalarType> =
     Some(ApplicationScalarType::Bf16);
-pub(super) const MODEL_DOMAIN_CONFIGURATION_DECLARED_SCALAR: Option<ScalarType> =
-    Some(ScalarType::Bf16);
+
 pub(super) const MODEL_OBSERVED_TENSOR_SCALARS: ScalarTypeSet =
     ScalarTypeSet::from_scalar(ScalarType::Bf16);
 

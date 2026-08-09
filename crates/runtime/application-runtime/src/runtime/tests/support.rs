@@ -4,7 +4,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use domain_contracts::{CancellationReason, FinishReason, ModelId, RequestId};
-use hf_hub_adapter::{ArtifactScalarType, ResolvedSafetensorsLlamaArtifacts};
+use hf_hub_adapter::{
+    ArtifactContentIdentity, ArtifactContentIdentityAuthority, ArtifactScalarType,
+    ResolvedSafetensorsLlamaArtifacts, ResolvedSafetensorsShard,
+};
 use inference_runtime::{
     CleanupFailureReport, CleanupResource, CleanupRetryState, CommandTicket, FailureClass,
     LoadReceipt, RuntimeError, RuntimeEvent, RuntimeOperation,
@@ -28,6 +31,12 @@ pub(super) const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 pub(super) const TEST_POLL: Duration = Duration::from_millis(1);
 pub(super) const TEST_CUDA_MEMORY_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 pub(super) const CUDA_ZERO: ApplicationDevice = ApplicationDevice::Cuda { ordinal: 0 };
+
+const CANDLE_FIXTURE_WEIGHT_BYTES: u64 = 4_800;
+const CANDLE_FIXTURE_WEIGHT_SHA256: [u8; 32] = [
+    0xcc, 0x47, 0x98, 0xaf, 0x93, 0x48, 0x8b, 0x4f, 0xb2, 0xae, 0x05, 0x48, 0xc2, 0xb2, 0x8a, 0xce,
+    0x60, 0x05, 0x21, 0x73, 0x2b, 0x52, 0x02, 0x3a, 0x77, 0x86, 0xc3, 0x22, 0x7d, 0x72, 0xd6, 0x72,
+];
 
 static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -193,20 +202,22 @@ pub(super) fn resolve_fixture_with(
     commit: &str,
     tokenizer_filename: &str,
 ) -> TestResult<(ModelSelection, ResolvedModel)> {
-    resolve_fixture_with_declaration(
+    resolve_fixture_with_configuration(
         runtime,
         repository,
         commit,
         tokenizer_filename,
+        &candle_fixture_configuration_path(),
         Some(ArtifactScalarType::F32),
     )
 }
 
-pub(super) fn resolve_fixture_with_declaration(
+pub(super) fn resolve_fixture_with_configuration(
     runtime: &mut ApplicationRuntime,
     repository: &str,
     commit: &str,
     tokenizer_filename: &str,
+    config_path: &Path,
     configuration_declared_scalar_type: Option<ArtifactScalarType>,
 ) -> TestResult<(ModelSelection, ResolvedModel)> {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -216,9 +227,16 @@ pub(super) fn resolve_fixture_with_declaration(
         revision: REVISION.to_owned(),
         commit: commit.to_owned(),
         configuration_declared_scalar_type,
-        config_path: canonical(candle.join("config.json"))?,
+        config_path: canonical(config_path)?,
         tokenizer_path: canonical(manifest.join("tests/fixtures").join(tokenizer_filename))?,
-        weight_paths: vec![canonical(candle.join("model.safetensors"))?],
+        weight_shards: vec![ResolvedSafetensorsShard {
+            path: canonical(candle.join("model.safetensors"))?,
+            content_identity: ArtifactContentIdentity {
+                byte_length: CANDLE_FIXTURE_WEIGHT_BYTES,
+                sha256: CANDLE_FIXTURE_WEIGHT_SHA256,
+                authority: ArtifactContentIdentityAuthority::ProjectEstablished,
+            },
+        }],
     };
     let selection = ModelSelection::new(repository, REVISION);
     match runtime.accept_resolved_artifacts(artifacts) {
@@ -474,12 +492,49 @@ pub(super) fn unique_database_path() -> PathBuf {
     ))
 }
 
+pub(super) fn write_fixture_configuration_without_declaration(destination: &Path) -> TestResult {
+    const DECLARATION: &str = "  \"dtype\": \"float32\",\n";
+
+    let source = candle_fixture_configuration_path();
+    let configuration = fs::read_to_string(&source).map_err(|error| {
+        format!(
+            "failed to read fixture configuration {}: {error}",
+            source.display()
+        )
+    })?;
+    if configuration.matches(DECLARATION).count() != 1 {
+        return Err("fixture configuration has an unexpected dtype declaration".to_owned());
+    }
+    fs::write(destination, configuration.replacen(DECLARATION, "", 1)).map_err(|error| {
+        format!(
+            "failed to write declaration-free fixture configuration {}: {error}",
+            destination.display()
+        )
+    })
+}
+
+pub(super) fn remove_test_file(path: &Path) -> TestResult {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "failed to remove test file {}: {error}",
+            path.display()
+        )),
+    }
+}
+
 pub(super) fn remove_database(path: &Path) -> TestResult {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!("failed to remove test database: {error}")),
     }
+}
+
+fn candle_fixture_configuration_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../inference-runtime/tests/fixtures/candle-llama/config.json")
 }
 
 fn canonical(path: impl AsRef<Path>) -> TestResult<PathBuf> {

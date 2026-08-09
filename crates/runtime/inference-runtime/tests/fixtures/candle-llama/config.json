@@ -1,5 +1,6 @@
 {
   "model_type": "llama",
+  "dtype": "float32",
   "vocab_size": 16,
   "hidden_size": 8,
   "intermediate_size": 16,

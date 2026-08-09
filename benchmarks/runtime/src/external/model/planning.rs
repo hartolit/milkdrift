@@ -22,8 +22,7 @@ use crate::report::MemoryFootprintRecord;
 use super::PlannedModelEvidence;
 use super::identity::{
     EXPECTED_CONTEXT_TOKENS, EXPECTED_VOCABULARY_SIZE, MODEL_CONFIGURATION_DECLARED_SCALAR,
-    MODEL_DOMAIN_CONFIGURATION_DECLARED_SCALAR, MODEL_OBSERVED_TENSOR_SCALARS,
-    canonical_snapshot_artifacts,
+    MODEL_OBSERVED_TENSOR_SCALARS, canonical_snapshot_artifacts,
 };
 use super::resolution::validate_resolved_state;
 
@@ -55,10 +54,9 @@ pub(super) fn plan_resolved_model(
     }
 
     let artifacts = canonical_snapshot_artifacts(cache_directory)?;
-    let source = CandleLlamaSource::new(
+    let source = CandleLlamaSource::from_local_files(
         artifacts.config_path,
         vec![artifacts.weight_path],
-        MODEL_DOMAIN_CONFIGURATION_DECLARED_SCALAR,
     )
     .map_err(|error| {
         BenchmarkError::new(format!(

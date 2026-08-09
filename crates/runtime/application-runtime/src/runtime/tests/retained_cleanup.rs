@@ -118,37 +118,27 @@ fn unsupported_execution_scalar_receipt_uses_incompatible_model_cleanup() -> Tes
 }
 
 #[test]
-fn unsupported_observed_scalar_classification_uses_incompatible_model_cleanup() -> TestResult {
+fn complete_observed_extra_categories_do_not_duplicate_candle_execution_policy() -> TestResult {
     with_runtime(default_test_configuration, |runtime| {
         let (selection, _resolved) =
             resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
         runtime.load_model(&selection).map_err(application_error)?;
         let (ticket, mut receipt) = receive_successful_load_receipt(runtime)?;
-        let handle = receipt.handle;
         receipt.descriptor.metadata.observed_tensor_scalar_types =
-            ScalarTypeSet::from_scalar(ScalarType::I8);
+            ScalarTypeSet::from_scalar(ScalarType::F32)
+                .union(ScalarTypeSet::from_scalar(ScalarType::I8))
+                .union(ScalarTypeSet::from_scalar(ScalarType::Other(7)));
 
         let event = runtime.process_model_loaded(ticket, Ok(receipt));
-        assert!(matches!(
-            event,
-            ApplicationEvent::ModelCompatibilityFailed { .. }
-        ));
-        assert!(runtime.state().loaded().is_none());
-        assert_eq!(runtime.state().activity(), ApplicationActivity::Unloading);
-        assert_eq!(
-            runtime
-                .incompatible_model_cleanup
-                .as_ref()
-                .map(|cleanup| cleanup.handle),
-            Some(handle)
-        );
-
-        let event = wait_for_event(
-            runtime,
-            |event| matches!(event, ApplicationEvent::ModelUnloaded { handle: unloaded, .. } if *unloaded == handle),
-        )?;
-        assert!(matches!(event, ApplicationEvent::ModelUnloaded { .. }));
+        assert!(matches!(event, ApplicationEvent::ModelLoaded { .. }));
+        assert!(runtime.state().loaded().is_some());
         assert!(runtime.incompatible_model_cleanup.is_none());
+
+        runtime.unload_model().map_err(application_error)?;
+        let event = wait_for_event(runtime, |event| {
+            matches!(event, ApplicationEvent::ModelUnloaded { .. })
+        })?;
+        assert!(matches!(event, ApplicationEvent::ModelUnloaded { .. }));
         assert_eq!(runtime.state().activity(), ApplicationActivity::Idle);
         Ok(())
     })

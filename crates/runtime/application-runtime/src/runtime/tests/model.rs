@@ -54,9 +54,17 @@ fn resolved_selection_defaults_persist_without_restoring_resolution() -> TestRes
 #[test]
 fn absent_configuration_declaration_remains_loadable_and_is_persisted() -> TestResult {
     let database_path = unique_database_path();
+    let config_path = database_path.with_extension("config.json");
+    write_fixture_configuration_without_declaration(&config_path)?;
     let result = with_runtime_at(&database_path, default_test_configuration, |runtime| {
-        let (selection, resolved) =
-            resolve_fixture_with_declaration(runtime, REPOSITORY, COMMIT, "tokenizer.json", None)?;
+        let (selection, resolved) = resolve_fixture_with_configuration(
+            runtime,
+            REPOSITORY,
+            COMMIT,
+            "tokenizer.json",
+            &config_path,
+            None,
+        )?;
         assert_eq!(resolved.configuration_declared_scalar_type(), None);
         assert!(runtime.state().can_load(&selection));
 
@@ -86,8 +94,9 @@ fn absent_configuration_declaration_remains_loadable_and_is_persisted() -> TestR
         Ok(())
     });
 
-    let cleanup_result = remove_database(&database_path);
-    result.and(cleanup_result)
+    let database_cleanup = remove_database(&database_path);
+    let config_cleanup = remove_test_file(&config_path);
+    result.and(database_cleanup).and(config_cleanup)
 }
 
 #[test]
@@ -257,7 +266,7 @@ fn model_load_failures_are_normalized_into_stable_application_categories() -> Te
                     BackendFailureKind::Unsupported,
                     22,
                 ))),
-                ApplicationFailureKind::ModelLoad,
+                ApplicationFailureKind::UnsupportedArtifact,
             ),
             (
                 4,

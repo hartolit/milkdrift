@@ -96,7 +96,7 @@ The runtime harness references the project-authored deterministic fixture under 
 
 | File | Size | Required SHA-256 |
 |---|---:|---|
-| `config.json` | 360 bytes | `052b5c325859dc723ed0825f711950cbff112a140239953273cebacdb36afdd0` |
+| `config.json` | 382 bytes | `e30225f7b8cbeb18c6fe2e9f623e87bd5d7cec3e28dd7e23a3f36ee107c69c4d` |
 | `model.safetensors` | 4,800 bytes | `cc4798af93488b4fb2ae0548c2b28ace600521732b52023a7786c3227d72d672` |
 
 The fixture is Candle / Llama / Safetensors / unquantized F32 with vocabulary and context capacity 16. It contains no trained or externally sourced weights and proves integration only.

@@ -35,6 +35,41 @@ These CPU and canonical gates ran locally on Linux 7.1.5-arch1-2 x86_64 with an 
 
 The complete local deterministic hardware matrix passed on NVIDIA GeForce RTX 5070 Ti ordinal 0, driver/KMD 610.43.03, CUDA UMD/toolkit 13.3, `nvcc` 13.3.73, compute capability 12.0, and build cap 120. The Phase 12 GitHub self-hosted workflow has not run, so no remote workflow provenance is claimed. No suitable immutable, license-reviewed external mixed-dtype Llama checkpoint was established; the mixed-layout claim remains limited to deterministic project-authored fixtures.
 
+## Pristine artifact-loading amendment evidence
+
+On 2026-08-10, the uncommitted artifact-loading amendment passed these default-feature targeted commands sequentially:
+
+```sh
+cargo fmt --all -- --check
+cargo check --locked \
+    -p candle-backend -p hf-hub-adapter -p inference-runtime \
+    -p application-runtime -p runtime-benchmarks --all-targets
+cargo test --locked -p candle-backend
+cargo test --locked -p hf-hub-adapter
+cargo test --locked -p inference-runtime --test native_backend_generation
+cargo test --locked -p application-runtime
+cargo test --locked -p runtime-benchmarks
+cargo clippy --locked \
+    -p candle-backend -p hf-hub-adapter -p inference-runtime \
+    -p application-runtime -p runtime-benchmarks --all-targets -- -D warnings
+RUSTDOCFLAGS='-D warnings' cargo doc --locked \
+    -p candle-backend -p hf-hub-adapter -p inference-runtime \
+    -p application-runtime --no-deps
+```
+
+Observed passing counts were 24 Candle unit tests, 1 fixture-generator consistency test, 25 Candle CPU integration tests, 23 Hub tests, 3 native hosted-E0 tests, 79 application-runtime tests, and 78 runtime-benchmark tests. The fixture generator remained intentionally ignored. These commands did not run the complete workspace/canonical gate, portable-domain cross-targets, dependency policy, link checking, network resolution, an external checkpoint, or performance measurements.
+
+The exact amended CUDA metadata/architecture/hygiene/check/test-compilation/Clippy graph also passed with `CUDA_COMPUTE_CAP=120` for `candle-backend`, `hf-hub-adapter`, `inference-runtime`, `application-runtime`, `desktop-slint`, and `runtime-benchmarks` as applicable. Local release-mode hardware execution then passed on NVIDIA GeForce RTX 5070 Ti ordinal 0, driver/KMD 610.43.03, CUDA UMD/toolkit 13.3, `nvcc` 13.3.73, compute capability 12.0, and build cap 120:
+
+- explicit CPU execution from a CUDA-enabled Candle binary;
+- exactly four guarded adapter tests: F32, homogeneous BF16, mixed F16/F32, and mixed BF16/F32;
+- the guarded mixed F16/F32 hosted-E0 generation/accounting/lifecycle test;
+- all 32 deterministic E0 fault-injection tests under the CUDA graph;
+- E1 explicit unavailable-CUDA no-fallback;
+- the guarded E1 CUDA fixture load/device/scalar/unload/shutdown lifecycle.
+
+This is local hardware evidence for the amended working tree, not a GitHub self-hosted run, generic NVIDIA support, or external-checkpoint evidence. Re-run after the coherent commit if clean-commit provenance is required.
+
 ## Canonical repository gate
 
 The ordinary composite gate is:
@@ -220,20 +255,18 @@ Architecture validates the typed locked workspace graph and exact role/dependenc
 
 ## Download-free focused CPU validation
 
-Ordinary tests and the canonical gate do not resolve or download external models. Run focused Phase 12 checks sequentially:
+Ordinary tests and the canonical gate do not resolve or download external models. Run focused artifact-loading checks sequentially:
 
 ```sh
-cargo test --locked -p candle-backend --test llama_cpu
+cargo test --locked -p candle-backend
+cargo test --locked -p hf-hub-adapter
 cargo test --locked -p inference-runtime --test native_backend_generation
 cargo test --locked -p inference-runtime --test fault_injection
-cargo test --locked -p application-runtime --lib \
-    controlled_mixed_dtype_receipt_allows_bf16_declaration_with_f32_execution
-cargo test --locked -p application-runtime --lib \
-    unavailable_selected_cuda_blocks_load_without_fallback
+cargo test --locked -p application-runtime
 cargo test --locked -p runtime-benchmarks
 ```
 
-The adapter suite is the deterministic owner for homogeneous `{F32}`, `{F16}`, and `{BF16}` plus mixed `{F16, F32}` and `{BF16, F32}` inspection, conversion, execution, exact final/loading-peak planning, supported auxiliary F32 headroom, declaration handling, and rejection of F16/BF16 mixtures, unsupported dtypes, malformed headers, duplicate tensors, invalid bounds/shapes, and overflow. Its host-budget test requires aggregate loading-peak rejection before materialization.
+The Candle package is the deterministic owner for required-versus-complete-observed scalar policy, all declaration states, every Safetensors 0.8 category, required unsupported-dtype rejection, ignored-extra non-materialization/transfer, exact required-only CPU/CUDA footprints, whole-shard identity authorities, verified and mutable mutation handling, bounded structural metadata/allocation failure, malformed/duplicate/gapped/overlapping/truncated/reordered shards, and partial-load ownership at every stage. Its host-budget test requires loading-peak rejection before materialization. The Hub package owns bounded immutable-commit discovery, strict declaration parsing, shard selection, exact LFS identity proof, and project-established fallback hashing.
 
 The native E0 suite includes `mixed_f16_f32_fixture_covers_e0_generation_accounting_and_lifecycle`. It compares the independent preparation with the E0 receipt, exercises hosted prefill/decode and generation, restores model-only reserved ownership after release, unloads to exact empty model/request/workspace/cleanup accounting, and completes bounded shutdown and join.
 
@@ -271,6 +304,7 @@ cargo xtask hygiene
 
 cargo check --locked \
     -p candle-backend \
+    -p hf-hub-adapter \
     -p inference-runtime \
     -p application-runtime \
     -p desktop-slint \
@@ -288,6 +322,7 @@ cargo test --locked \
 
 cargo clippy --locked \
     -p candle-backend \
+    -p hf-hub-adapter \
     -p inference-runtime \
     -p application-runtime \
     -p desktop-slint \
@@ -297,7 +332,7 @@ cargo clippy --locked \
     -- -D warnings
 ```
 
-Do not use workspace `--all-features`; the exact graph is `runtime-benchmarks/cuda -> application-runtime/cuda -> candle-backend/cuda`, `desktop-slint/cuda -> application-runtime/cuda`, plus the development-only `inference-runtime/cuda -> candle-backend/cuda` test edge. This exact compile chain passed locally on 2026-08-08 with `CUDA_COMPUTE_CAP=120`.
+Do not use workspace `--all-features`; the exact graph is `runtime-benchmarks/cuda -> application-runtime/cuda -> candle-backend/cuda`, `desktop-slint/cuda -> application-runtime/cuda`, plus the development-only `inference-runtime/cuda -> candle-backend/cuda` test edge. This exact compile chain passed locally on both the 2026-08-08 closure tree and the 2026-08-10 artifact-loading amendment with `CUDA_COMPUTE_CAP=120`.
 
 Hardware execution is ignored by default and additionally requires `MILKDRIFT_CUDA_TEST=1`. First run the non-ignored explicit-CPU proof in the CUDA build:
 
@@ -354,7 +389,7 @@ do
 done
 ```
 
-The workflow requires the ignored-test list to contain exactly these four names, then runs each name separately with `--include-ignored --exact`. A rename, accidental de-ignoring, or extra ignored test therefore cannot silently reduce or expand the trusted runner workload. The matrix checks actual device/scalar facts and exact final/loading-peak footprints for the mixed fixtures. The complete guarded four-test adapter matrix passed locally on 2026-08-08 on the exact RTX 5070 Ti row.
+The workflow requires the ignored-test list to contain exactly these four names, then runs each name separately with `--include-ignored --exact`. A rename, accidental de-ignoring, or extra ignored test therefore cannot silently reduce or expand the trusted runner workload. The matrix checks actual device/scalar facts and exact final/loading-peak footprints for the mixed fixtures. The complete guarded four-test adapter matrix passed locally on both 2026-08-08 and the amended 2026-08-10 tree on the exact RTX 5070 Ti row.
 
 The E0 hardware target proves verified preparation/receipt/snapshot identity, mixed F16/F32 execution, scheduled prefill and incremental decode, host-side sampling from transferred logits, sequence cleanup, model unload, and zero post-unload ownership accounting:
 
@@ -439,7 +474,7 @@ cargo test --release --locked \
     --test-threads=1
 ```
 
-Do not run the ignored hardware tests in ordinary CPU CI, do not use workspace `--all-features`, and do not interpret source presence, test listing, or compilation as hardware execution. On 2026-08-08, the complete local Phase 12 matrix passed on NVIDIA GeForce RTX 5070 Ti ordinal 0, driver/KMD 610.43.03, CUDA UMD/toolkit 13.3, `nvcc` 13.3.73, compute capability 12.0, and build cap 120. The explicit CPU-in-CUDA adapter test passed; all four ignored adapter tests passed; the mixed F16/F32 hosted-E0 lifecycle passed; all 32 fault tests passed under the CUDA feature graph; E1 explicit no-fallback passed; and the guarded E1 CUDA fixture lifecycle passed. These are local deterministic fixture results. The Phase 12 GitHub self-hosted workflow has not run and remains unclaimed.
+Do not run the ignored hardware tests in ordinary CPU CI, do not use workspace `--all-features`, and do not interpret source presence, test listing, or compilation as hardware execution. On 2026-08-08 and again for the artifact-loading amendment on 2026-08-10, the complete local matrix passed on NVIDIA GeForce RTX 5070 Ti ordinal 0, driver/KMD 610.43.03, CUDA UMD/toolkit 13.3, `nvcc` 13.3.73, compute capability 12.0, and build cap 120. The explicit CPU-in-CUDA adapter test passed; all four ignored adapter tests passed; the mixed F16/F32 hosted-E0 lifecycle passed; all 32 fault tests passed under the CUDA feature graph; E1 explicit no-fallback passed; and the guarded E1 CUDA fixture lifecycle passed. These are local deterministic fixture results. The Phase 12 GitHub self-hosted workflow has not run and remains unclaimed.
 
 ## Self-hosted CUDA hardware correctness gate
 

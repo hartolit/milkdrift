@@ -3,19 +3,22 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use candle_backend::CandleLlamaSource;
-use domain_contracts::ScalarType;
+use candle_backend::{CandleLlamaSource, CandleShardIdentity, CandleWeightShard};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::{BenchmarkError, BenchmarkResult};
 
 pub(crate) const CONFIG_SHA256: &str =
-    "052b5c325859dc723ed0825f711950cbff112a140239953273cebacdb36afdd0";
+    "e30225f7b8cbeb18c6fe2e9f623e87bd5d7cec3e28dd7e23a3f36ee107c69c4d";
 pub(crate) const WEIGHTS_SHA256: &str =
     "cc4798af93488b4fb2ae0548c2b28ace600521732b52023a7786c3227d72d672";
-pub(crate) const CONFIG_BYTES: u64 = 360;
+pub(crate) const CONFIG_BYTES: u64 = 382;
 pub(crate) const WEIGHTS_BYTES: u64 = 4_800;
+const WEIGHTS_SHA256_BYTES: [u8; 32] = [
+    0xcc, 0x47, 0x98, 0xaf, 0x93, 0x48, 0x8b, 0x4f, 0xb2, 0xae, 0x05, 0x48, 0xc2, 0xb2, 0x8a, 0xce,
+    0x60, 0x05, 0x21, 0x73, 0x2b, 0x52, 0x02, 0x3a, 0x77, 0x86, 0xc3, 0x22, 0x7d, 0x72, 0xd6, 0x72,
+];
 pub(crate) const VOCABULARY_SIZE: u32 = 16;
 pub(crate) const CONTEXT_CAPACITY: u32 = 16;
 pub(crate) const RELATIVE_DIRECTORY: &str =
@@ -45,6 +48,7 @@ pub(crate) struct VerifiedFixture {
 #[derive(Deserialize)]
 struct FixtureConfiguration {
     model_type: String,
+    dtype: String,
     vocab_size: u32,
     hidden_size: u32,
     intermediate_size: u32,
@@ -94,8 +98,13 @@ impl VerifiedFixture {
     pub(crate) fn source(&self) -> BenchmarkResult<CandleLlamaSource> {
         CandleLlamaSource::new(
             self.directory.join("config.json"),
-            vec![self.directory.join("model.safetensors")],
-            Some(ScalarType::F32),
+            vec![CandleWeightShard::new(
+                self.directory.join("model.safetensors"),
+                CandleShardIdentity::ProjectEstablished {
+                    byte_length: WEIGHTS_BYTES,
+                    sha256: WEIGHTS_SHA256_BYTES,
+                },
+            )],
         )
         .map_err(|error| BenchmarkError::new(format!("fixture source is invalid: {error}")))
     }
@@ -175,9 +184,20 @@ fn verify_configuration(path: &Path) -> BenchmarkResult {
                 path.display()
             ))
         })?;
-    let expected = ("llama", VOCABULARY_SIZE, 8, 16, 1, 2, 2, CONTEXT_CAPACITY);
+    let expected = (
+        "llama",
+        "float32",
+        VOCABULARY_SIZE,
+        8,
+        16,
+        1,
+        2,
+        2,
+        CONTEXT_CAPACITY,
+    );
     let observed = (
         configuration.model_type.as_str(),
+        configuration.dtype.as_str(),
         configuration.vocab_size,
         configuration.hidden_size,
         configuration.intermediate_size,
@@ -225,6 +245,7 @@ mod tests {
     fn configuration_shape_is_deserializable_without_unknown_contracts() -> Result<(), String> {
         let input = br#"{
             "model_type":"llama",
+            "dtype":"float32",
             "vocab_size":16,
             "hidden_size":8,
             "intermediate_size":16,
@@ -235,6 +256,7 @@ mod tests {
         }"#;
         let parsed = serde_json::from_slice::<FixtureConfiguration>(input)
             .map_err(|error| error.to_string())?;
+        assert_eq!(parsed.dtype, "float32");
         assert_eq!(parsed.vocab_size, 16);
         assert_eq!(parsed.max_position_embeddings, 16);
         Ok(())

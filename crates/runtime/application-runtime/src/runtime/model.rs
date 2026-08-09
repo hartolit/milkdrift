@@ -1,11 +1,13 @@
 //! Model resolution, load admission, receipt validation, and resolution persistence.
 
-use candle_backend::CandleLlamaSource;
+use candle_backend::{CandleLlamaSource, CandleShardIdentity, CandleWeightShard, SourceError};
 use domain_contracts::{
     BackendFailureKind, CapabilitySet, ExecutionDevice, LoadError, MemoryBudget, MemoryFootprint,
-    ModelArchitecture, ModelId, QuantizationFormat, ScalarType, ScalarTypeSet,
+    ModelArchitecture, ModelId, QuantizationFormat, ScalarTypeSet,
 };
-use hf_hub_adapter::{HubModelReference, ResolvedSafetensorsLlamaArtifacts};
+use hf_hub_adapter::{
+    ArtifactContentIdentityAuthority, HubModelReference, ResolvedSafetensorsLlamaArtifacts,
+};
 use hf_tokenizer::HfTokenizer;
 use host_runtime::{TrySendError, TrySendError::Disconnected};
 use inference_runtime::{CommandTicket, RuntimeCommand};
@@ -16,8 +18,8 @@ use crate::hub_worker::{HubCommand, HubEvent};
 use crate::local::{CANDLE_BACKEND_ID, application_device, execution_device};
 use crate::runtime::retained_cleanup::RetainedModelCleanup;
 use crate::support::{
-    application_configuration_declared_scalar_type, application_scalar_type, domain_scalar_type,
-    hub_failure, model_source_failure, stored_configuration_declared_scalar_type, stored_settings,
+    application_configuration_declared_scalar_type, application_scalar_type, hub_failure,
+    model_source_failure, stored_configuration_declared_scalar_type, stored_settings,
     unix_milliseconds,
 };
 use crate::{
@@ -86,8 +88,7 @@ impl ApplicationRuntime {
             .ok_or(ApplicationError::NoResolvedModel)?;
         let source = CandleLlamaSource::new(
             artifacts.config_path.clone(),
-            artifacts.weight_paths.clone(),
-            configuration_declared_scalar_type.map(domain_scalar_type),
+            candle_weight_shards(artifacts).map_err(model_source_failure)?,
         )
         .map_err(model_source_failure)?;
         let ticket = self.next_ticket()?;
@@ -339,7 +340,7 @@ impl ApplicationRuntime {
             && admission.execution_device == receipt.execution_device
             && admission.memory_budget == self.memory_budget
             && Self::load_footprint_matches(admission, receipt.reserved_footprint)
-            && observed_tensor_scalar_types_are_supported(
+            && observed_tensor_scalar_types_are_present(
                 descriptor.metadata.observed_tensor_scalar_types,
             )
             && descriptor
@@ -408,11 +409,35 @@ impl ApplicationRuntime {
     }
 }
 
-const fn observed_tensor_scalar_types_are_supported(observed: ScalarTypeSet) -> bool {
-    let supported = ScalarTypeSet::from_scalar(ScalarType::F32)
-        .union(ScalarTypeSet::from_scalar(ScalarType::F16))
-        .union(ScalarTypeSet::from_scalar(ScalarType::Bf16));
-    !observed.is_empty() && observed.is_subset_of(supported)
+fn candle_weight_shards(
+    artifacts: &ResolvedSafetensorsLlamaArtifacts,
+) -> Result<Vec<CandleWeightShard>, SourceError> {
+    let mut shards = Vec::new();
+    shards
+        .try_reserve_exact(artifacts.weight_shards.len())
+        .map_err(|_| SourceError::Allocation)?;
+    for shard in &artifacts.weight_shards {
+        let identity = match shard.content_identity.authority {
+            ArtifactContentIdentityAuthority::HuggingFaceLfs => {
+                CandleShardIdentity::VerifiedImmutable {
+                    byte_length: shard.content_identity.byte_length,
+                    sha256: shard.content_identity.sha256,
+                }
+            }
+            ArtifactContentIdentityAuthority::ProjectEstablished => {
+                CandleShardIdentity::ProjectEstablished {
+                    byte_length: shard.content_identity.byte_length,
+                    sha256: shard.content_identity.sha256,
+                }
+            }
+        };
+        shards.push(CandleWeightShard::new(shard.path.clone(), identity));
+    }
+    Ok(shards)
+}
+
+const fn observed_tensor_scalar_types_are_present(observed: ScalarTypeSet) -> bool {
+    !observed.is_empty()
 }
 
 fn model_load_failure(error: inference_runtime::RuntimeError) -> ApplicationFailure {
@@ -447,7 +472,9 @@ const fn load_error_failure_kind(error: LoadError) -> ApplicationFailureKind {
         | LoadError::CapacityExhausted(_) => ApplicationFailureKind::UnsupportedArtifact,
         LoadError::InsufficientMemory { .. } => ApplicationFailureKind::MemoryAdmission,
         LoadError::Backend(failure) => match failure.kind {
-            BackendFailureKind::InvalidModel => ApplicationFailureKind::UnsupportedArtifact,
+            BackendFailureKind::InvalidModel | BackendFailureKind::Unsupported => {
+                ApplicationFailureKind::UnsupportedArtifact
+            }
             BackendFailureKind::HostMemory | BackendFailureKind::DeviceMemory => {
                 ApplicationFailureKind::MemoryAdmission
             }

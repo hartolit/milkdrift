@@ -1,0 +1,370 @@
+//! Exact required-tensor loading and final footprint simulation.
+
+use candle_core::DType;
+use candle_transformers::models::llama::Config;
+use domain_contracts::{
+    BackendId, DeviceKind, LoadError, MemoryBudget, MemoryFootprint, MemoryKind,
+};
+
+use crate::failure::CODE_NUMERIC_OVERFLOW;
+
+use super::manifest::InspectedShard;
+use super::{invalid_model_failure, unsupported_scalar};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct CalculatedFootprints {
+    pub(super) final_footprint: MemoryFootprint,
+    pub(super) loading_peak_footprint: MemoryFootprint,
+}
+
+pub(super) fn calculate(
+    backend: BackendId,
+    config: &Config,
+    shards: &[InspectedShard],
+    device_kind: DeviceKind,
+    execution_dtype: DType,
+) -> Result<CalculatedFootprints, LoadError> {
+    let execution_width =
+        dtype_bytes(execution_dtype).ok_or_else(|| unsupported_scalar(backend))?;
+    let cache_bytes_per_token = cache_bytes_per_token(backend, config, execution_width)?;
+    let mut required_execution_bytes = 0_u64;
+    let mut host_peak = 0_u64;
+
+    for tensor in shards
+        .iter()
+        .flat_map(|shard| shard.tensors.iter())
+        .filter(|tensor| tensor.required)
+    {
+        let execution_bytes = tensor
+            .element_count
+            .checked_mul(execution_width)
+            .ok_or_else(|| numeric_error(backend))?;
+        let alignment = tensor
+            .source_dtype
+            .alignment()
+            .ok_or_else(|| unsupported_scalar(backend))?;
+        let aligned_staging = tensor
+            .source_bytes
+            .checked_add(alignment.saturating_sub(1))
+            .ok_or_else(|| numeric_error(backend))?;
+        let source_dtype = tensor
+            .source_dtype
+            .executable_dtype()
+            .ok_or_else(|| unsupported_scalar(backend))?;
+
+        match device_kind {
+            DeviceKind::Cpu => {
+                let raw_peak = required_execution_bytes
+                    .checked_add(aligned_staging)
+                    .and_then(|bytes| bytes.checked_add(tensor.source_bytes))
+                    .ok_or_else(|| numeric_error(backend))?;
+                host_peak = host_peak.max(raw_peak);
+                if source_dtype != execution_dtype {
+                    let cast_peak = required_execution_bytes
+                        .checked_add(tensor.source_bytes)
+                        .and_then(|bytes| bytes.checked_add(execution_bytes))
+                        .ok_or_else(|| numeric_error(backend))?;
+                    host_peak = host_peak.max(cast_peak);
+                }
+            }
+            DeviceKind::Cuda => {
+                let raw_peak = aligned_staging
+                    .checked_add(tensor.source_bytes)
+                    .ok_or_else(|| numeric_error(backend))?;
+                host_peak = host_peak.max(raw_peak).max(execution_bytes);
+                if source_dtype != execution_dtype {
+                    let cast_peak = tensor
+                        .source_bytes
+                        .checked_add(execution_bytes)
+                        .ok_or_else(|| numeric_error(backend))?;
+                    host_peak = host_peak.max(cast_peak);
+                }
+            }
+            _ => return Err(LoadError::InvalidConfiguration),
+        }
+        required_execution_bytes = required_execution_bytes
+            .checked_add(execution_bytes)
+            .ok_or_else(|| numeric_error(backend))?;
+    }
+
+    match device_kind {
+        DeviceKind::Cpu => cpu_footprints(
+            backend,
+            required_execution_bytes,
+            host_peak,
+            cache_bytes_per_token,
+        ),
+        DeviceKind::Cuda => Ok(cuda_footprints(
+            required_execution_bytes,
+            host_peak,
+            cache_bytes_per_token,
+        )),
+        _ => Err(LoadError::InvalidConfiguration),
+    }
+}
+
+fn cpu_footprints(
+    backend: BackendId,
+    required_execution_bytes: u64,
+    host_peak: u64,
+    cache_bytes_per_token: u64,
+) -> Result<CalculatedFootprints, LoadError> {
+    let host_peak = host_peak.max(required_execution_bytes);
+    let host_working_bytes = host_peak
+        .checked_sub(required_execution_bytes)
+        .ok_or_else(|| numeric_error(backend))?;
+    Ok(CalculatedFootprints {
+        final_footprint: MemoryFootprint {
+            host_weight_bytes: required_execution_bytes,
+            device_weight_bytes: 0,
+            host_working_bytes: 0,
+            device_working_bytes: 0,
+            cache_bytes_per_token,
+        },
+        loading_peak_footprint: MemoryFootprint {
+            host_weight_bytes: required_execution_bytes,
+            device_weight_bytes: 0,
+            host_working_bytes,
+            device_working_bytes: 0,
+            cache_bytes_per_token,
+        },
+    })
+}
+
+const fn cuda_footprints(
+    required_execution_bytes: u64,
+    host_peak: u64,
+    cache_bytes_per_token: u64,
+) -> CalculatedFootprints {
+    CalculatedFootprints {
+        final_footprint: MemoryFootprint {
+            host_weight_bytes: 0,
+            device_weight_bytes: required_execution_bytes,
+            host_working_bytes: 0,
+            device_working_bytes: 0,
+            cache_bytes_per_token,
+        },
+        loading_peak_footprint: MemoryFootprint {
+            host_weight_bytes: 0,
+            device_weight_bytes: required_execution_bytes,
+            host_working_bytes: host_peak,
+            device_working_bytes: 0,
+            cache_bytes_per_token,
+        },
+    }
+}
+
+pub(super) fn validate_memory_plan(
+    backend: BackendId,
+    footprint: MemoryFootprint,
+    budget: MemoryBudget,
+    currently_available_device_bytes: Option<u64>,
+) -> Result<(), LoadError> {
+    let required_host = footprint
+        .checked_host_bytes()
+        .ok_or_else(|| numeric_error(backend))?;
+    if required_host > budget.host_bytes {
+        return Err(LoadError::InsufficientMemory {
+            kind: MemoryKind::Host,
+            required_bytes: required_host,
+            available_bytes: budget.host_bytes,
+        });
+    }
+    let required_device = footprint
+        .checked_device_bytes()
+        .ok_or_else(|| numeric_error(backend))?;
+    if required_device > budget.device_bytes {
+        return Err(LoadError::InsufficientMemory {
+            kind: MemoryKind::Device,
+            required_bytes: required_device,
+            available_bytes: budget.device_bytes,
+        });
+    }
+    if let Some(available) = currently_available_device_bytes
+        && required_device > available
+    {
+        return Err(LoadError::InsufficientMemory {
+            kind: MemoryKind::Device,
+            required_bytes: required_device,
+            available_bytes: available,
+        });
+    }
+    Ok(())
+}
+
+fn cache_bytes_per_token(
+    backend: BackendId,
+    config: &Config,
+    scalar_bytes: u64,
+) -> Result<u64, LoadError> {
+    let head_dimension = config.hidden_size / config.num_attention_heads;
+    let factors = [
+        u64::try_from(config.num_hidden_layers),
+        Ok(2_u64),
+        u64::try_from(config.num_key_value_heads),
+        u64::try_from(head_dimension),
+        Ok(scalar_bytes),
+    ];
+    factors.into_iter().try_fold(1_u64, |total, factor| {
+        let factor = factor.map_err(|_| numeric_error(backend))?;
+        total
+            .checked_mul(factor)
+            .ok_or_else(|| numeric_error(backend))
+    })
+}
+
+const fn dtype_bytes(dtype: DType) -> Option<u64> {
+    match dtype {
+        DType::F32 => Some(4),
+        DType::F16 | DType::BF16 => Some(2),
+        _ => None,
+    }
+}
+
+const fn numeric_error(backend: BackendId) -> LoadError {
+    invalid_model_failure(backend, CODE_NUMERIC_OVERFLOW)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs::File;
+
+    use candle_core::DType;
+    use candle_transformers::models::llama::Config;
+    use domain_contracts::{BackendId, DeviceKind, MemoryFootprint};
+
+    use super::{CalculatedFootprints, calculate};
+    use crate::loader::identity::{EstablishedIdentityAuthority, EstablishedShardIdentity};
+    use crate::loader::manifest::{
+        InspectedShard, InspectedTensor, SourceTensorDType, TensorShape,
+    };
+    use crate::source::CandleShardIdentity;
+
+    #[test]
+    fn exact_cpu_and_cuda_formulas_use_required_tensors_only() -> Result<(), String> {
+        let shard = calculation_shard(vec![
+            calculation_tensor("required.f16", SourceTensorDType::F16, 10, true)?,
+            calculation_tensor("required.f32", SourceTensorDType::F32, 4, true)?,
+            calculation_tensor("ignored.f64", SourceTensorDType::F64, 10_000, false)?,
+        ])?;
+        let config = test_config();
+        let backend = BackendId::new(1);
+
+        assert_eq!(
+            calculate(
+                backend,
+                &config,
+                std::slice::from_ref(&shard),
+                DeviceKind::Cpu,
+                DType::F16,
+            )
+            .map_err(|error| format!("CPU footprint: {error:?}"))?,
+            CalculatedFootprints {
+                final_footprint: MemoryFootprint {
+                    host_weight_bytes: 28,
+                    device_weight_bytes: 0,
+                    host_working_bytes: 0,
+                    device_working_bytes: 0,
+                    cache_bytes_per_token: 32,
+                },
+                loading_peak_footprint: MemoryFootprint {
+                    host_weight_bytes: 28,
+                    device_weight_bytes: 0,
+                    host_working_bytes: 27,
+                    device_working_bytes: 0,
+                    cache_bytes_per_token: 32,
+                },
+            }
+        );
+        assert_eq!(
+            calculate(
+                backend,
+                &config,
+                std::slice::from_ref(&shard),
+                DeviceKind::Cuda,
+                DType::F16,
+            )
+            .map_err(|error| format!("CUDA footprint: {error:?}"))?,
+            CalculatedFootprints {
+                final_footprint: MemoryFootprint {
+                    host_weight_bytes: 0,
+                    device_weight_bytes: 28,
+                    host_working_bytes: 0,
+                    device_working_bytes: 0,
+                    cache_bytes_per_token: 32,
+                },
+                loading_peak_footprint: MemoryFootprint {
+                    host_weight_bytes: 0,
+                    device_weight_bytes: 28,
+                    host_working_bytes: 41,
+                    device_working_bytes: 0,
+                    cache_bytes_per_token: 32,
+                },
+            }
+        );
+        Ok(())
+    }
+
+    fn calculation_shard(tensors: Vec<InspectedTensor>) -> Result<InspectedShard, String> {
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        let file = File::open(executable).map_err(|error| error.to_string())?;
+        Ok(InspectedShard {
+            file,
+            file_length: 0,
+            data_start: 0,
+            prefix_header_sha256: [0; 32],
+            source_identity: CandleShardIdentity::Unverified,
+            established_identity: Some(EstablishedShardIdentity {
+                byte_length: 0,
+                sha256: [0; 32],
+                authority: EstablishedIdentityAuthority::UnverifiedBaseline,
+            }),
+            tensors,
+        })
+    }
+
+    fn calculation_tensor(
+        name: &str,
+        source_dtype: SourceTensorDType,
+        element_count: u64,
+        required: bool,
+    ) -> Result<InspectedTensor, String> {
+        let dimension = usize::try_from(element_count).map_err(|error| error.to_string())?;
+        let bits = element_count
+            .checked_mul(source_dtype.bits_per_element())
+            .ok_or_else(|| "source bits overflow".to_owned())?;
+        let source_bytes = bits
+            .checked_div(8)
+            .ok_or_else(|| "source bytes overflow".to_owned())?;
+        let shape = TensorShape::from_slice(&[dimension])
+            .ok_or_else(|| "test shape overflow".to_owned())?;
+        Ok(InspectedTensor {
+            name: name.to_owned(),
+            source_dtype,
+            shape,
+            data_start: 0,
+            source_bytes,
+            element_count,
+            required,
+        })
+    }
+
+    fn test_config() -> Config {
+        Config {
+            hidden_size: 8,
+            intermediate_size: 16,
+            vocab_size: 16,
+            num_hidden_layers: 1,
+            num_attention_heads: 2,
+            num_key_value_heads: 2,
+            use_flash_attn: false,
+            rms_norm_eps: 1e-5,
+            rope_theta: 10_000.0,
+            bos_token_id: None,
+            eos_token_id: None,
+            rope_scaling: None,
+            max_position_embeddings: 16,
+            tie_word_embeddings: false,
+        }
+    }
+}

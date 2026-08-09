@@ -17,20 +17,25 @@ use domain_contracts::{
     PrefillInput, PrefillOutcome, PreparedLoad, ScalarType, ScalarTypeSet, SequenceConfiguration,
     SequenceId, TokenId, decode_checked, prefill_checked,
 };
+use serde_json::{Value as JsonValue, json};
 
 const BACKEND: BackendId = BackendId::new(501);
 const CPU: ExecutionDevice = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu);
 const CUDA_0: ExecutionDevice = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda);
 const VOCABULARY_SIZE: usize = 16;
-const MIXED_EXECUTION_WEIGHT_BYTES: u64 = 1_840;
-const MIXED_CACHE_BYTES_PER_TOKEN: u64 = 32;
-const MIXED_HOST_LOADING_PEAK_BYTES: u64 = 513;
+const F32_EXECUTION_WEIGHT_BYTES: u64 = 3_680;
+const F32_CACHE_BYTES_PER_TOKEN: u64 = 64;
+const F32_CPU_LOADING_WORKING_BYTES: u64 = 227;
+const F32_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 1_027;
+const HALF_EXECUTION_WEIGHT_BYTES: u64 = 1_840;
+const HALF_CACHE_BYTES_PER_TOKEN: u64 = 32;
+const HALF_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 513;
 
 type TestResult<T = ()> = Result<T, String>;
 
 #[test]
 fn cuda_enabled_binary_can_explicitly_execute_cpu() -> TestResult {
-    let source = fixture_source(Some(ScalarType::F32), fixture_weight_path())?;
+    let source = fixture_source()?;
     let result = execute_fixture(&source, CPU)?;
 
     assert_eq!(result.declared_scalar_type, Some(ScalarType::F32));
@@ -40,10 +45,7 @@ fn cuda_enabled_binary_can_explicitly_execute_cpu() -> TestResult {
     );
     assert_eq!(result.execution_scalar_type, ScalarType::F32);
     assert_eq!(result.execution_device, CPU);
-    assert!(result.accounted_footprint.host_weight_bytes > 0);
-    assert_eq!(result.accounted_footprint.host_working_bytes, 0);
-    assert_eq!(result.accounted_footprint.device_weight_bytes, 0);
-    assert!(result.loading_peak_footprint.host_working_bytes > 0);
+    assert_exact_f32_cpu_footprints(&result);
     assert!(result.sequence_footprint.host_working_bytes > 0);
     assert_eq!(result.sequence_footprint.device_working_bytes, 0);
     assert_eq!(
@@ -107,17 +109,13 @@ fn cuda_ordinal_zero_executes_fixture_and_matches_cpu_logits() -> TestResult {
             if failure.kind == BackendFailureKind::DeviceInitialization
     ));
 
-    let source = fixture_source(Some(ScalarType::F32), fixture_weight_path())?;
+    let source = fixture_source()?;
     let cpu = execute_fixture(&source, CPU)?;
     let cuda = execute_fixture(&source, CUDA_0)?;
 
     assert_eq!(cuda.execution_scalar_type, ScalarType::F32);
     assert_eq!(cuda.execution_device, CUDA_0);
-    assert_eq!(cuda.accounted_footprint.host_weight_bytes, 0);
-    assert_eq!(cuda.accounted_footprint.host_working_bytes, 0);
-    assert!(cuda.accounted_footprint.device_weight_bytes > 0);
-    assert_eq!(cuda.accounted_footprint.device_working_bytes, 0);
-    assert!(cuda.loading_peak_footprint.host_working_bytes > 0);
+    assert_exact_f32_cuda_footprints(&cuda);
     assert_eq!(cuda.sequence_footprint.host_working_bytes, 0);
     assert!(cuda.sequence_footprint.device_working_bytes > 0);
     assert_logits_close(&cpu.prefill_logits, &cuda.prefill_logits, 1.0e-3)?;
@@ -132,7 +130,7 @@ fn cuda_ordinal_zero_executes_fixture_and_matches_cpu_logits() -> TestResult {
 fn cuda_homogeneous_bf16_source_executes_as_bf16() -> TestResult {
     require_cuda_opt_in()?;
     let converted = ConvertedFixture::create(DType::BF16, false)?;
-    let source = fixture_source(Some(ScalarType::Bf16), converted.weight_path.clone())?;
+    let source = converted.source()?;
     let result = execute_fixture(&source, CUDA_0)?;
 
     assert_eq!(result.declared_scalar_type, Some(ScalarType::Bf16));
@@ -141,8 +139,7 @@ fn cuda_homogeneous_bf16_source_executes_as_bf16() -> TestResult {
         ScalarTypeSet::from_scalar(ScalarType::Bf16)
     );
     assert_eq!(result.execution_scalar_type, ScalarType::Bf16);
-    assert!(result.accounted_footprint.device_weight_bytes > 0);
-    assert_eq!(result.accounted_footprint.host_weight_bytes, 0);
+    assert_exact_half_cuda_footprints(&result);
     assert_eq!(
         maximum_logit_token(&result.prefill_logits)?,
         TokenId::new(2)
@@ -155,14 +152,14 @@ fn cuda_homogeneous_bf16_source_executes_as_bf16() -> TestResult {
 fn cuda_mixed_f16_f32_executes_as_f16() -> TestResult {
     require_cuda_opt_in()?;
     let converted = ConvertedFixture::create(DType::F16, true)?;
-    let source = fixture_source(Some(ScalarType::F16), converted.weight_path.clone())?;
+    let source = converted.source()?;
     let result = execute_fixture(&source, CUDA_0)?;
 
     assert_eq!(result.declared_scalar_type, Some(ScalarType::F16));
     assert_eq!(result.observed_scalar_types, mixed_set(ScalarType::F16));
     assert_eq!(result.execution_scalar_type, ScalarType::F16);
     assert_eq!(result.execution_device, CUDA_0);
-    assert_exact_mixed_cuda_footprints(&result);
+    assert_exact_half_cuda_footprints(&result);
     assert_eq!(maximum_logit_token(&result.decode_logits)?, TokenId::new(3));
     Ok(())
 }
@@ -172,37 +169,83 @@ fn cuda_mixed_f16_f32_executes_as_f16() -> TestResult {
 fn cuda_mixed_bf16_f32_executes_as_bf16() -> TestResult {
     require_cuda_opt_in()?;
     let converted = ConvertedFixture::create(DType::BF16, true)?;
-    let source = fixture_source(Some(ScalarType::Bf16), converted.weight_path.clone())?;
+    let source = converted.source()?;
     let result = execute_fixture(&source, CUDA_0)?;
 
     assert_eq!(result.declared_scalar_type, Some(ScalarType::Bf16));
     assert_eq!(result.observed_scalar_types, mixed_set(ScalarType::Bf16));
     assert_eq!(result.execution_scalar_type, ScalarType::Bf16);
     assert_eq!(result.execution_device, CUDA_0);
-    assert_exact_mixed_cuda_footprints(&result);
+    assert_exact_half_cuda_footprints(&result);
     assert_eq!(maximum_logit_token(&result.decode_logits)?, TokenId::new(3));
     Ok(())
 }
 
-fn assert_exact_mixed_cuda_footprints(result: &FixtureExecution) {
+fn assert_exact_f32_cpu_footprints(result: &FixtureExecution) {
+    assert_eq!(
+        result.accounted_footprint,
+        MemoryFootprint {
+            host_weight_bytes: F32_EXECUTION_WEIGHT_BYTES,
+            device_weight_bytes: 0,
+            host_working_bytes: 0,
+            device_working_bytes: 0,
+            cache_bytes_per_token: F32_CACHE_BYTES_PER_TOKEN,
+        }
+    );
+    assert_eq!(
+        result.loading_peak_footprint,
+        MemoryFootprint {
+            host_weight_bytes: F32_EXECUTION_WEIGHT_BYTES,
+            device_weight_bytes: 0,
+            host_working_bytes: F32_CPU_LOADING_WORKING_BYTES,
+            device_working_bytes: 0,
+            cache_bytes_per_token: F32_CACHE_BYTES_PER_TOKEN,
+        }
+    );
+}
+
+fn assert_exact_f32_cuda_footprints(result: &FixtureExecution) {
     assert_eq!(
         result.accounted_footprint,
         MemoryFootprint {
             host_weight_bytes: 0,
-            device_weight_bytes: MIXED_EXECUTION_WEIGHT_BYTES,
+            device_weight_bytes: F32_EXECUTION_WEIGHT_BYTES,
             host_working_bytes: 0,
             device_working_bytes: 0,
-            cache_bytes_per_token: MIXED_CACHE_BYTES_PER_TOKEN,
+            cache_bytes_per_token: F32_CACHE_BYTES_PER_TOKEN,
         }
     );
     assert_eq!(
         result.loading_peak_footprint,
         MemoryFootprint {
             host_weight_bytes: 0,
-            device_weight_bytes: MIXED_EXECUTION_WEIGHT_BYTES,
-            host_working_bytes: MIXED_HOST_LOADING_PEAK_BYTES,
+            device_weight_bytes: F32_EXECUTION_WEIGHT_BYTES,
+            host_working_bytes: F32_CUDA_HOST_LOADING_PEAK_BYTES,
             device_working_bytes: 0,
-            cache_bytes_per_token: MIXED_CACHE_BYTES_PER_TOKEN,
+            cache_bytes_per_token: F32_CACHE_BYTES_PER_TOKEN,
+        }
+    );
+}
+
+fn assert_exact_half_cuda_footprints(result: &FixtureExecution) {
+    assert_eq!(
+        result.accounted_footprint,
+        MemoryFootprint {
+            host_weight_bytes: 0,
+            device_weight_bytes: HALF_EXECUTION_WEIGHT_BYTES,
+            host_working_bytes: 0,
+            device_working_bytes: 0,
+            cache_bytes_per_token: HALF_CACHE_BYTES_PER_TOKEN,
+        }
+    );
+    assert_eq!(
+        result.loading_peak_footprint,
+        MemoryFootprint {
+            host_weight_bytes: 0,
+            device_weight_bytes: HALF_EXECUTION_WEIGHT_BYTES,
+            host_working_bytes: HALF_CUDA_HOST_LOADING_PEAK_BYTES,
+            device_working_bytes: 0,
+            cache_bytes_per_token: HALF_CACHE_BYTES_PER_TOKEN,
         }
     );
 }
@@ -330,11 +373,7 @@ fn load_fixture(
         .prepare_load(source, &configuration)
         .map_err(|error| format!("prepare fixture on {execution_device:?}: {error:?}"))?;
     let plan = *prepared.plan();
-    let declared_scalar_type = source.configuration_declared_scalar_type();
-    assert_eq!(
-        plan.descriptor.metadata.configuration_declared_scalar_type,
-        declared_scalar_type
-    );
+    let declared_scalar_type = plan.descriptor.metadata.configuration_declared_scalar_type;
     let observed_scalar_types = plan.descriptor.metadata.observed_tensor_scalar_types;
     let model = match loader.load_prepared(prepared) {
         Ok(model) => model,
@@ -359,14 +398,10 @@ fn load_fixture(
     })
 }
 
-fn fixture_source(
-    configuration_declared_scalar_type: Option<ScalarType>,
-    weight_path: PathBuf,
-) -> TestResult<CandleLlamaSource> {
-    CandleLlamaSource::new(
+fn fixture_source() -> TestResult<CandleLlamaSource> {
+    CandleLlamaSource::from_local_files(
         fixture_directory().join("config.json"),
-        vec![weight_path],
-        configuration_declared_scalar_type,
+        vec![fixture_weight_path()],
     )
     .map_err(|error| error.to_string())
 }
@@ -423,6 +458,7 @@ fn mixed_set(primary: ScalarType) -> ScalarTypeSet {
 
 struct ConvertedFixture {
     directory: PathBuf,
+    config_path: PathBuf,
     weight_path: PathBuf,
 }
 
@@ -437,7 +473,9 @@ impl ConvertedFixture {
             std::process::id()
         ));
         fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let config_path = directory.join("config.json");
         let weight_path = directory.join("model.safetensors");
+        write_converted_config(&config_path, primary_dtype)?;
         convert_weights(
             &fixture_weight_path(),
             &weight_path,
@@ -446,8 +484,17 @@ impl ConvertedFixture {
         )?;
         Ok(Self {
             directory,
+            config_path,
             weight_path,
         })
+    }
+
+    fn source(&self) -> TestResult<CandleLlamaSource> {
+        CandleLlamaSource::from_local_files(
+            self.config_path.clone(),
+            vec![self.weight_path.clone()],
+        )
+        .map_err(|error| error.to_string())
     }
 }
 
@@ -455,6 +502,33 @@ impl Drop for ConvertedFixture {
     fn drop(&mut self) {
         let _ignored = fs::remove_dir_all(&self.directory);
     }
+}
+
+fn write_converted_config(destination: &Path, primary_dtype: DType) -> TestResult {
+    let bytes = fs::read(fixture_directory().join("config.json"))
+        .map_err(|error| format!("read conversion config: {error}"))?;
+    let mut config: JsonValue = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("decode conversion config: {error}"))?;
+    let object = config
+        .as_object_mut()
+        .ok_or_else(|| "conversion config must be a JSON object".to_owned())?;
+    let declaration = match primary_dtype {
+        DType::F32 => "float32",
+        DType::F16 => "float16",
+        DType::BF16 => "bfloat16",
+        _ => {
+            return Err(format!(
+                "unsupported converted config dtype: {primary_dtype:?}"
+            ));
+        }
+    };
+    object.insert("model_type".to_owned(), json!("llama"));
+    object.insert("dtype".to_owned(), json!(declaration));
+    object.remove("torch_dtype");
+    let mut encoded = serde_json::to_vec_pretty(&config)
+        .map_err(|error| format!("encode conversion config: {error}"))?;
+    encoded.push(b'\n');
+    fs::write(destination, encoded).map_err(|error| format!("write conversion config: {error}"))
 }
 
 fn convert_weights(

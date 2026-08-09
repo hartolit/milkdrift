@@ -5,66 +5,109 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use candle_backend::{
     CandleLlamaLoader, CandleLlamaModel, CandleLlamaPreparedLoad, CandleLlamaSource,
+    CandleShardIdentity, CandleWeightShard,
 };
 use candle_core::{DType, Device, Tensor};
 use domain_contracts::{
     BackendFailureKind, BackendId, BackendSequence, CancellationStatus, CapacityResource,
     DecodeBuffers, DecodeInput, DecodeOutcome, DeviceId, DeviceKind, ExecutionDevice,
-    LoadConfiguration, LoadError, LoadPlan, LoadedModel, MemoryBudget, ModelGeneration,
-    ModelHandle, ModelId, ModelLoader, PrefillBuffers, PrefillInput, PrefillOutcome, PreparedLoad,
-    ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceId, SequenceState, TokenId,
-    decode_checked, prefill_checked,
+    LoadConfiguration, LoadError, LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint,
+    ModelGeneration, ModelHandle, ModelId, ModelLoader, PrefillBuffers, PrefillInput,
+    PrefillOutcome, PreparedLoad, ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceId,
+    SequenceState, TokenId, decode_checked, prefill_checked,
 };
-use safetensors::tensor::{Dtype as SafeDtype, SafeTensors};
+use serde_json::{Map as JsonMap, Value as JsonValue, json};
+use sha2::{Digest, Sha256};
 
 const BACKEND: BackendId = BackendId::new(1);
 const REQUIRED_ELEMENTS: u64 = 920;
 const VOCABULARY_SIZE: usize = 16;
+const PER_SHARD_HEADER_LIMIT: u64 = 8 * 1024 * 1024;
+
+const CPU_F32_FINAL: MemoryFootprint = MemoryFootprint {
+    host_weight_bytes: 3_680,
+    device_weight_bytes: 0,
+    host_working_bytes: 0,
+    device_working_bytes: 0,
+    cache_bytes_per_token: 64,
+};
+const CPU_F32_LOADING_PEAK: MemoryFootprint = MemoryFootprint {
+    host_weight_bytes: 3_680,
+    device_weight_bytes: 0,
+    host_working_bytes: 227,
+    device_working_bytes: 0,
+    cache_bytes_per_token: 64,
+};
+const CPU_F16_FINAL: MemoryFootprint = MemoryFootprint {
+    host_weight_bytes: 1_840,
+    device_weight_bytes: 0,
+    host_working_bytes: 0,
+    device_working_bytes: 0,
+    cache_bytes_per_token: 32,
+};
+const CPU_F16_LOADING_PEAK: MemoryFootprint = MemoryFootprint {
+    host_weight_bytes: 1_840,
+    device_weight_bytes: 0,
+    host_working_bytes: 113,
+    device_working_bytes: 0,
+    cache_bytes_per_token: 32,
+};
+const CPU_MIXED_F16_F32_LOADING_PEAK: MemoryFootprint = MemoryFootprint {
+    host_weight_bytes: 1_840,
+    device_weight_bytes: 0,
+    host_working_bytes: 129,
+    device_working_bytes: 0,
+    cache_bytes_per_token: 32,
+};
+const CPU_BF16_TO_F32_LOADING_PEAK: MemoryFootprint = MemoryFootprint {
+    host_weight_bytes: 3_680,
+    device_weight_bytes: 0,
+    host_working_bytes: 96,
+    device_working_bytes: 0,
+    cache_bytes_per_token: 64,
+};
+const CPU_MIXED_BF16_F32_LOADING_PEAK: MemoryFootprint = MemoryFootprint {
+    host_weight_bytes: 3_680,
+    device_weight_bytes: 0,
+    host_working_bytes: 128,
+    device_working_bytes: 0,
+    cache_bytes_per_token: 64,
+};
+
+static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 type TestResult<T = ()> = Result<T, String>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum WeightProfile {
-    HomogeneousF32,
-    HomogeneousF16,
-    HomogeneousBf16,
+enum RequiredProfile {
+    F32,
+    F16,
+    Bf16,
     MixedF16F32,
     MixedBf16F32,
     MixedF16Bf16,
-    MixedF16F32WithExtra,
     UnsupportedU8,
 }
 
-impl WeightProfile {
-    const fn primary_scalar(self) -> ScalarType {
-        match self {
-            Self::HomogeneousF32 | Self::UnsupportedU8 => ScalarType::F32,
-            Self::HomogeneousF16
-            | Self::MixedF16F32
-            | Self::MixedF16Bf16
-            | Self::MixedF16F32WithExtra => ScalarType::F16,
-            Self::HomogeneousBf16 | Self::MixedBf16F32 => ScalarType::Bf16,
-        }
-    }
-
+impl RequiredProfile {
     fn dtype_for(self, name: &str) -> DType {
         match self {
-            Self::HomogeneousF32 => DType::F32,
-            Self::HomogeneousF16 => DType::F16,
-            Self::HomogeneousBf16 => DType::BF16,
-            Self::MixedF16F32 | Self::MixedF16F32WithExtra => {
-                if is_f32_auxiliary(name) {
+            Self::F32 => DType::F32,
+            Self::F16 => DType::F16,
+            Self::Bf16 => DType::BF16,
+            Self::MixedF16F32 => {
+                if name == "model.norm.weight" {
                     DType::F32
                 } else {
                     DType::F16
                 }
             }
             Self::MixedBf16F32 => {
-                if is_f32_auxiliary(name) {
+                if name == "model.norm.weight" {
                     DType::F32
                 } else {
                     DType::BF16
@@ -86,259 +129,327 @@ impl WeightProfile {
             }
         }
     }
+}
 
-    const fn has_extra(self) -> bool {
-        matches!(self, Self::MixedF16F32WithExtra)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConfigDeclaration {
+    Absent,
+    F32,
+    F16,
+    Bf16,
+    Unsupported,
+    Conflict,
+}
+
+impl ConfigDeclaration {
+    fn recognized(self) -> TestResult<Option<ScalarType>> {
+        match self {
+            Self::Absent => Ok(None),
+            Self::F32 => Ok(Some(ScalarType::F32)),
+            Self::F16 => Ok(Some(ScalarType::F16)),
+            Self::Bf16 => Ok(Some(ScalarType::Bf16)),
+            Self::Unsupported | Self::Conflict => {
+                Err("test requested a recognized value for an invalid declaration".to_owned())
+            }
+        }
     }
 }
 
-fn is_f32_auxiliary(name: &str) -> bool {
-    matches!(name, "model.norm.weight") || matches!(name, "extra.phase12.weight")
+#[derive(Clone, Copy, Debug)]
+struct ExtraTensor {
+    name: &'static str,
+    dtype: &'static str,
+    elements: usize,
+    bytes_per_element: usize,
+}
+
+impl ExtraTensor {
+    const fn new(
+        name: &'static str,
+        dtype: &'static str,
+        elements: usize,
+        bytes_per_element: usize,
+    ) -> Self {
+        Self {
+            name,
+            dtype,
+            elements,
+            bytes_per_element,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum PreparedMutation {
+    Payload,
+    SameLengthHeader,
+    Truncate,
+    Extend,
 }
 
 #[test]
 fn homogeneous_f32_f16_and_bf16_preserve_execution_behavior() -> TestResult {
-    for (profile, expected_execution) in [
-        (WeightProfile::HomogeneousF32, ScalarType::F32),
-        (WeightProfile::HomogeneousF16, ScalarType::F16),
-        (WeightProfile::HomogeneousBf16, ScalarType::F32),
+    for (profile, declaration, observed, expected_execution, expected_final, expected_loading) in [
+        (
+            RequiredProfile::F32,
+            ConfigDeclaration::F32,
+            scalar_set(&[ScalarType::F32]),
+            ScalarType::F32,
+            CPU_F32_FINAL,
+            CPU_F32_LOADING_PEAK,
+        ),
+        (
+            RequiredProfile::F16,
+            ConfigDeclaration::F16,
+            scalar_set(&[ScalarType::F16]),
+            ScalarType::F16,
+            CPU_F16_FINAL,
+            CPU_F16_LOADING_PEAK,
+        ),
+        (
+            RequiredProfile::Bf16,
+            ConfigDeclaration::Bf16,
+            scalar_set(&[ScalarType::Bf16]),
+            ScalarType::F32,
+            CPU_F32_FINAL,
+            CPU_BF16_TO_F32_LOADING_PEAK,
+        ),
     ] {
-        execute_profile(profile, Some(profile.primary_scalar()), expected_execution)?;
-    }
-    Ok(())
-}
-
-#[test]
-fn mixed_f16_f32_loads_executes_and_reports_observed_facts() -> TestResult {
-    execute_profile(
-        WeightProfile::MixedF16F32,
-        Some(ScalarType::F16),
-        ScalarType::F16,
-    )
-}
-
-#[test]
-fn mixed_bf16_f32_loads_executes_as_f32_on_cpu() -> TestResult {
-    execute_profile(
-        WeightProfile::MixedBf16F32,
-        Some(ScalarType::Bf16),
-        ScalarType::F32,
-    )
-}
-
-#[test]
-fn absent_declaration_uses_inferred_mixed_primary() -> TestResult {
-    let fixture = TinyLlamaFixture::create(WeightProfile::MixedF16F32)?;
-    let source = fixture.source(None)?;
-    let mut loader = CandleLlamaLoader::new(BACKEND);
-    let descriptor = loader.inspect(&source).map_err(debug_error)?;
-    assert_eq!(descriptor.metadata.configuration_declared_scalar_type, None);
-    assert_eq!(
-        descriptor.metadata.observed_tensor_scalar_types,
-        mixed_set(ScalarType::F16)
-    );
-
-    let (plan, mut model) = prepare_and_load(&mut loader, &source, load_configuration())?;
-    assert_eq!(plan.execution_scalar_type, ScalarType::F16);
-    assert_eq!(model.execution_scalar_type(), ScalarType::F16);
-    clean_model(&mut model)
-}
-
-#[test]
-fn declaration_matching_primary_accepts_differing_f32_auxiliary() -> TestResult {
-    let fixture = TinyLlamaFixture::create(WeightProfile::MixedF16F32)?;
-    let source = fixture.source(Some(ScalarType::F16))?;
-    let loader = CandleLlamaLoader::new(BACKEND);
-    let descriptor = loader.inspect(&source).map_err(debug_error)?;
-
-    assert_eq!(
-        descriptor.metadata.configuration_declared_scalar_type,
-        Some(ScalarType::F16)
-    );
-    assert_eq!(
-        descriptor.metadata.observed_tensor_scalar_types,
-        mixed_set(ScalarType::F16)
-    );
-    Ok(())
-}
-
-#[test]
-fn contradictory_and_unsupported_declarations_are_unsupported_not_corrupt() -> TestResult {
-    let mixed = TinyLlamaFixture::create(WeightProfile::MixedF16F32)?;
-    let contradictory = mixed.source(Some(ScalarType::F32))?;
-    let loader = CandleLlamaLoader::new(BACKEND);
-    assert_eq!(
-        loader.inspect(&contradictory),
-        Err(LoadError::UnsupportedFormat)
-    );
-
-    let f32_fixture = TinyLlamaFixture::create(WeightProfile::HomogeneousF32)?;
-    let unsupported = f32_fixture.source(Some(ScalarType::I8))?;
-    assert_eq!(
-        loader.inspect(&unsupported),
-        Err(LoadError::UnsupportedFormat)
-    );
-    Ok(())
-}
-
-#[test]
-fn f16_bf16_tensor_mixture_is_rejected_before_device_initialization() -> TestResult {
-    let fixture = TinyLlamaFixture::create(WeightProfile::MixedF16Bf16)?;
-    let source = fixture.source(None)?;
-    let mut loader = CandleLlamaLoader::new(BACKEND);
-    let mut configuration = load_configuration();
-    configuration.execution_device = ExecutionDevice::new(DeviceId::new(1), DeviceKind::Cpu);
-
-    assert_eq!(loader.inspect(&source), Err(LoadError::UnsupportedFormat));
-    assert!(matches!(
-        loader.prepare_load(&source, &configuration),
-        Err(LoadError::UnsupportedFormat)
-    ));
-    Ok(())
-}
-
-#[test]
-fn unsupported_tensor_dtype_fails_before_device_initialization() -> TestResult {
-    let fixture = TinyLlamaFixture::create(WeightProfile::UnsupportedU8)?;
-    let source = fixture.source(Some(ScalarType::F32))?;
-    let mut loader = CandleLlamaLoader::new(BACKEND);
-    let mut configuration = load_configuration();
-    // This identity would fail device preparation if header rejection did not
-    // take precedence.
-    configuration.execution_device = ExecutionDevice::new(DeviceId::new(1), DeviceKind::Cpu);
-
-    assert!(matches!(
-        loader.prepare_load(&source, &configuration),
-        Err(LoadError::UnsupportedFormat)
-    ));
-    Ok(())
-}
-
-#[test]
-fn exact_mixed_cpu_final_and_loading_peak_accounting_matches_algorithm() -> TestResult {
-    for profile in [
-        WeightProfile::MixedF16F32,
-        WeightProfile::MixedBf16F32,
-        WeightProfile::MixedF16F32WithExtra,
-    ] {
-        let fixture = TinyLlamaFixture::create(profile)?;
-        let source = fixture.source(Some(profile.primary_scalar()))?;
-        let mut loader = CandleLlamaLoader::new(BACKEND);
-        let descriptor = loader.inspect(&source).map_err(debug_error)?;
-        let prepared = loader
-            .prepare_load(&source, &load_configuration())
-            .map_err(debug_error)?;
-        let plan = *prepared.plan();
-        let expected_execution_dtype = match profile.primary_scalar() {
-            ScalarType::F32 | ScalarType::Bf16 => DType::F32,
-            ScalarType::F16 => DType::F16,
-            _ => return Err("unexpected test primary scalar".to_owned()),
-        };
-        let expected = expected_cpu_accounting(
-            std::slice::from_ref(&fixture.weight_path),
-            expected_execution_dtype,
+        execute_profile(
+            profile,
+            &[],
+            declaration,
+            observed,
+            expected_execution,
+            expected_final,
+            expected_loading,
         )?;
-
-        assert_eq!(expected.required_elements, REQUIRED_ELEMENTS);
-        assert_eq!(
-            expected.required_execution_bytes,
-            REQUIRED_ELEMENTS * dtype_bytes(expected_execution_dtype)?
-        );
-        if profile == WeightProfile::MixedF16F32 {
-            assert_eq!(expected.source_bytes, 1_856);
-        }
-        assert_eq!(
-            descriptor.estimated_footprint.host_weight_bytes,
-            expected.required_execution_bytes
-        );
-        assert_eq!(descriptor.estimated_footprint.host_working_bytes, 0);
-        assert_eq!(plan.expected_footprint, descriptor.estimated_footprint);
-        assert_eq!(
-            plan.loading_peak_footprint.host_weight_bytes,
-            expected.required_execution_bytes
-        );
-        assert_eq!(
-            plan.loading_peak_footprint.host_working_bytes,
-            expected
-                .host_peak
-                .checked_sub(expected.required_execution_bytes)
-                .ok_or_else(|| "host headroom underflow".to_owned())?
-        );
-        assert_eq!(
-            plan.loading_peak_footprint.checked_host_bytes(),
-            Some(expected.host_peak)
-        );
-        assert_eq!(
-            plan.expected_footprint.cache_bytes_per_token,
-            16 * dtype_bytes(expected_execution_dtype)?
-        );
-        if profile.has_extra() {
-            assert!(expected.full_execution_bytes > expected.required_execution_bytes);
-            assert!(
-                plan.loading_peak_footprint.host_working_bytes
-                    >= expected.full_execution_bytes - expected.required_execution_bytes
-            );
-        } else {
-            assert_eq!(
-                expected.full_execution_bytes,
-                expected.required_execution_bytes
-            );
-        }
-        drop(prepared);
     }
     Ok(())
 }
 
 #[test]
-fn supported_extra_tensor_is_materialized_as_headroom_not_final_ownership() -> TestResult {
-    let fixture = TinyLlamaFixture::create(WeightProfile::MixedF16F32WithExtra)?;
-    let source = fixture.source(Some(ScalarType::F16))?;
-    let mut loader = CandleLlamaLoader::new(BACKEND);
-    let (plan, mut model) = prepare_and_load(&mut loader, &source, load_configuration())?;
+fn f32_required_ignores_f16_bf16_and_combined_extras_with_declared_and_absent_configs() -> TestResult
+{
+    let cases = [
+        (
+            vec![ExtraTensor::new("unused.f16", "F16", 3, 2)],
+            scalar_set(&[ScalarType::F32, ScalarType::F16]),
+        ),
+        (
+            vec![ExtraTensor::new("unused.bf16", "BF16", 5, 2)],
+            scalar_set(&[ScalarType::F32, ScalarType::Bf16]),
+        ),
+        (
+            vec![
+                ExtraTensor::new("unused.f16", "F16", 3, 2),
+                ExtraTensor::new("unused.bf16", "BF16", 5, 2),
+            ],
+            scalar_set(&[ScalarType::F32, ScalarType::F16, ScalarType::Bf16]),
+        ),
+    ];
 
+    for (extras, observed) in cases {
+        for declaration in [ConfigDeclaration::F32, ConfigDeclaration::Absent] {
+            execute_profile(
+                RequiredProfile::F32,
+                extras.as_slice(),
+                declaration,
+                observed,
+                ScalarType::F32,
+                CPU_F32_FINAL,
+                CPU_F32_LOADING_PEAK,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn mixed_required_f16_f32_ignores_bf16_u8_bool_and_other_extras() -> TestResult {
+    let extras = [
+        ExtraTensor::new("unused.bf16", "BF16", 2, 2),
+        ExtraTensor::new("unused.u8", "U8", 3, 1),
+        ExtraTensor::new("unused.bool", "BOOL", 4, 1),
+        ExtraTensor::new("unused.f64", "F64", 1, 8),
+    ];
+    execute_profile(
+        RequiredProfile::MixedF16F32,
+        &extras,
+        ConfigDeclaration::F16,
+        scalar_set(&[
+            ScalarType::F32,
+            ScalarType::F16,
+            ScalarType::Bf16,
+            ScalarType::U8,
+            ScalarType::Other(1),
+        ]),
+        ScalarType::F16,
+        CPU_F16_FINAL,
+        CPU_MIXED_F16_F32_LOADING_PEAK,
+    )
+}
+
+#[test]
+fn mixed_required_bf16_f32_ignores_f16_u8_bool_and_other_extras() -> TestResult {
+    let extras = [
+        ExtraTensor::new("unused.f16", "F16", 2, 2),
+        ExtraTensor::new("unused.u8", "U8", 3, 1),
+        ExtraTensor::new("unused.bool", "BOOL", 4, 1),
+        ExtraTensor::new("unused.f64", "F64", 1, 8),
+    ];
+    execute_profile(
+        RequiredProfile::MixedBf16F32,
+        &extras,
+        ConfigDeclaration::Bf16,
+        scalar_set(&[
+            ScalarType::F32,
+            ScalarType::F16,
+            ScalarType::Bf16,
+            ScalarType::U8,
+            ScalarType::Other(1),
+        ]),
+        ScalarType::F32,
+        CPU_F32_FINAL,
+        CPU_MIXED_BF16_F32_LOADING_PEAK,
+    )
+}
+
+#[test]
+fn complete_observed_set_includes_i8_u8_and_other_while_unused_extras_load() -> TestResult {
+    let extras = [
+        ExtraTensor::new("unused.i8", "I8", 2, 1),
+        ExtraTensor::new("unused.u8", "U8", 2, 1),
+        ExtraTensor::new("unused.bool", "BOOL", 2, 1),
+        ExtraTensor::new("unused.f64", "F64", 1, 8),
+    ];
+    execute_profile(
+        RequiredProfile::F32,
+        &extras,
+        ConfigDeclaration::F32,
+        scalar_set(&[
+            ScalarType::F32,
+            ScalarType::I8,
+            ScalarType::U8,
+            ScalarType::Other(17),
+        ]),
+        ScalarType::F32,
+        CPU_F32_FINAL,
+        CPU_F32_LOADING_PEAK,
+    )
+}
+
+#[test]
+fn huge_ignored_extra_does_not_change_exact_cpu_footprints_or_working_bytes() -> TestResult {
+    assert_eq!(CPU_F32_FINAL.host_weight_bytes, REQUIRED_ELEMENTS * 4);
+    assert_eq!(CPU_F16_FINAL.host_weight_bytes, REQUIRED_ELEMENTS * 2);
+    let base = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
+    let base_source = base.source(ConfigDeclaration::F32)?;
+    let mut loader = CandleLlamaLoader::new(BACKEND);
+    let base_prepared = loader
+        .prepare_load(&base_source, &load_configuration())
+        .map_err(debug_error)?;
+    let base_plan = *base_prepared.plan();
+    drop(base_prepared);
+
+    let extras = [
+        ExtraTensor::new("unused.huge.f16", "F16", 1_048_576, 2),
+        ExtraTensor::new("unused.non_executable.u8", "U8", 32, 1),
+    ];
+    let huge = TinyLlamaFixture::create(RequiredProfile::F32, &extras)?;
+    let huge_source = huge.source(ConfigDeclaration::F32)?;
+    let descriptor = loader.inspect(&huge_source).map_err(debug_error)?;
+    let (huge_plan, mut model) = prepare_and_load(&mut loader, &huge_source, load_configuration())?;
+
+    assert_eq!(base_plan.expected_footprint, CPU_F32_FINAL);
+    assert_eq!(base_plan.loading_peak_footprint, CPU_F32_LOADING_PEAK);
+    assert_eq!(huge_plan.expected_footprint, base_plan.expected_footprint);
     assert_eq!(
-        plan.expected_footprint.host_weight_bytes,
-        REQUIRED_ELEMENTS * 2
+        huge_plan.loading_peak_footprint,
+        base_plan.loading_peak_footprint
     );
-    assert!(plan.loading_peak_footprint.host_working_bytes >= 2);
-    assert_eq!(model.accounted_footprint(), plan.expected_footprint);
+    assert_eq!(descriptor.estimated_footprint, CPU_F32_FINAL);
+    assert_eq!(huge_plan.loading_peak_footprint.device_working_bytes, 0);
+    assert_eq!(model.accounted_footprint(), CPU_F32_FINAL);
     clean_model(&mut model)
 }
 
 #[test]
-fn host_budget_rejects_loading_peak_before_materialization() -> TestResult {
-    let fixture = TinyLlamaFixture::create(WeightProfile::MixedBf16F32)?;
-    let source = fixture.source(Some(ScalarType::Bf16))?;
+fn configuration_declaration_must_match_required_primary() -> TestResult {
+    let fixture = TinyLlamaFixture::create(RequiredProfile::MixedF16F32, &[])?;
+    let source = fixture.source(ConfigDeclaration::F32)?;
+    let loader = CandleLlamaLoader::new(BACKEND);
+    assert_unsupported(loader.inspect(&source));
+
+    let f32_fixture = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
+    for declaration in [ConfigDeclaration::F16, ConfigDeclaration::Bf16] {
+        let source = f32_fixture.source(declaration)?;
+        assert_unsupported(loader.inspect(&source));
+    }
+    Ok(())
+}
+
+#[test]
+fn unsupported_and_conflicting_config_declarations_are_rejected() -> TestResult {
+    let fixture = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
+    let loader = CandleLlamaLoader::new(BACKEND);
+    for declaration in [ConfigDeclaration::Unsupported, ConfigDeclaration::Conflict] {
+        let source = fixture.source(declaration)?;
+        assert_unsupported(loader.inspect(&source));
+    }
+    Ok(())
+}
+
+#[test]
+fn genuine_required_f16_bf16_mixture_rejects_before_device_initialization() -> TestResult {
+    let fixture = TinyLlamaFixture::create(RequiredProfile::MixedF16Bf16, &[])?;
+    let source = fixture.source(ConfigDeclaration::Absent)?;
     let mut loader = CandleLlamaLoader::new(BACKEND);
-    let prepared = loader
-        .prepare_load(&source, &load_configuration())
-        .map_err(debug_error)?;
-    let required = prepared
-        .plan()
-        .loading_peak_footprint
-        .checked_host_bytes()
-        .ok_or_else(|| "loading host total overflow".to_owned())?;
-    drop(prepared);
+    let mut configuration = load_configuration();
+    configuration.execution_device = ExecutionDevice::new(DeviceId::new(1), DeviceKind::Cpu);
+
+    assert_unsupported(loader.inspect(&source));
+    assert_unsupported(loader.prepare_load(&source, &configuration));
+    Ok(())
+}
+
+#[test]
+fn required_unsupported_dtype_rejects_before_device_initialization() -> TestResult {
+    let fixture = TinyLlamaFixture::create(RequiredProfile::UnsupportedU8, &[])?;
+    let source = fixture.source(ConfigDeclaration::F32)?;
+    let mut loader = CandleLlamaLoader::new(BACKEND);
+    let mut configuration = load_configuration();
+    configuration.execution_device = ExecutionDevice::new(DeviceId::new(1), DeviceKind::Cpu);
+
+    assert_unsupported(loader.inspect(&source));
+    assert_unsupported(loader.prepare_load(&source, &configuration));
+    Ok(())
+}
+
+#[test]
+fn host_budget_rejects_exact_required_only_loading_peak() -> TestResult {
+    let fixture = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
+    let source = fixture.source(ConfigDeclaration::F32)?;
+    let mut loader = CandleLlamaLoader::new(BACKEND);
+    assert_eq!(CPU_F32_LOADING_PEAK.checked_host_bytes(), Some(3_907));
 
     let mut constrained = load_configuration();
-    constrained.memory_budget.host_bytes = required
-        .checked_sub(1)
-        .ok_or_else(|| "test loading peak must be nonzero".to_owned())?;
+    constrained.memory_budget.host_bytes = 3_906;
     assert!(matches!(
         loader.prepare_load(&source, &constrained),
         Err(LoadError::InsufficientMemory {
             kind: domain_contracts::MemoryKind::Host,
-            required_bytes,
-            available_bytes,
-        }) if required_bytes == required && available_bytes == required - 1
+            required_bytes: 3_907,
+            available_bytes: 3_906,
+        })
     ));
     Ok(())
 }
 
 #[test]
-fn prepared_load_consumes_retained_file_without_reopening_path() -> TestResult {
-    let fixture = TinyLlamaFixture::create(WeightProfile::HomogeneousF32)?;
-    let source = fixture.source(Some(ScalarType::F32))?;
+fn prepared_load_consumes_retained_file_after_path_deletion() -> TestResult {
+    let fixture = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
+    let source = fixture.source(ConfigDeclaration::F32)?;
     let mut loader = CandleLlamaLoader::new(BACKEND);
     let prepared = loader
         .prepare_load(&source, &load_configuration())
@@ -356,94 +467,125 @@ fn prepared_load_consumes_retained_file_without_reopening_path() -> TestResult {
 }
 
 #[test]
-fn prepared_load_rejects_same_inode_payload_mutation_and_cleans_partial_tensors() -> TestResult {
-    let fixture = TinyLlamaFixture::create(WeightProfile::HomogeneousF32)?;
-    let source = fixture.source(Some(ScalarType::F32))?;
-    let mut loader = CandleLlamaLoader::new(BACKEND);
-    let prepared = loader
-        .prepare_load(&source, &load_configuration())
-        .map_err(debug_error)?;
+fn unverified_fallback_detects_same_inode_payload_mutation() -> TestResult {
+    assert_unverified_prepared_mutation_rejected(PreparedMutation::Payload)
+}
 
-    let mut retained_file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&fixture.weight_path)
-        .map_err(|error| format!("open prepared payload for mutation: {error}"))?;
-    retained_file
-        .seek(SeekFrom::End(-1))
-        .map_err(|error| format!("seek prepared payload: {error}"))?;
-    let mut final_byte = [0_u8; 1];
-    retained_file
-        .read_exact(&mut final_byte)
-        .map_err(|error| format!("read prepared payload: {error}"))?;
-    final_byte[0] ^= 1;
-    retained_file
-        .seek(SeekFrom::End(-1))
-        .map_err(|error| format!("reseek prepared payload: {error}"))?;
-    retained_file
-        .write_all(&final_byte)
-        .map_err(|error| format!("mutate prepared payload: {error}"))?;
-    retained_file
-        .sync_all()
-        .map_err(|error| format!("synchronize prepared payload mutation: {error}"))?;
+#[test]
+fn unverified_fallback_detects_same_length_header_mutation() -> TestResult {
+    assert_unverified_prepared_mutation_rejected(PreparedMutation::SameLengthHeader)
+}
 
-    let failed = match loader.load_prepared(prepared) {
-        Err(failed) => failed,
-        Ok(mut model) => {
-            clean_model(&mut model)?;
-            return Err("same-inode payload mutation unexpectedly loaded".to_owned());
-        }
-    };
-    let (error, mut cleanup_owner) = failed.into_parts();
-    assert!(matches!(
-        error,
-        LoadError::Backend(failure) if failure.kind == BackendFailureKind::InvalidModel
-    ));
-    cleanup_owner.cleanup().map_err(debug_error)?;
-    cleanup_owner.cleanup().map_err(debug_error)?;
+#[test]
+fn unverified_fallback_detects_truncation_and_extension() -> TestResult {
+    for mutation in [PreparedMutation::Truncate, PreparedMutation::Extend] {
+        assert_unverified_prepared_mutation_rejected(mutation)?;
+    }
     Ok(())
 }
 
 #[test]
-fn cross_shard_and_same_header_duplicates_are_rejected_deterministically() -> TestResult {
-    let fixture = TinyLlamaFixture::create(WeightProfile::HomogeneousF32)?;
-    let duplicate_source = CandleLlamaSource::new(
-        fixture.config_path.clone(),
-        vec![fixture.weight_path.clone(), fixture.weight_path.clone()],
-        Some(ScalarType::F32),
-    )
-    .map_err(|error| error.to_string())?;
-    let loader = CandleLlamaLoader::new(BACKEND);
+fn supplied_verified_immutable_identity_succeeds_and_digest_mismatch_rejects() -> TestResult {
+    let verified = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
+    let (byte_length, sha256) = file_identity(&verified.weight_path)?;
+    let source = verified.source_with_shards(
+        ConfigDeclaration::F32,
+        vec![CandleWeightShard::new(
+            verified.weight_path.clone(),
+            CandleShardIdentity::VerifiedImmutable {
+                byte_length,
+                sha256,
+            },
+        )],
+    )?;
+    let mut loader = CandleLlamaLoader::new(BACKEND);
+    let (_plan, mut model) = prepare_and_load(&mut loader, &source, load_configuration())?;
+    clean_model(&mut model)?;
+
+    let mismatched = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
+    let (byte_length, mut sha256) = file_identity(&mismatched.weight_path)?;
+    sha256[0] ^= 1;
+    let source = mismatched.source_with_shards(
+        ConfigDeclaration::F32,
+        vec![CandleWeightShard::new(
+            mismatched.weight_path.clone(),
+            CandleShardIdentity::VerifiedImmutable {
+                byte_length,
+                sha256,
+            },
+        )],
+    )?;
+    let prepared = loader
+        .prepare_load(&source, &load_configuration())
+        .map_err(debug_error)?;
+    assert_failed_preparation_invalid_model(&mut loader, prepared)
+}
+
+#[test]
+fn project_established_mutation_rejects_before_invalid_device_initialization() -> TestResult {
+    let fixture = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
+    let (byte_length, sha256) = file_identity(&fixture.weight_path)?;
+    let source = fixture.source_with_shards(
+        ConfigDeclaration::F32,
+        vec![CandleWeightShard::new(
+            fixture.weight_path.clone(),
+            CandleShardIdentity::ProjectEstablished {
+                byte_length,
+                sha256,
+            },
+        )],
+    )?;
+    mutate_prepared_file(&fixture.weight_path, PreparedMutation::Payload)?;
+
+    let mut configuration = load_configuration();
+    configuration.execution_device = ExecutionDevice::new(DeviceId::new(1), DeviceKind::Cpu);
+    let mut loader = CandleLlamaLoader::new(BACKEND);
     assert!(matches!(
-        loader.inspect(&duplicate_source),
+        loader.prepare_load(&source, &configuration),
         Err(LoadError::Backend(failure))
             if failure.kind == BackendFailureKind::InvalidModel
     ));
+    Ok(())
+}
 
-    let same_header = TinyLlamaFixture::create(WeightProfile::HomogeneousF32)?;
+#[test]
+fn same_header_same_path_and_distinct_cross_shard_duplicates_are_rejected() -> TestResult {
+    let fixture = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
+    let duplicate_path_source = fixture.source_with_paths(
+        ConfigDeclaration::F32,
+        vec![fixture.weight_path.clone(), fixture.weight_path.clone()],
+    )?;
+    let loader = CandleLlamaLoader::new(BACKEND);
+    assert_invalid_model(loader.inspect(&duplicate_path_source));
+
+    let same_header = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
     write_raw_safetensors(
         &same_header.weight_path,
         r#"{"dup":{"dtype":"F32","shape":[0],"data_offsets":[0,0]},"dup":{"dtype":"F32","shape":[0],"data_offsets":[0,0]}}"#,
         &[],
     )?;
-    let source = same_header.source(Some(ScalarType::F32))?;
-    assert!(matches!(
-        loader.inspect(&source),
-        Err(LoadError::Backend(failure))
-            if failure.kind == BackendFailureKind::InvalidModel
-    ));
+    let same_header_source = same_header.source(ConfigDeclaration::F32)?;
+    assert_invalid_model(loader.inspect(&same_header_source));
+
+    let cross_shard = TinyLlamaFixture::create_sharded(RequiredProfile::F32, true)?;
+    let cross_shard_source = cross_shard.source_with_paths(
+        ConfigDeclaration::F32,
+        vec![
+            cross_shard.weight_path.clone(),
+            cross_shard.second_weight_path.clone(),
+        ],
+    )?;
+    assert_invalid_model(loader.inspect(&cross_shard_source));
     Ok(())
 }
 
 #[test]
 fn excessive_shard_count_is_rejected_before_files_are_opened() -> TestResult {
-    let fixture = TinyLlamaFixture::create(WeightProfile::HomogeneousF32)?;
-    let source = CandleLlamaSource::new(
-        fixture.config_path.clone(),
+    let fixture = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
+    let source = fixture.source_with_paths(
+        ConfigDeclaration::F32,
         vec![fixture.weight_path.clone(); 257],
-        Some(ScalarType::F32),
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     fs::remove_file(&fixture.weight_path).map_err(|error| error.to_string())?;
     let loader = CandleLlamaLoader::new(BACKEND);
 
@@ -458,74 +600,118 @@ fn excessive_shard_count_is_rejected_before_files_are_opened() -> TestResult {
 }
 
 #[test]
-fn malformed_truncated_and_oversized_headers_are_rejected() -> TestResult {
+fn malformed_truncated_and_eight_mib_plus_one_headers_are_rejected() -> TestResult {
     assert_raw_header_rejected(10_u64.to_le_bytes(), b"{}", &[])?;
-    assert_raw_header_rejected(100_000_001_u64.to_le_bytes(), &[], &[])?;
+    assert_raw_header_rejected((PER_SHARD_HEADER_LIMIT + 1).to_le_bytes(), &[], &[])?;
     assert_raw_header_rejected(8_u64.to_le_bytes(), b"not-json", &[])?;
+    assert_raw_bytes_rejected(b"short")?;
     Ok(())
 }
 
 #[test]
-fn invalid_offsets_bounds_shape_mismatch_and_overflow_are_rejected() -> TestResult {
+fn overlap_explicit_gap_bounds_shape_mismatch_and_overflow_are_rejected() -> TestResult {
     for (header, payload) in [
         (
-            r#"{"a":{"dtype":"F32","shape":[1],"data_offsets":[0,4]},"b":{"dtype":"F32","shape":[1],"data_offsets":[3,7]}}"#,
+            r#"{"a":{"dtype":"F32","shape":[1],"data_offsets":[0,4]},"b":{"dtype":"F32","shape":[1],"data_offsets":[3,7]}}"#.to_owned(),
             vec![0_u8; 7],
         ),
         (
-            r#"{"a":{"dtype":"F32","shape":[2],"data_offsets":[0,4]}}"#,
+            r#"{"a":{"dtype":"F32","shape":[1],"data_offsets":[0,4]},"b":{"dtype":"F32","shape":[1],"data_offsets":[5,9]}}"#.to_owned(),
+            vec![0_u8; 9],
+        ),
+        (
+            r#"{"a":{"dtype":"F32","shape":[2],"data_offsets":[0,4]}}"#.to_owned(),
             vec![0_u8; 4],
         ),
         (
-            r#"{"a":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#,
+            r#"{"a":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#.to_owned(),
             vec![0_u8; 3],
         ),
         (
-            r#"{"a":{"dtype":"F32","shape":[18446744073709551615,2],"data_offsets":[0,0]}}"#,
+            r#"{"a":{"dtype":"F32","shape":[18446744073709551615,2],"data_offsets":[0,0]}}"#.to_owned(),
             Vec::new(),
         ),
     ] {
-        let fixture = TinyLlamaFixture::create(WeightProfile::HomogeneousF32)?;
-        write_raw_safetensors(&fixture.weight_path, header, &payload)?;
-        let source = fixture.source(Some(ScalarType::F32))?;
-        let loader = CandleLlamaLoader::new(BACKEND);
-        assert!(matches!(
-            loader.inspect(&source),
-            Err(LoadError::Backend(failure))
-                if failure.kind == BackendFailureKind::InvalidModel
-        ));
+        assert_valid_prefix_header_rejected(header.as_str(), payload.as_slice())?;
     }
     Ok(())
 }
 
 #[test]
-fn reversed_shard_selection_is_sorted_and_loads_deterministically() -> TestResult {
-    let fixture = TinyLlamaFixture::create_sharded(WeightProfile::MixedF16F32)?;
-    let source = CandleLlamaSource::new(
-        fixture.config_path.clone(),
-        vec![
-            fixture.weight_path.clone(),
-            fixture.second_weight_path.clone(),
-        ],
-        Some(ScalarType::F16),
-    )
+fn tensor_name_rank_and_metadata_limits_are_rejected() -> TestResult {
+    let long_name = "n".repeat(513);
+    let name_header =
+        format!(r#"{{"{long_name}":{{"dtype":"F32","shape":[0],"data_offsets":[0,0]}}}}"#);
+    assert_valid_prefix_header_rejected(name_header.as_str(), &[])?;
+
+    let rank_header =
+        r#"{"rank":{"dtype":"F32","shape":[1,1,1,1,1,1,1,1,1],"data_offsets":[0,4]}}"#;
+    assert_valid_prefix_header_rejected(rank_header, &[0_u8; 4])?;
+
+    let metadata_header = serde_json::to_string(&json!({
+        "__metadata__": {"key": "v".repeat(4 * 1024 + 1)}
+    }))
     .map_err(|error| error.to_string())?;
-    assert!(
-        source
-            .weight_paths()
-            .windows(2)
-            .all(|paths| paths.first() <= paths.get(1))
+    assert_valid_prefix_header_rejected(metadata_header.as_str(), &[])?;
+    Ok(())
+}
+
+#[test]
+fn shard_reorder_sorts_complete_identity_pairs_and_loads() -> TestResult {
+    let fixture = TinyLlamaFixture::create_sharded(RequiredProfile::MixedF16F32, false)?;
+    let (z_length, z_sha256) = file_identity(&fixture.weight_path)?;
+    let (a_length, a_sha256) = file_identity(&fixture.second_weight_path)?;
+    let source = fixture.source_with_shards(
+        ConfigDeclaration::F16,
+        vec![
+            CandleWeightShard::new(
+                fixture.weight_path.clone(),
+                CandleShardIdentity::VerifiedImmutable {
+                    byte_length: z_length,
+                    sha256: z_sha256,
+                },
+            ),
+            CandleWeightShard::new(
+                fixture.second_weight_path.clone(),
+                CandleShardIdentity::ProjectEstablished {
+                    byte_length: a_length,
+                    sha256: a_sha256,
+                },
+            ),
+        ],
+    )?;
+
+    let [first, second] = source.weight_shards() else {
+        return Err("sharded source did not retain exactly two identity pairs".to_owned());
+    };
+    assert_eq!(first.path(), fixture.second_weight_path);
+    assert_eq!(
+        first.identity(),
+        CandleShardIdentity::ProjectEstablished {
+            byte_length: a_length,
+            sha256: a_sha256,
+        }
+    );
+    assert_eq!(second.path(), fixture.weight_path);
+    assert_eq!(
+        second.identity(),
+        CandleShardIdentity::VerifiedImmutable {
+            byte_length: z_length,
+            sha256: z_sha256,
+        }
     );
 
     let mut loader = CandleLlamaLoader::new(BACKEND);
-    let (_plan, mut model) = prepare_and_load(&mut loader, &source, load_configuration())?;
+    let (plan, mut model) = prepare_and_load(&mut loader, &source, load_configuration())?;
+    assert_eq!(plan.expected_footprint, CPU_F16_FINAL);
+    assert_eq!(plan.loading_peak_footprint, CPU_MIXED_F16_F32_LOADING_PEAK);
     clean_model(&mut model)
 }
 
 #[test]
 fn rejects_invalid_cpu_identity_and_unsupported_devices() -> TestResult {
-    let fixture = TinyLlamaFixture::create(WeightProfile::HomogeneousF32)?;
-    let source = fixture.source(Some(ScalarType::F32))?;
+    let fixture = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
+    let source = fixture.source(ConfigDeclaration::F32)?;
     let mut loader = CandleLlamaLoader::new(BACKEND);
     let mut configuration = load_configuration();
     configuration.execution_device = ExecutionDevice::new(DeviceId::new(1), DeviceKind::Cpu);
@@ -548,8 +734,8 @@ fn rejects_invalid_cpu_identity_and_unsupported_devices() -> TestResult {
 #[cfg(not(feature = "cuda"))]
 #[test]
 fn cuda_request_fails_explicitly_when_support_is_not_compiled() -> TestResult {
-    let fixture = TinyLlamaFixture::create(WeightProfile::HomogeneousF32)?;
-    let source = fixture.source(Some(ScalarType::F32))?;
+    let fixture = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
+    let source = fixture.source(ConfigDeclaration::F32)?;
     let mut loader = CandleLlamaLoader::new(BACKEND);
     let mut configuration = load_configuration();
     configuration.execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda);
@@ -564,28 +750,37 @@ fn cuda_request_fails_explicitly_when_support_is_not_compiled() -> TestResult {
 }
 
 fn execute_profile(
-    profile: WeightProfile,
-    declaration: Option<ScalarType>,
+    profile: RequiredProfile,
+    extras: &[ExtraTensor],
+    declaration: ConfigDeclaration,
+    expected_observed: ScalarTypeSet,
     expected_execution: ScalarType,
+    expected_final: MemoryFootprint,
+    expected_loading: MemoryFootprint,
 ) -> TestResult {
-    let fixture = TinyLlamaFixture::create(profile)?;
+    let fixture = TinyLlamaFixture::create(profile, extras)?;
     let source = fixture.source(declaration)?;
     let mut loader = CandleLlamaLoader::new(BACKEND);
     let descriptor = loader.inspect(&source).map_err(debug_error)?;
     assert_eq!(
         descriptor.metadata.configuration_declared_scalar_type,
-        declaration
+        declaration.recognized()?
     );
     assert_eq!(
         descriptor.metadata.observed_tensor_scalar_types,
-        expected_observed_set(profile)
+        expected_observed
     );
+    assert_eq!(descriptor.estimated_footprint, expected_final);
 
     let (plan, mut model) = prepare_and_load(&mut loader, &source, load_configuration())?;
     assert_eq!(plan.descriptor, descriptor);
     assert_eq!(plan.execution_scalar_type, expected_execution);
+    assert_eq!(plan.expected_footprint, expected_final);
+    assert_eq!(plan.loading_peak_footprint, expected_loading);
+    assert_eq!(plan.loading_peak_footprint.device_working_bytes, 0);
     assert_eq!(model.descriptor(), &descriptor);
     assert_eq!(model.execution_scalar_type(), expected_execution);
+    assert_eq!(model.accounted_footprint(), expected_final);
     exercise_model(&mut model)?;
     clean_model(&mut model)
 }
@@ -690,6 +885,119 @@ fn load_exact_preparation(
     }
 }
 
+fn assert_failed_preparation_invalid_model(
+    loader: &mut CandleLlamaLoader,
+    prepared: CandleLlamaPreparedLoad,
+) -> TestResult {
+    let failed = match loader.load_prepared(prepared) {
+        Err(failed) => failed,
+        Ok(mut model) => {
+            clean_model(&mut model)?;
+            return Err("mutated or mismatched preparation unexpectedly loaded".to_owned());
+        }
+    };
+    let (error, mut cleanup_owner) = failed.into_parts();
+    assert!(matches!(
+        error,
+        LoadError::Backend(failure) if failure.kind == BackendFailureKind::InvalidModel
+    ));
+    cleanup_owner.cleanup().map_err(debug_error)?;
+    cleanup_owner.cleanup().map_err(debug_error)
+}
+
+fn assert_unverified_prepared_mutation_rejected(mutation: PreparedMutation) -> TestResult {
+    let fixture = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
+    let source = fixture.source(ConfigDeclaration::F32)?;
+    assert!(
+        source
+            .weight_shards()
+            .iter()
+            .all(|shard| shard.identity() == CandleShardIdentity::Unverified)
+    );
+    let mut loader = CandleLlamaLoader::new(BACKEND);
+    let prepared = loader
+        .prepare_load(&source, &load_configuration())
+        .map_err(debug_error)?;
+    mutate_prepared_file(&fixture.weight_path, mutation)?;
+    assert_failed_preparation_invalid_model(&mut loader, prepared)
+}
+
+fn mutate_prepared_file(path: &Path, mutation: PreparedMutation) -> TestResult {
+    match mutation {
+        PreparedMutation::Payload => {
+            let mut file = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(path)
+                .map_err(|error| format!("open payload for mutation: {error}"))?;
+            file.seek(SeekFrom::End(-1))
+                .map_err(|error| format!("seek payload: {error}"))?;
+            let mut final_byte = [0_u8; 1];
+            file.read_exact(&mut final_byte)
+                .map_err(|error| format!("read payload: {error}"))?;
+            final_byte[0] ^= 1;
+            file.seek(SeekFrom::End(-1))
+                .map_err(|error| format!("reseek payload: {error}"))?;
+            file.write_all(&final_byte)
+                .map_err(|error| format!("write payload mutation: {error}"))?;
+            file.sync_all()
+                .map_err(|error| format!("sync payload mutation: {error}"))
+        }
+        PreparedMutation::SameLengthHeader => {
+            let bytes = fs::read(path).map_err(|error| error.to_string())?;
+            let header_length = read_header_length(bytes.as_slice())?;
+            let header = bytes
+                .get(8..8 + header_length)
+                .ok_or_else(|| "fixture header is truncated".to_owned())?;
+            let offset = header
+                .iter()
+                .rposition(|byte| *byte == b' ')
+                .ok_or_else(|| "fixture header has no padding byte to mutate".to_owned())?;
+            let absolute = 8_u64
+                .checked_add(u64::try_from(offset).map_err(|error| error.to_string())?)
+                .ok_or_else(|| "header mutation offset overflow".to_owned())?;
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .map_err(|error| format!("open header for mutation: {error}"))?;
+            file.seek(SeekFrom::Start(absolute))
+                .map_err(|error| format!("seek header: {error}"))?;
+            file.write_all(b"\n")
+                .map_err(|error| format!("write header mutation: {error}"))?;
+            file.sync_all()
+                .map_err(|error| format!("sync header mutation: {error}"))
+        }
+        PreparedMutation::Truncate => {
+            let file = fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .map_err(|error| format!("open file for truncation: {error}"))?;
+            let length = file
+                .metadata()
+                .map_err(|error| format!("read length for truncation: {error}"))?
+                .len();
+            file.set_len(
+                length
+                    .checked_sub(1)
+                    .ok_or_else(|| "cannot truncate empty fixture".to_owned())?,
+            )
+            .map_err(|error| format!("truncate fixture: {error}"))?;
+            file.sync_all()
+                .map_err(|error| format!("sync truncation: {error}"))
+        }
+        PreparedMutation::Extend => {
+            let mut file = fs::OpenOptions::new()
+                .append(true)
+                .open(path)
+                .map_err(|error| format!("open file for extension: {error}"))?;
+            file.write_all(&[0])
+                .map_err(|error| format!("extend fixture: {error}"))?;
+            file.sync_all()
+                .map_err(|error| format!("sync extension: {error}"))
+        }
+    }
+}
+
 const fn load_configuration() -> LoadConfiguration {
     LoadConfiguration {
         handle: ModelHandle::new(ModelId::new(9), ModelGeneration::new(1)),
@@ -709,15 +1017,16 @@ struct TinyLlamaFixture {
 }
 
 impl TinyLlamaFixture {
-    fn create(profile: WeightProfile) -> TestResult<Self> {
+    fn create(profile: RequiredProfile, extras: &[ExtraTensor]) -> TestResult<Self> {
         let fixture = Self::empty()?;
         let tensors = create_weight_tensors(profile)?;
         candle_core::safetensors::save(&tensors, &fixture.weight_path)
             .map_err(|error| format!("save weights: {error}"))?;
+        append_raw_extras(&fixture.weight_path, extras)?;
         Ok(fixture)
     }
 
-    fn create_sharded(profile: WeightProfile) -> TestResult<Self> {
+    fn create_sharded(profile: RequiredProfile, duplicate_extra: bool) -> TestResult<Self> {
         let fixture = Self::empty()?;
         let tensors = create_weight_tensors(profile)?;
         let mut first = HashMap::new();
@@ -732,6 +1041,15 @@ impl TinyLlamaFixture {
                 return Err("duplicate sharded tensor".to_owned());
             }
         }
+        if duplicate_extra {
+            let name = "unused.cross_shard_duplicate".to_owned();
+            let first_duplicate =
+                Tensor::zeros(1, DType::F32, &Device::Cpu).map_err(|error| error.to_string())?;
+            let second_duplicate =
+                Tensor::zeros(1, DType::F32, &Device::Cpu).map_err(|error| error.to_string())?;
+            first.insert(name.clone(), first_duplicate);
+            second.insert(name, second_duplicate);
+        }
         candle_core::safetensors::save(&first, &fixture.second_weight_path)
             .map_err(|error| format!("save first shard: {error}"))?;
         candle_core::safetensors::save(&second, &fixture.weight_path)
@@ -740,19 +1058,16 @@ impl TinyLlamaFixture {
     }
 
     fn empty() -> TestResult<Self> {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
-            .as_nanos();
+        let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
         let directory = std::env::temp_dir().join(format!(
-            "milkdrift-candle-phase12-{}-{nonce}",
+            "milkdrift-candle-loader-{}-{sequence}",
             std::process::id()
         ));
         fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
         let config_path = directory.join("config.json");
         let weight_path = directory.join("z-model.safetensors");
         let second_weight_path = directory.join("a-model.safetensors");
-        fs::write(&config_path, TINY_CONFIG).map_err(|error| error.to_string())?;
+        write_tiny_config(&config_path, ConfigDeclaration::Absent)?;
         Ok(Self {
             directory,
             config_path,
@@ -761,16 +1076,27 @@ impl TinyLlamaFixture {
         })
     }
 
-    fn source(
+    fn source(&self, declaration: ConfigDeclaration) -> TestResult<CandleLlamaSource> {
+        self.source_with_paths(declaration, vec![self.weight_path.clone()])
+    }
+
+    fn source_with_paths(
         &self,
-        configuration_declared_scalar_type: Option<ScalarType>,
+        declaration: ConfigDeclaration,
+        paths: Vec<PathBuf>,
     ) -> TestResult<CandleLlamaSource> {
-        CandleLlamaSource::new(
-            self.config_path.clone(),
-            vec![self.weight_path.clone()],
-            configuration_declared_scalar_type,
-        )
-        .map_err(|error| error.to_string())
+        write_tiny_config(&self.config_path, declaration)?;
+        CandleLlamaSource::from_local_files(self.config_path.clone(), paths)
+            .map_err(|error| error.to_string())
+    }
+
+    fn source_with_shards(
+        &self,
+        declaration: ConfigDeclaration,
+        shards: Vec<CandleWeightShard>,
+    ) -> TestResult<CandleLlamaSource> {
+        write_tiny_config(&self.config_path, declaration)?;
+        CandleLlamaSource::new(self.config_path.clone(), shards).map_err(|error| error.to_string())
     }
 }
 
@@ -780,7 +1106,54 @@ impl Drop for TinyLlamaFixture {
     }
 }
 
-fn create_weight_tensors(profile: WeightProfile) -> TestResult<HashMap<String, Tensor>> {
+fn write_tiny_config(path: &Path, declaration: ConfigDeclaration) -> TestResult {
+    let mut config = json!({
+        "model_type": "llama",
+        "hidden_size": 8,
+        "intermediate_size": 16,
+        "vocab_size": 16,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 2,
+        "num_key_value_heads": 2,
+        "rms_norm_eps": 0.00001,
+        "rope_theta": 10000.0,
+        "bos_token_id": 1,
+        "eos_token_id": 2,
+        "rope_scaling": null,
+        "max_position_embeddings": 16,
+        "tie_word_embeddings": false
+    });
+    let object = config
+        .as_object_mut()
+        .ok_or_else(|| "tiny config must be an object".to_owned())?;
+    match declaration {
+        ConfigDeclaration::Absent => {}
+        ConfigDeclaration::F32 => {
+            object.insert("dtype".to_owned(), JsonValue::String("float32".to_owned()));
+        }
+        ConfigDeclaration::F16 => {
+            object.insert("dtype".to_owned(), JsonValue::String("float16".to_owned()));
+        }
+        ConfigDeclaration::Bf16 => {
+            object.insert("dtype".to_owned(), JsonValue::String("bfloat16".to_owned()));
+        }
+        ConfigDeclaration::Unsupported => {
+            object.insert("dtype".to_owned(), JsonValue::String("int4".to_owned()));
+        }
+        ConfigDeclaration::Conflict => {
+            object.insert("dtype".to_owned(), JsonValue::String("float16".to_owned()));
+            object.insert(
+                "torch_dtype".to_owned(),
+                JsonValue::String("bfloat16".to_owned()),
+            );
+        }
+    }
+    let mut bytes = serde_json::to_vec_pretty(&config).map_err(|error| error.to_string())?;
+    bytes.push(b'\n');
+    fs::write(path, bytes).map_err(|error| error.to_string())
+}
+
+fn create_weight_tensors(profile: RequiredProfile) -> TestResult<HashMap<String, Tensor>> {
     let device = Device::Cpu;
     let mut tensors = HashMap::new();
     insert_token_matrix(&mut tensors, "model.embed_tokens.weight", profile, &device)?;
@@ -823,16 +1196,13 @@ fn create_weight_tensors(profile: WeightProfile) -> TestResult<HashMap<String, T
         profile,
         &device,
     )?;
-    if profile.has_extra() {
-        insert_vector(&mut tensors, "extra.phase12.weight", 1, profile, &device)?;
-    }
     Ok(tensors)
 }
 
 fn insert_token_matrix(
     tensors: &mut HashMap<String, Tensor>,
     name: &str,
-    profile: WeightProfile,
+    profile: RequiredProfile,
     device: &Device,
 ) -> TestResult {
     let values = (0_u32..16)
@@ -857,7 +1227,7 @@ fn insert_matrix(
     name: &str,
     rows: usize,
     columns: usize,
-    profile: WeightProfile,
+    profile: RequiredProfile,
     device: &Device,
 ) -> TestResult {
     let tensor = Tensor::zeros((rows, columns), profile.dtype_for(name), device)
@@ -869,7 +1239,7 @@ fn insert_vector(
     tensors: &mut HashMap<String, Tensor>,
     name: &str,
     length: usize,
-    profile: WeightProfile,
+    profile: RequiredProfile,
     device: &Device,
 ) -> TestResult {
     let tensor =
@@ -884,140 +1254,117 @@ fn insert_tensor(tensors: &mut HashMap<String, Tensor>, name: &str, tensor: Tens
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug)]
-struct ExpectedCpuAccounting {
-    source_bytes: u64,
-    required_elements: u64,
-    required_execution_bytes: u64,
-    full_execution_bytes: u64,
-    host_peak: u64,
-}
+fn append_raw_extras(path: &Path, extras: &[ExtraTensor]) -> TestResult {
+    if extras.is_empty() {
+        return Ok(());
+    }
+    let bytes = fs::read(path).map_err(|error| error.to_string())?;
+    let header_length = read_header_length(bytes.as_slice())?;
+    let data_start = 8_usize
+        .checked_add(header_length)
+        .ok_or_else(|| "Safetensors data start overflow".to_owned())?;
+    let header_bytes = bytes
+        .get(8..data_start)
+        .ok_or_else(|| "saved Safetensors header is truncated".to_owned())?;
+    let mut header: JsonMap<String, JsonValue> =
+        serde_json::from_slice(header_bytes).map_err(|error| error.to_string())?;
+    let mut payload = bytes
+        .get(data_start..)
+        .ok_or_else(|| "saved Safetensors payload is missing".to_owned())?
+        .to_vec();
 
-fn expected_cpu_accounting(
-    paths: &[PathBuf],
-    execution_dtype: DType,
-) -> TestResult<ExpectedCpuAccounting> {
-    let execution_width = dtype_bytes(execution_dtype)?;
-    let mut sorted_paths = paths.to_vec();
-    sorted_paths.sort();
-    let mut source_bytes = 0_u64;
-    let mut required_elements = 0_u64;
-    let mut required_execution_bytes = 0_u64;
-    let mut full_execution_bytes = 0_u64;
-    let mut host_peak = 0_u64;
-
-    for path in sorted_paths {
-        let bytes = fs::read(path).map_err(|error| error.to_string())?;
-        let (_header_length, metadata) =
-            SafeTensors::read_metadata(&bytes).map_err(|error| error.to_string())?;
-        for name in metadata.offset_keys() {
-            let info = metadata
-                .info(&name)
-                .ok_or_else(|| format!("missing metadata for {name}"))?;
-            let source_width = safe_dtype_bytes(info.dtype)?;
-            let elements = info.shape.iter().try_fold(1_u64, |total, dimension| {
-                total
-                    .checked_mul(u64::try_from(*dimension).map_err(|error| error.to_string())?)
-                    .ok_or_else(|| "fixture element overflow".to_owned())
-            })?;
-            let tensor_source_bytes = elements
-                .checked_mul(source_width)
-                .ok_or_else(|| "fixture source bytes overflow".to_owned())?;
-            let execution_bytes = elements
-                .checked_mul(execution_width)
-                .ok_or_else(|| "fixture execution bytes overflow".to_owned())?;
-            let aligned_staging = tensor_source_bytes
-                .checked_add(source_width.saturating_sub(1))
-                .ok_or_else(|| "fixture staging overflow".to_owned())?;
-            let raw_peak = full_execution_bytes
-                .checked_add(aligned_staging)
-                .and_then(|value| value.checked_add(tensor_source_bytes))
-                .ok_or_else(|| "fixture raw peak overflow".to_owned())?;
-            host_peak = host_peak.max(raw_peak);
-            if source_width != execution_width {
-                let cast_peak = full_execution_bytes
-                    .checked_add(tensor_source_bytes)
-                    .and_then(|value| value.checked_add(execution_bytes))
-                    .ok_or_else(|| "fixture cast peak overflow".to_owned())?;
-                host_peak = host_peak.max(cast_peak);
-            }
-            source_bytes = source_bytes
-                .checked_add(tensor_source_bytes)
-                .ok_or_else(|| "fixture total source overflow".to_owned())?;
-            full_execution_bytes = full_execution_bytes
-                .checked_add(execution_bytes)
-                .ok_or_else(|| "fixture full execution overflow".to_owned())?;
-            if name != "extra.phase12.weight" {
-                required_elements = required_elements
-                    .checked_add(elements)
-                    .ok_or_else(|| "fixture required elements overflow".to_owned())?;
-                required_execution_bytes = required_execution_bytes
-                    .checked_add(execution_bytes)
-                    .ok_or_else(|| "fixture required execution overflow".to_owned())?;
-            }
+    for extra in extras {
+        if header.contains_key(extra.name) {
+            return Err(format!("duplicate raw extra tensor: {}", extra.name));
         }
+        let start = u64::try_from(payload.len()).map_err(|error| error.to_string())?;
+        let byte_length = extra
+            .elements
+            .checked_mul(extra.bytes_per_element)
+            .ok_or_else(|| format!("raw extra byte length overflow: {}", extra.name))?;
+        let new_length = payload
+            .len()
+            .checked_add(byte_length)
+            .ok_or_else(|| format!("raw payload length overflow: {}", extra.name))?;
+        payload
+            .try_reserve_exact(byte_length)
+            .map_err(|error| error.to_string())?;
+        payload.resize(new_length, 0);
+        let end = u64::try_from(new_length).map_err(|error| error.to_string())?;
+        header.insert(
+            extra.name.to_owned(),
+            json!({
+                "dtype": extra.dtype,
+                "shape": [extra.elements],
+                "data_offsets": [start, end]
+            }),
+        );
     }
-    host_peak = host_peak.max(full_execution_bytes);
-    Ok(ExpectedCpuAccounting {
-        source_bytes,
-        required_elements,
-        required_execution_bytes,
-        full_execution_bytes,
-        host_peak,
-    })
+
+    let mut encoded_header = serde_json::to_vec(&header).map_err(|error| error.to_string())?;
+    let padding = (8 - encoded_header.len() % 8) % 8;
+    encoded_header.resize(encoded_header.len() + padding, b' ');
+    let encoded_length = u64::try_from(encoded_header.len()).map_err(|error| error.to_string())?;
+    let total_length = 8_usize
+        .checked_add(encoded_header.len())
+        .and_then(|length| length.checked_add(payload.len()))
+        .ok_or_else(|| "rebuilt Safetensors length overflow".to_owned())?;
+    let mut rebuilt = Vec::new();
+    rebuilt
+        .try_reserve_exact(total_length)
+        .map_err(|error| error.to_string())?;
+    rebuilt.extend_from_slice(&encoded_length.to_le_bytes());
+    rebuilt.extend_from_slice(&encoded_header);
+    rebuilt.extend_from_slice(&payload);
+    fs::write(path, rebuilt).map_err(|error| error.to_string())
 }
 
-fn safe_dtype_bytes(dtype: SafeDtype) -> TestResult<u64> {
-    match dtype {
-        SafeDtype::F32 => Ok(4),
-        SafeDtype::F16 | SafeDtype::BF16 => Ok(2),
-        _ => Err(format!("unexpected fixture dtype: {dtype:?}")),
-    }
+fn read_header_length(bytes: &[u8]) -> TestResult<usize> {
+    let prefix: [u8; 8] = bytes
+        .get(..8)
+        .ok_or_else(|| "Safetensors prefix is truncated".to_owned())?
+        .try_into()
+        .map_err(|_| "Safetensors prefix has the wrong length".to_owned())?;
+    usize::try_from(u64::from_le_bytes(prefix)).map_err(|error| error.to_string())
 }
 
-fn dtype_bytes(dtype: DType) -> TestResult<u64> {
-    match dtype {
-        DType::F32 => Ok(4),
-        DType::F16 | DType::BF16 => Ok(2),
-        _ => Err(format!("unexpected execution dtype: {dtype:?}")),
-    }
+fn file_identity(path: &Path) -> TestResult<(u64, [u8; 32])> {
+    let bytes = fs::read(path).map_err(|error| error.to_string())?;
+    let byte_length = u64::try_from(bytes.len()).map_err(|error| error.to_string())?;
+    Ok((byte_length, Sha256::digest(bytes).into()))
 }
 
-fn expected_observed_set(profile: WeightProfile) -> ScalarTypeSet {
-    match profile {
-        WeightProfile::HomogeneousF32 => ScalarTypeSet::from_scalar(ScalarType::F32),
-        WeightProfile::HomogeneousF16 => ScalarTypeSet::from_scalar(ScalarType::F16),
-        WeightProfile::HomogeneousBf16 => ScalarTypeSet::from_scalar(ScalarType::Bf16),
-        WeightProfile::MixedF16F32 | WeightProfile::MixedF16F32WithExtra => {
-            mixed_set(ScalarType::F16)
-        }
-        WeightProfile::MixedBf16F32 => mixed_set(ScalarType::Bf16),
-        WeightProfile::MixedF16Bf16 => ScalarTypeSet::from_scalar(ScalarType::F16)
-            .union(ScalarTypeSet::from_scalar(ScalarType::Bf16)),
-        WeightProfile::UnsupportedU8 => ScalarTypeSet::from_scalar(ScalarType::U8)
-            .union(ScalarTypeSet::from_scalar(ScalarType::F32)),
+fn scalar_set(types: &[ScalarType]) -> ScalarTypeSet {
+    let mut set = ScalarTypeSet::EMPTY;
+    for scalar_type in types {
+        set.insert(*scalar_type);
     }
-}
-
-fn mixed_set(primary: ScalarType) -> ScalarTypeSet {
-    ScalarTypeSet::from_scalar(primary).union(ScalarTypeSet::from_scalar(ScalarType::F32))
+    set
 }
 
 fn write_raw_safetensors(path: &Path, header: &str, payload: &[u8]) -> TestResult {
     let header_length = u64::try_from(header.len()).map_err(|error| error.to_string())?;
+    let total_length = 8_usize
+        .checked_add(header.len())
+        .and_then(|length| length.checked_add(payload.len()))
+        .ok_or_else(|| "raw fixture length overflow".to_owned())?;
     let mut bytes = Vec::new();
     bytes
-        .try_reserve_exact(
-            8_usize
-                .checked_add(header.len())
-                .and_then(|value| value.checked_add(payload.len()))
-                .ok_or_else(|| "raw fixture length overflow".to_owned())?,
-        )
+        .try_reserve_exact(total_length)
         .map_err(|error| error.to_string())?;
     bytes.extend_from_slice(&header_length.to_le_bytes());
     bytes.extend_from_slice(header.as_bytes());
     bytes.extend_from_slice(payload);
     fs::write(path, bytes).map_err(|error| error.to_string())
+}
+
+fn assert_valid_prefix_header_rejected(header: &str, payload: &[u8]) -> TestResult {
+    let fixture = TinyLlamaFixture::empty()?;
+    write_raw_safetensors(&fixture.weight_path, header, payload)?;
+    let source = fixture.source(ConfigDeclaration::F32)?;
+    let loader = CandleLlamaLoader::new(BACKEND);
+    assert_invalid_model(loader.inspect(&source));
+    Ok(())
 }
 
 fn assert_raw_header_rejected(prefix: [u8; 8], header: &[u8], payload: &[u8]) -> TestResult {
@@ -1027,14 +1374,39 @@ fn assert_raw_header_rejected(prefix: [u8; 8], header: &[u8], payload: &[u8]) ->
     bytes.extend_from_slice(header);
     bytes.extend_from_slice(payload);
     fs::write(&fixture.weight_path, bytes).map_err(|error| error.to_string())?;
-    let source = fixture.source(Some(ScalarType::F32))?;
+    let source = fixture.source(ConfigDeclaration::F32)?;
     let loader = CandleLlamaLoader::new(BACKEND);
-    assert!(matches!(
-        loader.inspect(&source),
+    assert_invalid_model(loader.inspect(&source));
+    Ok(())
+}
+
+fn assert_raw_bytes_rejected(bytes: &[u8]) -> TestResult {
+    let fixture = TinyLlamaFixture::empty()?;
+    fs::write(&fixture.weight_path, bytes).map_err(|error| error.to_string())?;
+    let source = fixture.source(ConfigDeclaration::F32)?;
+    let loader = CandleLlamaLoader::new(BACKEND);
+    assert_invalid_model(loader.inspect(&source));
+    Ok(())
+}
+
+fn assert_invalid_model<T>(result: Result<T, LoadError>) {
+    let matches_kind = matches!(
+        &result,
         Err(LoadError::Backend(failure))
             if failure.kind == BackendFailureKind::InvalidModel
-    ));
-    Ok(())
+    );
+    drop(result);
+    assert!(matches_kind);
+}
+
+fn assert_unsupported<T>(result: Result<T, LoadError>) {
+    let matches_kind = matches!(
+        &result,
+        Err(LoadError::Backend(failure))
+            if failure.kind == BackendFailureKind::Unsupported
+    );
+    drop(result);
+    assert!(matches_kind);
 }
 
 fn maximum_logit_token(logits: &[f32]) -> TestResult<TokenId> {
@@ -1051,19 +1423,3 @@ fn maximum_logit_token(logits: &[f32]) -> TestResult<TokenId> {
 fn debug_error(error: impl std::fmt::Debug) -> String {
     format!("{error:?}")
 }
-
-const TINY_CONFIG: &str = r#"{
-  "hidden_size": 8,
-  "intermediate_size": 16,
-  "vocab_size": 16,
-  "num_hidden_layers": 1,
-  "num_attention_heads": 2,
-  "num_key_value_heads": 2,
-  "rms_norm_eps": 0.00001,
-  "rope_theta": 10000.0,
-  "bos_token_id": 1,
-  "eos_token_id": 2,
-  "rope_scaling": null,
-  "max_position_embeddings": 16,
-  "tie_word_embeddings": false
-}"#;

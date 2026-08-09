@@ -1,54 +1,240 @@
 # candle-backend
 
-CPU-default and feature-gated CUDA adapter for unquantized Hugging Face Llama models stored as Safetensors.
+CPU-default and feature-gated CUDA adapter for unquantized Hugging Face Llama models stored as Safetensors. The crate owns Candle, Safetensors, filesystem, and `cudarc` details and implements the portable contracts from `domain-contracts`.
 
-The crate owns all Candle/`cudarc`-specific types and implements only the portable contracts from `domain-contracts`. It supports device-independent inspection, device-aware admission planning, loading, independent sequence caches, prompt prefill, incremental decode, synchronization, and unload preparation.
+## Source API and artifact identity
 
-## Scalar and accounting contract
+`CandleLlamaSource` accepts a configuration path and one or more identity-bearing shards:
 
-`ModelDescriptor::metadata.scalar_type` reports the scalar stored in the source weights. `LoadPlan::execution_scalar_type` reports the scalar selected during device-aware planning, and `LoadedModel::execution_scalar_type()` reports the actual domain `ScalarType` retained by the loaded model. Candle's `DType` remains internal to this adapter.
+```rust,ignore
+CandleLlamaSource::new(config_path, Vec<CandleWeightShard>)
+```
 
-The supported policy is:
+Each `CandleWeightShard` keeps its path paired with one `CandleShardIdentity` while the source sorts complete pairs deterministically:
 
-- F32 source on CPU or CUDA executes as F32;
-- F16 source on CPU or CUDA executes as F16;
-- BF16 source on CPU executes as F32 because Candle 0.11 CPU matmul does not support BF16 operands;
-- BF16 source on CUDA executes as BF16 only when the selected device reports support; otherwise planning fails before any model weights become resident.
+- `VerifiedImmutable { byte_length, sha256 }`: identity came from a source whose content-addressing and immutability semantics were independently verified;
+- `ProjectEstablished { byte_length, sha256 }`: trusted project code computed the complete-file identity, without claiming that the path itself is immutable;
+- `Unverified`: no reusable identity is available.
 
-Weight, cache, and rope accounting is computed from the selected execution scalar. Caller-visible vocabulary logits remain host F32 for every supported source and execution scalar.
+`CandleLlamaSource::from_local_files(config_path, paths)` is the explicit convenience for unverified mutable local files. At least one weight shard is required.
 
-`LoadPlan::expected_footprint` is the planned accounting quantity. After loading, `LoadedModel::accounted_footprint()` reports the accepted quantity for runtime verification. These values are not observations of physical memory use or availability. CUDA physical capacity and moment-in-time availability are reported separately by `CandleDeviceSummary::{total_memory_bytes, available_memory_bytes}`.
+Candle does not trust filenames, symlinks, inode numbers, mtimes, ETags, or cache conventions. Inspection opens and retains each file. A supplied identity length must match retained file metadata. Only `VerifiedImmutable` skips a baseline payload pass. Its expected cryptographic identity is verified during the one sequential materialization pass.
 
-## CUDA initialization lifecycle
+`ProjectEstablished` and `Unverified` are mutable-source fallbacks. Before device initialization or admission, `ProjectEstablished` is rehashed from Candle's retained file and compared with the supplied digest, while `Unverified` establishes a fresh baseline. Both use one sequential whole-file SHA-256 pass from byte zero that revalidates the exact inspected prefix/header digest, exact length, and EOF. Materialization later verifies the retained file against that admitted identity before publication.
 
-CPU device ID 0 maps directly to `Device::Cpu`. Explicit CUDA ordinals can be represented only behind the non-default `cuda` feature and never fall back to CPU. Product support is narrower than this representation: only ordinal 0 on the executed Linux x86_64 RTX 5070 Ti matrix is claimed.
+## Strict bounded configuration
 
-Discovery, load planning, and loading are independent cold paths. Each CUDA invocation initializes its own Candle device and direct `cudarc` probe; no probe or context cache is retained between them. Planning drops its prepared device after returning the portable `LoadPlan`. Loading performs a fresh probe and retains only its loaded Candle device in the model.
+The adapter reads `config.json` through a checked allocation with an exact 1 MiB ceiling. The retained bytes are parsed twice: once by a custom duplicate-aware top-level visitor and once as Candle's `LlamaConfig`. The scalar declaration is therefore derived from the same exact bytes as the executable configuration; callers cannot inject it.
 
-Sequence creation, prefill, decode, synchronization, destruction, and unload preparation reuse the loaded model's device. They do not call `Device::new_cuda` or `CudaContext::new` per sequence or token. Unload preparation synchronizes the retained device; native resources are released when the owning model and sequence values are dropped.
+The declaration policy for modern `dtype` and legacy `torch_dtype` is fail-closed:
 
-## Allocation contract
+- both absent or null: no declaration;
+- one recognized and the other absent/null: use the recognized declaration;
+- both recognized and equal: use that declaration;
+- either present with an unsupported string: fail explicitly, with no fallback;
+- both recognized but different: fail explicitly;
+- duplicate fields, wrong JSON types, or malformed JSON: fail explicitly.
 
-This adapter does **not** advertise `CapabilitySet::ALLOCATION_FREE_HOT_PATH`. Candle 0.11's upstream Llama implementation concatenates KV-cache tensors as generation advances and creates tensors for forward operations. CUDA logits additionally use Candle's safe transfer into a temporary upstream CPU tensor before copying into reusable caller-owned output. A future strict path must provide measured pre-allocated cache, execution, and transfer storage before claiming the capability.
+Recognized declarations are F32 (`float32`/`f32`), F16 (`float16`/`half`/`f16`), and BF16 (`bfloat16`/`bf16`) under ASCII case normalization. Raw producer strings never cross the adapter boundary.
 
-## Sequence reset
+Configuration must explicitly identify Llama: `model_type` must be `llama` (ASCII case normalization is accepted). If `architectures` is present and non-null, it must be a nonempty array containing only `LlamaForCausalLM` and/or `LlamaModel`. Missing, contradictory, non-Llama, duplicated, or malformed architecture identity is rejected. Existing nonzero/divisibility validation remains, and hidden layers are capped at 256 before required tensor names are generated.
 
-The upstream cache cannot be cleared in place without constructing a replacement. The adapter therefore does not advertise `CapabilitySet::SEQUENCE_RESET`; destroy and recreate the sequence at a cold lifecycle boundary.
+## Four scalar facts
 
-## Tests
+The adapter keeps four meanings separate:
 
-Default CPU tests deterministically cover F32, F16, and BF16 sources, including the BF16 source/F32 execution distinction, execution scalar memory accounting, final-position prefill logits, decode progression, cancellation, independent caches, synchronized destruction, and unload preparation.
+1. **Configuration declaration** — optional F32/F16/BF16 producer intent derived from bounded config bytes.
+2. **Complete observed set** — `ModelMetadata::observed_tensor_scalar_types`, populated from every structurally valid tensor in every shard.
+3. **Required scalar set** — adapter-private categories from only tensors consumed by the supported Candle Llama schema.
+4. **Execution scalar** — selected during device-aware preparation and reported in the load plan and loaded model.
 
-A CUDA-enabled build keeps explicit CPU execution non-ignored to prove that enabling CUDA does not change a CPU request. Actual CUDA execution remains both ignored and explicitly opted in with `MILKDRIFT_CUDA_TEST=1`. The target-specific tests validate CUDA ordinal 0, physical device observations, F32 CPU/CUDA compatibility, BF16-source/BF16-execution evidence, synchronization, and unload preparation.
+Every Safetensors 0.8 dtype is represented structurally. F32, F16, BF16, I8, and U8 map directly to portable categories. BOOL, F4/F6, all FP8 variants, wider integers, F64, C64, and the remaining understood formats map to stable adapter-owned `ScalarType::Other(code)` categories; `ScalarTypeSet` intentionally collapses those codes into its single `Other` bit.
 
-## Supported scope
+Unused understood tensors may use any of those dtypes. They remain complete observed evidence but do not select precision and do not fail merely because Candle cannot execute them. A required tensor must be F32, F16, or BF16; any required other dtype fails before device initialization.
 
-- CPU device ID 0, compiled by default and still usable in CUDA-enabled binaries
-- explicit CUDA ordinal construction behind the non-default `cuda` feature; product support limited to ordinal 0 on the exact executed Linux x86_64 RTX 5070 Ti matrix, with no fallback
-- unquantized Llama-family models
-- Hugging Face `config.json`
-- one or more Safetensors shards
-- F32, F16, and BF16 source weight types under the execution policy above
-- CPU weights/cache/rope charged to host accounting; CUDA weights/cache/rope charged to device accounting with host load headroom represented separately
+The required-primary matrix is exact:
 
-Model downloading and tokenizer integration remain separate adapters. Metal, cuDNN, flash attention, NCCL, multi-GPU execution, GPU-side sampling, GGUF, and other quantized formats are unsupported. Feature/API capability and accepted hardware support remain distinct; see the sole [product support matrix](../../../docs/project/implementation-status.md).
+| Required scalar set | Required primary | Permitted declaration |
+|---|---:|---:|
+| `{F32}` | F32 | absent or F32 |
+| `{F16}` | F16 | absent or F16 |
+| `{F16,F32}` | F16 | absent or F16 |
+| `{BF16}` | BF16 | absent or BF16 |
+| `{BF16,F32}` | BF16 | absent or BF16 |
+
+Empty, F16+BF16, and any required set containing another category are rejected. Complete observed extras never affect this matrix.
+
+Execution selection remains:
+
+| Required primary | CPU | CUDA |
+|---|---:|---:|
+| F32 | F32 | F32 |
+| F16 | F16 | F16 |
+| BF16 | F32 | BF16 only when the selected device reports support |
+
+CPU BF16 sources execute as F32 because the supported Candle CPU matmul path does not accept BF16 operands. CUDA is available only behind the non-default `cuda` feature and is always explicitly selected; it never falls back to CPU.
+
+## Bounded full manifest inspection
+
+`inspect()` reads only bounded configuration bytes plus each shard's 8-byte prefix and bounded JSON header. It never scans weight payloads and never initializes an execution device. Nevertheless, every shard and every tensor header is parsed and validated before preparation can initialize a device.
+
+One private injectable `InspectionLimits` has these production values:
+
+| Structure | Production ceiling |
+|---|---:|
+| selected shards | 256 |
+| one shard header | 8 MiB |
+| aggregate headers | 64 MiB |
+| tensors | 16,384 |
+| one tensor name | 512 bytes |
+| aggregate tensor-name bytes | 8 MiB |
+| tensor rank | 8 |
+| one shape dimension extent | 1,048,576 |
+| aggregate shape dimensions | 131,072 |
+| metadata entries | 1,024 |
+| one metadata key | 256 bytes |
+| one metadata value | 4 KiB |
+| aggregate metadata string bytes | 4 MiB |
+| final owned inspection inventory | 64 MiB |
+
+Custom Serde visitors/seeds reject tensor, name, rank, individual dimension extent, aggregate shape, metadata, and retained-inventory growth while traversing the JSON. Tensor shapes use fixed rank-8 storage. Checked reservations map allocation failure deterministically.
+
+Inspection preserves duplicate JSON/tensor detection, cross-shard duplicate detection, deterministic offset order, exact contiguous Safetensors offsets (no overlap or gap), exact payload/file bounds, checked element counts, and checked bit-packed byte calculations. Bit-packed tensors must occupy an integral number of bytes, matching Safetensors validation.
+
+Parsed metadata strings and header/config buffers are non-tensor resources governed by the ceilings above. Metadata is discarded after validation. They are deliberately excluded from `MemoryFootprint` because they are independently and strictly bounded.
+
+## One-pass selective materialization
+
+After identity establishment and admission, each retained shard is processed by exactly one sequential pass from byte zero:
+
+1. read and hash the prefix/header through one checked fixed 64 KiB verification buffer;
+2. compare the exact retained prefix/header digest before processing payload bytes;
+3. read and hash unused tensor ranges through the same 64 KiB buffer without allocating or constructing tensors;
+4. read each required payload once into one checked aligned staging allocation;
+5. construct its CPU source tensor, independently cast if required, and independently retain on CPU or transfer/synchronize on CUDA;
+6. at EOF, verify exact length and the accepted whole-file SHA-256;
+7. only after every shard verifies, construct and synchronize the Llama model for publication.
+
+There are no per-tensor seeks, no mmap, and no unsafe code. Unused tensors are never staged into tensor-sized storage, converted, transferred, inserted into Candle's load map, or retained by the model. Header mutation fails before payload processing. Payload mutation, extension, and truncation fail before model publication. A late digest mismatch returns the same prepared value as the sole cleanup owner of all tensors already materialized.
+
+## Exact required-only footprints
+
+`MemoryFootprint` accounts for deterministic tensor ownership and cache bytes. It excludes the separately bounded 64 KiB verification buffer, parsed config/header/inventory metadata, required-name/map metadata, allocator bookkeeping/fragmentation, process RSS, and CUDA driver/context allocations. Required map growth is independently capped by 16,384 tensor entries, 512 bytes per name, 8 MiB aggregate names, and the 64 MiB retained inventory ceiling. At most one 512-byte required-name clone is in flight during materialization; model construction temporarily owns one additional map with at most the same entry/name bounds so the prepared value retains all original tensor handles if construction fails. Hash-map bucket overhead is platform-dependent but bounded by the entry ceiling.
+
+For required tensors in deterministic materialization order, define:
+
+- `S_i`: exact serialized source bytes, including checked bit-packed calculation;
+- `E_i`: execution bytes;
+- `align_i`: executable source alignment (2 for F16/BF16, 4 for F32);
+- `A_i = S_i + align_i - 1`: aligned staging allocation bound;
+- `P_i`: required execution bytes retained before tensor `i`;
+- `R = sum(E_i)`: all required final execution weights;
+- `C`: exact KV-cache bytes per token at execution width.
+
+Unused tensors do not enter any formula.
+
+### CPU
+
+```text
+Hcpu = max(
+    R,
+    max_i(P_i + A_i + S_i),
+    max_cast_i(P_i + S_i + E_i)
+)
+```
+
+Final CPU footprint:
+
+```text
+host weights = R
+host working = 0
+device weights = 0
+device working = 0
+cache bytes/token = C
+```
+
+Loading CPU footprint:
+
+```text
+host weights = R
+host working = Hcpu - R
+device weights = 0
+device working = 0
+cache bytes/token = C
+```
+
+### CUDA
+
+```text
+Hcuda = max(
+    max_i(A_i + S_i),
+    max_i(E_i),
+    max_cast_i(S_i + E_i)
+)
+```
+
+Final CUDA footprint:
+
+```text
+host weights = 0
+host working = 0
+device weights = R
+device working = 0
+cache bytes/token = C
+```
+
+Loading CUDA footprint:
+
+```text
+host weights = 0
+host working = Hcuda
+device weights = R
+device working = 0
+cache bytes/token = C
+```
+
+All arithmetic is checked. There is no extra headroom for ignored tensors.
+
+## Transactional ownership and cleanup
+
+`CandleLlamaPreparedLoad` remains the only partial-load owner. It retains:
+
+- parsed config and selected device;
+- every retained open shard and accepted whole-file identity;
+- every completed required tensor in the final map;
+- pending source, cast-host, and transferred-device tensor endpoints;
+- a constructed model if a later checkpoint or final synchronization fails.
+
+Each endpoint is stored before subsequent fallible validation, synchronization, insertion, or publication work. CPU/CUDA synchronization occurs before explicit release. `PreparedLoad::cleanup` is retryable and idempotent: synchronization failure leaves every handle intact for another attempt; only successful synchronization clears the model, tensors, shards, config, and device. The adapter does not use `mem::forget`.
+
+Private deterministic instrumentation covers hashed ignored ranges versus required materialization events, the immutable fast path versus project-established/unverified mutable baselines, source/cast/transfer/map/model/final-sync ownership checkpoints, mutation and truncation, and cleanup failure/retry. No fault-injection hook is public.
+
+## Stable failure details
+
+Backend failures use project-owned numeric details rather than retaining vendor strings. Existing codes remain stable; artifact-loading additions include:
+
+| Code | Meaning |
+|---:|---|
+| 32 | accepted whole-shard SHA-256 mismatch |
+| 33 | configuration byte/layer ceiling |
+| 34 | bounded configuration allocation |
+| 35 | malformed/duplicate scalar declaration |
+| 36 | unsupported present scalar declaration |
+| 37 | conflicting recognized declarations |
+| 38 | missing/malformed/contradictory architecture identity |
+| 39 | per-shard or aggregate header ceiling |
+| 40 | tensor/name/rank/shape structural ceiling |
+| 41 | metadata structural ceiling |
+| 42 | final inspection inventory ceiling |
+| 43 | bounded inspection allocation |
+| 44 | retained prefix/header identity mismatch |
+| 45 | retained/supplied shard length mismatch |
+| 46 | required tensor-map allocation |
+
+## Runtime scope
+
+The adapter supports CPU device ID 0 by default and explicit CUDA ordinals behind `candle-backend/cuda`. It supports unquantized Hugging Face Llama configuration plus one or more Safetensors shards, independent sequence caches, prompt prefill, incremental decode, synchronization, and unload preparation.
+
+It does not advertise `CapabilitySet::ALLOCATION_FREE_HOT_PATH`: Candle's upstream Llama implementation allocates forward intermediates and grows KV-cache tensors. It does not advertise `CapabilitySet::SEQUENCE_RESET`; destroy and recreate a sequence at a cold lifecycle boundary.
+
+Model downloading, tokenizer integration, GGUF/quantized formats, Metal, cuDNN, flash attention, NCCL, multi-GPU execution, and GPU-side sampling remain outside this adapter.

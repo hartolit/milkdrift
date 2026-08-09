@@ -45,9 +45,9 @@ Nonzero CPU IDs, unsupported kinds, CUDA in a build without the feature, driver 
 
 [ADR-0020](0020-transactional-prepared-model-loading.md) now owns the durable load contract:
 
-- optional configuration declaration, observed tensor scalar set, adapter-inferred primary, and execution scalar are separate facts;
-- the exact accepted observed sets are `{F32}`, `{F16}`, `{F16,F32}`, `{BF16}`, and `{BF16,F32}`;
-- F16+BF16 and unsupported/quantized tensor types are rejected;
+- configuration declaration, complete observed scalar set, required execution-tensor scalar set/primary, and execution scalar are separate facts;
+- the exact accepted required sets are `{F32}`, `{F16}`, `{F16,F32}`, `{BF16}`, and `{BF16,F32}`; complete observed extras never select execution;
+- required F16+BF16 and required unsupported/quantized tensor types are rejected, while structurally understood unused extras remain observed but are not materialized;
 - CPU maps F32→F32, F16→F16, and BF16→F32;
 - CUDA policy maps F32→F32, F16→F16, and BF16→BF16 only when the selected device reports support;
 - `prepare_load` binds an exact plan to retained source/device state, `load_prepared` consumes it without replanning, and `FailedLoad<PreparedLoad>` preserves partial-load cleanup ownership;
@@ -77,7 +77,7 @@ Before load, E1 re-probes the selected CUDA device and requires the fixed budget
 
 `LAS1` application settings continue to write version 2 and read exact version 1. Selected device and memory policy remain persisted; unavailable CUDA is not migrated to CPU.
 
-`LAM1` model catalogue records now write version 2 with optional configuration-declared scalar metadata. Exact version 1 remains readable as a present declaration. Observed layout, inferred primary, execution scalar/device, and per-tensor details are not persisted.
+`LAM1` model catalogue records now write version 2 with optional configuration-declared scalar metadata. Exact version 1 remains readable as a present declaration. Complete observed layout, required primary, execution scalar/device, shard identity, and per-tensor details are not persisted.
 
 Slint remains a thin presentation adapter with stable Rust-owned identity/index mapping. Resolved summaries may show the optional declaration. Loaded summaries show execution scalar and execution device only. Labels are never parsed; Slint does not infer scalar, choose conversion, or fall back.
 

@@ -43,9 +43,9 @@ Tensor construction is fully deterministic:
 - `model.norm.weight`, `model.layers.0.input_layernorm.weight`, and `model.layers.0.post_attention_layernorm.weight` are unit vectors.
 - all attention projection and MLP projection matrices are zero matrices.
 
-Two consecutive committed-fixture generator runs on the recorded tree produced identical bytes.
+The ordinary generator test verifies that committed `config.json` is byte-for-byte identical to the generator constant. The deterministic weight generator was executed twice when the replacement fixture was established; the weight blob remains unchanged by this declaration-only amendment.
 
-## Temporary Phase 12 scalar derivatives
+## Temporary scalar derivatives
 
 Phase 12 does **not** commit additional weight blobs. Download-free tests derive temporary F16/F32 and BF16/F32 variants from project-authored tensor values and delete their temporary directories after use.
 
@@ -55,11 +55,11 @@ The real-adapter E0/CUDA derivative path:
 2. converts each tensor with Candle's safe `to_dtype` operation;
 3. writes a temporary Safetensors file beneath a process/nonce-specific operating-system temporary directory;
 4. keeps `model.norm.weight` as F32 for a mixed layout while converting every other tensor to F16 or BF16;
-5. constructs `CandleLlamaSource` with the matching optional F16 or BF16 configuration declaration;
-6. executes inspection/preparation/load tests against observed `{F16,F32}` or `{BF16,F32}`;
+5. writes a temporary configuration with the matching F16 or BF16 declaration and constructs an unverified local `CandleLlamaSource`;
+6. executes inspection/preparation/load tests against required and observed `{F16,F32}` or `{BF16,F32}`;
 7. removes the complete temporary directory from the fixture owner's `Drop` path.
 
-Adapter-local CPU tests also construct equivalent tiny homogeneous and mixed values in temporary directories. A temporary `extra.phase12.weight` may be added only to prove that supported extra tensors contribute loading-peak headroom but not final required model ownership. It is never written into this committed fixture directory.
+Adapter-local CPU tests also construct equivalent tiny homogeneous and mixed values in temporary directories. Temporary auxiliary tensors may be added only to prove that structurally valid unused tensors remain complete observed artifact evidence while contributing neither materialization/transfers nor final or loading-peak tensor ownership. They are never written into this committed fixture directory.
 
 These derivatives are deterministic in tensor names, shapes, values, selected dtypes, and expected accounting. Their process-specific paths and ephemeral serialized files are test intermediates, not durable evidence artifacts, so no additional committed size/hash table is created for them.
 
@@ -77,7 +77,7 @@ The temporary derivatives prove the reviewed scalar-layout, conversion, accounti
 
 | File | Size | SHA-256 |
 |---|---:|---|
-| `config.json` | 360 bytes | `052b5c325859dc723ed0825f711950cbff112a140239953273cebacdb36afdd0` |
+| `config.json` | 382 bytes | `e30225f7b8cbeb18c6fe2e9f623e87bd5d7cec3e28dd7e23a3f36ee107c69c4d` |
 | `model.safetensors` | 4,800 bytes | `cc4798af93488b4fb2ae0548c2b28ace600521732b52023a7786c3227d72d672` |
 
 No other configuration, tokenizer, index, shard, or weight file is committed for this fixture.

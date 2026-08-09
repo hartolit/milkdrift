@@ -3,7 +3,7 @@
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use domain_contracts::{MemoryBudget, ScalarType};
+use domain_contracts::MemoryBudget;
 use hf_hub_adapter::{ArtifactScalarType, HubClientConfiguration};
 use host_runtime::ThreadPanicked;
 use inference_runtime::{HostedRuntimeConfiguration, RuntimeLimits};
@@ -185,14 +185,6 @@ pub const fn application_configuration_declared_scalar_type(
         ArtifactScalarType::F32 => ApplicationScalarType::F32,
         ArtifactScalarType::F16 => ApplicationScalarType::F16,
         ArtifactScalarType::Bf16 => ApplicationScalarType::Bf16,
-    }
-}
-
-pub const fn domain_scalar_type(value: ApplicationScalarType) -> ScalarType {
-    match value {
-        ApplicationScalarType::F32 => ScalarType::F32,
-        ApplicationScalarType::F16 => ScalarType::F16,
-        ApplicationScalarType::Bf16 => ScalarType::Bf16,
     }
 }
 
