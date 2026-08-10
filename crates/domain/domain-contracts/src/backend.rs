@@ -170,7 +170,10 @@ pub trait BackendSequence {
     /// Returns the number of token positions already consumed.
     fn position(&self) -> usize;
 
-    /// Returns the fixed token capacity allocated during sequence creation.
+    /// Returns the fixed token capacity accepted by sequence admission.
+    ///
+    /// Backends may materialize cache payload incrementally during execution;
+    /// this capacity is a logical plan bound, not proof of eager allocation.
     fn token_capacity(&self) -> usize;
 }
 
@@ -207,7 +210,7 @@ pub trait LoadedModel {
     /// hidden native aliases.
     fn reported_footprint(&self) -> MemoryFootprint;
 
-    /// Validates and reports sequence resource requirements before allocation.
+    /// Validates and reports sequence reservation requirements before creation.
     ///
     /// # Errors
     ///
@@ -218,7 +221,13 @@ pub trait LoadedModel {
         configuration: &SequenceConfiguration,
     ) -> Result<SequencePlan, ModelError>;
 
-    /// Creates all sequence-owned allocations before the generation hot path starts.
+    /// Creates one sequence under the previously reported reservation plan.
+    ///
+    /// Creation establishes the sequence owner and its fixed logical capacities,
+    /// but need not eagerly perform every future backend allocation. Execution-time
+    /// logical tensor payloads and source transfers must remain covered by
+    /// [`SequencePlan::expected_footprint`]; caller-owned logits buffers remain
+    /// outside that backend reservation.
     ///
     /// # Errors
     ///
@@ -246,6 +255,9 @@ pub trait LoadedModel {
 
     /// Executes prefill after all caller-owned capacities have been validated.
     ///
+    /// If an error can occur after mutating sequence cache state, the backend must
+    /// make the sequence non-retryable while preserving explicit destruction.
+    ///
     /// # Errors
     ///
     /// Returns [`SequenceError`] when the sequence state is invalid, the operation
@@ -258,6 +270,9 @@ pub trait LoadedModel {
     ) -> Result<PrefillOutcome, SequenceError>;
 
     /// Executes one incremental decode step after capacities have been validated.
+    ///
+    /// If an error can occur after mutating sequence cache state, the backend must
+    /// make the sequence non-retryable while preserving explicit destruction.
     ///
     /// # Errors
     ///

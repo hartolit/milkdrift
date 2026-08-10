@@ -9,7 +9,7 @@ use domain_contracts::{
 use crate::failure::CODE_NUMERIC_OVERFLOW;
 
 use super::manifest::InspectedShard;
-use super::{invalid_model_failure, unsupported_scalar};
+use super::{VERIFICATION_BUFFER_BYTES_U64, invalid_model_failure, unsupported_scalar};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct CalculatedFootprints {
@@ -26,7 +26,7 @@ pub(super) fn calculate(
     let execution_width =
         dtype_bytes(execution_dtype).ok_or_else(|| unsupported_scalar(backend))?;
     let mut required_execution_bytes = 0_u64;
-    let mut host_peak = 0_u64;
+    let mut host_peak = VERIFICATION_BUFFER_BYTES_U64;
 
     for tensor in shards
         .iter()
@@ -58,12 +58,14 @@ pub(super) fn calculate(
                 let raw_peak = required_execution_bytes
                     .checked_add(aligned_staging)
                     .and_then(|bytes| bytes.checked_add(tensor.source_bytes))
+                    .and_then(|bytes| bytes.checked_add(VERIFICATION_BUFFER_BYTES_U64))
                     .ok_or_else(|| numeric_error(backend))?;
                 host_peak = host_peak.max(raw_peak);
                 if source_dtype != execution_dtype {
                     let cast_peak = required_execution_bytes
                         .checked_add(tensor.source_bytes)
                         .and_then(|bytes| bytes.checked_add(execution_bytes))
+                        .and_then(|bytes| bytes.checked_add(VERIFICATION_BUFFER_BYTES_U64))
                         .ok_or_else(|| numeric_error(backend))?;
                     host_peak = host_peak.max(cast_peak);
                 }
@@ -71,12 +73,17 @@ pub(super) fn calculate(
             DeviceKind::Cuda => {
                 let raw_peak = aligned_staging
                     .checked_add(tensor.source_bytes)
+                    .and_then(|bytes| bytes.checked_add(VERIFICATION_BUFFER_BYTES_U64))
                     .ok_or_else(|| numeric_error(backend))?;
-                host_peak = host_peak.max(raw_peak).max(execution_bytes);
+                let execution_peak = execution_bytes
+                    .checked_add(VERIFICATION_BUFFER_BYTES_U64)
+                    .ok_or_else(|| numeric_error(backend))?;
+                host_peak = host_peak.max(raw_peak).max(execution_peak);
                 if source_dtype != execution_dtype {
                     let cast_peak = tensor
                         .source_bytes
                         .checked_add(execution_bytes)
+                        .and_then(|bytes| bytes.checked_add(VERIFICATION_BUFFER_BYTES_U64))
                         .ok_or_else(|| numeric_error(backend))?;
                     host_peak = host_peak.max(cast_peak);
                 }
@@ -255,7 +262,7 @@ mod tests {
                 loading_peak_footprint: MemoryFootprint {
                     host_weight_bytes: 28,
                     device_weight_bytes: 0,
-                    host_working_bytes: 27,
+                    host_working_bytes: 65_563,
                     device_working_bytes: 0,
                 },
             }
@@ -278,7 +285,7 @@ mod tests {
                 loading_peak_footprint: MemoryFootprint {
                     host_weight_bytes: 0,
                     device_weight_bytes: 28,
-                    host_working_bytes: 41,
+                    host_working_bytes: 65_577,
                     device_working_bytes: 0,
                 },
             }

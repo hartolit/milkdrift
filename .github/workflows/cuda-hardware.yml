@@ -39,8 +39,6 @@ jobs:
       CARGO_HOME: /var/tmp/milkdrift-cargo-home
       CARGO_INCREMENTAL: "0"
       CARGO_NET_OFFLINE: "true"
-      CUDA_CHECK_TARGET_DIR: ${{ runner.temp }}/milkdrift-cuda-check-target
-      CUDA_HARDWARE_TARGET_DIR: ${{ runner.temp }}/milkdrift-cuda-hardware-target
       CUDA_COMPUTE_CAP: "120"
       CUDA_VISIBLE_DEVICES: "0"
       MILKDRIFT_CUDA_TEST: "1"
@@ -55,6 +53,10 @@ jobs:
       - name: Preflight storage and isolated CUDA targets
         run: |
           set -eu
+          cuda_check_target_dir="${RUNNER_TEMP}/milkdrift-cuda-check-target"
+          cuda_hardware_target_dir="${RUNNER_TEMP}/milkdrift-cuda-hardware-target"
+          printf 'CUDA_CHECK_TARGET_DIR=%s\n' "${cuda_check_target_dir}" >> "${GITHUB_ENV}"
+          printf 'CUDA_HARDWARE_TARGET_DIR=%s\n' "${cuda_hardware_target_dir}" >> "${GITHUB_ENV}"
           test ! -e "${GITHUB_WORKSPACE}/target"
           test -d "${CARGO_HOME}/registry/index"
           test -d "${CARGO_HOME}/registry/cache"
@@ -79,8 +81,8 @@ jobs:
             exit 1
           fi
 
-          rm -rf "${CUDA_CHECK_TARGET_DIR}" "${CUDA_HARDWARE_TARGET_DIR}"
-          mkdir -p "${CUDA_CHECK_TARGET_DIR}"
+          rm -rf "${cuda_check_target_dir}" "${cuda_hardware_target_dir}"
+          mkdir -p "${cuda_check_target_dir}"
           du -sh "${CARGO_HOME}"
           df -h "${RUNNER_TEMP}" "${CARGO_HOME}"
 
@@ -117,75 +119,15 @@ jobs:
           CARGO_TARGET_DIR="${CUDA_CHECK_TARGET_DIR}" cargo xtask architecture
           CARGO_TARGET_DIR="${CUDA_CHECK_TARGET_DIR}" cargo xtask hygiene
 
-      - name: Check exact CUDA feature graph
+      - name: Compile metadata-owned CUDA graphs and hardware suites
         run: |
           set -eu
-          CARGO_TARGET_DIR="${CUDA_CHECK_TARGET_DIR}" cargo check --locked \
-            -p candle-backend \
-            -p inference-runtime \
-            -p application-runtime \
-            -p desktop-slint \
-            -p runtime-benchmarks \
-            --all-targets \
-            --features cuda
+          CARGO_TARGET_DIR="${CUDA_CHECK_TARGET_DIR}" cargo xtask cuda-compile
 
-      - name: Compile exact CUDA test graph
+      - name: Clippy metadata-owned CUDA graphs and hardware suites
         run: |
           set -eu
-          CARGO_TARGET_DIR="${CUDA_CHECK_TARGET_DIR}" cargo test --locked \
-            -p candle-backend \
-            -p inference-runtime \
-            -p application-runtime \
-            -p runtime-benchmarks \
-            --features cuda \
-            --no-run
-
-      - name: Compile dedicated CUDA hardware suites
-        run: |
-          set -eu
-          CARGO_TARGET_DIR="${CUDA_CHECK_TARGET_DIR}" cargo test --locked \
-            -p candle-backend \
-            --features cuda-hardware-tests \
-            --test cuda_hardware \
-            --no-run
-          CARGO_TARGET_DIR="${CUDA_CHECK_TARGET_DIR}" cargo test --locked \
-            -p inference-runtime \
-            --features cuda-hardware-tests \
-            --test cuda_hardware \
-            --no-run
-          CARGO_TARGET_DIR="${CUDA_CHECK_TARGET_DIR}" cargo test --locked \
-            -p application-runtime \
-            --features cuda-hardware-tests \
-            --test cuda_hardware \
-            --no-run
-
-      - name: Clippy exact CUDA feature graph
-        run: |
-          set -eu
-          CARGO_TARGET_DIR="${CUDA_CHECK_TARGET_DIR}" cargo clippy --locked \
-            -p candle-backend \
-            -p inference-runtime \
-            -p application-runtime \
-            -p desktop-slint \
-            -p runtime-benchmarks \
-            --all-targets \
-            --features cuda \
-            -- -D warnings
-          CARGO_TARGET_DIR="${CUDA_CHECK_TARGET_DIR}" cargo clippy --locked \
-            -p candle-backend \
-            --features cuda-hardware-tests \
-            --test cuda_hardware \
-            -- -D warnings
-          CARGO_TARGET_DIR="${CUDA_CHECK_TARGET_DIR}" cargo clippy --locked \
-            -p inference-runtime \
-            --features cuda-hardware-tests \
-            --test cuda_hardware \
-            -- -D warnings
-          CARGO_TARGET_DIR="${CUDA_CHECK_TARGET_DIR}" cargo clippy --locked \
-            -p application-runtime \
-            --features cuda-hardware-tests \
-            --test cuda_hardware \
-            -- -D warnings
+          CARGO_TARGET_DIR="${CUDA_CHECK_TARGET_DIR}" cargo xtask cuda-clippy
 
       - name: Observe and remove CUDA check target
         run: |
@@ -206,21 +148,10 @@ jobs:
           mkdir -p "${CUDA_HARDWARE_TARGET_DIR}"
           df -h "${RUNNER_TEMP}" "${CARGO_HOME}"
 
-      - name: Run complete CUDA adapter suite
+      - name: Run metadata-owned CUDA hardware suites
         run: |
           set -eu
-          CARGO_TARGET_DIR="${CUDA_HARDWARE_TARGET_DIR}" cargo test --release --locked \
-            -p candle-backend \
-            --features cuda-hardware-tests \
-            --test cuda_hardware
-
-      - name: Run complete hosted E0 CUDA suite
-        run: |
-          set -eu
-          CARGO_TARGET_DIR="${CUDA_HARDWARE_TARGET_DIR}" cargo test --release --locked \
-            -p inference-runtime \
-            --features cuda-hardware-tests \
-            --test cuda_hardware
+          CARGO_TARGET_DIR="${CUDA_HARDWARE_TARGET_DIR}" cargo xtask cuda-hardware
 
       - name: Run deterministic failure cleanup suite
         run: |
@@ -232,14 +163,6 @@ jobs:
             -- \
             --nocapture \
             --test-threads=1
-
-      - name: Run complete E1 CUDA suite
-        run: |
-          set -eu
-          CARGO_TARGET_DIR="${CUDA_HARDWARE_TARGET_DIR}" cargo test --release --locked \
-            -p application-runtime \
-            --features cuda-hardware-tests \
-            --test cuda_hardware
 
       - name: Observe CUDA hardware target and disk
         run: |
@@ -253,22 +176,36 @@ jobs:
         if: ${{ always() }}
         run: |
           set -u
-          leaked=0
-          if test -e "${GITHUB_WORKSPACE}/target"
+          cuda_check_target_dir="${CUDA_CHECK_TARGET_DIR:-${RUNNER_TEMP}/milkdrift-cuda-check-target}"
+          cuda_hardware_target_dir="${CUDA_HARDWARE_TARGET_DIR:-${RUNNER_TEMP}/milkdrift-cuda-hardware-target}"
+          failed=0
+          if test -e "${GITHUB_WORKSPACE}/target" || test -L "${GITHUB_WORKSPACE}/target"
           then
             printf '%s\n' "unexpected root target was created" >&2
             du -sh "${GITHUB_WORKSPACE}/target" >&2 || true
-            leaked=1
+            failed=1
           fi
-          if test -e "${CUDA_CHECK_TARGET_DIR}"
+          if test -e "${cuda_check_target_dir}"
           then
-            du -sh "${CUDA_CHECK_TARGET_DIR}" || true
+            du -sh "${cuda_check_target_dir}" || true
           fi
-          if test -e "${CUDA_HARDWARE_TARGET_DIR}"
+          if test -e "${cuda_hardware_target_dir}"
           then
-            du -sh "${CUDA_HARDWARE_TARGET_DIR}" || true
+            du -sh "${cuda_hardware_target_dir}" || true
           fi
           du -sh "${CARGO_HOME}" || true
           df -h "${RUNNER_TEMP}" "${CARGO_HOME}" || true
-          rm -rf "${CUDA_CHECK_TARGET_DIR}" "${CUDA_HARDWARE_TARGET_DIR}" "${GITHUB_WORKSPACE}/target"
-          exit "${leaked}"
+          if ! rm -rf "${cuda_check_target_dir}" "${cuda_hardware_target_dir}" "${GITHUB_WORKSPACE}/target"
+          then
+            printf '%s\n' "failed to remove isolated CUDA targets or root target" >&2
+            failed=1
+          fi
+          for path in "${cuda_check_target_dir}" "${cuda_hardware_target_dir}" "${GITHUB_WORKSPACE}/target"
+          do
+            if test -e "${path}" || test -L "${path}"
+            then
+              printf '%s\n' "cleanup path still exists: ${path}" >&2
+              failed=1
+            fi
+          done
+          exit "${failed}"

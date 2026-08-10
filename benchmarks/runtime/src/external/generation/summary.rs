@@ -1,7 +1,5 @@
 //! Report projection, checked duration conversion, throughput, and summaries.
 
-use std::time::Duration;
-
 use domain_contracts::FinishReason;
 
 use super::observer::GenerationEvidence;
@@ -11,6 +9,7 @@ use crate::external::report::{
     DirectCompletionSummary, DirectCompletionWarmupResult, GenerationSubmissionTimings,
     SamplingMetadata,
 };
+pub(in crate::external) use crate::report::checked_duration_ns as duration_ns;
 
 pub(in crate::external) const fn sampling_metadata() -> SamplingMetadata {
     SamplingMetadata {
@@ -186,17 +185,6 @@ pub(super) fn summarize_samples(
                 .iter()
                 .map(|sample| sample.effective_generated_tokens_per_second),
         )?,
-    })
-}
-
-pub(in crate::external) fn duration_ns(
-    duration: Duration,
-    label: &'static str,
-) -> BenchmarkResult<u64> {
-    u64::try_from(duration.as_nanos()).map_err(|_| {
-        BenchmarkError::new(format!(
-            "{label} duration exceeded the report's u64 nanosecond range"
-        ))
     })
 }
 

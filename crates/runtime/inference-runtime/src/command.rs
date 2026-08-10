@@ -42,7 +42,7 @@ pub struct LoadReceipt {
     pub execution_scalar_type: ScalarType,
     /// Backend-inspected model description.
     pub descriptor: ModelDescriptor,
-    /// Footprint reserved by the runtime registry.
+    /// Exact final model-footprint reservation committed by the runtime registry.
     pub reserved_footprint: MemoryFootprint,
 }
 
@@ -55,7 +55,11 @@ pub struct RequestStartReceipt {
     pub sequence_id: SequenceId,
     /// Required reusable logits elements for incremental decode.
     pub logits_capacity: usize,
-    /// Sequence-specific footprint reserved by admission control.
+    /// Exact request reservation arithmetic committed by admission control.
+    ///
+    /// This combines the backend sequence logical-payload reservation with any
+    /// separately planned caller-owned workspace. Exactness describes that
+    /// checked sum, not instantaneous physical allocation.
     pub reserved_footprint: MemoryFootprint,
 }
 
@@ -115,8 +119,10 @@ pub struct RuntimeSnapshot {
     pub loaded_models: u32,
     /// Number of active request-owned sequences.
     pub active_requests: u32,
-    /// Exact aggregate reservation for verified and exact retained ownership.
+    /// Exact checked aggregate of committed and exactly retained reservations.
     ///
+    /// Sequence entries contribute their admitted logical-payload reservation
+    /// arithmetic rather than an instantaneous allocation measurement.
     /// Incompatible complete models are excluded rather than falsely represented
     /// as exact; their evidence is exposed by [`Self::unverified_ownership`].
     pub reserved_footprint: MemoryFootprint,
@@ -126,7 +132,7 @@ pub struct RuntimeSnapshot {
     pub admission_blocked: bool,
     /// Generation tasks retaining host workspaces until terminal output is released.
     pub generation_workspaces: u32,
-    /// Host workspace bytes retained by active or terminal generation tasks.
+    /// Exact caller-owned workspace reservation retained by generation tasks.
     pub reserved_generation_workspace: MemoryFootprint,
     /// Model-level owners retained for complete-model or failed-load cleanup.
     pub pending_cleanup_models: u32,
@@ -166,7 +172,10 @@ pub struct ModelSnapshot {
     pub lifecycle: ModelLifecycleState,
     /// Inspected backend description.
     pub descriptor: ModelDescriptor,
-    /// Model and active-sequence bytes currently reserved under this slot.
+    /// Exact checked model and active/retained-sequence reservation aggregate.
+    ///
+    /// Sequence contributions are logical-payload reservation bounds, not
+    /// instantaneous physical allocation measurements.
     pub reserved_footprint: MemoryFootprint,
     /// Number of normally active request-owned sequences in the slot.
     pub active_requests: u32,

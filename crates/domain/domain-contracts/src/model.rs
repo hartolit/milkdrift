@@ -215,24 +215,28 @@ pub struct ModelCapabilities {
     pub maximum_prefill_batch: u32,
 }
 
-/// Deterministic byte ownership and headroom for a named accounting phase.
+/// Deterministic byte accounting for a named ownership or reservation phase.
 ///
-/// The field or operation carrying a footprint names its phase, such as final
-/// post-load ownership or the loading transaction peak. A footprint contains
-/// only concrete byte ownership and explicitly planned deterministic headroom
-/// for that phase; rates and other planning coefficients belong outside it. It
-/// excludes allocator bookkeeping and fragmentation, driver or device-context
-/// allocations, process RSS, and serialized headers, configuration, and other
-/// metadata.
+/// The field or operation carrying a footprint defines its exact meaning, such
+/// as final post-load ownership, a loading transaction peak, or a sequence
+/// logical-payload reservation. "Exact" means that the declared phase's checked
+/// arithmetic is exact; it does not turn a conservative reservation bound into
+/// an instantaneous allocation measurement. Rates and other planning
+/// coefficients belong outside the footprint.
+///
+/// Portable footprints exclude physical RSS/VRAM, allocator rounding,
+/// fragmentation and pools, CUDA context/driver allocations, native workspaces,
+/// and serialized headers, configuration, and other metadata unless a carrying
+/// field explicitly defines otherwise.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MemoryFootprint {
     /// Host-resident weight tensor ownership.
     pub host_weight_bytes: u64,
     /// Device-resident weight tensor ownership.
     pub device_weight_bytes: u64,
-    /// Host working ownership and deterministic headroom excluding weights.
+    /// Host working payload ownership or reservation headroom excluding weights.
     pub host_working_bytes: u64,
-    /// Device working ownership and deterministic headroom excluding weights.
+    /// Device working payload ownership or reservation headroom excluding weights.
     pub device_working_bytes: u64,
 }
 
@@ -457,13 +461,18 @@ impl SequenceConfiguration {
     }
 }
 
-/// Cold-path sequence creation plan.
+/// Cold-path sequence reservation plan.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SequencePlan {
     /// Accepted sequence configuration.
     pub configuration: SequenceConfiguration,
-    /// Exact maximum sequence-specific ownership for the accepted configuration.
+    /// Exact arithmetic reservation for the accepted sequence plan.
+    ///
+    /// This is a checked conservative hard upper bound for the backend's reviewed
+    /// live logical tensor payload and source-transfer bytes across creation and
+    /// permitted execution schedules. It is not an exact instantaneous live
+    /// allocation, and caller-owned logits workspace is accounted separately.
     pub expected_footprint: MemoryFootprint,
-    /// Required logits elements for each decode operation.
+    /// Required caller-owned logits elements for each decode operation.
     pub logits_capacity: usize,
 }

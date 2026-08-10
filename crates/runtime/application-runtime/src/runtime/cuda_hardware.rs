@@ -6,8 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use hf_hub_adapter::{
-    ArtifactContentIdentity, ArtifactContentIdentityAuthority, ArtifactScalarType,
-    ResolvedSafetensorsLlamaArtifacts, ResolvedSafetensorsShard,
+    ArtifactContentIdentity, ArtifactContentIdentityAuthority, ArtifactContentKind,
+    ArtifactScalarType, ResolvedContentArtifact, ResolvedSafetensorsLlamaArtifacts,
+    ResolvedSafetensorsShard,
 };
 
 use super::ApplicationRuntime;
@@ -32,6 +33,16 @@ const CANDLE_FIXTURE_WEIGHT_SHA256: [u8; 32] = [
     0xcc, 0x47, 0x98, 0xaf, 0x93, 0x48, 0x8b, 0x4f, 0xb2, 0xae, 0x05, 0x48, 0xc2, 0xb2, 0x8a, 0xce,
     0x60, 0x05, 0x21, 0x73, 0x2b, 0x52, 0x02, 0x3a, 0x77, 0x86, 0xc3, 0x22, 0x7d, 0x72, 0xd6, 0x72,
 ];
+const CANDLE_FIXTURE_CONFIG_BYTES: u64 = 382;
+const CANDLE_FIXTURE_CONFIG_SHA256: [u8; 32] = [
+    0xe3, 0x02, 0x25, 0xf7, 0xb8, 0xcb, 0xeb, 0x18, 0xc6, 0xfe, 0x2e, 0x9f, 0x62, 0x3e, 0x87, 0xbd,
+    0x5d, 0x7c, 0xec, 0x3e, 0x28, 0xdd, 0x7e, 0x23, 0xa3, 0xf3, 0x6e, 0xe1, 0x07, 0xc6, 0x9c, 0x4d,
+];
+const TOKENIZER_FIXTURE_BYTES: u64 = 590;
+const TOKENIZER_FIXTURE_SHA256: [u8; 32] = [
+    0x48, 0x58, 0x03, 0x37, 0x39, 0x9c, 0xdd, 0x7f, 0x69, 0x8e, 0x11, 0x1e, 0x42, 0xf7, 0x68, 0x05,
+    0xcf, 0xc0, 0xe5, 0x31, 0xc4, 0xf7, 0x72, 0x88, 0x7f, 0x65, 0x1e, 0xb2, 0x0b, 0xb2, 0xb0, 0x5f,
+];
 
 static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -43,7 +54,15 @@ struct HardwareCase {
 }
 
 macro_rules! hardware_cases {
-    ($($case:ident),+ $(,)?) => {
+    (
+        $(
+            fn $case:ident() -> TestResult $body:block
+        )+
+    ) => {
+        $(
+            fn $case() -> TestResult $body
+        )+
+
         const HARDWARE_CASES: &[HardwareCase] = &[
             $(HardwareCase {
                 name: stringify!($case),
@@ -52,11 +71,6 @@ macro_rules! hardware_cases {
         ];
     };
 }
-
-hardware_cases!(
-    unavailable_selected_cuda_blocks_load_without_fallback,
-    cuda_fixture_load_reports_selected_and_actual_e1_device,
-);
 
 pub(crate) fn run_hardware_suite() -> TestResult {
     require_cuda_opt_in()?;
@@ -121,69 +135,71 @@ fn unavailable_cuda_probe(device: ApplicationDevice) -> DeviceProbeResult {
     }
 }
 
-fn unavailable_selected_cuda_blocks_load_without_fallback() -> TestResult {
-    with_runtime_and_probe(available_device_probe, |runtime| {
-        runtime
-            .select_device(CUDA_ZERO)
-            .map_err(application_error)?;
-        runtime.device_probe = unavailable_cuda_probe;
-        let selection = accept_fixture(runtime)?;
+hardware_cases!(
+    fn unavailable_selected_cuda_blocks_load_without_fallback() -> TestResult {
+        with_runtime_and_probe(available_device_probe, |runtime| {
+            runtime
+                .select_device(CUDA_ZERO)
+                .map_err(application_error)?;
+            runtime.device_probe = unavailable_cuda_probe;
+            let selection = accept_fixture(runtime)?;
 
-        assert_eq!(
-            runtime.load_model(&selection),
-            Err(ApplicationError::SelectedDeviceUnavailable {
-                device: CUDA_ZERO,
-                reason: ApplicationDeviceUnavailableReason::DiscoveryFailed,
-            })
-        );
-        assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
-        assert!(!runtime.state().selected_device_available());
-        assert!(!runtime.state().can_load(&selection));
-        assert!(runtime.state().loaded().is_none());
-        assert_eq!(runtime.state().device_discovery_failures().len(), 1);
-        Ok(())
-    })
-}
+            assert_eq!(
+                runtime.load_model(&selection),
+                Err(ApplicationError::SelectedDeviceUnavailable {
+                    device: CUDA_ZERO,
+                    reason: ApplicationDeviceUnavailableReason::DiscoveryFailed,
+                })
+            );
+            assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
+            assert!(!runtime.state().selected_device_available());
+            assert!(!runtime.state().can_load(&selection));
+            assert!(runtime.state().loaded().is_none());
+            assert_eq!(runtime.state().device_discovery_failures().len(), 1);
+            Ok(())
+        })
+    }
 
-fn cuda_fixture_load_reports_selected_and_actual_e1_device() -> TestResult {
-    with_runtime_and_probe(probe_application_device, |runtime| {
-        let cuda = runtime
-            .state()
-            .devices()
-            .iter()
-            .find(|summary| summary.device() == CUDA_ZERO && summary.available())
-            .ok_or_else(|| "CUDA ordinal 0 was not discovered by E1".to_owned())?;
-        assert!(cuda.display_name().is_some());
-        eprintln!(
-            "E1 discovered {:?} ({:?}) with total={:?} available={:?} compute={:?}",
-            cuda.device(),
-            cuda.display_name(),
-            cuda.total_memory_bytes(),
-            cuda.available_memory_bytes(),
-            cuda.compute_capability(),
-        );
+    fn cuda_fixture_load_reports_selected_and_actual_e1_device() -> TestResult {
+        with_runtime_and_probe(probe_application_device, |runtime| {
+            let cuda = runtime
+                .state()
+                .devices()
+                .iter()
+                .find(|summary| summary.device() == CUDA_ZERO && summary.available())
+                .ok_or_else(|| "CUDA ordinal 0 was not discovered by E1".to_owned())?;
+            assert!(cuda.display_name().is_some());
+            eprintln!(
+                "E1 discovered {:?} ({:?}) with total={:?} available={:?} compute={:?}",
+                cuda.device(),
+                cuda.display_name(),
+                cuda.total_memory_bytes(),
+                cuda.available_memory_bytes(),
+                cuda.compute_capability(),
+            );
 
-        runtime
-            .select_device(CUDA_ZERO)
-            .map_err(application_error)?;
-        assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
-        assert!(runtime.state().loaded().is_none());
-        assert_eq!(runtime.state().activity(), ApplicationActivity::Idle);
+            runtime
+                .select_device(CUDA_ZERO)
+                .map_err(application_error)?;
+            assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
+            assert!(runtime.state().loaded().is_none());
+            assert_eq!(runtime.state().activity(), ApplicationActivity::Idle);
 
-        let loaded = load_fixture(runtime)?;
-        assert_eq!(loaded.device(), CUDA_ZERO);
-        assert_eq!(loaded.execution_scalar_type(), ApplicationScalarType::F32);
-        assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
+            let loaded = load_fixture(runtime)?;
+            assert_eq!(loaded.device(), CUDA_ZERO);
+            assert_eq!(loaded.execution_scalar_type(), ApplicationScalarType::F32);
+            assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
 
-        runtime.unload_model().map_err(application_error)?;
-        let _unloaded = wait_for_event(runtime, |event| {
-            matches!(event, ApplicationEvent::ModelUnloaded { .. })
-        })?;
-        assert!(runtime.state().loaded().is_none());
-        assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
-        Ok(())
-    })
-}
+            runtime.unload_model().map_err(application_error)?;
+            let _unloaded = wait_for_event(runtime, |event| {
+                matches!(event, ApplicationEvent::ModelUnloaded { .. })
+            })?;
+            assert!(runtime.state().loaded().is_none());
+            assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
+            Ok(())
+        })
+    }
+);
 
 fn with_runtime_and_probe<F>(device_probe: DeviceProbe, test: F) -> TestResult
 where
@@ -216,8 +232,18 @@ fn accept_fixture(runtime: &mut ApplicationRuntime) -> TestResult<ModelSelection
         revision: REVISION.to_owned(),
         commit: COMMIT.to_owned(),
         configuration_declared_scalar_type: Some(ArtifactScalarType::F32),
-        config_path: canonical(candle.join("config.json"))?,
-        tokenizer_path: canonical(manifest.join("tests/fixtures/tokenizer.json"))?,
+        config: resolved_content_artifact(
+            candle.join("config.json"),
+            ArtifactContentKind::Configuration,
+            CANDLE_FIXTURE_CONFIG_BYTES,
+            CANDLE_FIXTURE_CONFIG_SHA256,
+        )?,
+        tokenizer: resolved_content_artifact(
+            manifest.join("tests/fixtures/tokenizer.json"),
+            ArtifactContentKind::Tokenizer,
+            TOKENIZER_FIXTURE_BYTES,
+            TOKENIZER_FIXTURE_SHA256,
+        )?,
         weight_shards: vec![ResolvedSafetensorsShard {
             path: canonical(candle.join("model.safetensors"))?,
             content_identity: ArtifactContentIdentity {
@@ -307,6 +333,23 @@ fn remove_database(path: &Path) -> TestResult {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!("failed to remove test database: {error}")),
     }
+}
+
+fn resolved_content_artifact(
+    path: impl AsRef<Path>,
+    kind: ArtifactContentKind,
+    byte_length: u64,
+    sha256: [u8; 32],
+) -> TestResult<ResolvedContentArtifact> {
+    Ok(ResolvedContentArtifact {
+        path: canonical(path)?,
+        content_identity: ArtifactContentIdentity {
+            byte_length,
+            sha256,
+            authority: ArtifactContentIdentityAuthority::ProjectEstablished,
+        },
+        kind,
+    })
 }
 
 fn canonical(path: impl AsRef<Path>) -> TestResult<PathBuf> {

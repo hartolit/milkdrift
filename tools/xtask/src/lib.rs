@@ -11,4 +11,10 @@ pub use architecture::{
     DependencyKind, Layer, ValidationError, ValidationReport, Violation, validate_workspace,
 };
 pub use hygiene::{HygieneError, HygieneReport, HygieneViolation, validate_repository_hygiene};
-pub use verification::{BenchmarkPlanError, CargoCommand, benchmark_command_plan};
+pub use verification::{
+    BenchmarkPlanError, CargoCommand, CommandPlanError, benchmark_command_plan,
+    cuda_clippy_command_plan, cuda_clippy_command_plan_for_metadata, cuda_compile_command_plan,
+    cuda_compile_command_plan_for_metadata, cuda_hardware_command_plan,
+    cuda_hardware_command_plan_for_metadata, portable_command_plan,
+    portable_command_plan_for_metadata,
+};

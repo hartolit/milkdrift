@@ -1,17 +1,80 @@
+use std::fs;
+use std::path::Path;
+
 use domain_contracts::{
     BackendFailure, BackendFailureKind, BackendId, CapacityExhausted, CapacityResource, DeviceId,
-    DeviceKind, ExecutionDevice, LoadError, MemoryBudget, MemoryFootprint, MemoryKind, ModelId,
-    ScalarType, ScalarTypeSet,
+    DeviceKind, ExecutionDevice, LoadError, MemoryBudget, MemoryFootprint, MemoryKind, ModelHandle,
+    ModelId, ScalarType, ScalarTypeSet,
 };
-
+use hf_hub_adapter::ArtifactScalarType;
+use inference_runtime::{
+    CleanupFailureReport, CleanupResource, CleanupRetryState, FailureClass, RetainedOwnership,
+    RuntimeError, RuntimeOperation,
+};
 use redb_storage::{RedbStorage, StoredScalarType};
 
 use super::support::*;
 use crate::runtime::model::{LoadAdmission, LoadReceiptMismatch};
 use crate::{
-    ApplicationDevice, ApplicationError, ApplicationEvent, ApplicationFailureKind,
-    ApplicationRuntime, ApplicationScalarType, ModelSelection, ResolvedModel,
+    ApplicationActivity, ApplicationDevice, ApplicationError, ApplicationEvent,
+    ApplicationFailureKind, ApplicationMemoryFootprint, ApplicationRetainedModelResource,
+    ApplicationRetainedOwnership, ApplicationRuntime, ApplicationScalarType, ModelSelection,
+    ResolvedModel,
 };
+
+fn retained_load_cleanup(
+    handle: ModelHandle,
+    footprint: MemoryFootprint,
+    attempts: u32,
+) -> CleanupRetryState {
+    CleanupRetryState {
+        resource: CleanupResource::FailedLoad { handle },
+        failure: CleanupFailureReport::new(
+            RuntimeOperation::ModelLoad,
+            FailureClass::Load,
+            RuntimeOperation::FailedLoadCleanup,
+            FailureClass::Synchronization,
+        ),
+        ownership: RetainedOwnership::Exact(footprint),
+        attempts,
+        maximum_attempts: 3,
+    }
+}
+
+fn copy_test_file(source: &Path, destination: &Path) -> TestResult {
+    fs::copy(source, destination).map(|_| ()).map_err(|error| {
+        format!(
+            "failed to copy test file {} to {}: {error}",
+            source.display(),
+            destination.display()
+        )
+    })
+}
+
+fn mutate_test_file_without_changing_size(path: &Path) -> TestResult {
+    let mut bytes = fs::read(path)
+        .map_err(|error| format!("failed to read test file {}: {error}", path.display()))?;
+    let byte_length = bytes.len();
+    let first = bytes
+        .first_mut()
+        .ok_or_else(|| format!("test file {} was empty", path.display()))?;
+    *first = first.wrapping_add(1);
+    fs::write(path, bytes)
+        .map_err(|error| format!("failed to mutate test file {}: {error}", path.display()))?;
+    let mutated_length = usize::try_from(
+        fs::metadata(path)
+            .map_err(|error| format!("failed to inspect test file {}: {error}", path.display()))?
+            .len(),
+    )
+    .map_err(|error| error.to_string())?;
+    if mutated_length != byte_length {
+        return Err(format!(
+            "same-size mutation changed {} from {byte_length} to {mutated_length} bytes",
+            path.display()
+        ));
+    }
+    Ok(())
+}
 
 #[test]
 fn resolved_selection_defaults_persist_without_restoring_resolution() -> TestResult {
@@ -49,6 +112,125 @@ fn resolved_selection_defaults_persist_without_restoring_resolution() -> TestRes
 
     let cleanup_result = remove_database(&database_path);
     result.and(cleanup_result)
+}
+
+#[test]
+fn same_size_tokenizer_mutation_before_acceptance_is_rejected_as_artifact_identity() -> TestResult {
+    let database_path = unique_database_path();
+    let tokenizer_path = database_path.with_extension("tokenizer.json");
+    let result = copy_test_file(
+        tokenizer_fixture_path("tokenizer.json").as_path(),
+        &tokenizer_path,
+    )
+    .and_then(|()| {
+        with_runtime_at(&database_path, default_test_configuration, |runtime| {
+            let config_path = candle_fixture_configuration_path();
+            let artifacts = fixture_artifacts_with_paths(
+                REPOSITORY,
+                COMMIT,
+                &tokenizer_path,
+                config_path.as_path(),
+                Some(ArtifactScalarType::F32),
+            )?;
+            mutate_test_file_without_changing_size(&tokenizer_path)?;
+
+            let event = runtime.accept_resolved_artifacts(artifacts);
+            let ApplicationEvent::ModelResolutionFailed { failure } = event else {
+                return Err(format!(
+                    "mutated tokenizer identity was accepted: {event:?}"
+                ));
+            };
+            assert_eq!(failure.kind, ApplicationFailureKind::ArtifactResolution);
+            assert!(
+                failure
+                    .message
+                    .contains("resolved tokenizer content verification failed")
+            );
+            assert!(runtime.state().resolved().is_none());
+            assert!(runtime.tokenizer.is_none());
+            Ok(())
+        })
+    });
+
+    let database_cleanup = remove_database(&database_path);
+    let tokenizer_cleanup = remove_test_file(&tokenizer_path);
+    result.and(database_cleanup).and(tokenizer_cleanup)
+}
+
+#[test]
+fn verified_malformed_tokenizer_is_rejected_as_tokenizer_parser_failure() -> TestResult {
+    let database_path = unique_database_path();
+    let tokenizer_path = database_path.with_extension("tokenizer.json");
+    let result = fs::write(&tokenizer_path, br#"{"not":"a tokenizer"}"#)
+        .map_err(|error| error.to_string())
+        .and_then(|()| {
+            with_runtime_at(&database_path, default_test_configuration, |runtime| {
+                let config_path = candle_fixture_configuration_path();
+                let artifacts = fixture_artifacts_with_paths(
+                    REPOSITORY,
+                    COMMIT,
+                    &tokenizer_path,
+                    config_path.as_path(),
+                    Some(ArtifactScalarType::F32),
+                )?;
+
+                let event = runtime.accept_resolved_artifacts(artifacts);
+                let ApplicationEvent::ModelResolutionFailed { failure } = event else {
+                    return Err(format!("malformed tokenizer was accepted: {event:?}"));
+                };
+                assert_eq!(failure.kind, ApplicationFailureKind::Tokenizer);
+                assert!(failure.message.contains("valid supported tokenizer"));
+                assert!(runtime.state().resolved().is_none());
+                Ok(())
+            })
+        });
+
+    let database_cleanup = remove_database(&database_path);
+    let tokenizer_cleanup = remove_test_file(&tokenizer_path);
+    result.and(database_cleanup).and(tokenizer_cleanup)
+}
+
+#[test]
+fn same_size_config_mutation_after_acceptance_is_rejected_before_load_submission() -> TestResult {
+    let database_path = unique_database_path();
+    let config_path = database_path.with_extension("config.json");
+    let result = copy_test_file(candle_fixture_configuration_path().as_path(), &config_path)
+        .and_then(|()| {
+            with_runtime_at(&database_path, default_test_configuration, |runtime| {
+                let (selection, _resolved) = resolve_fixture_with_configuration(
+                    runtime,
+                    REPOSITORY,
+                    COMMIT,
+                    "tokenizer.json",
+                    &config_path,
+                    Some(ArtifactScalarType::F32),
+                )?;
+                mutate_test_file_without_changing_size(&config_path)?;
+
+                let error = runtime
+                    .load_model(&selection)
+                    .err()
+                    .ok_or_else(|| "mutated configuration was submitted for loading".to_owned())?;
+                let ApplicationError::Failure(failure) = error else {
+                    return Err(format!(
+                        "configuration identity failure had the wrong error shape: {error:?}"
+                    ));
+                };
+                assert_eq!(failure.kind, ApplicationFailureKind::ArtifactResolution);
+                assert!(
+                    failure
+                        .message
+                        .contains("resolved model configuration verification failed before load")
+                );
+                assert!(runtime.pending_load.is_none());
+                assert!(runtime.state().can_load(&selection));
+                Ok(())
+            })
+        });
+
+    let database_cleanup = remove_database(&database_path);
+    let config_cleanup = remove_test_file(&config_path);
+    result.and(database_cleanup).and(config_cleanup)
 }
 
 #[test]
@@ -340,7 +522,7 @@ fn load_receipt_validation_classifies_each_independent_transaction_fact() -> Tes
 }
 
 #[test]
-fn stale_load_events_do_not_consume_the_active_transaction() -> TestResult {
+fn stale_non_ownership_load_failure_does_not_consume_the_active_transaction() -> TestResult {
     with_runtime(default_test_configuration, |runtime| {
         let (selection, _resolved) =
             resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
@@ -351,15 +533,8 @@ fn stale_load_events_do_not_consume_the_active_transaction() -> TestResult {
         assert_eq!(
             runtime.process_model_loaded(
                 stale_ticket,
-                Err(inference_runtime::RuntimeError::Load(
-                    LoadError::UnsupportedFormat
-                )),
+                Err(RuntimeError::Load(LoadError::UnsupportedFormat)),
             ),
-            None
-        );
-        assert!(runtime.pending_load.is_some());
-        assert_eq!(
-            runtime.process_model_loaded(stale_ticket, Ok(receipt)),
             None
         );
         assert!(runtime.pending_load.is_some());
@@ -370,6 +545,176 @@ fn stale_load_events_do_not_consume_the_active_transaction() -> TestResult {
         let _unloaded = wait_for_event(runtime, |event| {
             matches!(event, ApplicationEvent::ModelUnloaded { .. })
         })?;
+        Ok(())
+    })
+}
+
+#[test]
+fn wrong_ticket_load_receipt_is_quarantined_and_invalidates_the_transaction() -> TestResult {
+    with_runtime(default_test_configuration, |runtime| {
+        let (selection, _resolved) =
+            resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
+        runtime.load_model(&selection).map_err(application_error)?;
+        let (ticket, receipt) = receive_successful_load_receipt(runtime)?;
+        let stale_ticket = inference_runtime::CommandTicket::new(ticket.get().saturating_add(1));
+
+        let event = runtime.process_model_loaded(stale_ticket, Ok(receipt));
+        let Some(ApplicationEvent::ModelCompatibilityFailed { failure }) = event else {
+            return Err(format!(
+                "wrong-ticket receipt was not quarantined: {event:?}"
+            ));
+        };
+        assert_eq!(failure.kind, ApplicationFailureKind::IncompatibleReceipt);
+        assert_eq!(failure.message, LoadReceiptMismatch::Ticket.message());
+        assert!(runtime.pending_load.is_none());
+        let retained = runtime
+            .state()
+            .retained_model()
+            .ok_or_else(|| "wrong-ticket receipt did not retain its owner".to_owned())?;
+        assert_eq!(
+            retained.resource(),
+            ApplicationRetainedModelResource::LoadedModel {
+                handle: receipt.handle,
+            }
+        );
+        assert_eq!(
+            retained.ownership(),
+            ApplicationRetainedOwnership::Exact(ApplicationMemoryFootprint::from(
+                receipt.reserved_footprint
+            ))
+        );
+        assert_eq!(retained.primary_failure(), &failure);
+        assert_eq!(
+            runtime.state().activity(),
+            ApplicationActivity::RetainedCleanup
+        );
+        assert!(runtime.state().loaded().is_none());
+        assert!(!runtime.state().can_load(&selection));
+        assert!(!runtime.state().can_select_device());
+        Ok(())
+    })
+}
+
+#[test]
+fn load_receipt_without_a_pending_transaction_is_quarantined_from_idle() -> TestResult {
+    with_runtime(default_test_configuration, |runtime| {
+        let (selection, _resolved) =
+            resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
+        runtime.load_model(&selection).map_err(application_error)?;
+        let (_ticket, receipt) = receive_successful_load_receipt(runtime)?;
+        runtime.pending_load = None;
+        runtime.state.set_idle();
+
+        let event =
+            runtime.process_model_loaded(inference_runtime::CommandTicket::new(991), Ok(receipt));
+        let Some(ApplicationEvent::ModelCompatibilityFailed { failure }) = event else {
+            return Err(format!(
+                "uncorrelated receipt was not quarantined: {event:?}"
+            ));
+        };
+        assert_eq!(failure.kind, ApplicationFailureKind::IncompatibleReceipt);
+        assert_eq!(
+            failure.message,
+            LoadReceiptMismatch::MissingTransaction.message()
+        );
+        assert!(runtime.pending_load.is_none());
+        let retained = runtime
+            .state()
+            .retained_model()
+            .ok_or_else(|| "uncorrelated receipt did not retain its owner".to_owned())?;
+        assert_eq!(
+            retained.resource(),
+            ApplicationRetainedModelResource::LoadedModel {
+                handle: receipt.handle,
+            }
+        );
+        assert_eq!(
+            runtime.state().activity(),
+            ApplicationActivity::RetainedCleanup
+        );
+        assert!(runtime.state().loaded().is_none());
+        assert!(!runtime.state().can_load(&selection));
+        assert!(!runtime.state().can_select_device());
+        Ok(())
+    })
+}
+
+#[test]
+fn wrong_ticket_retained_cleanup_result_is_not_dropped() -> TestResult {
+    with_runtime(default_test_configuration, |runtime| {
+        let (selection, _resolved) =
+            resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
+        runtime.load_model(&selection).map_err(application_error)?;
+        let (ticket, receipt) = receive_successful_load_receipt(runtime)?;
+        let stale_ticket = inference_runtime::CommandTicket::new(ticket.get().saturating_add(1));
+        let lower = retained_load_cleanup(receipt.handle, receipt.reserved_footprint, 1);
+
+        let event =
+            runtime.process_model_loaded(stale_ticket, Err(RuntimeError::CleanupFailed(lower)));
+        let Some(ApplicationEvent::ModelCleanupPending { cleanup }) = event else {
+            return Err(format!(
+                "wrong-ticket retained cleanup was not quarantined: {event:?}"
+            ));
+        };
+        assert_eq!(
+            cleanup.primary_failure().kind,
+            ApplicationFailureKind::IncompatibleReceipt
+        );
+        assert_eq!(
+            cleanup.primary_failure().message,
+            LoadReceiptMismatch::Ticket.message()
+        );
+        assert_eq!(
+            cleanup.resource(),
+            ApplicationRetainedModelResource::FailedLoad {
+                handle: receipt.handle,
+            }
+        );
+        assert_eq!(runtime.state().retained_model(), Some(&cleanup));
+        assert!(runtime.pending_load.is_none());
+        assert_eq!(
+            runtime.state().activity(),
+            ApplicationActivity::RetainedCleanup
+        );
+        assert!(!runtime.state().can_load(&selection));
+        Ok(())
+    })
+}
+
+#[test]
+fn exhausted_retained_cleanup_without_a_pending_transaction_is_not_dropped() -> TestResult {
+    with_runtime(default_test_configuration, |runtime| {
+        let handle = ModelHandle::new(ModelId::new(17), domain_contracts::ModelGeneration::new(19));
+        let lower = retained_load_cleanup(handle, MemoryFootprint::default(), 3);
+        runtime.state.set_idle();
+
+        let event = runtime.process_model_loaded(
+            inference_runtime::CommandTicket::new(992),
+            Err(RuntimeError::CleanupRetryExhausted(lower)),
+        );
+        let Some(ApplicationEvent::ModelCleanupPending { cleanup }) = event else {
+            return Err(format!(
+                "uncorrelated exhausted cleanup was not quarantined: {event:?}"
+            ));
+        };
+        assert_eq!(
+            cleanup.primary_failure().kind,
+            ApplicationFailureKind::IncompatibleReceipt
+        );
+        assert_eq!(
+            cleanup.primary_failure().message,
+            LoadReceiptMismatch::MissingTransaction.message()
+        );
+        assert_eq!(
+            cleanup.resource(),
+            ApplicationRetainedModelResource::FailedLoad { handle }
+        );
+        assert!(runtime.pending_load.is_none());
+        assert_eq!(
+            runtime.state().activity(),
+            ApplicationActivity::RetainedCleanup
+        );
+        assert!(!runtime.state().can_select_device());
         Ok(())
     })
 }

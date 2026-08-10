@@ -6,9 +6,10 @@ use domain_contracts::{
     ModelArchitecture, ModelId, QuantizationFormat, ScalarTypeSet,
 };
 use hf_hub_adapter::{
-    ArtifactContentIdentityAuthority, HubModelReference, ResolvedSafetensorsLlamaArtifacts,
+    ArtifactContentIdentityAuthority, HubError, HubModelReference,
+    ResolvedSafetensorsLlamaArtifacts,
 };
-use hf_tokenizer::HfTokenizer;
+use hf_tokenizer::{HfTokenizer, HfTokenizerLoadError};
 use host_runtime::{TrySendError, TrySendError::Disconnected};
 use inference_runtime::{CommandTicket, RuntimeCommand, RuntimeError};
 use redb_storage::ModelRecord;
@@ -52,6 +53,8 @@ pub(super) struct ModelLoadTransaction {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LoadReceiptMismatch {
+    MissingTransaction,
+    Ticket,
     ModelIdentity,
     Declaration,
     ExecutionScalar,
@@ -67,8 +70,10 @@ pub(super) enum LoadReceiptMismatch {
 }
 
 impl LoadReceiptMismatch {
-    const fn message(self) -> &'static str {
+    pub(super) const fn message(self) -> &'static str {
         match self {
+            Self::MissingTransaction => "the load result had no pending load transaction",
+            Self::Ticket => "the load result ticket did not match the pending load transaction",
             Self::ModelIdentity => "the load receipt model identity did not match",
             Self::Declaration => {
                 "the independently parsed configuration declaration did not match resolution"
@@ -152,8 +157,18 @@ impl ApplicationRuntime {
         let selected_device = self.state.selected_device();
         self.refresh_selected_device()?;
         let requested_execution_device = execution_device(selected_device);
-        let source = CandleLlamaSource::new(
-            snapshot.artifacts.config_path.clone(),
+        let config_bytes = snapshot
+            .artifacts
+            .config
+            .read_verified_bytes()
+            .map_err(|error| {
+                resolved_content_verification_failure(
+                    &error,
+                    "resolved model configuration verification failed before load",
+                )
+            })?;
+        let source = CandleLlamaSource::from_config_bytes(
+            config_bytes,
             candle_weight_shards(&snapshot.artifacts).map_err(model_source_failure)?,
         )
         .map_err(model_source_failure)?;
@@ -275,11 +290,18 @@ impl ApplicationRuntime {
         }
         self.pending_hub_selection = None;
 
-        let Ok(tokenizer) = HfTokenizer::from_file(&artifacts.tokenizer_path) else {
-            return self.reject_resolution(ApplicationFailure::new(
-                ApplicationFailureKind::Tokenizer,
-                "the resolved tokenizer could not be validated",
-            ));
+        let tokenizer_bytes = match artifacts.tokenizer.read_verified_bytes() {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                return self.reject_resolution(resolved_content_verification_failure(
+                    &error,
+                    "resolved tokenizer content verification failed",
+                ));
+            }
+        };
+        let tokenizer = match HfTokenizer::from_bytes(tokenizer_bytes.as_slice()) {
+            Ok(tokenizer) => tokenizer,
+            Err(error) => return self.reject_resolution(tokenizer_load_failure(&error)),
         };
         let chat_profile = crate::chat::detect_chat_profile(
             artifacts.repository.as_str(),
@@ -327,26 +349,26 @@ impl ApplicationRuntime {
         ticket: CommandTicket,
         result: Result<inference_runtime::LoadReceipt, RuntimeError>,
     ) -> Option<ApplicationEvent> {
-        let expected_ticket = self
-            .pending_load
-            .as_ref()
-            .map(|transaction| transaction.ticket)?;
-        if expected_ticket != ticket {
-            return None;
+        let correlation_mismatch = match self.pending_load.as_ref() {
+            None => Some(LoadReceiptMismatch::MissingTransaction),
+            Some(transaction) if transaction.ticket != ticket => Some(LoadReceiptMismatch::Ticket),
+            Some(_) => None,
+        };
+        if let Some(mismatch) = correlation_mismatch {
+            return self.process_uncorrelated_model_load(result, mismatch);
         }
 
-        let transaction = self.pending_load.take();
+        let Some(transaction) = self.pending_load.take() else {
+            return self
+                .process_uncorrelated_model_load(result, LoadReceiptMismatch::MissingTransaction);
+        };
         let receipt = match result {
             Ok(receipt) => receipt,
             Err(
                 RuntimeError::CleanupFailed(cleanup) | RuntimeError::CleanupRetryExhausted(cleanup),
             ) => {
                 self.begin_runtime_retention(cleanup, None);
-                return self
-                    .state
-                    .retained_model()
-                    .cloned()
-                    .map(|cleanup| ApplicationEvent::ModelCleanupPending { cleanup });
+                return Some(self.current_cleanup_event());
             }
             Err(error) => {
                 self.state.set_idle();
@@ -355,7 +377,6 @@ impl ApplicationRuntime {
                 });
             }
         };
-        let transaction = transaction?;
 
         match self.validate_load_receipt(&transaction, &receipt) {
             Ok(validated) => {
@@ -371,6 +392,31 @@ impl ApplicationRuntime {
                 receipt.reserved_footprint,
                 incompatible_receipt_failure(mismatch),
             )),
+        }
+    }
+
+    fn process_uncorrelated_model_load(
+        &mut self,
+        result: Result<inference_runtime::LoadReceipt, RuntimeError>,
+        mismatch: LoadReceiptMismatch,
+    ) -> Option<ApplicationEvent> {
+        match result {
+            Ok(receipt) => {
+                self.pending_load = None;
+                Some(self.reject_incompatible_model(
+                    receipt.handle,
+                    receipt.reserved_footprint,
+                    incompatible_receipt_failure(mismatch),
+                ))
+            }
+            Err(
+                RuntimeError::CleanupFailed(cleanup) | RuntimeError::CleanupRetryExhausted(cleanup),
+            ) => {
+                self.pending_load = None;
+                self.begin_runtime_retention(cleanup, Some(incompatible_receipt_failure(mismatch)));
+                Some(self.current_cleanup_event())
+            }
+            Err(_) => None,
         }
     }
 
@@ -502,6 +548,26 @@ impl ApplicationRuntime {
     }
 }
 
+fn resolved_content_verification_failure(error: &HubError, context: &str) -> ApplicationFailure {
+    let normalized = model_resolution_failure(error);
+    ApplicationFailure::new(
+        normalized.kind,
+        format!("{context}: {}", normalized.message),
+    )
+}
+
+fn tokenizer_load_failure(error: &HfTokenizerLoadError) -> ApplicationFailure {
+    let message = match error {
+        HfTokenizerLoadError::InvalidTokenizer(_) => {
+            "verified tokenizer bytes are not a valid supported tokenizer serialization"
+        }
+        HfTokenizerLoadError::VocabularyOverflow { .. } => {
+            "verified tokenizer vocabulary exceeds the application token identifier range"
+        }
+    };
+    ApplicationFailure::new(ApplicationFailureKind::Tokenizer, message)
+}
+
 fn candle_weight_shards(
     artifacts: &ResolvedSafetensorsLlamaArtifacts,
 ) -> Result<Vec<CandleWeightShard>, SourceError> {
@@ -511,7 +577,8 @@ fn candle_weight_shards(
         .map_err(|_| SourceError::Allocation)?;
     for shard in &artifacts.weight_shards {
         let identity = match shard.content_identity.authority {
-            ArtifactContentIdentityAuthority::HuggingFaceLfs => {
+            ArtifactContentIdentityAuthority::HuggingFaceLfs
+            | ArtifactContentIdentityAuthority::HuggingFaceGitBlob => {
                 CandleShardIdentity::VerifiedImmutable {
                     byte_length: shard.content_identity.byte_length,
                     sha256: shard.content_identity.sha256,

@@ -107,6 +107,12 @@ impl Display for SourceError {
 
 impl Error for SourceError {}
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CandleConfigurationSource {
+    Path(PathBuf),
+    Bytes(Vec<u8>),
+}
+
 /// Configuration and identity-bearing Safetensors shards for one Llama model.
 ///
 /// The scalar declaration is deliberately not caller supplied. Candle derives
@@ -115,7 +121,7 @@ impl Error for SourceError {}
 /// pairs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CandleLlamaSource {
-    config_path: PathBuf,
+    configuration: CandleConfigurationSource,
     weight_shards: Vec<CandleWeightShard>,
 }
 
@@ -128,21 +134,31 @@ impl CandleLlamaSource {
     /// Returns [`SourceError::MissingWeights`] when `weight_shards` is empty.
     pub fn new(
         config_path: impl Into<PathBuf>,
-        mut weight_shards: Vec<CandleWeightShard>,
+        weight_shards: Vec<CandleWeightShard>,
     ) -> Result<Self, SourceError> {
-        if weight_shards.is_empty() {
-            return Err(SourceError::MissingWeights);
-        }
-        weight_shards.sort_unstable_by(|left, right| {
-            left.path
-                .cmp(&right.path)
-                .then_with(|| left.identity.cmp(&right.identity))
-        });
-
-        Ok(Self {
-            config_path: config_path.into(),
+        Self::with_configuration(
+            CandleConfigurationSource::Path(config_path.into()),
             weight_shards,
-        })
+        )
+    }
+
+    /// Creates a source from owned, already selected configuration bytes and
+    /// identity-bearing Safetensors shards.
+    ///
+    /// The loader parses this exact byte vector and never reopens a configuration
+    /// path, allowing callers to preserve a previously verified content binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SourceError::MissingWeights`] when `weight_shards` is empty.
+    pub fn from_config_bytes(
+        config_bytes: Vec<u8>,
+        weight_shards: Vec<CandleWeightShard>,
+    ) -> Result<Self, SourceError> {
+        Self::with_configuration(
+            CandleConfigurationSource::Bytes(config_bytes),
+            weight_shards,
+        )
     }
 
     /// Creates a source from mutable or otherwise unverified local files.
@@ -170,16 +186,53 @@ impl CandleLlamaSource {
         Self::new(config_path, weight_shards)
     }
 
-    /// Returns the Hugging Face model configuration path.
+    /// Returns the late-bound Hugging Face model configuration path, when this
+    /// source was constructed from an arbitrary local path.
     #[must_use]
-    pub fn config_path(&self) -> &Path {
-        &self.config_path
+    pub fn config_path(&self) -> Option<&Path> {
+        match &self.configuration {
+            CandleConfigurationSource::Path(path) => Some(path),
+            CandleConfigurationSource::Bytes(_) => None,
+        }
+    }
+
+    /// Returns the exact owned configuration bytes, when this source was
+    /// constructed from previously selected bytes.
+    #[must_use]
+    pub fn config_bytes(&self) -> Option<&[u8]> {
+        match &self.configuration {
+            CandleConfigurationSource::Path(_) => None,
+            CandleConfigurationSource::Bytes(bytes) => Some(bytes.as_slice()),
+        }
+    }
+
+    pub(crate) const fn configuration(&self) -> &CandleConfigurationSource {
+        &self.configuration
     }
 
     /// Returns deterministically sorted path/identity shard pairs.
     #[must_use]
     pub fn weight_shards(&self) -> &[CandleWeightShard] {
         &self.weight_shards
+    }
+
+    fn with_configuration(
+        configuration: CandleConfigurationSource,
+        mut weight_shards: Vec<CandleWeightShard>,
+    ) -> Result<Self, SourceError> {
+        if weight_shards.is_empty() {
+            return Err(SourceError::MissingWeights);
+        }
+        weight_shards.sort_unstable_by(|left, right| {
+            left.path
+                .cmp(&right.path)
+                .then_with(|| left.identity.cmp(&right.identity))
+        });
+
+        Ok(Self {
+            configuration,
+            weight_shards,
+        })
     }
 }
 
@@ -247,6 +300,25 @@ mod tests {
             CandleWeightShard::unverified("z.safetensors"),
         ];
         assert_eq!(source.weight_shards(), expected.as_slice());
+        assert_eq!(
+            source.config_path(),
+            Some(std::path::Path::new("config.json"))
+        );
+        assert_eq!(source.config_bytes(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn owned_configuration_bytes_are_retained_without_a_path() -> Result<(), SourceError> {
+        let source = CandleLlamaSource::from_config_bytes(
+            br#"{"model_type":"llama"}"#.to_vec(),
+            vec![CandleWeightShard::unverified("model.safetensors")],
+        )?;
+        assert_eq!(
+            source.config_bytes(),
+            Some(br#"{"model_type":"llama"}"#.as_slice())
+        );
+        assert_eq!(source.config_path(), None);
         Ok(())
     }
 
@@ -258,6 +330,10 @@ mod tests {
         );
         assert_eq!(
             CandleLlamaSource::from_local_files("config.json", Vec::new()),
+            Err(SourceError::MissingWeights)
+        );
+        assert_eq!(
+            CandleLlamaSource::from_config_bytes(Vec::new(), Vec::new()),
             Err(SourceError::MissingWeights)
         );
     }

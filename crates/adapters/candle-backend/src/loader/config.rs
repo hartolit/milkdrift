@@ -107,7 +107,13 @@ fn try_reserve_config(bytes: &mut Vec<u8>, additional: usize) -> Result<(), ()> 
     bytes.try_reserve_exact(additional).map_err(|_| ())
 }
 
-fn parse_bytes(backend: BackendId, bytes: &[u8]) -> Result<ParsedConfig, LoadError> {
+pub(super) fn parse_bytes(backend: BackendId, bytes: &[u8]) -> Result<ParsedConfig, LoadError> {
+    let byte_length = u64::try_from(bytes.len())
+        .map_err(|_| invalid_model_failure(backend, CODE_NUMERIC_OVERFLOW))?;
+    if byte_length > MAX_CONFIG_BYTES {
+        return Err(invalid_model_failure(backend, CODE_CONFIG_LIMIT));
+    }
+
     let facts = parse_facts(bytes)
         .map_err(|_| invalid_model_failure(backend, CODE_DECLARATION_MALFORMED))?;
     let declaration = facts.resolve_declaration(backend)?;
@@ -771,10 +777,18 @@ fn validate_numeric_config(backend: BackendId, config: &Config) -> Result<(), Lo
         || !config
             .num_attention_heads
             .is_multiple_of(config.num_key_value_heads)
+        // Candle 0.11.0 reads the KV-head dimension when deciding whether to
+        // trim sequence length. Reject configurations that can enter that
+        // invalid branch while this source-locked adapter is in use.
+        || config.num_key_value_heads > config.max_position_embeddings
         || !head_dimension.is_multiple_of(2)
     {
         return Err(LoadError::InvalidSource);
     }
+    config
+        .max_position_embeddings
+        .checked_mul(2)
+        .ok_or_else(|| invalid_model_failure(backend, CODE_NUMERIC_OVERFLOW))?;
     config
         .num_hidden_layers
         .checked_mul(9)
@@ -787,11 +801,12 @@ fn validate_numeric_config(backend: BackendId, config: &Config) -> Result<(), Lo
 mod tests {
     use std::io::Cursor;
 
+    use candle_transformers::models::llama::Config;
     use domain_contracts::{BackendFailureKind, BackendId, LoadError, ScalarType};
 
     use super::{
-        MAX_CONFIG_BYTES, ScalarDeclaration, TEST_CONFIG_ALLOCATION_FAILURES, parse_facts,
-        read_bounded,
+        MAX_CONFIG_BYTES, ScalarDeclaration, TEST_CONFIG_ALLOCATION_FAILURES, parse_bytes,
+        parse_facts, read_bounded, validate_numeric_config,
     };
     use crate::failure::{
         CODE_ARCHITECTURE, CODE_CONFIG_ALLOCATION, CODE_CONFIG_LIMIT, CODE_DECLARATION_CONFLICT,
@@ -946,6 +961,50 @@ mod tests {
     }
 
     #[test]
+    fn numeric_config_rejects_locked_cache_hazards() {
+        let mut config = numeric_fixture();
+        config.num_key_value_heads = 2;
+        config.num_attention_heads = 2;
+        config.max_position_embeddings = 1;
+        assert_eq!(
+            validate_numeric_config(BACKEND, &config),
+            Err(LoadError::InvalidSource)
+        );
+
+        let mut config = numeric_fixture();
+        config.max_position_embeddings = usize::MAX;
+        assert_eq!(
+            backend_code(
+                validate_numeric_config(BACKEND, &config)
+                    .expect_err("overflowing doubled context length was accepted")
+            ),
+            Some((
+                BackendFailureKind::InvalidModel,
+                crate::failure::CODE_NUMERIC_OVERFLOW
+            ))
+        );
+    }
+
+    fn numeric_fixture() -> Config {
+        Config {
+            hidden_size: 8,
+            intermediate_size: 16,
+            vocab_size: 16,
+            num_hidden_layers: 1,
+            num_attention_heads: 2,
+            num_key_value_heads: 2,
+            use_flash_attn: false,
+            rms_norm_eps: 1e-5,
+            rope_theta: 10_000.0,
+            bos_token_id: None,
+            eos_token_id: None,
+            rope_scaling: None,
+            max_position_embeddings: 16,
+            tie_word_embeddings: false,
+        }
+    }
+
+    #[test]
     fn exact_config_ceiling_and_allocation_failure_are_deterministic() -> Result<(), String> {
         let exact_length = usize::try_from(MAX_CONFIG_BYTES).map_err(|error| error.to_string())?;
         let retained_length = read_bounded(BACKEND, &mut Cursor::new(vec![b' '; exact_length]))
@@ -959,6 +1018,15 @@ mod tests {
         )
         .err()
         .ok_or_else(|| "ceiling plus one was accepted".to_owned())?;
+        assert_eq!(
+            backend_code(error),
+            Some((BackendFailureKind::InvalidModel, CODE_CONFIG_LIMIT))
+        );
+
+        let oversized_owned = vec![b' '; exact_length.saturating_add(1)];
+        let error = parse_bytes(BACKEND, oversized_owned.as_slice())
+            .err()
+            .ok_or_else(|| "oversized owned config bytes were accepted".to_owned())?;
         assert_eq!(
             backend_code(error),
             Some((BackendFailureKind::InvalidModel, CODE_CONFIG_LIMIT))

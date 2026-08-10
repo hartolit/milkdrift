@@ -2,6 +2,8 @@
 all-features = true
 targets = [
     { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "wasm32-unknown-unknown" },
+    { triple = "thumbv7em-none-eabihf" },
 ]
 
 [advisories]

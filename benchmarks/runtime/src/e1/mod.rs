@@ -31,22 +31,28 @@ const fn is_retryable_shutdown_error(error: &ApplicationError) -> bool {
 fn retry_cleanup_shutdown(
     mut shutdown: impl FnMut() -> Result<(), ApplicationError>,
 ) -> Result<(), CleanupShutdownFailure> {
-    for attempt in 1..=CLEANUP_SHUTDOWN_ATTEMPTS {
+    let mut last = match shutdown() {
+        Ok(()) => return Ok(()),
+        Err(error) if !is_retryable_shutdown_error(&error) => {
+            return Err(CleanupShutdownFailure::NonRetryable(error));
+        }
+        Err(error) => error,
+    };
+
+    for _ in 2..=CLEANUP_SHUTDOWN_ATTEMPTS {
         match shutdown() {
             Ok(()) => return Ok(()),
             Err(error) if !is_retryable_shutdown_error(&error) => {
                 return Err(CleanupShutdownFailure::NonRetryable(error));
             }
-            Err(error) if attempt == CLEANUP_SHUTDOWN_ATTEMPTS => {
-                return Err(CleanupShutdownFailure::RetryExhausted {
-                    attempts: attempt,
-                    last: error,
-                });
-            }
-            Err(_) => {}
+            Err(error) => last = error,
         }
     }
-    unreachable!("the positive cleanup-attempt bound always returns from the loop")
+
+    Err(CleanupShutdownFailure::RetryExhausted {
+        attempts: CLEANUP_SHUTDOWN_ATTEMPTS,
+        last,
+    })
 }
 
 fn shutdown_for_cleanup(runtime: &mut ApplicationRuntime) -> BenchmarkResult {
@@ -129,7 +135,10 @@ mod tests {
         ]
         .into_iter();
         assert_eq!(
-            retry_cleanup_shutdown(|| outcomes.next().unwrap_or(Ok(()))),
+            retry_cleanup_shutdown(|| match outcomes.next() {
+                Some(outcome) => outcome,
+                None => Ok(()),
+            }),
             Ok(())
         );
     }

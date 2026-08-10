@@ -24,12 +24,15 @@ use crate::failure::{
     failure,
 };
 use crate::model::{CandleLlamaModel, CandleLlamaModelParameters};
-use crate::source::CandleLlamaSource;
+use crate::source::{CandleConfigurationSource, CandleLlamaSource};
 
 use self::footprint::{calculate, sequence_cache_bytes_per_token, validate_memory_plan};
 use self::manifest::{InspectedShard, InspectionLimits};
 pub use self::prepared::CandleLlamaPreparedLoad;
 use self::scalar::{execution_scalar_type, select_execution_dtype, select_required_primary};
+
+pub(super) const VERIFICATION_BUFFER_BYTES: usize = 64 * 1024;
+pub(super) const VERIFICATION_BUFFER_BYTES_U64: u64 = 64 * 1024;
 
 /// Cold-path loader for unquantized Hugging Face Llama Safetensors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,7 +78,14 @@ impl CandleLlamaLoader {
         source: &CandleLlamaSource,
         limits: &InspectionLimits,
     ) -> Result<InspectedSource, LoadError> {
-        let parsed_config = config::read_and_parse(self.backend, source.config_path())?;
+        let parsed_config = match source.configuration() {
+            CandleConfigurationSource::Path(path) => {
+                config::read_and_parse(self.backend, path.as_path())?
+            }
+            CandleConfigurationSource::Bytes(bytes) => {
+                config::parse_bytes(self.backend, bytes.as_slice())?
+            }
+        };
         let mut shards =
             manifest::inspect_weight_shards(self.backend, source.weight_shards(), limits)?;
         let observed_tensor_scalar_types = manifest::observed_scalar_types(&shards);

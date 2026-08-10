@@ -66,7 +66,7 @@ impl From<Utf8Error> for TestError {
     }
 }
 
-fn fixture() -> Result<HfTokenizer, TestError> {
+fn upstream_fixture() -> Result<tokenizers::Tokenizer, TestError> {
     let vocabulary = [
         ("[UNK]".to_owned(), 0),
         ("hello".to_owned(), 1),
@@ -80,7 +80,11 @@ fn fixture() -> Result<HfTokenizer, TestError> {
         .build()?;
     let mut tokenizer = tokenizers::Tokenizer::new(model);
     tokenizer.with_pre_tokenizer(Some(Whitespace));
-    Ok(HfTokenizer::from_tokenizer(tokenizer)?)
+    Ok(tokenizer)
+}
+
+fn fixture() -> Result<HfTokenizer, TestError> {
+    Ok(HfTokenizer::from_tokenizer(upstream_fixture()?)?)
 }
 
 #[test]
@@ -88,6 +92,18 @@ fn vocabulary_lookup_returns_project_owned_identifiers() -> Result<(), TestError
     let tokenizer = fixture()?;
     assert_eq!(tokenizer.token_id("hello"), Some(TokenId::new(1)));
     assert_eq!(tokenizer.token_id("missing"), None);
+    Ok(())
+}
+
+#[test]
+fn loads_from_exact_serialized_bytes() -> Result<(), TestError> {
+    let serialized = upstream_fixture()?.to_string(false)?;
+    let tokenizer = HfTokenizer::from_bytes(serialized.as_bytes())?;
+    assert_eq!(tokenizer.token_id("hello"), Some(TokenId::new(1)));
+    assert!(matches!(
+        HfTokenizer::from_bytes(br#"{"not":"a tokenizer"}"#),
+        Err(HfTokenizerLoadError::InvalidTokenizer(_))
+    ));
     Ok(())
 }
 

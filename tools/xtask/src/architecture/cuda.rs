@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 
 use cargo_metadata::{Dependency, Package};
 
@@ -9,10 +8,9 @@ use super::policy::{
     RULE_CUDA_PROHIBITED, dependency_kind,
 };
 use super::report::{ValidationReport, Violation};
-use crate::workspace::cuda_provider;
-
-const HARDWARE_FEATURE: &str = "cuda-hardware-tests";
-const HARDWARE_TARGET: &str = "cuda_hardware";
+use crate::workspace::{
+    CUDA_HARDWARE_FEATURE as HARDWARE_FEATURE, cuda_provider, inspect_cuda_hardware_target,
+};
 
 pub(super) fn validate_cuda_policy(
     packages: &[&Package],
@@ -21,6 +19,9 @@ pub(super) fn validate_cuda_policy(
     exceptions: &ExceptionRegistry,
     report: &mut ValidationReport,
 ) {
+    let mut providers = Vec::new();
+    let mut has_cuda_topology = false;
+
     for package in packages {
         let role = roles.get(package.name.as_ref()).copied();
         let provider = match cuda_provider(package) {
@@ -37,6 +38,7 @@ pub(super) fn validate_cuda_policy(
                 false
             }
         };
+        has_cuda_topology |= provider || package_has_cuda_topology(package);
 
         validate_default_feature(report, package, role);
         validate_prohibited_features(report, package, role);
@@ -44,12 +46,57 @@ pub(super) fn validate_cuda_policy(
         validate_direct_dependency_features(report, package, role);
 
         if provider {
+            providers.push(package.name.to_string());
             validate_provider(report, package, role);
         } else {
             validate_forwarding_source(report, package, role, packages_by_name, exceptions);
         }
         validate_cuda_references(report, package, role, provider, exceptions);
     }
+
+    validate_provider_cardinality(report, has_cuda_topology, &providers);
+}
+
+fn package_has_cuda_topology(package: &Package) -> bool {
+    package.features.contains_key("cuda")
+        || package.features.contains_key(HARDWARE_FEATURE)
+        || package
+            .dependencies
+            .iter()
+            .any(|dependency| dependency.name == "cudarc")
+        || package
+            .features
+            .values()
+            .flatten()
+            .any(|reference| reference_is_cuda_sensitive(reference))
+}
+
+fn validate_provider_cardinality(
+    report: &mut ValidationReport,
+    has_cuda_topology: bool,
+    providers: &[String],
+) {
+    if !has_cuda_topology || providers.len() == 1 {
+        return;
+    }
+
+    let provider_names = if providers.is_empty() {
+        "none".to_owned()
+    } else {
+        providers.join(", ")
+    };
+    report.push(Violation::new(
+        "workspace CUDA topology".to_owned(),
+        "cuda-provider".to_owned(),
+        None,
+        None,
+        None,
+        RULE_CUDA_CONTRACT,
+        format!(
+            "a workspace with CUDA features or dependencies must declare exactly one cuda-provider; found {} ({provider_names})",
+            providers.len()
+        ),
+    ));
 }
 
 fn validate_default_feature(report: &mut ValidationReport, package: &Package, role: Option<Layer>) {
@@ -119,6 +166,7 @@ fn validate_provider(report: &mut ValidationReport, package: &Package, role: Opt
             "a CUDA provider's `cuda` feature must contain exactly dep:cudarc and the three reviewed Candle cuda forwards".to_owned(),
         );
     }
+    validate_provider_cudarc_activation(report, package, role);
 
     for target in ["candle-core", "candle-nn", "candle-transformers"] {
         let matching = package
@@ -148,6 +196,34 @@ fn validate_provider(report: &mut ValidationReport, package: &Package, role: Opt
     validate_cudarc_contract(report, package, role);
 }
 
+fn validate_provider_cudarc_activation(
+    report: &mut ValidationReport,
+    package: &Package,
+    role: Option<Layer>,
+) {
+    let activations = package
+        .features
+        .iter()
+        .flat_map(|(feature, references)| {
+            references
+                .iter()
+                .filter(|reference| directly_activates_cudarc(reference))
+                .map(move |reference| (feature.as_str(), reference.as_str()))
+        })
+        .collect::<Vec<_>>();
+    if activations.as_slice() != [("cuda", "dep:cudarc")] {
+        push_feature_violation(
+            report,
+            package,
+            role,
+            "cudarc activation",
+            RULE_CUDA_CONTRACT,
+            "the sole CUDA provider must activate cudarc exactly once, through one `dep:cudarc` entry in its exact `cuda` feature; default, alias, hardware, and `cudarc/*` activation paths are denied"
+                .to_owned(),
+        );
+    }
+}
+
 fn validate_cudarc_contract(report: &mut ValidationReport, package: &Package, role: Option<Layer>) {
     let expected_features = BTreeSet::from([
         "cuda-version-from-build-system",
@@ -158,11 +234,12 @@ fn validate_cudarc_contract(report: &mut ValidationReport, package: &Package, ro
     let matching = package
         .dependencies
         .iter()
-        .filter(|dependency| dependency.name == "cudarc" && dependency.rename.is_none())
+        .filter(|dependency| dependency.name == "cudarc")
         .collect::<Vec<_>>();
     let exact = matching.len() == 1
         && matching.iter().all(|dependency| {
-            dependency.path.is_none()
+            dependency.rename.is_none()
+                && dependency.path.is_none()
                 && dependency.req.to_string() == "=0.19.8"
                 && dependency.optional
                 && !dependency.uses_default_features
@@ -297,104 +374,18 @@ fn validate_cuda_references(
 }
 
 fn validate_hardware_suite(report: &mut ValidationReport, package: &Package, role: Option<Layer>) {
-    let feature = package.features.get(HARDWARE_FEATURE);
-    let targets = package
-        .targets
-        .iter()
-        .filter(|target| target.name == HARDWARE_TARGET)
-        .collect::<Vec<_>>();
-    if feature.is_none() && targets.is_empty() {
-        return;
-    }
-
-    if feature.is_none_or(|values| {
-        values.len() != 1 || values.first().is_none_or(|value| value != "cuda")
-    }) {
-        push_feature_violation(
-            report,
-            package,
-            role,
-            HARDWARE_FEATURE,
-            RULE_CUDA_HARDWARE,
-            "cuda-hardware-tests must be a package-local non-default alias containing exactly `cuda`"
-                .to_owned(),
-        );
-    }
-
-    let expected_path = package
-        .manifest_path
-        .parent()
-        .map(|directory| directory.join("tests/cuda_hardware.rs"));
-    let metadata_target_is_exact = targets.len() == 1
-        && targets.iter().all(|target| {
-            target.is_test()
-                && target.required_features == [HARDWARE_FEATURE]
-                && expected_path
-                    .as_ref()
-                    .is_some_and(|expected| &target.src_path == expected)
-        });
-    let manifest_target_is_exact =
-        exact_hardware_manifest_target(package).unwrap_or_else(|reason| {
+    if let Err(issues) = inspect_cuda_hardware_target(package) {
+        for issue in issues {
             push_feature_violation(
                 report,
                 package,
                 role,
-                HARDWARE_TARGET,
+                &issue.target,
                 RULE_CUDA_HARDWARE,
-                reason,
+                issue.reason,
             );
-            false
-        });
-    let exact_target = metadata_target_is_exact && manifest_target_is_exact;
-    if !exact_target {
-        push_feature_violation(
-            report,
-            package,
-            role,
-            HARDWARE_TARGET,
-            RULE_CUDA_HARDWARE,
-            "the CUDA hardware suite must be one explicit harness-free [[test]] named cuda_hardware at tests/cuda_hardware.rs with required-features = [\"cuda-hardware-tests\"]"
-                .to_owned(),
-        );
+        }
     }
-}
-
-fn exact_hardware_manifest_target(package: &Package) -> Result<bool, String> {
-    let content = fs::read_to_string(package.manifest_path.as_std_path()).map_err(|error| {
-        format!("could not read package manifest to verify harness = false: {error}")
-    })?;
-    let manifest = toml::from_str::<toml::Table>(&content).map_err(|error| {
-        format!("could not parse package manifest to verify harness = false: {error}")
-    })?;
-    let Some(tests) = manifest.get("test").and_then(toml::Value::as_array) else {
-        return Ok(false);
-    };
-    let matching = tests
-        .iter()
-        .filter_map(toml::Value::as_table)
-        .filter(|test| test.get("name").and_then(toml::Value::as_str) == Some(HARDWARE_TARGET))
-        .collect::<Vec<_>>();
-    if matching.len() != 1 {
-        return Ok(false);
-    }
-    let test = matching.first().copied().ok_or_else(|| {
-        "internal hardware target selection did not retain its sole entry".to_owned()
-    })?;
-    let required_features = test
-        .get("required-features")
-        .and_then(toml::Value::as_array)
-        .is_some_and(|features| {
-            features.len() == 1
-                && features
-                    .first()
-                    .and_then(toml::Value::as_str)
-                    .is_some_and(|feature| feature == HARDWARE_FEATURE)
-        });
-    Ok(
-        test.get("path").and_then(toml::Value::as_str) == Some("tests/cuda_hardware.rs")
-            && test.get("harness").and_then(toml::Value::as_bool) == Some(false)
-            && required_features,
-    )
 }
 
 fn validate_direct_dependency_features(
@@ -483,12 +474,19 @@ fn feature_reaches_cuda(package: &Package, feature: &str, visited: &mut BTreeSet
     }
     package.features.get(feature).is_some_and(|references| {
         references.iter().any(|reference| {
-            reference == "cuda"
-                || reference.ends_with("/cuda")
+            reference_is_cuda_sensitive(reference)
                 || (package.features.contains_key(reference)
                     && feature_reaches_cuda(package, reference, visited))
         })
     })
+}
+
+fn reference_is_cuda_sensitive(reference: &str) -> bool {
+    reference == "cuda" || reference.ends_with("/cuda") || directly_activates_cudarc(reference)
+}
+
+fn directly_activates_cudarc(reference: &str) -> bool {
+    reference == "dep:cudarc" || reference.starts_with("cudarc/")
 }
 
 fn prohibited_cuda_feature(value: &str) -> bool {

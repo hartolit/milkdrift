@@ -1,4 +1,4 @@
-//! Safe host/CUDA resource observation and exact external-runner device validation.
+//! Public E1 validation plus process and context-free whole-device observation.
 
 mod device;
 mod environment;
@@ -89,40 +89,28 @@ impl DeviceObserver {
 #[cfg(test)]
 mod tests {
     use application_runtime::ApplicationDevice;
-    use candle_backend::{CandleDeviceSummary, CudaComputeCapability as CandleComputeCapability};
-    use domain_contracts::DeviceKind;
 
     use super::DeviceObserver;
-    use super::device::{
-        CPU_EXECUTION_DEVICE, CUDA_ZERO_EXECUTION_DEVICE, DeviceState, REQUIRED_CUDA_NAME,
-        ValidatedCudaProbe,
-    };
+    use super::device::{DeviceState, REQUIRED_CUDA_NAME, ValidatedCudaObservation};
     use super::resources::ResourceState;
     use crate::external::cli::RequestedDevice;
     use crate::external::report::{CudaComputeCapability, CudaDeviceMetadata};
     use crate::report::DeviceIdentity;
 
-    fn valid_probe() -> Result<ValidatedCudaProbe, String> {
-        ValidatedCudaProbe::from_summary(&CandleDeviceSummary {
-            execution_device: CUDA_ZERO_EXECUTION_DEVICE,
-            ordinal: Some(0),
-            display_name: Some(REQUIRED_CUDA_NAME.to_owned()),
-            compute_capability: Some(CandleComputeCapability {
-                major: 12,
-                minor: 0,
+    fn synthetic_cuda_observer() -> DeviceObserver {
+        DeviceObserver {
+            device: DeviceState::from_validated_observation(ValidatedCudaObservation {
+                name: REQUIRED_CUDA_NAME.to_owned(),
+                driver_version: "575.57.08".to_owned(),
+                compute_capability: CudaComputeCapability {
+                    major: 12,
+                    minor: 0,
+                },
+                total_bytes: 16_000,
+                free_bytes: 12_000,
             }),
-            total_memory_bytes: Some(16_000),
-            available_memory_bytes: Some(12_000),
-            supports_bf16: true,
-        })
-        .map_err(|error| error.to_string())
-    }
-
-    fn synthetic_cuda_observer() -> Result<DeviceObserver, String> {
-        Ok(DeviceObserver {
-            device: DeviceState::from_validated_probe(valid_probe()?),
             resources: ResourceState::default(),
-        })
+        }
     }
 
     #[test]
@@ -137,8 +125,7 @@ mod tests {
                 ordinal: None,
             }
         );
-        assert_eq!(CPU_EXECUTION_DEVICE.id.get(), 0);
-        assert_eq!(CPU_EXECUTION_DEVICE.kind, DeviceKind::Cpu);
+
         assert_eq!(observer.cuda_device_metadata(), None);
 
         let execution = observer.execution_metadata("F32");
@@ -166,7 +153,7 @@ mod tests {
     #[test]
     fn cuda_observer_reports_exact_identity_and_static_metadata_without_hardware()
     -> Result<(), String> {
-        let observer = synthetic_cuda_observer()?;
+        let observer = synthetic_cuda_observer();
         assert_eq!(
             observer.requested_identity(),
             DeviceIdentity {

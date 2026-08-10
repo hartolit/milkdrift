@@ -22,6 +22,7 @@ pub(super) struct RuntimeAdmissions {
     pub(super) can_clear: bool,
     pub(super) can_cancel: bool,
     pub(super) can_unload: bool,
+    pub(super) can_retry_model_cleanup: bool,
 }
 
 #[expect(
@@ -39,6 +40,7 @@ pub(super) struct ControlState {
     pub(super) can_clear: bool,
     pub(super) can_cancel: bool,
     pub(super) can_unload: bool,
+    pub(super) can_retry_model_cleanup: bool,
 }
 
 pub(super) fn control_state(
@@ -61,6 +63,7 @@ pub(super) fn control_state(
         can_clear: admissions.can_clear,
         can_cancel: admissions.can_cancel,
         can_unload: admissions.can_unload,
+        can_retry_model_cleanup: admissions.can_retry_model_cleanup,
     }
 }
 
@@ -86,6 +89,7 @@ pub(super) fn synchronize(
             can_clear: state.active_generation().is_none(),
             can_cancel: state.can_cancel_generation(),
             can_unload: state.can_unload(),
+            can_retry_model_cleanup: state.can_retry_model_cleanup(),
         },
         mode,
         &message,
@@ -109,6 +113,7 @@ pub(super) fn synchronize(
     window.set_can_clear_conversation(controls.can_clear);
     window.set_can_cancel(controls.can_cancel);
     window.set_can_unload(controls.can_unload);
+    window.set_can_retry_model_cleanup(controls.can_retry_model_cleanup);
     window.set_composer_mode(mode.label().into());
     window.set_composer_guidance(mode.guidance(state.retained_model().is_some()).into());
     window.set_composer_input_label(mode.input_label().into());

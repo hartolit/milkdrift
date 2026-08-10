@@ -26,13 +26,16 @@ const CUDA_0: ExecutionDevice = ExecutionDevice::new(DeviceId::new(0), DeviceKin
 const VOCABULARY_SIZE: usize = 16;
 const F32_EXECUTION_WEIGHT_BYTES: u64 = 3_680;
 const F32_CACHE_BYTES_PER_TOKEN: u64 = 64;
-const F32_SEQUENCE_WORKING_BYTES: u64 = 1_280;
-const F32_CPU_LOADING_WORKING_BYTES: u64 = 227;
-const F32_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 1_027;
+const F32_CPU_SEQUENCE_HOST_WORKING_BYTES: u64 = 13_924;
+const F32_CUDA_SEQUENCE_HOST_WORKING_BYTES: u64 = 228;
+const F32_CUDA_SEQUENCE_DEVICE_WORKING_BYTES: u64 = 13_764;
+const F32_CPU_LOADING_WORKING_BYTES: u64 = 65_763;
+const F32_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 66_563;
 const HALF_EXECUTION_WEIGHT_BYTES: u64 = 1_840;
 const HALF_CACHE_BYTES_PER_TOKEN: u64 = 32;
-const HALF_SEQUENCE_WORKING_BYTES: u64 = 640;
-const HALF_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 513;
+const HALF_CUDA_SEQUENCE_HOST_WORKING_BYTES: u64 = 228;
+const HALF_CUDA_SEQUENCE_DEVICE_WORKING_BYTES: u64 = 10_964;
+const HALF_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 66_049;
 
 type TestResult<T = ()> = Result<T, String>;
 
@@ -42,7 +45,17 @@ struct HardwareCase {
 }
 
 macro_rules! hardware_cases {
-    ($($case:ident),+ $(,)?) => {
+    (
+        $(
+            $(#[$case_attribute:meta])*
+            fn $case:ident() -> TestResult $body:block
+        )+
+    ) => {
+        $(
+            $(#[$case_attribute])*
+            fn $case() -> TestResult $body
+        )+
+
         const HARDWARE_CASES: &[HardwareCase] = &[
             $(HardwareCase {
                 name: stringify!($case),
@@ -51,15 +64,6 @@ macro_rules! hardware_cases {
         ];
     };
 }
-
-hardware_cases!(
-    cuda_enabled_binary_can_explicitly_execute_cpu,
-    invalid_cuda_ordinal_is_rejected_before_driver_initialization,
-    cuda_ordinal_zero_executes_fixture_and_matches_cpu_logits,
-    cuda_homogeneous_bf16_source_executes_as_bf16,
-    cuda_mixed_f16_f32_executes_as_f16,
-    cuda_mixed_bf16_f32_executes_as_bf16,
-);
 
 fn run_hardware_suite() -> TestResult {
     require_cuda_opt_in()?;
@@ -93,140 +97,152 @@ fn main() -> ExitCode {
     }
 }
 
-fn cuda_enabled_binary_can_explicitly_execute_cpu() -> TestResult {
-    let source = fixture_source()?;
-    let result = execute_fixture(&source, CPU)?;
+hardware_cases!(
+    fn cuda_enabled_binary_can_explicitly_execute_cpu() -> TestResult {
+        let source = fixture_source()?;
+        let result = execute_fixture(&source, CPU)?;
 
-    assert_eq!(result.declared_scalar_type, Some(ScalarType::F32));
-    assert_eq!(
-        result.observed_scalar_types,
-        ScalarTypeSet::from_scalar(ScalarType::F32)
-    );
-    assert_eq!(result.execution_scalar_type, ScalarType::F32);
-    assert_eq!(result.execution_device, CPU);
-    assert_exact_f32_cpu_footprints(&result);
-    assert!(result.sequence_footprint.host_working_bytes > 0);
-    assert_eq!(result.sequence_footprint.device_working_bytes, 0);
-    assert_eq!(
-        maximum_logit_token(&result.prefill_logits)?,
-        TokenId::new(2)
-    );
-    assert_eq!(maximum_logit_token(&result.decode_logits)?, TokenId::new(3));
-    Ok(())
-}
+        assert_eq!(result.declared_scalar_type, Some(ScalarType::F32));
+        assert_eq!(
+            result.observed_scalar_types,
+            ScalarTypeSet::from_scalar(ScalarType::F32)
+        );
+        assert_eq!(result.execution_scalar_type, ScalarType::F32);
+        assert_eq!(result.execution_device, CPU);
+        assert_exact_f32_cpu_footprints(&result);
+        assert!(result.sequence_footprint.host_working_bytes > 0);
+        assert_eq!(result.sequence_footprint.device_working_bytes, 0);
+        assert_eq!(
+            maximum_logit_token(&result.prefill_logits)?,
+            TokenId::new(2)
+        );
+        assert_eq!(maximum_logit_token(&result.decode_logits)?, TokenId::new(3));
+        Ok(())
+    }
 
-fn invalid_cuda_ordinal_is_rejected_before_driver_initialization() -> TestResult {
-    let loader = CandleLlamaLoader::new(BACKEND);
-    assert_eq!(
-        loader.discover_device(ExecutionDevice::new(
-            DeviceId::new(u64::MAX),
-            DeviceKind::Cuda,
-        )),
-        Err(domain_contracts::LoadError::InvalidConfiguration)
-    );
-    Ok(())
-}
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "all hardware cases use one fallible function-pointer signature"
+    )]
+    fn invalid_cuda_ordinal_is_rejected_before_driver_initialization() -> TestResult {
+        let loader = CandleLlamaLoader::new(BACKEND);
+        assert_eq!(
+            loader.discover_device(ExecutionDevice::new(
+                DeviceId::new(u64::MAX),
+                DeviceKind::Cuda,
+            )),
+            Err(domain_contracts::LoadError::InvalidConfiguration)
+        );
+        Ok(())
+    }
 
-fn cuda_ordinal_zero_executes_fixture_and_matches_cpu_logits() -> TestResult {
-    let loader = CandleLlamaLoader::new(BACKEND);
-    let summary = loader
-        .discover_device(CUDA_0)
-        .map_err(|error| format!("discover CUDA 0: {error:?}"))?;
-    assert_eq!(summary.execution_device, CUDA_0);
-    assert_eq!(summary.ordinal, Some(0));
-    assert!(summary.supports_bf16);
-    assert!(
-        summary
-            .display_name
-            .as_deref()
-            .is_some_and(|name| name.contains("RTX 5070 Ti")),
-        "unexpected CUDA device name: {:?}",
-        summary.display_name
-    );
-    assert_eq!(
-        summary.compute_capability,
-        Some(candle_backend::CudaComputeCapability {
-            major: 12,
-            minor: 0,
-        })
-    );
-    assert!(summary.total_memory_bytes.is_some_and(|bytes| bytes > 0));
-    assert!(
-        summary
-            .available_memory_bytes
-            .is_some_and(|bytes| bytes > 0)
-    );
-    assert!(matches!(
-        loader.discover_device(ExecutionDevice::new(
-            DeviceId::new(9_999),
-            DeviceKind::Cuda,
-        )),
-        Err(domain_contracts::LoadError::Backend(failure))
-            if failure.kind == BackendFailureKind::DeviceInitialization
-    ));
+    fn cuda_ordinal_zero_executes_fixture_and_matches_cpu_logits() -> TestResult {
+        let loader = CandleLlamaLoader::new(BACKEND);
+        let summary = loader
+            .discover_device(CUDA_0)
+            .map_err(|error| format!("discover CUDA 0: {error:?}"))?;
+        assert_eq!(summary.execution_device, CUDA_0);
+        assert_eq!(summary.ordinal, Some(0));
+        assert!(summary.supports_bf16);
+        assert!(
+            summary
+                .display_name
+                .as_deref()
+                .is_some_and(|name| name.contains("RTX 5070 Ti")),
+            "unexpected CUDA device name: {:?}",
+            summary.display_name
+        );
+        assert_eq!(
+            summary.compute_capability,
+            Some(candle_backend::CudaComputeCapability {
+                major: 12,
+                minor: 0,
+            })
+        );
+        assert!(summary.total_memory_bytes.is_some_and(|bytes| bytes > 0));
+        assert!(
+            summary
+                .available_memory_bytes
+                .is_some_and(|bytes| bytes > 0)
+        );
+        assert!(matches!(
+            loader.discover_device(ExecutionDevice::new(
+                DeviceId::new(9_999),
+                DeviceKind::Cuda,
+            )),
+            Err(domain_contracts::LoadError::Backend(failure))
+                if failure.kind == BackendFailureKind::DeviceInitialization
+        ));
 
-    let source = fixture_source()?;
-    let cpu = execute_fixture(&source, CPU)?;
-    let cuda = execute_fixture(&source, CUDA_0)?;
+        let source = fixture_source()?;
+        let cpu = execute_fixture(&source, CPU)?;
+        let cuda = execute_fixture(&source, CUDA_0)?;
 
-    assert_eq!(cuda.execution_scalar_type, ScalarType::F32);
-    assert_eq!(cuda.execution_device, CUDA_0);
-    assert_exact_f32_cuda_footprints(&cuda);
-    assert_eq!(cuda.sequence_footprint.host_working_bytes, 0);
-    assert!(cuda.sequence_footprint.device_working_bytes > 0);
-    assert_logits_close(&cpu.prefill_logits, &cuda.prefill_logits, 1.0e-3)?;
-    assert_logits_close(&cpu.decode_logits, &cuda.decode_logits, 1.0e-3)?;
-    assert_eq!(maximum_logit_token(&cuda.prefill_logits)?, TokenId::new(2));
-    assert_eq!(maximum_logit_token(&cuda.decode_logits)?, TokenId::new(3));
-    Ok(())
-}
+        assert_eq!(cuda.execution_scalar_type, ScalarType::F32);
+        assert_eq!(cuda.execution_device, CUDA_0);
+        assert_exact_f32_cuda_footprints(&cuda);
+        assert_eq!(
+            cuda.sequence_footprint.host_working_bytes,
+            F32_CUDA_SEQUENCE_HOST_WORKING_BYTES
+        );
+        assert_eq!(
+            cuda.sequence_footprint.device_working_bytes,
+            F32_CUDA_SEQUENCE_DEVICE_WORKING_BYTES
+        );
+        assert_logits_close(&cpu.prefill_logits, &cuda.prefill_logits, 1.0e-3)?;
+        assert_logits_close(&cpu.decode_logits, &cuda.decode_logits, 1.0e-3)?;
+        assert_eq!(maximum_logit_token(&cuda.prefill_logits)?, TokenId::new(2));
+        assert_eq!(maximum_logit_token(&cuda.decode_logits)?, TokenId::new(3));
+        Ok(())
+    }
 
-fn cuda_homogeneous_bf16_source_executes_as_bf16() -> TestResult {
-    let converted = ConvertedFixture::create(DType::BF16, false)?;
-    let source = converted.source()?;
-    let result = execute_fixture(&source, CUDA_0)?;
+    fn cuda_homogeneous_bf16_source_executes_as_bf16() -> TestResult {
+        let converted = ConvertedFixture::create(DType::BF16, false)?;
+        let source = converted.source()?;
+        let result = execute_fixture(&source, CUDA_0)?;
 
-    assert_eq!(result.declared_scalar_type, Some(ScalarType::Bf16));
-    assert_eq!(
-        result.observed_scalar_types,
-        ScalarTypeSet::from_scalar(ScalarType::Bf16)
-    );
-    assert_eq!(result.execution_scalar_type, ScalarType::Bf16);
-    assert_exact_half_cuda_footprints(&result);
-    assert_eq!(
-        maximum_logit_token(&result.prefill_logits)?,
-        TokenId::new(2)
-    );
-    Ok(())
-}
+        assert_eq!(result.declared_scalar_type, Some(ScalarType::Bf16));
+        assert_eq!(
+            result.observed_scalar_types,
+            ScalarTypeSet::from_scalar(ScalarType::Bf16)
+        );
+        assert_eq!(result.execution_scalar_type, ScalarType::Bf16);
+        assert_exact_half_cuda_footprints(&result);
+        assert_eq!(
+            maximum_logit_token(&result.prefill_logits)?,
+            TokenId::new(2)
+        );
+        Ok(())
+    }
 
-fn cuda_mixed_f16_f32_executes_as_f16() -> TestResult {
-    let converted = ConvertedFixture::create(DType::F16, true)?;
-    let source = converted.source()?;
-    let result = execute_fixture(&source, CUDA_0)?;
+    fn cuda_mixed_f16_f32_executes_as_f16() -> TestResult {
+        let converted = ConvertedFixture::create(DType::F16, true)?;
+        let source = converted.source()?;
+        let result = execute_fixture(&source, CUDA_0)?;
 
-    assert_eq!(result.declared_scalar_type, Some(ScalarType::F16));
-    assert_eq!(result.observed_scalar_types, mixed_set(ScalarType::F16));
-    assert_eq!(result.execution_scalar_type, ScalarType::F16);
-    assert_eq!(result.execution_device, CUDA_0);
-    assert_exact_half_cuda_footprints(&result);
-    assert_eq!(maximum_logit_token(&result.decode_logits)?, TokenId::new(3));
-    Ok(())
-}
+        assert_eq!(result.declared_scalar_type, Some(ScalarType::F16));
+        assert_eq!(result.observed_scalar_types, mixed_set(ScalarType::F16));
+        assert_eq!(result.execution_scalar_type, ScalarType::F16);
+        assert_eq!(result.execution_device, CUDA_0);
+        assert_exact_half_cuda_footprints(&result);
+        assert_eq!(maximum_logit_token(&result.decode_logits)?, TokenId::new(3));
+        Ok(())
+    }
 
-fn cuda_mixed_bf16_f32_executes_as_bf16() -> TestResult {
-    let converted = ConvertedFixture::create(DType::BF16, true)?;
-    let source = converted.source()?;
-    let result = execute_fixture(&source, CUDA_0)?;
+    fn cuda_mixed_bf16_f32_executes_as_bf16() -> TestResult {
+        let converted = ConvertedFixture::create(DType::BF16, true)?;
+        let source = converted.source()?;
+        let result = execute_fixture(&source, CUDA_0)?;
 
-    assert_eq!(result.declared_scalar_type, Some(ScalarType::Bf16));
-    assert_eq!(result.observed_scalar_types, mixed_set(ScalarType::Bf16));
-    assert_eq!(result.execution_scalar_type, ScalarType::Bf16);
-    assert_eq!(result.execution_device, CUDA_0);
-    assert_exact_half_cuda_footprints(&result);
-    assert_eq!(maximum_logit_token(&result.decode_logits)?, TokenId::new(3));
-    Ok(())
-}
+        assert_eq!(result.declared_scalar_type, Some(ScalarType::Bf16));
+        assert_eq!(result.observed_scalar_types, mixed_set(ScalarType::Bf16));
+        assert_eq!(result.execution_scalar_type, ScalarType::Bf16);
+        assert_eq!(result.execution_device, CUDA_0);
+        assert_exact_half_cuda_footprints(&result);
+        assert_eq!(maximum_logit_token(&result.decode_logits)?, TokenId::new(3));
+        Ok(())
+    }
+);
 
 fn assert_exact_f32_cpu_footprints(result: &FixtureExecution) {
     assert_eq!(
@@ -256,7 +272,7 @@ fn assert_exact_f32_cpu_footprints(result: &FixtureExecution) {
         MemoryFootprint {
             host_weight_bytes: 0,
             device_weight_bytes: 0,
-            host_working_bytes: F32_SEQUENCE_WORKING_BYTES,
+            host_working_bytes: F32_CPU_SEQUENCE_HOST_WORKING_BYTES,
             device_working_bytes: 0,
         }
     );
@@ -290,8 +306,8 @@ fn assert_exact_f32_cuda_footprints(result: &FixtureExecution) {
         MemoryFootprint {
             host_weight_bytes: 0,
             device_weight_bytes: 0,
-            host_working_bytes: 0,
-            device_working_bytes: F32_SEQUENCE_WORKING_BYTES,
+            host_working_bytes: F32_CUDA_SEQUENCE_HOST_WORKING_BYTES,
+            device_working_bytes: F32_CUDA_SEQUENCE_DEVICE_WORKING_BYTES,
         }
     );
 }
@@ -324,8 +340,8 @@ fn assert_exact_half_cuda_footprints(result: &FixtureExecution) {
         MemoryFootprint {
             host_weight_bytes: 0,
             device_weight_bytes: 0,
-            host_working_bytes: 0,
-            device_working_bytes: HALF_SEQUENCE_WORKING_BYTES,
+            host_working_bytes: HALF_CUDA_SEQUENCE_HOST_WORKING_BYTES,
+            device_working_bytes: HALF_CUDA_SEQUENCE_DEVICE_WORKING_BYTES,
         }
     );
 }

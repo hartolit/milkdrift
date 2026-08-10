@@ -13,6 +13,7 @@ mod device;
 mod failure;
 mod loader;
 mod model;
+mod sequence_reservation;
 mod source;
 
 pub use device::{CandleDeviceSummary, CudaComputeCapability};

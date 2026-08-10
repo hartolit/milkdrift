@@ -8,14 +8,16 @@ use domain_contracts::{
     RequestId,
 };
 use hf_hub_adapter::{
-    ArtifactContentIdentity, ArtifactContentIdentityAuthority, ArtifactScalarType,
-    ResolvedSafetensorsLlamaArtifacts, ResolvedSafetensorsShard,
+    ArtifactContentIdentity, ArtifactContentIdentityAuthority, ArtifactContentKind,
+    ArtifactScalarType, ResolvedContentArtifact, ResolvedSafetensorsLlamaArtifacts,
+    ResolvedSafetensorsShard,
 };
 use inference_runtime::{
     CleanupFailureReport, CleanupResource, CleanupRetryState, CommandTicket, ConservativeFootprint,
     FailureClass, LoadReceipt, RetainedOwnership, RuntimeError, RuntimeEvent, RuntimeOperation,
     TerminalRetentionSummary,
 };
+use sha2::{Digest, Sha256};
 
 use super::super::ApplicationRuntime;
 use crate::{
@@ -206,24 +208,14 @@ pub(super) fn resolve_fixture_with_configuration(
     config_path: &Path,
     configuration_declared_scalar_type: Option<ArtifactScalarType>,
 ) -> TestResult<(ModelSelection, ResolvedModel)> {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let candle = manifest.join("../inference-runtime/tests/fixtures/candle-llama");
-    let artifacts = ResolvedSafetensorsLlamaArtifacts {
-        repository: repository.to_owned(),
-        revision: REVISION.to_owned(),
-        commit: commit.to_owned(),
+    let tokenizer_path = tokenizer_fixture_path(tokenizer_filename);
+    let artifacts = fixture_artifacts_with_paths(
+        repository,
+        commit,
+        tokenizer_path.as_path(),
+        config_path,
         configuration_declared_scalar_type,
-        config_path: canonical(config_path)?,
-        tokenizer_path: canonical(manifest.join("tests/fixtures").join(tokenizer_filename))?,
-        weight_shards: vec![ResolvedSafetensorsShard {
-            path: canonical(candle.join("model.safetensors"))?,
-            content_identity: ArtifactContentIdentity {
-                byte_length: CANDLE_FIXTURE_WEIGHT_BYTES,
-                sha256: CANDLE_FIXTURE_WEIGHT_SHA256,
-                authority: ArtifactContentIdentityAuthority::ProjectEstablished,
-            },
-        }],
-    };
+    )?;
     let selection = ModelSelection::new(repository, REVISION);
     match runtime.accept_resolved_artifacts(artifacts) {
         ApplicationEvent::ModelResolved {
@@ -244,6 +236,33 @@ pub(super) fn resolve_fixture_with_configuration(
         }
         event => Err(format!("unexpected fixture-resolution event: {event:?}")),
     }
+}
+
+pub(super) fn fixture_artifacts_with_paths(
+    repository: &str,
+    commit: &str,
+    tokenizer_path: &Path,
+    config_path: &Path,
+    configuration_declared_scalar_type: Option<ArtifactScalarType>,
+) -> TestResult<ResolvedSafetensorsLlamaArtifacts> {
+    let candle = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../inference-runtime/tests/fixtures/candle-llama");
+    Ok(ResolvedSafetensorsLlamaArtifacts {
+        repository: repository.to_owned(),
+        revision: REVISION.to_owned(),
+        commit: commit.to_owned(),
+        configuration_declared_scalar_type,
+        config: resolved_content_artifact(config_path, ArtifactContentKind::Configuration)?,
+        tokenizer: resolved_content_artifact(tokenizer_path, ArtifactContentKind::Tokenizer)?,
+        weight_shards: vec![ResolvedSafetensorsShard {
+            path: canonical(candle.join("model.safetensors"))?,
+            content_identity: ArtifactContentIdentity {
+                byte_length: CANDLE_FIXTURE_WEIGHT_BYTES,
+                sha256: CANDLE_FIXTURE_WEIGHT_SHA256,
+                authority: ArtifactContentIdentityAuthority::ProjectEstablished,
+            },
+        }],
+    })
 }
 
 pub(super) fn load_fixture_with(
@@ -514,9 +533,38 @@ pub(super) fn remove_database(path: &Path) -> TestResult {
     }
 }
 
-fn candle_fixture_configuration_path() -> PathBuf {
+pub(super) fn candle_fixture_configuration_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../inference-runtime/tests/fixtures/candle-llama/config.json")
+}
+
+pub(super) fn tokenizer_fixture_path(filename: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(filename)
+}
+
+fn resolved_content_artifact(
+    path: impl AsRef<Path>,
+    kind: ArtifactContentKind,
+) -> TestResult<ResolvedContentArtifact> {
+    let path = canonical(path)?;
+    let bytes = fs::read(&path).map_err(|error| {
+        format!(
+            "failed to read fixture content identity {}: {error}",
+            path.display()
+        )
+    })?;
+    let byte_length = u64::try_from(bytes.len()).map_err(|error| error.to_string())?;
+    Ok(ResolvedContentArtifact {
+        path,
+        content_identity: ArtifactContentIdentity {
+            byte_length,
+            sha256: Sha256::digest(bytes.as_slice()).into(),
+            authority: ArtifactContentIdentityAuthority::ProjectEstablished,
+        },
+        kind,
+    })
 }
 
 fn canonical(path: impl AsRef<Path>) -> TestResult<PathBuf> {

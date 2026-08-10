@@ -1,21 +1,15 @@
-//! CUDA build and process environment validation plus direct metadata commands.
+//! CUDA build/process validation and non-context-owning toolkit metadata commands.
 
 use std::env::{self, VarError};
 use std::process::{Command, Output};
 
 use super::super::cli::RequestedDevice;
 use super::super::report::CudaEnvironmentMetadata;
-use super::device::{DeviceState, REQUIRED_CUDA_NAME};
+use super::device::DeviceState;
 use crate::error::{BenchmarkError, BenchmarkResult};
 
 #[cfg(feature = "cuda")]
 const REQUIRED_BUILD_COMPUTE_CAPABILITY: &str = "120";
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct NvidiaSmiMetadata {
-    name: String,
-    driver_version: String,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct NvccMetadata {
@@ -32,20 +26,12 @@ pub(super) fn collect_cuda_environment(
 
     let build_compute_capability = validate_cuda_build_configuration()?;
     let cuda_visible_devices = collect_cuda_visible_devices()?;
-    let probe = device.validated_cuda_probe()?;
-
-    let nvidia_smi = query_nvidia_smi()?;
-    if nvidia_smi.name != probe.name {
-        return Err(BenchmarkError::new(format!(
-            "fixed nvidia-smi metadata query identified CUDA index 0 as {:?}, but Candle discovered backend CUDA ordinal 0 as {:?}; ensure CUDA_VISIBLE_DEVICES is unset or exactly `0` and that both tools address the required device",
-            nvidia_smi.name, probe.name
-        )));
-    }
+    let cuda = device.validated_cuda_observation()?;
     let nvcc = query_nvcc()?;
     validate_minimum_toolkit_release(&nvcc.toolkit_release)?;
 
     Ok(Some(CudaEnvironmentMetadata {
-        driver_version: nvidia_smi.driver_version,
+        driver_version: cuda.driver_version,
         toolkit_release: nvcc.toolkit_release,
         toolkit_compiler_version: nvcc.compiler_version,
         build_compute_capability: build_compute_capability.to_owned(),
@@ -87,24 +73,6 @@ fn collect_cuda_visible_devices() -> BenchmarkResult<Option<String>> {
     }
 }
 
-fn query_nvidia_smi() -> BenchmarkResult<NvidiaSmiMetadata> {
-    let output = Command::new("nvidia-smi")
-        .arg("--query-gpu=index,name,driver_version")
-        .arg("--format=csv,noheader,nounits")
-        .output()
-        .map_err(|error| {
-            BenchmarkError::new(format!(
-                "could not execute the fixed nvidia-smi GPU identity/driver query; ensure NVIDIA driver tools are installed and on PATH: {error}"
-            ))
-        })?;
-    let stdout = successful_stdout(
-        "fixed nvidia-smi GPU identity/driver query",
-        output,
-        "verify that the NVIDIA driver can query physical GPU index 0",
-    )?;
-    parse_nvidia_smi_cuda_zero(&stdout)
-}
-
 fn query_nvcc() -> BenchmarkResult<NvccMetadata> {
     let output = Command::new("nvcc")
         .arg("--version")
@@ -144,70 +112,6 @@ fn successful_stdout(
         BenchmarkError::new(format!(
             "{command_description} returned non-UTF-8 stdout; {remediation}: {error}"
         ))
-    })
-}
-
-fn parse_nvidia_smi_cuda_zero(output: &str) -> BenchmarkResult<NvidiaSmiMetadata> {
-    let mut selected = None;
-    for (line_index, line) in output.lines().enumerate() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let line_number = line_index + 1;
-        let mut fields = line.split(',');
-        let index = fields.next().map(str::trim).ok_or_else(|| {
-            BenchmarkError::new(format!(
-                "nvidia-smi metadata line {line_number} omitted the GPU index"
-            ))
-        })?;
-        let name = fields.next().map(str::trim).ok_or_else(|| {
-            BenchmarkError::new(format!(
-                "nvidia-smi metadata line {line_number} omitted the GPU name"
-            ))
-        })?;
-        let driver_version = fields.next().map(str::trim).ok_or_else(|| {
-            BenchmarkError::new(format!(
-                "nvidia-smi metadata line {line_number} omitted the driver version"
-            ))
-        })?;
-        if fields.next().is_some() {
-            return Err(BenchmarkError::new(format!(
-                "nvidia-smi metadata line {line_number} must contain exactly index, name, and driver_version"
-            )));
-        }
-        let index = index.parse::<u32>().map_err(|error| {
-            BenchmarkError::new(format!(
-                "nvidia-smi metadata line {line_number} has a nonnumeric GPU index: {error}"
-            ))
-        })?;
-        if index != 0 {
-            continue;
-        }
-        if selected.is_some() {
-            return Err(BenchmarkError::new(
-                "nvidia-smi metadata output contains more than one row for GPU index 0",
-            ));
-        }
-        if name != REQUIRED_CUDA_NAME {
-            return Err(BenchmarkError::new(format!(
-                "nvidia-smi identifies physical GPU index 0 as {name:?}, but the required executed matrix is exactly {REQUIRED_CUDA_NAME:?}"
-            )));
-        }
-        if !is_dotted_decimal_version(driver_version) {
-            return Err(BenchmarkError::new(format!(
-                "nvidia-smi returned invalid or empty driver version {driver_version:?} for GPU index 0"
-            )));
-        }
-        selected = Some(NvidiaSmiMetadata {
-            name: name.to_owned(),
-            driver_version: driver_version.to_owned(),
-        });
-    }
-    selected.ok_or_else(|| {
-        BenchmarkError::new(
-            "fixed nvidia-smi metadata query returned no row for physical GPU index 0",
-        )
     })
 }
 
@@ -294,40 +198,7 @@ fn validate_minimum_toolkit_release(release: &str) -> BenchmarkResult {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        NvccMetadata, NvidiaSmiMetadata, parse_nvcc_version, parse_nvidia_smi_cuda_zero,
-        validate_minimum_toolkit_release,
-    };
-    use crate::external::observation::device::REQUIRED_CUDA_NAME;
-
-    #[test]
-    fn nvidia_smi_parser_selects_exact_physical_cuda_zero() -> Result<(), String> {
-        let parsed = parse_nvidia_smi_cuda_zero(
-            "1, NVIDIA Other GPU, 575.57.08\n0, NVIDIA GeForce RTX 5070 Ti, 575.57.08\n",
-        )
-        .map_err(|error| error.to_string())?;
-        assert_eq!(
-            parsed,
-            NvidiaSmiMetadata {
-                name: REQUIRED_CUDA_NAME.to_owned(),
-                driver_version: "575.57.08".to_owned(),
-            }
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn nvidia_smi_parser_rejects_wrong_missing_duplicate_and_malformed_zero_rows() {
-        for output in [
-            "0, NVIDIA GeForce RTX 4090, 575.57.08\n",
-            "1, NVIDIA GeForce RTX 5070 Ti, 575.57.08\n",
-            "0, NVIDIA GeForce RTX 5070 Ti, 575.57.08\n0, NVIDIA GeForce RTX 5070 Ti, 575.57.08\n",
-            "0, NVIDIA GeForce RTX 5070 Ti, unknown\n",
-            "0, NVIDIA GeForce RTX 5070 Ti\n",
-        ] {
-            assert!(parse_nvidia_smi_cuda_zero(output).is_err(), "{output:?}");
-        }
-    }
+    use super::{NvccMetadata, parse_nvcc_version, validate_minimum_toolkit_release};
 
     #[test]
     fn nvcc_parser_extracts_release_and_v_compiler_version() -> Result<(), String> {

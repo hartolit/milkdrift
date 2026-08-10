@@ -1,7 +1,7 @@
 //! Frontend-neutral application orchestration over bounded host workers.
 
 #[cfg(feature = "cuda-hardware-tests")]
-mod cuda_hardware;
+pub(crate) mod cuda_hardware;
 mod devices;
 mod lifecycle;
 mod model;

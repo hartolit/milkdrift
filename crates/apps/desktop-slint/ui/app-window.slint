@@ -1,7 +1,7 @@
 import { Button, ComboBox, HorizontalBox, LineEdit, TextEdit, VerticalBox } from "std-widgets.slint";
 
 export component AppWindow inherits Window {
-    title: "LLM App";
+    title: "Milkdrift";
     width: 1080px;
     height: 900px;
 
@@ -32,11 +32,13 @@ export component AppWindow inherits Window {
     in property <bool> can-clear-conversation: true;
     in property <bool> can-cancel: false;
     in property <bool> can-unload: false;
+    in property <bool> can-retry-model-cleanup: false;
 
     callback select-device(index: int);
     callback resolve-model();
     callback load-model();
     callback unload-model();
+    callback retry-model-cleanup();
     callback submit-message();
     callback regenerate-response();
     callback cancel-generation();
@@ -139,6 +141,11 @@ export component AppWindow inherits Window {
                 text: "Unload";
                 enabled: root.can-unload;
                 clicked => { root.unload-model(); }
+            }
+            Button {
+                text: "Retry cleanup";
+                enabled: root.can-retry-model-cleanup;
+                clicked => { root.retry-model-cleanup(); }
             }
         }
 

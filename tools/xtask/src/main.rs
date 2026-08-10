@@ -8,21 +8,30 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus};
 
-use xtask::{benchmark_command_plan, validate_repository_hygiene, validate_workspace};
+use xtask::{
+    CargoCommand, benchmark_command_plan, cuda_clippy_command_plan, cuda_compile_command_plan,
+    cuda_hardware_command_plan, portable_command_plan, validate_repository_hygiene,
+    validate_workspace,
+};
 
 const HELP: &str = "\
 Milkdrift workspace tooling
 
 USAGE:
     cargo xtask <command>
+    cargo xtask portable <wasm32-unknown-unknown|thumbv7em-none-eabihf>
 
 COMMANDS:
     architecture    Validate workspace roles, layout, dependency DAG, and feature policy
     hygiene         Validate operational surfaces and the selected dependency graph
     verify          Run policy, format, build, test, lint, docs, and exact benchmark gates
+    portable        Check every metadata-owned domain library for one portable target
+    cuda-compile    Check CUDA owners and compile CUDA tests and exact hardware suites
+    cuda-clippy     Lint CUDA owners and exact hardware suites with warnings denied
+    cuda-hardware   Run every exact harness-free CUDA hardware suite in release mode
     help            Print this message
 
-Ordinary Cargo operations are invoked directly rather than hidden behind forwarding commands.
+Canonical matrices are derived from locked Cargo metadata; ordinary Cargo operations remain direct.
 ";
 
 fn main() -> ExitCode {
@@ -36,9 +45,9 @@ fn main() -> ExitCode {
 }
 
 fn execute() -> io::Result<ExitCode> {
-    let command_argument = env::args_os()
-        .nth(1)
-        .unwrap_or_else(|| OsString::from("help"));
+    let mut arguments = env::args_os().skip(1);
+    let command_argument = arguments.next().unwrap_or_else(|| OsString::from("help"));
+    let remaining = arguments.collect::<Vec<_>>();
     let Some(command) = command_argument.to_str() else {
         eprintln!("xtask commands must be valid UTF-8");
         return Ok(ExitCode::from(2));
@@ -46,12 +55,67 @@ fn execute() -> io::Result<ExitCode> {
 
     let success = match command {
         "help" | "--help" | "-h" => {
+            if !remaining.is_empty() {
+                return Ok(argument_error("help does not accept arguments"));
+            }
             print!("{HELP}");
             return Ok(ExitCode::SUCCESS);
         }
-        "architecture" => validate_architecture(),
-        "hygiene" => validate_hygiene(),
-        "verify" => verify(),
+        "architecture" => {
+            if !remaining.is_empty() {
+                return Ok(argument_error("architecture does not accept arguments"));
+            }
+            validate_architecture()
+        }
+        "hygiene" => {
+            if !remaining.is_empty() {
+                return Ok(argument_error("hygiene does not accept arguments"));
+            }
+            validate_hygiene()
+        }
+        "verify" => {
+            if !remaining.is_empty() {
+                return Ok(argument_error("verify does not accept arguments"));
+            }
+            verify()
+        }
+        "portable" => {
+            let [target] = remaining.as_slice() else {
+                return Ok(argument_error(
+                    "portable requires exactly one maintained target",
+                ));
+            };
+            let Some(target) = target.to_str() else {
+                return Ok(argument_error("portable target must be valid UTF-8"));
+            };
+            let commands =
+                portable_command_plan(&workspace_manifest(), target).map_err(io::Error::other)?;
+            run_cargo_plan(&commands)
+        }
+        "cuda-compile" => {
+            if !remaining.is_empty() {
+                return Ok(argument_error("cuda-compile does not accept arguments"));
+            }
+            let commands =
+                cuda_compile_command_plan(&workspace_manifest()).map_err(io::Error::other)?;
+            run_cargo_plan(&commands)
+        }
+        "cuda-clippy" => {
+            if !remaining.is_empty() {
+                return Ok(argument_error("cuda-clippy does not accept arguments"));
+            }
+            let commands =
+                cuda_clippy_command_plan(&workspace_manifest()).map_err(io::Error::other)?;
+            run_cargo_plan(&commands)
+        }
+        "cuda-hardware" => {
+            if !remaining.is_empty() {
+                return Ok(argument_error("cuda-hardware does not accept arguments"));
+            }
+            let commands =
+                cuda_hardware_command_plan(&workspace_manifest()).map_err(io::Error::other)?;
+            run_cargo_plan(&commands)
+        }
         _ => {
             eprintln!("unknown command: {command}\n");
             print!("{HELP}");
@@ -64,6 +128,12 @@ fn execute() -> io::Result<ExitCode> {
     } else {
         ExitCode::FAILURE
     })
+}
+
+fn argument_error(message: &str) -> ExitCode {
+    eprintln!("{message}\n");
+    print!("{HELP}");
+    ExitCode::from(2)
 }
 
 fn verify() -> io::Result<bool> {
@@ -110,6 +180,15 @@ fn command(arguments: &[&str]) -> Vec<String> {
 fn run_sequence(commands: &[Vec<String>]) -> io::Result<bool> {
     for arguments in commands {
         if !run_cargo(arguments)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn run_cargo_plan(commands: &[CargoCommand]) -> io::Result<bool> {
+    for command in commands {
+        if !run_cargo(command.arguments())? {
             return Ok(false);
         }
     }

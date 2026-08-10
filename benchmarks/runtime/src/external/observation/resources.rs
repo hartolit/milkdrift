@@ -2,7 +2,7 @@
 
 use super::super::cli::RequestedDevice;
 use super::super::report::{CudaMemoryObservation, ResourceCheckpoint, StabilitySummary};
-use super::device::{DeviceState, ValidatedCudaProbe};
+use super::device::{DeviceState, ValidatedCudaObservation};
 use crate::error::{BenchmarkError, BenchmarkResult};
 use crate::memory::process_memory;
 
@@ -25,8 +25,11 @@ impl ResourceState {
         let cuda_memory = match device.requested() {
             RequestedDevice::Cpu => None,
             RequestedDevice::Cuda0 => {
-                let probe = device.validated_cuda_probe()?;
-                Some(cuda_memory_observation(&probe, self.pre_load_used_bytes)?)
+                let observation = device.validated_cuda_observation()?;
+                Some(cuda_memory_observation(
+                    &observation,
+                    self.pre_load_used_bytes,
+                )?)
             }
         };
         Ok(ResourceCheckpoint {
@@ -45,11 +48,11 @@ impl ResourceState {
         let cuda_memory = match device.requested() {
             RequestedDevice::Cpu => None,
             RequestedDevice::Cuda0 => {
-                let probe = device.validated_cuda_probe()?;
-                let used_bytes = probe.used_bytes()?;
+                let cuda = device.validated_cuda_observation()?;
+                let used_bytes = cuda.used_bytes()?;
                 let observation = CudaMemoryObservation {
-                    total_bytes: probe.total_bytes,
-                    free_bytes: probe.free_bytes,
+                    total_bytes: cuda.total_bytes,
+                    free_bytes: cuda.free_bytes,
                     used_bytes,
                     used_delta_from_pre_load_bytes: Some(0),
                 };
@@ -66,16 +69,16 @@ impl ResourceState {
 }
 
 fn cuda_memory_observation(
-    probe: &ValidatedCudaProbe,
+    observation: &ValidatedCudaObservation,
     pre_load_used_bytes: Option<u64>,
 ) -> BenchmarkResult<CudaMemoryObservation> {
-    let used_bytes = probe.used_bytes()?;
+    let used_bytes = observation.used_bytes()?;
     let used_delta_from_pre_load_bytes = pre_load_used_bytes
         .map(|baseline| signed_used_delta(used_bytes, baseline))
         .transpose()?;
     Ok(CudaMemoryObservation {
-        total_bytes: probe.total_bytes,
-        free_bytes: probe.free_bytes,
+        total_bytes: observation.total_bytes,
+        free_bytes: observation.free_bytes,
         used_bytes,
         used_delta_from_pre_load_bytes,
     })
@@ -263,19 +266,19 @@ mod tests {
         validate_pre_load_checkpoint,
     };
     use crate::external::cli::RequestedDevice;
-    use crate::external::observation::device::ValidatedCudaProbe;
+    use crate::external::observation::device::ValidatedCudaObservation;
     use crate::external::report::{CudaComputeCapability, CudaMemoryObservation};
 
-    fn valid_probe() -> ValidatedCudaProbe {
-        ValidatedCudaProbe {
+    fn valid_observation() -> ValidatedCudaObservation {
+        ValidatedCudaObservation {
             name: "NVIDIA GeForce RTX 5070 Ti".to_owned(),
+            driver_version: "575.57.08".to_owned(),
             compute_capability: CudaComputeCapability {
                 major: 12,
                 minor: 0,
             },
             total_bytes: 16_000,
             free_bytes: 12_000,
-            supports_bf16: true,
         }
     }
 
@@ -304,7 +307,7 @@ mod tests {
         );
         assert!(signed_used_delta(u64::MAX, 0).is_err());
         assert_eq!(
-            cuda_memory_observation(&valid_probe(), Some(4_000))
+            cuda_memory_observation(&valid_observation(), Some(4_000))
                 .map_err(|error| error.to_string())?,
             CudaMemoryObservation {
                 total_bytes: 16_000,

@@ -29,6 +29,7 @@ pub(super) fn connect(
     connect_resolve(window, Rc::clone(runtime), Rc::clone(device_selector));
     connect_load(window, Rc::clone(runtime), Rc::clone(device_selector));
     connect_unload(window, Rc::clone(runtime), Rc::clone(device_selector));
+    connect_retry_model_cleanup(window, Rc::clone(runtime), Rc::clone(device_selector));
     connect_submit_message(
         window,
         Rc::clone(runtime),
@@ -166,6 +167,30 @@ fn connect_unload(
         window.set_status_text("Draining active work before deterministic unload…".into());
         if let Err(error) = runtime.borrow_mut().unload_model() {
             window.set_status_text(error.to_string().into());
+        }
+        synchronize_controls(&window, &runtime.borrow(), &device_selector);
+    });
+}
+
+fn connect_retry_model_cleanup(
+    window: &AppWindow,
+    runtime: Rc<RefCell<ApplicationRuntime>>,
+    device_selector: Rc<RefCell<DeviceSelectorModel>>,
+) {
+    let weak = window.as_weak();
+    window.on_retry_model_cleanup(move || {
+        let Some(window) = weak.upgrade() else {
+            return;
+        };
+        match runtime.borrow_mut().retry_model_cleanup() {
+            Ok(()) => window.set_status_text("Retained model cleanup retry scheduled.".into()),
+            Err(error) => window.set_status_text(
+                format!(
+                    "Model cleanup retry failed: {}",
+                    normalized_application_error(&error)
+                )
+                .into(),
+            ),
         }
         synchronize_controls(&window, &runtime.borrow(), &device_selector);
     });

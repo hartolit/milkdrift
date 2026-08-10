@@ -26,7 +26,7 @@ The sole external runner is split by evidence responsibility, not by device:
 external/
 ├── generation/   # fixed workload, one request observer, validation, summaries
 ├── model/        # exact identity, public E1 resolution/load/unload lifecycle
-├── observation/  # requested/selected/actual devices, process RSS, whole-device CUDA
+├── observation/  # public E1 devices, process RSS, nvidia-smi whole-device CUDA
 ├── lifecycle.rs  # start -> select -> resolve -> load -> workload -> unload -> shutdown -> owner drop
 └── report.rs     # one versioned CPU/CUDA report contract
 ```
@@ -115,19 +115,19 @@ Synthetic and external reports have independent version sequences.
 
 The external binary fixes `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`; callers cannot substitute either identity. The fixed artifact profile is `config.json`, `tokenizer.json`, and one unindexed `model.safetensors`. It requires explicit network authorization, explicit device selection, a clean committed tree, and an already-existing canonical cache beneath repository-root `target/` or outside the repository. It never reads a default global Hub cache implicitly and never falls back from CUDA to CPU.
 
-The profile's configuration declaration is optional in the schema but required to equal `Some(BF16)` for this exact revision. E1's `ModelLoaded` event supplies the actual execution scalar and actual loaded device. The runner validates that requested, selected, and actual devices agree, but it does not independently invoke adapter `prepare_load`, recreate production planning policy, inspect tensor headers, or claim direct E0 reservation/accounting facts.
+The profile's configuration declaration is optional in the schema but required to equal `Some(BF16)` for this exact revision. E1's public selected-device summary is validated from its own public identity, availability, name, memory, and compute-capability fields. E1's `ModelLoaded` event independently supplies the actual execution scalar and actual loaded device. The runner validates that requested, selected, and actual devices agree, but it does not independently invoke adapter `prepare_load` or backend device discovery, recreate production planning policy, inspect tensor headers, or claim direct E0 reservation/accounting facts.
 
 External schema 6 records:
 
 - repository, immutable revision/commit, license-metadata provenance, the fixed artifact profile, and the optional E1 configuration declaration;
-- requested device and CUDA build/device metadata where applicable;
+- requested device and, where applicable, CUDA build metadata plus fixed physical-index-0 `nvidia-smi` device metadata;
 - each cycle's selected E1 device, actual loaded device, and actual execution scalar;
 - raw startup, resolution, load, generation, cancellation, unload, and shutdown timings plus token/byte counts and terminal kinds;
 - `process_memory` checkpoints containing sampled process RSS/HWM;
-- `whole_device_cuda_memory` checkpoints containing qualified driver total/free/used values for the complete device, never process-attributed CUDA ownership;
+- `whole_device_cuda_memory` checkpoints containing qualified `nvidia-smi` total/free/used values for the complete device, never process-attributed CUDA ownership;
 - the consumed retained-growth interpretation, computed from raw cycle-local CUDA deltas without duplicating checkpoint arrays.
 
-Schema 6 observes the public E1 product boundary. Validation failures still abort the run, but invariant success booleans and policy prose are not report data.
+Schema 6 observes the public E1 product boundary plus non-context-owning OS/driver commands. Validation failures still abort the run, but invariant success booleans and policy prose are not report data.
 
 Build separate release artifacts, then execute them directly and sequentially so no compiler process overlaps model residency:
 
@@ -161,7 +161,7 @@ target/phase12-cuda/release/external-baseline \
 
 The primary cycle on each device runs one compatible-chat proof, one direct-completion warmup, three measured 32-token completions, and one progress-triggered cancellation. The CUDA invocation then runs two additional load/generate/release/cancel/unload/shutdown stability cycles, yielding three complete CUDA lifecycle cycles total. Stdout contains one schema-versioned report; progress and the compact summary use stderr.
 
-CUDA total/free/used observations are safe driver observations for the whole device, not process-attributed memory. Each cycle establishes its own pre-load baseline immediately before the public E1 load; retained-delta stability uses post-unload and post-owner-drop deltas while preserving absolute observations in raw checkpoints. Public E1 does not expose the product worker's E0 `RuntimeSnapshot`, so the external report does not fabricate E0 planning, reserved ownership, or post-unload accounting. Direct E0 zero-accounting evidence remains a separate download-free hardware test.
+CUDA total/free/used observations come only from the fixed `nvidia-smi --query-gpu=index,name,driver_version,compute_cap,memory.total,memory.free --format=csv,noheader,nounits` whole-device command, not process-attributed memory. This `nvidia-smi` observation creates no CUDA context in the benchmark process. Repeated observations require stable physical-index-0 name, driver, compute capability, and total memory while allowing free memory to vary. Each cycle establishes its own pre-load baseline immediately before the public E1 load; retained-delta stability uses post-unload and post-owner-drop deltas while preserving absolute observations in raw checkpoints. The initial checkpoint is named `after-observer-initialization-before-application-start`; it no longer claims an observer-owned CUDA context. Public E1 does not expose the product worker's E0 `RuntimeSnapshot`, so the external report does not fabricate E0 planning, reserved ownership, or post-unload accounting. Direct E0 zero-accounting evidence remains a separate download-free hardware test.
 
 Ordinary tests and shared CI compile this path but never execute it, access the network, or require CUDA hardware. Resource preflight, hardware tests, report review, and the bounded manual Slint procedure are in [controlled CPU and CUDA external product evidence](../../docs/project/validation.md#controlled-cpu-and-cuda-external-product-evidence); curated historical results live only in [performance evidence](../../docs/project/performance.md#external-product-evidence).
 
@@ -177,7 +177,7 @@ Ordinary tests and shared CI compile this path but never execute it, access the 
 
 **External schema 5 (historical):** removes `cache_bytes_per_token` from byte-footprint records because cache rate is separate descriptor planning data. All other schema-4 evidence groups retain their meanings.
 
-**External schema 6 (current):** removes the independent adapter preparation/planning path and its declared/observed/planned/footprint payload. It records actual public E1 model/device/capacity facts, raw variable timing/count/resource evidence, and provenance; validation still aborts failures without serializing tautological success flags or invariant prose.
+**External schema 6 (current):** removes the independent adapter preparation/planning path and its declared/observed/planned/footprint payload. It records actual public E1 model/device/capacity facts, raw variable timing/count/resource evidence, and provenance; whole-device CUDA fields come from the fixed non-context-owning `nvidia-smi` observation. Validation still aborts failures without serializing tautological success flags or invariant prose.
 
 No legacy parser has been added for schemas 1–5. Their descriptions and preserved measurements remain provenance records, not migration inputs.
 

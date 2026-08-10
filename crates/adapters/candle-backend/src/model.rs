@@ -4,7 +4,7 @@ use candle_core::{DType, Device, Storage, Tensor};
 use candle_transformers::models::llama::{Cache, Config, Llama};
 use domain_contracts::{
     BackendFailureKind, BackendId, BackendSequence, CapacityExhausted, CapacityResource,
-    DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceKind, ExecutionDevice, LoadedModel,
+    DecodeBufferRequirements, DecodeInput, DecodeOutcome, ExecutionDevice, LoadedModel,
     MemoryFootprint, ModelDescriptor, ModelError, ModelHandle, PrefillBufferRequirements,
     PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers, ScalarType,
     SequenceConfiguration, SequenceError, SequenceId, SequencePlan, SequenceState,
@@ -16,6 +16,7 @@ use crate::failure::{
     CODE_LOGITS_TRANSFER, CODE_NUMERIC_OVERFLOW, CODE_RESERVATION, CODE_SYNCHRONIZE,
     candle_cuda_failure_kind, failure,
 };
+use crate::sequence_reservation;
 pub(crate) struct CandleLlamaModelParameters {
     pub(crate) backend: BackendId,
     pub(crate) handle: ModelHandle,
@@ -81,57 +82,30 @@ impl CandleLlamaModel {
         &self,
         configuration: SequenceConfiguration,
     ) -> Result<MemoryFootprint, ModelError> {
-        let maximum_tokens = u64::from(configuration.maximum_tokens.get());
-        let cache_bytes = self
-            .descriptor
-            .sequence_cache_bytes_per_token
-            .checked_mul(maximum_tokens)
-            .ok_or_else(|| numeric_model_error(self.backend))?;
-        let head_dimension = self
-            .config
-            .hidden_size
-            .checked_div(self.config.num_attention_heads)
-            .ok_or_else(|| numeric_model_error(self.backend))?;
-        let scalar_bytes =
-            dtype_bytes(self.dtype).ok_or_else(|| numeric_model_error(self.backend))?;
-        let rope_bytes = u64::try_from(self.config.max_position_embeddings)
-            .ok()
-            .and_then(|positions| positions.checked_mul(u64::try_from(head_dimension).ok()?))
-            .and_then(|elements| elements.checked_mul(scalar_bytes))
-            .ok_or_else(|| numeric_model_error(self.backend))?;
-        let working_bytes = cache_bytes
-            .checked_add(rope_bytes)
-            .ok_or_else(|| numeric_model_error(self.backend))?;
-
-        match self.execution_device.kind {
-            DeviceKind::Cpu => Ok(MemoryFootprint {
-                host_weight_bytes: 0,
-                device_weight_bytes: 0,
-                host_working_bytes: working_bytes,
-                device_working_bytes: 0,
-            }),
-            DeviceKind::Cuda => Ok(MemoryFootprint {
-                host_weight_bytes: 0,
-                device_weight_bytes: 0,
-                host_working_bytes: 0,
-                device_working_bytes: working_bytes,
-            }),
-            _ => Err(ModelError::Unsupported),
-        }
+        sequence_reservation::calculate(
+            self.backend,
+            &self.config,
+            self.dtype,
+            self.execution_device.kind,
+            configuration,
+            self.descriptor.sequence_cache_bytes_per_token,
+        )
     }
 
-    fn execute(
+    fn prepare_input(&self, tokens: &[u32]) -> Result<Tensor, SequenceError> {
+        Tensor::from_slice(tokens, (1, tokens.len()), &self.device).map_err(|error| {
+            sequence_candle_failure(self.backend, &self.device, &error, CODE_INPUT_TENSOR)
+        })
+    }
+
+    fn forward(
         &self,
         cache: &mut Cache,
         position: usize,
-        tokens: &[u32],
+        input: &Tensor,
     ) -> Result<Tensor, SequenceError> {
-        let input =
-            Tensor::from_slice(tokens, (1, tokens.len()), &self.device).map_err(|error| {
-                sequence_candle_failure(self.backend, &self.device, &error, CODE_INPUT_TENSOR)
-            })?;
         self.device
-            .with_context(|| self.model.forward(&input, position, cache))
+            .with_context(|| self.model.forward(input, position, cache))
             .map_err(|error| {
                 sequence_candle_failure(self.backend, &self.device, &error, CODE_FORWARD)
             })
@@ -227,16 +201,15 @@ impl LoadedModel for CandleLlamaModel {
         let plan = self.plan_sequence(configuration)?;
         let maximum_prefill = usize::try_from(configuration.maximum_prefill_batch.get())
             .map_err(|_| numeric_model_error(self.backend))?;
+        let token_capacity = usize::try_from(configuration.maximum_tokens.get())
+            .map_err(|_| numeric_model_error(self.backend))?;
         let mut token_staging = Vec::new();
         token_staging
             .try_reserve_exact(maximum_prefill)
-            .map_err(|_| {
-                ModelError::Backend(failure(
-                    self.backend,
-                    BackendFailureKind::HostMemory,
-                    CODE_RESERVATION,
-                ))
-            })?;
+            .map_err(|_| reservation_model_error(self.backend))?;
+        if token_staging.capacity() != maximum_prefill {
+            return Err(reservation_model_error(self.backend));
+        }
         let cache = Cache::new(true, self.dtype, &self.config, &self.device).map_err(|error| {
             model_candle_failure(self.backend, &self.device, &error, CODE_CACHE_CREATE)
         })?;
@@ -245,8 +218,7 @@ impl LoadedModel for CandleLlamaModel {
             id: sequence_id,
             state: SequenceState::Empty,
             position: 0,
-            token_capacity: usize::try_from(configuration.maximum_tokens.get())
-                .map_err(|_| numeric_model_error(self.backend))?,
+            token_capacity,
             maximum_prefill,
             cache,
             token_staging,
@@ -295,24 +267,28 @@ impl LoadedModel for CandleLlamaModel {
             )));
         }
 
+        let next_position = checked_next_position(
+            self.backend,
+            sequence.position,
+            input.tokens.len(),
+            sequence.token_capacity,
+        )?;
         sequence.token_staging.clear();
         for token in input.tokens {
             sequence.token_staging.push(token.get());
         }
         let position = sequence.position;
-        let cache = &mut sequence.cache;
-        let staging = sequence.token_staging.as_slice();
-        let logits = self.execute(cache, position, staging)?;
+        let input_tensor = self.prepare_input(sequence.token_staging.as_slice())?;
+        let forward = self.forward(&mut sequence.cache, position, &input_tensor);
+        let logits = finish_after_cache_boundary(&mut sequence.state, forward)?;
         let logits_written = if input.emit_logits {
             let required_logits = buffers.required_logits();
-            self.copy_logits(&logits, buffers.logits_mut(), required_logits)?
+            let copy = self.copy_logits(&logits, buffers.logits_mut(), required_logits);
+            finish_after_cache_boundary(&mut sequence.state, copy)?
         } else {
             0
         };
-        sequence.position = sequence
-            .position
-            .checked_add(input.tokens.len())
-            .ok_or_else(|| numeric_sequence_error(self.backend))?;
+        sequence.position = next_position;
         sequence.state = SequenceState::Ready;
 
         Ok(PrefillOutcome::Ready {
@@ -332,15 +308,17 @@ impl LoadedModel for CandleLlamaModel {
             return Err(SequenceError::InvalidState);
         }
 
+        let next_position =
+            checked_next_position(self.backend, sequence.position, 1, sequence.token_capacity)?;
         let token = [input.token.get()];
         let position = sequence.position;
-        let logits = self.execute(&mut sequence.cache, position, &token)?;
+        let input_tensor = self.prepare_input(&token)?;
+        let forward = self.forward(&mut sequence.cache, position, &input_tensor);
+        let logits = finish_after_cache_boundary(&mut sequence.state, forward)?;
         let required_logits = buffers.required_logits();
-        let logits_written = self.copy_logits(&logits, buffers.logits_mut(), required_logits)?;
-        sequence.position = sequence
-            .position
-            .checked_add(1)
-            .ok_or_else(|| numeric_sequence_error(self.backend))?;
+        let copy = self.copy_logits(&logits, buffers.logits_mut(), required_logits);
+        let logits_written = finish_after_cache_boundary(&mut sequence.state, copy)?;
+        sequence.position = next_position;
 
         Ok(DecodeOutcome::Ready {
             position: sequence.position,
@@ -396,7 +374,8 @@ pub struct CandleLlamaSequence {
 }
 
 impl CandleLlamaSequence {
-    /// Returns the exact planned maximum sequence-specific ownership.
+    /// Returns the exact arithmetic reservation for the reviewed sequence
+    /// logical-payload upper bound.
     #[must_use]
     pub const fn expected_footprint(&self) -> MemoryFootprint {
         self.expected_footprint
@@ -456,12 +435,32 @@ fn copy_cpu_storage(
     Ok(())
 }
 
-const fn dtype_bytes(dtype: DType) -> Option<u64> {
-    match dtype {
-        DType::F32 => Some(4),
-        DType::F16 | DType::BF16 => Some(2),
-        _ => None,
+fn checked_next_position(
+    backend: BackendId,
+    position: usize,
+    input_length: usize,
+    token_capacity: usize,
+) -> Result<usize, SequenceError> {
+    let next_position = position
+        .checked_add(input_length)
+        .ok_or_else(|| numeric_sequence_error(backend))?;
+    if next_position > token_capacity {
+        return Err(SequenceError::CapacityExhausted(CapacityExhausted::new(
+            CapacityResource::Tokens,
+            usize_to_u64(input_length),
+            usize_to_u64(token_capacity.saturating_sub(position)),
+        )));
     }
+    Ok(next_position)
+}
+
+fn finish_after_cache_boundary<T>(
+    state: &mut SequenceState,
+    result: Result<T, SequenceError>,
+) -> Result<T, SequenceError> {
+    result.inspect_err(|_| {
+        *state = SequenceState::Finished;
+    })
 }
 
 fn usize_to_u64(value: usize) -> u64 {
@@ -473,6 +472,14 @@ const fn numeric_model_error(backend: BackendId) -> ModelError {
         backend,
         BackendFailureKind::InvalidModel,
         CODE_NUMERIC_OVERFLOW,
+    ))
+}
+
+const fn reservation_model_error(backend: BackendId) -> ModelError {
+    ModelError::Backend(failure(
+        backend,
+        BackendFailureKind::HostMemory,
+        CODE_RESERVATION,
     ))
 }
 
@@ -514,4 +521,59 @@ fn model_candle_failure(
         BackendFailureKind::HostMemory
     };
     ModelError::Backend(failure(backend, kind, code))
+}
+
+#[cfg(test)]
+mod tests {
+    use domain_contracts::{
+        BackendFailureKind, BackendId, CapacityResource, SequenceError, SequenceState,
+    };
+
+    use super::{
+        checked_next_position, finish_after_cache_boundary, numeric_sequence_error,
+        sequence_failure,
+    };
+    use crate::failure::{CODE_FORWARD, CODE_NUMERIC_OVERFLOW};
+
+    const BACKEND: BackendId = BackendId::new(91);
+
+    #[test]
+    fn capacity_is_rejected_before_the_cache_mutation_boundary() {
+        assert_eq!(checked_next_position(BACKEND, 8, 8, 16), Ok(16));
+        assert!(matches!(
+            checked_next_position(BACKEND, 15, 2, 16),
+            Err(SequenceError::CapacityExhausted(capacity))
+                if capacity.resource == CapacityResource::Tokens
+                    && capacity.required == 2
+                    && capacity.available == 1
+        ));
+        assert_eq!(
+            checked_next_position(BACKEND, usize::MAX, 1, usize::MAX),
+            Err(numeric_sequence_error(BACKEND))
+        );
+        assert!(matches!(
+            numeric_sequence_error(BACKEND),
+            SequenceError::Backend(failure)
+                if failure.kind == BackendFailureKind::DeviceExecution
+                    && failure.code == CODE_NUMERIC_OVERFLOW
+        ));
+    }
+
+    #[test]
+    fn errors_after_crossing_the_cache_boundary_finish_the_sequence() {
+        let mut state = SequenceState::Ready;
+        let error = sequence_failure(BACKEND, CODE_FORWARD);
+        assert_eq!(
+            finish_after_cache_boundary::<()>(&mut state, Err(error)),
+            Err(error)
+        );
+        assert_eq!(state, SequenceState::Finished);
+
+        let mut successful_state = SequenceState::Ready;
+        assert_eq!(
+            finish_after_cache_boundary(&mut successful_state, Ok(7_u32)),
+            Ok(7)
+        );
+        assert_eq!(successful_state, SequenceState::Ready);
+    }
 }

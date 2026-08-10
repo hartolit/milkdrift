@@ -4,6 +4,7 @@
 
 mod bounded;
 mod configuration;
+mod content;
 mod discovery;
 mod identity;
 mod weights;
@@ -12,13 +13,14 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use configuration::read_configuration_declared_scalar_type;
+use configuration::parse_configuration_declared_scalar_type;
+use content::{read_verified_content_bytes, resolve_content_artifact};
 use discovery::resolve_commit_and_files;
 use hf_hub::{HFClient, HFClientSync, HFError, HFRepositorySync, RepoTypeModel, split_id};
-use identity::{resolve_weight_shard, selected_weight_metadata};
-use weights::{direct_weights, indexed_weights, read_index, validate_artifact_path};
+use identity::{resolve_weight_shard, selected_content_metadata, selected_weight_metadata};
+use weights::{direct_weights, indexed_weights, validate_artifact_path};
 
 const CONFIG_FILE: &str = "config.json";
 const TOKENIZER_FILE: &str = "tokenizer.json";
@@ -109,12 +111,69 @@ pub struct ResolvedSafetensorsLlamaArtifacts {
     /// This is producer-intent evidence only. It does not describe tensor-header
     /// homogeneity or the scalar selected for backend execution.
     pub configuration_declared_scalar_type: Option<ArtifactScalarType>,
-    /// Cached model configuration.
-    pub config_path: PathBuf,
-    /// Cached serialized tokenizer.
-    pub tokenizer_path: PathBuf,
+    /// Cached model configuration paired with its exact bounded content identity.
+    pub config: ResolvedContentArtifact,
+    /// Cached serialized tokenizer paired with its exact bounded content identity.
+    pub tokenizer: ResolvedContentArtifact,
     /// Ordered cached Safetensors shards with reusable whole-file identities.
     pub weight_shards: Vec<ResolvedSafetensorsShard>,
+}
+
+/// One bounded cached JSON artifact and its accepted exact content identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedContentArtifact {
+    /// Cached local artifact path.
+    pub path: PathBuf,
+    /// Accepted exact whole-file content identity.
+    pub content_identity: ArtifactContentIdentity,
+    /// Bounded artifact role, which determines the reviewed byte ceiling.
+    pub kind: ArtifactContentKind,
+}
+
+impl ResolvedContentArtifact {
+    /// Returns the cached local artifact path.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Returns the accepted exact whole-file content identity.
+    #[must_use]
+    pub const fn content_identity(&self) -> ArtifactContentIdentity {
+        self.content_identity
+    }
+
+    /// Opens the cached path once, retains its bounded exact bytes, and validates their
+    /// length and SHA-256 against the accepted identity before returning those same bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`HubError`] if the path cannot be read, is not a regular file, exceeds
+    /// its reviewed bound, or no longer matches the accepted content identity.
+    pub fn read_verified_bytes(&self) -> Result<Vec<u8>, HubError> {
+        read_verified_content_bytes(self)
+    }
+}
+
+/// Role of one bounded cached JSON artifact.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArtifactContentKind {
+    /// Hugging Face model `config.json`.
+    Configuration,
+    /// Hugging Face `tokenizer.json`.
+    Tokenizer,
+    /// Hugging Face Safetensors shard index.
+    WeightIndex,
+}
+
+impl ArtifactContentKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Configuration => "model configuration",
+            Self::Tokenizer => "tokenizer",
+            Self::WeightIndex => "Safetensors weight index",
+        }
+    }
 }
 
 /// One cached Safetensors shard and the whole-file identity Candle must verify while reading it.
@@ -142,7 +201,9 @@ pub struct ArtifactContentIdentity {
 pub enum ArtifactContentIdentityAuthority {
     /// SHA-256 came from Git LFS metadata at the resolved Hub commit.
     HuggingFaceLfs,
-    /// SHA-256 was established by streaming the downloaded local file.
+    /// Bytes matched the Git blob object ID at the resolved Hub commit, then received this SHA-256.
+    HuggingFaceGitBlob,
+    /// SHA-256 was established by streaming a local file without provider-bound identity.
     ProjectEstablished,
 }
 
@@ -162,6 +223,8 @@ pub enum ArtifactScalarType {
 pub enum HubStructuralLimit {
     /// Model configuration bytes.
     ConfigurationBytes,
+    /// Serialized tokenizer JSON bytes.
+    TokenizerBytes,
     /// Safetensors weight-index bytes.
     WeightIndexBytes,
     /// Weight-map entries in one Safetensors index.
@@ -184,6 +247,7 @@ impl HubStructuralLimit {
     const fn label(self) -> &'static str {
         match self {
             Self::ConfigurationBytes => "model configuration bytes",
+            Self::TokenizerBytes => "serialized tokenizer JSON bytes",
             Self::WeightIndexBytes => "Safetensors weight-index bytes",
             Self::WeightIndexEntries => "Safetensors weight-index entries",
             Self::WeightIndexTensorNameBytes => "Safetensors weight-index tensor-name bytes",
@@ -233,10 +297,9 @@ pub enum HubError {
     RepositoryInfo(HFError),
     /// Exact selected-file metadata could not be inspected.
     ArtifactMetadata(HFError),
-    /// Repository metadata omitted the immutable commit identifier.
-    MissingCommit,
-    /// Repository metadata omitted its file listing.
-    MissingFileListing,
+    /// Exact config/tokenizer metadata was absent, repeated, inconsistent, or unexpected.
+    InvalidContentMetadata,
+
     /// Repository metadata returned a non-canonical immutable commit identifier.
     InvalidCommit,
     /// Recursive repository metadata repeated one file path.
@@ -251,6 +314,12 @@ pub enum HubError {
     StructuralLimitExceeded(HubStructuralLimit),
     /// A cached model configuration could not be read.
     ReadConfiguration(io::Error),
+    /// A cached serialized tokenizer could not be read.
+    ReadTokenizer(io::Error),
+    /// A bounded config/tokenizer path did not identify a regular file.
+    InvalidContentFile(ArtifactContentKind),
+    /// Bounded config/tokenizer bytes did not match the accepted exact identity.
+    ContentIdentityMismatch(ArtifactContentKind),
     /// The model configuration JSON or declaration field type was malformed.
     InvalidConfiguration,
     /// A present scalar declaration was not recognized by this adapter.
@@ -267,10 +336,14 @@ pub enum HubError {
     DuplicateShardMetadata,
     /// Selected-file metadata returned a path or entry type that was not requested.
     UnexpectedShardMetadata,
-    /// Git LFS metadata contained a malformed SHA-256 value.
+    /// Git LFS metadata contained a missing or malformed SHA-256 value.
     InvalidLfsContentIdentity,
+    /// Hub Git metadata contained a malformed blob object ID.
+    InvalidGitContentIdentity,
     /// Hub-reported, LFS-reported, cached, or streamed shard lengths disagreed.
     ShardLengthMismatch,
+    /// A non-LFS shard did not match its Git blob object ID at the resolved commit.
+    ShardContentIdentityMismatch,
     /// A cached weight shard was not a regular file.
     InvalidWeightFile,
     /// A cached weight shard could not be inspected or streamed.
@@ -293,9 +366,8 @@ impl HubError {
             Self::Client(_)
             | Self::RepositoryInfo(_)
             | Self::ArtifactMetadata(_)
-            | Self::MissingCommit
-            | Self::MissingFileListing
             | Self::ReadConfiguration(_)
+            | Self::ReadTokenizer(_)
             | Self::ReadIndex(_)
             | Self::ReadWeight(_)
             | Self::Download { .. } => HubErrorKind::Unavailable,
@@ -305,15 +377,20 @@ impl HubError {
             Self::InvalidConfiguration => HubErrorKind::MalformedConfiguration,
             Self::UnsupportedScalarDeclaration => HubErrorKind::UnsupportedScalarDeclaration,
             Self::ConflictingScalarDeclarations => HubErrorKind::ConflictingScalarDeclarations,
-            Self::InvalidCommit
+            Self::InvalidContentMetadata
+            | Self::InvalidCommit
             | Self::DuplicateRepositoryFilePath
             | Self::UnsafeArtifactPath(_)
+            | Self::InvalidContentFile(_)
+            | Self::ContentIdentityMismatch(_)
             | Self::InvalidIndex
             | Self::MissingShardMetadata
             | Self::DuplicateShardMetadata
             | Self::UnexpectedShardMetadata
             | Self::InvalidLfsContentIdentity
+            | Self::InvalidGitContentIdentity
             | Self::ShardLengthMismatch
+            | Self::ShardContentIdentityMismatch
             | Self::InvalidWeightFile => HubErrorKind::InvalidArtifact,
         }
     }
@@ -334,12 +411,10 @@ impl Display for HubError {
                     "failed to inspect selected Hub artifacts: {error}"
                 )
             }
-            Self::MissingCommit => {
-                formatter.write_str("Hub repository metadata omitted the commit identifier")
+            Self::InvalidContentMetadata => {
+                formatter.write_str("selected configuration, tokenizer, or index metadata is invalid")
             }
-            Self::MissingFileListing => {
-                formatter.write_str("Hub repository metadata omitted the file listing")
-            }
+
             Self::InvalidCommit => {
                 formatter.write_str("Hub repository metadata returned an invalid commit identifier")
             }
@@ -365,6 +440,17 @@ impl Display for HubError {
             Self::ReadConfiguration(error) => {
                 write!(formatter, "failed to read model configuration: {error}")
             }
+            Self::ReadTokenizer(error) => {
+                write!(formatter, "failed to read serialized tokenizer: {error}")
+            }
+            Self::InvalidContentFile(kind) => {
+                write!(formatter, "cached {} is not a regular file", kind.label())
+            }
+            Self::ContentIdentityMismatch(kind) => write!(
+                formatter,
+                "cached {} does not match its accepted content identity",
+                kind.label()
+            ),
             Self::InvalidConfiguration => formatter.write_str(
                 "model configuration JSON or scalar declaration field type is malformed",
             ),
@@ -385,10 +471,16 @@ impl Display for HubError {
                 formatter.write_str("selected Hub metadata returned an unexpected artifact entry")
             }
             Self::InvalidLfsContentIdentity => {
-                formatter.write_str("Hub LFS metadata contains an invalid SHA-256 identity")
+                formatter.write_str("Hub LFS metadata lacks a valid SHA-256 identity")
+            }
+            Self::InvalidGitContentIdentity => {
+                formatter.write_str("Hub Git metadata contains an invalid blob object identity")
             }
             Self::ShardLengthMismatch => formatter.write_str(
                 "Hub-reported, LFS-reported, cached, or streamed shard lengths disagree",
+            ),
+            Self::ShardContentIdentityMismatch => formatter.write_str(
+                "cached Safetensors shard does not match its Git blob identity at the resolved commit",
             ),
             Self::InvalidWeightFile => {
                 formatter.write_str("cached Safetensors shard is not a regular file")
@@ -412,20 +504,22 @@ impl Error for HubError {
             Self::Client(error) | Self::RepositoryInfo(error) | Self::ArtifactMetadata(error) => {
                 Some(error)
             }
-            Self::ReadConfiguration(error) | Self::ReadIndex(error) | Self::ReadWeight(error) => {
-                Some(error)
-            }
+            Self::ReadConfiguration(error)
+            | Self::ReadTokenizer(error)
+            | Self::ReadIndex(error)
+            | Self::ReadWeight(error) => Some(error),
             Self::Download { source, .. } => Some(source),
             Self::InvalidRepository
             | Self::InvalidRevision
-            | Self::MissingCommit
-            | Self::MissingFileListing
+            | Self::InvalidContentMetadata
             | Self::InvalidCommit
             | Self::DuplicateRepositoryFilePath
             | Self::MissingArtifact(_)
             | Self::UnsupportedWeightLayout
             | Self::UnsafeArtifactPath(_)
             | Self::StructuralLimitExceeded(_)
+            | Self::InvalidContentFile(_)
+            | Self::ContentIdentityMismatch(_)
             | Self::InvalidConfiguration
             | Self::UnsupportedScalarDeclaration
             | Self::ConflictingScalarDeclarations
@@ -434,7 +528,9 @@ impl Error for HubError {
             | Self::DuplicateShardMetadata
             | Self::UnexpectedShardMetadata
             | Self::InvalidLfsContentIdentity
+            | Self::InvalidGitContentIdentity
             | Self::ShardLengthMismatch
+            | Self::ShardContentIdentityMismatch
             | Self::InvalidWeightFile => None,
         }
     }
@@ -484,9 +580,19 @@ impl HubClient {
 
         require_file(&filenames, CONFIG_FILE)?;
         require_file(&filenames, TOKENIZER_FILE)?;
-        let weight_filenames = if filenames.contains(WEIGHT_INDEX_FILE) {
+        let has_weight_index = filenames.contains(WEIGHT_INDEX_FILE);
+        let content_metadata =
+            selected_content_metadata(&repository, commit.as_str(), has_weight_index)?;
+        let weight_filenames = if has_weight_index {
+            let index_metadata = content_metadata
+                .weight_index
+                .ok_or(HubError::InvalidContentMetadata)?;
             let index_path = resolve_file(&repository, commit.as_str(), WEIGHT_INDEX_FILE)?;
-            let bytes = read_index(index_path.as_path())?;
+            let (_, bytes) = resolve_content_artifact(
+                index_path,
+                index_metadata,
+                ArtifactContentKind::WeightIndex,
+            )?;
             indexed_weights(bytes.as_slice(), &filenames)?
         } else {
             direct_weights(&filenames)?
@@ -495,9 +601,19 @@ impl HubClient {
             selected_weight_metadata(&repository, commit.as_str(), weight_filenames.as_slice())?;
 
         let config_path = resolve_file(&repository, commit.as_str(), CONFIG_FILE)?;
+        let (config, config_bytes) = resolve_content_artifact(
+            config_path,
+            content_metadata.configuration,
+            ArtifactContentKind::Configuration,
+        )?;
         let configuration_declared_scalar_type =
-            read_configuration_declared_scalar_type(config_path.as_path())?;
+            parse_configuration_declared_scalar_type(config_bytes.as_slice())?;
         let tokenizer_path = resolve_file(&repository, commit.as_str(), TOKENIZER_FILE)?;
+        let (tokenizer, _) = resolve_content_artifact(
+            tokenizer_path,
+            content_metadata.tokenizer,
+            ArtifactContentKind::Tokenizer,
+        )?;
         let mut weight_shards = Vec::with_capacity(weight_filenames.len());
         for filename in weight_filenames {
             let metadata = weight_metadata
@@ -515,8 +631,8 @@ impl HubClient {
             revision: reference.revision.clone(),
             commit,
             configuration_declared_scalar_type,
-            config_path,
-            tokenizer_path,
+            config,
+            tokenizer,
             weight_shards,
         })
     }

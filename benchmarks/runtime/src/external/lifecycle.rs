@@ -34,7 +34,8 @@ const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 const DRAIN_TIMEOUT_MILLISECONDS: u64 = 10_000;
 const RESOURCE_CHECKPOINT_CAPACITY: usize = 16;
 
-const BEFORE_APPLICATION_START_CHECKPOINT: &str = "after-observer-context-before-application-start";
+const BEFORE_APPLICATION_START_CHECKPOINT: &str =
+    "after-observer-initialization-before-application-start";
 const AFTER_APPLICATION_START_CHECKPOINT: &str = "after-application-start-and-device-selection";
 const AFTER_RESOLUTION_CHECKPOINT: &str = "after-model-resolution";
 const BEFORE_LOAD_CHECKPOINT: &str = "immediately-before-model-load";

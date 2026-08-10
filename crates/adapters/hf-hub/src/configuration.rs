@@ -1,14 +1,12 @@
 use std::fmt::{self, Formatter};
-use std::path::Path;
 
 use serde::Deserialize;
 use serde::de::{self, Deserializer, IgnoredAny, MapAccess, Visitor};
 
-use crate::bounded::{BoundedReadError, read_bounded_file};
-use crate::{ArtifactScalarType, HubError, HubStructuralLimit};
+use crate::{ArtifactScalarType, HubError};
 
 /// One MiB accommodates realistic Llama configuration files with ample extension headroom.
-const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
+pub(crate) const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 
 struct ModelConfiguration {
     dtype: Option<String>,
@@ -108,19 +106,7 @@ enum ScalarDeclaration {
     Unsupported,
 }
 
-pub(crate) fn read_configuration_declared_scalar_type(
-    path: &Path,
-) -> Result<Option<ArtifactScalarType>, HubError> {
-    let bytes = read_bounded_file(path, MAX_CONFIG_BYTES).map_err(|error| match error {
-        BoundedReadError::Io(error) => HubError::ReadConfiguration(error),
-        BoundedReadError::Limit => {
-            HubError::StructuralLimitExceeded(HubStructuralLimit::ConfigurationBytes)
-        }
-    })?;
-    parse_configuration_declared_scalar_type(bytes.as_slice())
-}
-
-fn parse_configuration_declared_scalar_type(
+pub(crate) fn parse_configuration_declared_scalar_type(
     bytes: &[u8],
 ) -> Result<Option<ArtifactScalarType>, HubError> {
     let configuration: ModelConfiguration =

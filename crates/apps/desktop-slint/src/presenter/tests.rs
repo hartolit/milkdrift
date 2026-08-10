@@ -308,6 +308,22 @@ fn control_state_uses_the_e1_device_selection_flag_unchanged() {
 }
 
 #[test]
+fn cleanup_retry_control_is_a_direct_e1_admission_projection() {
+    for expected in [false, true] {
+        let controls = control_state(
+            RuntimeAdmissions {
+                can_retry_model_cleanup: expected,
+                ..RuntimeAdmissions::default()
+            },
+            ComposerMode::Unavailable,
+            "",
+        );
+
+        assert_eq!(controls.can_retry_model_cleanup, expected);
+    }
+}
+
+#[test]
 fn changing_visible_selection_fields_never_reuses_the_stale_selection() {
     let selection = map_model_selection("a/model", "main");
     let changed_repository = map_model_selection("b/model", "main");

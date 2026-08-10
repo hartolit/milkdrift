@@ -185,7 +185,10 @@ impl Default for ConservativeFootprint {
 pub enum RetainedOwnership {
     /// Explicit cleanup succeeded and no backend owner remains.
     Released,
-    /// The owner remains covered by an exact named ownership phase.
+    /// The owner remains covered by exact reservation arithmetic for its named phase.
+    ///
+    /// For a retained sequence this preserves the accepted logical-payload upper
+    /// bound; it does not claim exact instantaneous physical allocation.
     Exact(MemoryFootprint),
     /// A complete model contradicted its accepted contract.
     ///
@@ -203,7 +206,7 @@ pub enum RetainedOwnership {
 }
 
 impl RetainedOwnership {
-    /// Returns the exact footprint only when exact accounting remains established.
+    /// Returns the footprint only when exact reservation accounting remains established.
     #[must_use]
     pub const fn exact_footprint(self) -> Option<MemoryFootprint> {
         match self {

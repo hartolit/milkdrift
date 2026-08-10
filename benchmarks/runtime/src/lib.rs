@@ -169,7 +169,7 @@ fn metric_median(values: impl IntoIterator<Item = u64>) -> BenchmarkResult<u64> 
             .get(middle)
             .copied()
             .ok_or_else(|| BenchmarkError::new("summary upper median disappeared"))?;
-        Ok(lower.saturating_add(upper) / 2)
+        Ok(lower + (upper - lower) / 2)
     } else {
         values
             .get(middle)
@@ -186,4 +186,22 @@ fn write_json(report: &(impl Serialize + ?Sized)) -> BenchmarkResult {
     })?;
     lock.write_all(b"\n")
         .map_err(|error| BenchmarkError::new(format!("could not finish JSON report: {error}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::metric_median;
+
+    #[test]
+    fn metric_median_uses_an_exact_overflow_safe_even_average() -> Result<(), String> {
+        assert_eq!(
+            metric_median([u64::MAX - 1, u64::MAX]).map_err(|error| error.to_string())?,
+            u64::MAX - 1
+        );
+        assert_eq!(
+            metric_median([0, u64::MAX]).map_err(|error| error.to_string())?,
+            u64::MAX / 2
+        );
+        Ok(())
+    }
 }

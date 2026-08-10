@@ -72,6 +72,14 @@ kind = "development"
 rationale = "download-free compatibility tests create mixed-dtype fixtures through Candle's CPU conversion APIs"
 
 [[workspace.metadata.milkdrift.exceptions]]
+id = "external-application-runtime-sha2-dev"
+source = "application-runtime"
+target = "sha2"
+scope = "external"
+kind = "development"
+rationale = "application-boundary mutation tests establish exact identities for temporary config and tokenizer fixtures"
+
+[[workspace.metadata.milkdrift.exceptions]]
 id = "external-domain-contracts-stats-alloc-dev"
 source = "domain-contracts"
 target = "stats_alloc"
@@ -183,9 +191,9 @@ sampling = { path = "crates/domain/sampling" }
 task-graph = { path = "crates/domain/task-graph" }
 tokenization = { path = "crates/domain/tokenization" }
 libm = { version = "0.2", default-features = false }
-candle-core = { version = "0.11.0", default-features = false }
-candle-nn = { version = "0.11.0", default-features = false }
-candle-transformers = { version = "0.11.0", default-features = false }
+candle-core = { version = "=0.11.0", default-features = false }
+candle-nn = { version = "=0.11.0", default-features = false }
+candle-transformers = { version = "=0.11.0", default-features = false }
 cudarc = { version = "=0.19.8", default-features = false, features = ["std", "driver", "cuda-version-from-build-system", "dynamic-linking"] }
 safetensors = "0.8.0"
 serde_json = "1.0"
@@ -194,6 +202,7 @@ flume = { version = "0.12.0", default-features = false }
 tokenizers = { version = "0.23.1", default-features = false, features = ["fancy-regex"] }
 hf-hub = { version = "1.0", default-features = false, features = ["blocking"] }
 serde = { version = "1.0", features = ["derive"] }
+sha1 = { version = "0.11.0", default-features = false }
 sha2 = { version = "0.11.0", default-features = false }
 redb = { version = "4.1.0", default-features = false }
 slint = { version = "1.17.1", default-features = false, features = ["std", "backend-winit", "renderer-femtovg", "compat-1-2"] }

@@ -1,10 +1,10 @@
 # Milkdrift Phase 12 implementation audit
 
-**Audit date:** 2026-08-09  
-**Repository basis:** uploaded repository archive  
-**Audited commit:** `181a069ce81525e9c144fe8de051ced8e3c0b9d7`  
-**Audited tree:** `310e437c0729f51fe6c0ba3dcb5fbf9f1935a80f`  
-**Comparison base:** `a28008a369214e26522cf027977b67292962d058`  
+**Audit date:** 2026-08-09
+**Repository basis:** uploaded repository archive
+**Audited commit:** `181a069ce81525e9c144fe8de051ced8e3c0b9d7`
+**Audited tree:** `310e437c0729f51fe6c0ba3dcb5fbf9f1935a80f`
+**Comparison base:** `a28008a369214e26522cf027977b67292962d058`
 **Disposition:** **conditional acceptance; corrective work required before Phase 12 should be treated as fully closed**
 
 ## Executive verdict
@@ -537,22 +537,22 @@ The prompts were nevertheless below the project's desired standard in several im
 
 ### What the prompts failed to preserve
 
-1. **The original strict declared-primary matrix.**  
+1. **The original strict declared-primary matrix.**
    The core prompt asked the agent to make absent/unsupported policy explicit but did not restate that mixed layouts originally required a declared primary. This allowed ADR-0020 to authorize lossy inference from an ambiguous set.
 
-2. **The fixed-size diagnostic acceptance criterion.**  
+2. **The fixed-size diagnostic acceptance criterion.**
    The segmented core prompt did not retain the original shard/tensor/hash/dtype diagnostic requirement strongly enough, and it disappeared.
 
-3. **Actual adapter-stage fault injection.**  
+3. **Actual adapter-stage fault injection.**
    The prompt mentioned fault injection, but its acceptance language allowed generic E0 fakes and manually constructed prepared state to substitute for failures injected into the real Candle path.
 
-4. **Inspection cost and API semantics.**  
+4. **Inspection cost and API semantics.**
    The prompt rewarded exact source binding without requiring `inspect()` to remain metadata-oriented or requiring a load-cost measurement. The agent chose a very conservative full-payload double-read design without evidence of acceptable startup cost.
 
-5. **Unsupported configuration tests.**  
+5. **Unsupported configuration tests.**
    The application-integration prompt explicitly required recognized and absent declarations, but did not require unknown-present, conflicting-field, or exact-config-versus-source mismatch tests. The parser bug follows directly from that omission.
 
-6. **Hosted-runner target lifecycle.**  
+6. **Hosted-runner target lifecycle.**
    The validation prompt required clean targets and broad gates but did not require disk diagnostics, cleanup of the canonical target, or isolation of portable targets. It therefore did not expose the workflow's resource layout before closure.
 
 The lesson is not to return to a monolithic prompt. Keep domain-oriented segmentation, but carry a compact, immutable acceptance ledger from the source specification into every segment. Each segment should state which acceptance clauses it owns and which it must verify at handoff.

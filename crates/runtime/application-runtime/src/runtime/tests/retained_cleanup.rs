@@ -21,6 +21,7 @@ use crate::{
 };
 
 const RETAINED_HANDLE: ModelHandle = ModelHandle::new(ModelId::new(7), ModelGeneration::new(3));
+const UNRELATED_HANDLE: ModelHandle = ModelHandle::new(ModelId::new(11), ModelGeneration::new(5));
 const EXACT_FOOTPRINT: MemoryFootprint = MemoryFootprint {
     host_weight_bytes: 11,
     device_weight_bytes: 13,
@@ -703,6 +704,85 @@ fn rejected_load_receipt_starts_exact_retained_loaded_model() -> TestResult {
 }
 
 #[test]
+fn incompatible_unload_rejects_an_unrelated_cleanup_resource() -> TestResult {
+    with_runtime(default_test_configuration, |runtime| {
+        let ticket = CommandTicket::new(83);
+        let primary = ApplicationFailure::new(
+            ApplicationFailureKind::IncompatibleReceipt,
+            "stable application compatibility failure",
+        );
+        runtime.incompatible_model_cleanup =
+            Some(crate::runtime::retained_cleanup::IncompatibleModelCleanup {
+                handle: RETAINED_HANDLE,
+                compatibility_failure: primary.clone(),
+                unload: IncompatibleModelUnload::Submitted {
+                    ticket,
+                    attempts: 1,
+                    last_failure: None,
+                },
+            });
+        runtime
+            .state
+            .set_retained_model(ApplicationRetainedModel::new(
+                ApplicationRetainedModelResource::LoadedModel {
+                    handle: RETAINED_HANDLE,
+                },
+                ApplicationRetainedOwnership::Exact(ApplicationMemoryFootprint::from(
+                    EXACT_FOOTPRINT,
+                )),
+                ApplicationModelCleanupDisposition::Pending,
+                primary.clone(),
+                None,
+            ));
+        let unrelated = verified_unload_cleanup(UNRELATED_HANDLE);
+
+        let cleanup = pending_cleanup(
+            runtime.process_model_unload(ticket, Err(RuntimeError::CleanupFailed(unrelated))),
+        )?;
+
+        assert_eq!(
+            cleanup.resource(),
+            ApplicationRetainedModelResource::LoadedModel {
+                handle: RETAINED_HANDLE,
+            }
+        );
+        assert_eq!(cleanup.ownership(), ApplicationRetainedOwnership::Unknown);
+        assert_eq!(cleanup.primary_failure(), &primary);
+        let coordination_failure = cleanup
+            .cleanup_failure()
+            .ok_or_else(|| "cleanup-resource mismatch was not retained".to_owned())?;
+        assert_eq!(
+            coordination_failure.kind,
+            ApplicationFailureKind::RetainedCleanup
+        );
+        assert!(
+            coordination_failure
+                .message
+                .contains("different resource identity")
+        );
+        assert_eq!(runtime.state().retained_model(), Some(&cleanup));
+        assert!(runtime.retained_model_cleanup.is_none());
+        assert!(matches!(
+            runtime.incompatible_model_cleanup.as_ref(),
+            Some(crate::runtime::retained_cleanup::IncompatibleModelCleanup {
+                handle: RETAINED_HANDLE,
+                compatibility_failure,
+                unload: IncompatibleModelUnload::PendingSubmission {
+                    attempts: 1,
+                    last_failure: Some(failure),
+                },
+            }) if compatibility_failure == &primary && failure == coordination_failure
+        ));
+        assert_eq!(
+            runtime.state().activity(),
+            ApplicationActivity::RetainedCleanup
+        );
+        assert!(runtime.state().loaded().is_none());
+        Ok(())
+    })
+}
+
+#[test]
 fn per_owner_snapshot_updates_retry_then_exhaustion_with_zero_aggregate() -> TestResult {
     with_runtime(default_test_configuration, |runtime| {
         let initial = failed_preparation_cleanup(RetainedOwnership::Exact(EXACT_FOOTPRINT), 1, 3);
@@ -771,6 +851,73 @@ fn per_owner_snapshot_updates_retry_then_exhaustion_with_zero_aggregate() -> Tes
                 resource: exhausted.resource,
                 inspection: RetainedModelInspection::LowerExhausted,
             })
+        );
+        assert!(runtime.state().loaded().is_none());
+        Ok(())
+    })
+}
+
+#[test]
+fn live_retained_snapshot_prevents_release_and_marks_same_resource_contradiction_unknown()
+-> TestResult {
+    with_runtime(default_test_configuration, |runtime| {
+        let initial = failed_preparation_cleanup(RetainedOwnership::Exact(EXACT_FOOTPRINT), 1, 3);
+        runtime.begin_runtime_retention(initial, None);
+        let primary = retained_model(runtime)?.primary_failure().clone();
+        let ticket = CommandTicket::new(84);
+        submit_inspection(runtime, initial.resource, ticket);
+        let released = CleanupRetryState {
+            ownership: RetainedOwnership::Released,
+            attempts: 2,
+            ..initial
+        };
+        let live = CleanupRetryState {
+            ownership: RetainedOwnership::Exact(UPDATED_FOOTPRINT),
+            attempts: 2,
+            ..initial
+        };
+
+        let cleanup = pending_cleanup(process_snapshot(
+            runtime,
+            ticket,
+            RuntimeSnapshot {
+                last_cleanup: Some(released),
+                ..RuntimeSnapshot::default()
+            },
+            vec![RetainedModelSnapshot {
+                handle: RETAINED_HANDLE,
+                cleanup: live,
+            }],
+        )?)?;
+
+        assert_eq!(
+            cleanup.resource(),
+            ApplicationRetainedModelResource::FailedLoad {
+                handle: RETAINED_HANDLE,
+            }
+        );
+        assert_eq!(cleanup.ownership(), ApplicationRetainedOwnership::Unknown);
+        assert_eq!(
+            cleanup.cleanup(),
+            ApplicationModelCleanupDisposition::Pending
+        );
+        assert_eq!(cleanup.primary_failure(), &primary);
+        let contradiction = cleanup
+            .cleanup_failure()
+            .ok_or_else(|| "snapshot contradiction was not retained".to_owned())?;
+        assert_eq!(contradiction.kind, ApplicationFailureKind::RetainedCleanup);
+        assert!(contradiction.message.contains("live retained owner"));
+        assert_eq!(runtime.state().retained_model(), Some(&cleanup));
+        assert_eq!(
+            runtime.retained_model_cleanup,
+            Some(RetainedModelCleanup {
+                resource: live.resource,
+                inspection: RetainedModelInspection::PendingSubmission { attempts: 0 },
+            })
+        );
+        assert_eq!(
+            runtime.state().activity(),
+            ApplicationActivity::RetainedCleanup
         );
         assert!(runtime.state().loaded().is_none());
         Ok(())

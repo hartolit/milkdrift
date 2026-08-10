@@ -17,7 +17,7 @@ use crate::error::{BenchmarkError, BenchmarkResult};
 use crate::fixture::{VOCABULARY_SIZE, VerifiedFixture};
 use crate::report::{
     BackpressureMeasurement, CancellationMeasurement, CycleSet, ShutdownMeasurement,
-    SnapshotCheckpoint, SyntheticCycle, SyntheticLoadEvidence, duration_ns,
+    SnapshotCheckpoint, SyntheticCycle, SyntheticLoadEvidence, checked_duration_ns,
 };
 
 pub(crate) fn run_cycles(
@@ -51,7 +51,7 @@ fn run_cycle(fixture: &VerifiedFixture) -> BenchmarkResult<SyntheticCycle> {
     let (mut harness, start_duration) = HostedE0Harness::start(1, 128)?;
     let body = run_cycle_body(&mut harness, fixture);
     let (body, shutdown) = harness.finish(body)?;
-    Ok(to_report(start_duration, body, shutdown))
+    to_report(start_duration, body, shutdown)
 }
 
 struct CycleBody {
@@ -161,32 +161,53 @@ fn to_report(
     start_duration: Duration,
     body: CycleBody,
     shutdown: ShutdownDurations,
-) -> SyntheticCycle {
-    SyntheticCycle {
-        e0_start_ns: duration_ns(start_duration),
-        model_load_ns: duration_ns(body.model_load),
+) -> BenchmarkResult<SyntheticCycle> {
+    Ok(SyntheticCycle {
+        e0_start_ns: checked_duration_ns(start_duration, "synthetic E0 startup")?,
+        model_load_ns: checked_duration_ns(body.model_load, "synthetic E0 model load")?,
         load_evidence: body.load_evidence,
-        checked_prefill_ns: duration_ns(body.checked_prefill),
-        first_token_ns: duration_ns(body.first_token),
-        post_first_token_proxy_ns: duration_ns(body.post_first_token_proxy),
+        checked_prefill_ns: checked_duration_ns(
+            body.checked_prefill,
+            "synthetic E0 checked prefill",
+        )?,
+        first_token_ns: checked_duration_ns(body.first_token, "synthetic E0 first token")?,
+        post_first_token_proxy_ns: checked_duration_ns(
+            body.post_first_token_proxy,
+            "synthetic E0 post-first-token proxy",
+        )?,
         backpressure: BackpressureMeasurement {
-            controlled_hold_ns: duration_ns(body.backpressure_controlled_hold),
-            recovery_to_next_token_ns: duration_ns(body.backpressure_recovery_to_next_token),
+            controlled_hold_ns: checked_duration_ns(
+                body.backpressure_controlled_hold,
+                "synthetic E0 controlled backpressure hold",
+            )?,
+            recovery_to_next_token_ns: checked_duration_ns(
+                body.backpressure_recovery_to_next_token,
+                "synthetic E0 backpressure recovery",
+            )?,
         },
         cancellation: CancellationMeasurement {
             generated_tokens: body.cancellation.generated_tokens,
-            acknowledgement_ns: duration_ns(body.cancellation.acknowledgement),
-            terminal_ns: duration_ns(body.cancellation.terminal),
-            released_ns: duration_ns(body.cancellation.released),
+            acknowledgement_ns: checked_duration_ns(
+                body.cancellation.acknowledgement,
+                "synthetic E0 cancellation acknowledgement",
+            )?,
+            terminal_ns: checked_duration_ns(
+                body.cancellation.terminal,
+                "synthetic E0 cancellation terminal",
+            )?,
+            released_ns: checked_duration_ns(
+                body.cancellation.released,
+                "synthetic E0 cancellation release",
+            )?,
         },
-        model_unload_ns: duration_ns(body.model_unload),
+        model_unload_ns: checked_duration_ns(body.model_unload, "synthetic E0 model unload")?,
         shutdown: ShutdownMeasurement {
-            event_ns: duration_ns(shutdown.event),
-            join_ns: duration_ns(shutdown.join),
-            total_ns: duration_ns(shutdown.total),
+            event_ns: checked_duration_ns(shutdown.event, "synthetic E0 shutdown event")?,
+            join_ns: checked_duration_ns(shutdown.join, "synthetic E0 shutdown join")?,
+            total_ns: checked_duration_ns(shutdown.total, "synthetic E0 shutdown total")?,
         },
         snapshots: body.snapshots,
-    }
+    })
 }
 
 fn usize_from_u32(value: u32) -> BenchmarkResult<usize> {

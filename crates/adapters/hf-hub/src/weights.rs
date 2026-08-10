@@ -6,11 +6,10 @@ use std::path::{Component, Path};
 use serde::Deserialize;
 use serde::de::{self, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, Visitor};
 
-use crate::bounded::{BoundedReadError, read_bounded_file};
 use crate::{HubError, HubStructuralLimit};
 
 /// Thirty-two MiB accommodates very large Llama indexes while bounding raw JSON ownership.
-const MAX_WEIGHT_INDEX_BYTES: u64 = 32 * 1024 * 1024;
+pub(crate) const MAX_WEIGHT_INDEX_BYTES: u64 = 32 * 1024 * 1024;
 /// Realistic Llama models have thousands of tensors; this retains substantial extension headroom.
 const MAX_INDEX_WEIGHT_ENTRIES: usize = 65_536;
 /// Tensor names in supported model families are normally well below 256 bytes.
@@ -18,15 +17,6 @@ const MAX_INDEX_TENSOR_NAME_BYTES: usize = 1024;
 /// Repository paths in supported layouts are short, even when shards live below one directory.
 const MAX_REPOSITORY_PATH_BYTES: usize = 1024;
 pub(crate) const MAX_SELECTED_WEIGHT_SHARDS: usize = 256;
-
-pub(crate) fn read_index(path: &Path) -> Result<Vec<u8>, HubError> {
-    read_bounded_file(path, MAX_WEIGHT_INDEX_BYTES).map_err(|error| match error {
-        BoundedReadError::Io(error) => HubError::ReadIndex(error),
-        BoundedReadError::Limit => {
-            HubError::StructuralLimitExceeded(HubStructuralLimit::WeightIndexBytes)
-        }
-    })
-}
 
 pub(crate) fn indexed_weights(
     bytes: &[u8],
@@ -184,8 +174,9 @@ impl<'de> Visitor<'de> for WeightMapVisitor<'_> {
         M: MapAccess<'de>,
     {
         let mut entry_count = 0_usize;
+        let mut tensor_names = BTreeSet::new();
         let mut weight_filenames = BTreeSet::new();
-        while let Some(()) = map.next_key_seed(TensorNameSeed {
+        while let Some(tensor_name) = map.next_key_seed(TensorNameSeed {
             structural_limit: self.structural_limit,
         })? {
             let Some(next_entry_count) = entry_count.checked_add(1) else {
@@ -201,6 +192,11 @@ impl<'de> Visitor<'de> for WeightMapVisitor<'_> {
                 ));
             }
             entry_count = next_entry_count;
+            if !tensor_names.insert(tensor_name) {
+                return Err(de::Error::custom(
+                    "Safetensors index weight_map contains a duplicate tensor name",
+                ));
+            }
 
             let filename = map.next_value_seed(RepositoryPathSeed {
                 structural_limit: self.structural_limit,
@@ -222,7 +218,7 @@ struct TensorNameSeed<'a> {
 }
 
 impl<'de> DeserializeSeed<'de> for TensorNameSeed<'_> {
-    type Value = ();
+    type Value = String;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
@@ -239,7 +235,7 @@ struct TensorNameVisitor<'a> {
 }
 
 impl Visitor<'_> for TensorNameVisitor<'_> {
-    type Value = ();
+    type Value = String;
 
     fn expecting(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         formatter.write_str("a bounded tensor name")
@@ -255,14 +251,20 @@ impl Visitor<'_> for TensorNameVisitor<'_> {
                 HubStructuralLimit::WeightIndexTensorNameBytes,
             ));
         }
-        Ok(())
+        Ok(value.to_owned())
     }
 
     fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        self.visit_str(value.as_str())
+        if value.len() > MAX_INDEX_TENSOR_NAME_BYTES {
+            return Err(structural_limit_error(
+                self.structural_limit,
+                HubStructuralLimit::WeightIndexTensorNameBytes,
+            ));
+        }
+        Ok(value)
     }
 }
 
@@ -482,6 +484,25 @@ mod tests {
                 Err(HubError::InvalidIndex)
             ));
         }
+    }
+
+    #[test]
+    fn duplicate_weight_map_tensor_names_are_invalid() {
+        let available = BTreeSet::from([
+            "model-00001-of-00002.safetensors".to_owned(),
+            "model-00002-of-00002.safetensors".to_owned(),
+        ]);
+        let index = br#"{
+            "weight_map": {
+                "model.layers.0.weight": "model-00001-of-00002.safetensors",
+                "model.layers.0.weight": "model-00002-of-00002.safetensors"
+            }
+        }"#;
+
+        assert!(matches!(
+            indexed_weights(index, &available),
+            Err(HubError::InvalidIndex)
+        ));
     }
 
     #[test]

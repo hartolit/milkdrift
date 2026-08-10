@@ -50,7 +50,7 @@ const HOMOGENEOUS_F32_FINAL_FOOTPRINT: MemoryFootprint = MemoryFootprint {
 const HOMOGENEOUS_F32_LOADING_PEAK_FOOTPRINT: MemoryFootprint = MemoryFootprint {
     host_weight_bytes: 3_680,
     device_weight_bytes: 0,
-    host_working_bytes: 227,
+    host_working_bytes: 65_763,
     device_working_bytes: 0,
 };
 const HOMOGENEOUS_F32_CACHE_BYTES_PER_TOKEN: u64 = 64;
@@ -75,7 +75,7 @@ const HOMOGENEOUS_F32_DESCRIPTOR: ModelDescriptor = ModelDescriptor {
 };
 const MIXED_EXECUTION_WEIGHT_BYTES: u64 = 1_840;
 const MIXED_CACHE_BYTES_PER_TOKEN: u64 = 32;
-const MIXED_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 513;
+const MIXED_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 66_049;
 
 pub(crate) type TestResult<T = ()> = Result<T, String>;
 type CandleRuntime = HostedRuntime<CandleLlamaSource>;

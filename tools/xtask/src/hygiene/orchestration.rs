@@ -23,6 +23,7 @@ const RULE_BENCHMARK_BUILD: &str = "HYGIENE-BENCHMARK-BUILD-1";
 const RULE_WORKSPACE_MEMBER: &str = "HYGIENE-WORKSPACE-MEMBER-1";
 const RULE_BENCHMARK_LAYOUT: &str = "HYGIENE-BENCHMARK-LAYOUT-1";
 const RULE_BENCHMARK_REGISTRY: &str = "HYGIENE-BENCHMARK-REGISTRY-1";
+const RULE_TRACKED_WHITESPACE: &str = "HYGIENE-TRACKED-WHITESPACE-1";
 
 /// One actionable repository hygiene policy violation.
 #[derive(Debug, PartialEq, Eq)]
@@ -286,6 +287,8 @@ fn validate_hygiene(
             continue;
         }
 
+        scan_tracked_text_whitespace(&absolute, relative, &mut report)?;
+
         let cargo_manifest = is_cargo_manifest(relative);
         let operational = is_potential_operational_surface(relative);
         if !cargo_manifest && !operational {
@@ -309,6 +312,42 @@ fn validate_hygiene(
 
     scan_selected_graph(metadata, &mut report);
     Ok(report)
+}
+
+fn scan_tracked_text_whitespace(
+    absolute: &Path,
+    relative: &Path,
+    report: &mut HygieneReport,
+) -> Result<(), HygieneError> {
+    let bytes = fs::read(absolute).map_err(|error| {
+        HygieneError::new(format!(
+            "could not read tracked file {} for whitespace validation: {error}",
+            relative.display()
+        ))
+    })?;
+    if bytes.contains(&0) {
+        return Ok(());
+    }
+    let Ok(content) = std::str::from_utf8(&bytes) else {
+        return Ok(());
+    };
+
+    for (line_index, line) in content.split('\n').enumerate() {
+        if line
+            .as_bytes()
+            .last()
+            .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\r'))
+        {
+            report.push(HygieneViolation::new(
+                Some(relative.to_path_buf()),
+                Some(line_index.saturating_add(1)),
+                RULE_TRACKED_WHITESPACE,
+                "tracked UTF-8 text must not contain trailing spaces, tabs, or carriage returns"
+                    .to_owned(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn scan_tracked_path(

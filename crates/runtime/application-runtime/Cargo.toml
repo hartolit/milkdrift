@@ -26,6 +26,9 @@ inference-runtime.workspace = true
 redb-storage.workspace = true
 tokenization.workspace = true
 
+[dev-dependencies]
+sha2.workspace = true
+
 [[test]]
 name = "cuda_hardware"
 path = "tests/cuda_hardware.rs"

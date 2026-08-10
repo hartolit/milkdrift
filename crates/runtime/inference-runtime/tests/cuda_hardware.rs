@@ -4,6 +4,10 @@
 
 use std::process::ExitCode;
 
+#[allow(
+    dead_code,
+    reason = "the harness-free CUDA target reuses one case from broader shared integration support"
+)]
 #[path = "support/native_backend.rs"]
 mod native_backend;
 
@@ -15,7 +19,15 @@ struct HardwareCase {
 }
 
 macro_rules! hardware_cases {
-    ($($case:ident),+ $(,)?) => {
+    (
+        $(
+            fn $case:ident() -> TestResult $body:block
+        )+
+    ) => {
+        $(
+            fn $case() -> TestResult $body
+        )+
+
         const HARDWARE_CASES: &[HardwareCase] = &[
             $(HardwareCase {
                 name: stringify!($case),
@@ -25,11 +37,11 @@ macro_rules! hardware_cases {
     };
 }
 
-hardware_cases!(hosted_e0_cuda_lifecycle_and_accounting);
-
-fn hosted_e0_cuda_lifecycle_and_accounting() -> TestResult {
-    native_backend::candle_mixed_cuda_fixture_covers_e0_generation_accounting_and_lifecycle()
-}
+hardware_cases!(
+    fn hosted_e0_cuda_lifecycle_and_accounting() -> TestResult {
+        native_backend::candle_mixed_cuda_fixture_covers_e0_generation_accounting_and_lifecycle()
+    }
+);
 
 fn require_cuda_opt_in() -> TestResult {
     if std::env::var("MILKDRIFT_CUDA_TEST").as_deref() == Ok("1") {

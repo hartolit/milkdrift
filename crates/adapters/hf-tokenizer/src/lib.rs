@@ -82,6 +82,19 @@ impl HfTokenizer {
         Self::from_tokenizer(inner)
     }
 
+    /// Loads a serialized `tokenizer.json` from the supplied exact bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HfTokenizerLoadError::InvalidTokenizer`] when the bytes cannot be parsed, or
+    /// [`HfTokenizerLoadError::VocabularyOverflow`] when the vocabulary size cannot be
+    /// represented as a `u32`.
+    pub fn from_bytes(bytes: impl AsRef<[u8]>) -> Result<Self, HfTokenizerLoadError> {
+        let inner = tokenizers::Tokenizer::from_bytes(bytes)
+            .map_err(HfTokenizerLoadError::InvalidTokenizer)?;
+        Self::from_tokenizer(inner)
+    }
+
     /// Wraps an already constructed Hugging Face tokenizer.
     ///
     /// # Errors

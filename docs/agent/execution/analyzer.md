@@ -1,9 +1,9 @@
 # Milkdrift strategic vision and architecture analysis
 
-**Analysis date:** 2026-08-07  
-**Repository basis:** the previously reviewed `hartolit/milkdrift` snapshot at commit `a28008a369214e26522cf027977b67292962d058`, combined with the operator-provided workflow and context vision recorded on 2026-08-07  
-**Purpose:** correct the earlier engine-only framing, define Milkdrift's durable product identity, and establish an architecture that keeps workflows operator-programmable rather than hardcoded  
-**Scope:** project vision, core concepts, execution layers, extensibility, workspaces, authority, local and remote models, trusted networking, repository structure, crate publication, frontend role, documentation ownership, and roadmap. The earlier model-loading and technical-cleanup findings remain relevant where explicitly retained.  
+**Analysis date:** 2026-08-07
+**Repository basis:** the previously reviewed `hartolit/milkdrift` snapshot at commit `a28008a369214e26522cf027977b67292962d058`, combined with the operator-provided workflow and context vision recorded on 2026-08-07
+**Purpose:** correct the earlier engine-only framing, define Milkdrift's durable product identity, and establish an architecture that keeps workflows operator-programmable rather than hardcoded
+**Scope:** project vision, core concepts, execution layers, extensibility, workspaces, authority, local and remote models, trusted networking, repository structure, crate publication, frontend role, documentation ownership, and roadmap. The earlier model-loading and technical-cleanup findings remain relevant where explicitly retained.
 **Validation note:** this is a conceptual and static architecture review. No fresh repository fetch, build, benchmark, or CI run was performed for this revision.
 
 ---

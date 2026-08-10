@@ -239,6 +239,32 @@ fn historical_names_and_superseded_adrs_do_not_bypass_scanning() -> Result<(), B
 }
 
 #[test]
+fn tracked_utf8_text_rejects_trailing_whitespace_outside_rust_sources() -> Result<(), Box<dyn Error>>
+{
+    let repository = FixtureRepository::new(
+        "tracked-whitespace",
+        &[
+            ("Cargo.toml", BASIC_MANIFEST),
+            ("src/lib.rs", BASIC_SOURCE),
+            ("docs/readme.md", "clean\ntrailing space \ntrailing tab\t\n"),
+        ],
+    )?;
+    let report = validate_repository_hygiene(&repository.manifest())?;
+
+    let lines = report
+        .violations()
+        .iter()
+        .filter(|violation| {
+            violation.rule() == "HYGIENE-TRACKED-WHITESPACE-1"
+                && violation.path() == Some(Path::new("docs/readme.md"))
+        })
+        .filter_map(|violation| violation.line())
+        .collect::<Vec<_>>();
+    assert_eq!(lines, vec![2, 3]);
+    Ok(())
+}
+
+#[test]
 fn tracked_build_and_benchmark_artifacts_fail_closed() -> Result<(), Box<dyn Error>> {
     let repository = FixtureRepository::new(
         "generated-artifacts",

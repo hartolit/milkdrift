@@ -9,7 +9,7 @@ use application_runtime::{
 
 use crate::error::{BenchmarkError, BenchmarkResult};
 use crate::memory::process_memory;
-use crate::report::{ApplicationLifecycleCycle, CycleSet, duration_ns};
+use crate::report::{ApplicationLifecycleCycle, CycleSet, checked_duration_ns};
 use crate::workspace::TemporaryWorkspace;
 
 use super::cleanup_runtime_after_failure;
@@ -103,8 +103,11 @@ fn finish_cycle(
     validate_stopped(runtime)?;
     let rss_after_shutdown = process_memory()?;
     Ok(ApplicationLifecycleCycle {
-        start_ns: duration_ns(start_elapsed),
-        shutdown_ns: duration_ns(shutdown_elapsed),
+        start_ns: checked_duration_ns(start_elapsed, "ApplicationRuntime lifecycle startup")?,
+        shutdown_ns: checked_duration_ns(
+            shutdown_elapsed,
+            "ApplicationRuntime lifecycle shutdown",
+        )?,
         rss_before_start,
         rss_after_start,
         rss_after_shutdown,

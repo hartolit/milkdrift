@@ -45,7 +45,7 @@ Additional restrictions:
 * Cross-adapter dependencies are prohibited.
 * Circular dependencies are architectural failures.
 
-This preserves the required directed acyclic graph while avoiding both a monolithic core crate and unnecessary one-type micro-crates. 
+This preserves the required directed acyclic graph while avoiding both a monolithic core crate and unnecessary one-type micro-crates.
 
 ---
 
@@ -275,7 +275,7 @@ Responsibilities include:
 * synchronization;
 * resource destruction.
 
-All unsafe code stays inside this adapter and must have explicit soundness arguments. It must not leak raw native pointers into engines or applications. This follows the requirement that unsafe code remain narrowly contained behind safe abstractions. 
+All unsafe code stays inside this adapter and must have explicit soundness arguments. It must not leak raw native pointers into engines or applications. This follows the requirement that unsafe code remain narrowly contained behind safe abstractions.
 
 ## `hf-tokenizer`
 
@@ -694,7 +694,7 @@ Backend-native details may be converted into:
 
 Control flow never depends on parsing diagnostic strings.
 
-This follows the project requirement for typed error propagation and avoidance of unchecked failure handling. 
+This follows the project requirement for typed error propagation and avoidance of unchecked failure handling.
 
 ---
 
@@ -725,7 +725,7 @@ Dynamic dispatch is permitted only at coarse boundaries where its cost is neglig
 
 Even at those boundaries, dynamic dispatch is not mandatory. An application may instead use an enum over compiled backend implementations.
 
-This applies the project rule prohibiting dynamic dispatch in hot paths while avoiding excessive generic propagation across the entire desktop application. 
+This applies the project rule prohibiting dynamic dispatch in hot paths while avoiding excessive generic propagation across the entire desktop application.
 
 ---
 
@@ -776,7 +776,7 @@ Debug builds will include capacity invariants before generation starts.
 
 Performance tests will use an allocation-counting test allocator to fail any test that allocates inside the measured generation region.
 
-The design follows the requirement for flat contiguous memory, predictable iteration, and allocation-free hot paths. 
+The design follows the requirement for flat contiguous memory, predictable iteration, and allocation-free hot paths.
 
 ---
 
@@ -799,7 +799,7 @@ It will not contain volatile register access.
 
 Raw device interaction belongs to upstream user-space drivers or narrowly scoped backend FFI adapters.
 
-Hardware-specific optimization will be driven by measurement. Iterator-based implementations remain the default unless profiling demonstrates a failed optimization or measurable bottleneck, consistent with the project’s profiling and inlining rules. 
+Hardware-specific optimization will be driven by measurement. Iterator-based implementations remain the default unless profiling demonstrates a failed optimization or measurable bottleneck, consistent with the project’s profiling and inlining rules.
 
 ---
 

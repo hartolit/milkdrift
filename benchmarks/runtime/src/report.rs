@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
+use crate::error::{BenchmarkError, BenchmarkResult};
 use crate::fixture::FixtureIdentity;
 use crate::memory::ProcessMemory;
 
@@ -223,17 +224,23 @@ pub(crate) struct ModelAccounting {
     pub(crate) degraded: bool,
 }
 
-pub(crate) fn duration_ns(duration: Duration) -> u64 {
-    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+pub(crate) fn checked_duration_ns(duration: Duration, label: &'static str) -> BenchmarkResult<u64> {
+    u64::try_from(duration.as_nanos()).map_err(|_| {
+        BenchmarkError::new(format!(
+            "{label} duration exceeded the report's u64 nanosecond range"
+        ))
+    })
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use serde_json::Value;
 
     use super::{
         E0LoadReceiptRecord, ExecutionDeviceRecord, MemoryFootprintRecord, PreparedLoadRecord,
-        SCHEMA_VERSION, SyntheticLoadEvidence,
+        SCHEMA_VERSION, SyntheticLoadEvidence, checked_duration_ns,
     };
 
     const CPU: ExecutionDeviceRecord = ExecutionDeviceRecord { kind: "cpu", id: 0 };
@@ -245,6 +252,22 @@ mod tests {
             host_working_bytes,
             device_working_bytes: 0,
         }
+    }
+
+    #[test]
+    fn checked_duration_conversion_preserves_values_and_reports_overflow() -> Result<(), String> {
+        assert_eq!(
+            checked_duration_ns(Duration::from_nanos(u64::MAX), "boundary")
+                .map_err(|error| error.to_string())?,
+            u64::MAX
+        );
+        let Err(error) = checked_duration_ns(Duration::MAX, "synthetic report") else {
+            return Err(
+                "overflowing duration unexpectedly converted to u64 nanoseconds".to_owned(),
+            );
+        };
+        assert!(error.to_string().contains("synthetic report"));
+        Ok(())
     }
 
     #[test]

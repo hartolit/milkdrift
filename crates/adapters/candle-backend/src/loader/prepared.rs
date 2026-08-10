@@ -26,11 +26,9 @@ use crate::failure::{
 use super::identity::EstablishedIdentityAuthority;
 use super::manifest::{InspectedShard, SourceTensorDType, TensorShape};
 use super::{
-    host_memory_failure, invalid_model_failure, map_candle_load_error, unsupported_scalar,
+    VERIFICATION_BUFFER_BYTES, VERIFICATION_BUFFER_BYTES_U64, host_memory_failure,
+    invalid_model_failure, map_candle_load_error, unsupported_scalar,
 };
-
-const VERIFICATION_BUFFER_BYTES: usize = 64 * 1024;
-const VERIFICATION_BUFFER_BYTES_U64: u64 = 64 * 1024;
 
 #[cfg(test)]
 thread_local! {

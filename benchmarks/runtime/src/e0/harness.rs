@@ -329,9 +329,10 @@ impl HostedE0Harness {
         let Some(thread) = self.thread.take() else {
             return;
         };
-        let mut retained = RETAINED_WORKERS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut retained = match RETAINED_WORKERS.lock() {
+            Ok(retained) => retained,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         retained.push(thread);
     }
 }

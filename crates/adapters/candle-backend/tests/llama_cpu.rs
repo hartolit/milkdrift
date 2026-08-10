@@ -29,6 +29,8 @@ const VOCABULARY_SIZE: usize = 16;
 const PER_SHARD_HEADER_LIMIT: u64 = 8 * 1024 * 1024;
 const F32_SEQUENCE_CACHE_BYTES_PER_TOKEN: u64 = 64;
 const F16_SEQUENCE_CACHE_BYTES_PER_TOKEN: u64 = 32;
+const F32_SEQUENCE_HOST_WORKING_BYTES: u64 = 13_924;
+const HALF_SEQUENCE_HOST_WORKING_BYTES: u64 = 11_124;
 
 const CPU_F32_FINAL: MemoryFootprint = MemoryFootprint {
     host_weight_bytes: 3_680,
@@ -39,7 +41,7 @@ const CPU_F32_FINAL: MemoryFootprint = MemoryFootprint {
 const CPU_F32_LOADING_PEAK: MemoryFootprint = MemoryFootprint {
     host_weight_bytes: 3_680,
     device_weight_bytes: 0,
-    host_working_bytes: 227,
+    host_working_bytes: 65_763,
     device_working_bytes: 0,
 };
 const CPU_F16_FINAL: MemoryFootprint = MemoryFootprint {
@@ -51,25 +53,25 @@ const CPU_F16_FINAL: MemoryFootprint = MemoryFootprint {
 const CPU_F16_LOADING_PEAK: MemoryFootprint = MemoryFootprint {
     host_weight_bytes: 1_840,
     device_weight_bytes: 0,
-    host_working_bytes: 113,
+    host_working_bytes: 65_649,
     device_working_bytes: 0,
 };
 const CPU_MIXED_F16_F32_LOADING_PEAK: MemoryFootprint = MemoryFootprint {
     host_weight_bytes: 1_840,
     device_weight_bytes: 0,
-    host_working_bytes: 129,
+    host_working_bytes: 65_665,
     device_working_bytes: 0,
 };
 const CPU_BF16_TO_F32_LOADING_PEAK: MemoryFootprint = MemoryFootprint {
     host_weight_bytes: 3_680,
     device_weight_bytes: 0,
-    host_working_bytes: 96,
+    host_working_bytes: 65_632,
     device_working_bytes: 0,
 };
 const CPU_MIXED_BF16_F32_LOADING_PEAK: MemoryFootprint = MemoryFootprint {
     host_weight_bytes: 3_680,
     device_weight_bytes: 0,
-    host_working_bytes: 128,
+    host_working_bytes: 65_664,
     device_working_bytes: 0,
 };
 
@@ -389,6 +391,28 @@ fn configuration_declaration_must_match_required_primary() -> TestResult {
 }
 
 #[test]
+fn owned_config_bytes_remain_bound_while_local_paths_stay_late_bound() -> TestResult {
+    let fixture = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
+    let local_source = fixture.source(ConfigDeclaration::F32)?;
+    let config_bytes = fs::read(&fixture.config_path).map_err(|error| error.to_string())?;
+    let bound_source = CandleLlamaSource::from_config_bytes(
+        config_bytes,
+        vec![CandleWeightShard::unverified(fixture.weight_path.clone())],
+    )
+    .map_err(|error| error.to_string())?;
+
+    write_tiny_config(&fixture.config_path, ConfigDeclaration::Unsupported)?;
+    let loader = CandleLlamaLoader::new(BACKEND);
+    let descriptor = loader.inspect(&bound_source).map_err(debug_error)?;
+    assert_eq!(
+        descriptor.metadata.configuration_declared_scalar_type,
+        Some(ScalarType::F32)
+    );
+    assert_unsupported(loader.inspect(&local_source));
+    Ok(())
+}
+
+#[test]
 fn unsupported_and_conflicting_config_declarations_are_rejected() -> TestResult {
     let fixture = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
     let loader = CandleLlamaLoader::new(BACKEND);
@@ -430,16 +454,16 @@ fn host_budget_rejects_exact_required_only_loading_peak() -> TestResult {
     let fixture = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
     let source = fixture.source(ConfigDeclaration::F32)?;
     let mut loader = CandleLlamaLoader::new(BACKEND);
-    assert_eq!(CPU_F32_LOADING_PEAK.checked_host_bytes(), Some(3_907));
+    assert_eq!(CPU_F32_LOADING_PEAK.checked_host_bytes(), Some(69_443));
 
     let mut constrained = load_configuration();
-    constrained.memory_budget.host_bytes = 3_906;
+    constrained.memory_budget.host_bytes = 69_442;
     assert!(matches!(
         loader.prepare_load(&source, &constrained),
         Err(LoadError::InsufficientMemory {
             kind: domain_contracts::MemoryKind::Host,
-            required_bytes: 3_907,
-            available_bytes: 3_906,
+            required_bytes: 69_443,
+            available_bytes: 69_442,
         })
     ));
     Ok(())
@@ -796,19 +820,11 @@ fn exercise_model(model: &mut CandleLlamaModel) -> TestResult {
         NonZeroU32::new(8).ok_or_else(|| "maximum prefill must be nonzero".to_owned())?,
     );
     let sequence_plan = model.plan_sequence(&configuration).map_err(debug_error)?;
-    let rope_bytes = match model.execution_scalar_type() {
-        ScalarType::F32 => 256,
-        ScalarType::F16 | ScalarType::Bf16 => 128,
+    let expected_working_bytes = match model.execution_scalar_type() {
+        ScalarType::F32 => F32_SEQUENCE_HOST_WORKING_BYTES,
+        ScalarType::F16 | ScalarType::Bf16 => HALF_SEQUENCE_HOST_WORKING_BYTES,
         _ => return Err("test model selected a non-floating execution scalar".to_owned()),
     };
-    let cache_bytes = model
-        .descriptor()
-        .sequence_cache_bytes_per_token
-        .checked_mul(u64::from(configuration.maximum_tokens.get()))
-        .ok_or_else(|| "test sequence cache bytes overflowed".to_owned())?;
-    let expected_working_bytes = cache_bytes
-        .checked_add(rope_bytes)
-        .ok_or_else(|| "test sequence working bytes overflowed".to_owned())?;
     assert_eq!(
         sequence_plan.expected_footprint,
         MemoryFootprint {
@@ -825,6 +841,11 @@ fn exercise_model(model: &mut CandleLlamaModel) -> TestResult {
     let mut second = model
         .create_sequence(SequenceId::new(2), &configuration)
         .map_err(debug_error)?;
+    assert_eq!(first.expected_footprint(), sequence_plan.expected_footprint);
+    assert_eq!(
+        second.expected_footprint(),
+        sequence_plan.expected_footprint
+    );
     let prompt = [TokenId::new(1), TokenId::new(2)];
     let mut first_logits = [0.0_f32; VOCABULARY_SIZE];
     let mut second_logits = [0.0_f32; VOCABULARY_SIZE];
@@ -846,6 +867,26 @@ fn exercise_model(model: &mut CandleLlamaModel) -> TestResult {
         }
     );
     assert_eq!(maximum_logit_token(&first_logits)?, TokenId::new(2));
+    assert_eq!(first.state(), SequenceState::Ready);
+
+    let continuation = [TokenId::new(3), TokenId::new(4)];
+    let repeated_prefill = prefill_checked(
+        model,
+        &mut first,
+        PrefillInput::new(&continuation, true),
+        PrefillBuffers::new(&mut first_logits),
+        CancellationStatus::Running,
+    )
+    .map_err(debug_error)?;
+    assert_eq!(
+        repeated_prefill,
+        PrefillOutcome::Ready {
+            consumed_tokens: 2,
+            position: 4,
+            logits_written: VOCABULARY_SIZE,
+        }
+    );
+    assert_eq!(maximum_logit_token(&first_logits)?, TokenId::new(4));
 
     prefill_checked(
         model,
@@ -858,7 +899,7 @@ fn exercise_model(model: &mut CandleLlamaModel) -> TestResult {
     let decoded = decode_checked(
         model,
         &mut first,
-        DecodeInput::new(TokenId::new(3)),
+        DecodeInput::new(TokenId::new(5)),
         DecodeBuffers::new(&mut first_logits),
         CancellationStatus::Running,
     )
@@ -866,11 +907,11 @@ fn exercise_model(model: &mut CandleLlamaModel) -> TestResult {
     assert_eq!(
         decoded,
         DecodeOutcome::Ready {
-            position: 3,
+            position: 5,
             logits_written: VOCABULARY_SIZE,
         }
     );
-    assert_eq!(maximum_logit_token(&first_logits)?, TokenId::new(3));
+    assert_eq!(maximum_logit_token(&first_logits)?, TokenId::new(5));
     assert_eq!(second.position(), 2);
 
     model.destroy_sequence(&mut first).map_err(debug_error)?;

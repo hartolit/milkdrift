@@ -17,9 +17,6 @@ pub use error::DesktopError;
 
 #[allow(
     missing_docs,
-    clippy::all,
-    clippy::pedantic,
-    clippy::nursery,
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,

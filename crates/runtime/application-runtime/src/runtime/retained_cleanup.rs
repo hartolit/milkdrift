@@ -206,6 +206,28 @@ impl ApplicationRuntime {
         let matching_last_cleanup = snapshot.last_cleanup.filter(|cleanup| {
             cleanup.resource == resource || belongs_to_correlated_unload(cleanup.resource)
         });
+        let matching_live_cleanup = retained_models
+            .iter()
+            .map(|retained| retained.cleanup)
+            .find(|cleanup| {
+                cleanup.resource == resource || belongs_to_correlated_unload(cleanup.resource)
+            });
+
+        if let Some(state) = matching_live_cleanup {
+            if matching_last_cleanup.is_some_and(|cleanup| {
+                cleanup.resource == state.resource && cleanup.ownership.is_released()
+            }) {
+                self.begin_snapshot_release_contradiction(state);
+                return Some(self.current_cleanup_event());
+            }
+            let was_exhausted = self.retained_cleanup_was_lower_exhausted();
+            self.begin_runtime_retention(state, None);
+            if state.exhausted() && !was_exhausted {
+                return Some(self.current_cleanup_event());
+            }
+            return None;
+        }
+
         if let Some(cleanup) = matching_last_cleanup {
             if cleanup.ownership.is_released() {
                 if correlated_handle.is_some() {
@@ -221,34 +243,9 @@ impl ApplicationRuntime {
                 }
                 return Some(self.release_retained_model(resource));
             }
-            let was_exhausted = self.state.retained_model().is_some_and(|retained| {
-                matches!(
-                    retained.cleanup(),
-                    ApplicationModelCleanupDisposition::LowerExhausted { .. }
-                )
-            });
+            let was_exhausted = self.retained_cleanup_was_lower_exhausted();
             self.begin_runtime_retention(cleanup, None);
             if cleanup.exhausted() && !was_exhausted {
-                return Some(self.current_cleanup_event());
-            }
-            return None;
-        }
-
-        if let Some(state) = retained_models
-            .iter()
-            .map(|retained| retained.cleanup)
-            .find(|cleanup| {
-                cleanup.resource == resource || belongs_to_correlated_unload(cleanup.resource)
-            })
-        {
-            let was_exhausted = self.state.retained_model().is_some_and(|retained| {
-                matches!(
-                    retained.cleanup(),
-                    ApplicationModelCleanupDisposition::LowerExhausted { .. }
-                )
-            });
-            self.begin_runtime_retention(state, None);
-            if state.exhausted() && !was_exhausted {
                 return Some(self.current_cleanup_event());
             }
             return None;
@@ -287,6 +284,36 @@ impl ApplicationRuntime {
         }
         self.state.begin_retained_cleanup();
         Some(self.current_cleanup_event())
+    }
+
+    fn retained_cleanup_was_lower_exhausted(&self) -> bool {
+        self.state.retained_model().is_some_and(|retained| {
+            matches!(
+                retained.cleanup(),
+                ApplicationModelCleanupDisposition::LowerExhausted { .. }
+            )
+        })
+    }
+
+    fn begin_snapshot_release_contradiction(&mut self, cleanup: CleanupRetryState) {
+        let primary_failure = self
+            .retained_primary_failure(cleanup.resource)
+            .unwrap_or_else(|| application_primary_failure(cleanup.failure));
+        let (resource, _) = self.retained_model_evidence(cleanup);
+        self.retained_model_cleanup = Some(RetainedModelCleanup {
+            resource: cleanup.resource,
+            inspection: RetainedModelInspection::PendingSubmission { attempts: 0 },
+        });
+        self.state.set_retained_model(ApplicationRetainedModel::new(
+            resource,
+            ApplicationRetainedOwnership::Unknown,
+            ApplicationModelCleanupDisposition::Pending,
+            primary_failure,
+            Some(ApplicationFailure::new(
+                ApplicationFailureKind::RetainedCleanup,
+                "runtime snapshot simultaneously reported explicit release and a live retained owner for the same cleanup resource",
+            )),
+        ));
     }
 
     fn model_unload_correlation_exists(&self, handle: ModelHandle) -> bool {
@@ -619,20 +646,22 @@ impl ApplicationRuntime {
         ticket: CommandTicket,
         result: Result<inference_runtime::UnloadReceipt, RuntimeError>,
     ) -> ApplicationEvent {
-        let expected_handle = self
-            .incompatible_model_cleanup
-            .as_ref()
-            .map(|cleanup| cleanup.handle);
-        let attempts = self
-            .incompatible_model_cleanup
-            .as_ref()
-            .and_then(|cleanup| match cleanup.unload {
-                IncompatibleModelUnload::Submitted { attempts, .. } => Some(attempts),
-                _ => None,
-            })
-            .unwrap_or(1);
+        let Some((expected_handle, attempts)) =
+            self.incompatible_model_cleanup
+                .as_ref()
+                .and_then(|cleanup| match cleanup.unload {
+                    IncompatibleModelUnload::Submitted {
+                        ticket: expected_ticket,
+                        attempts,
+                        ..
+                    } if expected_ticket == ticket => Some((cleanup.handle, attempts)),
+                    _ => None,
+                })
+        else {
+            return self.current_cleanup_event();
+        };
         match result {
-            Ok(receipt) if expected_handle != Some(receipt.handle) => self
+            Ok(receipt) if expected_handle != receipt.handle => self
                 .record_incompatible_command_failure(
                     attempts,
                     ApplicationFailure::new(
@@ -657,7 +686,7 @@ impl ApplicationRuntime {
             },
             Err(
                 RuntimeError::CleanupFailed(cleanup) | RuntimeError::CleanupRetryExhausted(cleanup),
-            ) => {
+            ) if cleanup_resource_belongs_to_model(cleanup.resource, expected_handle) => {
                 let primary = self
                     .incompatible_model_cleanup
                     .as_ref()
@@ -676,6 +705,16 @@ impl ApplicationRuntime {
                 }
                 self.current_cleanup_event()
             }
+            Err(RuntimeError::CleanupFailed(_) | RuntimeError::CleanupRetryExhausted(_)) => {
+                self.retain_expected_model_after_cleanup_mismatch(expected_handle);
+                self.record_incompatible_command_failure(
+                    attempts,
+                    ApplicationFailure::new(
+                        ApplicationFailureKind::RetainedCleanup,
+                        "automatic retained-model unload cleanup state returned a different resource identity",
+                    ),
+                )
+            }
             Err(error) => self.record_incompatible_command_failure(
                 attempts,
                 ApplicationFailure::from_debug(
@@ -685,6 +724,53 @@ impl ApplicationRuntime {
                 ),
             ),
         }
+    }
+
+    fn retain_expected_model_after_cleanup_mismatch(&mut self, expected_handle: ModelHandle) {
+        let Some(primary_failure) = self
+            .incompatible_model_cleanup
+            .as_ref()
+            .map(|cleanup| cleanup.compatibility_failure.clone())
+        else {
+            return;
+        };
+        let (resource, ownership) = self
+            .state
+            .retained_model()
+            .filter(|retained| {
+                matches!(
+                    retained.resource(),
+                    ApplicationRetainedModelResource::LoadedModel { handle }
+                        | ApplicationRetainedModelResource::IncompatibleModel { handle }
+                        if handle == expected_handle
+                )
+            })
+            .map_or(
+                (
+                    ApplicationRetainedModelResource::LoadedModel {
+                        handle: expected_handle,
+                    },
+                    ApplicationRetainedOwnership::Unknown,
+                ),
+                |retained| {
+                    let ownership = match retained.ownership() {
+                        ownership @ ApplicationRetainedOwnership::Unverified { .. } => ownership,
+                        ApplicationRetainedOwnership::Exact(_)
+                        | ApplicationRetainedOwnership::Unknown => {
+                            ApplicationRetainedOwnership::Unknown
+                        }
+                    };
+                    (retained.resource(), ownership)
+                },
+            );
+        self.retained_model_cleanup = None;
+        self.state.set_retained_model(ApplicationRetainedModel::new(
+            resource,
+            ownership,
+            ApplicationModelCleanupDisposition::Pending,
+            primary_failure,
+            None,
+        ));
     }
 
     fn record_incompatible_command_failure(
