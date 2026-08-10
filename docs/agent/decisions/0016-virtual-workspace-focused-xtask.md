@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-01
+- **Verification amendment:** 2026-08-10 — exact declarative benchmark compilation
 
 ## Context
 
@@ -19,7 +20,7 @@ Aside from help, `xtask` has only these command roles:
 - `cargo xtask hygiene` runs custom maintained-surface and selected-graph policy checks;
 - `cargo xtask verify` runs those custom policies and the canonical fail-fast composite quality gate.
 
-`cargo xtask verify` is the sole composite verification command. It may orchestrate multiple Cargo operations because composition, ordering, shared policy, and fail-fast behavior are the value it adds.
+`cargo xtask verify` is the sole composite verification command. It may orchestrate multiple Cargo operations because composition, ordering, shared policy, and fail-fast behavior are the value it adds. Maintained Cargo bench targets are declared by their owning package metadata, validated bidirectionally against Cargo targets and exactly one explicit owning-manifest `[[bench]]` entry with `harness = false`, and compiled through one visible exact `cargo bench -p PACKAGE --bench TARGET --no-run` command each. The composite must not use workspace-wide release bench compilation as a proxy for benchmark coverage.
 
 One-step operations use Cargo directly. Formatting, checking, testing, linting, documentation, benchmarks, package selection, examples, metadata, and similar single Cargo actions must not gain pass-through `xtask` subcommands or a second forwarding interface. A new custom command is justified only when it implements repository-specific policy or composes multiple steps with behavior that direct Cargo invocation cannot express clearly.
 
@@ -36,7 +37,7 @@ This command boundary specializes the Rust/Cargo-native tooling policy in [ADR-0
 
 - Workspace membership and package identity are explicit; the root itself is not a package.
 - `tools/xtask` is the single home for custom repository policy and composite verification.
-- Contributors use `cargo xtask verify` for the complete gate and direct `cargo` commands for focused one-step work.
+- Contributors use `cargo xtask verify` for the complete gate and direct `cargo` commands for focused one-step work; its generated exact benchmark commands remain visible and reproducible.
 - Removing the former root runner is a command migration, not a product-application rename.
 - Future automation must demonstrate added policy or composition semantics rather than convenience forwarding.
 

@@ -1,5 +1,7 @@
-//! Layered workspace architecture validation.
+//! Metadata-driven workspace architecture validation.
 
+mod cuda;
+mod exceptions;
 mod policy;
 mod report;
 mod traversal;

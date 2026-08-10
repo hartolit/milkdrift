@@ -7,9 +7,9 @@ use domain_contracts::FinishReason;
 use super::observer::GenerationEvidence;
 use crate::error::{BenchmarkError, BenchmarkResult};
 use crate::external::report::{
-    CancellationResult, CancellationSubmissionTimings, ChatProofResult, ConversationProof,
-    DirectCompletionSample, DirectCompletionSummary, DirectCompletionWarmupResult,
-    GenerationOutcomeMatch, GenerationSubmissionTimings, SamplingMetadata,
+    CancellationResult, CancellationSubmissionTimings, ChatProofResult, DirectCompletionSample,
+    DirectCompletionSummary, DirectCompletionWarmupResult, GenerationSubmissionTimings,
+    SamplingMetadata,
 };
 
 pub(in crate::external) const fn sampling_metadata() -> SamplingMetadata {
@@ -46,11 +46,6 @@ pub(super) fn chat_proof_record(evidence: &GenerationEvidence) -> BenchmarkResul
         prompt_tokens: evidence.usage.prompt_tokens,
         generated_tokens: evidence.usage.generated_tokens,
         terminal_kind: finish_reason_label(evidence.finish_reason),
-        outcome_match: matched_outcomes(),
-        conversation: ConversationProof {
-            validated: true,
-            cleared: true,
-        },
     })
 }
 
@@ -60,7 +55,6 @@ pub(super) fn warmup_record(evidence: &GenerationEvidence) -> DirectCompletionWa
         prompt_tokens: evidence.usage.prompt_tokens,
         generated_tokens: evidence.usage.generated_tokens,
         terminal_kind: finish_reason_label(evidence.finish_reason),
-        clean_release: true,
     }
 }
 
@@ -106,9 +100,6 @@ pub(super) fn sample_record(
         generated_tokens: evidence.usage.generated_tokens,
         decoded_byte_count: evidence.decoded_byte_count,
         terminal_kind: finish_reason_label(evidence.finish_reason),
-        terminal_state_matched: true,
-        released_state_matched: true,
-        terminal_event_matched: true,
         effective_generated_tokens_per_second,
     })
 }
@@ -156,8 +147,6 @@ pub(super) fn cancellation_record(
         prompt_tokens: evidence.usage.prompt_tokens,
         generated_tokens: evidence.usage.generated_tokens,
         terminal_kind: finish_reason_label(evidence.finish_reason),
-        cancellation_acknowledged: true,
-        outcome_match: matched_outcomes(),
     })
 }
 
@@ -257,14 +246,6 @@ fn median_f64(values: impl IntoIterator<Item = f64>) -> BenchmarkResult<f64> {
     }
 }
 
-const fn matched_outcomes() -> GenerationOutcomeMatch {
-    GenerationOutcomeMatch {
-        terminal_state_matched: true,
-        released_state_matched: true,
-        terminal_event_matched: true,
-    }
-}
-
 const fn finish_reason_label(reason: FinishReason) -> &'static str {
     match reason {
         FinishReason::EndOfSequence(_) => "end_of_sequence",
@@ -329,9 +310,6 @@ mod tests {
             generated_tokens: 32,
             decoded_byte_count: 64,
             terminal_kind: "token_limit",
-            terminal_state_matched: true,
-            released_state_matched: true,
-            terminal_event_matched: true,
             effective_generated_tokens_per_second: throughput,
         }
     }

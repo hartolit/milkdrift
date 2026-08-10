@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-01
+- **Observer/registry amendment:** 2026-08-10
 
 ## Context
 
@@ -31,12 +32,15 @@ Cross-crate E0/E1 and product-level measurements live in the dedicated root-work
 
 Every future package under `benchmarks/`:
 
-- is an exact root-workspace member rather than a nested workspace;
-- uses the root `Cargo.lock` and shared root `target` directory;
+- is a root-workspace member rather than a nested workspace;
+- declares explicit `benchmark-observer` manifest metadata and occupies its compatible direct-child location;
+- uses the root `Cargo.lock` and an approved root or isolated Cargo target;
 - declares `publish = false`;
-- has no custom build target or `build.rs`;
-- receives only exact reviewed local and external dependency edges;
-- fails architecture validation when its path or role is unknown.
+- has no custom build target, `build.rs`, or build dependency;
+- follows the generic outer-observer dependency rule, with exact exceptions for restricted external/development edges; and
+- fails architecture validation when its role, location, dependency direction, or maintained target registration is unknown.
+
+Each maintained Cargo bench target is registered in its owning package metadata and must match Cargo metadata in both directions. A target added without registration or a registration whose target disappears fails before compilation. The canonical gate compiles only those exact targets rather than every workspace package as a release bench harness.
 
 The authoring order is mandatory: register `benchmarks/runtime` in root `workspace.members`, create its manifest in the same change, and only then run Cargo from the repository root. An `xtask` invoked through Cargo cannot prove historical command order, so hygiene enforces the resulting root-membership invariant and documentation defines the required sequence.
 
@@ -79,11 +83,11 @@ Real-model performance measurements are explicit and opt-in. They name an extern
 
 - Phase 10 begins from one documented benchmark architecture without an empty benchmark package.
 - Component measurements remain close to their production owner, while one future package owns system measurements.
-- Production-to-benchmark edges and unknown benchmark paths fail closed.
+- Production-to-benchmark edges, unknown observer roles/paths, and unregistered benchmark targets fail closed.
 - Generated output and model caches cannot become tracked repository trees unnoticed.
 - The committed Candle fixture has reproducible project-owned bytes and an explicit Apache-2.0 provenance record.
 - Real-model measurements remain local/opt-in and cannot silently turn a cache into redistributed repository content.
 
 ## Review trigger
 
-Review when a second real cross-crate benchmark package is required, two implemented consumers justify shared benchmark support or fixture ownership, Cargo workspace behavior changes materially, a model fixture needs external source material, or a controlled baseline requires an artifact policy not represented here.
+Review when a new evidence class needs a different role, two implemented consumers justify shared benchmark support or fixture ownership, Cargo workspace behavior changes materially, a model fixture needs external source material, or a controlled baseline requires an artifact policy not represented here. A second correctly classified observer or maintained target does not require a package-name validator change.

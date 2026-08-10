@@ -1,6 +1,0 @@
-[workspace]
-members = [
-    "crates/domain/domain-contracts",
-    "crates/adapters/candle-backend",
-]
-resolver = "3"

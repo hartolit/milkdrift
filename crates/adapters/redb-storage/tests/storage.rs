@@ -28,7 +28,7 @@ impl TestDatabase {
     fn new() -> Self {
         let identifier = NEXT_DATABASE.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
-            "llm-app-redb-storage-{}-{identifier}.redb",
+            "milkdrift-redb-storage-{}-{identifier}.redb",
             std::process::id()
         ));
         let _ = fs::remove_file(&path);

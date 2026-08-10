@@ -6,14 +6,14 @@ mod resources;
 
 use application_runtime::{ApplicationDevice, ApplicationRuntime};
 
-use self::device::{CUDA_LOGITS_TO_HOST_LIMITATION, DeviceState, DiscoveryCounter};
-use self::resources::{CUDA_MEMORY_OBSERVATION_SCOPE, ResourceState};
+use self::device::DeviceState;
+use self::resources::ResourceState;
 use super::cli::RequestedDevice;
 use super::report::{
-    CudaContextObservation, CudaDeviceMetadata, CudaEnvironmentMetadata, DeviceIdentity,
-    ExecutionMetadata, ResourceCheckpoint,
+    CudaDeviceMetadata, CudaEnvironmentMetadata, ExecutionMetadata, ResourceCheckpoint,
 };
 use crate::error::BenchmarkResult;
+use crate::report::DeviceIdentity;
 
 pub(super) use resources::{
     CycleStabilityObservation, record_owner_drop, stability_after_unload, summarize_stability,
@@ -23,7 +23,6 @@ pub(super) use resources::{
 pub(super) struct DeviceObserver {
     device: DeviceState,
     resources: ResourceState,
-    discovery_counter: DiscoveryCounter,
 }
 
 impl DeviceObserver {
@@ -31,12 +30,9 @@ impl DeviceObserver {
         if requested == RequestedDevice::Cuda0 {
             environment::validate_cuda_build_configuration()?;
         }
-        let discovery_counter = DiscoveryCounter::new();
-        let device = DeviceState::new(requested, &discovery_counter)?;
         Ok(Self {
-            device,
+            device: DeviceState::new(requested)?,
             resources: ResourceState::default(),
-            discovery_counter,
         })
     }
 
@@ -53,21 +49,18 @@ impl DeviceObserver {
     }
 
     pub(super) fn capture(&self, checkpoint: &'static str) -> BenchmarkResult<ResourceCheckpoint> {
-        self.resources
-            .capture(&self.device, &self.discovery_counter, checkpoint)
+        self.resources.capture(&self.device, checkpoint)
     }
 
     pub(super) fn capture_pre_load(
         &mut self,
         checkpoint: &'static str,
     ) -> BenchmarkResult<ResourceCheckpoint> {
-        self.resources
-            .capture_pre_load(&self.device, &self.discovery_counter, checkpoint)
+        self.resources.capture_pre_load(&self.device, checkpoint)
     }
 
     pub(super) fn validate_selected_e1(&self, runtime: &ApplicationRuntime) -> BenchmarkResult {
-        self.device
-            .validate_selected_e1(runtime, &self.discovery_counter)
+        self.device.validate_selected_e1(runtime)
     }
 
     pub(super) fn validate_actual_loaded(&self, actual: ApplicationDevice) -> BenchmarkResult {
@@ -76,36 +69,20 @@ impl DeviceObserver {
 
     pub(super) fn execution_metadata(
         &self,
-        planned_execution_scalar: &'static str,
         actual_execution_scalar: &'static str,
     ) -> ExecutionMetadata {
-        let cuda_enabled = cfg!(feature = "cuda");
-        let cuda_requested = self.device.requested() == RequestedDevice::Cuda0;
         ExecutionMetadata {
-            cuda_enabled,
+            cuda_enabled: cfg!(feature = "cuda"),
             requested_device: self.requested_identity(),
             cuda_device: self.cuda_device_metadata(),
-            planned_execution_scalar,
             actual_execution_scalar,
-            host_sampling: true,
-            cuda_logits_to_host_limitation: cuda_requested
-                .then_some(CUDA_LOGITS_TO_HOST_LIMITATION),
-            cuda_memory_observation_scope: cuda_requested.then_some(CUDA_MEMORY_OBSERVATION_SCOPE),
-            cuda_context_observation: cuda_requested.then_some(CudaContextObservation {
-                device_discovery_calls: self.cuda_discovery_count(),
-                initialization_scope: device::CUDA_CONTEXT_INITIALIZATION_SCOPE,
-            }),
         }
     }
 
     pub(super) fn collect_cuda_environment(
         &self,
     ) -> BenchmarkResult<Option<CudaEnvironmentMetadata>> {
-        environment::collect_cuda_environment(&self.device, &self.discovery_counter)
-    }
-
-    pub(super) fn cuda_discovery_count(&self) -> u64 {
-        self.discovery_counter.count()
+        environment::collect_cuda_environment(&self.device)
     }
 }
 
@@ -113,16 +90,17 @@ impl DeviceObserver {
 mod tests {
     use application_runtime::ApplicationDevice;
     use candle_backend::{CandleDeviceSummary, CudaComputeCapability as CandleComputeCapability};
+    use domain_contracts::DeviceKind;
 
     use super::DeviceObserver;
     use super::device::{
-        CPU_EXECUTION_DEVICE, CUDA_LOGITS_TO_HOST_LIMITATION, CUDA_ZERO_EXECUTION_DEVICE,
-        DeviceState, DiscoveryCounter, REQUIRED_CUDA_NAME, ValidatedCudaProbe,
+        CPU_EXECUTION_DEVICE, CUDA_ZERO_EXECUTION_DEVICE, DeviceState, REQUIRED_CUDA_NAME,
+        ValidatedCudaProbe,
     };
-    use super::resources::{CUDA_MEMORY_OBSERVATION_SCOPE, ResourceState};
+    use super::resources::ResourceState;
     use crate::external::cli::RequestedDevice;
-    use crate::external::report::{CudaComputeCapability, CudaDeviceMetadata, DeviceIdentity};
-    use domain_contracts::DeviceKind;
+    use crate::external::report::{CudaComputeCapability, CudaDeviceMetadata};
+    use crate::report::DeviceIdentity;
 
     fn valid_probe() -> Result<ValidatedCudaProbe, String> {
         ValidatedCudaProbe::from_summary(&CandleDeviceSummary {
@@ -144,7 +122,6 @@ mod tests {
         Ok(DeviceObserver {
             device: DeviceState::from_validated_probe(valid_probe()?),
             resources: ResourceState::default(),
-            discovery_counter: DiscoveryCounter::new(),
         })
     }
 
@@ -163,25 +140,12 @@ mod tests {
         assert_eq!(CPU_EXECUTION_DEVICE.id.get(), 0);
         assert_eq!(CPU_EXECUTION_DEVICE.kind, DeviceKind::Cpu);
         assert_eq!(observer.cuda_device_metadata(), None);
-        assert_eq!(observer.cuda_discovery_count(), 0);
 
-        let execution = observer.execution_metadata("F32", "F32");
+        let execution = observer.execution_metadata("F32");
         assert_eq!(execution.cuda_enabled, cfg!(feature = "cuda"));
-        assert_eq!(
-            execution.requested_device,
-            DeviceIdentity {
-                kind: "cpu",
-                id: 0,
-                ordinal: None,
-            }
-        );
+        assert_eq!(execution.requested_device, observer.requested_identity());
         assert_eq!(execution.cuda_device, None);
-        assert_eq!(execution.planned_execution_scalar, "F32");
         assert_eq!(execution.actual_execution_scalar, "F32");
-        assert!(execution.host_sampling);
-        assert_eq!(execution.cuda_logits_to_host_limitation, None);
-        assert_eq!(execution.cuda_memory_observation_scope, None);
-        assert_eq!(execution.cuda_context_observation, None);
         assert_eq!(
             observer
                 .collect_cuda_environment()
@@ -223,23 +187,9 @@ mod tests {
             })
         );
 
-        let execution = observer.execution_metadata("BF16", "BF16");
+        let execution = observer.execution_metadata("BF16");
         assert_eq!(execution.cuda_enabled, cfg!(feature = "cuda"));
-        assert_eq!(execution.planned_execution_scalar, "BF16");
         assert_eq!(execution.actual_execution_scalar, "BF16");
-        assert_eq!(
-            execution.cuda_logits_to_host_limitation,
-            Some(CUDA_LOGITS_TO_HOST_LIMITATION)
-        );
-        assert_eq!(
-            execution.cuda_memory_observation_scope,
-            Some(CUDA_MEMORY_OBSERVATION_SCOPE)
-        );
-        let context = execution
-            .cuda_context_observation
-            .ok_or_else(|| "CUDA context observation disappeared".to_owned())?;
-        assert_eq!(context.device_discovery_calls, 0);
-        assert!(context.initialization_scope.contains("never per token"));
         observer
             .validate_actual_loaded(ApplicationDevice::Cuda { ordinal: 0 })
             .map_err(|error| error.to_string())?;
@@ -249,32 +199,5 @@ mod tests {
                 .is_err()
         );
         Ok(())
-    }
-
-    #[test]
-    fn discovery_count_bookkeeping_is_per_observer_and_hardware_free() -> Result<(), String> {
-        let observer = synthetic_cuda_observer()?;
-        assert_eq!(observer.cuda_discovery_count(), 0);
-        observer
-            .discovery_counter
-            .record_call()
-            .map_err(|error| error.to_string())?;
-        observer
-            .discovery_counter
-            .record_call()
-            .map_err(|error| error.to_string())?;
-        assert_eq!(observer.cuda_discovery_count(), 2);
-
-        let other = synthetic_cuda_observer()?;
-        assert_eq!(other.cuda_discovery_count(), 0);
-        Ok(())
-    }
-
-    #[test]
-    fn cuda_execution_metadata_documents_host_sampling_boundary() {
-        assert!(CUDA_LOGITS_TO_HOST_LIMITATION.contains("host F32"));
-        assert!(CUDA_LOGITS_TO_HOST_LIMITATION.contains("GPU-side sampling"));
-        assert!(CUDA_MEMORY_OBSERVATION_SCOPE.contains("whole device"));
-        assert!(CUDA_MEMORY_OBSERVATION_SCOPE.contains("not process-attributed"));
     }
 }

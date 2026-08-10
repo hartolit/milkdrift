@@ -1,4 +1,4 @@
-//! Workspace maintenance entry point for custom policy and the canonical composite gate.
+//! Milkdrift workspace maintenance entry point and canonical composite gate.
 
 #![forbid(unsafe_code)]
 
@@ -8,21 +8,21 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus};
 
-use xtask::{validate_repository_hygiene, validate_workspace};
+use xtask::{benchmark_command_plan, validate_repository_hygiene, validate_workspace};
 
 const HELP: &str = "\
-llm-app workspace tooling
+Milkdrift workspace tooling
 
 USAGE:
     cargo xtask <command>
 
 COMMANDS:
-    architecture    Validate workspace layout and dependency policy
+    architecture    Validate workspace roles, layout, dependency DAG, and feature policy
     hygiene         Validate operational surfaces and the selected dependency graph
-    verify          Run the canonical policy, format, build, test, lint, docs, and benchmark gate
+    verify          Run policy, format, build, test, lint, docs, and exact benchmark gates
     help            Print this message
 
-Ordinary Cargo operations are intentionally invoked directly rather than forwarded by xtask.
+Ordinary Cargo operations are invoked directly rather than hidden behind forwarding commands.
 ";
 
 fn main() -> ExitCode {
@@ -71,13 +71,11 @@ fn verify() -> io::Result<bool> {
         return Ok(false);
     }
 
-    // This fail-fast composite is the single stable quality gate; one-step Cargo operations remain
-    // native Cargo commands instead of growing a parallel forwarding interface.
-    run_sequence(&[
-        &["fmt", "--all", "--", "--check"],
-        &["check", "--workspace", "--all-targets", "--locked"],
-        &["test", "--workspace", "--locked"],
-        &[
+    let commands = [
+        command(&["fmt", "--all", "--", "--check"]),
+        command(&["check", "--workspace", "--all-targets", "--locked"]),
+        command(&["test", "--workspace", "--locked"]),
+        command(&[
             "clippy",
             "--workspace",
             "--all-targets",
@@ -85,13 +83,31 @@ fn verify() -> io::Result<bool> {
             "--",
             "-D",
             "warnings",
-        ],
-        &["doc", "--workspace", "--no-deps", "--locked"],
-        &["bench", "--workspace", "--no-run", "--locked"],
-    ])
+        ]),
+        command(&["doc", "--workspace", "--no-deps", "--locked"]),
+    ];
+    if !run_sequence(&commands)? {
+        return Ok(false);
+    }
+
+    let benchmark_commands =
+        benchmark_command_plan(&workspace_manifest()).map_err(io::Error::other)?;
+    for benchmark in benchmark_commands {
+        if !run_cargo(benchmark.arguments())? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
-fn run_sequence(commands: &[&[&str]]) -> io::Result<bool> {
+fn command(arguments: &[&str]) -> Vec<String> {
+    arguments
+        .iter()
+        .map(|argument| (*argument).to_owned())
+        .collect()
+}
+
+fn run_sequence(commands: &[Vec<String>]) -> io::Result<bool> {
     for arguments in commands {
         if !run_cargo(arguments)? {
             return Ok(false);
@@ -100,31 +116,38 @@ fn run_sequence(commands: &[&[&str]]) -> io::Result<bool> {
     Ok(true)
 }
 
-fn run_cargo(arguments: &[&str]) -> io::Result<bool> {
+fn run_cargo(arguments: &[String]) -> io::Result<bool> {
     let Some((subcommand, options)) = arguments.split_first() else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "cargo command requires a subcommand",
         ));
     };
+    let manifest = workspace_manifest();
+    let Some(workspace_root) = manifest.parent() else {
+        return Err(io::Error::other(
+            "workspace manifest has no parent directory",
+        ));
+    };
+    println!("+ cargo {}", arguments.join(" "));
+
     let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
-    let mut command = Command::new(cargo);
-    command
+    let mut process = Command::new(cargo);
+    process
+        .current_dir(workspace_root)
         .arg(subcommand)
-        .arg("--manifest-path")
-        .arg(workspace_manifest())
         .args(options);
-    if *subcommand == "doc" {
-        command.env("RUSTDOCFLAGS", "-D warnings");
+    if subcommand == "doc" {
+        process.env("RUSTDOCFLAGS", "-D warnings");
     }
-    let status = command.status()?;
+    let status = process.status()?;
     let success = status.success();
 
     report_status(arguments, status);
     Ok(success)
 }
 
-fn report_status(arguments: &[&str], status: ExitStatus) {
+fn report_status(arguments: &[String], status: ExitStatus) {
     if status.success() {
         return;
     }

@@ -7,9 +7,13 @@ license.workspace = true
 description = "Frontend-neutral application orchestration for model lifecycle, completion, and chat"
 publish = false
 
+[package.metadata.milkdrift]
+role = "runtime-application"
+
 [features]
 default = []
 cuda = ["candle-backend/cuda"]
+cuda-hardware-tests = ["cuda"]
 
 [dependencies]
 candle-backend.workspace = true
@@ -21,6 +25,12 @@ host-runtime.workspace = true
 inference-runtime.workspace = true
 redb-storage.workspace = true
 tokenization.workspace = true
+
+[[test]]
+name = "cuda_hardware"
+path = "tests/cuda_hardware.rs"
+harness = false
+required-features = ["cuda-hardware-tests"]
 
 [lints]
 workspace = true

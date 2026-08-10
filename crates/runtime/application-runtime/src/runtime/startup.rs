@@ -175,7 +175,7 @@ impl ApplicationRuntime {
         .map_err(StartupFailure::into_primary)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "cuda-hardware-tests"))]
     pub(super) fn start_with_device_probe(
         configuration: ApplicationRuntimeConfiguration,
         device_probe: DeviceProbe,

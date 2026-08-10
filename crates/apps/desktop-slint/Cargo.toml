@@ -8,6 +8,9 @@ description = "Thin Slint frontend for the reusable application runtime"
 publish = false
 build = "build.rs"
 
+[package.metadata.milkdrift]
+role = "application"
+
 [features]
 default = []
 cuda = ["application-runtime/cuda"]

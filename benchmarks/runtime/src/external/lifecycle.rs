@@ -7,22 +7,21 @@ use application_runtime::{
     ApplicationActivity, ApplicationDevice, ApplicationRuntime, ApplicationRuntimeConfiguration,
     ApplicationScalarType, GenerationTerminalOutcome, LoadedModel, ModelSelection,
 };
-use domain_contracts::ScalarTypeSet;
 
 use super::cli::{self, RequestedDevice};
 use super::generation::{self, PrimaryWorkloadEvidence};
-use super::model::{self, PlannedModelEvidence};
+use super::model;
 use super::observation::{
     CycleStabilityObservation, DeviceObserver, record_owner_drop, stability_after_unload,
     summarize_stability, validate_pre_load_checkpoint,
 };
 use super::report::{
-    CancellationResult, DeviceIdentity, DirectCompletionSample, LifecycleResult,
-    PreparedLoadEvidence, PrimaryCycleResult, ResourceCheckpoint, ShutdownOwnershipState,
-    ShutdownResult, ShutdownWorkerState, StabilityCycleResult, StabilitySummary, UnloadResult,
+    CancellationResult, DirectCompletionSample, LifecycleResult, PrimaryCycleResult,
+    ResourceCheckpoint, ShutdownResult, StabilityCycleResult, StabilitySummary,
 };
 use crate::e1::cleanup_runtime_after_failure;
 use crate::error::{BenchmarkError, BenchmarkResult};
+use crate::evidence::application_device_record;
 use crate::workspace::TemporaryWorkspace;
 
 const PRIMARY_CYCLE_ORDINAL: u32 = 1;
@@ -44,13 +43,9 @@ const AFTER_UNLOAD_CHECKPOINT: &str = "after-synchronized-model-unload";
 const AFTER_SHUTDOWN_RETURN_CHECKPOINT: &str = "after-application-shutdown-return";
 const AFTER_OWNER_DROP_CHECKPOINT: &str = "after-application-shutdown-owner-drop";
 
-const POST_UNLOAD_ACCOUNTING_SCOPE: &str = "complete same-worker E0 RuntimeSnapshot accounting is not exposed by public E1 APIs and is not inferred here; this report records Released output, no cleanup-pending/exhausted event, synchronized ModelUnloaded acceptance, and zero E1 ownership only; direct E0 snapshot validation is external to this report and must be executed and recorded separately";
-
 pub(super) struct LifecycleEvidence {
     pub(super) resolved_commit: String,
     pub(super) configuration_declared_scalar: Option<ApplicationScalarType>,
-    pub(super) observed_tensor_scalars: ScalarTypeSet,
-    pub(super) planned_execution_scalar: ApplicationScalarType,
     pub(super) actual_execution_scalar: ApplicationScalarType,
     pub(super) vocabulary_size: u32,
     pub(super) maximum_context_tokens: u32,
@@ -64,13 +59,10 @@ pub(super) struct LifecycleEvidence {
 struct CycleModelFacts {
     resolved_commit: String,
     configuration_declared_scalar: Option<ApplicationScalarType>,
-    observed_tensor_scalars: ScalarTypeSet,
-    planned_execution_scalar: ApplicationScalarType,
     actual_execution_scalar: ApplicationScalarType,
     vocabulary_size: u32,
     maximum_context_tokens: u32,
     maximum_prefill_batch: u32,
-    prepared_load: PreparedLoadEvidence,
 }
 
 #[derive(Clone, Copy)]
@@ -205,8 +197,6 @@ pub(super) fn run(
     Ok(LifecycleEvidence {
         resolved_commit: primary_model.resolved_commit,
         configuration_declared_scalar: primary_model.configuration_declared_scalar,
-        observed_tensor_scalars: primary_model.observed_tensor_scalars,
-        planned_execution_scalar: primary_model.planned_execution_scalar,
         actual_execution_scalar: primary_model.actual_execution_scalar,
         vocabulary_size: primary_model.vocabulary_size,
         maximum_context_tokens: primary_model.maximum_context_tokens,
@@ -282,19 +272,15 @@ fn execute_started_cycle(
     let (resolved, resolve_elapsed) = model::resolve_model(runtime, &selection)?;
     recorder.capture(AFTER_RESOLUTION_CHECKPOINT)?;
 
-    let mut planned = model::plan_resolved_model(cache_directory, runtime, recorder.requested)?;
     recorder.capture_pre_load()?;
-    let (loaded, load_elapsed) =
-        model::load_model(runtime, &selection, &mut planned, recorder.observer)?;
+    let (loaded, load_elapsed) = model::load_model(runtime, &selection, recorder.observer)?;
     recorder.capture(AFTER_LOAD_CHECKPOINT)?;
 
-    let model_facts =
-        validated_model_facts(runtime, &resolved, &loaded, &planned, recorder.observer)?;
+    let model_facts = validated_model_facts(runtime, &resolved, &loaded, recorder.observer)?;
     let workload_evidence = run_cycle_workload(runtime, &loaded, workload, recorder)?;
     validate_released_workload_state(runtime, &loaded)?;
 
     let unload = model::unload_model(runtime, &loaded)?;
-    validate_unload_contract(&unload)?;
     let stability = recorder.capture_after_unload()?;
     let shutdown = shutdown_cycle(runtime, ordinal)?;
     recorder.capture(AFTER_SHUTDOWN_RETURN_CHECKPOINT)?;
@@ -307,10 +293,8 @@ fn execute_started_cycle(
             start_ns: generation::duration_ns(start_elapsed, "ApplicationRuntime startup")?,
             resolve_ns: generation::duration_ns(resolve_elapsed, "immutable model resolution")?,
             load_ns: generation::duration_ns(load_elapsed, "E1 model load acceptance")?,
-            selected_e1_device: application_device_identity(runtime.state().selected_device()),
-            actual_loaded_e0_device: application_device_identity(loaded.device()),
-            prepared_load: planned.prepared_load,
-            post_unload_e0_accounting_scope: POST_UNLOAD_ACCOUNTING_SCOPE,
+            selected_e1_device: application_device_record(runtime.state().selected_device()),
+            actual_loaded_e0_device: application_device_record(loaded.device()),
             unload,
             shutdown,
             resource_checkpoints: recorder.take_checkpoints(),
@@ -324,29 +308,17 @@ fn validated_model_facts(
     runtime: &ApplicationRuntime,
     resolved: &application_runtime::ResolvedModel,
     loaded: &LoadedModel,
-    planned: &PlannedModelEvidence,
     observer: &DeviceObserver,
 ) -> BenchmarkResult<CycleModelFacts> {
     observer.validate_selected_e1(runtime)?;
     observer.validate_actual_loaded(loaded.device())?;
-    model::validate_verified_plan(planned, observer)?;
-    if resolved.configuration_declared_scalar_type() != planned.configuration_declared_scalar_type
-        || loaded.execution_scalar_type() != planned.planned_execution_scalar_type
-    {
-        return Err(BenchmarkError::new(
-            "resolved declaration or actual execution scalar changed after exact E1 load acceptance",
-        ));
-    }
     Ok(CycleModelFacts {
         resolved_commit: resolved.identity().commit().to_owned(),
-        configuration_declared_scalar: planned.configuration_declared_scalar_type,
-        observed_tensor_scalars: planned.observed_tensor_scalar_types,
-        planned_execution_scalar: planned.planned_execution_scalar_type,
+        configuration_declared_scalar: resolved.configuration_declared_scalar_type(),
         actual_execution_scalar: loaded.execution_scalar_type(),
         vocabulary_size: loaded.vocabulary_size(),
         maximum_context_tokens: loaded.maximum_context_tokens(),
         maximum_prefill_batch: loaded.maximum_prefill_batch(),
-        prepared_load: planned.prepared_load,
     })
 }
 
@@ -387,15 +359,6 @@ fn shutdown_cycle(
     validate_stopped(runtime)?;
     Ok(ShutdownResult {
         duration_ns: generation::duration_ns(elapsed, "ApplicationRuntime shutdown")?,
-        shutdown_returned_cleanly: true,
-        workers: ShutdownWorkerState {
-            hub_unavailable: true,
-            inference_unavailable: true,
-        },
-        ownership: ShutdownOwnershipState {
-            loaded_model_absent: true,
-            active_generation_absent: true,
-        },
     })
 }
 
@@ -502,26 +465,12 @@ fn validate_observer_request(
     requested: RequestedDevice,
     observer: &DeviceObserver,
 ) -> BenchmarkResult {
-    let expected = application_device_identity(requested_application_device(requested));
+    let expected = application_device_record(requested_application_device(requested));
     let observer_identity = observer.requested_identity();
     if observer_identity != expected {
         return Err(BenchmarkError::new(format!(
             "lifecycle requested {expected:?}, but the supplied observer addresses {observer_identity:?}"
         )));
-    }
-    Ok(())
-}
-
-fn validate_unload_contract(unload: &UnloadResult) -> BenchmarkResult {
-    if unload.cancelled_requests != 0
-        || !unload.loaded_model_absent
-        || !unload.active_generation_absent
-        || !unload.runtime_connected
-        || !unload.backend_release_synchronized
-    {
-        return Err(BenchmarkError::new(
-            "synchronized E1 ModelUnloaded evidence did not retain zero cancellations, connected workers, and released model/generation ownership",
-        ));
     }
     Ok(())
 }
@@ -533,7 +482,7 @@ fn validate_model_consistency(
 ) -> BenchmarkResult {
     if observed != primary {
         return Err(BenchmarkError::new(format!(
-            "cycle {ordinal} changed immutable model, declared/observed/planned/actual scalar, or prepared-load facts relative to primary cycle 1: primary={primary:?}, observed={observed:?}"
+            "cycle {ordinal} changed immutable public model facts or actual execution scalar relative to primary cycle 1: primary={primary:?}, observed={observed:?}"
         )));
     }
     Ok(())
@@ -581,21 +530,6 @@ const fn requested_application_device(requested: RequestedDevice) -> Application
     match requested {
         RequestedDevice::Cpu => ApplicationDevice::Cpu,
         RequestedDevice::Cuda0 => ApplicationDevice::Cuda { ordinal: 0 },
-    }
-}
-
-const fn application_device_identity(device: ApplicationDevice) -> DeviceIdentity {
-    match device {
-        ApplicationDevice::Cpu => DeviceIdentity {
-            kind: "cpu",
-            id: 0,
-            ordinal: None,
-        },
-        ApplicationDevice::Cuda { ordinal } => DeviceIdentity {
-            kind: "cuda",
-            id: ordinal as u64,
-            ordinal: Some(ordinal),
-        },
     }
 }
 

@@ -1,0 +1,19 @@
+[package]
+name = "f1-a"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[package.metadata.milkdrift]
+role = "domain-feature"
+benchmark-targets = ["sampling_pipeline"]
+
+[lib]
+name = "ordinary_target"
+
+[dependencies]
+f0 = { path = "../f0" }
+
+[[bench]]
+name = "sampling_pipeline"
+harness = false

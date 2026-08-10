@@ -1,0 +1,11 @@
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[package.metadata.milkdrift]
+role = "application"
+
+[dependencies]
+e1 = { path = "../../runtime/e1" }

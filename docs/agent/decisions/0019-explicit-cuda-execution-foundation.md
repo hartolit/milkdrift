@@ -7,6 +7,7 @@
 - **Contract amendment:** source/execution scalar separation and accounted-footprint terminology accepted 2026-08-04
 - **Evidence acceptance:** product-model CUDA evidence and self-hosted hardware CI accepted 2026-08-04
 - **Phase 12 amendment:** [ADR-0020](0020-transactional-prepared-model-loading.md) supersedes this ADR's former homogeneous-source, independent plan/load, E1 loaded-source-scalar, `LAM1` v1-write, and Slint loaded-source-display clauses
+- **Infrastructure amendment:** 2026-08-10 — dedicated harness-free whole-suite hardware targets replace workflow-owned test-name enumeration
 
 ## Context
 
@@ -32,6 +33,8 @@ The accepted execution and exposure matrix is:
 - an explicitly requested CUDA device never falls back to CPU.
 
 The accepted Phase 11 hardware row is CUDA ordinal 0 on Linux x86_64, NVIDIA GeForce RTX 5070 Ti, driver 610.43.03, CUDA Toolkit 13.3, compute capability 12.0, and build target 120. The fixture workflow's toolkit minimum does not broaden product support beyond that observed row.
+
+Adapter, hosted-E0, and E1 hardware correctness each own one explicit harness-free `cuda_hardware` target behind the package-local `cuda-hardware-tests = ["cuda"]` feature. Each custom runner requires `MILKDRIFT_CUDA_TEST=1`, has one-or-more case registration at compile time, counts attempted cases, and fails rather than skipping when execution is not explicitly authorized. The workflow runs whole targets; test function names are not CI configuration. Deterministic E0 fault injection remains a separate complete target under the CUDA feature graph.
 
 ### Portable and adapter device ownership
 
@@ -77,7 +80,7 @@ Before load, E1 re-probes the selected CUDA device and requires the fixed budget
 
 `LAS1` application settings continue to write version 2 and read exact version 1. Selected device and memory policy remain persisted; unavailable CUDA is not migrated to CPU.
 
-`LAM1` model catalogue records now write version 2 with optional configuration-declared scalar metadata. Exact version 1 remains readable as a present declaration. Complete observed layout, required primary, execution scalar/device, shard identity, and per-tensor details are not persisted.
+The later application-boundary amendment writes `LAM1` version 3 with an explicit declaration-presence tag. Exact versions 1 and 2 remain readable without automatic rewrite. Complete observed layout, required primary, execution scalar/device, shard identity, and per-tensor details are not persisted.
 
 Slint remains a thin presentation adapter with stable Rust-owned identity/index mapping. Resolved summaries may show the optional declaration. Loaded summaries show execution scalar and execution device only. Labels are never parsed; Slint does not infer scalar, choose conversion, or fall back.
 
@@ -89,7 +92,7 @@ Metal remains domain vocabulary only. Metal execution, cuDNN, flash attention, N
 
 The accepted Phase 11 hardware evidence remains attributed to the exact pre-Phase 12 baseline and matrix. It proves the then-current explicit CUDA path, not Phase 12 prepared loading or mixed layouts.
 
-A separate Phase 12 local closure-tree run passed the exact CUDA compile chain and deterministic hardware matrix on 2026-08-08 on the narrowly identified RTX 5070 Ti row. This does not rewrite the historical Phase 11 Actions evidence or establish generic NVIDIA or external mixed-checkpoint compatibility. The Phase 12 GitHub self-hosted workflow has not run; presence of workflow steps is not remote execution evidence. Current evidence truth is canonical in [implementation status](../../project/implementation-status.md).
+A separate Phase 12 local closure-tree run passed the exact CUDA compile chain and deterministic hardware matrix on 2026-08-08 on the narrowly identified RTX 5070 Ti row. At the time that closure text was authored, the Phase 12 GitHub workflow had not run. After push, self-hosted [run 31281013243](https://github.com/hartolit/milkdrift/actions/runs/31281013243) completed successfully on exact closure commit `181a069ce81525e9c144fe8de051ced8e3c0b9d7`. This later fact does not rewrite the historical Phase 11 evidence, prove later amendments, or establish generic NVIDIA/external mixed-checkpoint compatibility. Current evidence truth is canonical in [implementation status](../../project/implementation-status.md).
 
 ## Rejected alternatives
 
@@ -112,7 +115,7 @@ A separate Phase 12 local closure-tree run passed the exact CUDA compile chain a
 - E0 receipts/snapshots identify the actual verified execution device and execution scalar.
 - Phase 12 final and loading-peak accounting strengthen admission without changing explicit device policy.
 - E1 and Slint preserve explicit selection while exposing only application-relevant resolved and loaded facts.
-- Hardware evidence must identify exact commit/tree, driver, toolkit, GPU, compute capability, ordinal, fixture/result, synchronization, and post-unload accounting.
+- Hardware evidence must identify exact commit/tree, driver, toolkit, GPU, compute capability, ordinal, whole-suite result, fixture/result, synchronization, and post-unload accounting.
 - Historical Phase 11 evidence remains historical; Phase 12 support cannot inherit a hardware run that predates its implementation.
 
 ## Review trigger

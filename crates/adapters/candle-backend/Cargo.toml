@@ -7,6 +7,10 @@ license.workspace = true
 description = "CPU and feature-gated CUDA Llama inference adapter implemented with Hugging Face Candle"
 publish = false
 
+[package.metadata.milkdrift]
+role = "adapter"
+cuda-provider = true
+
 [features]
 default = []
 cuda = [
@@ -15,6 +19,7 @@ cuda = [
     "candle-nn/cuda",
     "candle-transformers/cuda",
 ]
+cuda-hardware-tests = ["cuda"]
 
 [dependencies]
 candle-core.workspace = true
@@ -26,6 +31,12 @@ safetensors.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+
+[[test]]
+name = "cuda_hardware"
+path = "tests/cuda_hardware.rs"
+harness = false
+required-features = ["cuda-hardware-tests"]
 
 [lints]
 workspace = true

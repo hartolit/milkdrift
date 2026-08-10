@@ -8,8 +8,13 @@ description = "Workspace architecture, hygiene, and verification tooling"
 publish = false
 default-run = "xtask"
 
+[package.metadata.milkdrift]
+role = "tooling"
+
 [dependencies]
 cargo_metadata.workspace = true
+serde_json.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true

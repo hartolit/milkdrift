@@ -12,7 +12,7 @@ use std::ffi::OsString;
 use sha2::{Digest, Sha256};
 
 use crate::error::{BenchmarkError, BenchmarkResult};
-use crate::evidence::{application_scalar_type_label, scalar_type_set_labels};
+use crate::evidence::application_scalar_type_label;
 use crate::metadata;
 use crate::workspace::{TemporaryWorkspace, repository_root};
 
@@ -27,7 +27,6 @@ pub(crate) use cli::{Action, HELP};
 
 pub(crate) const UPSTREAM_DECLARED_LICENSE: &str = "apache-2.0";
 pub(crate) const LICENSE_METADATA_SOURCE: &str = "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/raw/fe8a4ea1ffedaf415f4da2f062534de366a451e6/README.md";
-const COMMAND_MODE: &str = "external_e1_hugging_face_hub";
 const PRIMARY_CYCLE_COUNT: u32 = 1;
 
 pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> BenchmarkResult<Action> {
@@ -73,10 +72,9 @@ pub(crate) fn run_configuration(
 
     let cuda_stability_cycle_count = u32::try_from(lifecycle.cuda_stability_cycles.len())
         .map_err(|_| BenchmarkError::new("CUDA stability-cycle count conversion failed"))?;
-    let execution = observer.execution_metadata(
-        application_scalar_type_label(lifecycle.planned_execution_scalar),
-        application_scalar_type_label(lifecycle.actual_execution_scalar),
-    );
+    let execution = observer.execution_metadata(application_scalar_type_label(
+        lifecycle.actual_execution_scalar,
+    ));
     let model = model_metadata(&lifecycle, initial_cache_state);
     let workload = workload_metadata(cuda_stability_cycle_count)?;
 
@@ -86,8 +84,6 @@ pub(crate) fn run_configuration(
             git: environment.git,
             toolchain: environment.toolchain,
             system: environment.system,
-            command_mode: COMMAND_MODE,
-            network_authorized: true,
             cache_location: configuration.cache_location.label(),
             cuda_environment,
         },
@@ -98,7 +94,6 @@ pub(crate) fn run_configuration(
             primary_cycle: lifecycle.primary_cycle,
             cuda_stability_cycles: lifecycle.cuda_stability_cycles,
             stability_summary: lifecycle.stability_summary,
-            temporary_workspace_removed: true,
         },
     })
 }
@@ -126,7 +121,6 @@ fn model_metadata(
         configuration_declared_scalar: lifecycle
             .configuration_declared_scalar
             .map(application_scalar_type_label),
-        observed_tensor_scalars: scalar_type_set_labels(lifecycle.observed_tensor_scalars),
         vocabulary_size: lifecycle.vocabulary_size,
         maximum_context_tokens: lifecycle.maximum_context_tokens,
         maximum_prefill_batch: lifecycle.maximum_prefill_batch,
@@ -193,7 +187,7 @@ pub(crate) fn print_human_summary(report: &ExternalBaselineReport) {
     );
 }
 
-fn device_label(device: report::DeviceIdentity) -> &'static str {
+fn device_label(device: crate::report::DeviceIdentity) -> &'static str {
     match (device.kind, device.ordinal) {
         ("cpu", None) => "CPU",
         ("cuda", Some(0)) => "CUDA 0",
@@ -227,23 +221,14 @@ fn hex_digit(value: u8) -> char {
 #[cfg(test)]
 mod tests {
     use super::report::{
-        CancellationResult, CancellationSubmissionTimings, ConversationProof,
-        DirectCompletionSample, GenerationOutcomeMatch, GenerationSubmissionTimings,
+        CancellationResult, CancellationSubmissionTimings, DirectCompletionSample,
+        GenerationSubmissionTimings,
     };
 
     #[test]
     fn external_generation_report_payload_excludes_text_and_token_identifiers() -> Result<(), String>
     {
-        let outcomes = GenerationOutcomeMatch {
-            terminal_state_matched: true,
-            released_state_matched: true,
-            terminal_event_matched: true,
-        };
         let payload = (
-            ConversationProof {
-                validated: true,
-                cleared: true,
-            },
             DirectCompletionSample {
                 ordinal: 1,
                 submission_to_generation_started_ns: 1,
@@ -254,9 +239,6 @@ mod tests {
                 generated_tokens: 32,
                 decoded_byte_count: 64,
                 terminal_kind: "token_limit",
-                terminal_state_matched: true,
-                released_state_matched: true,
-                terminal_event_matched: true,
                 effective_generated_tokens_per_second: 8.0,
             },
             CancellationResult {
@@ -275,8 +257,6 @@ mod tests {
                 prompt_tokens: 5,
                 generated_tokens: 2,
                 terminal_kind: "cancelled",
-                cancellation_acknowledged: true,
-                outcome_match: outcomes,
             },
         );
         let json = serde_json::to_string(&payload).map_err(|error| error.to_string())?;

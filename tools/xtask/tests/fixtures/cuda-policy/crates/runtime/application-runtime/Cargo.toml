@@ -4,9 +4,19 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[package.metadata.milkdrift]
+role = "runtime-application"
+
 [features]
 default = []
 cuda = ["candle-backend/cuda"]
+cuda-hardware-tests = ["cuda"]
 
 [dependencies]
 candle-backend = { path = "../../adapters/candle-backend" }
+
+[[test]]
+name = "cuda_hardware"
+path = "tests/cuda_hardware.rs"
+harness = false
+required-features = ["cuda-hardware-tests"]

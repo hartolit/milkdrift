@@ -2,9 +2,9 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-08
-- **Amended:** 2026-08-10 for artifact loading and retained-ownership certainty
-- **Phase:** 12 plus post-audit artifact-loading and runtime-ownership hardening
-- **Implementation:** `58490fe693fef7a2635956181088664cd90685e8`, `12510695aa29be6a2665dbf3777cccbb8172c2d1`, the pristine artifact-loading amendment, and the pristine runtime-ownership amendment recorded by this revision
+- **Amended:** 2026-08-10 for artifact loading, retained-ownership certainty, and the application boundary
+- **Phase:** 12 plus post-audit artifact-loading, runtime-ownership, and application-boundary hardening
+- **Implementation:** `58490fe693fef7a2635956181088664cd90685e8`, `12510695aa29be6a2665dbf3777cccbb8172c2d1`, `d4a1e4324a6793becc56147e4b2e3246189d2693`, `b43d0f47953c5319a41340d9087b7fd8f07b3280`, and `1f91cba691a8099805fa31f576079e79c282c73e`
 - **Amends:** [ADR-0019](0019-explicit-cuda-execution-foundation.md) for scalar/source terminology, load planning/materialization, E1 loaded facts, model-catalogue persistence, and Phase 12 evidence claims
 - **Preserves:** [ADR-0006](0006-explicit-bounded-shutdown.md), [ADR-0010](0010-verify-backend-contracts-at-e0.md), and [ADR-0013](0013-candle-only-local-execution.md)
 
@@ -169,14 +169,14 @@ E1 receives lower descriptor/receipt facts but does not reproduce Candle policy.
 - Public E1 `LoadedModel` exposes the E0-verified execution scalar and actual execution device, but no declaration, observed set, required primary, or per-tensor inventory.
 - E1 checks declaration agreement across artifact/admission/descriptor evidence, a nonempty complete observed set, receipt identity/capabilities/device, and final reserved footprint. Integer or `Other` bits from unused tensors are truthful evidence rather than an E1 compatibility policy.
 - E1 does not infer required primary, choose per-tensor conversion, compare declaration with execution, or fall back.
-- Retained lower model ownership is reported as `ModelCleanupPending { exhausted, failure }`; ordinary owner-free failure remains `ModelLoadFailed`.
+- Retained lower model ownership is reported as `ModelCleanupPending { cleanup: ApplicationRetainedModel }`, preserving resource, ownership certainty, cleanup disposition, and independent primary/cleanup failures; ordinary owner-free failure remains `ModelLoadFailed`.
 - Slint may display the optional declaration in a resolved summary and execution scalar/device in a loaded summary. It gains no tensor table, conversion control, or backend responsibility.
 
 This preserves ADR-0013: Candle remains the sole local engine, E0 remains generic/backend-neutral at portable contracts, E1 remains non-generic/private concrete composition, and token-sensitive work remains statically dispatched.
 
 ### Persist declaration only
 
-New `LAM1` writes use version 2 and store optional configuration-declared scalar metadata. Exact version 1 reads remain supported and decode their mandatory scalar as a present declaration. Observed sets, required primary, execution scalar/device, per-tensor inventory, footprints, shard identities, and cache paths are not persisted.
+New `LAM1` writes use version 3 and store optional configuration-declared scalar metadata through an explicit presence tag. Exact version 1 and 2 reads remain supported without automatic rewrite; version 1 decodes its mandatory scalar as present, while version 2 recognizes its historical absence code. Observed sets, required primary, execution scalar/device, per-tensor inventory, footprints, shard identities, and cache paths are not persisted.
 
 `LAS1` settings semantics remain unchanged: version 2 writes and exact version 1 reads continue to own device selection and accelerator-memory policy.
 
@@ -212,7 +212,7 @@ No default feature reaches CUDA. Explicit CUDA failure never falls back to CPU. 
 - Cleanup polling is bounded and fair across owner classes and identities; terminal retention remains structured through process exit.
 - E1 and Slint become simpler: resolved declaration and loaded execution facts are no longer collapsed into one source-scalar label.
 - Persistence can represent absent declarations without storing per-tensor runtime evidence.
-- Benchmark/evidence observers may copy public plan/receipt facts inward, but production APIs are not expanded for reports.
+- Synthetic E0 evidence may observe existing public plan/receipt facts. External E1 evidence observes the public product boundary without a shadow preparation, and production APIs are not expanded for reports.
 - Milkdrift remains centered on operator-defined workflows and explicit ownership; Phase 12 hardens one local endpoint and stops at that boundary.
 
 ## Review trigger

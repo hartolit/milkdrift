@@ -8,14 +8,20 @@ Phase 10 created measurement and regression infrastructure; it made no productio
 
 Hard harness timeouts stop hangs only. Lifecycle, fixture, identity, output, cleanup, accounting, or join mismatches fail a run; elapsed time alone does not.
 
-| Evidence class | Current surface | What it establishes | What it does not establish |
-|---|---|---|---|
-| Deterministic allocation | Harness-free `domain-contracts` allocation executable and the sampling allocator test | Project-global allocator behavior within the named preallocated regions | Candle/native/driver/OS/device allocation behavior |
-| Sampling component | `crates/domain/sampling/benches/sampling_pipeline.rs` | Comparative timing of public sampling and stop matching with caller-owned prepared storage | E0/E1 latency, product throughput, or allocation attribution |
-| Hosted E0 component-like | `benchmarks/runtime/benches/runtime.rs` | Public command submission through matching completion event, including bounded transport and dispatch | Raw Candle kernel timing, E1/product latency, RSS, or full-generation throughput |
-| Synthetic system/integration | `benchmarks/runtime` normal `baseline` binary; current synthetic schema 4 | Download-free hosted-E0 lifecycle/output plus separate prepared declared/observed/planned facts, actual E0 receipt/reserved ownership, exact final/loading-peak plans, process RSS, and fresh E1 start/shutdown cycles | Product-model speed or quality, representative scale, steady-state serving, physical residency, or device memory |
-| Compile-only | Workspace benchmark compilation | Target/API compatibility | Runtime correctness or performance |
-| External real-product | `runtime-benchmarks` `external-baseline` binary plus focused E0/E1 device and ownership validation; current external schema 5 | Current report semantics for the exact homogeneous TinyLlama profile: declared/observed/planned/actual facts, exact final/loading-peak preparation, E1 acceptance without fabricated direct E0 ownership, process RSS, and whole-device CUDA observations. Curated CPU/CUDA timings remain the preserved schema-2 Commit E evidence below; historical CPU-only Commit C and schema-3 regression evidence also remain below. | Mixed-checkpoint evidence, model quality, other hosts/models/layouts/devices, serving capacity, GPU sampling, process-attributed device memory, generic NVIDIA behavior, leak/non-leak proof, or a portable regression threshold |
+| Registry ID | Public boundary and evidence class | Required environment/artifact | Output/schema owner | Does not establish |
+|---|---|---|---|---|
+| `correctness.allocation` | Harness-free domain/sampling allocator correctness | Named preallocated regions; default host tests | Owning crate tests | Candle/native/driver/OS/device allocation behavior |
+| `sampling.pipeline` | Public `Sampler::sample` and prepared restore boundary; synthetic component performance | Deterministic caller-owned fixture; host bench profile | Criterion target `sampling/sampling_pipeline` | E0/E1 latency, product throughput, or allocation attribution |
+| `sampling.stop-suffix` | Public `match_stop_suffix`; synthetic component performance | Deterministic caller-owned inputs; host bench profile | Criterion target `sampling/sampling_pipeline` | Generation/product latency |
+| `e0.checked-prefill` | Public E0 submission through matching checked-prefill completion; synthetic hosted-E0 performance | Committed Candle fixture; CPU bench profile | Criterion target `runtime-benchmarks/runtime` | Raw Candle kernel timing, E1 latency, RSS, or generation throughput |
+| `e0.incremental-decode` | Public E0 decode after untimed two-token prefill; synthetic hosted-E0 performance | Committed Candle fixture; CPU bench profile | Criterion target `runtime-benchmarks/runtime` | Product latency or full-generation throughput |
+| `e0.lifecycle-process` | Hosted E0 load/generate/backpressure/cancel/unload/shutdown, direct accounting, and RSS/HWM; synthetic/process evidence | Release CPU binary; committed fixture; no network | `benchmarks/runtime/src/report.rs`, synthetic schema 4 | Product-model speed/quality, representative scale, or physical device residency |
+| `e1.cold-start-process` | Fresh E1 start/shutdown and process RSS; process sampling | Empty temporary redb state; no network | Synthetic schema 4 application-lifecycle records | Resolution, load, or generation behavior |
+| `e1.tinyllama-product` | Public E1 resolve/load/chat/direct/cancel/unload/shutdown plus actual scalar/device; external product/process/device evidence | Clean commit, explicit cache/network, fixed TinyLlama revision, CPU or exact reviewed CUDA row | `benchmarks/runtime/src/external/report.rs`, external schema 6 | Mixed-checkpoint evidence, model quality, generic NVIDIA support, process-attributed VRAM, leak proof, or a portable threshold |
+| `cuda.fixture-correctness` | Dedicated adapter/E0/E1 CUDA suites; hardware correctness | Download-free fixture; exact self-hosted RTX 5070 Ti matrix | GitHub/local test logs | Product performance or external-model compatibility |
+| `compile.maintained-benches` | Exact registered Cargo bench targets; compile-only | Locked graph; bench profile | `xtask` manifest registry | Runtime correctness or performance |
+
+CI target size/free-space observations are infrastructure evidence and are recorded in [implementation status](implementation-status.md) and [execution history](../agent/execution/history.md), not interpreted as product performance.
 
 ## Sampling methodology
 
@@ -244,39 +250,25 @@ Elevated post-unload RSS was not treated as retained model ownership because all
 
 ## External product evidence
 
-### Current external schema-5 contract
+### Current external schema-6 contract
 
-The runtime-ownership amendment advances the external report from schema 4 to **external schema 5** by removing `cache_bytes_per_token` from serialized final/loading byte-footprint records. Sequence-cache rate remains separate descriptor planning data. Unit tests validate serialization and semantic separation, but no schema-5 CPU or CUDA product run is accepted here. Therefore every Phase 10/11 timing and memory table below remains attributed to its original code, report schema, and environment.
+The infrastructure-truth amendment advances the external report from schema 5 to **external schema 6**. It removes the observer's independent adapter preparation, which duplicated production policy and could warm page-cache/CUDA state before the timed public E1 load. It also removes invariant prose, derivable duplicate arrays, and success booleans whose false state already aborts the runner. Unit tests validate the schema, but no schema-6 CPU or CUDA product run is accepted here. Every Phase 10/11 timing and memory table below remains attributed to its original code, schema, and environment.
 
-Schema 5 records:
+Schema 6 records:
 
-- optional `configuration_declared_scalar` separately from `observed_tensor_scalars` read through the adapter's prepared-load descriptor;
-- `planned_execution_scalar` separately from E1's `actual_execution_scalar` after E0 receipt verification;
-- requested device, each prepared transaction's planned device, selected E1 device, and actual loaded E0 device as separate facts;
-- fixed repository/revision/license provenance and explicit artifact layout;
-- `prepared_load.exact_final_footprint` separately from `prepared_load.loading_peak_footprint`;
-- E1 acceptance of the prepared load contract while requiring `e0_reserved_ownership_observed: false`, because the observer preparation is independent of the product worker and cannot fabricate a same-worker E0 snapshot;
-- sampled process RSS/HWM only under `process_memory`;
-- qualified whole-device driver total/free/used observations only under `whole_device_cuda_memory`, never as process-attributed ownership;
-- bounded cold CUDA discovery/context-call counts as audit evidence, not a threshold.
+- fixed repository/revision/license and Git/toolchain/system/cache provenance;
+- optional configuration declaration from public E1 resolution;
+- requested device, selected E1 device, actual loaded device, and actual execution scalar;
+- raw startup, resolution, load, generation, cancellation, unload, shutdown, token/byte, and terminal measurements;
+- sampled process RSS/HWM under `process_memory`;
+- qualified whole-device CUDA total/free/used observations under `whole_device_cuda_memory`, never as process-attributed ownership; and
+- retained-growth summaries computed from raw cycle-local observations, without claiming leak/non-leak proof.
 
-The evidence classes must remain distinct:
+External schema 6 deliberately does **not** serialize observed tensor sets, planned scalar/device, exact final/loading-peak footprints, or direct E0 reserved ownership. Those facts require an adapter preparation or direct E0 receipt/snapshot and are owned by synthetic E0 evidence and correctness suites. The external runner observes the public E1 product boundary rather than fabricating same-worker lower-layer access.
 
-| Fact | Evidence owner | Interpretation limit |
-|---|---|---|
-| Declared scalar | Immutable configuration metadata | Producer intent only. |
-| Observed scalar set | Safetensors header inspection in the exact preparation | Compact source-layout fact, not execution. |
-| Planned scalar/device | Prepared `LoadPlan` | Selected policy before materialization. |
-| Actual scalar/device | E0-verified receipt surfaced through E1 | Loaded execution fact. |
-| Exact final footprint | Prepared plan | Deterministic successful-load tensor ownership. |
-| Loading-peak footprint | Prepared plan | Deterministic aggregate admission peak during loading/conversion. |
-| E0 reserved ownership | Direct E0 receipt/snapshot only | Runtime ownership/accounting; absent from the external E1 worker unless directly observed. |
-| Process RSS/HWM | Linux process checkpoint | Sampled whole-process residency, not owner attribution. |
-| Whole-device CUDA memory | Driver checkpoint | Entire-device observation, not process attribution. |
+The pinned `TinyLlama/TinyLlama-1.1B-Chat-v1.0` revision remains the established homogeneous BF16 lifecycle/chat profile and is **not mixed-checkpoint evidence**. No suitable immutable, license-reviewed external mixed-dtype Llama profile with an auditable direct-completion procedure has been established. A missing network path or credential is an acquisition failure, not model incompatibility; only an acquired artifact that fails the reviewed product path can support an incompatibility finding.
 
-The pinned `TinyLlama/TinyLlama-1.1B-Chat-v1.0` revision is configuration-declared BF16 and observed homogeneous `{BF16}`. It remains the established lifecycle/chat profile and is **not mixed-checkpoint evidence**. No suitable immutable, license-reviewed external mixed-dtype Llama profile with an auditable direct-completion procedure has been established, so external mixed CPU/CUDA evidence remains absent. A missing network path or credential would be an acquisition failure, not model incompatibility; only an acquired artifact that fails inspection/preparation/execution can support an incompatibility finding.
-
-External schemas 1–4 retain their historical field meanings. No legacy parser was added merely to reinterpret old reports.
+External schemas 1–5 retain their historical field meanings. No legacy parser was added merely to reinterpret old reports.
 
 ### Historical post-Phase 11 external schema-3 observation contract
 
@@ -439,7 +431,7 @@ A manual Slint user check confirmed CPU and CUDA behavior, described CUDA prompt
 
 #### Interpretation and limitations
 
-This evidence establishes controlled local product-path behavior for the exact Commit E tree, model revision, host, RTX 5070 Ti ordinal, driver, toolkit, build cap, scalar choices, and workload above. The lower CUDA durations are observations for that exact composition, not a hard threshold or a hardware-only speedup claim: the shared BF16 source executed as F32 on CPU and BF16 on CUDA, and CUDA transferred full-vocabulary logits to host F32 for host sampling. GPU sampling was not measured. GPU sampling was not measured.
+This evidence establishes controlled local product-path behavior for the exact Commit E tree, model revision, host, RTX 5070 Ti ordinal, driver, toolkit, build cap, scalar choices, and workload above. The lower CUDA durations are observations for that exact composition, not a hard threshold or a hardware-only speedup claim: the shared BF16 source executed as F32 on CPU and BF16 on CUDA, and CUDA transferred full-vocabulary logits to host F32 for host sampling. GPU sampling was not measured.
 
 Nothing here generalizes to NVIDIA devices as a family, another device/model/revision/scalar, concurrent or steady-state serving, model quality, or production capacity. Whole-device CUDA values cannot attribute memory to this process. The three CUDA cycles and absence of strict monotonic retained growth prove neither a leak nor non-leak; sampled RSS likewise cannot do so. Clean lifecycle outcomes, the accepted E1 contract, and exact direct-E0 zero accounting establish their named ownership boundaries without claiming immediate OS, allocator, or driver reclamation.
 

@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-01
+- **Enforcement amendment:** 2026-08-10 — Cargo-derived acyclic domain graph under explicit manifest roles
 
 ## Context
 
@@ -11,7 +12,7 @@ A coarse layer matrix is not sufficient by itself. Permitting every downward or 
 
 ## Decision
 
-Replace the blanket F1-to-F1 prohibition with an exact allowlisted DAG for workspace-local production dependencies wholly inside `crates/domain`. Arrows below point from the dependent crate to its dependency. The complete approved graph is:
+The original decision replaced the blanket F1-to-F1 prohibition with an exact allowlisted DAG. Its accepted graph, shown from dependent to dependency, was and remains the current Cargo graph:
 
 ```text
 tokenization    -> domain-contracts
@@ -20,7 +21,9 @@ sampling        -> domain-contracts
 task-graph      -> domain-contracts
 ```
 
-These four edges are normal production dependencies. `domain-contracts` has no workspace-local production dependency. No domain peer edge and no domain build dependency is currently approved. A coarse layer rule may permit an F1 peer dependency in principle, but the exact-edge registry must reject it until its source, target, dependency kind, and rationale are reviewed. The registry itself must remain acyclic; adding an edge that creates a cycle is invalid.
+The 2026-08-10 enforcement amendment preserves the durable invariant—workspace-local normal/build F0/F1 edges form an acyclic graph—but removes the second hand-maintained copy of every ordinary Cargo edge. Every package now declares an explicit domain role in manifest metadata. The validator checks the role/location contract, rejects upward facilities, derives the complete domain graph from actual Cargo declarations, and rejects cycles. A legal inward or peer edge therefore does not require editing a Rust package-name registry; a role change, external/development exception, or ownership move still requires explicit review.
+
+`domain-contracts` currently has no workspace-local production dependency and no F1 peer edge currently exists. That inventory is Cargo truth, not an allowlist frozen into the validator.
 
 `domain-contracts` contains only portable engine/backend contracts and stable portable vocabulary genuinely shared across independent domain or runtime boundaries. A type does not belong there merely because one crate uses it, because a future consumer is imaginable, or because placing it there avoids review of the actual dependency. Vocabulary with one coherent domain owner stays with that owner; consumers take an explicit reviewed dependency when needed.
 
@@ -37,12 +40,12 @@ The exact domain graph is enforced independently from folder placement. External
 
 ## Consequences
 
-- The current domain production graph has four explicit edges and one root, with no approved F1 peer edge.
-- Future domain coupling requires an exact rationale and an acyclic whole-graph review instead of inheriting permission from a layer name.
+- The current domain production graph has four Cargo-declared edges and one root, with no F1 peer edge.
+- Future domain coupling must fit explicit manifest roles and preserve the acyclic whole graph; ordinary legal edges need no duplicate policy entry.
 - Moving `TaskId` changes its public import path from `domain_contracts::TaskId` to `task_graph::TaskId` while preserving its task identity semantics.
 - Shared-foundation growth must be justified by real cross-boundary ownership rather than dependency-policy convenience.
 - The portability set remains the five crates named by [ADR-0007](0007-portability-targets.md); a future DAG change must preserve or explicitly review that contract.
 
 ## Review trigger
 
-Review when a new domain crate is introduced, an exact domain production edge must be added or removed, a proposed edge would change the graph's acyclicity, or concrete multi-owner pressure shows that vocabulary should move into or out of `domain-contracts`.
+Review when the domain role vocabulary changes, a proposed edge would change the graph's acyclicity or portability, an exception is proposed, or concrete multi-owner pressure shows that vocabulary should move into or out of `domain-contracts`. Adding an ordinary correctly classified domain crate or legal acyclic Cargo edge does not by itself require a validator match-table change.

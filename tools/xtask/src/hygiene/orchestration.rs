@@ -9,6 +9,8 @@ use std::process::Command;
 
 use cargo_metadata::{Metadata, MetadataCommand};
 
+use crate::workspace::{Role, benchmark_inventory, package_role, role_location_is_compatible};
+
 use super::invocation::{is_potential_operational_surface, scan_operational_invocations};
 use super::manifest::{is_cargo_manifest, scan_manifest, scan_selected_graph};
 
@@ -18,9 +20,9 @@ const RULE_BENCHMARK_LOCKFILE: &str = "HYGIENE-BENCHMARK-LOCK-1";
 const RULE_BENCHMARK_OUTPUT: &str = "HYGIENE-BENCHMARK-OUTPUT-1";
 const RULE_MODEL_CACHE: &str = "HYGIENE-MODEL-CACHE-1";
 const RULE_BENCHMARK_BUILD: &str = "HYGIENE-BENCHMARK-BUILD-1";
-const RULE_BENCHMARK_MEMBER: &str = "HYGIENE-BENCHMARK-MEMBER-1";
+const RULE_WORKSPACE_MEMBER: &str = "HYGIENE-WORKSPACE-MEMBER-1";
 const RULE_BENCHMARK_LAYOUT: &str = "HYGIENE-BENCHMARK-LAYOUT-1";
-const BENCHMARK_MANIFEST: &str = "benchmarks/runtime/Cargo.toml";
+const RULE_BENCHMARK_REGISTRY: &str = "HYGIENE-BENCHMARK-REGISTRY-1";
 
 /// One actionable repository hygiene policy violation.
 #[derive(Debug, PartialEq, Eq)]
@@ -211,6 +213,45 @@ fn validate_hygiene(
                 .map(Path::to_path_buf)
         })
         .collect::<BTreeSet<_>>();
+    let benchmark_manifests = metadata
+        .workspace_packages()
+        .iter()
+        .filter(|package| {
+            matches!(package_role(package), Ok(Role::BenchmarkObserver))
+                && role_location_is_compatible(root, package, Role::BenchmarkObserver)
+        })
+        .filter_map(|package| {
+            package
+                .manifest_path
+                .as_std_path()
+                .strip_prefix(root)
+                .ok()
+                .map(Path::to_path_buf)
+        })
+        .collect::<BTreeSet<_>>();
+
+    if let Err(issues) = benchmark_inventory(metadata) {
+        for issue in issues {
+            let path = metadata
+                .workspace_packages()
+                .iter()
+                .find(|package| package.name == issue.package)
+                .and_then(|package| {
+                    package
+                        .manifest_path
+                        .as_std_path()
+                        .strip_prefix(root)
+                        .ok()
+                        .map(Path::to_path_buf)
+                });
+            report.push(HygieneViolation::new(
+                path,
+                None,
+                RULE_BENCHMARK_REGISTRY,
+                format!("{}: {}", issue.target, issue.reason),
+            ));
+        }
+    }
 
     for relative in tracked_paths {
         let absolute = root.join(relative);
@@ -225,7 +266,12 @@ fn validate_hygiene(
             }
         };
 
-        scan_tracked_path(relative, &workspace_manifests, &mut report);
+        scan_tracked_path(
+            relative,
+            &workspace_manifests,
+            &benchmark_manifests,
+            &mut report,
+        );
 
         if is_python_artifact(relative) {
             report.push(HygieneViolation::new(
@@ -268,6 +314,7 @@ fn validate_hygiene(
 fn scan_tracked_path(
     path: &Path,
     workspace_manifests: &BTreeSet<PathBuf>,
+    benchmark_manifests: &BTreeSet<PathBuf>,
     report: &mut HygieneReport,
 ) {
     if has_component(path, "target") {
@@ -281,6 +328,15 @@ fn scan_tracked_path(
 
     let benchmark_path = path.starts_with(Path::new("benchmarks"));
     let file_name = path.file_name().and_then(|name| name.to_str());
+    if is_project_package_manifest(path) && !workspace_manifests.contains(path) {
+        report.push(HygieneViolation::new(
+            Some(path.to_path_buf()),
+            None,
+            RULE_WORKSPACE_MEMBER,
+            "every tracked non-fixture Cargo package must be a root workspace member so role policy and canonical Rust gates cannot be bypassed"
+                .to_owned(),
+        ));
+    }
     if benchmark_path && file_name == Some("Cargo.lock") {
         report.push(HygieneViolation::new(
             Some(path.to_path_buf()),
@@ -298,24 +354,18 @@ fn scan_tracked_path(
             "benchmark packages cannot contain build.rs; generation, downloads, measurement, and machine probing must remain explicit runtime operations".to_owned(),
         ));
     }
-    if benchmark_path && file_name == Some("Cargo.toml") {
-        if path == Path::new(BENCHMARK_MANIFEST) {
-            if !workspace_manifests.contains(path) {
-                report.push(HygieneViolation::new(
-                    Some(path.to_path_buf()),
-                    None,
-                    RULE_BENCHMARK_MEMBER,
-                    "benchmarks/runtime must be registered in the root workspace before Cargo is run for that package".to_owned(),
-                ));
-            }
-        } else {
-            report.push(HygieneViolation::new(
-                Some(path.to_path_buf()),
-                None,
-                RULE_BENCHMARK_LAYOUT,
-                "benchmarks/runtime is the only recognized cross-crate benchmark package; unknown benchmark manifests fail closed".to_owned(),
-            ));
-        }
+    if benchmark_path
+        && file_name == Some("Cargo.toml")
+        && workspace_manifests.contains(path)
+        && !benchmark_manifests.contains(path)
+    {
+        report.push(HygieneViolation::new(
+            Some(path.to_path_buf()),
+            None,
+            RULE_BENCHMARK_LAYOUT,
+            "workspace members under benchmarks/ require the explicit benchmark-observer role at a compatible direct-child location"
+                .to_owned(),
+        ));
     }
 
     if [
@@ -360,6 +410,12 @@ fn scan_tracked_path(
             "downloaded model and benchmark caches must remain external or under the ignored root target directory".to_owned(),
         ));
     }
+}
+
+fn is_project_package_manifest(path: &Path) -> bool {
+    path.file_name().and_then(|name| name.to_str()) == Some("Cargo.toml")
+        && path != Path::new("Cargo.toml")
+        && !path.starts_with(Path::new("tools/xtask/tests/fixtures"))
 }
 
 fn has_component(path: &Path, expected: &str) -> bool {

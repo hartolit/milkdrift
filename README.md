@@ -149,7 +149,7 @@ The current foundation provides:
 
 The Candle loader now performs bounded complete Safetensors inspection while materializing only required Llama tensors. Configuration declaration, complete observed categories, required scalar set/primary, and execution scalar are separate facts: unused F16/BF16/integer/boolean/other extras remain truthful observed evidence but cannot change precision, consume tensor/device headroom, or cause rejection merely because they are unused. Required F32, F16, mixed F16/F32, BF16, and mixed BF16/F32 policies remain explicit; genuine required F16/BF16 mixtures, required unsupported dtypes, quantization, malformed structure, and contradictory or unsupported declarations fail before device initialization.
 
-Selected Hugging Face LFS shards use provider SHA-256/length identity at the resolved commit; mutable project-established or unverified sources receive a safe pre-admission baseline. Materialization verifies each retained shard sequentially, skips tensor allocation for ignored ranges, and preserves one retryable partial-load owner on failure. Final and loading footprints contain required tensors only. The 2026-08-08 RTX 5070 Ti run remains historical Phase 12 evidence; current amended-tree CPU/CUDA validation and hardware status are recorded in [implementation status](docs/project/implementation-status.md). No suitable immutable, license-reviewed external mixed checkpoint has been established.
+Selected Hugging Face LFS shards use provider SHA-256/length identity at the resolved commit; mutable project-established or unverified sources receive a safe pre-admission baseline. Materialization verifies each retained shard sequentially, skips tensor allocation for ignored ranges, and preserves one retryable partial-load owner on failure. Final and loading footprints contain required tensors only. The 2026-08-08 local and GitHub RTX 5070 Ti runs remain historical Phase 12 evidence for commit `181a069`; current-tree CPU/CUDA validation and hardware status are recorded in [implementation status](docs/project/implementation-status.md). No suitable immutable, license-reviewed external mixed checkpoint has been established.
 
 Workflow definitions, workspaces, plugins, external targets, peer execution, and the control center are not yet general product paths. Current chat and conversation behavior belongs to the reference application layer, not the final workflow API. See [implementation status](docs/project/implementation-status.md) for the current Phase 12 support/evidence boundary and [current execution context](docs/agent/execution/current.md) for the next program direction.
 
@@ -190,11 +190,14 @@ A future `crates/core/` root is appropriate only for portable, vendor-neutral sc
 
 ### Completed boundary — Phase 12 local-target truth
 
-- canonical CPU, portability, policy, link, and exact local CUDA gates passed;
-- the Phase 12 GitHub self-hosted workflow remains unrun and external mixed-checkpoint evidence remains absent;
-- compatibility stops at the reviewed unquantized Llama layout boundary.
+- canonical CPU, portability, policy, link, and exact local CUDA gates passed on the Phase 12 closure tree;
+- Phase 12 self-hosted CUDA [run 31281013243](https://github.com/hartolit/milkdrift/actions/runs/31281013243) later passed on that exact commit;
+- hosted Quality [run 31281013257](https://github.com/hartolit/milkdrift/actions/runs/31281013257) exhausted disk after its canonical native work passed, so it is CI-infrastructure history rather than a WASM/product failure;
+- external mixed-checkpoint evidence remains absent, and compatibility stops at the reviewed unquantized Llama layout boundary.
 
-### Next major program — workflow, workspace, and authority
+### Planned direction — workflow, workspace, and authority
+
+This direction is not yet a ratified product program.
 
 - ratify versioned workflow, node, port, artifact, workspace, authority, capability, budget, and target schemas;
 - implement a minimal general workflow runtime and headless host;

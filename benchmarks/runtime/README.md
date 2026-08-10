@@ -1,6 +1,6 @@
 # Runtime benchmarks
 
-`runtime-benchmarks` is the sole non-production cross-crate measurement package. It observes reviewed public production APIs and has three current surfaces:
+`runtime-benchmarks` is the current non-production cross-crate measurement package. It observes reviewed public production APIs and has three current surfaces:
 
 - the normal `baseline` binary runs bounded, download-free synthetic hosted-E0 scenarios plus fresh E1 startup/shutdown cycles;
 - the `external-baseline` binary is the sole opt-in external E1 product-baseline path, parameterized by mandatory `--device cpu|cuda:0` selection;
@@ -13,7 +13,7 @@ Canonical methodology, environments, preserved measurements, RSS/device-memory i
 ## Package contract
 
 - Run Cargo from the repository root with the committed root `Cargo.lock`.
-- Use only the root `target/`; never create `benchmarks/runtime/Cargo.lock`, `benchmarks/runtime/target`, or a source-tree results/cache directory.
+- Use root `target/` or one explicit workspace-level isolated `CARGO_TARGET_DIR`; never create `benchmarks/runtime/Cargo.lock`, `benchmarks/runtime/target`, or a source-tree results/cache directory.
 - Production, application, tooling, and test packages do not depend on this package.
 - Benchmark support remains private to this package; no helper is added to a production public API solely for measurement.
 - The non-default `runtime-benchmarks/cuda` feature forwards only to `application-runtime/cuda`; CPU remains selectable in that binary.
@@ -25,13 +25,25 @@ The sole external runner is split by evidence responsibility, not by device:
 ```text
 external/
 ├── generation/   # fixed workload, one request observer, validation, summaries
-├── model/        # exact identity, resolution, observer preparation, E1 load lifecycle
+├── model/        # exact identity, public E1 resolution/load/unload lifecycle
 ├── observation/  # requested/selected/actual devices, process RSS, whole-device CUDA
-├── lifecycle.rs  # start -> select -> resolve -> prepare -> load -> workload -> unload -> shutdown -> owner drop
+├── lifecycle.rs  # start -> select -> resolve -> load -> workload -> unload -> shutdown -> owner drop
 └── report.rs     # one versioned CPU/CUDA report contract
 ```
 
 CPU and CUDA use the same CLI, binary, E1 lifecycle, generation observer, cleanup path, and report schema.
+
+## Measurement registry
+
+| Registry entry | Classification and maintained question | Evidence owner | Required artifact or environment |
+| --- | --- | --- | --- |
+| `runtime/e0_hosted_checked_prefill/4_tokens` | Synthetic Criterion performance: hosted-E0 submission through checked-prefill completion. Correctness invariants gate each sample. | `runtime-benchmarks` `benches/runtime.rs` | Criterion raw samples under root `target/criterion`; committed synthetic fixture; controlled local host. |
+| `runtime/e0_hosted_incremental_decode/1_token_after_2_token_prefill` | Synthetic Criterion performance: hosted-E0 submission through one incremental decode after a two-token prefill. Correctness invariants gate each sample. | `runtime-benchmarks` `benches/runtime.rs` | Criterion raw samples under root `target/criterion`; committed synthetic fixture; controlled local host. |
+| `baseline.synthetic_e0` | Synthetic lifecycle/accounting/process evidence: E0 load, prefill, generation, backpressure, cancellation, unload, shutdown, E0 snapshots, and process RSS/HWM. | `runtime-benchmarks` `baseline` | Synthetic schema-4 JSON; committed fixture; no network or external model. |
+| `baseline.synthetic_e1_cold_lifecycle` | Synthetic process/lifecycle evidence: cold E1 process start and bounded shutdown overhead without resolution, model load, or generation. | `runtime-benchmarks` `baseline` | The `application_lifecycle` cycles in synthetic schema-4 JSON; temporary redb state; no network. |
+| `external-baseline.e1_product` | External product/process/device evidence: public E1 resolution, actual load/generation/cancellation/unload/shutdown facts, process RSS/HWM, and qualified whole-device CUDA observations. | `runtime-benchmarks` `external-baseline` | External schema-6 JSON; clean committed tree; immutable TinyLlama cache; explicit CPU or approved CUDA environment. |
+| `sampling_pipeline` | Criterion sampling-pipeline performance, maintained outside this package. | `sampling` `benches/sampling_pipeline.rs` | Sampling package Criterion artifacts and its documented fixture/environment. |
+| Schema and validator tests | Correctness only: schema shape, fixed identities, parsers, lifecycle plans, summaries, and observer invariants. They are not measurements or evidence runs. | `runtime-benchmarks` unit tests | `cargo test --locked -p runtime-benchmarks`; network-free and hardware-free by default. |
 
 ## Test and compile
 
@@ -39,7 +51,14 @@ CPU and CUDA use the same CLI, binary, E1 lifecycle, generation observer, cleanu
 cargo check --locked -p runtime-benchmarks --all-targets
 cargo test --locked -p runtime-benchmarks
 cargo clippy --locked -p runtime-benchmarks --all-targets -- -D warnings
-cargo bench --workspace --no-run --locked
+
+cargo bench --locked --no-run \
+  -p runtime-benchmarks \
+  --bench runtime
+
+cargo bench --locked --no-run \
+  -p sampling \
+  --bench sampling_pipeline
 
 CUDA_COMPUTE_CAP=120 cargo check --locked \
   -p runtime-benchmarks \
@@ -47,7 +66,7 @@ CUDA_COMPUTE_CAP=120 cargo check --locked \
   --features cuda
 ```
 
-These commands compile the current benchmark targets without claiming CUDA hardware execution or a product baseline. Ordinary tests remain network-free.
+These commands compile the two maintained Criterion targets without claiming hardware execution or a product baseline. Ordinary tests remain network-free.
 
 The separate [`cuda-hardware` workflow](../../.github/workflows/cuda-hardware.yml) runs the exact CUDA feature graph and committed adapter/E0/E1 fixtures on the dedicated `milkdrift-cuda-5070ti` self-hosted label. It accepts only trusted `main` pushes or owner dispatches of `main`, uses read-only permissions and offline Cargo, and never runs this package's external model binary or a performance threshold. The full security and maintenance procedure is in [validation](../../docs/project/validation.md#self-hosted-cuda-hardware-correctness-gate).
 
@@ -96,20 +115,19 @@ Synthetic and external reports have independent version sequences.
 
 The external binary fixes `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`; callers cannot substitute either identity. The fixed artifact profile is `config.json`, `tokenizer.json`, and one unindexed `model.safetensors`. It requires explicit network authorization, explicit device selection, a clean committed tree, and an already-existing canonical cache beneath repository-root `target/` or outside the repository. It never reads a default global Hub cache implicitly and never falls back from CUDA to CPU.
 
-The profile's configuration declaration is optional in the schema but required to equal `Some(BF16)` for this exact revision. An accepted run also requires the observer `prepare_load` descriptor to report homogeneous observed `{BF16}`. CPU planning selects F32 execution; supported CUDA planning selects BF16 execution. E1's loaded model supplies the actual execution scalar and actual device after E0 receipt validation.
+The profile's configuration declaration is optional in the schema but required to equal `Some(BF16)` for this exact revision. E1's `ModelLoaded` event supplies the actual execution scalar and actual loaded device. The runner validates that requested, selected, and actual devices agree, but it does not independently invoke adapter `prepare_load`, recreate production planning policy, inspect tensor headers, or claim direct E0 reservation/accounting facts.
 
-External schema 5 records:
+External schema 6 records:
 
-- repository, immutable revision/commit, license-metadata provenance, and the fixed artifact layout;
-- `configuration_declared_scalar` separately from `observed_tensor_scalars`;
-- `planned_execution_scalar` separately from `actual_execution_scalar`;
-- requested device, each cycle's planned device, selected E1 device, and actual E0-verified loaded device;
-- `prepared_load.exact_final_footprint` and `prepared_load.loading_peak_footprint` copied from an unmaterialized `prepare_load` plan;
-- public E1 load acceptance without claiming a direct same-worker E0 reservation (`e0_reserved_ownership_observed` is required to be `false`);
+- repository, immutable revision/commit, license-metadata provenance, the fixed artifact profile, and the optional E1 configuration declaration;
+- requested device and CUDA build/device metadata where applicable;
+- each cycle's selected E1 device, actual loaded device, and actual execution scalar;
+- raw startup, resolution, load, generation, cancellation, unload, and shutdown timings plus token/byte counts and terminal kinds;
 - `process_memory` checkpoints containing sampled process RSS/HWM;
-- `whole_device_cuda_memory` checkpoints containing qualified driver total/free/used values for the complete device, never process-attributed CUDA ownership.
+- `whole_device_cuda_memory` checkpoints containing qualified driver total/free/used values for the complete device, never process-attributed CUDA ownership;
+- the consumed retained-growth interpretation, computed from raw cycle-local CUDA deltas without duplicating checkpoint arrays.
 
-The observer does not derive tensor counts, execution bytes, final accounting, or loading peaks from the complete Safetensors file length. File length is used only to reject missing/empty fixed artifacts. Exact accounting comes from the adapter's checked per-tensor preparation plan.
+Schema 6 observes the public E1 product boundary. Validation failures still abort the run, but invariant success booleans and policy prose are not report data.
 
 Build separate release artifacts, then execute them directly and sequentially so no compiler process overlaps model residency:
 
@@ -132,20 +150,18 @@ target/phase12-cpu/release/external-baseline \
   --allow-network \
   --cache-dir target/phase10-external-cache \
   --device cpu \
-  > target/phase12-evidence/tinyllama-cpu-schema5.json
+  > target/phase12-evidence/tinyllama-cpu-schema6.json
 
 target/phase12-cuda/release/external-baseline \
   --allow-network \
   --cache-dir target/phase10-external-cache \
   --device cuda:0 \
-  > target/phase12-evidence/tinyllama-cuda-schema5.json
+  > target/phase12-evidence/tinyllama-cuda-schema6.json
 ```
 
 The primary cycle on each device runs one compatible-chat proof, one direct-completion warmup, three measured 32-token completions, and one progress-triggered cancellation. The CUDA invocation then runs two additional load/generate/release/cancel/unload/shutdown stability cycles, yielding three complete CUDA lifecycle cycles total. Stdout contains one schema-versioned report; progress and the compact summary use stderr.
 
-CUDA total/free/used observations are safe driver observations for the whole device, not process-attributed memory. Each cycle establishes its own pre-load baseline after the observer preparation; retained-delta stability uses post-unload and post-owner-drop deltas while preserving absolute observations. Public E1 does not expose the product worker's E0 `RuntimeSnapshot`, so the external report does not fabricate E0 reserved ownership or a post-unload accounting snapshot. Direct E0 zero-accounting evidence remains a separate download-free hardware test.
-
-Every safe Candle `discover_device` observation constructs a temporary Candle CUDA device and cudarc context. Schema 5 records the exact number of those discovery calls. The separate observer `prepare_load` call also initializes its requested device but is not mislabeled as a discovery call. All are cold lifecycle operations and never per token. Safe reuse would require exposing production context ownership or adding a lower-level benchmark dependency, neither of which is justified by this inward observer.
+CUDA total/free/used observations are safe driver observations for the whole device, not process-attributed memory. Each cycle establishes its own pre-load baseline immediately before the public E1 load; retained-delta stability uses post-unload and post-owner-drop deltas while preserving absolute observations in raw checkpoints. Public E1 does not expose the product worker's E0 `RuntimeSnapshot`, so the external report does not fabricate E0 planning, reserved ownership, or post-unload accounting. Direct E0 zero-accounting evidence remains a separate download-free hardware test.
 
 Ordinary tests and shared CI compile this path but never execute it, access the network, or require CUDA hardware. Resource preflight, hardware tests, report review, and the bounded manual Slint procedure are in [controlled CPU and CUDA external product evidence](../../docs/project/validation.md#controlled-cpu-and-cuda-external-product-evidence); curated historical results live only in [performance evidence](../../docs/project/performance.md#external-product-evidence).
 
@@ -159,9 +175,11 @@ Ordinary tests and shared CI compile this path but never execute it, access the 
 
 **External schema 4 (historical):** replaces singular source-scalar evidence with optional configuration declaration plus observed `ScalarTypeSet`, splits planned from actual execution scalar, records exact final and loading-peak preparation quantities, and names process RSS, absent direct E0 reserved ownership, and whole-device CUDA observation independently.
 
-**External schema 5 (current):** removes `cache_bytes_per_token` from byte-footprint records because cache rate is separate descriptor planning data. All other schema-4 evidence groups retain their meanings.
+**External schema 5 (historical):** removes `cache_bytes_per_token` from byte-footprint records because cache rate is separate descriptor planning data. All other schema-4 evidence groups retain their meanings.
 
-No legacy parser has been added for schemas 1–3. Their descriptions and preserved measurements remain provenance records, not migration inputs.
+**External schema 6 (current):** removes the independent adapter preparation/planning path and its declared/observed/planned/footprint payload. It records actual public E1 model/device/capacity facts, raw variable timing/count/resource evidence, and provenance; validation still aborts failures without serializing tautological success flags or invariant prose.
+
+No legacy parser has been added for schemas 1–5. Their descriptions and preserved measurements remain provenance records, not migration inputs.
 
 ### External mixed-checkpoint evidence gap
 
@@ -191,6 +209,6 @@ Temporary redb state for E1 lifecycle checks is created beneath root `target` an
 
 ## Evidence limits
 
-The synthetic fixture proves deterministic integration and lifecycle behavior, not model quality, product-model speed, representative scale, production serving throughput, allocation freedom, or product-model GPU behavior. Synthetic E1 cycles cover startup and bounded shutdown without Hub resolution, model loading, or generation.
+The synthetic fixture proves deterministic integration and lifecycle behavior, not model quality, product-model speed, representative scale, production serving throughput, allocation freedom, or product-model GPU behavior. Synthetic E1 cycles are retained specifically to measure cold process startup and bounded shutdown overhead without Hub resolution, model loading, or generation.
 
-The normal `baseline` CLI remains synthetic-only and rejects product/network options. The external binary has a separate opt-in report schema and evidence contract. Executed CUDA evidence applies only to its documented Linux/NVIDIA/GPU/toolkit matrix; it does not establish generic NVIDIA compatibility, model quality, serving capacity, cross-host performance, allocation freedom, mixed-checkpoint external evidence, or an optimization threshold. CUDA sampling remains on the host after vocabulary-logit transfer. Canonical interpretation is in [performance evidence](../../docs/project/performance.md#external-product-evidence).
+The normal `baseline` CLI remains synthetic-only and rejects product/network options. The external binary has a separate opt-in report schema and evidence contract. Executed CUDA evidence applies only to its documented Linux/NVIDIA/GPU/toolkit matrix; it does not establish generic NVIDIA compatibility, model quality, serving capacity, cross-host performance, allocation freedom, mixed-checkpoint external evidence, or an optimization threshold. Canonical interpretation is in [performance evidence](../../docs/project/performance.md#external-product-evidence).

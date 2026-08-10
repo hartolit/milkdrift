@@ -291,6 +291,6 @@ release, successful unload, or clean E0 shutdown result proves model release.
 Disconnect or handle absence does not. Terminal E0 cleanup retention remains
 sticky after worker exit and is exposed as `RetainedUntilProcessExit`.
 
-This guide makes no current-tree validation or hardware-support claim. The
-canonical evidence and support matrix remains in
-[implementation status](implementation-status.md).
+The package's dedicated harness-free `cuda_hardware` target runs the complete E1 hardware boundary, including explicit unavailable-CUDA no-fallback behavior and the real fixture's selected/actual device, execution scalar, generation, unload, and shutdown lifecycle. Adding a registered case changes the suite without changing workflow YAML, and absent hardware opt-in is a failure rather than a successful skip.
+
+This guide makes no current-tree validation or hardware-support claim. The canonical evidence and support matrix remains in [implementation status](implementation-status.md).

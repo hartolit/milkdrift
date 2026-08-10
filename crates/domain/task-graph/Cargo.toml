@@ -7,6 +7,9 @@ license.workspace = true
 description = "Allocation-free task graph validation and workflow state transitions"
 publish = false
 
+[package.metadata.milkdrift]
+role = "domain-feature"
+
 [dependencies]
 domain-contracts.workspace = true
 

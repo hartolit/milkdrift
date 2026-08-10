@@ -1,6 +1,0 @@
-[workspace]
-members = [
-    "crates/domain/sampling",
-    "crates/domain/tokenization",
-]
-resolver = "3"

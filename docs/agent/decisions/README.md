@@ -20,10 +20,10 @@ Accepted ADRs remain part of the project architecture until superseded. A supers
 - [ADR-0012: Keep local native composition private inside E1](0012-local-native-composition.md) — superseded by ADR-0013
 - [ADR-0013: Use Candle as the sole local execution engine](0013-candle-only-local-execution.md) — device dimension amended by ADR-0019
 - [ADR-0014: Keep project-owned operational tooling Rust/Cargo-native](0014-rust-cargo-native-operational-tooling.md)
-- [ADR-0015: Use an exact reviewed domain dependency DAG](0015-exact-reviewed-domain-dependency-dag.md)
-- [ADR-0016: Use a virtual workspace and a focused `xtask`](0016-virtual-workspace-focused-xtask.md)
+- [ADR-0015: Use an exact reviewed domain dependency DAG](0015-exact-reviewed-domain-dependency-dag.md) — enforcement amended to explicit roles plus Cargo-derived acyclicity
+- [ADR-0016: Use a virtual workspace and a focused `xtask`](0016-virtual-workspace-focused-xtask.md) — exact benchmark-target verification amended
 - [ADR-0017: Keep stable Clippy lints mandatory and nursery exploratory](0017-stable-clippy-gate-exploratory-nursery.md)
-- [ADR-0018: Separate benchmark roles and govern measurement artifacts](0018-benchmark-and-model-fixture-policy.md)
+- [ADR-0018: Separate benchmark roles and govern measurement artifacts](0018-benchmark-and-model-fixture-policy.md) — observer roles and maintained-target registration amended
 - [ADR-0019: Add explicit feature-gated CUDA execution with application-owned selection](0019-explicit-cuda-execution-foundation.md) — Phase 12 loading/scalar clauses amended by ADR-0020
 - [ADR-0020: Use transaction-bound prepared model loading](0020-transactional-prepared-model-loading.md)
 

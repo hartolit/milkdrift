@@ -516,6 +516,15 @@ The closure gate should check the accepted base range or scan all tracked text f
 | No external mixed checkpoint | Confirmed and honestly documented |
 | E0 backend-neutral / E1 thin / Slint thin | Confirmed |
 
+### Later evidence note — 2026-08-10
+
+The table above records the audit's evidence at the time it examined the uploaded archive; it is not rewritten retroactively. Official GitHub records later established that both Phase 12 workflows had run on closure commit `181a069ce81525e9c144fe8de051ced8e3c0b9d7`:
+
+- self-hosted CUDA [run 31281013243](https://github.com/hartolit/milkdrift/actions/runs/31281013243) completed successfully on the exact RTX 5070 Ti job;
+- hosted Quality [run 31281013257](https://github.com/hartolit/milkdrift/actions/runs/31281013257) failed after its canonical native work succeeded. Workspace-wide release bench artifacts left roughly 49 MiB free, and the following WASM check created a separate root target and failed with `No space left on device`; the later linker bus error was consequential.
+
+The CUDA run is remote Phase 12 hardware evidence for `181a069`. The Quality failure is CI-infrastructure evidence, not a product/WASM failure, and neither run proves later amendment trees.
+
 ## Prompt-quality retrospective
 
 The ownership-based three-prompt segmentation was correct. It avoided repeatedly loading the entire repository context and kept the main transactions together:

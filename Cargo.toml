@@ -20,6 +20,153 @@ members = [
 
 resolver = "3"
 
+[workspace.metadata.milkdrift]
+policy-version = 1
+
+[[workspace.metadata.milkdrift.exceptions]]
+id = "external-xtask-cargo-metadata"
+source = "xtask"
+target = "cargo_metadata"
+scope = "external"
+kind = "normal"
+rationale = "workspace tooling uses Cargo's typed metadata API"
+
+[[workspace.metadata.milkdrift.exceptions]]
+id = "external-xtask-serde-json"
+source = "xtask"
+target = "serde_json"
+scope = "external"
+kind = "normal"
+rationale = "workspace tooling validates declarative Cargo metadata values without a parallel parser"
+
+[[workspace.metadata.milkdrift.exceptions]]
+id = "external-xtask-toml"
+source = "xtask"
+target = "toml"
+scope = "external"
+kind = "normal"
+rationale = "Cargo metadata does not expose test harness mode, so tooling parses the exact hardware test target declaration"
+
+[[workspace.metadata.milkdrift.exceptions]]
+id = "external-sampling-libm"
+source = "sampling"
+target = "libm"
+scope = "external"
+kind = "normal"
+rationale = "portable sampling algorithms require the reviewed no-std floating-point implementation"
+
+[[workspace.metadata.milkdrift.exceptions]]
+id = "external-candle-cudarc"
+source = "candle-backend"
+target = "cudarc"
+scope = "external"
+kind = "normal"
+rationale = "the optional CUDA adapter uses the exact reviewed cudarc contract for safe device observation"
+
+[[workspace.metadata.milkdrift.exceptions]]
+id = "external-inference-candle-core-dev"
+source = "inference-runtime"
+target = "candle-core"
+scope = "external"
+kind = "development"
+rationale = "download-free compatibility tests create mixed-dtype fixtures through Candle's CPU conversion APIs"
+
+[[workspace.metadata.milkdrift.exceptions]]
+id = "external-domain-contracts-stats-alloc-dev"
+source = "domain-contracts"
+target = "stats_alloc"
+scope = "external"
+kind = "development"
+rationale = "allocation contract tests measure project-owned portable hot paths"
+
+[[workspace.metadata.milkdrift.exceptions]]
+id = "external-sampling-stats-alloc-dev"
+source = "sampling"
+target = "stats_alloc"
+scope = "external"
+kind = "development"
+rationale = "sampling tests measure the declared zero-allocation region"
+
+[[workspace.metadata.milkdrift.exceptions]]
+id = "external-sampling-criterion-dev"
+source = "sampling"
+target = "criterion"
+scope = "external"
+kind = "development"
+rationale = "Criterion compiles and runs the maintained sampling benchmark"
+
+[[workspace.metadata.milkdrift.exceptions]]
+id = "external-runtime-benchmarks-serde"
+source = "runtime-benchmarks"
+target = "serde"
+scope = "external"
+kind = "normal"
+rationale = "the controlled benchmark observer serializes typed measurement records"
+
+[[workspace.metadata.milkdrift.exceptions]]
+id = "external-runtime-benchmarks-serde-json"
+source = "runtime-benchmarks"
+target = "serde_json"
+scope = "external"
+kind = "normal"
+rationale = "the controlled benchmark observer emits stable JSON measurement records"
+
+[[workspace.metadata.milkdrift.exceptions]]
+id = "external-runtime-benchmarks-sha2"
+source = "runtime-benchmarks"
+target = "sha2"
+scope = "external"
+kind = "normal"
+rationale = "the observer verifies exact fixture and external workload identity"
+
+[[workspace.metadata.milkdrift.exceptions]]
+id = "external-runtime-benchmarks-criterion-dev"
+source = "runtime-benchmarks"
+target = "criterion"
+scope = "external"
+kind = "development"
+rationale = "Criterion runs the maintained runtime lifecycle benchmark"
+
+[[workspace.metadata.milkdrift.exceptions]]
+id = "local-inference-candle-backend-dev"
+source = "inference-runtime"
+target = "candle-backend"
+scope = "local"
+kind = "development"
+rationale = "download-free E0 compatibility and CUDA hardware suites exercise the reviewed Candle adapter"
+
+[[workspace.metadata.milkdrift.exceptions]]
+id = "cuda-application-to-candle"
+source = "application-runtime"
+target = "candle-backend"
+scope = "cuda-forward"
+kind = "normal"
+rationale = "E1 exposes the selected Candle adapter's opt-in CUDA support"
+
+[[workspace.metadata.milkdrift.exceptions]]
+id = "cuda-desktop-to-application"
+source = "desktop-slint"
+target = "application-runtime"
+scope = "cuda-forward"
+kind = "normal"
+rationale = "the desktop product selects CUDA through E1 rather than bypassing orchestration"
+
+[[workspace.metadata.milkdrift.exceptions]]
+id = "cuda-inference-to-candle-dev"
+source = "inference-runtime"
+target = "candle-backend"
+scope = "cuda-forward"
+kind = "development"
+rationale = "E0 compatibility tests opt into the Candle CUDA adapter without changing the production graph"
+
+[[workspace.metadata.milkdrift.exceptions]]
+id = "cuda-runtime-benchmarks-to-application"
+source = "runtime-benchmarks"
+target = "application-runtime"
+scope = "cuda-forward"
+kind = "normal"
+rationale = "the device-parameterized observer reaches CUDA through E1's reviewed feature"
+
 [workspace.dependencies]
 cargo_metadata = "0.23.1"
 application-runtime = { path = "crates/runtime/application-runtime" }
@@ -42,6 +189,7 @@ candle-transformers = { version = "0.11.0", default-features = false }
 cudarc = { version = "=0.19.8", default-features = false, features = ["std", "driver", "cuda-version-from-build-system", "dynamic-linking"] }
 safetensors = "0.8.0"
 serde_json = "1.0"
+toml = "1.1.3"
 flume = { version = "0.12.0", default-features = false }
 tokenizers = { version = "0.23.1", default-features = false, features = ["fancy-regex"] }
 hf-hub = { version = "1.0", default-features = false, features = ["blocking"] }

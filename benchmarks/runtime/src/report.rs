@@ -143,6 +143,13 @@ pub(crate) struct ExecutionDeviceRecord {
     pub(crate) id: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct DeviceIdentity {
+    pub(crate) kind: &'static str,
+    pub(crate) id: u64,
+    pub(crate) ordinal: Option<u32>,
+}
+
 #[derive(Serialize)]
 pub(crate) struct BackpressureMeasurement {
     pub(crate) controlled_hold_ns: u64,

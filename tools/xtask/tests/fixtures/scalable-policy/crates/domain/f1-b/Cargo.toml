@@ -1,0 +1,11 @@
+[package]
+name = "f1-b"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[package.metadata.milkdrift]
+role = "domain-feature"
+
+[dependencies]
+f1-a = { path = "../f1-a" }

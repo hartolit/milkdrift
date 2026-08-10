@@ -7,6 +7,9 @@ license.workspace = true
 description = "Typed corrective draft, validation, review, and revision orchestration"
 publish = false
 
+[package.metadata.milkdrift]
+role = "runtime-capability"
+
 [dependencies]
 domain-contracts.workspace = true
 task-graph.workspace = true

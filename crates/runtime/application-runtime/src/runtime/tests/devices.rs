@@ -8,8 +8,6 @@ use redb_storage::{
 };
 
 use super::support::*;
-#[cfg(feature = "cuda")]
-use crate::ApplicationActivity;
 use crate::{
     AcceleratorMemoryPolicy, ApplicationComputeCapability, ApplicationDevice,
     ApplicationDeviceDiscoveryFailure, ApplicationDeviceDiscoveryFailureKind,
@@ -331,50 +329,6 @@ fn load_command_uses_the_exact_selected_cuda_device() -> TestResult {
             Ok(())
         },
     )
-}
-
-#[cfg(feature = "cuda")]
-#[test]
-#[ignore = "requires MILKDRIFT_CUDA_TEST=1 and an initialized CUDA ordinal 0"]
-fn cuda_fixture_load_reports_the_selected_and_actual_e1_device() -> TestResult {
-    if std::env::var("MILKDRIFT_CUDA_TEST").as_deref() != Ok("1") {
-        return Err("set MILKDRIFT_CUDA_TEST=1 for the explicit E1 CUDA fixture test".to_owned());
-    }
-
-    with_runtime(default_test_configuration, |runtime| {
-        let cuda = runtime
-            .state()
-            .devices()
-            .iter()
-            .find(|summary| summary.device() == CUDA_ZERO && summary.available())
-            .ok_or_else(|| "CUDA ordinal 0 was not discovered by E1".to_owned())?;
-        assert!(cuda.display_name().is_some());
-        eprintln!(
-            "E1 discovered {:?} ({:?}) with total={:?} available={:?} compute={:?}",
-            cuda.device(),
-            cuda.display_name(),
-            cuda.total_memory_bytes(),
-            cuda.available_memory_bytes(),
-            cuda.compute_capability(),
-        );
-        runtime
-            .select_device(CUDA_ZERO)
-            .map_err(application_error)?;
-        assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
-        assert!(runtime.state().loaded().is_none());
-        assert_eq!(runtime.state().activity(), ApplicationActivity::Idle);
-        let loaded = load_fixture(runtime)?;
-        assert_eq!(loaded.device(), CUDA_ZERO);
-        assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
-
-        runtime.unload_model().map_err(application_error)?;
-        let _unloaded = wait_for_event(runtime, |event| {
-            matches!(event, ApplicationEvent::ModelUnloaded { .. })
-        })?;
-        assert!(runtime.state().loaded().is_none());
-        assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
-        Ok(())
-    })
 }
 
 #[test]

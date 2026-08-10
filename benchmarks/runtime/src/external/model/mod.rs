@@ -1,21 +1,15 @@
-//! Exact model identity, resolution, independent planning, loading, and unloading.
+//! Exact model identity, public E1 resolution, loading, and unloading.
 
 mod identity;
 mod lifecycle;
-mod planning;
 mod resolution;
 
-use std::path::Path;
 use std::time::{Duration, Instant};
 
-use application_runtime::{
-    ApplicationRuntime, ApplicationScalarType, LoadedModel, ModelSelection, ResolvedModel,
-};
-use domain_contracts::ScalarTypeSet;
+use application_runtime::{ApplicationRuntime, LoadedModel, ModelSelection, ResolvedModel};
 
-use super::cli::RequestedDevice;
 use super::observation::DeviceObserver;
-use super::report::{PreparedLoadEvidence, UnloadResult};
+use super::report::UnloadResult;
 use crate::error::{BenchmarkError, BenchmarkResult};
 
 /// Exact external-product repository identity.
@@ -27,20 +21,6 @@ pub(super) const MODEL_ARCHITECTURE: &str = "Llama";
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
-/// Observer-owned prepared-load evidence retained until exact E1 load acceptance.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct PlannedModelEvidence {
-    /// Exact final and loading-peak quantities from an unmaterialized `prepare_load` transaction.
-    pub(super) prepared_load: PreparedLoadEvidence,
-    /// Optional configuration declaration matched across E1 resolution and adapter preparation.
-    pub(super) configuration_declared_scalar_type: Option<ApplicationScalarType>,
-    /// Scalar categories observed by adapter preparation in every selected tensor header.
-    pub(super) observed_tensor_scalar_types: ScalarTypeSet,
-    /// Execution scalar selected by `LoadPlan::execution_scalar_type`.
-    pub(super) planned_execution_scalar_type: ApplicationScalarType,
-    requested_device: RequestedDevice,
-}
-
 /// Resolves and validates the built-in immutable model selection through public E1 events.
 pub(super) fn resolve_model(
     runtime: &mut ApplicationRuntime,
@@ -49,31 +29,13 @@ pub(super) fn resolve_model(
     resolution::resolve_model(runtime, selection)
 }
 
-/// Produces independent public Candle plan evidence without loading a second model.
-pub(super) fn plan_resolved_model(
-    cache_directory: &Path,
-    runtime: &ApplicationRuntime,
-    requested_device: RequestedDevice,
-) -> BenchmarkResult<PlannedModelEvidence> {
-    planning::plan_resolved_model(cache_directory, runtime, requested_device)
-}
-
-/// Loads through E1 and accepts the independent plan only after exact event/state validation.
+/// Loads through E1 and validates the actual public loaded-model facts.
 pub(super) fn load_model(
     runtime: &mut ApplicationRuntime,
     selection: &ModelSelection,
-    planned: &mut PlannedModelEvidence,
     observer: &DeviceObserver,
 ) -> BenchmarkResult<(LoadedModel, Duration)> {
-    lifecycle::load_model(runtime, selection, planned, observer)
-}
-
-/// Validates that observer preparation remains coherent after E1 load acceptance.
-pub(super) fn validate_verified_plan(
-    planned: &PlannedModelEvidence,
-    observer: &DeviceObserver,
-) -> BenchmarkResult {
-    planning::validate_verified_plan(planned, observer)
+    lifecycle::load_model(runtime, selection, observer)
 }
 
 /// Unloads the released model and validates the terminal public E1 contract.

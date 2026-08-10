@@ -2,16 +2,9 @@
 
 use super::super::cli::RequestedDevice;
 use super::super::report::{CudaMemoryObservation, ResourceCheckpoint, StabilitySummary};
-use super::device::{DeviceState, DiscoveryCounter, ValidatedCudaProbe};
+use super::device::{DeviceState, ValidatedCudaProbe};
 use crate::error::{BenchmarkError, BenchmarkResult};
 use crate::memory::process_memory;
-
-const CPU_STABILITY_ASSESSMENT: &str =
-    "not-applicable: CPU execution has no CUDA stability cycles or CUDA memory observations";
-const CUDA_GROWTH_ASSESSMENT: &str = "review-required: at least one retained CUDA used-byte delta series strictly increased across all cycle windows relative to each cycle's own pre-load baseline; observations are device-global and can be affected by other GPU processes, so this finite result is neither proof of a process leak nor proof of unbounded growth";
-const CUDA_NO_GROWTH_ASSESSMENT: &str = "no retained CUDA used-byte delta series strictly increased across every cycle window relative to each cycle's own pre-load baseline; observations are device-global, lifecycle contracts passed, and no leak conclusion is drawn";
-
-pub(super) const CUDA_MEMORY_OBSERVATION_SCOPE: &str = "safe CUDA driver total/free observations for the whole device, not process-attributed usage; desktop and other GPU processes can affect absolute values and deltas";
 
 #[derive(Default)]
 pub(super) struct ResourceState {
@@ -26,14 +19,13 @@ impl ResourceState {
     pub(super) fn capture(
         &self,
         device: &DeviceState,
-        discovery_counter: &DiscoveryCounter,
         checkpoint: &'static str,
     ) -> BenchmarkResult<ResourceCheckpoint> {
         let host_memory = process_memory()?;
         let cuda_memory = match device.requested() {
             RequestedDevice::Cpu => None,
             RequestedDevice::Cuda0 => {
-                let probe = device.validated_cuda_probe(discovery_counter)?;
+                let probe = device.validated_cuda_probe()?;
                 Some(cuda_memory_observation(&probe, self.pre_load_used_bytes)?)
             }
         };
@@ -47,14 +39,13 @@ impl ResourceState {
     pub(super) fn capture_pre_load(
         &mut self,
         device: &DeviceState,
-        discovery_counter: &DiscoveryCounter,
         checkpoint: &'static str,
     ) -> BenchmarkResult<ResourceCheckpoint> {
         let host_memory = process_memory()?;
         let cuda_memory = match device.requested() {
             RequestedDevice::Cpu => None,
             RequestedDevice::Cuda0 => {
-                let probe = device.validated_cuda_probe(discovery_counter)?;
+                let probe = device.validated_cuda_probe()?;
                 let used_bytes = probe.used_bytes()?;
                 let observation = CudaMemoryObservation {
                     total_bytes: probe.total_bytes,
@@ -101,8 +92,6 @@ fn signed_used_delta(current: u64, pre_load: u64) -> BenchmarkResult<i64> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::external) struct CycleStabilityObservation {
-    pub(in crate::external) unload_used: Option<u64>,
-    pub(in crate::external) owner_drop_used: Option<u64>,
     pub(in crate::external) unload_delta: Option<i64>,
     pub(in crate::external) owner_drop_delta: Option<i64>,
 }
@@ -111,15 +100,10 @@ pub(in crate::external) fn validate_pre_load_checkpoint(
     requested: RequestedDevice,
     checkpoint: &ResourceCheckpoint,
 ) -> BenchmarkResult {
-    let (used_bytes, delta) = checkpoint_cuda_usage(
-        requested,
-        checkpoint,
-        true,
-        "immediately-before-load checkpoint",
-    )?;
+    let delta = checkpoint_cuda_delta(requested, checkpoint, "immediately-before-load checkpoint")?;
     match requested {
-        RequestedDevice::Cpu if used_bytes.is_none() && delta.is_none() => Ok(()),
-        RequestedDevice::Cuda0 if used_bytes.is_some() && delta == Some(0) => Ok(()),
+        RequestedDevice::Cpu if delta.is_none() => Ok(()),
+        RequestedDevice::Cuda0 if delta == Some(0) => Ok(()),
         _ => Err(BenchmarkError::new(
             "pre-load resource checkpoint did not establish the exact zero CUDA baseline delta",
         )),
@@ -130,12 +114,8 @@ pub(in crate::external) fn stability_after_unload(
     requested: RequestedDevice,
     checkpoint: &ResourceCheckpoint,
 ) -> BenchmarkResult<CycleStabilityObservation> {
-    let (unload_used, unload_delta) =
-        checkpoint_cuda_usage(requested, checkpoint, true, "post-unload checkpoint")?;
     Ok(CycleStabilityObservation {
-        unload_used,
-        owner_drop_used: None,
-        unload_delta,
+        unload_delta: checkpoint_cuda_delta(requested, checkpoint, "post-unload checkpoint")?,
         owner_drop_delta: None,
     })
 }
@@ -145,14 +125,11 @@ pub(in crate::external) fn record_owner_drop(
     checkpoint: &ResourceCheckpoint,
     observation: &mut CycleStabilityObservation,
 ) -> BenchmarkResult {
-    let (owner_drop_used, owner_drop_delta) = checkpoint_cuda_usage(
+    observation.owner_drop_delta = checkpoint_cuda_delta(
         requested,
         checkpoint,
-        true,
         "post-application-shutdown owner-drop checkpoint",
     )?;
-    observation.owner_drop_used = owner_drop_used;
-    observation.owner_drop_delta = owner_drop_delta;
     validate_complete_stability_observation(requested, *observation)
 }
 
@@ -162,16 +139,10 @@ pub(in crate::external) fn validate_complete_stability_observation(
 ) -> BenchmarkResult {
     let complete = match requested {
         RequestedDevice::Cpu => {
-            observation.unload_used.is_none()
-                && observation.owner_drop_used.is_none()
-                && observation.unload_delta.is_none()
-                && observation.owner_drop_delta.is_none()
+            observation.unload_delta.is_none() && observation.owner_drop_delta.is_none()
         }
         RequestedDevice::Cuda0 => {
-            observation.unload_used.is_some()
-                && observation.owner_drop_used.is_some()
-                && observation.unload_delta.is_some()
-                && observation.owner_drop_delta.is_some()
+            observation.unload_delta.is_some() && observation.owner_drop_delta.is_some()
         }
     };
     if !complete {
@@ -204,43 +175,29 @@ pub(in crate::external) fn summarize_stability(
                 "CPU stability summary received a nonzero CUDA stability-cycle count",
             ));
         }
-        if observations.iter().any(|observation| {
-            observation.unload_used.is_some()
-                || observation.owner_drop_used.is_some()
-                || observation.unload_delta.is_some()
-                || observation.owner_drop_delta.is_some()
-        }) {
-            return Err(BenchmarkError::new(
-                "CPU stability summary received unexpected CUDA observations",
-            ));
+        for observation in observations {
+            validate_complete_stability_observation(requested, *observation)?;
         }
         return Ok(StabilitySummary {
-            primary_cycle_count: 1,
-            cuda_stability_cycle_count,
-            post_unload_cuda_used_bytes: Vec::new(),
-            post_owner_drop_cuda_used_bytes: Vec::new(),
-            post_unload_cuda_delta_from_pre_load_bytes: Vec::new(),
-            post_owner_drop_cuda_delta_from_pre_load_bytes: Vec::new(),
             strict_monotonic_retained_growth_observed: false,
             max_retained_cuda_delta_bytes: None,
-            assessment: CPU_STABILITY_ASSESSMENT.to_owned(),
         });
     }
 
-    let mut post_unload_cuda_used_bytes = Vec::new();
-    let mut post_owner_drop_cuda_used_bytes = Vec::new();
     let mut post_unload_deltas = Vec::new();
     let mut post_owner_drop_deltas = Vec::new();
+    post_unload_deltas
+        .try_reserve_exact(observations.len())
+        .map_err(|error| {
+            BenchmarkError::new(format!("stability summary allocation failed: {error}"))
+        })?;
+    post_owner_drop_deltas
+        .try_reserve_exact(observations.len())
+        .map_err(|error| {
+            BenchmarkError::new(format!("stability summary allocation failed: {error}"))
+        })?;
     for observation in observations {
         validate_complete_stability_observation(requested, *observation)?;
-        post_unload_cuda_used_bytes.push(observation.unload_used.ok_or_else(|| {
-            BenchmarkError::new("CUDA post-unload used bytes disappeared during summary")
-        })?);
-        post_owner_drop_cuda_used_bytes.push(observation.owner_drop_used.ok_or_else(|| {
-            BenchmarkError::new(
-                "CUDA post-application-shutdown owner-drop used bytes disappeared during summary",
-            )
-        })?);
         post_unload_deltas.push(observation.unload_delta.ok_or_else(|| {
             BenchmarkError::new(
                 "CUDA post-unload pre-load-baseline delta disappeared during summary",
@@ -253,57 +210,38 @@ pub(in crate::external) fn summarize_stability(
         })?);
     }
 
-    let strict_monotonic_retained_growth_observed =
-        strictly_increases(&post_unload_deltas) || strictly_increases(&post_owner_drop_deltas);
-    let max_retained_cuda_delta_bytes = post_unload_deltas
-        .iter()
-        .chain(&post_owner_drop_deltas)
-        .copied()
-        .max();
-    let assessment = if strict_monotonic_retained_growth_observed {
-        CUDA_GROWTH_ASSESSMENT
-    } else {
-        CUDA_NO_GROWTH_ASSESSMENT
-    };
-
     Ok(StabilitySummary {
-        primary_cycle_count: 1,
-        cuda_stability_cycle_count,
-        post_unload_cuda_used_bytes,
-        post_owner_drop_cuda_used_bytes,
-        post_unload_cuda_delta_from_pre_load_bytes: post_unload_deltas,
-        post_owner_drop_cuda_delta_from_pre_load_bytes: post_owner_drop_deltas,
-        strict_monotonic_retained_growth_observed,
-        max_retained_cuda_delta_bytes,
-        assessment: assessment.to_owned(),
+        strict_monotonic_retained_growth_observed: strictly_increases(&post_unload_deltas)
+            || strictly_increases(&post_owner_drop_deltas),
+        max_retained_cuda_delta_bytes: post_unload_deltas
+            .iter()
+            .chain(&post_owner_drop_deltas)
+            .copied()
+            .max(),
     })
 }
 
-fn checkpoint_cuda_usage(
+fn checkpoint_cuda_delta(
     requested: RequestedDevice,
     checkpoint: &ResourceCheckpoint,
-    require_pre_load_delta: bool,
     context: &'static str,
-) -> BenchmarkResult<(Option<u64>, Option<i64>)> {
+) -> BenchmarkResult<Option<i64>> {
     match (requested, checkpoint.whole_device_cuda_memory) {
-        (RequestedDevice::Cpu, None) => Ok((None, None)),
+        (RequestedDevice::Cpu, None) => Ok(None),
         (RequestedDevice::Cpu, Some(_)) => Err(BenchmarkError::new(format!(
             "{context} unexpectedly contained CUDA memory for a CPU cycle"
         ))),
         (RequestedDevice::Cuda0, None) => Err(BenchmarkError::new(format!(
             "{context} omitted CUDA memory for a CUDA cycle"
         ))),
-        (RequestedDevice::Cuda0, Some(memory)) => {
-            if require_pre_load_delta && memory.used_delta_from_pre_load_bytes.is_none() {
-                return Err(BenchmarkError::new(format!(
+        (RequestedDevice::Cuda0, Some(memory)) => memory
+            .used_delta_from_pre_load_bytes
+            .map(Some)
+            .ok_or_else(|| {
+                BenchmarkError::new(format!(
                     "{context} omitted its delta from the current cycle's pre-load baseline"
-                )));
-            }
-            Ok((
-                Some(memory.used_bytes),
-                memory.used_delta_from_pre_load_bytes,
-            ))
-        }
+                ))
+            }),
     }
 }
 
@@ -320,9 +258,9 @@ pub(in crate::external) fn strictly_increases(values: &[i64]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        CPU_STABILITY_ASSESSMENT, CycleStabilityObservation, ResourceState,
-        cuda_memory_observation, record_owner_drop, signed_used_delta, stability_after_unload,
-        strictly_increases, summarize_stability, validate_pre_load_checkpoint,
+        CycleStabilityObservation, ResourceState, cuda_memory_observation, record_owner_drop,
+        signed_used_delta, stability_after_unload, strictly_increases, summarize_stability,
+        validate_pre_load_checkpoint,
     };
     use crate::external::cli::RequestedDevice;
     use crate::external::observation::device::ValidatedCudaProbe;
@@ -365,7 +303,6 @@ mod tests {
             0
         );
         assert!(signed_used_delta(u64::MAX, 0).is_err());
-
         assert_eq!(
             cuda_memory_observation(&valid_probe(), Some(4_000))
                 .map_err(|error| error.to_string())?,
@@ -409,7 +346,7 @@ mod tests {
             .map_err(|error| error.to_string())?;
         record_owner_drop(RequestedDevice::Cuda0, &cuda, &mut cuda_stability)
             .map_err(|error| error.to_string())?;
-        assert_eq!(cuda_stability.unload_used, Some(4_000));
+        assert_eq!(cuda_stability.unload_delta, Some(0));
         assert_eq!(cuda_stability.owner_drop_delta, Some(0));
         Ok(())
     }
@@ -424,82 +361,41 @@ mod tests {
     }
 
     #[test]
-    fn cpu_summary_is_not_applicable_and_has_no_cuda_arrays() -> Result<(), String> {
+    fn cpu_summary_has_no_cuda_interpretation() -> Result<(), String> {
         let summary = summarize_stability(
             RequestedDevice::Cpu,
             0,
             &[CycleStabilityObservation {
-                unload_used: None,
-                owner_drop_used: None,
                 unload_delta: None,
                 owner_drop_delta: None,
             }],
         )
         .map_err(|error| error.to_string())?;
-        assert_eq!(summary.primary_cycle_count, 1);
-        assert_eq!(summary.cuda_stability_cycle_count, 0);
-        assert!(summary.post_unload_cuda_used_bytes.is_empty());
-        assert!(summary.post_owner_drop_cuda_used_bytes.is_empty());
-        assert!(
-            summary
-                .post_unload_cuda_delta_from_pre_load_bytes
-                .is_empty()
-        );
-        assert!(
-            summary
-                .post_owner_drop_cuda_delta_from_pre_load_bytes
-                .is_empty()
-        );
         assert!(!summary.strict_monotonic_retained_growth_observed);
         assert_eq!(summary.max_retained_cuda_delta_bytes, None);
-        assert_eq!(summary.assessment, CPU_STABILITY_ASSESSMENT);
         Ok(())
     }
 
     #[test]
-    fn cuda_summary_flags_growth_without_calling_it_a_leak() -> Result<(), String> {
+    fn cuda_summary_flags_growth_without_duplicating_raw_checkpoint_arrays() -> Result<(), String> {
         let observations = [
             CycleStabilityObservation {
-                unload_used: Some(100),
-                owner_drop_used: Some(90),
                 unload_delta: Some(20),
                 owner_drop_delta: Some(10),
             },
             CycleStabilityObservation {
-                unload_used: Some(90),
-                owner_drop_used: Some(80),
                 unload_delta: Some(30),
                 owner_drop_delta: Some(20),
             },
             CycleStabilityObservation {
-                unload_used: Some(80),
-                owner_drop_used: Some(70),
                 unload_delta: Some(40),
                 owner_drop_delta: Some(30),
             },
         ];
         let summary = summarize_stability(RequestedDevice::Cuda0, 2, &observations)
             .map_err(|error| error.to_string())?;
-        assert_eq!(summary.primary_cycle_count, 1);
-        assert_eq!(summary.cuda_stability_cycle_count, 2);
-        assert_eq!(summary.post_unload_cuda_used_bytes, [100, 90, 80]);
-        assert_eq!(summary.post_owner_drop_cuda_used_bytes, [90, 80, 70]);
-        assert_eq!(
-            summary.post_unload_cuda_delta_from_pre_load_bytes,
-            [20, 30, 40]
-        );
-        assert_eq!(
-            summary.post_owner_drop_cuda_delta_from_pre_load_bytes,
-            [10, 20, 30]
-        );
         assert!(summary.strict_monotonic_retained_growth_observed);
         assert_eq!(summary.max_retained_cuda_delta_bytes, Some(40));
-        assert!(summary.assessment.contains("review-required"));
-        assert!(
-            summary
-                .assessment
-                .contains("neither proof of a process leak")
-        );
         Ok(())
     }
 }

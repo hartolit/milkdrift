@@ -39,7 +39,7 @@ These files should not accumulate project support state, concrete crate inventor
 
 ### Project vision
 
-[Project vision](vision.md) records why llm-app exists and the longer-term ideas the
+[Project vision](vision.md) records why Milkdrift exists and the longer-term ideas the
 current product is intended to explore: clean context, composable workflows,
 navigable memory, local/peer/hosted execution, multiple frontends, trust, and deeper
 system integration. It is deliberately exploratory rather than normative.

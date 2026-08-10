@@ -153,6 +153,21 @@ pub use retention::{
     ApplicationRetainedOwnership,
 };
 pub use runtime::ApplicationRuntime;
+
+/// Executes the complete download-free E1 CUDA hardware suite.
+///
+/// This entry point exists only for the explicitly feature-gated harness-free test target.
+/// It is not a product runtime API.
+///
+/// # Errors
+///
+/// Returns a diagnostic when opt-in is absent or any registered hardware case fails.
+#[cfg(feature = "cuda-hardware-tests")]
+#[doc(hidden)]
+pub fn __run_cuda_hardware_suite() -> Result<(), String> {
+    runtime::cuda_hardware::run_hardware_suite()
+}
+
 pub use selection::{
     ApplicationComputeCapability, ApplicationDevice, ApplicationDeviceDiscoveryFailure,
     ApplicationDeviceDiscoveryFailureKind, ApplicationDeviceSummary,

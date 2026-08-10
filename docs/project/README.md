@@ -24,7 +24,7 @@ A document may restate a small boundary when needed locally, but changing facts 
 
 ## Architecture and state
 
-- [Project architecture](architecture.md) applies the reusable [architecture principles](../architecture.md) to llm-app and records the current F0/F1, E0/capability/E1, execution-target, adapter, and frontend model.
+- [Project architecture](architecture.md) applies the reusable [architecture principles](../architecture.md) to Milkdrift and records the current F0/F1, E0/capability/E1, execution-target, adapter, and frontend model.
 - [Workspace boundaries](workspace.md) is the concrete crate inventory and dependency graph.
 - [Implementation status](implementation-status.md) is the only product-level support matrix and validation-state page.
 - Accepted and superseded project decisions are indexed in [architecture decisions](../agent/decisions/README.md).

@@ -5,7 +5,7 @@ use std::process::{Command, Output};
 
 use super::super::cli::RequestedDevice;
 use super::super::report::CudaEnvironmentMetadata;
-use super::device::{DeviceState, DiscoveryCounter, REQUIRED_CUDA_NAME};
+use super::device::{DeviceState, REQUIRED_CUDA_NAME};
 use crate::error::{BenchmarkError, BenchmarkResult};
 
 #[cfg(feature = "cuda")]
@@ -25,7 +25,6 @@ struct NvccMetadata {
 
 pub(super) fn collect_cuda_environment(
     device: &DeviceState,
-    discovery_counter: &DiscoveryCounter,
 ) -> BenchmarkResult<Option<CudaEnvironmentMetadata>> {
     if device.requested() == RequestedDevice::Cpu {
         return Ok(None);
@@ -33,7 +32,7 @@ pub(super) fn collect_cuda_environment(
 
     let build_compute_capability = validate_cuda_build_configuration()?;
     let cuda_visible_devices = collect_cuda_visible_devices()?;
-    let probe = device.validated_cuda_probe(discovery_counter)?;
+    let probe = device.validated_cuda_probe()?;
 
     let nvidia_smi = query_nvidia_smi()?;
     if nvidia_smi.name != probe.name {

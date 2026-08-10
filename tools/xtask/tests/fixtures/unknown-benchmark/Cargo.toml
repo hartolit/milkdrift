@@ -1,3 +1,0 @@
-[workspace]
-members = ["benchmarks/experimental"]
-resolver = "3"

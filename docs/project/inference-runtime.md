@@ -227,6 +227,6 @@ engine. External Hub resolution remains above E0. Hosted providers and peers nee
 coarser execution boundary rather than pretending remote text generation has local
 native ownership semantics.
 
-This guide makes no current-tree validation, external-checkpoint, or hardware
-support claim. The canonical evidence and support matrix remains in
-[implementation status](implementation-status.md).
+The package's dedicated harness-free `cuda_hardware` target owns the complete hosted-E0 mixed-fixture generation, accounting, release, unload, and shutdown hardware boundary. The deterministic `fault_injection` target remains separate and runs in full under the CUDA feature graph; neither suite is selected through a workflow list of function names.
+
+This guide makes no current-tree validation, external-checkpoint, or hardware support claim. The canonical evidence and support matrix remains in [implementation status](implementation-status.md).

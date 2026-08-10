@@ -1,3 +1,0 @@
-[workspace]
-members = ["tools/release"]
-resolver = "3"

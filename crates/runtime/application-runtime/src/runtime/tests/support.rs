@@ -469,7 +469,7 @@ pub(super) const fn deterministic_settings(maximum_new_tokens: u32) -> Generatio
 pub(super) fn unique_database_path() -> PathBuf {
     let identifier = NEXT_DATABASE_ID.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "llm-app-phase5-{}-{identifier}.redb",
+        "milkdrift-application-runtime-{}-{identifier}.redb",
         std::process::id()
     ))
 }

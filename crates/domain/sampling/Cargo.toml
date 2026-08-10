@@ -8,6 +8,10 @@ description = "Deterministic zero-allocation logit sampling and stop matching"
 readme = "README.md"
 publish = false
 
+[package.metadata.milkdrift]
+role = "domain-feature"
+benchmark-targets = ["sampling_pipeline"]
+
 [dependencies]
 domain-contracts.workspace = true
 libm.workspace = true

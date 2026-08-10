@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[package.metadata.milkdrift]
+role = "adapter"
+cuda-provider = true
+
 [features]
 default = []
 cuda = [
@@ -12,9 +16,16 @@ cuda = [
     "candle-nn/cuda",
     "candle-transformers/cuda",
 ]
+cuda-hardware-tests = ["cuda"]
 
 [dependencies]
-candle-core = { path = "../../../vendor/candle-core", default-features = false }
-candle-nn = { path = "../../../vendor/candle-nn", default-features = false }
-candle-transformers = { path = "../../../vendor/candle-transformers", default-features = false }
-cudarc = { path = "../../../vendor/cudarc", default-features = false, optional = true }
+candle-core = { version = "=0.11.0", default-features = false }
+candle-nn = { version = "=0.11.0", default-features = false }
+candle-transformers = { version = "=0.11.0", default-features = false }
+cudarc = { version = "=0.19.8", default-features = false, features = ["std", "driver", "cuda-version-from-build-system", "dynamic-linking"], optional = true }
+
+[[test]]
+name = "cuda_hardware"
+path = "tests/cuda_hardware.rs"
+harness = false
+required-features = ["cuda-hardware-tests"]

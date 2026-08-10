@@ -7,6 +7,9 @@ license.workspace = true
 description = "Versioned redb persistence adapter for desktop settings and model catalogue"
 publish = false
 
+[package.metadata.milkdrift]
+role = "adapter"
+
 [dependencies]
 redb.workspace = true
 

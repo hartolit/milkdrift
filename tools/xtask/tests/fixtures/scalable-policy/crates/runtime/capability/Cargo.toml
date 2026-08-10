@@ -1,0 +1,11 @@
+[package]
+name = "capability"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[package.metadata.milkdrift]
+role = "runtime-capability"
+
+[dependencies]
+e0 = { path = "../e0" }

@@ -1,6 +1,6 @@
 //! Benchmark-local translation of public load facts into stable report records.
 
-use application_runtime::ApplicationScalarType;
+use application_runtime::{ApplicationDevice, ApplicationScalarType};
 use domain_contracts::{
     DeviceKind, ExecutionDevice, LoadPlan, MemoryFootprint, ScalarType, ScalarTypeSet,
 };
@@ -8,7 +8,8 @@ use inference_runtime::LoadReceipt;
 
 use crate::error::{BenchmarkError, BenchmarkResult};
 use crate::report::{
-    E0LoadReceiptRecord, ExecutionDeviceRecord, MemoryFootprintRecord, PreparedLoadRecord,
+    DeviceIdentity, E0LoadReceiptRecord, ExecutionDeviceRecord, MemoryFootprintRecord,
+    PreparedLoadRecord,
 };
 
 pub(crate) fn prepared_load_record(plan: &LoadPlan) -> BenchmarkResult<PreparedLoadRecord> {
@@ -154,17 +155,18 @@ pub(crate) const fn application_scalar_type_label(value: ApplicationScalarType) 
     }
 }
 
-pub(crate) fn application_scalar_type(
-    value: ScalarType,
-    context: &'static str,
-) -> BenchmarkResult<ApplicationScalarType> {
+pub(crate) const fn application_device_record(value: ApplicationDevice) -> DeviceIdentity {
     match value {
-        ScalarType::F32 => Ok(ApplicationScalarType::F32),
-        ScalarType::F16 => Ok(ApplicationScalarType::F16),
-        ScalarType::Bf16 => Ok(ApplicationScalarType::Bf16),
-        unsupported => Err(BenchmarkError::new(format!(
-            "{context} used unsupported application scalar {unsupported:?}"
-        ))),
+        ApplicationDevice::Cpu => DeviceIdentity {
+            kind: "cpu",
+            id: 0,
+            ordinal: None,
+        },
+        ApplicationDevice::Cuda { ordinal } => DeviceIdentity {
+            kind: "cuda",
+            id: ordinal as u64,
+            ordinal: Some(ordinal),
+        },
     }
 }
 

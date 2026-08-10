@@ -7,9 +7,13 @@ license.workspace = true
 description = "Exclusive model registry and bounded inference lifecycle engine"
 publish = false
 
+[package.metadata.milkdrift]
+role = "runtime-foundation"
+
 [features]
 default = []
 cuda = ["candle-backend/cuda"]
+cuda-hardware-tests = ["cuda"]
 
 [dependencies]
 domain-contracts.workspace = true
@@ -19,6 +23,12 @@ sampling.workspace = true
 [dev-dependencies]
 candle-backend.workspace = true
 candle-core.workspace = true
+
+[[test]]
+name = "cuda_hardware"
+path = "tests/cuda_hardware.rs"
+harness = false
+required-features = ["cuda-hardware-tests"]
 
 [lints]
 workspace = true

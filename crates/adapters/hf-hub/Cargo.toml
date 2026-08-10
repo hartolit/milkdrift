@@ -7,6 +7,9 @@ license.workspace = true
 description = "Synchronous Hugging Face Hub model artifact resolver"
 publish = false
 
+[package.metadata.milkdrift]
+role = "adapter"
+
 [dependencies]
 hf-hub = { workspace = true }
 serde = { workspace = true }

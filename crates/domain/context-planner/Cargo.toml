@@ -7,6 +7,9 @@ license.workspace = true
 description = "Deterministic allocation-free context budgeting and selection"
 publish = false
 
+[package.metadata.milkdrift]
+role = "domain-feature"
+
 [dependencies]
 domain-contracts.workspace = true
 

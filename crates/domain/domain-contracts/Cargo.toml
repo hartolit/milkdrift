@@ -7,6 +7,9 @@ license.workspace = true
 description = "Portable shared vocabulary and engine-backend contracts"
 publish = false
 
+[package.metadata.milkdrift]
+role = "domain-foundation"
+
 [dependencies]
 
 [dev-dependencies]

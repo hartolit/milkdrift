@@ -52,7 +52,7 @@ cargo bench --locked -p sampling --bench sampling_pipeline -- \
 Compile the complete benchmark matrix without timing it with:
 
 ```text
-cargo bench --workspace --no-run --locked
+cargo bench --locked -p sampling --bench sampling_pipeline --no-run
 ```
 
 There are no hard timing thresholds. Exact executed targets, compact observed intervals, deferred component candidates, environment metadata, and evidence limitations are recorded in the canonical [performance guide](../../../docs/project/performance.md).

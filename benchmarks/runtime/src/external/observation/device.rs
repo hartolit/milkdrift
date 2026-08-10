@@ -1,16 +1,17 @@
 //! Exact requested-device policy, CUDA matrix validation, and stable identity.
 
-use std::cell::Cell;
-
 use application_runtime::{ApplicationDevice, ApplicationRuntime};
 use candle_backend::{CandleDeviceSummary, CandleLlamaLoader};
 use domain_contracts::{BackendId, DeviceId, DeviceKind, ExecutionDevice};
 
 use super::super::cli::RequestedDevice;
-use super::super::report::{CudaComputeCapability, CudaDeviceMetadata, DeviceIdentity};
+use super::super::report::{CudaComputeCapability, CudaDeviceMetadata};
 use crate::error::{BenchmarkError, BenchmarkResult};
+use crate::evidence::application_device_record;
+use crate::report::DeviceIdentity;
 
 const OBSERVATION_BACKEND: BackendId = BackendId::new(10_002);
+#[cfg(test)]
 pub(super) const CPU_EXECUTION_DEVICE: ExecutionDevice =
     ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu);
 pub(super) const CUDA_ZERO_EXECUTION_DEVICE: ExecutionDevice =
@@ -21,34 +22,6 @@ const REQUIRED_CUDA_COMPUTE_CAPABILITY: CudaComputeCapability = CudaComputeCapab
     major: 12,
     minor: 0,
 };
-pub(super) const CUDA_LOGITS_TO_HOST_LIMITATION: &str = "CUDA vocabulary logits are transferred to host F32 before sampling; GPU-side sampling is not implemented";
-pub(super) const CUDA_CONTEXT_INITIALIZATION_SCOPE: &str = "each counted safe Candle discover_device call constructs a temporary Candle CUDA device and cudarc context at a cold identity or resource checkpoint; never per token; retaining a reusable context would require unsupported ownership exposure or a new lower-level benchmark dependency";
-
-pub(super) struct DiscoveryCounter {
-    calls: Cell<u64>,
-}
-
-impl DiscoveryCounter {
-    pub(super) const fn new() -> Self {
-        Self {
-            calls: Cell::new(0),
-        }
-    }
-
-    pub(super) fn record_call(&self) -> BenchmarkResult {
-        let calls =
-            self.calls.get().checked_add(1).ok_or_else(|| {
-                BenchmarkError::new("CUDA device-discovery call count overflowed")
-            })?;
-        self.calls.set(calls);
-        Ok(())
-    }
-
-    pub(super) fn count(&self) -> u64 {
-        self.calls.get()
-    }
-}
-
 pub(super) struct DeviceState {
     requested: RequestedDevice,
     cuda: Option<CudaState>,
@@ -69,13 +42,10 @@ pub(super) struct ValidatedCudaProbe {
 }
 
 impl DeviceState {
-    pub(super) fn new(
-        requested: RequestedDevice,
-        discovery_counter: &DiscoveryCounter,
-    ) -> BenchmarkResult<Self> {
+    pub(super) fn new(requested: RequestedDevice) -> BenchmarkResult<Self> {
         let cuda = match requested {
             RequestedDevice::Cpu => None,
-            RequestedDevice::Cuda0 => Some(CudaState::new(discover_cuda_zero(discovery_counter)?)),
+            RequestedDevice::Cuda0 => Some(CudaState::new(discover_cuda_zero()?)),
         };
         Ok(Self { requested, cuda })
     }
@@ -93,39 +63,21 @@ impl DeviceState {
     }
 
     pub(super) fn requested_identity(&self) -> DeviceIdentity {
-        let execution_device = requested_execution_device(self.requested);
-        DeviceIdentity {
-            kind: match self.requested {
-                RequestedDevice::Cpu => "cpu",
-                RequestedDevice::Cuda0 => "cuda",
-            },
-            id: execution_device.id.get(),
-            ordinal: match self.requested {
-                RequestedDevice::Cpu => None,
-                RequestedDevice::Cuda0 => Some(0),
-            },
-        }
+        application_device_record(requested_application_device(self.requested))
     }
 
     pub(super) fn cuda_device_metadata(&self) -> Option<CudaDeviceMetadata> {
         self.cuda.as_ref().map(|cuda| cuda.metadata.clone())
     }
 
-    pub(super) fn validated_cuda_probe(
-        &self,
-        discovery_counter: &DiscoveryCounter,
-    ) -> BenchmarkResult<ValidatedCudaProbe> {
+    pub(super) fn validated_cuda_probe(&self) -> BenchmarkResult<ValidatedCudaProbe> {
         let cuda = self.cuda_state()?;
-        let probe = discover_cuda_zero(discovery_counter)?;
+        let probe = discover_cuda_zero()?;
         cuda.validate_stable(&probe)?;
         Ok(probe)
     }
 
-    pub(super) fn validate_selected_e1(
-        &self,
-        runtime: &ApplicationRuntime,
-        discovery_counter: &DiscoveryCounter,
-    ) -> BenchmarkResult {
+    pub(super) fn validate_selected_e1(&self, runtime: &ApplicationRuntime) -> BenchmarkResult {
         let expected = requested_application_device(self.requested);
         let persisted = runtime.preferences().selected_device;
         if persisted != expected {
@@ -161,7 +113,7 @@ impl DeviceState {
 
         if self.requested == RequestedDevice::Cuda0 {
             let cuda = self.cuda_state()?;
-            self.validated_cuda_probe(discovery_counter)?;
+            self.validated_cuda_probe()?;
             validate_e1_cuda_summary(summary, cuda)?;
         }
         Ok(())
@@ -171,7 +123,7 @@ impl DeviceState {
         let expected = requested_application_device(self.requested);
         if actual != expected {
             return Err(BenchmarkError::new(format!(
-                "E0 load receipt reported actual device {actual:?}, expected the explicitly requested {expected:?}; refusing to record a substituted execution device"
+                "public E1 loaded-model evidence reported actual device {actual:?}, expected the explicitly requested {expected:?}; refusing to record a substituted execution device"
             )));
         }
         Ok(())
@@ -318,13 +270,6 @@ impl ValidatedCudaProbe {
     }
 }
 
-const fn requested_execution_device(requested: RequestedDevice) -> ExecutionDevice {
-    match requested {
-        RequestedDevice::Cpu => CPU_EXECUTION_DEVICE,
-        RequestedDevice::Cuda0 => CUDA_ZERO_EXECUTION_DEVICE,
-    }
-}
-
 const fn requested_application_device(requested: RequestedDevice) -> ApplicationDevice {
     match requested {
         RequestedDevice::Cpu => ApplicationDevice::Cpu,
@@ -332,8 +277,7 @@ const fn requested_application_device(requested: RequestedDevice) -> Application
     }
 }
 
-fn discover_cuda_zero(discovery_counter: &DiscoveryCounter) -> BenchmarkResult<ValidatedCudaProbe> {
-    discovery_counter.record_call()?;
+fn discover_cuda_zero() -> BenchmarkResult<ValidatedCudaProbe> {
     let summary = CandleLlamaLoader::new(OBSERVATION_BACKEND)
         .discover_device(CUDA_ZERO_EXECUTION_DEVICE)
         .map_err(|error| {

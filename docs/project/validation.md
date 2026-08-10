@@ -14,11 +14,11 @@ git rev-parse 'HEAD^{tree}'
 
 A command that passed on another commit or an earlier dirty tree is not evidence for the current tree. Local validation and GitHub CI are separate facts; do not claim remote CI passed without observing its actual run.
 
-Use one Cargo process at a time. Do not run `cargo clean`. Keep generated output under the root `target/` or outside the repository.
+Use one Cargo process at a time. Do not run `cargo clean`. Keep generated output under root `target/`, one explicitly named isolated `CARGO_TARGET_DIR`, or outside the repository. Clean acceptance must verify that it did not accidentally create both an isolated target and root `target/`.
 
 ## Phase 12 closure evidence
 
-Phase 12 Segment 1 is commit `58490fe693fef7a2635956181088664cd90685e8`; Segment 2 is commit `12510695aa29be6a2665dbf3777cccbb8172c2d1`; Segment 3 is this coherent validation/project-truth closure commit.
+Phase 12 Segment 1 is commit `58490fe693fef7a2635956181088664cd90685e8`; Segment 2 is commit `12510695aa29be6a2665dbf3777cccbb8172c2d1`; Segment 3 is closure commit `181a069ce81525e9c144fe8de051ced8e3c0b9d7`, tree `310e437c0729f51fe6c0ba3dcb5fbf9f1935a80f`.
 
 On 2026-08-08, these sequential download-free CPU commands passed on the closure tree:
 
@@ -33,7 +33,7 @@ The observed results were respectively 20, 3, 32, and 78 passing tests with no f
 
 These CPU and canonical gates ran locally on Linux 7.1.5-arch1-2 x86_64 with an AMD Ryzen 9 5950X (16 cores/32 threads), Rust 1.96.1, and Cargo 1.96.1. The canonical `cargo xtask verify` gate passed from a previously absent Cargo target directory. Both `wasm32-unknown-unknown` and `thumbv7em-none-eabihf` checks passed for all five domain crates; locked cargo-deny policy passed; and offline Lychee checked 276 links with 0 errors. The exact CUDA compile chain passed with `CUDA_COMPUTE_CAP=120`.
 
-The complete local deterministic hardware matrix passed on NVIDIA GeForce RTX 5070 Ti ordinal 0, driver/KMD 610.43.03, CUDA UMD/toolkit 13.3, `nvcc` 13.3.73, compute capability 12.0, and build cap 120. The Phase 12 GitHub self-hosted workflow has not run, so no remote workflow provenance is claimed. No suitable immutable, license-reviewed external mixed-dtype Llama checkpoint was established; the mixed-layout claim remains limited to deterministic project-authored fixtures.
+The complete local deterministic hardware matrix passed on NVIDIA GeForce RTX 5070 Ti ordinal 0, driver/KMD 610.43.03, CUDA UMD/toolkit 13.3, `nvcc` 13.3.73, compute capability 12.0, and build cap 120. At commit-authoring time the GitHub workflow had not run; after push, self-hosted CUDA [run 31281013243](https://github.com/hartolit/milkdrift/actions/runs/31281013243) completed successfully on the exact closure commit. Hosted Quality [run 31281013257](https://github.com/hartolit/milkdrift/actions/runs/31281013257) passed its canonical native step and then exhausted disk before portable evidence could complete. That is infrastructure history, not a WASM/product failure. No suitable immutable, license-reviewed external mixed-dtype Llama checkpoint was established; the mixed-layout claim remains limited to deterministic project-authored fixtures.
 
 ## Pristine artifact-loading amendment evidence
 
@@ -78,7 +78,7 @@ The ordinary composite gate is:
 cargo xtask verify
 ```
 
-`tools/xtask` runs architecture and hygiene policy, formatting, every workspace target, ordinary tests/doctests, mandatory Clippy, API documentation with warnings denied, and benchmark compilation. It does not run statistical measurements or a network-dependent external model.
+`tools/xtask` runs architecture and hygiene policy, formatting, every intended workspace target, ordinary tests/doctests, mandatory Clippy, API documentation with warnings denied, and exact maintained benchmark compilation. Package metadata is checked bidirectionally against Cargo bench targets before commands run. It does not execute statistical measurements, a hardware suite, or a network-dependent external model.
 
 Useful direct diagnostics are:
 
@@ -88,7 +88,8 @@ cargo check --workspace --all-targets --locked
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
-cargo bench --workspace --no-run --locked
+cargo bench --locked -p runtime-benchmarks --bench runtime --no-run
+cargo bench --locked -p sampling --bench sampling_pipeline --no-run
 git diff --check
 ```
 
@@ -98,7 +99,11 @@ The mandatory lint profile uses stable selected Clippy policy under `-D warnings
 
 [`.github/workflows/quality.yml`](../../.github/workflows/quality.yml) is the normal shared-CI gate. It runs on every push and pull request, plus a weekly schedule, using GitHub-hosted Ubuntu 24.04 and the mandatory default CPU feature graph. It does not install a CUDA toolkit, require a driver, enable the `cuda` feature, execute CUDA hardware tests, download an external model, or run performance thresholds.
 
-The `Rust and architecture` job prints the commit and tree, runs the canonical gate from a fresh target with forbidden-tool shims, checks the two portable domain targets, and reports duplicate dependencies. The separate blocking policy job runs locked dependency policy and offline repository-local Markdown links. Scheduled-only nursery and external-link jobs remain non-blocking or outside pull-request determinism as configured in the workflow.
+The `Rust and architecture` job prints the commit/tree and runs only the native canonical gate plus duplicate-dependency reporting in `${RUNNER_TEMP}/milkdrift-native-quality-target`. A separate two-leg matrix runs WebAssembly and embedded domain checks in `${RUNNER_TEMP}/milkdrift-wasm-target` and `${RUNNER_TEMP}/milkdrift-thumb-target` without Slint/native packages and without depending on native artifacts. Policy, scheduled nursery, and link work use their own named targets/install roots. The policy job removes `cargo-deny` build artifacts before compiling Lychee so both installer trees never coexist. Jobs run in parallel where no evidence dependency exists.
+
+Every Cargo-building job rejects an unexpected root `target/`, checks a documented free-space floor, prints useful `df`/`du` observations, and removes its target under `if: always()`. The initial operational floors are 14 GiB for native, 12 GiB for nursery, 4 GiB per portable/link leg, and 6 GiB for policy tools; they are fail-early safeguards, not measured product requirements. The first clean hosted redesigned run must record its target size and filesystem low-water mark before those floors are treated as measured CI evidence.
+
+All checkout steps use immutable `actions/checkout` v7.0.1 commit `3d3c42e5aac5ba805825da76410c181273ba90b1` (Node 24) with credentials disabled and read-only repository permission. Self-hosted runners must meet checkout's documented minimum runner version 2.327.1.
 
 Untrusted pull-request code runs only on GitHub-hosted infrastructure. It cannot schedule the self-hosted CUDA machine because that workflow has no pull-request trigger. Observed run acceptance belongs in [implementation status](implementation-status.md); this document owns the repeatable workflow boundary.
 
@@ -251,7 +256,7 @@ cargo xtask architecture
 cargo xtask hygiene
 ```
 
-Architecture validates the typed locked workspace graph and exact role/dependency registries. Hygiene validates tracked operational surfaces, manifests, selected dependencies, benchmark layout, nested locks/targets, generated results, caches, and source-tree artifacts. See [dependency policy](dependency-policy.md).
+Architecture validates locked typed Cargo metadata, explicit manifest roles, the generic layer DAG, actual domain acyclicity, exact exception/CUDA records, and maintained benchmark registration. Hygiene shares the role/benchmark source while validating tracked operational surfaces, manifests, selected dependencies, nested locks/targets, generated results, caches, and source-tree artifacts. See [dependency policy](dependency-policy.md).
 
 ## Download-free focused CPU validation
 
@@ -304,7 +309,6 @@ cargo xtask hygiene
 
 cargo check --locked \
     -p candle-backend \
-    -p hf-hub-adapter \
     -p inference-runtime \
     -p application-runtime \
     -p desktop-slint \
@@ -322,7 +326,6 @@ cargo test --locked \
 
 cargo clippy --locked \
     -p candle-backend \
-    -p hf-hub-adapter \
     -p inference-runtime \
     -p application-runtime \
     -p desktop-slint \
@@ -334,97 +337,25 @@ cargo clippy --locked \
 
 Do not use workspace `--all-features`; the exact graph is `runtime-benchmarks/cuda -> application-runtime/cuda -> candle-backend/cuda`, `desktop-slint/cuda -> application-runtime/cuda`, plus the development-only `inference-runtime/cuda -> candle-backend/cuda` test edge. This exact compile chain passed locally on both the 2026-08-08 closure tree and the 2026-08-10 artifact-loading amendment with `CUDA_COMPUTE_CAP=120`.
 
-Hardware execution is ignored by default and additionally requires `MILKDRIFT_CUDA_TEST=1`. First run the non-ignored explicit-CPU proof in the CUDA build:
+Hardware execution is absent from ordinary CPU tests and requires both the package-local `cuda-hardware-tests` feature and `MILKDRIFT_CUDA_TEST=1`. Each owning package declares one explicit harness-free `cuda_hardware` target. The source macro requires one or more registered cases, the runner counts every attempted case, and absence of opt-in is a failure rather than a successful skip. Cargo fails when a target is missing; adding a case to a suite runs it without a workflow edit.
+
+Run the complete adapter, E0, deterministic cleanup, and E1 boundaries sequentially:
 
 ```sh
-CUDA_VISIBLE_DEVICES=0 \
-CUDA_COMPUTE_CAP=120 \
+export CUDA_VISIBLE_DEVICES=0
+export CUDA_COMPUTE_CAP=120
+export MILKDRIFT_CUDA_TEST=1
+
 cargo test --release --locked \
     -p candle-backend \
-    --features cuda \
-    --test llama_cuda \
-    -- \
-    --exact cuda_enabled_binary_can_explicitly_execute_cpu \
-    --nocapture \
-    --test-threads=1
-```
+    --features cuda-hardware-tests \
+    --test cuda_hardware
 
-Then verify and execute the **complete all-ignored adapter matrix**. The expected ignored tests are exactly:
-
-- `cuda_ordinal_zero_executes_fixture_and_matches_cpu_logits`;
-- `cuda_homogeneous_bf16_source_executes_as_bf16`;
-- `cuda_mixed_f16_f32_executes_as_f16`;
-- `cuda_mixed_bf16_f32_executes_as_bf16`.
-
-```sh
-CUDA_VISIBLE_DEVICES=0 \
-MILKDRIFT_CUDA_TEST=1 \
-CUDA_COMPUTE_CAP=120 \
-cargo test --release --locked \
-    -p candle-backend \
-    --features cuda \
-    --test llama_cuda \
-    -- \
-    --ignored \
-    --list
-
-for test_name in \
-    cuda_ordinal_zero_executes_fixture_and_matches_cpu_logits \
-    cuda_homogeneous_bf16_source_executes_as_bf16 \
-    cuda_mixed_f16_f32_executes_as_f16 \
-    cuda_mixed_bf16_f32_executes_as_bf16
-do
-    CUDA_VISIBLE_DEVICES=0 \
-    MILKDRIFT_CUDA_TEST=1 \
-    CUDA_COMPUTE_CAP=120 \
-    cargo test --release --locked \
-        -p candle-backend \
-        --features cuda \
-        --test llama_cuda \
-        -- \
-        --include-ignored \
-        --exact "${test_name}" \
-        --nocapture \
-        --test-threads=1
-done
-```
-
-The workflow requires the ignored-test list to contain exactly these four names, then runs each name separately with `--include-ignored --exact`. A rename, accidental de-ignoring, or extra ignored test therefore cannot silently reduce or expand the trusted runner workload. The matrix checks actual device/scalar facts and exact final/loading-peak footprints for the mixed fixtures. The complete guarded four-test adapter matrix passed locally on both 2026-08-08 and the amended 2026-08-10 tree on the exact RTX 5070 Ti row.
-
-The E0 hardware target proves verified preparation/receipt/snapshot identity, mixed F16/F32 execution, scheduled prefill and incremental decode, host-side sampling from transferred logits, sequence cleanup, model unload, and zero post-unload ownership accounting:
-
-```sh
-CUDA_VISIBLE_DEVICES=0 \
-MILKDRIFT_CUDA_TEST=1 \
-CUDA_COMPUTE_CAP=120 \
 cargo test --release --locked \
     -p inference-runtime \
-    --features cuda \
-    --test native_backend_generation \
-    -- \
-    --ignored \
-    --list
+    --features cuda-hardware-tests \
+    --test cuda_hardware
 
-CUDA_VISIBLE_DEVICES=0 \
-MILKDRIFT_CUDA_TEST=1 \
-CUDA_COMPUTE_CAP=120 \
-cargo test --release --locked \
-    -p inference-runtime \
-    --features cuda \
-    --test native_backend_generation \
-    -- \
-    --include-ignored \
-    --exact candle_mixed_cuda_fixture_covers_e0_generation_accounting_and_lifecycle \
-    --nocapture \
-    --test-threads=1
-```
-
-Run deterministic failed-load ownership/accounting faults and the explicit application no-fallback policy separately. These tests are download-free; their use in the CUDA job proves the exact feature graph still preserves the same cleanup and selection contracts:
-
-```sh
-CUDA_VISIBLE_DEVICES=0 \
-MILKDRIFT_CUDA_TEST=1 \
-CUDA_COMPUTE_CAP=120 \
 cargo test --release --locked \
     -p inference-runtime \
     --features cuda \
@@ -433,48 +364,15 @@ cargo test --release --locked \
     --nocapture \
     --test-threads=1
 
-CUDA_VISIBLE_DEVICES=0 \
-MILKDRIFT_CUDA_TEST=1 \
-CUDA_COMPUTE_CAP=120 \
 cargo test --release --locked \
     -p application-runtime \
-    --features cuda \
-    --lib \
-    -- \
-    --exact runtime::tests::devices::unavailable_selected_cuda_blocks_load_without_fallback \
-    --nocapture \
-    --test-threads=1
+    --features cuda-hardware-tests \
+    --test cuda_hardware
 ```
 
-The ignored E1 fixture test is separately guarded by `MILKDRIFT_CUDA_TEST=1`. It exercises discovery, explicit E1 CUDA selection, fixture load, configuration-declared versus actual execution scalar truth, selected-versus-receipt-verified actual device reporting, unload, and bounded shutdown:
+The adapter suite owns explicit CPU execution in a CUDA build, invalid-ordinal rejection, ordinal-0 F32 identity/logit comparison, homogeneous BF16, mixed F16/F32, and mixed BF16/F32. The E0 suite owns mixed execution, preparation/receipt identity, scheduled generation, sequence release, unload, and zero accounting. The complete fault target owns deterministic failed-load and cleanup behavior. The E1 suite owns explicit unavailable-CUDA no-fallback plus real discovery, selection, actual scalar/device, unload, and bounded shutdown.
 
-```sh
-CUDA_VISIBLE_DEVICES=0 \
-MILKDRIFT_CUDA_TEST=1 \
-CUDA_COMPUTE_CAP=120 \
-cargo test --release --locked \
-    -p application-runtime \
-    --features cuda \
-    --lib \
-    -- \
-    --ignored \
-    --list
-
-CUDA_VISIBLE_DEVICES=0 \
-MILKDRIFT_CUDA_TEST=1 \
-CUDA_COMPUTE_CAP=120 \
-cargo test --release --locked \
-    -p application-runtime \
-    --features cuda \
-    --lib \
-    -- \
-    --include-ignored \
-    --exact runtime::tests::devices::cuda_fixture_load_reports_the_selected_and_actual_e1_device \
-    --nocapture \
-    --test-threads=1
-```
-
-Do not run the ignored hardware tests in ordinary CPU CI, do not use workspace `--all-features`, and do not interpret source presence, test listing, or compilation as hardware execution. On 2026-08-08 and again for the artifact-loading amendment on 2026-08-10, the complete local matrix passed on NVIDIA GeForce RTX 5070 Ti ordinal 0, driver/KMD 610.43.03, CUDA UMD/toolkit 13.3, `nvcc` 13.3.73, compute capability 12.0, and build cap 120. The explicit CPU-in-CUDA adapter test passed; all four ignored adapter tests passed; the mixed F16/F32 hosted-E0 lifecycle passed; all 32 fault tests passed under the CUDA feature graph; E1 explicit no-fallback passed; and the guarded E1 CUDA fixture lifecycle passed. These are local deterministic fixture results. The Phase 12 GitHub self-hosted workflow has not run and remains unclaimed.
+Do not use workspace `--all-features`, parse test listings, or interpret compilation as device execution. The former ignored/name-enumerated matrix passed locally on 2026-08-08 and on the artifact-loading amendment on 2026-08-10. Phase 12 self-hosted run `31281013243` later passed that historical workflow on closure commit `181a069`; a dedicated-suite result must be recorded separately for the current tree.
 
 ## Self-hosted CUDA hardware correctness gate
 
@@ -487,11 +385,13 @@ The security boundary is deliberate:
 - path-filtered pushes trust code already landed on `main`; anyone able to land matching code on `main` is inside the machine-execution boundary, so repository write and branch controls remain part of runner security;
 - workflow permissions are `contents: read`, checkout credentials are not persisted, and no repository secret or command input is used;
 - one repository-wide concurrency group prevents overlapping Milkdrift GPU jobs;
-- Cargo is offline after checkout, the target directory is isolated beneath `$RUNNER_TEMP`, and an `always()` final step removes it without `cargo clean`.
+- Cargo is offline after checkout; check and release-hardware targets are separately isolated beneath `$RUNNER_TEMP`, root-target creation is rejected, and an `always()` final step removes both without `cargo clean`.
 
-The runner administrator maintains `/var/tmp/milkdrift-cargo-home` as a dependency-only Cargo cache seeded out of band from a trusted locked checkout. Refresh that cache before a trusted dependency update reaches `main`; do not expose credentials in it or relax the workflow's offline setting. The job fails before compilation when the maintained cache is missing or inaccessible.
+The runner administrator maintains `/var/tmp/milkdrift-cargo-home` as a dependency-only Cargo cache seeded out of band from a trusted locked checkout. Refresh that cache before a trusted dependency update reaches `main`; do not expose credentials in it or relax the workflow's offline setting. The job fails before compilation when the maintained cache is missing/inaccessible, `RUNNER_TEMP` has less than 20 GiB free, or the Cargo-home filesystem has less than 4 GiB free. The runner must be Actions Runner 2.327.1 or newer for pinned checkout v7's Node 24 runtime.
 
-The job validates the exact RTX 5070 Ti / CUDA ordinal 0 / compute capability 12.0 / Toolkit 12.8+ / build-cap-120 matrix, then runs metadata, architecture, hygiene, the five-package CUDA check/Clippy graph, four-package test compilation, guarded explicit CPU-in-CUDA execution, the guarded exact four-test homogeneous/mixed adapter matrix, the guarded renamed mixed hosted-E0 lifecycle, deterministic cleanup faults, guarded exact no-fallback, and guarded E1 device/scalar lifecycle. It does not run TinyLlama, Hugging Face resolution, Criterion, elapsed-time thresholds, Slint interaction, or any arbitrary model. Its Toolkit 12.8+ fixture preflight range does not broaden product support beyond the exact locally observed Phase 12 Toolkit 13.3 row. The local command matrix passed, but the updated Phase 12 GitHub workflow has not run; workflow-source presence is not remote execution evidence.
+The job validates the exact RTX 5070 Ti / CUDA ordinal 0 / compute capability 12.0 / Toolkit 12.8+ / build-cap-120 matrix. It compiles metadata/policy, the exact CUDA check/Clippy graph, and all dedicated suites in `${RUNNER_TEMP}/milkdrift-cuda-check-target`, reports its size, and removes it before release execution. It then runs the complete adapter, E0, fault-cleanup, and E1 suite boundaries in `${RUNNER_TEMP}/milkdrift-cuda-hardware-target`, reports target/Cargo-home/filesystem use, and always cleans both targets. No shell registry contains test function names.
+
+The job does not run TinyLlama, network resolution, Criterion, elapsed-time thresholds, Slint interaction, or arbitrary models. Toolkit 12.8+ preflight does not broaden product support beyond an actually observed row. Historical Phase 12 run `31281013243` succeeded before this suite redesign; the redesigned current-tree workflow requires its own post-push run.
 
 ## Controlled CPU and CUDA external product evidence
 
@@ -557,38 +457,36 @@ target/phase12-cpu/release/external-baseline \
     --allow-network \
     --cache-dir target/phase10-external-cache \
     --device cpu \
-    > target/phase12-evidence/tinyllama-cpu-schema4.json
+    > target/phase12-evidence/tinyllama-cpu-schema6.json
 
 target/phase12-cuda/release/external-baseline \
     --allow-network \
     --cache-dir target/phase10-external-cache \
     --device cuda:0 \
-    > target/phase12-evidence/tinyllama-cuda-schema4.json
+    > target/phase12-evidence/tinyllama-cuda-schema6.json
 ```
 
 The executable writes no result file itself: stdout is exactly one structured report, stderr carries progress and concise diagnostics, and the redirect owns the ignored raw artifact. Do not edit generated JSON.
 
 The primary cycle on each device must prove the exact model/revision, non-empty compatible chat, one direct-completion warmup, three measured 32-token completions, matching request identities, exact terminal/released outcomes and usage, one cancellation after decoded progress, zero cleanup-pending/exhausted events, synchronized zero-cancellation unload, and bounded shutdown. CUDA additionally performs two reduced stability cycles containing load, direct generation/release, separate cancellation/release, unload, synchronization, shutdown, and owner drop. Together with the primary cycle this is three complete CUDA lifecycle cycles; warmup timing remains separate from measured samples.
 
-Review both current external schema-4 reports programmatically without printing generated text or token identifiers. Require:
+Review both current external schema-6 reports programmatically without printing generated text or token identifiers. Require:
 
 - the same clean code-under-test Git commit/tree and `dirty: false`;
 - the same exact model, revision, fixed artifact layout, prompt hashes, sampling settings, and primary workload;
-- configuration-declared `BF16` and observed tensor scalars exactly `["BF16"]`, proving this profile is homogeneous;
-- planned CPU F32 versus planned CUDA BF16 execution, with actual E1/E0-verified execution matching each plan;
-- requested device, prepared-load device, selected E1 device, and actual loaded E0 device all CPU in one report and all CUDA ordinal 0 in the other;
-- `prepared_load.exact_final_footprint` and `prepared_load.loading_peak_footprint` as separate deterministic plan quantities;
-- `e1_load_accepted: true` and `e0_reserved_ownership_observed: false`, because this independent observer preparation is not the product worker's direct E0 snapshot;
+- configuration-declared `BF16` from public E1 resolution;
+- actual E1/E0-verified execution scalar F32 on CPU and BF16 on CUDA;
+- requested, selected E1, and actual loaded device all CPU in one report and CUDA ordinal 0 in the other;
 - process RSS/HWM only under `process_memory`, and whole-device CUDA total/free/used only under `whole_device_cuda_memory`;
-- `cuda_enabled: false` for the CPU build and `cuda_enabled: true` for the CUDA build;
-- RTX 5070 Ti identity, driver/toolkit metadata, compute capability 12.0, and build target 120 only in the CUDA report;
-- complete cancellation, unload, shutdown, workspace-removal, and three-cycle CUDA stability results.
+- CUDA build/device metadata absent from CPU-only evidence and exact RTX 5070 Ti identity, driver/toolkit, compute capability 12.0, and build target 120 in CUDA evidence;
+- matching terminal/release identities, expected token/byte counts, cancellation after progress, unload, shutdown, and all three CUDA lifecycle cycles; and
+- no independent `prepared_load`, observed-tensor, planned scalar/device, footprint, direct-E0-reservation, or tautological success payload.
 
-The exact final footprint is the prepared transaction's deterministic post-load tensor ownership. The loading peak is the separate aggregate admission requirement during materialization. Neither is process RSS or physical whole-device memory. Public E1 accepts the E0 load contract but does not expose a same-worker E0 `RuntimeSnapshot`, so external schema 5 deliberately does not claim direct E0 reserved ownership or post-unload zero accounting. The opted-in E0 fixture test remains the owner for exact zero model/request/workspace/cleanup accounting.
+Schema 6 observes the public E1 product boundary and deliberately performs no shadow adapter preparation before timed load. Exact final/loading-peak plans and zero E0 ownership accounting remain owned by synthetic E0 evidence and dedicated correctness suites. Process RSS and whole-device CUDA observations remain non-attributed resource samples.
 
-Each CUDA cycle establishes a new whole-device pre-load baseline. Interpret post-unload and post-owner-drop retained deltas with absolute observations; desktop or other GPU activity can perturb either. Safe Candle `discover_device` calls and their temporary contexts remain bounded cold observations recorded as audit evidence, never per-token work or a threshold.
+Each CUDA cycle establishes a new whole-device pre-load baseline. Interpret post-unload and post-owner-drop retained deltas with absolute observations; desktop or other GPU activity can perturb either. Three cycles prove neither a leak nor non-leak result.
 
-No schema-5 product report has been accepted on the runtime-ownership tree, so no new measured values replace the historical Phase 10/11 evidence in [performance evidence](performance.md#external-product-evidence).
+No schema-6 product report has been accepted on the infrastructure-truth tree, so no new measured values replace the historical Phase 10/11 evidence in [performance evidence](performance.md#external-product-evidence).
 
 ### External mixed-checkpoint evidence gap
 
@@ -672,7 +570,7 @@ cargo clippy --locked \
     -- -D warnings
 ```
 
-Run every explicitly opted-in CUDA hardware test listed in [download-free CUDA hardware validation](#download-free-cuda-hardware-validation). The homogeneous TinyLlama schema-4 CPU/CUDA baseline remains an optional current product regression and is not mixed evidence; run it only with explicit network authorization. Absence of a suitable reviewed external mixed profile remains a documented evidence gap rather than a reason to substitute TinyLlama. Confirm artifact hygiene:
+Run every explicitly opted-in CUDA hardware test listed in [download-free CUDA hardware validation](#download-free-cuda-hardware-validation). The homogeneous TinyLlama schema-6 CPU/CUDA baseline remains an optional current product regression and is not mixed evidence; run it only with explicit network authorization. Absence of a suitable reviewed external mixed profile remains a documented evidence gap rather than a reason to substitute TinyLlama. Confirm artifact hygiene:
 
 ```sh
 test ! -e benchmarks/runtime/Cargo.lock

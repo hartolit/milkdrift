@@ -165,10 +165,12 @@ stopped. Combined Slint and shutdown failures remain visible in `DesktopError`.
 
 The runner stores `state.redb` under the platform application-data root:
 
-- `XDG_DATA_HOME/llm-app/state.redb` when configured;
-- `%LOCALAPPDATA%\\llm-app\\state.redb` on Windows, with `%APPDATA%` fallback;
-- `~/Library/Application Support/llm-app/state.redb` on macOS; and
-- `~/.local/share/llm-app/state.redb` on other Unix desktops.
+- `XDG_DATA_HOME/milkdrift/state.redb` when configured;
+- `%LOCALAPPDATA%\\milkdrift\\state.redb` on Windows, with `%APPDATA%` fallback;
+- `~/Library/Application Support/milkdrift/state.redb` on macOS; and
+- `~/.local/share/milkdrift/state.redb` on other Unix desktops.
+
+When the Milkdrift path does not yet contain a database but the former `llm-app/state.redb` path does, startup atomically moves that file into the Milkdrift directory. An existing Milkdrift database always wins and the legacy file is left untouched; migration failure is explicit rather than silently starting with empty state.
 
 Other native hosts choose their own path and pass it to
 `ApplicationRuntimeConfiguration::new`.

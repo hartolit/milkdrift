@@ -7,6 +7,10 @@ license.workspace = true
 description = "Controlled runtime benchmarks and explicit E1 product baselines"
 publish = false
 
+[package.metadata.milkdrift]
+role = "benchmark-observer"
+benchmark-targets = ["runtime"]
+
 [features]
 default = []
 cuda = ["application-runtime/cuda"]

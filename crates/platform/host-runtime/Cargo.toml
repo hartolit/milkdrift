@@ -7,6 +7,9 @@ license.workspace = true
 description = "Bounded host threading, channels, and monotonic clock adapter"
 publish = false
 
+[package.metadata.milkdrift]
+role = "platform"
+
 [dependencies]
 domain-contracts.workspace = true
 flume.workspace = true

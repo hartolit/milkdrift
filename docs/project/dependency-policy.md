@@ -2,42 +2,32 @@
 
 ## Architecture enforcement
 
-`cargo xtask architecture` loads the virtual workspace through the typed `cargo_metadata` API. Unknown workspace locations and unresolved local path targets fail closed. Architecture and hygiene are independently runnable checks; `cargo xtask verify` runs both before the composite Cargo gate.
+`cargo xtask architecture` loads the virtual workspace through locked typed `cargo_metadata`. Every tracked non-fixture Cargo package must be a root workspace member, every member must declare one known `[package.metadata.milkdrift] role`, and that declaration must occupy the compatible direct-child root. Roles are not inferred from names or prefixes; omitted members, unresolved local path targets, missing/unknown roles, and incompatible locations fail closed. Architecture and hygiene remain independently runnable, and `cargo xtask verify` runs both first.
 
-`tools/xtask` is the sole recognized tooling package and has the exact reviewed external edge to `cargo_metadata`. Runtime and platform roles are also explicit. `inference-runtime`, `corrective-workflow`, and `application-runtime` are the recognized E0, capability, and E1 packages; `host-runtime` is the only recognized package under `crates/platform`. The private local composition in `application-runtime/src/local.rs` is an internal module, not another package or layer.
+The generic inward role DAG is canonical in [project architecture](architecture.md). It keeps portable domain code below platform/adapters, E0 below capability/E1, applications above E1, benchmark observers outside production, and tooling isolated. Same-role runtime peers are denied. Normal/build Cargo edges that obey the role DAG are ordinary legal edges and are not copied into another registry.
 
-Normal and build dependencies first use the complete production layer matrix. Every domain-to-domain production edge then requires an exact source/target/kind review entry with a nonempty rationale, and the complete reviewed domain graph must remain acyclic. The current registry contains only the four F1 → F0 edges from `tokenization`, `context-planner`, `sampling`, and `task-graph` to `domain-contracts`. The coarse matrix can admit a reviewed F1 peer, but no unreviewed domain peer is allowed. F0 vocabulary itself requires a backend/runtime crossing or at least two stable, distinct domain consumers; `TaskId` therefore remains owned by `task-graph`.
+The actual normal/build F0/F1 graph is derived from Cargo declarations and must remain acyclic, including any allowed peer/foundation edge. This preserves domain ownership without making every future workflow or SDK crate edit a package-name constitution. `TaskId` remains owned by `task-graph`; shared-foundation vocabulary still requires real cross-boundary ownership rather than policy convenience.
 
-Production edges from a runtime to platform/adapters or another runtime likewise require an exact review entry with a narrow composition justification. Development dependencies are reviewed separately because compatibility tests and benchmarks may need edges that production code must not acquire.
+The root `[workspace.metadata.milkdrift]` namespace and exact integer `policy-version = 1` are mandatory; omission or an unknown version fails closed. Its exception registry is intentionally small. Each record has a stable ID, exact source/target/scope/kind, and nonempty rationale. Restricted external edges, every workspace-local/external development edge, and CUDA forwards require records. Records are validated in both directions: duplicates, stale declarations, wrong kinds, missing packages, empty rationales, and unnecessary exceptions fail. An exception cannot override an upward role edge or any tooling/observer absolute denial.
 
-The root-workspace member `benchmarks/runtime`, named `runtime-benchmarks`, has its own non-production measurement-observer role. It uses the root `Cargo.lock` and shared root `target`, declares `publish = false`, and has no nested workspace or lockfile, build script, Cargo custom-build target, or build dependencies. Its exact reviewed dependency registry is:
+The current workspace-local development exception is `inference-runtime -> candle-backend`; executable E0 compatibility and dedicated CUDA suites use it without creating a production edge. The current external policy is:
 
-- workspace-local normal: `application-runtime`, `candle-backend`, `domain-contracts`, `host-runtime`, and `inference-runtime`;
-- external normal: `serde`, `serde_json`, and `sha2` 0.11;
-- external development: `criterion`.
+- F0/F1, runtimes, tooling, and observers require exact review for production external dependencies;
+- current portable production review is `sampling -> libm`;
+- platform/adapters/apps may use ordinary implementation dependencies appropriate to their boundary, but sensitive CUDA and every development dependency still require exact review;
+- E0's external development `candle-core` edge supports download-free mixed-fixture conversion only;
+- tooling reviews `cargo_metadata`, `serde_json`, and `toml` for policy parsing; and
+- observer external reviews cover `serde`, `serde_json`, `sha2`, and development-only `criterion`.
 
-`sha2` is limited to recomputing and checking the exact reviewed synthetic-fixture hashes before either normal-runner or Criterion setup.
+A package with role `benchmark-observer` is an outer consumer. Cargo's `normal` label does not place it in production. It cannot use build dependencies/custom-build targets or be depended upon by product, tooling, tests, applications, or another observer. Unknown benchmark manifests fail closed. `runtime-benchmarks` currently observes `application-runtime`, `candle-backend`, `domain-contracts`, `host-runtime`, and `inference-runtime`; those ordinary legal outgoing local edges come from Cargo rather than a duplicate list.
 
-Cargo's `normal` label does not place these observer edges in the production graph. No production, tooling, test, or application package may depend on `runtime-benchmarks` through a normal, build, or development edge. Unknown package paths under `benchmarks/`, unreviewed benchmark dependencies, benchmark build dependencies, and custom-build targets fail closed.
+Maintained Cargo benchmark targets are separately registered in owning package metadata and compared bidirectionally with Cargo metadata and exactly one explicit owning-manifest `[[bench]]` entry with `harness = false`. The complete inventory is `runtime-benchmarks/runtime` and `sampling/sampling_pipeline`. The canonical gate compiles only those exact targets; an implicit, harnessed, new, or missing target fails policy rather than being silently omitted or compiling a zero-benchmark libtest binary.
 
-The current external policy is:
+The exact product opt-in chain is `desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda`; `runtime-benchmarks/cuda` observes through E1, and `inference-runtime/cuda` is development-only. Every default feature set is empty. The validator rejects aliases, direct dependency CUDA features, unreviewed forwards, and `cudnn`, `flash-attn`, or `nccl` as feature names, forwarded references, dependency package names, or dependency aliases.
 
-- F0 production code has no external dependencies;
-- F1 production code may use only reviewed portable dependencies, currently `sampling -> libm`;
-- platform/adapters may use implementation dependencies appropriate to their integration boundary;
-- runtimes may use only reviewed external orchestration dependencies and no frontend toolkit;
-- apps depend on E1 in production rather than directly on E0 or adapters;
-- external and workspace-local development dependencies require separate exact review.
+`candle-backend` is the sole declared CUDA provider. Its feature contains exactly optional `cudarc` plus the three reviewed Candle forwards. The direct `cudarc` edge is exact `=0.19.8`, optional, unrenamed, default-feature-free, and limited to the reviewed feature set. `cuda-hardware-tests = ["cuda"]` is permitted only as a package-local non-default alias for one explicit harness-free `cuda_hardware` target; it cannot be selected or forwarded by dependencies.
 
-The reviewed E1 production composition edges cover `candle-backend`, `hf-hub-adapter`, `hf-tokenizer`, `host-runtime`, `inference-runtime`, and `redb-storage`. They authorize the current Candle/Hub/Safetensors composition with explicit CPU or opt-in CUDA execution, bounded workers/output, and application persistence; they do not authorize arbitrary adapters or a public generic backend surface. The only workspace-local E0 development edge is `inference-runtime -> candle-backend` for executable compatibility coverage. E0 also has one exact external development edge to `candle-core`: download-free hosted tests use safe CPU conversion APIs to derive temporary mixed-dtype Safetensors variants from the project-authored F32 fixture. This edge supplies no production dependency or public API.
-
-The exact product opt-in chain is `desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda`. The existing `inference-runtime/cuda -> candle-backend/cuda` chain is development-only and does not authorize a production application edge. Every default feature set is empty along this path, so no default dependency graph reaches CUDA. There is no generic `gpu` alias.
-
-`candle-backend` owns the sole concrete non-default `cuda` implementation feature. Its exact mapping is `candle-core/cuda`, `candle-nn/cuda`, `candle-transformers/cuda`, and optional `cudarc`. The architecture validator rejects direct or forwarded `cudnn`, `flash-attn`, and `nccl` features without a separate decision.
-
-The optional direct `candle-backend -> cudarc` edge pins Candle's selected `0.19.8` version with default features disabled. It is used only under `cuda` through reviewed safe APIs for device name, compute capability, total/current memory, and native out-of-memory classification. No `cudarc` type crosses the adapter boundary, and default CPU builds do not compile or link it.
-
-`desktop-slint` has one workspace-local production dependency, `application-runtime`; its non-default `cuda` feature only forwards that dependency's reviewed feature. No `application-api` package exists.
+`desktop-slint` has one workspace-local production dependency, `application-runtime`. No `application-api` package exists.
 
 ## Rust-owned operational hygiene
 
@@ -55,13 +45,14 @@ Repository artifact rules additionally reject:
 - a nested `Cargo.lock` or `build.rs` under `benchmarks/`;
 - tracked benchmark/criterion result trees, generated reports, flamegraphs, profiler output, heap dumps, and package-local result directories;
 - tracked model/download cache directories;
-- a `benchmarks/runtime/Cargo.toml` that is not registered in root `workspace.members`, or any unknown benchmark manifest.
+- any tracked non-fixture Cargo package manifest that is not a root workspace member;
+- a benchmark member without an explicit compatible observer role, or a Cargo bench target without exact metadata registration and one explicit `harness = false` manifest entry.
 
-The root `.gitignore` uses `target/` so Cargo output is ignored at every repository depth, but project commands still share the root `target` through ordinary workspace behavior or an explicit root `CARGO_TARGET_DIR`. Raw Criterion/profiler data and model caches remain there or outside the repository. Curated conclusions belong in canonical documentation rather than generated result trees.
+The root `.gitignore` uses `target/` so Cargo output is ignored at every repository depth. Ordinary local Cargo work may use root `target`; clean acceptance and CI instead set one named isolated `CARGO_TARGET_DIR` per job, verify that root `target` was not created, observe disk use, and remove the isolated directory. Raw Criterion/profiler data and model caches remain under an approved target or outside the repository. Curated conclusions belong in canonical documentation rather than generated result trees.
 
 There is no filename-, directory-, document-status-, or whole-file bypass for a tracked operational surface. Historical names, execution-history locations, and superseded ADR status do not exempt content. Negative policy examples are accepted only when the parser can identify them as prohibitions rather than instructions. Any future exception must be exact, narrowly reviewed, and covered by tests; a broad path or status exemption is not acceptable.
 
-`cargo xtask architecture` does not implicitly run hygiene. The canonical `cargo xtask verify` command runs architecture and hygiene in sequence before format/build/test/lint/documentation/benchmark compilation. [ADR-0014](../agent/decisions/0014-rust-cargo-native-operational-tooling.md) owns the rationale and policy boundary.
+`cargo xtask architecture` does not implicitly run hygiene. The canonical `cargo xtask verify` command runs architecture and hygiene in sequence before format, workspace check/test/strict Clippy, warning-denied rustdoc, and exact registered benchmark compilation. It never falls back to a workspace-wide release bench build. [ADR-0014](../agent/decisions/0014-rust-cargo-native-operational-tooling.md) owns the rationale and policy boundary.
 
 ## Model fixture and external artifact policy
 

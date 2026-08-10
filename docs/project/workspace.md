@@ -5,7 +5,7 @@ This document is the concrete workspace inventory: crate placement, current memb
 ## Physical layout
 
 ```text
-llm-app/
+milkdrift/
 ├── .cargo/
 │   └── config.toml
 ├── Cargo.toml                 virtual workspace manifest
@@ -63,7 +63,9 @@ crates/apps/desktop-slint
 
 Each domain and runtime crate owns a coherent, independently testable responsibility. None exists merely to hold one identifier, data structure, or callback.
 
-`benchmarks/runtime` is the root-workspace member whose package name is `runtime-benchmarks`. It is the sole recognized package path under `benchmarks/` and has the explicit non-production benchmark-observer role. It shares the root `Cargo.lock` and root `target`, declares `publish = false`, and has no nested workspace, nested lockfile, build script, Cargo custom-build target, or build dependencies. No other workspace package has an incoming dependency edge to `runtime-benchmarks` of any kind; unknown benchmark manifests fail closed.
+Every tracked non-fixture package manifest must appear in the root workspace, and every member declares one explicit `[package.metadata.milkdrift] role`. Role strings and compatible direct-child locations are documented in [project architecture](architecture.md); omitted members and missing, unknown, or misplaced roles fail closed. The declaration—not a package-name match—classifies future workflow runtimes, portable SDKs, provider adapters, headless applications, benchmark observers, and tools.
+
+`benchmarks/runtime` is the root-workspace member whose package name is `runtime-benchmarks` and role is `benchmark-observer`. It uses the root `Cargo.lock`, declares `publish = false`, and has no nested workspace/lockfile, build script, Cargo custom-build target, or build dependencies. No workspace package has an incoming dependency edge to it. Unknown or unclassified benchmark manifests fail closed, while a future explicitly classified observer can be added without changing a sole-package constant.
 
 ## Responsibility-based source organization
 
@@ -94,7 +96,7 @@ application-runtime -> context-planner + tokenization + domain-contracts
 desktop-slint       -> application-runtime
 ```
 
-`xtask`, `hf-hub-adapter`, and `redb-storage` have no workspace-local production dependencies. `xtask` depends externally on the reviewed `cargo_metadata` crate.
+`xtask`, `hf-hub-adapter`, and `redb-storage` have no workspace-local production dependencies. `xtask` uses reviewed external `cargo_metadata`, `serde_json`, and `toml` dependencies to inspect typed Cargo metadata and exact test-target declarations.
 
 ### Non-production observer dependency edges
 
@@ -121,17 +123,26 @@ These are measurement-observer edges outside the production graph even where Car
 
 `desktop-slint` has no production import of Candle, Hugging Face adapter source types, redb, host channels, or inference commands. It maps E1's repository/revision selection, state, events, and model metadata to Slint presentation.
 
-Production code may not acquire an upward dependency. Platform and production adapter crates do not import runtimes or applications; production adapters do not import one another. Development dependencies are reviewed separately. The current workspace-local development exception is `inference-runtime -> candle-backend` for executable E0 compatibility tests.
+Production code may not acquire an upward dependency. Platform and adapter crates do not import runtimes or applications, and same-role runtime peers are denied. Ordinary legal normal/build edges follow the generic role DAG and are not duplicated in Rust. Workspace-local development dependencies remain separately reviewed; the current exact exception is `inference-runtime -> candle-backend` for executable E0 compatibility and CUDA hardware suites.
 
-`inference-runtime` is registered as E0, `corrective-workflow` as a capability engine, `application-runtime` as E1, and `host-runtime` as the current platform package. Runtime and platform roles are not inferred from directory position. Any production edge from a runtime to platform/adapters or another runtime additionally requires an exact reviewed composition entry.
+`inference-runtime`, `corrective-workflow`, `application-runtime`, and `host-runtime` declare `runtime-foundation`, `runtime-capability`, `runtime-application`, and `platform` respectively in their manifests. Their identities are not inferred from directory position or matched in a package registry.
 
-## Architecture enforcement
+## Architecture and verification registration
 
-`cargo xtask architecture` uses typed Cargo metadata with the committed lockfile, fails closed on unknown workspace locations and unresolved local path targets, distinguishes dependency kinds, requires explicit tooling/runtime/platform roles, and applies the dependency rules documented in [dependency policy](dependency-policy.md).
+`cargo xtask architecture` uses locked typed Cargo metadata, fails closed on unknown roles/locations and unresolved local path targets, distinguishes dependency kinds, derives the actual domain DAG, validates exact exception records bidirectionally, and applies the generic role rules documented in [dependency policy](dependency-policy.md).
 
-The accepted product roots are `crates/domain`, `crates/platform`, `crates/adapters`, `crates/runtime`, and `crates/apps`; `tools/xtask` is the only accepted tooling package. `benchmarks/runtime` is the only recognized benchmark member and is classified separately from every product layer. Other benchmark/tooling locations and legacy product paths are not classified. Adapter packages remain direct children of `crates/adapters` until a later structural decision explicitly permits deeper grouping.
+The accepted direct-child roots are `crates/domain`, `crates/platform`, `crates/adapters`, `crates/runtime`, `crates/apps`, `tools`, and `benchmarks`. A package is accepted only when its manifest role is compatible with its root; path placement never supplies a missing role. Deeper grouping requires a deliberate structural change rather than accidental prefix acceptance.
 
-The registered `benchmarks/runtime` manifest is governed by the root workspace, committed root `Cargo.lock`, and shared root `target`; Cargo commands for it run from the repository root. Architecture and hygiene enforce the exact package name `runtime-benchmarks`, `publish = false`, absence of a nested workspace or lockfile, absence of a Cargo custom-build target or `build.rs`, exact reviewed outgoing dependencies, and the prohibition on reverse dependencies. A separate shared benchmark-support package still requires two real consumers and an ownership review.
+Maintained Cargo bench targets are also package-owned metadata. The current complete inventory is:
+
+```text
+runtime-benchmarks / runtime
+sampling           / sampling_pipeline
+```
+
+Architecture and hygiene compare those registrations bidirectionally with Cargo targets and the owning manifest. Every maintained target requires exactly one explicit `[[bench]]` entry with `harness = false`; a missing target, implicit target, harnessed target, duplicate registration, non-bench registration, or newly discovered unregistered bench fails before compilation. `cargo xtask verify` emits one exact `cargo bench --locked -p PACKAGE --bench TARGET --no-run` command per sorted registration and never builds every workspace library as a release bench harness.
+
+Local developer Cargo commands normally use the root target. CI and clean acceptance use one explicitly named isolated `CARGO_TARGET_DIR` per job and remove it reliably; package-local targets and nested benchmark locks remain prohibited. A separate shared benchmark-support package still requires two real consumers and an ownership review.
 
 ## Generated-code lint boundary
 

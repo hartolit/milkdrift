@@ -2,6 +2,7 @@
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
+use std::path::PathBuf;
 
 use application_runtime::ApplicationError;
 
@@ -23,6 +24,15 @@ pub enum DesktopError {
     MissingDataDirectory,
     /// The application-state directory could not be created.
     CreateDataDirectory(std::io::Error),
+    /// Existing state could not be migrated from the legacy application directory.
+    MigrateApplicationState {
+        /// Existing legacy database path.
+        legacy: PathBuf,
+        /// Current Milkdrift database path.
+        current: PathBuf,
+        /// Filesystem failure that prevented inspection or migration.
+        source: std::io::Error,
+    },
 }
 
 impl Display for DesktopError {
@@ -43,6 +53,16 @@ impl Display for DesktopError {
                     "failed to create application data directory: {error}"
                 )
             }
+            Self::MigrateApplicationState {
+                legacy,
+                current,
+                source,
+            } => write!(
+                formatter,
+                "failed to migrate application state from {} to {}: {source}",
+                legacy.display(),
+                current.display(),
+            ),
         }
     }
 }
@@ -53,6 +73,7 @@ impl Error for DesktopError {
             Self::Application(error) => Some(error),
             Self::Slint(error) | Self::SlintAndShutdown { slint: error, .. } => Some(error),
             Self::CreateDataDirectory(error) => Some(error),
+            Self::MigrateApplicationState { source, .. } => Some(source),
             Self::MissingDataDirectory => None,
         }
     }

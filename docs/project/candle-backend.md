@@ -174,6 +174,8 @@ Current deterministic coverage includes:
 - exact required-only CPU/CUDA final and loading formulas plus pre-materialization budget rejection;
 - every source/host/cast/transfer/map/model/final-sync ownership checkpoint and idempotent retryable cleanup.
 
+The package's dedicated harness-free `cuda_hardware` target runs the complete reviewed adapter hardware suite: explicit CPU execution in a CUDA build, invalid ordinal rejection, F32 CUDA/CPU logits, homogeneous BF16, mixed F16/F32, and mixed BF16/F32. Its custom runner requires explicit opt-in, registers at least one case, counts every attempt, and cannot silently succeed with zero execution.
+
 Exact current-tree commands and whether CUDA was compiled or executed are recorded in [validation](validation.md) and [implementation status](implementation-status.md). Temporary mixed derivatives and fixture identity are documented beside the committed fixture in [`PROVENANCE.md`](../../crates/runtime/inference-runtime/tests/fixtures/candle-llama/PROVENANCE.md). The 2026-08-08 RTX 5070 Ti execution remains historical evidence for the earlier Phase 12 closure tree unless the amended tree is separately run on hardware.
 
 ## Unsupported and deferred work

@@ -210,7 +210,7 @@ Local AI gives us another path: not necessarily the most powerful model or the e
 
 That possibility is enough reason for me to explore it.
 
-## What `llm-app` is for now
+## What Milkdrift is for now
 
 All of this is much larger than the project in its current form.
 

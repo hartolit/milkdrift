@@ -282,9 +282,9 @@ fn tracked_build_and_benchmark_artifacts_fail_closed() -> Result<(), Box<dyn Err
 }
 
 #[test]
-fn benchmark_manifests_must_be_known_root_workspace_members() -> Result<(), Box<dyn Error>> {
+fn project_manifests_must_be_known_root_workspace_members() -> Result<(), Box<dyn Error>> {
     let repository = FixtureRepository::new(
-        "benchmark-membership",
+        "workspace-membership",
         &[
             ("Cargo.toml", BASIC_MANIFEST),
             ("src/lib.rs", BASIC_SOURCE),
@@ -296,18 +296,31 @@ fn benchmark_manifests_must_be_known_root_workspace_members() -> Result<(), Box<
                 "benchmarks/experimental/Cargo.toml",
                 "[package]\nname = \"experimental-benchmarks\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n",
             ),
+            (
+                "crates/runtime/hidden/Cargo.toml",
+                "[package]\nname = \"hidden-runtime\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("crates/runtime/hidden/src/lib.rs", BASIC_SOURCE),
+            (
+                "misc/hidden/Cargo.toml",
+                "[package]\nname = \"hidden-misc\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("misc/hidden/src/lib.rs", BASIC_SOURCE),
         ],
     )?;
     let report = validate_repository_hygiene(&repository.manifest())?;
 
-    assert!(report.violations().iter().any(|violation| {
-        violation.path() == Some(Path::new("benchmarks/runtime/Cargo.toml"))
-            && violation.rule() == "HYGIENE-BENCHMARK-MEMBER-1"
-    }));
-    assert!(report.violations().iter().any(|violation| {
-        violation.path() == Some(Path::new("benchmarks/experimental/Cargo.toml"))
-            && violation.rule() == "HYGIENE-BENCHMARK-LAYOUT-1"
-    }));
+    for path in [
+        "benchmarks/runtime/Cargo.toml",
+        "benchmarks/experimental/Cargo.toml",
+        "crates/runtime/hidden/Cargo.toml",
+        "misc/hidden/Cargo.toml",
+    ] {
+        assert!(report.violations().iter().any(|violation| {
+            violation.path() == Some(Path::new(path))
+                && violation.rule() == "HYGIENE-WORKSPACE-MEMBER-1"
+        }));
+    }
     Ok(())
 }
 
@@ -319,7 +332,7 @@ fn nearby_source_and_fixture_paths_remain_allowed() -> Result<(), Box<dyn Error>
             ("Cargo.toml", BASIC_MANIFEST),
             ("src/lib.rs", BASIC_SOURCE),
             ("docs/target.md", "documentation\n"),
-            ("benches/generated_cases.rs", "pub fn cases() {}\n"),
+            ("fixtures/benches/generated_cases.rs", "pub fn cases() {}\n"),
             ("fixtures/model-cache-key.txt", "key\n"),
             ("crates/apps/desktop-slint/build.rs", "fn main() {}\n"),
             (

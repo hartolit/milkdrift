@@ -25,6 +25,8 @@ crates/runtime/     stateful capability and resource-owning runtimes
 crates/apps/        process, event-loop, transport, and presentation boundaries
 ```
 
+Every tracked non-fixture Cargo package manifest must be a root workspace member, and every member declares its role under `[package.metadata.milkdrift]`; the validator never infers a role from a path prefix or package name. The current vocabulary is `tooling`, `benchmark-observer`, `domain-foundation`, `domain-feature`, `platform`, `adapter`, `runtime-foundation`, `runtime-capability`, `runtime-application`, and `application`. A declaration must also occupy the direct physical root compatible with that role, so omitted members, unknown/missing roles, and misplaced packages fail closed.
+
 The logical dependency direction is inward:
 
 ```text
@@ -48,9 +50,7 @@ capability engines never depend on E1. A host should not reconstruct E1's state
 machines if it chooses E1, but applications whose semantics differ are not forced
 through it.
 
-`runtime-benchmarks` remains outside the production graph. It observes reviewed
-public APIs and must not become a dependency of product, tooling, test, or
-application packages.
+Packages with role `benchmark-observer` remain outside the production graph. They may observe public product APIs but may not use build dependencies or become a dependency of product, tooling, tests, applications, or another observer. `runtime-benchmarks` is the current observer; the policy can accept another explicitly declared observer without adding a package-name match.
 
 ## Domain tiers
 
@@ -60,8 +60,7 @@ stable domain contracts. Portable domain code does not import runtimes,
 applications, platform implementations, vendor libraries, frontend toolkits, or
 filesystem/network/database implementations.
 
-Domain peer edges require explicit review and must preserve an acyclic graph. See
-[portability](portability.md) and [dependency policy](dependency-policy.md).
+Cargo's actual normal/build graph among F0/F1 packages must remain acyclic. Ordinary legal inward or peer domain edges are not copied into a second exact-edge registry; the validator derives the graph from Cargo metadata and rejects upward facilities, unsupported external dependencies, and cycles. See [portability](portability.md) and [dependency policy](dependency-policy.md).
 
 ## E0: local inference ownership
 
@@ -201,14 +200,29 @@ rewrite. Key/name mismatch, corrupt records, and unknown versions are explicit.
 Runtime execution and ownership facts are not persisted. The timestamp field is
 `last_resolved_unix_milliseconds`.
 
-## Enforcement and status
+## Generic role DAG and enforcement
 
-`cargo xtask architecture` enforces reviewed dependency direction from domain to
-platform/adapters to E0/capabilities to optional E1 to applications.
-`cargo xtask hygiene` enforces repository policy, and `cargo xtask verify` composes
-the project gates. Project-authored code denies unsafe code, with narrow generated
-Slint exceptions documented in [workspace boundaries](workspace.md).
+`cargo xtask architecture` validates the declared roles and this compact dependency model:
 
-This architecture page does not assert validation of the current tree or broaden
-historical hardware support. The authoritative support and evidence record remains
-[implementation status](implementation-status.md).
+```text
+application         -> runtime-application
+runtime-application -> runtime-capability, runtime-foundation,
+                       adapter, platform, domain-feature, domain-foundation
+runtime-capability  -> runtime-foundation,
+                       adapter, platform, domain-feature, domain-foundation
+runtime-foundation  -> adapter, platform, domain-feature, domain-foundation
+adapter              -> platform, domain-feature, domain-foundation
+platform             -> domain-feature, domain-foundation
+domain-feature       -> domain-feature, domain-foundation
+domain-foundation    -> domain-foundation
+```
+
+Same-role runtime peers are not generally legal. Domain peer/foundation edges participate in the actual Cargo-derived acyclic domain graph. Tooling has no workspace-local edges. Observers are outer-only and build-script-free. The root policy namespace and exact integer `policy-version = 1` are mandatory. Normal/build edges that already obey these invariants need no duplicate record; workspace-local development edges and restricted external edges require exact live exception records with source, target, kind, stable ID, and rationale. Stale, wrong-kind, duplicate, unnecessary, and absolute-denial override records fail.
+
+Default features, CUDA aliases, direct dependency feature selection, the exact provider contract, and reviewed forwarding remain separately fail-closed. `cuda-hardware-tests` is a package-local, non-default test alias and cannot be forwarded by another package.
+
+A future workflow runtime declares `runtime-capability` or the lifecycle-appropriate runtime role; a portable workspace or plugin SDK declares a domain role; a provider implementation declares `adapter`; a headless process declares `application`; and a repository utility declares `tooling`. Those packages require no package-name registry change. A new role or a genuinely exceptional edge remains an architecture change.
+
+`cargo xtask hygiene` enforces repository policy, and `cargo xtask verify` composes the project gates plus exact registered benchmark compilation. Project-authored code denies unsafe code, with narrow generated Slint exceptions documented in [workspace boundaries](workspace.md).
+
+This architecture page does not assert validation of the current tree or broaden historical hardware support. The authoritative support and evidence record remains [implementation status](implementation-status.md).
