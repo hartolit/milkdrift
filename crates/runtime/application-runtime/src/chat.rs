@@ -33,7 +33,7 @@ const HISTORICAL_PRIORITY: ContextPriority = ContextPriority::new(128);
 
 /// Verified local prompt and termination profile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PromptCompatibilityProfile {
+pub(crate) enum PromptCompatibilityProfile {
     /// `TinyLlama` 1.1B Chat v1.0 role markers with `</s>` message/EOS termination.
     TinyLlamaChatV1,
 }
@@ -42,7 +42,7 @@ pub enum PromptCompatibilityProfile {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChatCompatibility {
     /// Prompt formatting and assistant-turn termination are verified by one profile.
-    Supported(PromptCompatibilityProfile),
+    Supported,
     /// No verified profile is available; direct completion remains supported.
     Unsupported,
 }
@@ -124,14 +124,18 @@ impl<'a> ContextPlanningUnit<'a> {
 }
 
 impl PromptCompatibilityProfile {
-    fn detect(repository: &str, commit: &str, tokenizer: &HfTokenizer) -> ChatCompatibility {
+    fn detect(
+        repository: &str,
+        commit: &str,
+        tokenizer: &HfTokenizer,
+    ) -> Option<PromptCompatibilityProfile> {
         if repository == TINYLLAMA_CHAT_REPOSITORY
             && commit == TINYLLAMA_CHAT_COMMIT
             && tokenizer.token_id(TINYLLAMA_END_OF_MESSAGE) == Some(TINYLLAMA_EOS_TOKEN)
         {
-            ChatCompatibility::Supported(Self::TinyLlamaChatV1)
+            Some(Self::TinyLlamaChatV1)
         } else {
-            ChatCompatibility::Unsupported
+            None
         }
     }
 
@@ -223,10 +227,7 @@ impl ApplicationRuntime {
             && !self.conversation.has_active_response()
             && self.tokenizer.is_some()
             && self.state.resolved().is_some_and(|resolved| {
-                matches!(
-                    resolved.chat_compatibility(),
-                    ChatCompatibility::Supported(_)
-                )
+                matches!(resolved.chat_compatibility(), ChatCompatibility::Supported)
             })
     }
 
@@ -330,15 +331,11 @@ impl ApplicationRuntime {
             .tokenizer
             .as_ref()
             .ok_or(ApplicationError::NoTokenizer)?;
-        let compatibility = self
+        let profile = self
             .state
             .resolved()
-            .map_or(ChatCompatibility::Unsupported, |resolved| {
-                resolved.chat_compatibility()
-            });
-        let ChatCompatibility::Supported(profile) = compatibility else {
-            return Err(ApplicationError::UnsupportedChatCompatibility);
-        };
+            .and_then(crate::ResolvedModel::prompt_compatibility_profile)
+            .ok_or(ApplicationError::UnsupportedChatCompatibility)?;
         Ok((profile, tokenizer, loaded.maximum_context_tokens()))
     }
 
@@ -379,11 +376,11 @@ impl ApplicationRuntime {
     }
 }
 
-pub fn detect_chat_compatibility(
+pub(crate) fn detect_chat_profile(
     repository: &str,
     commit: &str,
     tokenizer: &HfTokenizer,
-) -> ChatCompatibility {
+) -> Option<PromptCompatibilityProfile> {
     PromptCompatibilityProfile::detect(repository, commit, tokenizer)
 }
 
@@ -691,8 +688,8 @@ mod tests {
     use hf_tokenizer::HfTokenizer;
 
     use super::{
-        ChatCompatibility, PromptCompatibilityProfile, TINYLLAMA_CHAT_COMMIT,
-        TINYLLAMA_CHAT_REPOSITORY, build_context_units, detect_chat_compatibility, prepare_chat,
+        PromptCompatibilityProfile, TINYLLAMA_CHAT_COMMIT, TINYLLAMA_CHAT_REPOSITORY,
+        build_context_units, prepare_chat,
     };
 
     use crate::{
@@ -707,16 +704,24 @@ mod tests {
     fn tinyllama_profile_formats_roles_and_owns_eos_compatibility() -> TestResult {
         let tokenizer = chat_tokenizer()?;
         assert_eq!(
-            detect_chat_compatibility(TINYLLAMA_CHAT_REPOSITORY, TINYLLAMA_CHAT_COMMIT, &tokenizer),
-            ChatCompatibility::Supported(PromptCompatibilityProfile::TinyLlamaChatV1)
+            PromptCompatibilityProfile::detect(
+                TINYLLAMA_CHAT_REPOSITORY,
+                TINYLLAMA_CHAT_COMMIT,
+                &tokenizer,
+            ),
+            Some(PromptCompatibilityProfile::TinyLlamaChatV1)
         );
         assert_eq!(
-            detect_chat_compatibility(TINYLLAMA_CHAT_REPOSITORY, "different-commit", &tokenizer),
-            ChatCompatibility::Unsupported
+            PromptCompatibilityProfile::detect(
+                TINYLLAMA_CHAT_REPOSITORY,
+                "different-commit",
+                &tokenizer,
+            ),
+            None
         );
         assert_eq!(
-            detect_chat_compatibility("unknown/model", TINYLLAMA_CHAT_COMMIT, &tokenizer),
-            ChatCompatibility::Unsupported
+            PromptCompatibilityProfile::detect("unknown/model", TINYLLAMA_CHAT_COMMIT, &tokenizer,),
+            None
         );
 
         let records = vec![

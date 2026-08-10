@@ -266,11 +266,12 @@ impl GenerationObserver {
                 }
                 Ok(())
             }
-            ApplicationEvent::ModelCleanupPending { exhausted, failure } => {
-                Err(BenchmarkError::new(format!(
-                    "model cleanup retained E0 ownership during generation observation (exhausted={exhausted}): {failure}"
-                )))
-            }
+            ApplicationEvent::ModelCleanupPending { cleanup } => Err(BenchmarkError::new(format!(
+                "model cleanup retained E0 ownership during generation observation: disposition={:?}, primary_failure={}, cleanup_failure={:?}",
+                cleanup.cleanup(),
+                cleanup.primary_failure(),
+                cleanup.cleanup_failure()
+            ))),
             ApplicationEvent::HubDisconnected => Err(BenchmarkError::new(
                 "Hub worker disconnected during generation",
             )),

@@ -1,19 +1,5 @@
 //! Application-owned selection and model-reporting vocabulary.
 
-/// Local execution engine reported by E1.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ApplicationEngine {
-    /// Candle local execution.
-    Candle,
-}
-
-/// Model artifact source reported by E1.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ApplicationSource {
-    /// Immutable artifacts resolved through Hugging Face Hub.
-    HuggingFaceHub,
-}
-
 /// Application-owned identity of one local execution device.
 ///
 /// CUDA ordinals are process-local backend selectors rather than permanent
@@ -27,15 +13,6 @@ pub enum ApplicationDevice {
         /// Zero-based CUDA ordinal.
         ordinal: u32,
     },
-}
-
-impl ApplicationDevice {
-    pub(crate) fn base_label(self) -> String {
-        match self {
-            Self::Cpu => "CPU".to_owned(),
-            Self::Cuda { ordinal } => format!("CUDA {ordinal}"),
-        }
-    }
 }
 
 /// CUDA compute capability translated into application-owned vocabulary.
@@ -60,7 +37,7 @@ pub enum ApplicationDeviceUnavailableReason {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApplicationDeviceSummary {
     device: ApplicationDevice,
-    label: String,
+    display_name: Option<String>,
     available: bool,
     unavailable_reason: Option<ApplicationDeviceUnavailableReason>,
     total_memory_bytes: Option<u64>,
@@ -72,7 +49,7 @@ impl ApplicationDeviceSummary {
     pub(crate) fn cpu() -> Self {
         Self {
             device: ApplicationDevice::Cpu,
-            label: "CPU".to_owned(),
+            display_name: None,
             available: true,
             unavailable_reason: None,
             total_memory_bytes: None,
@@ -83,14 +60,14 @@ impl ApplicationDeviceSummary {
 
     pub(crate) fn discovered(
         device: ApplicationDevice,
-        label: String,
+        display_name: Option<String>,
         total_memory_bytes: Option<u64>,
         available_memory_bytes: Option<u64>,
         compute_capability: Option<ApplicationComputeCapability>,
     ) -> Self {
         Self {
             device,
-            label,
+            display_name,
             available: true,
             unavailable_reason: None,
             total_memory_bytes,
@@ -105,7 +82,7 @@ impl ApplicationDeviceSummary {
     ) -> Self {
         Self {
             device,
-            label: device.base_label(),
+            display_name: None,
             available: false,
             unavailable_reason: Some(reason),
             total_memory_bytes: None,
@@ -120,10 +97,13 @@ impl ApplicationDeviceSummary {
         self.device
     }
 
-    /// Returns a presentation-ready CPU or CUDA ordinal label.
+    /// Returns the optional device name reported during discovery.
+    ///
+    /// This excludes application presentation such as the CPU/CUDA kind and CUDA ordinal;
+    /// consumers should format those structured facts for their own interface.
     #[must_use]
-    pub const fn label(&self) -> &str {
-        self.label.as_str()
+    pub fn display_name(&self) -> Option<&str> {
+        self.display_name.as_deref()
     }
 
     /// Returns whether the latest bounded probe found the device available.
@@ -208,13 +188,6 @@ impl ApplicationDeviceDiscoveryFailure {
     pub const fn message(&self) -> &str {
         self.message.as_str()
     }
-}
-
-/// Model serialization format reported by E1.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ApplicationModelFormat {
-    /// Safetensors shards plus model configuration.
-    Safetensors,
 }
 
 /// User-visible Hugging Face model selection.

@@ -115,7 +115,7 @@ fn application_configuration(
     database_path: std::path::PathBuf,
     cache_directory: &Path,
 ) -> ApplicationRuntimeConfiguration {
-    let mut configuration = ApplicationRuntimeConfiguration::desktop(database_path);
+    let mut configuration = ApplicationRuntimeConfiguration::new(database_path);
     configuration.hub.cache_directory = Some(cache_directory.to_path_buf());
     configuration.hub.maximum_retries = 0;
     configuration.timing.runtime_poll = POLL_INTERVAL;

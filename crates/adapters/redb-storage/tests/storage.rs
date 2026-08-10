@@ -154,37 +154,94 @@ fn settings_v2_bytes(settings: &ApplicationSettings) -> Result<Vec<u8>, TryFromI
     Ok(output)
 }
 
+fn scalar_code(scalar_type: StoredScalarType) -> u8 {
+    match scalar_type {
+        StoredScalarType::F32 => 0,
+        StoredScalarType::F16 => 1,
+        StoredScalarType::Bf16 => 2,
+    }
+}
+
+fn encode_model_identity(
+    output: &mut Vec<u8>,
+    name: &str,
+    repository: &str,
+    revision: &str,
+) -> Result<(), TryFromIntError> {
+    encode_string(output, name)?;
+    encode_string(output, repository)?;
+    encode_string(output, revision)
+}
+
 fn model_v1_bytes(
     name: &str,
     repository: &str,
     revision: &str,
     scalar_code: u8,
-    last_used_unix_milliseconds: u64,
+    last_resolved_unix_milliseconds: u64,
 ) -> Result<Vec<u8>, TryFromIntError> {
     let mut output = b"LAM1".to_vec();
     output.extend_from_slice(&1_u16.to_le_bytes());
-    encode_string(&mut output, name)?;
-    encode_string(&mut output, repository)?;
-    encode_string(&mut output, revision)?;
+    encode_model_identity(&mut output, name, repository, revision)?;
     output.push(scalar_code);
-    output.extend_from_slice(&last_used_unix_milliseconds.to_le_bytes());
+    output.extend_from_slice(&last_resolved_unix_milliseconds.to_le_bytes());
     Ok(output)
 }
 
 fn model_v2_bytes(record: &ModelRecord) -> Result<Vec<u8>, TryFromIntError> {
     let mut output = b"LAM1".to_vec();
     output.extend_from_slice(&2_u16.to_le_bytes());
-    encode_string(&mut output, &record.name)?;
-    encode_string(&mut output, &record.repository)?;
-    encode_string(&mut output, &record.revision)?;
-    output.push(match record.configuration_declared_scalar_type {
-        Some(StoredScalarType::F32) => 0,
-        Some(StoredScalarType::F16) => 1,
-        Some(StoredScalarType::Bf16) => 2,
-        None => 3,
-    });
-    output.extend_from_slice(&record.last_used_unix_milliseconds.to_le_bytes());
+    encode_model_identity(
+        &mut output,
+        &record.name,
+        &record.repository,
+        &record.revision,
+    )?;
+    output.push(
+        record
+            .configuration_declared_scalar_type
+            .map_or(3, scalar_code),
+    );
+    output.extend_from_slice(&record.last_resolved_unix_milliseconds.to_le_bytes());
     Ok(output)
+}
+
+fn model_v3_bytes(record: &ModelRecord) -> Result<Vec<u8>, TryFromIntError> {
+    let mut output = b"LAM1".to_vec();
+    output.extend_from_slice(&3_u16.to_le_bytes());
+    encode_model_identity(
+        &mut output,
+        &record.name,
+        &record.repository,
+        &record.revision,
+    )?;
+    match record.configuration_declared_scalar_type {
+        Some(scalar_type) => {
+            output.push(1);
+            output.push(scalar_code(scalar_type));
+        }
+        None => output.push(0),
+    }
+    output.extend_from_slice(&record.last_resolved_unix_milliseconds.to_le_bytes());
+    Ok(output)
+}
+
+fn model_metadata_offset(record: &ModelRecord) -> usize {
+    6 + 4 + record.name.len() + 4 + record.repository.len() + 4 + record.revision.len()
+}
+
+fn model_record(
+    name: &str,
+    scalar_type: Option<StoredScalarType>,
+    last_resolved_unix_milliseconds: u64,
+) -> ModelRecord {
+    ModelRecord {
+        name: name.to_owned(),
+        repository: "acme/model".to_owned(),
+        revision: "immutable-commit".to_owned(),
+        configuration_declared_scalar_type: scalar_type,
+        last_resolved_unix_milliseconds,
+    }
 }
 
 #[test]
@@ -386,28 +443,21 @@ fn settings_v2_rejects_invalid_tags_and_zero_limit() -> Result<(), Box<dyn Error
 #[test]
 fn model_v1_scalar_codes_decode_as_present_without_rewrite() -> Result<(), Box<dyn Error>> {
     let cases = [
-        (0, StoredScalarType::F32, "legacy-f32"),
-        (1, StoredScalarType::F16, "legacy-f16"),
-        (2, StoredScalarType::Bf16, "legacy-bf16"),
+        (0, StoredScalarType::F32, "legacy-v1-f32", 40),
+        (1, StoredScalarType::F16, "legacy-v1-f16", 41),
+        (2, StoredScalarType::Bf16, "legacy-v1-bf16", 42),
     ];
 
-    for (scalar_code, scalar_type, name) in cases {
+    for (code, scalar_type, name, timestamp) in cases {
         let database = TestDatabase::new();
-        let raw = model_v1_bytes(name, "acme/legacy", "immutable", scalar_code, 42)?;
+        let record = model_record(name, Some(scalar_type), timestamp);
+        let raw = model_v1_bytes(name, &record.repository, &record.revision, code, timestamp)?;
         write_raw_model(database.path(), name, &raw)?;
 
         {
             let storage = RedbStorage::open(database.path())?;
-            assert_eq!(
-                storage.load_model(name)?,
-                Some(ModelRecord {
-                    name: name.to_owned(),
-                    repository: "acme/legacy".to_owned(),
-                    revision: "immutable".to_owned(),
-                    configuration_declared_scalar_type: Some(scalar_type),
-                    last_used_unix_milliseconds: 42,
-                })
-            );
+            assert_eq!(storage.load_model(name)?, Some(record.clone()));
+            assert_eq!(storage.list_models()?, vec![record]);
         }
 
         assert_eq!(read_raw_record(database.path(), MODELS_TABLE, name)?, raw);
@@ -416,63 +466,46 @@ fn model_v1_scalar_codes_decode_as_present_without_rewrite() -> Result<(), Box<d
 }
 
 #[test]
-fn model_v1_rejects_v2_absent_metadata_code() -> Result<(), Box<dyn Error>> {
-    let database = TestDatabase::new();
-    let raw = model_v1_bytes("legacy-none", "acme/legacy", "immutable", 3, 42)?;
-    write_raw_model(database.path(), "legacy-none", &raw)?;
+fn model_v2_present_and_absent_codes_decode_without_rewrite() -> Result<(), Box<dyn Error>> {
+    let cases = [
+        (Some(StoredScalarType::F32), "legacy-v2-f32", 50),
+        (Some(StoredScalarType::F16), "legacy-v2-f16", 51),
+        (Some(StoredScalarType::Bf16), "legacy-v2-bf16", 52),
+        (None, "legacy-v2-none", 53),
+    ];
 
-    {
-        let storage = RedbStorage::open(database.path())?;
-        assert!(matches!(
-            storage.load_model("legacy-none"),
-            Err(StorageError::InvalidScalarType(3))
-        ));
+    for (scalar_type, name, timestamp) in cases {
+        let database = TestDatabase::new();
+        let record = model_record(name, scalar_type, timestamp);
+        let raw = model_v2_bytes(&record)?;
+        write_raw_model(database.path(), name, &raw)?;
+
+        {
+            let storage = RedbStorage::open(database.path())?;
+            assert_eq!(storage.load_model(name)?, Some(record.clone()));
+            assert_eq!(storage.list_models()?, vec![record]);
+        }
+
+        assert_eq!(read_raw_record(database.path(), MODELS_TABLE, name)?, raw);
     }
-
-    assert_eq!(
-        read_raw_record(database.path(), MODELS_TABLE, "legacy-none")?,
-        raw
-    );
     Ok(())
 }
 
 #[test]
-fn model_v2_present_metadata_codes_round_trip_exactly() -> Result<(), Box<dyn Error>> {
+fn model_v3_present_metadata_writes_exact_presence_and_scalar_bytes() -> Result<(), Box<dyn Error>>
+{
     let database = TestDatabase::new();
     let models = vec![
-        ModelRecord {
-            name: "model-0-f32".to_owned(),
-            repository: "acme/f32".to_owned(),
-            revision: "f32-commit".to_owned(),
-            configuration_declared_scalar_type: Some(StoredScalarType::F32),
-            last_used_unix_milliseconds: 40,
-        },
-        ModelRecord {
-            name: "model-1-f16".to_owned(),
-            repository: "acme/f16".to_owned(),
-            revision: "f16-commit".to_owned(),
-            configuration_declared_scalar_type: Some(StoredScalarType::F16),
-            last_used_unix_milliseconds: 41,
-        },
-        ModelRecord {
-            name: "model-2-bf16".to_owned(),
-            repository: "acme/bf16".to_owned(),
-            revision: "bf16-commit".to_owned(),
-            configuration_declared_scalar_type: Some(StoredScalarType::Bf16),
-            last_used_unix_milliseconds: 42,
-        },
+        model_record("model-0-f32", Some(StoredScalarType::F32), 60),
+        model_record("model-1-f16", Some(StoredScalarType::F16), 61),
+        model_record("model-2-bf16", Some(StoredScalarType::Bf16), 62),
     ];
 
     {
         let storage = RedbStorage::open(database.path())?;
         for model in &models {
             storage.upsert_model(model)?;
-            assert_eq!(
-                storage.load_model(&model.name)?,
-                Some(model.clone()),
-                "failed to round-trip {}",
-                model.name
-            );
+            assert_eq!(storage.load_model(&model.name)?, Some(model.clone()));
         }
         assert_eq!(storage.list_models()?, models);
     }
@@ -480,8 +513,8 @@ fn model_v2_present_metadata_codes_round_trip_exactly() -> Result<(), Box<dyn Er
     for model in &models {
         assert_eq!(
             read_raw_record(database.path(), MODELS_TABLE, &model.name)?,
-            model_v2_bytes(model)?,
-            "unexpected bytes for {}",
+            model_v3_bytes(model)?,
+            "unexpected v3 bytes for {}",
             model.name
         );
     }
@@ -494,15 +527,9 @@ fn model_v2_present_metadata_codes_round_trip_exactly() -> Result<(), Box<dyn Er
 }
 
 #[test]
-fn model_v2_absent_metadata_round_trips_exactly() -> Result<(), Box<dyn Error>> {
+fn model_v3_absent_metadata_writes_only_the_absence_tag() -> Result<(), Box<dyn Error>> {
     let database = TestDatabase::new();
-    let model = ModelRecord {
-        name: "model-none".to_owned(),
-        repository: "acme/no-declaration".to_owned(),
-        revision: "none-commit".to_owned(),
-        configuration_declared_scalar_type: None,
-        last_used_unix_milliseconds: 43,
-    };
+    let model = model_record("model-none", None, 0x0302_0100_0302_0100);
 
     {
         let storage = RedbStorage::open(database.path())?;
@@ -510,13 +537,286 @@ fn model_v2_absent_metadata_round_trips_exactly() -> Result<(), Box<dyn Error>> 
         assert_eq!(storage.load_model(&model.name)?, Some(model.clone()));
     }
 
-    assert_eq!(
-        read_raw_record(database.path(), MODELS_TABLE, &model.name)?,
-        model_v2_bytes(&model)?
-    );
+    let raw = read_raw_record(database.path(), MODELS_TABLE, &model.name)?;
+    assert_eq!(raw, model_v3_bytes(&model)?);
+    assert_eq!(raw.get(model_metadata_offset(&model)), Some(&0));
+    assert_eq!(raw.len(), model_metadata_offset(&model) + 1 + 8);
 
     let reopened = RedbStorage::open(database.path())?;
     assert_eq!(reopened.load_model(&model.name)?, Some(model.clone()));
     assert_eq!(reopened.list_models()?, vec![model]);
+    Ok(())
+}
+
+#[test]
+fn explicit_upsert_after_old_read_rewrites_as_v3() -> Result<(), Box<dyn Error>> {
+    let v1_record = model_record("upsert-v1", Some(StoredScalarType::F16), 1_700_000_000_001);
+    let v2_record = model_record("upsert-v2", None, 1_700_000_000_002);
+    let cases = [
+        (
+            model_v1_bytes(
+                &v1_record.name,
+                &v1_record.repository,
+                &v1_record.revision,
+                1,
+                v1_record.last_resolved_unix_milliseconds,
+            )?,
+            v1_record,
+        ),
+        (model_v2_bytes(&v2_record)?, v2_record),
+    ];
+
+    for (old_bytes, expected_record) in cases {
+        let database = TestDatabase::new();
+        write_raw_model(database.path(), &expected_record.name, &old_bytes)?;
+
+        let loaded = {
+            let storage = RedbStorage::open(database.path())?;
+            storage
+                .load_model(&expected_record.name)?
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "old model is missing"))?
+        };
+        assert_eq!(loaded, expected_record);
+        assert_eq!(
+            read_raw_record(database.path(), MODELS_TABLE, &loaded.name)?,
+            old_bytes
+        );
+
+        {
+            let storage = RedbStorage::open(database.path())?;
+            storage.upsert_model(&loaded)?;
+        }
+        assert_eq!(
+            read_raw_record(database.path(), MODELS_TABLE, &loaded.name)?,
+            model_v3_bytes(&loaded)?
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unknown_record_versions_are_rejected() -> Result<(), Box<dyn Error>> {
+    for version in [0, 4, u16::MAX] {
+        let model_database = TestDatabase::new();
+        let mut model_bytes = b"LAM1".to_vec();
+        model_bytes.extend_from_slice(&version.to_le_bytes());
+        write_raw_model(model_database.path(), "unknown-version", &model_bytes)?;
+        let storage = RedbStorage::open(model_database.path())?;
+        assert!(matches!(
+            storage.load_model("unknown-version"),
+            Err(StorageError::UnsupportedVersion(found)) if found == version
+        ));
+        drop(storage);
+
+        let settings_database = TestDatabase::new();
+        let mut settings_bytes = b"LAS1".to_vec();
+        settings_bytes.extend_from_slice(&version.to_le_bytes());
+        write_raw_settings(settings_database.path(), &settings_bytes)?;
+        let storage = RedbStorage::open(settings_database.path())?;
+        assert!(matches!(
+            storage.load_settings(),
+            Err(StorageError::UnsupportedVersion(found)) if found == version
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn wrong_record_magic_is_rejected() -> Result<(), Box<dyn Error>> {
+    let model_database = TestDatabase::new();
+    write_raw_model(model_database.path(), "wrong-magic", b"LAS1\x02\x00")?;
+    let storage = RedbStorage::open(model_database.path())?;
+    assert!(matches!(
+        storage.load_model("wrong-magic"),
+        Err(StorageError::InvalidRecordKind)
+    ));
+    drop(storage);
+
+    let settings_database = TestDatabase::new();
+    write_raw_settings(settings_database.path(), b"LAM1\x03\x00")?;
+    let storage = RedbStorage::open(settings_database.path())?;
+    assert!(matches!(
+        storage.load_settings(),
+        Err(StorageError::InvalidRecordKind)
+    ));
+    Ok(())
+}
+
+#[test]
+fn every_v3_model_prefix_is_rejected_as_truncated() -> Result<(), Box<dyn Error>> {
+    let records = [
+        model_record("truncated-present", Some(StoredScalarType::Bf16), 70),
+        model_record("truncated-absent", None, 71),
+    ];
+
+    for record in records {
+        let raw = model_v3_bytes(&record)?;
+        for length in 0..raw.len() {
+            let database = TestDatabase::new();
+            let prefix = raw.get(..length).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "test prefix is out of bounds")
+            })?;
+            write_raw_model(database.path(), &record.name, prefix)?;
+            let storage = RedbStorage::open(database.path())?;
+            assert!(
+                matches!(
+                    storage.load_model(&record.name),
+                    Err(StorageError::TruncatedRecord)
+                ),
+                "prefix length {length} unexpectedly decoded"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn all_model_versions_and_settings_reject_trailing_bytes() -> Result<(), Box<dyn Error>> {
+    let record = model_record("trailing", Some(StoredScalarType::F32), 80);
+    let model_records = [
+        model_v1_bytes(
+            &record.name,
+            &record.repository,
+            &record.revision,
+            0,
+            record.last_resolved_unix_milliseconds,
+        )?,
+        model_v2_bytes(&record)?,
+        model_v3_bytes(&record)?,
+    ];
+
+    for mut raw in model_records {
+        raw.push(0xff);
+        let database = TestDatabase::new();
+        write_raw_model(database.path(), &record.name, &raw)?;
+        let storage = RedbStorage::open(database.path())?;
+        assert!(matches!(
+            storage.load_model(&record.name),
+            Err(StorageError::TrailingBytes)
+        ));
+    }
+
+    let settings = ApplicationSettings {
+        default_repository: "acme/trailing".to_owned(),
+        default_revision: "main".to_owned(),
+        maximum_host_memory_bytes: 1_024,
+        selected_device: StoredApplicationDevice::Cpu,
+        accelerator_memory_policy: StoredAcceleratorMemoryPolicy::Automatic,
+        drain_timeout_milliseconds: 1_000,
+    };
+    let mut raw = settings_v2_bytes(&settings)?;
+    raw.push(0xff);
+    let database = TestDatabase::new();
+    write_raw_settings(database.path(), &raw)?;
+    let storage = RedbStorage::open(database.path())?;
+    assert!(matches!(
+        storage.load_settings(),
+        Err(StorageError::TrailingBytes)
+    ));
+    Ok(())
+}
+
+#[test]
+fn model_v3_rejects_invalid_utf8_in_each_string() -> Result<(), Box<dyn Error>> {
+    let record = ModelRecord {
+        name: "n".to_owned(),
+        repository: "r".to_owned(),
+        revision: "v".to_owned(),
+        configuration_declared_scalar_type: None,
+        last_resolved_unix_milliseconds: 90,
+    };
+    let name_byte_offset = 10;
+    let repository_byte_offset = name_byte_offset + record.name.len() + 4;
+    let revision_byte_offset = repository_byte_offset + record.repository.len() + 4;
+
+    for (offset, field) in [
+        (name_byte_offset, "name"),
+        (repository_byte_offset, "repository"),
+        (revision_byte_offset, "revision"),
+    ] {
+        let database = TestDatabase::new();
+        let mut raw = model_v3_bytes(&record)?;
+        set_byte(&mut raw, offset, 0xff)?;
+        write_raw_model(database.path(), &record.name, &raw)?;
+        let storage = RedbStorage::open(database.path())?;
+        assert!(
+            matches!(
+                storage.load_model(&record.name),
+                Err(StorageError::InvalidUtf8(_))
+            ),
+            "invalid UTF-8 in {field} was accepted"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn model_versions_reject_invalid_presence_tags_and_scalars() -> Result<(), Box<dyn Error>> {
+    let v1_database = TestDatabase::new();
+    let v1 = model_record("invalid-v1-scalar", Some(StoredScalarType::F32), 100);
+    let raw = model_v1_bytes(&v1.name, &v1.repository, &v1.revision, 3, 100)?;
+    write_raw_model(v1_database.path(), &v1.name, &raw)?;
+    let storage = RedbStorage::open(v1_database.path())?;
+    assert!(matches!(
+        storage.load_model(&v1.name),
+        Err(StorageError::InvalidScalarType(3))
+    ));
+    drop(storage);
+
+    let v2_database = TestDatabase::new();
+    let v2 = model_record("invalid-v2-scalar", Some(StoredScalarType::F16), 101);
+    let mut raw = model_v2_bytes(&v2)?;
+    set_byte(&mut raw, model_metadata_offset(&v2), 4)?;
+    write_raw_model(v2_database.path(), &v2.name, &raw)?;
+    let storage = RedbStorage::open(v2_database.path())?;
+    assert!(matches!(
+        storage.load_model(&v2.name),
+        Err(StorageError::InvalidScalarType(4))
+    ));
+    drop(storage);
+
+    let presence_database = TestDatabase::new();
+    let v3 = model_record("invalid-v3-presence", Some(StoredScalarType::Bf16), 102);
+    let mut raw = model_v3_bytes(&v3)?;
+    set_byte(&mut raw, model_metadata_offset(&v3), 2)?;
+    write_raw_model(presence_database.path(), &v3.name, &raw)?;
+    let storage = RedbStorage::open(presence_database.path())?;
+    assert!(matches!(
+        storage.load_model(&v3.name),
+        Err(StorageError::InvalidScalarTypePresenceTag(2))
+    ));
+    drop(storage);
+
+    let scalar_database = TestDatabase::new();
+    let v3 = model_record("invalid-v3-scalar", Some(StoredScalarType::F32), 103);
+    let mut raw = model_v3_bytes(&v3)?;
+    set_byte(&mut raw, model_metadata_offset(&v3) + 1, 3)?;
+    write_raw_model(scalar_database.path(), &v3.name, &raw)?;
+    let storage = RedbStorage::open(scalar_database.path())?;
+    assert!(matches!(
+        storage.load_model(&v3.name),
+        Err(StorageError::InvalidScalarType(3))
+    ));
+    Ok(())
+}
+
+#[test]
+fn model_key_mismatch_is_rejected_by_load_and_list() -> Result<(), Box<dyn Error>> {
+    let database = TestDatabase::new();
+    let record = model_record("embedded-name", None, 110);
+    let raw = model_v3_bytes(&record)?;
+    write_raw_model(database.path(), "table-key", &raw)?;
+
+    let storage = RedbStorage::open(database.path())?;
+    assert!(matches!(
+        storage.load_model("table-key"),
+        Err(StorageError::ModelNameMismatch { key, embedded_name })
+            if key == "table-key" && embedded_name == "embedded-name"
+    ));
+    assert!(matches!(
+        storage.list_models(),
+        Err(StorageError::ModelNameMismatch { key, embedded_name })
+            if key == "table-key" && embedded_name == "embedded-name"
+    ));
     Ok(())
 }

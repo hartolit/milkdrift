@@ -4,6 +4,12 @@ use crate::{ApplicationConfigurationField, ApplicationError, ApplicationRuntime}
 use domain_contracts::{DrainTimeout, ModelHandle, UnloadPolicy};
 use inference_runtime::RuntimeCommand;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ModelUnloadTransaction {
+    pub(crate) ticket: inference_runtime::CommandTicket,
+    pub(crate) handle: ModelHandle,
+}
+
 /// Frontend-neutral behavior used when releasing the resident model.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ModelUnloadBehavior {
@@ -46,7 +52,9 @@ impl ApplicationRuntime {
         handle: ModelHandle,
         behavior: ModelUnloadBehavior,
     ) -> Result<(), ApplicationError> {
-        self.submit_model_unload(handle, behavior).map(|_| ())
+        let ticket = self.submit_model_unload(handle, behavior)?;
+        self.pending_unload = Some(ModelUnloadTransaction { ticket, handle });
+        Ok(())
     }
 
     pub(crate) fn submit_model_unload(

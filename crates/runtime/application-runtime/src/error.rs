@@ -5,13 +5,23 @@ use std::fmt::{self, Debug, Display, Formatter};
 
 use domain_contracts::RequestId;
 
-use crate::{ApplicationActivity, ApplicationDevice, ApplicationDeviceUnavailableReason};
+use crate::{
+    ApplicationActivity, ApplicationDevice, ApplicationDeviceUnavailableReason, GenerationPhase,
+};
 
 /// Infrastructure or adapter category associated with one failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApplicationFailureKind {
-    /// Hugging Face artifact resolution failed.
+    /// Hugging Face infrastructure or artifact resolution failed.
     Hub,
+    /// Immutable artifact resolution failed without exposing a vendor diagnostic.
+    ArtifactResolution,
+    /// Model configuration or a declaration field was malformed.
+    MalformedArtifactConfiguration,
+    /// A present configuration scalar declaration was unsupported.
+    UnsupportedArtifactDeclaration,
+    /// Modern and legacy configuration declarations contradicted one another.
+    ConflictingArtifactDeclaration,
     /// Tokenizer loading, encoding, or streaming decode failed.
     Tokenizer,
     /// Persistent state could not be read or written.
@@ -24,7 +34,7 @@ pub enum ApplicationFailureKind {
     MemoryAdmission,
     /// Model preparation or materialization failed after resolution.
     ModelLoad,
-    /// Failed-load resources remain owned while cleanup is pending or exhausted.
+    /// Model resources remain owned or cleanup coordination could not prove release.
     RetainedCleanup,
     /// A successful lower load receipt contradicted stable application compatibility facts.
     IncompatibleReceipt,
@@ -167,6 +177,13 @@ pub enum ApplicationError {
     GenerationAlreadyActive(RequestId),
     /// The addressed generation request is not the active request.
     GenerationNotActive(RequestId),
+    /// The active request has already crossed the cancellable lifecycle boundary.
+    GenerationNotCancellable {
+        /// Active request identity.
+        request_id: RequestId,
+        /// Current non-cancellable phase.
+        phase: GenerationPhase,
+    },
     /// Encoded direct-completion prompt is empty.
     EmptyPrompt,
     /// A submitted conversation message is empty after trimming.
@@ -226,6 +243,10 @@ pub enum ApplicationError {
         /// Latest reported physical capacity, or `None` when discovery omitted it.
         total_memory_bytes: Option<u64>,
     },
+    /// No retained model cleanup is currently owned by E1.
+    NoRetainedModelCleanup,
+    /// Retained cleanup exists, but lower policy or worker state makes E1 retry invalid.
+    ModelCleanupNotRetryable,
     /// Correlation ticket space was exhausted.
     TicketExhausted,
     /// Bounded Hub command queue has no capacity.
@@ -275,6 +296,11 @@ impl Display for ApplicationError {
             Self::GenerationNotActive(request_id) => write!(
                 formatter,
                 "generation request {} is not the active request",
+                request_id.get()
+            ),
+            Self::GenerationNotCancellable { request_id, phase } => write!(
+                formatter,
+                "generation request {} is no longer cancellable in phase {phase:?}",
                 request_id.get()
             ),
             Self::EmptyPrompt => {
@@ -344,6 +370,12 @@ impl Display for ApplicationError {
             } => write!(
                 formatter,
                 "selected device {device:?} cannot load under the startup accelerator budget ({budget_bytes} bytes, latest physical total {total_memory_bytes:?}); restart after device discovery changes; CPU fallback was not attempted",
+            ),
+            Self::NoRetainedModelCleanup => {
+                formatter.write_str("no retained model cleanup is available")
+            }
+            Self::ModelCleanupNotRetryable => formatter.write_str(
+                "retained model cleanup cannot be retried under its current lower or worker state",
             ),
             Self::TicketExhausted => formatter.write_str("command ticket space is exhausted"),
             Self::HubBusy => formatter.write_str("Hub resolver queue is full"),

@@ -27,9 +27,9 @@ static SHRINKING_CUDA_THREE_PROBES: AtomicU64 = AtomicU64::new(0);
 fn available_device_probe(device: ApplicationDevice) -> crate::local::DeviceProbeResult {
     match device {
         ApplicationDevice::Cpu => Ok(ApplicationDeviceSummary::cpu()),
-        ApplicationDevice::Cuda { ordinal } => Ok(ApplicationDeviceSummary::discovered(
+        ApplicationDevice::Cuda { .. } => Ok(ApplicationDeviceSummary::discovered(
             device,
-            format!("CUDA {ordinal} — deterministic test device"),
+            Some("deterministic test device".to_owned()),
             Some(TEST_CUDA_MEMORY_BYTES),
             Some(TEST_CUDA_MEMORY_BYTES / 2),
             Some(ApplicationComputeCapability {
@@ -80,7 +80,7 @@ fn shrinking_cuda_probe(device: ApplicationDevice) -> crate::local::DeviceProbeR
             };
             Ok(ApplicationDeviceSummary::discovered(
                 device,
-                format!("CUDA {ordinal} — shrinking deterministic test device"),
+                Some("shrinking deterministic test device".to_owned()),
                 Some(total_memory_bytes),
                 Some(total_memory_bytes / 2),
                 None,
@@ -109,7 +109,7 @@ fn fresh_configuration_selects_cpu_and_keeps_cpu_catalogue_identity() -> TestRes
             .first()
             .ok_or_else(|| "CPU was absent from the device catalogue".to_owned())?;
         assert_eq!(cpu.device(), ApplicationDevice::Cpu);
-        assert_eq!(cpu.label(), "CPU");
+        assert_eq!(cpu.display_name(), None);
         assert!(cpu.available());
         #[cfg(not(feature = "cuda"))]
         assert_eq!(runtime.state().devices(), std::slice::from_ref(cpu));
@@ -348,10 +348,11 @@ fn cuda_fixture_load_reports_the_selected_and_actual_e1_device() -> TestResult {
             .iter()
             .find(|summary| summary.device() == CUDA_ZERO && summary.available())
             .ok_or_else(|| "CUDA ordinal 0 was not discovered by E1".to_owned())?;
-        assert!(cuda.label().starts_with("CUDA 0"));
+        assert!(cuda.display_name().is_some());
         eprintln!(
-            "E1 discovered {} with total={:?} available={:?} compute={:?}",
-            cuda.label(),
+            "E1 discovered {:?} ({:?}) with total={:?} available={:?} compute={:?}",
+            cuda.device(),
+            cuda.display_name(),
             cuda.total_memory_bytes(),
             cuda.available_memory_bytes(),
             cuda.compute_capability(),

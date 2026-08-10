@@ -26,7 +26,16 @@ impl DeviceChoice {
     }
 
     fn from_summary(summary: &ApplicationDeviceSummary) -> Self {
-        Self::new(summary.device(), summary.label(), summary.available())
+        let mut label = device_label(summary.device());
+        if let Some(name) = summary
+            .display_name()
+            .map(str::trim)
+            .filter(|name| !name.is_empty() && *name != label)
+        {
+            label.push_str(" — ");
+            label.push_str(name);
+        }
+        Self::new(summary.device(), label, summary.available())
     }
 
     fn display_label(&self) -> SharedString {

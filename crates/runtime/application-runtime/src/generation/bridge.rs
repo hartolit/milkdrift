@@ -99,6 +99,12 @@ impl GenerationBridge {
         });
     }
 
+    pub(crate) fn confirm_runtime_shutdown(&mut self) {
+        self.pending.clear();
+        self.session = None;
+        self.pending_event = None;
+    }
+
     fn output_batch<R, F>(&self, consume: F) -> Result<R, ApplicationError>
     where
         F: for<'batch> FnOnce(ApplicationOutputBatch<'batch>) -> R,
@@ -127,6 +133,15 @@ impl ApplicationRuntime {
         if active.phase == GenerationPhase::Cancelling {
             return Ok(());
         }
+        if !matches!(
+            active.phase,
+            GenerationPhase::Starting | GenerationPhase::Running
+        ) {
+            return Err(ApplicationError::GenerationNotCancellable {
+                request_id,
+                phase: active.phase,
+            });
+        }
         let ticket = self.next_ticket()?;
         self.submit_inference(RuntimeCommand::CancelRequest {
             ticket,
@@ -144,6 +159,8 @@ impl ApplicationRuntime {
     ///
     /// The callback borrows retained application output storage. Copy any values
     /// needed after it returns; the next application write may reuse the same allocation.
+    /// Continue pulling after a terminal event until the corresponding `Released`
+    /// output state has been observed so final text and release records are not stranded.
     ///
     /// # Errors
     ///

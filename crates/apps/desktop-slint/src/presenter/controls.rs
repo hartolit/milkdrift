@@ -2,8 +2,8 @@ use application_runtime::{ApplicationActivity, ApplicationRuntime};
 
 use super::devices::DeviceSelectorModel;
 use super::model::{
-    ComposerMode, UNLOADED_MODEL_SUMMARY, UNRESOLVED_MODEL_SUMMARY, composer_mode,
-    loaded_model_summary, resolved_model_summary, selected_model, selected_model_summary,
+    ComposerMode, UNRESOLVED_MODEL_SUMMARY, composer_mode, model_residency_summary,
+    resolved_model_summary, selected_model, selected_model_summary,
 };
 use crate::AppWindow;
 
@@ -96,7 +96,9 @@ pub(super) fn synchronize(
 
     window.set_busy(state.activity() != ApplicationActivity::Idle);
     window.set_can_edit_selection(
-        state.activity() == ApplicationActivity::Idle && state.loaded().is_none(),
+        state.activity() == ApplicationActivity::Idle
+            && state.loaded().is_none()
+            && state.retained_model().is_none(),
     );
     window.set_can_select_device(controls.can_select_device);
     window.set_can_resolve(controls.can_resolve);
@@ -108,7 +110,7 @@ pub(super) fn synchronize(
     window.set_can_cancel(controls.can_cancel);
     window.set_can_unload(controls.can_unload);
     window.set_composer_mode(mode.label().into());
-    window.set_composer_guidance(mode.guidance().into());
+    window.set_composer_guidance(mode.guidance(state.retained_model().is_some()).into());
     window.set_composer_input_label(mode.input_label().into());
     window.set_composer_submit_label(mode.submit_label().into());
 
@@ -130,9 +132,6 @@ pub(super) fn synchronize(
             .into(),
     );
     window.set_loaded_model_summary(
-        state
-            .loaded()
-            .map_or_else(|| UNLOADED_MODEL_SUMMARY.to_owned(), loaded_model_summary)
-            .into(),
+        model_residency_summary(state.loaded(), state.retained_model()).into(),
     );
 }

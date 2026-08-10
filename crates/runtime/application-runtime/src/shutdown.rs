@@ -119,9 +119,6 @@ pub fn shutdown(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationError
     record_first_error(&mut first_error, join_hub_worker(runtime).err());
 
     let workers_stopped = workers_confirmed_stopped(runtime);
-    if workers_stopped {
-        runtime.release_incompatible_model_cleanup();
-    }
     if let Some(failure) = runtime.shutdown_control.terminal_failure() {
         runtime.shutdown_control.status = ShutdownStatus::TerminalFailure;
         return Err(terminal_inference_error(failure));
@@ -183,7 +180,7 @@ fn shutdown_runtime(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationE
             if !runtime.local.thread_is_present() {
                 runtime.shutdown_control.record_inference_disconnect();
                 runtime.state.disconnect_inference();
-                runtime.release_incompatible_model_cleanup();
+                runtime.mark_model_worker_disconnected();
                 return Err(ApplicationError::RuntimeDisconnected);
             }
             while runtime.local.runtime().try_receive().is_ok() {}
@@ -192,7 +189,7 @@ fn shutdown_runtime(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationE
                 RuntimeShutdownRequest::Disconnected => {
                     runtime.shutdown_control.record_inference_disconnect();
                     runtime.state.disconnect_inference();
-                    runtime.release_incompatible_model_cleanup();
+                    runtime.mark_model_worker_disconnected();
                     return Err(ApplicationError::RuntimeDisconnected);
                 }
                 RuntimeShutdownRequest::Submitted => {
@@ -224,14 +221,21 @@ fn shutdown_runtime(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationE
     match outcome {
         RuntimeShutdown::Disconnected => {
             runtime.shutdown_control.record_inference_disconnect();
-            runtime.release_incompatible_model_cleanup();
+            runtime.mark_model_worker_disconnected();
             Err(ApplicationError::RuntimeDisconnected)
         }
         RuntimeShutdown::Finished(Ok(_)) => {
             runtime.shutdown_control.inference = InferenceShutdownState::CleanlyStopped;
+            runtime.confirm_runtime_shutdown_released();
             Ok(())
         }
         RuntimeShutdown::Finished(Err(error)) => {
+            match error {
+                RuntimeError::TerminalCleanupRetention { first, summary } => {
+                    runtime.mark_terminal_process_retention(first, summary);
+                }
+                other => runtime.mark_terminal_worker_failure(other),
+            }
             runtime.shutdown_control.record_inference_failure(error);
             Err(inference_shutdown_error(error))
         }
@@ -355,7 +359,6 @@ fn join_runtime_worker(runtime: &mut ApplicationRuntime) -> Result<(), Applicati
     let result = finish_runtime_thread(runtime.local.thread_slot(), timeout, poll);
     if !runtime.local.thread_is_present() {
         runtime.state.disconnect_inference();
-        runtime.release_incompatible_model_cleanup();
     }
     result
 }

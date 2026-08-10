@@ -11,7 +11,7 @@ use crate::{
 
 #[test]
 fn shutdown_and_join_deadline_boundaries_are_validated_before_worker_start() -> TestResult {
-    let mut maximum = ApplicationRuntimeConfiguration::desktop("unused.redb");
+    let mut maximum = ApplicationRuntimeConfiguration::new("unused.redb");
     default_test_configuration(&mut maximum);
     maximum.timing.runtime_shutdown_timeout = MAXIMUM_SHUTDOWN_OR_JOIN_TIMEOUT;
     maximum.timing.runtime_join_timeout = MAXIMUM_SHUTDOWN_OR_JOIN_TIMEOUT;
@@ -28,7 +28,7 @@ fn shutdown_and_join_deadline_boundaries_are_validated_before_worker_start() -> 
 #[test]
 fn forced_hub_start_failure_stops_and_joins_started_inference_worker() -> TestResult {
     let database_path = unique_database_path();
-    let mut configuration = ApplicationRuntimeConfiguration::desktop(&database_path);
+    let mut configuration = ApplicationRuntimeConfiguration::new(&database_path);
     default_test_configuration(&mut configuration);
     let primary = ApplicationError::Failure(ApplicationFailure::new(
         ApplicationFailureKind::Hub,
@@ -57,7 +57,7 @@ fn forced_hub_start_failure_stops_and_joins_started_inference_worker() -> TestRe
 fn failed_startup_rollback_quarantines_and_later_reaps_inference_worker() -> TestResult {
     assert_eq!(startup_cleanup_quarantine_state(), (0, 0));
     let database_path = unique_database_path();
-    let mut configuration = ApplicationRuntimeConfiguration::desktop(&database_path);
+    let mut configuration = ApplicationRuntimeConfiguration::new(&database_path);
     default_test_configuration(&mut configuration);
     let primary = ApplicationError::Failure(ApplicationFailure::new(
         ApplicationFailureKind::Hub,
@@ -120,7 +120,7 @@ where
     F: FnOnce(&mut ApplicationRuntimeConfiguration),
 {
     let database_path = unique_database_path();
-    let mut configuration = ApplicationRuntimeConfiguration::desktop(&database_path);
+    let mut configuration = ApplicationRuntimeConfiguration::new(&database_path);
     default_test_configuration(&mut configuration);
     configure(&mut configuration);
     let hub_started = Cell::new(false);

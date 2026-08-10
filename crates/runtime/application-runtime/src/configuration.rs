@@ -174,9 +174,9 @@ pub struct ApplicationRuntimeConfiguration {
 }
 
 impl ApplicationRuntimeConfiguration {
-    /// Creates a desktop-oriented single-model configuration with bounded defaults.
+    /// Creates a frontend-neutral local application configuration with bounded defaults.
     #[must_use]
-    pub fn desktop(database_path: impl Into<PathBuf>) -> Self {
+    pub fn new(database_path: impl Into<PathBuf>) -> Self {
         Self {
             database_path: database_path.into(),
             hub: ApplicationHubConfiguration::default(),
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn application_configuration_debug_redacts_hub_access_token() {
-        let mut configuration = ApplicationRuntimeConfiguration::desktop("application.redb");
+        let mut configuration = ApplicationRuntimeConfiguration::new("application.redb");
         configuration.hub.access_token = Some("secret-token".to_owned());
 
         let debug = format!("{configuration:?}");

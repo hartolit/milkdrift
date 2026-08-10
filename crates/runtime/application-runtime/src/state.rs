@@ -4,9 +4,9 @@ use domain_contracts::{FinishReason, GenerationUsage, ModelHandle, RequestId};
 
 use crate::{
     ApplicationDevice, ApplicationDeviceDiscoveryFailure, ApplicationDeviceSummary,
-    ApplicationDeviceUnavailableReason, ApplicationEngine, ApplicationFailure,
-    ApplicationModelFormat, ApplicationScalarType, ApplicationSource, ChatCompatibility,
-    ImmutableModelIdentity, ModelSelection,
+    ApplicationDeviceUnavailableReason, ApplicationFailure, ApplicationMemoryFootprint,
+    ApplicationRetainedModel, ApplicationScalarType, ChatCompatibility, ImmutableModelIdentity,
+    ModelSelection,
 };
 
 /// Long-running application operation currently in progress.
@@ -21,6 +21,8 @@ pub enum ApplicationActivity {
     Loading,
     /// Active work is draining or the loaded model is being released.
     Unloading,
+    /// Lower model ownership remains retained or unconfirmed while normal admission is locked.
+    RetainedCleanup,
     /// Worker shutdown has begun and no new work is accepted.
     ShuttingDown,
 }
@@ -32,7 +34,7 @@ pub struct ResolvedModel {
     identity: ImmutableModelIdentity,
     vocabulary_size: u32,
     configuration_declared_scalar_type: Option<ApplicationScalarType>,
-    chat_compatibility: ChatCompatibility,
+    chat_profile: Option<crate::chat::PromptCompatibilityProfile>,
 }
 
 impl ResolvedModel {
@@ -41,14 +43,14 @@ impl ResolvedModel {
         identity: ImmutableModelIdentity,
         vocabulary_size: u32,
         configuration_declared_scalar_type: Option<ApplicationScalarType>,
-        chat_compatibility: ChatCompatibility,
+        chat_profile: Option<crate::chat::PromptCompatibilityProfile>,
     ) -> Self {
         Self {
             selection,
             identity,
             vocabulary_size,
             configuration_declared_scalar_type,
-            chat_compatibility,
+            chat_profile,
         }
     }
 
@@ -56,24 +58,6 @@ impl ResolvedModel {
     #[must_use]
     pub const fn selection(&self) -> &ModelSelection {
         &self.selection
-    }
-
-    /// Returns the local execution engine.
-    #[must_use]
-    pub const fn engine(&self) -> ApplicationEngine {
-        ApplicationEngine::Candle
-    }
-
-    /// Returns the artifact source category.
-    #[must_use]
-    pub const fn source(&self) -> ApplicationSource {
-        ApplicationSource::HuggingFaceHub
-    }
-
-    /// Returns the model serialization format.
-    #[must_use]
-    pub const fn format(&self) -> ApplicationModelFormat {
-        ApplicationModelFormat::Safetensors
     }
 
     /// Returns the immutable artifact identity.
@@ -100,7 +84,17 @@ impl ResolvedModel {
     /// Returns explicit prompt-rendering and termination compatibility.
     #[must_use]
     pub const fn chat_compatibility(&self) -> ChatCompatibility {
-        self.chat_compatibility
+        if self.chat_profile.is_some() {
+            ChatCompatibility::Supported
+        } else {
+            ChatCompatibility::Unsupported
+        }
+    }
+
+    pub(crate) const fn prompt_compatibility_profile(
+        &self,
+    ) -> Option<crate::chat::PromptCompatibilityProfile> {
+        self.chat_profile
     }
 
     /// Returns whether a complete visible selection still addresses this resolution.
@@ -108,6 +102,18 @@ impl ResolvedModel {
     pub fn matches_selection(&self, selection: &ModelSelection) -> bool {
         &self.selection == selection
     }
+}
+
+/// Stable generation mode supported by the resident application model.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ApplicationGenerationMode {
+    /// No normal loaded model is available.
+    #[default]
+    Unavailable,
+    /// Ordinary prompt completion is available without a verified chat profile.
+    DirectCompletion,
+    /// E1 owns a verified chat profile for the loaded artifact and tokenizer.
+    Chat,
 }
 
 /// One model generation currently owned by the local inference runtime.
@@ -121,6 +127,8 @@ pub struct LoadedModel {
     vocabulary_size: u32,
     maximum_context_tokens: u32,
     maximum_prefill_batch: u32,
+    generation_mode: ApplicationGenerationMode,
+    reserved_footprint: ApplicationMemoryFootprint,
 }
 
 impl LoadedModel {
@@ -137,6 +145,8 @@ impl LoadedModel {
         vocabulary_size: u32,
         maximum_context_tokens: u32,
         maximum_prefill_batch: u32,
+        generation_mode: ApplicationGenerationMode,
+        reserved_footprint: ApplicationMemoryFootprint,
     ) -> Self {
         Self {
             handle,
@@ -147,6 +157,8 @@ impl LoadedModel {
             vocabulary_size,
             maximum_context_tokens,
             maximum_prefill_batch,
+            generation_mode,
+            reserved_footprint,
         }
     }
 
@@ -162,28 +174,10 @@ impl LoadedModel {
         &self.selection
     }
 
-    /// Returns the local execution engine.
-    #[must_use]
-    pub const fn engine(&self) -> ApplicationEngine {
-        ApplicationEngine::Candle
-    }
-
-    /// Returns the artifact source category.
-    #[must_use]
-    pub const fn source(&self) -> ApplicationSource {
-        ApplicationSource::HuggingFaceHub
-    }
-
     /// Returns the actual execution device verified by E0's load receipt.
     #[must_use]
     pub const fn device(&self) -> ApplicationDevice {
         self.device
-    }
-
-    /// Returns the model serialization format.
-    #[must_use]
-    pub const fn format(&self) -> ApplicationModelFormat {
-        ApplicationModelFormat::Safetensors
     }
 
     /// Returns the immutable artifact identity loaded by E0.
@@ -214,6 +208,16 @@ impl LoadedModel {
     #[must_use]
     pub const fn maximum_prefill_batch(&self) -> u32 {
         self.maximum_prefill_batch
+    }
+
+    /// Returns the E1-owned generation mode for this loaded artifact and tokenizer.
+    #[must_use]
+    pub const fn generation_mode(&self) -> ApplicationGenerationMode {
+        self.generation_mode
+    }
+
+    pub(crate) const fn reserved_footprint(&self) -> ApplicationMemoryFootprint {
+        self.reserved_footprint
     }
 }
 
@@ -275,6 +279,7 @@ pub struct ApplicationState {
     accelerator_memory_budget_bytes: u64,
     resolved: Option<ResolvedModel>,
     loaded: Option<LoadedModel>,
+    retained_model: Option<ApplicationRetainedModel>,
     generation: Option<GenerationSummary>,
     last_generation: Option<GenerationTerminal>,
     hub_available: bool,
@@ -291,6 +296,7 @@ impl Default for ApplicationState {
             accelerator_memory_budget_bytes: 0,
             resolved: None,
             loaded: None,
+            retained_model: None,
             generation: None,
             last_generation: None,
             hub_available: true,
@@ -384,6 +390,7 @@ impl ApplicationState {
             self.activity,
             ApplicationActivity::Idle | ApplicationActivity::Resolving
         ) && self.loaded.is_none()
+            && self.retained_model.is_none()
             && self.generation.is_none()
     }
 
@@ -403,6 +410,34 @@ impl ApplicationState {
     #[must_use]
     pub const fn loaded(&self) -> Option<&LoadedModel> {
         self.loaded.as_ref()
+    }
+
+    /// Returns retained or unconfirmed lower model ownership, when present.
+    #[must_use]
+    pub const fn retained_model(&self) -> Option<&ApplicationRetainedModel> {
+        self.retained_model.as_ref()
+    }
+
+    /// Returns the stable generation mode of the normal loaded model.
+    #[must_use]
+    pub const fn generation_mode(&self) -> ApplicationGenerationMode {
+        match self.loaded.as_ref() {
+            Some(model) => model.generation_mode(),
+            None => ApplicationGenerationMode::Unavailable,
+        }
+    }
+
+    /// Returns whether E1 coordination for retained cleanup may be explicitly retried.
+    #[must_use]
+    pub fn can_retry_model_cleanup(&self) -> bool {
+        self.activity == ApplicationActivity::RetainedCleanup
+            && self.inference_available
+            && self.retained_model.as_ref().is_some_and(|model| {
+                matches!(
+                    model.cleanup(),
+                    crate::ApplicationModelCleanupDisposition::CoordinationRetryAvailable { .. }
+                )
+            })
     }
 
     /// Returns the active direct-completion request, when present.
@@ -435,6 +470,7 @@ impl ApplicationState {
         matches!(self.activity, ApplicationActivity::Idle)
             && self.hub_available
             && self.loaded.is_none()
+            && self.retained_model.is_none()
             && self.generation.is_none()
     }
 
@@ -459,6 +495,7 @@ impl ApplicationState {
             && self.selected_device_available()
             && self.selected_device_memory_budget_available()
             && self.loaded.is_none()
+            && self.retained_model.is_none()
             && self.generation.is_none()
             && self
                 .resolved
@@ -472,6 +509,7 @@ impl ApplicationState {
         matches!(self.activity, ApplicationActivity::Idle)
             && self.inference_available
             && self.loaded.is_some()
+            && self.retained_model.is_none()
             && self.generation.is_none()
     }
 
@@ -493,6 +531,7 @@ impl ApplicationState {
         matches!(self.activity, ApplicationActivity::Idle)
             && self.inference_available
             && self.loaded.is_some()
+            && self.retained_model.is_none()
     }
 
     pub(crate) fn set_selected_device(&mut self, device: ApplicationDevice) {
@@ -535,6 +574,10 @@ impl ApplicationState {
         self.activity = ApplicationActivity::Unloading;
     }
 
+    pub(crate) const fn begin_retained_cleanup(&mut self) {
+        self.activity = ApplicationActivity::RetainedCleanup;
+    }
+
     pub(crate) const fn begin_shutdown(&mut self) {
         self.activity = ApplicationActivity::ShuttingDown;
     }
@@ -554,12 +597,42 @@ impl ApplicationState {
 
     pub(crate) fn set_loaded(&mut self, loaded: LoadedModel) {
         self.loaded = Some(loaded);
+        self.retained_model = None;
         self.activity = ApplicationActivity::Idle;
+    }
+
+    pub(crate) fn set_retained_model(&mut self, retained: ApplicationRetainedModel) {
+        self.loaded = None;
+        self.retained_model = Some(retained);
+        if self.activity != ApplicationActivity::ShuttingDown {
+            self.activity = ApplicationActivity::RetainedCleanup;
+        }
+    }
+
+    pub(crate) fn retained_model_mut(&mut self) -> Option<&mut ApplicationRetainedModel> {
+        self.retained_model.as_mut()
+    }
+
+    pub(crate) fn clear_retained_model(&mut self) {
+        self.retained_model = None;
+        if self.activity == ApplicationActivity::RetainedCleanup {
+            self.activity = ApplicationActivity::Idle;
+        }
     }
 
     pub(crate) fn clear_loaded(&mut self) {
         self.loaded = None;
         self.activity = ApplicationActivity::Idle;
+    }
+
+    pub(crate) fn clear_normal_runtime_ownership_for_shutdown(&mut self) {
+        self.loaded = None;
+        self.generation = None;
+    }
+
+    pub(crate) fn confirm_runtime_shutdown_released(&mut self) {
+        self.clear_normal_runtime_ownership_for_shutdown();
+        self.retained_model = None;
     }
 
     pub(crate) fn begin_generation(&mut self, summary: GenerationSummary) {

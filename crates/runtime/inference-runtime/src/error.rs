@@ -411,7 +411,10 @@ pub enum RuntimeError {
     /// Sampling failed inside the generation kernel.
     Sampling(SamplingFailure),
     /// Cleanup failed after an independently important primary outcome.
-    CleanupFailed(CleanupFailureReport),
+    ///
+    /// The complete retry state preserves resource identity, ownership certainty,
+    /// attempt accounting, and the independent primary and cleanup failures.
+    CleanupFailed(CleanupRetryState),
     /// Automatic cleanup retries are exhausted while ownership remains retained.
     CleanupRetryExhausted(CleanupRetryState),
     /// Terminal shutdown retained all unresolved owners until process exit.
@@ -440,8 +443,9 @@ impl RuntimeError {
             Self::ShuttingDown => FailureClass::Shutdown,
             Self::AdmissionBlockedByUnverifiedOwnership { .. } => FailureClass::UnverifiedOwnership,
             Self::BackendContractViolation => FailureClass::BackendContract,
-            Self::CleanupFailed(report) => report.primary_failure,
-            Self::CleanupRetryExhausted(state) => state.failure.primary_failure,
+            Self::CleanupFailed(state) | Self::CleanupRetryExhausted(state) => {
+                state.failure.primary_failure
+            }
             Self::TerminalCleanupRetention { first, .. } => first.failure.primary_failure,
             Self::ModelAlreadyLoaded(_)
             | Self::ModelNotLoaded(_)
@@ -466,8 +470,9 @@ impl RuntimeError {
             Self::Synchronization(error) => FailureDetail::Synchronization(error),
             Self::Lifecycle(error) => FailureDetail::Lifecycle(error),
             Self::Sampling(error) => FailureDetail::Sampling(error),
-            Self::CleanupFailed(report) => report.primary_detail,
-            Self::CleanupRetryExhausted(state) => state.failure.primary_detail,
+            Self::CleanupFailed(state) | Self::CleanupRetryExhausted(state) => {
+                state.failure.primary_detail
+            }
             Self::TerminalCleanupRetention { first, .. } => first.failure.primary_detail,
             other => FailureDetail::Class(other.failure_class()),
         }

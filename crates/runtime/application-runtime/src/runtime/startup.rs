@@ -272,6 +272,7 @@ impl ApplicationRuntime {
             resolved_artifacts: None,
             pending_hub_selection: None,
             pending_load: None,
+            pending_unload: None,
             tokenizer: None,
             generation,
             conversation: crate::conversation::ConversationState::default(),

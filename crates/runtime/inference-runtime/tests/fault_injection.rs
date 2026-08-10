@@ -746,11 +746,23 @@ fn wrong_execution_scalar_cleanup_failure_retains_accounting_until_successful_re
 
     assert!(matches!(
         load(&mut runtime),
-        Err(RuntimeError::CleanupFailed(report))
-            if report.primary_operation == RuntimeOperation::ModelAdmission
-                && report.primary_failure == FailureClass::BackendContract
-                && report.cleanup_operation == RuntimeOperation::ModelUnload
-                && report.cleanup_failure == FailureClass::Synchronization
+        Err(RuntimeError::CleanupFailed(state))
+            if state.failure.primary_operation == RuntimeOperation::ModelAdmission
+                && state.failure.primary_failure == FailureClass::BackendContract
+                && state.failure.cleanup_operation == RuntimeOperation::ModelUnload
+                && state.failure.cleanup_failure == FailureClass::Synchronization
+                && state.resource
+                    == CleanupResource::IncompatibleModel {
+                        handle: expected_handle(1),
+                    }
+                && state.ownership
+                    == RetainedOwnership::Unverified {
+                        accepted_loading_peak: loading_peak_footprint(),
+                        reported_footprint: model_footprint(),
+                        conservative_footprint: ConservativeFootprint::Known(
+                            loading_peak_footprint(),
+                        ),
+                    }
     ));
     assert_eq!(counts.model_loads.get(), 1);
     assert_eq!(counts.model_cleanups.get(), 1);
@@ -859,9 +871,9 @@ fn device_mismatch_cleanup_failure_preserves_primary_error_ownership_and_account
     let result = load(&mut runtime);
     assert!(matches!(
         result,
-        Err(RuntimeError::CleanupFailed(report))
-            if report.primary_failure == inference_runtime::FailureClass::BackendContract
-                && report.cleanup_failure == inference_runtime::FailureClass::Synchronization
+        Err(RuntimeError::CleanupFailed(state))
+            if state.failure.primary_failure == inference_runtime::FailureClass::BackendContract
+                && state.failure.cleanup_failure == inference_runtime::FailureClass::Synchronization
     ));
     assert_eq!(counts.model_cleanups.get(), 1);
     let snapshot = runtime.snapshot();
@@ -903,10 +915,10 @@ fn incompatible_complete_model_matrix_retains_unverified_evidence_and_unlocks_on
         let result = load_model_id(&mut runtime, 1, source_with_faults(faults));
         assert!(matches!(
             result,
-            Err(RuntimeError::CleanupFailed(report))
-                if report.primary_detail
+            Err(RuntimeError::CleanupFailed(state))
+                if state.failure.primary_detail
                     == FailureDetail::Class(FailureClass::BackendContract)
-                    && report.cleanup_detail
+                    && state.failure.cleanup_detail
                         == FailureDetail::Synchronization(SynchronizationError::Backend(
                             backend_failure(3),
                         ))
@@ -1348,11 +1360,16 @@ fn failed_load_cleanup_failure_retains_owner_and_full_loading_peak() {
 
     assert!(matches!(
         load(&mut runtime),
-        Err(RuntimeError::CleanupFailed(report))
-            if report.primary_operation == RuntimeOperation::ModelLoad
-                && report.primary_failure == FailureClass::Load
-                && report.cleanup_operation == RuntimeOperation::FailedLoadCleanup
-                && report.cleanup_failure == FailureClass::Synchronization
+        Err(RuntimeError::CleanupFailed(state))
+            if state.failure.primary_operation == RuntimeOperation::ModelLoad
+                && state.failure.primary_failure == FailureClass::Load
+                && state.failure.cleanup_operation == RuntimeOperation::FailedLoadCleanup
+                && state.failure.cleanup_failure == FailureClass::Synchronization
+                && state.resource
+                    == CleanupResource::FailedLoad {
+                        handle: expected_handle(1),
+                    }
+                && state.ownership == RetainedOwnership::Exact(loading_peak_footprint())
     ));
     let snapshot = runtime.snapshot();
     assert_eq!(snapshot.loaded_models, 0);
@@ -1498,9 +1515,9 @@ fn failed_sequence_rollback_is_reported_without_registry_mutation() -> TestResul
     let result = start(&mut runtime, loaded.handle, 10, 100);
     assert!(matches!(
         result,
-        Err(RuntimeError::CleanupFailed(report))
-            if report.primary_failure == inference_runtime::FailureClass::BackendContract
-                && report.cleanup_failure == inference_runtime::FailureClass::Sequence
+        Err(RuntimeError::CleanupFailed(state))
+            if state.failure.primary_failure == inference_runtime::FailureClass::BackendContract
+                && state.failure.cleanup_failure == inference_runtime::FailureClass::Sequence
     ));
     assert_eq!(counts.sequence_creations.get(), 1);
     assert_eq!(counts.sequence_destructions.get(), 1);
@@ -1617,9 +1634,9 @@ fn repeated_sequence_cleanup_failure_exhausts_without_releasing_accounting() -> 
     let initial = runtime.cancel_request(RequestId::new(10), CancellationReason::UserRequested);
     assert!(matches!(
         initial,
-        Err(RuntimeError::CleanupFailed(report))
-            if report.primary_failure == FailureClass::Cancellation
-                && report.cleanup_failure == FailureClass::Sequence
+        Err(RuntimeError::CleanupFailed(state))
+            if state.failure.primary_failure == FailureClass::Cancellation
+                && state.failure.cleanup_failure == FailureClass::Sequence
     ));
     assert_eq!(counts.sequence_destructions.get(), 1);
     assert_eq!(
@@ -1843,10 +1860,10 @@ fn normal_model_unload_failure_uses_the_bounded_cleanup_state_machine() -> TestR
     );
     assert!(matches!(
         initial,
-        Err(RuntimeError::CleanupFailed(report))
-            if report.primary_operation == RuntimeOperation::ModelUnload
-                && report.primary_failure == FailureClass::Completion
-                && report.cleanup_failure == FailureClass::Synchronization
+        Err(RuntimeError::CleanupFailed(state))
+            if state.failure.primary_operation == RuntimeOperation::ModelUnload
+                && state.failure.primary_failure == FailureClass::Completion
+                && state.failure.cleanup_failure == FailureClass::Synchronization
     ));
     let snapshot = runtime.snapshot();
     assert_eq!(snapshot.loaded_models, 0);

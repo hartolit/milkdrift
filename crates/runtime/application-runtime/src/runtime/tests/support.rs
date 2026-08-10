@@ -19,9 +19,8 @@ use inference_runtime::{
 
 use super::super::ApplicationRuntime;
 use crate::{
-    ApplicationDevice, ApplicationEngine, ApplicationEvent, ApplicationModelFormat,
-    ApplicationOutputRecordKind, ApplicationOutputState, ApplicationRuntimeConfiguration,
-    ApplicationScalarType, ApplicationSource, GenerationSeed, GenerationSettings,
+    ApplicationDevice, ApplicationEvent, ApplicationOutputRecordKind, ApplicationOutputState,
+    ApplicationRuntimeConfiguration, ApplicationScalarType, GenerationSeed, GenerationSettings,
     GenerationTerminal, GenerationTerminalKind, GenerationTerminalOutcome, LoadedModel,
     ModelSelection, ResolvedModel,
 };
@@ -51,41 +50,6 @@ const CANDLE_FIXTURE_WEIGHT_SHA256: [u8; 32] = [
 static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(super) type TestResult<T = ()> = Result<T, String>;
-
-pub(super) const fn retryable_failed_load_cleanup_failure() -> RuntimeError {
-    RuntimeError::CleanupFailed(CleanupFailureReport::new(
-        RuntimeOperation::ModelLoad,
-        FailureClass::Load,
-        RuntimeOperation::FailedLoadCleanup,
-        FailureClass::Synchronization,
-    ))
-}
-
-pub(super) const fn retryable_model_unload_cleanup_failure() -> RuntimeError {
-    RuntimeError::CleanupFailed(CleanupFailureReport::new(
-        RuntimeOperation::ModelUnload,
-        FailureClass::Completion,
-        RuntimeOperation::ModelUnload,
-        FailureClass::Synchronization,
-    ))
-}
-
-pub(super) const fn exhausted_failed_load_cleanup_failure() -> RuntimeError {
-    RuntimeError::CleanupRetryExhausted(CleanupRetryState {
-        resource: CleanupResource::FailedLoad {
-            handle: ModelHandle::new(ModelId::new(1), ModelGeneration::new(1)),
-        },
-        failure: CleanupFailureReport::new(
-            RuntimeOperation::ModelLoad,
-            FailureClass::Load,
-            RuntimeOperation::FailedLoadCleanup,
-            FailureClass::Synchronization,
-        ),
-        ownership: RetainedOwnership::Exact(EMPTY_FOOTPRINT),
-        attempts: 3,
-        maximum_attempts: 3,
-    })
-}
 
 pub(super) const fn terminal_cleanup_failure() -> RuntimeError {
     let first = CleanupRetryState {
@@ -183,7 +147,7 @@ where
     C: FnOnce(&mut ApplicationRuntimeConfiguration),
     F: FnOnce(&mut ApplicationRuntime) -> TestResult,
 {
-    let mut configuration = ApplicationRuntimeConfiguration::desktop(database_path);
+    let mut configuration = ApplicationRuntimeConfiguration::new(database_path);
     configure(&mut configuration);
     match ApplicationRuntime::start_with_device_probe(configuration, device_probe) {
         Ok(mut runtime) => {
@@ -268,9 +232,7 @@ pub(super) fn resolve_fixture_with_configuration(
         } => {
             assert!(persistence_warning.is_none());
             assert_eq!(model.selection(), &selection);
-            assert_eq!(model.engine(), ApplicationEngine::Candle);
-            assert_eq!(model.source(), ApplicationSource::HuggingFaceHub);
-            assert_eq!(model.format(), ApplicationModelFormat::Safetensors);
+
             assert_eq!(
                 model.configuration_declared_scalar_type(),
                 configuration_declared_scalar_type
@@ -306,14 +268,12 @@ pub(super) fn load_fixture_with(
     match event {
         ApplicationEvent::ModelLoaded { model } => {
             assert_eq!(model.selection(), &selection);
-            assert_eq!(model.engine(), ApplicationEngine::Candle);
-            assert_eq!(model.source(), ApplicationSource::HuggingFaceHub);
             assert_eq!(model.device(), expected_device);
             assert_eq!(
                 runtime.state().loaded().map(LoadedModel::device),
                 Some(expected_device)
             );
-            assert_eq!(model.format(), ApplicationModelFormat::Safetensors);
+
             assert_eq!(model.execution_scalar_type(), ApplicationScalarType::F32);
             assert_eq!(model.identity().repository(), repository);
             assert_eq!(model.identity().commit(), commit);

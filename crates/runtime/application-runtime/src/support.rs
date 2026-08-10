@@ -200,12 +200,12 @@ pub const fn application_scalar_type(
 }
 
 pub const fn stored_configuration_declared_scalar_type(
-    value: ArtifactScalarType,
+    value: ApplicationScalarType,
 ) -> StoredScalarType {
     match value {
-        ArtifactScalarType::F32 => StoredScalarType::F32,
-        ArtifactScalarType::F16 => StoredScalarType::F16,
-        ArtifactScalarType::Bf16 => StoredScalarType::Bf16,
+        ApplicationScalarType::F32 => StoredScalarType::F32,
+        ApplicationScalarType::F16 => StoredScalarType::F16,
+        ApplicationScalarType::Bf16 => StoredScalarType::Bf16,
     }
 }
 
@@ -217,8 +217,52 @@ pub fn unix_milliseconds() -> u64 {
         })
 }
 
-pub fn hub_failure(error: hf_hub_adapter::HubError) -> ApplicationError {
-    ApplicationFailure::new(ApplicationFailureKind::Hub, error).into()
+pub fn hub_failure(error: &hf_hub_adapter::HubError) -> ApplicationError {
+    model_resolution_failure(error).into()
+}
+
+pub fn model_resolution_failure(error: &hf_hub_adapter::HubError) -> ApplicationFailure {
+    use hf_hub_adapter::HubErrorKind;
+
+    let (kind, message) = match error.kind() {
+        HubErrorKind::MalformedConfiguration => (
+            ApplicationFailureKind::MalformedArtifactConfiguration,
+            "model configuration or scalar declaration is malformed",
+        ),
+        HubErrorKind::UnsupportedScalarDeclaration => (
+            ApplicationFailureKind::UnsupportedArtifactDeclaration,
+            "model configuration contains an unsupported scalar declaration",
+        ),
+        HubErrorKind::ConflictingScalarDeclarations => (
+            ApplicationFailureKind::ConflictingArtifactDeclaration,
+            "model configuration contains conflicting scalar declarations",
+        ),
+        HubErrorKind::MissingArtifact | HubErrorKind::UnsupportedLayout => (
+            ApplicationFailureKind::UnsupportedArtifact,
+            "the selected repository does not contain the supported artifact layout",
+        ),
+        HubErrorKind::StructuralLimit => (
+            ApplicationFailureKind::UnsupportedArtifact,
+            "a resolved artifact exceeded an application structural limit",
+        ),
+        HubErrorKind::InvalidSelection => (
+            ApplicationFailureKind::ArtifactResolution,
+            "the model repository or revision selection is invalid",
+        ),
+        HubErrorKind::InvalidArtifact => (
+            ApplicationFailureKind::ArtifactResolution,
+            "resolved artifact identity or structure is invalid",
+        ),
+        HubErrorKind::Unavailable => (
+            ApplicationFailureKind::ArtifactResolution,
+            "model artifacts could not be resolved from the selected immutable revision",
+        ),
+        _ => (
+            ApplicationFailureKind::ArtifactResolution,
+            "model artifact resolution failed",
+        ),
+    };
+    ApplicationFailure::new(kind, message)
 }
 
 pub fn storage_failure(error: redb_storage::StorageError) -> ApplicationError {
@@ -332,10 +376,14 @@ where
 mod tests {
     use std::num::NonZeroU64;
 
-    use super::{application_preferences, runtime_memory_budget, stored_settings};
+    use hf_hub_adapter::HubError;
+
+    use super::{
+        application_preferences, model_resolution_failure, runtime_memory_budget, stored_settings,
+    };
     use crate::{
         AcceleratorMemoryPolicy, ApplicationDevice, ApplicationDeviceSummary,
-        ApplicationPreferences,
+        ApplicationFailureKind, ApplicationPreferences,
     };
 
     const GIBIBYTE: u64 = 1024 * 1024 * 1024;
@@ -343,11 +391,42 @@ mod tests {
     fn cuda_summary(ordinal: u32, total_memory_bytes: u64) -> ApplicationDeviceSummary {
         ApplicationDeviceSummary::discovered(
             ApplicationDevice::Cuda { ordinal },
-            format!("CUDA {ordinal} — test"),
+            Some("test device".to_owned()),
             Some(total_memory_bytes),
             Some(total_memory_bytes / 2),
             None,
         )
+    }
+
+    #[test]
+    fn declaration_resolution_failures_have_stable_application_categories() {
+        for (error, expected_kind, expected_message) in [
+            (
+                HubError::InvalidConfiguration,
+                ApplicationFailureKind::MalformedArtifactConfiguration,
+                "model configuration or scalar declaration is malformed",
+            ),
+            (
+                HubError::UnsupportedScalarDeclaration,
+                ApplicationFailureKind::UnsupportedArtifactDeclaration,
+                "model configuration contains an unsupported scalar declaration",
+            ),
+            (
+                HubError::ConflictingScalarDeclarations,
+                ApplicationFailureKind::ConflictingArtifactDeclaration,
+                "model configuration contains conflicting scalar declarations",
+            ),
+        ] {
+            let failure = model_resolution_failure(&error);
+            assert_eq!(failure.kind, expected_kind);
+            assert_eq!(failure.message, expected_message);
+        }
+
+        let vendor_detail = "vendor/internal/cache/path";
+        let failure =
+            model_resolution_failure(&HubError::UnsafeArtifactPath(vendor_detail.to_owned()));
+        assert_eq!(failure.kind, ApplicationFailureKind::ArtifactResolution);
+        assert!(!failure.message.contains(vendor_detail));
     }
 
     #[test]
@@ -371,7 +450,7 @@ mod tests {
             ApplicationDeviceSummary::cpu(),
             ApplicationDeviceSummary::discovered(
                 ApplicationDevice::Cuda { ordinal: 0 },
-                "CUDA 0 — unknown capacity".to_owned(),
+                Some("unknown-capacity device".to_owned()),
                 None,
                 None,
                 None,

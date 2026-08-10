@@ -196,7 +196,31 @@ impl HubStructuralLimit {
     }
 }
 
-/// Stable Hub adapter failures.
+/// Stable, allocation-free classification of Hub resolution failures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum HubErrorKind {
+    /// Repository or revision selection is invalid.
+    InvalidSelection,
+    /// Hub transport, authentication, cache I/O, or required metadata is unavailable.
+    Unavailable,
+    /// A required immutable artifact is absent.
+    MissingArtifact,
+    /// The repository does not provide the supported weight layout.
+    UnsupportedLayout,
+    /// A bounded artifact structure exceeded its accepted limit.
+    StructuralLimit,
+    /// Configuration JSON or a declaration field is malformed.
+    MalformedConfiguration,
+    /// A present scalar declaration is not recognized.
+    UnsupportedScalarDeclaration,
+    /// Modern and legacy scalar declarations contradict one another.
+    ConflictingScalarDeclarations,
+    /// Resolved artifact structure, path, or content identity is invalid.
+    InvalidArtifact,
+}
+
+/// Hub adapter failure with private vendor detail and stable classification.
 #[derive(Debug)]
 pub enum HubError {
     /// Repository identifier was empty.
@@ -258,6 +282,41 @@ pub enum HubError {
         /// Upstream Hub failure.
         source: HFError,
     },
+}
+
+impl HubError {
+    /// Returns the stable category used by application boundaries.
+    #[must_use]
+    pub const fn kind(&self) -> HubErrorKind {
+        match self {
+            Self::InvalidRepository | Self::InvalidRevision => HubErrorKind::InvalidSelection,
+            Self::Client(_)
+            | Self::RepositoryInfo(_)
+            | Self::ArtifactMetadata(_)
+            | Self::MissingCommit
+            | Self::MissingFileListing
+            | Self::ReadConfiguration(_)
+            | Self::ReadIndex(_)
+            | Self::ReadWeight(_)
+            | Self::Download { .. } => HubErrorKind::Unavailable,
+            Self::MissingArtifact(_) => HubErrorKind::MissingArtifact,
+            Self::UnsupportedWeightLayout => HubErrorKind::UnsupportedLayout,
+            Self::StructuralLimitExceeded(_) => HubErrorKind::StructuralLimit,
+            Self::InvalidConfiguration => HubErrorKind::MalformedConfiguration,
+            Self::UnsupportedScalarDeclaration => HubErrorKind::UnsupportedScalarDeclaration,
+            Self::ConflictingScalarDeclarations => HubErrorKind::ConflictingScalarDeclarations,
+            Self::InvalidCommit
+            | Self::DuplicateRepositoryFilePath
+            | Self::UnsafeArtifactPath(_)
+            | Self::InvalidIndex
+            | Self::MissingShardMetadata
+            | Self::DuplicateShardMetadata
+            | Self::UnexpectedShardMetadata
+            | Self::InvalidLfsContentIdentity
+            | Self::ShardLengthMismatch
+            | Self::InvalidWeightFile => HubErrorKind::InvalidArtifact,
+        }
+    }
 }
 
 impl Display for HubError {
@@ -490,7 +549,7 @@ fn resolve_file(
 
 #[cfg(test)]
 mod tests {
-    use super::{HubClientConfiguration, HubError, HubModelReference};
+    use super::{HubClientConfiguration, HubError, HubErrorKind, HubModelReference};
 
     #[test]
     fn client_configuration_debug_redacts_access_tokens() {
@@ -515,10 +574,38 @@ mod tests {
             HubModelReference::new(" ", "main"),
             Err(HubError::InvalidRepository)
         ));
+        assert_eq!(
+            HubError::InvalidRepository.kind(),
+            HubErrorKind::InvalidSelection
+        );
         assert!(matches!(
             HubModelReference::new("owner/model", " "),
             Err(HubError::InvalidRevision)
         ));
         Ok(())
+    }
+
+    #[test]
+    fn stable_error_kinds_distinguish_declarations_and_artifact_failures() {
+        assert_eq!(
+            HubError::InvalidConfiguration.kind(),
+            HubErrorKind::MalformedConfiguration
+        );
+        assert_eq!(
+            HubError::UnsupportedScalarDeclaration.kind(),
+            HubErrorKind::UnsupportedScalarDeclaration
+        );
+        assert_eq!(
+            HubError::ConflictingScalarDeclarations.kind(),
+            HubErrorKind::ConflictingScalarDeclarations
+        );
+        assert_eq!(
+            HubError::MissingArtifact("config.json").kind(),
+            HubErrorKind::MissingArtifact
+        );
+        assert_eq!(
+            HubError::InvalidLfsContentIdentity.kind(),
+            HubErrorKind::InvalidArtifact
+        );
     }
 }

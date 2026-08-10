@@ -1,9 +1,11 @@
 use application_runtime::{
-    ApplicationDevice, ApplicationEngine, ApplicationEvent, ApplicationFailure,
-    ApplicationFailureKind, ApplicationModelFormat, ApplicationOutputState, ApplicationScalarType,
-    ApplicationSource, ConversationProvenance, ConversationRecord, ConversationRecordId,
-    ConversationRetention, ConversationRole, ConversationTokenEstimate, GenerationTerminalKind,
-    GenerationTerminalOutcome, ResponseAttempt, ResponseAttemptId, ResponseAttemptState,
+    ApplicationConservativeFootprint, ApplicationDevice, ApplicationEvent, ApplicationFailure,
+    ApplicationFailureKind, ApplicationGenerationMode, ApplicationMemoryFootprint,
+    ApplicationModelCleanupDisposition, ApplicationOutputState, ApplicationRetainedModelResource,
+    ApplicationRetainedOwnership, ApplicationScalarType, ChatCompatibility, ConversationProvenance,
+    ConversationRecord, ConversationRecordId, ConversationRetention, ConversationRole,
+    ConversationTokenEstimate, GenerationTerminalKind, GenerationTerminalOutcome, ResponseAttempt,
+    ResponseAttemptId, ResponseAttemptState,
 };
 use slint::Model;
 
@@ -13,9 +15,9 @@ use super::callbacks::{
 use super::controls::{RuntimeAdmissions, control_state};
 use super::devices::{DeviceChoice, DeviceSelectorModel};
 use super::model::{
-    ComposerMode, UNLOADED_MODEL_SUMMARY, artifact_target_label, composer_mode_from_evidence,
-    device_label, loaded_model_facts_summary, map_model_selection, resolved_model_facts_summary,
-    selected_model_summary,
+    ComposerMode, composer_mode_from_generation_mode, device_label, loaded_model_facts_summary,
+    map_model_selection, model_residency_facts_summary, resolved_model_facts_summary,
+    retained_model_facts_summary, selected_model_summary,
 };
 use super::output::{
     FrameOutputDelta, GeneratedOutputUpdate, PresentationState, TerminalPresentation,
@@ -25,37 +27,45 @@ use super::output::{
 use super::{MAXIMUM_EVENTS_PER_FRAME, UI_FRAME_MILLISECONDS};
 
 #[test]
-fn repository_and_revision_map_to_model_selection() {
+fn repository_revision_and_selected_device_are_projected_without_backend_details() {
     let selection = map_model_selection(" owner/model ", " main ");
 
     assert_eq!(selection.repository(), "owner/model");
     assert_eq!(selection.revision(), "main");
 
     let summary = selected_model_summary(&selection, ApplicationDevice::Cpu, true);
-    assert!(summary.contains("Engine: Candle"));
-    assert!(summary.contains("Repository: owner/model"));
-    assert!(summary.contains("Revision: main"));
-    assert!(summary.contains("Selected device: CPU"));
-    assert!(!summary.contains("Configuration-declared scalar"));
-    assert!(!summary.contains("Source scalar"));
-    assert!(!summary.contains("Execution scalar"));
-    assert!(!summary.contains("Execution device"));
+    assert!(summary.contains("owner/model"));
+    assert!(summary.contains("main"));
+    assert!(summary.contains("CPU"));
+    assert!(summary.contains("available"));
+    for implementation_detail in ["Engine", "Source", "Format", "Identity", "commit"] {
+        assert!(!summary.contains(implementation_detail));
+    }
 }
 
 #[test]
-fn resolved_artifact_target_reports_only_artifact_facts() {
-    let target = artifact_target_label(
-        ApplicationEngine::Candle,
-        ApplicationSource::HuggingFaceHub,
-        ApplicationModelFormat::Safetensors,
+fn resolved_summary_projects_public_declaration_and_compatibility_facts_only() {
+    let summary = resolved_model_facts_summary(
+        Some(ApplicationScalarType::F32),
+        ChatCompatibility::Supported,
     );
 
-    assert!(target.contains("Engine: Candle"));
-    assert!(target.contains("Source: Hugging Face Hub"));
-    assert!(target.contains("Format: Safetensors"));
-    assert!(!target.contains("device"));
-    assert!(!target.contains("CPU"));
-    assert!(!target.contains("CUDA"));
+    assert!(summary.contains("Resolved"));
+    assert!(summary.contains("Recognized"));
+    assert!(summary.contains("F32"));
+    assert!(summary.contains("supported"));
+    for implementation_detail in [
+        "Engine",
+        "Source",
+        "Format",
+        "Identity",
+        "commit",
+        "vocabulary",
+    ] {
+        assert!(!summary.contains(implementation_detail));
+    }
+    assert!(!summary.contains("Execution device"));
+    assert!(!summary.contains("Execution scalar"));
 }
 
 #[test]
@@ -68,28 +78,25 @@ fn device_labels_are_owned_and_stable_for_cpu_and_cuda_ordinals() {
 }
 
 #[test]
-fn checked_device_indices_map_to_the_rust_owned_e1_order() {
+fn checked_device_rows_round_trip_rust_owned_application_identities() {
+    let cpu = ApplicationDevice::Cpu;
+    let cuda_zero = ApplicationDevice::Cuda { ordinal: 0 };
+    let cuda_four = ApplicationDevice::Cuda { ordinal: 4 };
+    let devices = [cpu, cuda_zero, cuda_four];
     let mut selector = DeviceSelectorModel::default();
     selector.synchronize_choices(&[
-        DeviceChoice::new(ApplicationDevice::Cpu, "CPU", true),
-        DeviceChoice::new(ApplicationDevice::Cuda { ordinal: 0 }, "CUDA 0", true),
-        DeviceChoice::new(ApplicationDevice::Cuda { ordinal: 4 }, "CUDA 4", true),
+        DeviceChoice::new(cpu, "CPU", true),
+        DeviceChoice::new(cuda_zero, "CUDA 0", true),
+        DeviceChoice::new(cuda_four, "CUDA 4", true),
     ]);
 
+    for device in devices {
+        let selected_row = selector.selected_index(device);
+        assert!(selected_row >= 0);
+        assert_eq!(selector.device_at_checked_index(selected_row), Some(device));
+    }
     assert_eq!(selector.device_at_checked_index(-1), None);
-    assert_eq!(
-        selector.device_at_checked_index(0),
-        Some(ApplicationDevice::Cpu)
-    );
-    assert_eq!(
-        selector.device_at_checked_index(1),
-        Some(ApplicationDevice::Cuda { ordinal: 0 })
-    );
-    assert_eq!(
-        selector.device_at_checked_index(2),
-        Some(ApplicationDevice::Cuda { ordinal: 4 })
-    );
-    assert_eq!(selector.device_at_checked_index(3), None);
+    assert_eq!(selector.device_at_checked_index(i32::MAX), None);
     assert_eq!(
         selector.selected_index(ApplicationDevice::Cuda { ordinal: 9 }),
         -1
@@ -97,146 +104,114 @@ fn checked_device_indices_map_to_the_rust_owned_e1_order() {
 }
 
 #[test]
-fn unavailable_selected_cuda_row_is_retained_at_its_stable_index() {
+fn unavailable_selected_cuda_identity_remains_visible_and_selectable() {
+    let cuda = ApplicationDevice::Cuda { ordinal: 2 };
     let mut selector = DeviceSelectorModel::default();
     selector.synchronize_choices(&[
         DeviceChoice::new(ApplicationDevice::Cpu, "CPU", true),
-        DeviceChoice::new(
-            ApplicationDevice::Cuda { ordinal: 2 },
-            "CUDA 2 — Test GPU",
-            true,
-        ),
+        DeviceChoice::new(cuda, "CUDA 2 — Test GPU", true),
     ]);
     let labels = selector.slint_model();
 
     selector.synchronize_choices(&[
         DeviceChoice::new(ApplicationDevice::Cpu, "CPU", true),
-        DeviceChoice::new(ApplicationDevice::Cuda { ordinal: 2 }, "CUDA 2", false),
+        DeviceChoice::new(cuda, "CUDA 2", false),
     ]);
 
+    let selected_row = selector.selected_index(cuda);
+    let selected_label = usize::try_from(selected_row)
+        .ok()
+        .and_then(|index| labels.row_data(index))
+        .map(|label| label.to_string());
+
     assert_eq!(labels, selector.slint_model());
-    assert_eq!(labels.row_count(), 2);
-    assert_eq!(
-        labels.row_data(1).map(|label| label.to_string()),
-        Some("CUDA 2 (unavailable)".to_owned())
+    assert!(
+        selected_label
+            .as_deref()
+            .is_some_and(|label| label.contains("CUDA 2"))
     );
-    assert_eq!(
-        selector.device_at_checked_index(1),
-        Some(ApplicationDevice::Cuda { ordinal: 2 })
+    assert!(
+        selected_label
+            .as_deref()
+            .is_some_and(|label| label.contains("unavailable"))
     );
-    assert_eq!(
-        selector.selected_index(ApplicationDevice::Cuda { ordinal: 2 }),
-        1
-    );
+    assert_eq!(selector.device_at_checked_index(selected_row), Some(cuda));
 }
 
 #[test]
-fn resolved_summary_labels_configuration_declared_scalar() {
-    let target = artifact_target_label(
-        ApplicationEngine::Candle,
-        ApplicationSource::HuggingFaceHub,
-        ApplicationModelFormat::Safetensors,
-    );
+fn resolved_summary_labels_a_recognized_configuration_declaration() {
     let resolved = resolved_model_facts_summary(
-        &target,
         Some(ApplicationScalarType::Bf16),
-        "Hub commit abc123 (owner/model)",
+        ChatCompatibility::Supported,
     );
 
-    assert_eq!(
-        resolved,
-        "Engine: Candle • Source: Hugging Face Hub • Format: Safetensors • Configuration-declared scalar: BF16 • Identity: Hub commit abc123 (owner/model)"
-    );
-    assert!(!resolved.contains("Source scalar"));
+    assert!(resolved.contains("Resolved"));
+    assert!(resolved.contains("Recognized"));
+    assert!(resolved.contains("BF16"));
+    assert!(resolved.contains("supported"));
     assert!(!resolved.contains("Execution scalar"));
     assert!(!resolved.contains("Execution device"));
 }
 
 #[test]
-fn resolved_summary_omits_absent_configuration_declaration() {
-    let target = artifact_target_label(
-        ApplicationEngine::Candle,
-        ApplicationSource::HuggingFaceHub,
-        ApplicationModelFormat::Safetensors,
-    );
-    let resolved = resolved_model_facts_summary(&target, None, "Hub commit abc123 (owner/model)");
+fn resolved_summary_omits_an_absent_configuration_declaration() {
+    let resolved = resolved_model_facts_summary(None, ChatCompatibility::Unsupported);
 
-    assert_eq!(
-        resolved,
-        "Engine: Candle • Source: Hugging Face Hub • Format: Safetensors • Identity: Hub commit abc123 (owner/model)"
-    );
+    assert!(resolved.contains("Resolved"));
+    assert!(resolved.contains("unsupported"));
+    assert!(!resolved.contains("Recognized"));
     assert!(!resolved.contains("scalar"));
     assert!(!resolved.contains("device"));
 }
 
 #[test]
-fn configuration_declaration_and_loaded_execution_are_presented_independently() {
-    let target = artifact_target_label(
-        ApplicationEngine::Candle,
-        ApplicationSource::HuggingFaceHub,
-        ApplicationModelFormat::Safetensors,
-    );
+fn recognized_declaration_and_loaded_execution_are_presented_independently() {
     let resolved = resolved_model_facts_summary(
-        &target,
         Some(ApplicationScalarType::Bf16),
-        "Hub commit abc123 (owner/model)",
+        ChatCompatibility::Supported,
     );
-    let loaded = loaded_model_facts_summary(
-        &target,
-        ApplicationScalarType::F32,
-        ApplicationDevice::Cpu,
-        "Hub commit abc123 (owner/model)",
-    );
+    let loaded = loaded_model_facts_summary(ApplicationScalarType::F32, ApplicationDevice::Cpu);
 
-    assert!(resolved.contains("Configuration-declared scalar: BF16"));
+    assert!(resolved.contains("Recognized"));
+    assert!(resolved.contains("BF16"));
     assert!(!resolved.contains("Execution scalar"));
-    assert_eq!(
-        loaded,
-        "Engine: Candle • Source: Hugging Face Hub • Format: Safetensors • Execution scalar: F32 • Execution device: CPU • Identity: Hub commit abc123 (owner/model)"
-    );
-    assert!(!loaded.contains("Configuration-declared scalar"));
-    assert!(!loaded.contains("Source scalar"));
+    assert!(!resolved.contains("Execution device"));
+    assert!(loaded.contains("Execution scalar: F32"));
+    assert!(loaded.contains("Execution device: CPU"));
+    assert!(!loaded.contains("declaration"));
+    assert!(!loaded.contains("BF16"));
 }
 
 #[test]
-fn loaded_summary_reports_only_bf16_cuda_execution_facts() {
-    let target = artifact_target_label(
-        ApplicationEngine::Candle,
-        ApplicationSource::HuggingFaceHub,
-        ApplicationModelFormat::Safetensors,
-    );
+fn loaded_summary_reports_only_actual_bf16_cuda_execution_facts() {
     let loaded = loaded_model_facts_summary(
-        &target,
         ApplicationScalarType::Bf16,
         ApplicationDevice::Cuda { ordinal: 2 },
-        "Hub commit abc123 (owner/model)",
     );
 
     assert!(loaded.contains("Execution scalar: BF16"));
     assert!(loaded.contains("Execution device: CUDA 2"));
-    assert!(!loaded.contains("Configuration-declared scalar"));
-    assert!(!loaded.contains("Source scalar"));
+    for non_execution_fact in [
+        "declaration",
+        "Engine",
+        "Source",
+        "Format",
+        "Identity",
+        "commit",
+    ] {
+        assert!(!loaded.contains(non_execution_fact));
+    }
 }
 
 #[test]
-fn selected_and_loaded_execution_device_formatting_remain_distinct() {
+fn selected_and_loaded_execution_devices_remain_distinct_projected_facts() {
     let selection = map_model_selection("owner/model", "main");
     let selected =
         selected_model_summary(&selection, ApplicationDevice::Cuda { ordinal: 3 }, false);
-    let target = artifact_target_label(
-        ApplicationEngine::Candle,
-        ApplicationSource::HuggingFaceHub,
-        ApplicationModelFormat::Safetensors,
-    );
-    let loaded = loaded_model_facts_summary(
-        &target,
-        ApplicationScalarType::F32,
-        ApplicationDevice::Cpu,
-        "Hub commit abc123 (owner/model)",
-    );
+    let loaded = loaded_model_facts_summary(ApplicationScalarType::F32, ApplicationDevice::Cpu);
 
     assert!(selected.contains("Selected device: CUDA 3"));
-    assert!(selected.contains("Availability: unavailable"));
+    assert!(selected.contains("unavailable"));
     assert!(!selected.contains("Execution device"));
     assert!(loaded.contains("Execution device: CPU"));
     assert!(!loaded.contains("Selected device"));
@@ -244,31 +219,76 @@ fn selected_and_loaded_execution_device_formatting_remain_distinct() {
 }
 
 #[test]
-fn unload_display_clears_loaded_execution_facts_without_changing_selected_identity() {
+fn released_residency_clears_execution_facts_without_changing_selected_device() {
     let selection = map_model_selection("owner/model", "main");
     let selected_before =
         selected_model_summary(&selection, ApplicationDevice::Cuda { ordinal: 3 }, false);
-    let target = artifact_target_label(
-        ApplicationEngine::Candle,
-        ApplicationSource::HuggingFaceHub,
-        ApplicationModelFormat::Safetensors,
-    );
-    let loaded_before = loaded_model_facts_summary(
-        &target,
-        ApplicationScalarType::F32,
-        ApplicationDevice::Cpu,
-        "Hub commit abc123 (owner/model)",
-    );
+    let loaded_before =
+        loaded_model_facts_summary(ApplicationScalarType::F32, ApplicationDevice::Cpu);
+    let released = model_residency_facts_summary(None, None);
     let selected_after =
         selected_model_summary(&selection, ApplicationDevice::Cuda { ordinal: 3 }, false);
 
     assert!(loaded_before.contains("Execution scalar: F32"));
     assert!(loaded_before.contains("Execution device: CPU"));
-    assert_eq!(UNLOADED_MODEL_SUMMARY, "Not loaded.");
-    assert!(!UNLOADED_MODEL_SUMMARY.contains("scalar"));
-    assert!(!UNLOADED_MODEL_SUMMARY.contains("device"));
+    assert!(released.contains("No loaded"));
+    assert!(released.contains("retained"));
+    assert!(!released.contains("Execution scalar"));
+    assert!(!released.contains("Execution device"));
     assert_eq!(selected_after, selected_before);
     assert!(selected_after.contains("Selected device: CUDA 3"));
+}
+
+#[test]
+fn exact_retained_ownership_replaces_the_unloaded_placeholder() {
+    let retained = retained_model_facts_summary(
+        ApplicationRetainedModelResource::UnconfirmedModel,
+        ApplicationRetainedOwnership::Exact(ApplicationMemoryFootprint::default()),
+        ApplicationModelCleanupDisposition::Pending,
+    );
+    let residency = model_residency_facts_summary(None, Some(&retained));
+
+    assert!(residency.contains("Retained"));
+    assert!(residency.contains("unconfirmed-model"));
+    assert!(residency.contains("exact"));
+    assert!(residency.contains("pending"));
+    assert!(!residency.contains("No loaded"));
+    assert!(!residency.contains("Not loaded"));
+}
+
+#[test]
+fn unverified_retained_ownership_projects_its_retryable_disposition() {
+    let retained = retained_model_facts_summary(
+        ApplicationRetainedModelResource::UnconfirmedLoad,
+        ApplicationRetainedOwnership::Unverified {
+            accepted_loading_peak: ApplicationMemoryFootprint::default(),
+            reported_footprint: ApplicationMemoryFootprint::default(),
+            conservative_footprint: ApplicationConservativeFootprint::Overflow,
+        },
+        ApplicationModelCleanupDisposition::LowerRetryable {
+            attempts: 2,
+            maximum_attempts: 3,
+        },
+    );
+
+    assert!(retained.contains("unverified"));
+    assert!(retained.contains("retryable"));
+    assert!(retained.contains('2'));
+    assert!(retained.contains('3'));
+}
+
+#[test]
+fn unknown_retained_ownership_projects_unconfirmed_release() {
+    let retained = retained_model_facts_summary(
+        ApplicationRetainedModelResource::UnconfirmedModel,
+        ApplicationRetainedOwnership::Unknown,
+        ApplicationModelCleanupDisposition::WorkerDisconnected,
+    );
+
+    assert!(retained.contains("unknown"));
+    assert!(retained.contains("worker disconnected"));
+    assert!(retained.contains("without confirmed release"));
+    assert!(!retained.contains("released"));
 }
 
 #[test]
@@ -298,16 +318,34 @@ fn changing_visible_selection_fields_never_reuses_the_stale_selection() {
 }
 
 #[test]
-fn composer_mode_requires_a_loaded_model_and_verified_chat_evidence() {
-    assert_eq!(
-        composer_mode_from_evidence(false, false),
+fn composer_mode_is_a_direct_projection_of_application_generation_mode() {
+    for (generation_mode, composer_mode) in [
+        (
+            ApplicationGenerationMode::Unavailable,
+            ComposerMode::Unavailable,
+        ),
+        (
+            ApplicationGenerationMode::DirectCompletion,
+            ComposerMode::DirectCompletion,
+        ),
+        (ApplicationGenerationMode::Chat, ComposerMode::Chat),
+    ] {
+        assert_eq!(
+            composer_mode_from_generation_mode(generation_mode),
+            composer_mode
+        );
+    }
+}
+
+#[test]
+fn unavailable_composer_guidance_distinguishes_retained_ownership() {
+    assert!(ComposerMode::Unavailable.guidance(false).contains("Load"));
+    assert!(
         ComposerMode::Unavailable
+            .guidance(true)
+            .contains("retained")
     );
-    assert_eq!(composer_mode_from_evidence(true, true), ComposerMode::Chat);
-    assert_eq!(
-        composer_mode_from_evidence(true, false),
-        ComposerMode::DirectCompletion
-    );
+    assert!(ComposerMode::Unavailable.guidance(true).contains("release"));
 }
 
 #[test]

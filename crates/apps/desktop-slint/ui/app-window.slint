@@ -9,9 +9,9 @@ export component AppWindow inherits Window {
     in-out property <string> revision;
     in-out property <string> message-input;
     in property <string> selected-model-summary: "No model selected.";
-    in property <string> resolved-model-summary: "Not resolved.";
-    in property <string> loaded-model-summary: "Not loaded.";
-    in property <string> composer-mode: "No model loaded";
+    in property <string> resolved-model-summary: "No resolved model facts.";
+    in property <string> loaded-model-summary: "No loaded or retained model resources.";
+    in property <string> composer-mode: "Unavailable";
     in property <string> composer-guidance: "Load a model to enable generation.";
     in property <string> composer-input-label: "Message";
     in property <string> composer-submit-label: "Send";
@@ -115,11 +115,11 @@ export component AppWindow inherits Window {
             wrap: word-wrap;
         }
         Text {
-            text: "Resolved artifacts — " + root.resolved-model-summary;
+            text: "Resolved model — " + root.resolved-model-summary;
             wrap: word-wrap;
         }
         Text {
-            text: "Loaded execution — " + root.loaded-model-summary;
+            text: "Execution / retention — " + root.loaded-model-summary;
             wrap: word-wrap;
         }
 

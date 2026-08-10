@@ -2,7 +2,10 @@
 
 use domain_contracts::{ModelHandle, RequestId};
 
-use crate::{ApplicationFailure, GenerationTerminal, LoadedModel, ResolvedModel};
+use crate::{
+    ApplicationFailure, ApplicationRetainedModel, ApplicationRetainedModelResource,
+    GenerationTerminal, LoadedModel, ResolvedModel,
+};
 
 /// Frontend-neutral result of polling the application orchestrator.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,10 +34,13 @@ pub enum ApplicationEvent {
     },
     /// A model operation retains lower-owned resources pending explicit cleanup.
     ModelCleanupPending {
-        /// Whether lower cleanup or application verification/retry policy is exhausted.
-        exhausted: bool,
-        /// Normalized primary-operation and retained-cleanup diagnostic.
-        failure: ApplicationFailure,
+        /// Complete current retained ownership and cleanup disposition.
+        cleanup: ApplicationRetainedModel,
+    },
+    /// A previously retained model owner was explicitly released.
+    ModelCleanupReleased {
+        /// Resource whose lower ownership reached explicit release.
+        resource: ApplicationRetainedModelResource,
     },
     /// A successful lower receipt was incompatible and deterministic unload was requested.
     ModelCompatibilityFailed {

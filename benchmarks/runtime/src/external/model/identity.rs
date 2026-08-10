@@ -1,11 +1,10 @@
-//! Single ownership of immutable model, source, and canonical snapshot identity.
+//! Single ownership of immutable model selection and canonical snapshot identity.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use application_runtime::{
-    ApplicationEngine, ApplicationModelFormat, ApplicationScalarType, ApplicationSource,
-    ChatCompatibility, ModelSelection, PromptCompatibilityProfile, ResolvedModel,
+    ApplicationScalarType, ChatCompatibility, ModelSelection, ResolvedModel,
 };
 use domain_contracts::{ScalarType, ScalarTypeSet};
 
@@ -49,16 +48,12 @@ pub(super) fn validate_resolved_facts(
     if model.selection() != selection
         || model.identity().repository() != MODEL_REPOSITORY
         || model.identity().commit() != MODEL_REVISION
-        || model.engine() != ApplicationEngine::Candle
-        || model.source() != ApplicationSource::HuggingFaceHub
-        || model.format() != ApplicationModelFormat::Safetensors
         || configuration_declared_scalar_type != MODEL_CONFIGURATION_DECLARED_SCALAR
         || model.vocabulary_size() != EXPECTED_VOCABULARY_SIZE
-        || model.chat_compatibility()
-            != ChatCompatibility::Supported(PromptCompatibilityProfile::TinyLlamaChatV1)
+        || model.chat_compatibility() != ChatCompatibility::Supported
     {
         return Err(BenchmarkError::new(format!(
-            "resolved model did not retain the exact immutable TinyLlama Candle/Hub/Safetensors/optional-BF16-declaration/chat facts: {model:?}"
+            "resolved model did not retain the exact immutable TinyLlama selection, identity, optional BF16 declaration, vocabulary, and chat-compatibility facts: {model:?}"
         )));
     }
     Ok(configuration_declared_scalar_type)

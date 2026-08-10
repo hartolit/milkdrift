@@ -38,8 +38,7 @@ use generated::AppWindow;
 /// Returns an error if the application data path cannot be prepared, the runtime cannot start or
 /// stop cleanly, or Slint cannot create or run the application window.
 pub fn run() -> Result<(), DesktopError> {
-    let configuration =
-        ApplicationRuntimeConfiguration::desktop(paths::application_database_path()?);
+    let configuration = ApplicationRuntimeConfiguration::new(paths::application_database_path()?);
     let mut runtime = ApplicationRuntime::start(configuration)?;
     let window = match AppWindow::new() {
         Ok(window) => window,

@@ -1666,11 +1666,13 @@ fn model_unload_retry_recovers_and_releases_accounting_once() -> TestResult {
         .map_err(|error| format!("initial unload event failed: {error:?}"))?
     {
         RuntimeEvent::ModelUnload {
-            result: Err(inference_runtime::RuntimeError::CleanupFailed(report)),
+            result: Err(inference_runtime::RuntimeError::CleanupFailed(state)),
             ..
-        } if report.primary_operation == inference_runtime::RuntimeOperation::ModelUnload
-            && report.primary_failure == inference_runtime::FailureClass::Completion
-            && report.cleanup_failure == inference_runtime::FailureClass::Synchronization => {}
+        } if state.failure.primary_operation
+            == inference_runtime::RuntimeOperation::ModelUnload
+            && state.failure.primary_failure == inference_runtime::FailureClass::Completion
+            && state.failure.cleanup_failure
+                == inference_runtime::FailureClass::Synchronization => {}
         _ => return Err("unexpected initial unload event".into()),
     }
 

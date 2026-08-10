@@ -432,9 +432,9 @@ fn failed_sequence_release_preserves_request_for_retry() -> Result<(), String> {
     let first = runtime.cancel_request(RequestId::new(70), CancellationReason::UserRequested);
     if !matches!(
         first,
-        Err(inference_runtime::RuntimeError::CleanupFailed(report))
-            if report.primary_failure == inference_runtime::FailureClass::Cancellation
-                && report.cleanup_failure == inference_runtime::FailureClass::Sequence
+        Err(inference_runtime::RuntimeError::CleanupFailed(state))
+            if state.failure.primary_failure == inference_runtime::FailureClass::Cancellation
+                && state.failure.cleanup_failure == inference_runtime::FailureClass::Sequence
     ) {
         return Err(format!("unexpected first release result: {first:?}"));
     }
@@ -784,9 +784,9 @@ fn hosted_worker_retries_a_failed_forced_release() -> Result<(), String> {
     {
         RuntimeEvent::ModelUnload {
             ticket,
-            result: Err(inference_runtime::RuntimeError::CleanupFailed(report)),
-        } if report.primary_failure == inference_runtime::FailureClass::Cancellation
-            && report.cleanup_failure == inference_runtime::FailureClass::Sequence
+            result: Err(inference_runtime::RuntimeError::CleanupFailed(state)),
+        } if state.failure.primary_failure == inference_runtime::FailureClass::Cancellation
+            && state.failure.cleanup_failure == inference_runtime::FailureClass::Sequence
             && ticket == CommandTicket::new(82) => {}
 
         _ => return Err("missing initial sequence-release failure".into()),

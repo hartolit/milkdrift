@@ -1,4 +1,4 @@
-//! Model resolution, load admission, receipt validation, and resolution persistence.
+//! Model resolution, correlated load admission, receipt validation, and persistence.
 
 use candle_backend::{CandleLlamaSource, CandleShardIdentity, CandleWeightShard, SourceError};
 use domain_contracts::{
@@ -10,33 +10,93 @@ use hf_hub_adapter::{
 };
 use hf_tokenizer::HfTokenizer;
 use host_runtime::{TrySendError, TrySendError::Disconnected};
-use inference_runtime::{CommandTicket, RuntimeCommand};
+use inference_runtime::{CommandTicket, RuntimeCommand, RuntimeError};
 use redb_storage::ModelRecord;
 use tokenization::Tokenizer;
 
 use crate::hub_worker::{HubCommand, HubEvent};
 use crate::local::{CANDLE_BACKEND_ID, application_device, execution_device};
-use crate::runtime::retained_cleanup::RetainedModelCleanup;
 use crate::support::{
     application_configuration_declared_scalar_type, application_scalar_type, hub_failure,
-    model_source_failure, stored_configuration_declared_scalar_type, stored_settings,
-    unix_milliseconds,
+    model_resolution_failure, model_source_failure, stored_configuration_declared_scalar_type,
+    stored_settings, unix_milliseconds,
 };
 use crate::{
-    ApplicationDevice, ApplicationError, ApplicationEvent, ApplicationFailure,
-    ApplicationFailureKind, ApplicationRuntime, ApplicationScalarType, ImmutableModelIdentity,
-    LoadedModel, ModelSelection, ResolvedModel,
+    ApplicationActivity, ApplicationDevice, ApplicationError, ApplicationEvent, ApplicationFailure,
+    ApplicationFailureKind, ApplicationGenerationMode, ApplicationMemoryFootprint,
+    ApplicationRuntime, ChatCompatibility, ImmutableModelIdentity, LoadedModel, ModelSelection,
+    ResolvedModel,
 };
 
 const MODEL_ID: ModelId = ModelId::new(1);
 
 #[derive(Clone, Copy)]
 pub(super) struct LoadAdmission {
-    pub(super) ticket: CommandTicket,
-    pub(super) configuration_declared_scalar_type: Option<ApplicationScalarType>,
     pub(super) selected_device: ApplicationDevice,
     pub(super) execution_device: ExecutionDevice,
     pub(super) memory_budget: MemoryBudget,
+}
+
+#[derive(Clone)]
+pub(super) struct ResolvedArtifactSnapshot {
+    pub(super) model: ResolvedModel,
+    pub(super) artifacts: ResolvedSafetensorsLlamaArtifacts,
+    pub(super) tokenizer_vocabulary_size: u32,
+}
+
+pub(super) struct ModelLoadTransaction {
+    pub(super) ticket: CommandTicket,
+    pub(super) resolved: ResolvedArtifactSnapshot,
+    pub(super) admission: LoadAdmission,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LoadReceiptMismatch {
+    ModelIdentity,
+    Declaration,
+    ExecutionScalar,
+    ExecutionDevice,
+    SelectedDevice,
+    MemoryBudget,
+    FinalFootprint,
+    ObservedEvidence,
+    Capabilities,
+    Composition,
+    Limits,
+    TokenizerVocabulary,
+}
+
+impl LoadReceiptMismatch {
+    const fn message(self) -> &'static str {
+        match self {
+            Self::ModelIdentity => "the load receipt model identity did not match",
+            Self::Declaration => {
+                "the independently parsed configuration declaration did not match resolution"
+            }
+            Self::ExecutionScalar => "the load receipt execution scalar is not representable by E1",
+            Self::ExecutionDevice => "the load receipt execution device is not representable by E1",
+            Self::SelectedDevice => "selected, requested, and actual execution devices disagreed",
+            Self::MemoryBudget => "the startup-fixed load budget changed during the transaction",
+            Self::FinalFootprint => {
+                "the verified final footprint overflowed or exceeded the admitted budget"
+            }
+            Self::ObservedEvidence => {
+                "the lower descriptor omitted complete observed scalar evidence"
+            }
+            Self::Capabilities => "the lower descriptor omitted required generation capabilities",
+            Self::Composition => {
+                "the lower descriptor did not match the supported local composition"
+            }
+            Self::Limits => "the lower descriptor reported incoherent model limits",
+            Self::TokenizerVocabulary => {
+                "the lower descriptor vocabulary did not match the resolved tokenizer"
+            }
+        }
+    }
+}
+
+pub(super) struct ValidatedLoad {
+    loaded: LoadedModel,
 }
 
 impl ApplicationRuntime {
@@ -56,20 +116,29 @@ impl ApplicationRuntime {
         self.resolve_hugging_face(selection)
     }
 
-    /// Loads the exact complete selection retained by immutable resolution.
+    /// Loads the immutable artifact snapshot retained by successful resolution.
+    ///
+    /// The transaction re-probes the selected device, constructs one source from
+    /// the retained snapshot, submits one lower load, correlates its ticket, checks
+    /// generic receipt invariants, and only then publishes [`LoadedModel`].
     ///
     /// # Errors
     ///
-    /// Returns an error when loading is not currently valid, the complete selection or immutable
-    /// declaration evidence changed, or the selected inference worker cannot accept the command.
+    /// Returns an error when loading is not currently valid, the visible selection
+    /// changed, resolved evidence is internally inconsistent, or the inference worker
+    /// cannot accept the command.
     pub fn load_model(&mut self, selection: &ModelSelection) -> Result<(), ApplicationError> {
         self.require_idle()?;
+        if self.state.retained_model().is_some() {
+            return Err(ApplicationError::Busy(ApplicationActivity::RetainedCleanup));
+        }
         if self.state.loaded().is_some() {
             return Err(ApplicationError::ModelAlreadyLoaded);
         }
         if !self.state.inference_available() {
             return Err(ApplicationError::RuntimeDisconnected);
         }
+
         let resolved = self
             .state
             .resolved()
@@ -78,17 +147,14 @@ impl ApplicationRuntime {
         if !resolved.matches_selection(selection) {
             return Err(ApplicationError::SelectionChanged);
         }
-        let configuration_declared_scalar_type = resolved.configuration_declared_scalar_type();
+        let snapshot = self.resolved_artifact_snapshot(resolved)?;
+
         let selected_device = self.state.selected_device();
         self.refresh_selected_device()?;
         let requested_execution_device = execution_device(selected_device);
-        let artifacts = self
-            .resolved_artifacts
-            .as_ref()
-            .ok_or(ApplicationError::NoResolvedModel)?;
         let source = CandleLlamaSource::new(
-            artifacts.config_path.clone(),
-            candle_weight_shards(artifacts).map_err(model_source_failure)?,
+            snapshot.artifacts.config_path.clone(),
+            candle_weight_shards(&snapshot.artifacts).map_err(model_source_failure)?,
         )
         .map_err(model_source_failure)?;
         let ticket = self.next_ticket()?;
@@ -98,12 +164,14 @@ impl ApplicationRuntime {
             source,
             execution_device: requested_execution_device,
         })?;
-        self.pending_load = Some(LoadAdmission {
+        self.pending_load = Some(ModelLoadTransaction {
             ticket,
-            configuration_declared_scalar_type,
-            selected_device,
-            execution_device: requested_execution_device,
-            memory_budget: self.memory_budget,
+            resolved: snapshot,
+            admission: LoadAdmission {
+                selected_device,
+                execution_device: requested_execution_device,
+                memory_budget: self.memory_budget,
+            },
         });
         self.state.begin_loading();
         Ok(())
@@ -123,12 +191,44 @@ impl ApplicationRuntime {
         self.unload_model_with_behavior(crate::ModelUnloadBehavior::Drain)
     }
 
+    fn resolved_artifact_snapshot(
+        &self,
+        model: ResolvedModel,
+    ) -> Result<ResolvedArtifactSnapshot, ApplicationError> {
+        let artifacts = self
+            .resolved_artifacts
+            .clone()
+            .ok_or(ApplicationError::NoResolvedModel)?;
+        let tokenizer = self
+            .tokenizer
+            .as_ref()
+            .ok_or(ApplicationError::NoTokenizer)?;
+        let artifact_selection = ModelSelection::new(&artifacts.repository, &artifacts.revision);
+        if model.selection() != &artifact_selection
+            || model.identity().repository() != artifacts.repository
+            || model.identity().commit() != artifacts.commit
+            || model.vocabulary_size() != tokenizer.vocabulary_size()
+        {
+            return Err(ApplicationFailure::new(
+                ApplicationFailureKind::IncompatibleReceipt,
+                "resolved artifact state no longer matches its public immutable projection",
+            )
+            .into());
+        }
+        Ok(ResolvedArtifactSnapshot {
+            model,
+            artifacts,
+            tokenizer_vocabulary_size: tokenizer.vocabulary_size(),
+        })
+    }
+
     fn resolve_hugging_face(&mut self, selection: ModelSelection) -> Result<(), ApplicationError> {
         if !self.state.hub_available() {
             return Err(ApplicationError::HubDisconnected);
         }
         let (repository, revision) = selection.into_parts();
-        let reference = HubModelReference::new(repository, revision).map_err(hub_failure)?;
+        let reference =
+            HubModelReference::new(repository, revision).map_err(|error| hub_failure(&error))?;
         let normalized = ModelSelection::new(reference.repository(), reference.revision());
         match self.hub_commands.try_send(HubCommand::Resolve(reference)) {
             Ok(()) => {}
@@ -151,7 +251,7 @@ impl ApplicationRuntime {
                 self.pending_hub_selection = None;
                 self.state.set_idle();
                 ApplicationEvent::ModelResolutionFailed {
-                    failure: ApplicationFailure::new(ApplicationFailureKind::Hub, error),
+                    failure: model_resolution_failure(&error),
                 }
             }
         }
@@ -169,22 +269,19 @@ impl ApplicationRuntime {
             .is_some_and(|selection| selection != &artifact_selection)
         {
             return self.reject_resolution(ApplicationFailure::new(
-                ApplicationFailureKind::Hub,
-                "Hub resolution returned artifacts for a different complete selection",
+                ApplicationFailureKind::ArtifactResolution,
+                "artifact resolution returned a different complete selection",
             ));
         }
         self.pending_hub_selection = None;
 
-        let tokenizer = match HfTokenizer::from_file(&artifacts.tokenizer_path) {
-            Ok(tokenizer) => tokenizer,
-            Err(error) => {
-                return self.reject_resolution(ApplicationFailure::new(
-                    ApplicationFailureKind::Tokenizer,
-                    error,
-                ));
-            }
+        let Ok(tokenizer) = HfTokenizer::from_file(&artifacts.tokenizer_path) else {
+            return self.reject_resolution(ApplicationFailure::new(
+                ApplicationFailureKind::Tokenizer,
+                "the resolved tokenizer could not be validated",
+            ));
         };
-        let chat_compatibility = crate::chat::detect_chat_compatibility(
+        let chat_profile = crate::chat::detect_chat_profile(
             artifacts.repository.as_str(),
             artifacts.commit.as_str(),
             &tokenizer,
@@ -196,10 +293,10 @@ impl ApplicationRuntime {
             artifacts
                 .configuration_declared_scalar_type
                 .map(application_configuration_declared_scalar_type),
-            chat_compatibility,
+            chat_profile,
         );
         let persistence_warning = self
-            .persist_resolved(&artifacts)
+            .persist_resolved(&artifacts, &resolved)
             .err()
             .map(|error| ApplicationFailure::new(ApplicationFailureKind::Storage, error));
         self.resolved_artifacts = Some(artifacts);
@@ -228,56 +325,131 @@ impl ApplicationRuntime {
     pub(super) fn process_model_loaded(
         &mut self,
         ticket: CommandTicket,
-        result: Result<inference_runtime::LoadReceipt, inference_runtime::RuntimeError>,
-    ) -> ApplicationEvent {
-        let admission = self.pending_load.take();
+        result: Result<inference_runtime::LoadReceipt, RuntimeError>,
+    ) -> Option<ApplicationEvent> {
+        let expected_ticket = self
+            .pending_load
+            .as_ref()
+            .map(|transaction| transaction.ticket)?;
+        if expected_ticket != ticket {
+            return None;
+        }
+
+        let transaction = self.pending_load.take();
         let receipt = match result {
             Ok(receipt) => receipt,
+            Err(
+                RuntimeError::CleanupFailed(cleanup) | RuntimeError::CleanupRetryExhausted(cleanup),
+            ) => {
+                self.begin_runtime_retention(cleanup, None);
+                return self
+                    .state
+                    .retained_model()
+                    .cloned()
+                    .map(|cleanup| ApplicationEvent::ModelCleanupPending { cleanup });
+            }
             Err(error) => {
-                let retained_cleanup_exhausted = match error {
-                    inference_runtime::RuntimeError::CleanupFailed(_) => {
-                        self.retained_model_cleanup =
-                            Some(RetainedModelCleanup::PendingInspection {
-                                submission_attempts: 0,
-                            });
-                        Some(false)
-                    }
-                    inference_runtime::RuntimeError::CleanupRetryExhausted(_) => {
-                        self.retained_model_cleanup = Some(RetainedModelCleanup::Exhausted);
-                        Some(true)
-                    }
-                    _ => None,
-                };
-                if let Some(exhausted) = retained_cleanup_exhausted {
-                    self.state.begin_unloading();
-                    return ApplicationEvent::ModelCleanupPending {
-                        exhausted,
-                        failure: retained_model_load_cleanup_failure(error, exhausted),
-                    };
-                }
-
-                self.retained_model_cleanup = None;
                 self.state.set_idle();
-                return ApplicationEvent::ModelLoadFailed {
+                return Some(ApplicationEvent::ModelLoadFailed {
                     failure: model_load_failure(error),
-                };
+                });
             }
         };
-        let Some(resolved) = self.state.resolved().cloned() else {
-            return self.reject_incompatible_model(receipt.handle);
-        };
-        let descriptor = receipt.descriptor;
-        let Some(execution_scalar_type) = application_scalar_type(receipt.execution_scalar_type)
-        else {
-            return self.reject_incompatible_model(receipt.handle);
-        };
-        let Some(actual_device) = application_device(receipt.execution_device) else {
-            return self.reject_incompatible_model(receipt.handle);
-        };
-        if !self.loaded_compatibility_matches(admission, ticket, &receipt, &resolved, actual_device)
-        {
-            return self.reject_incompatible_model(receipt.handle);
+        let transaction = transaction?;
+
+        match self.validate_load_receipt(&transaction, &receipt) {
+            Ok(validated) => {
+                self.retained_model_cleanup = None;
+                self.state.clear_retained_model();
+                self.state.set_loaded(validated.loaded.clone());
+                Some(ApplicationEvent::ModelLoaded {
+                    model: validated.loaded,
+                })
+            }
+            Err(mismatch) => Some(self.reject_incompatible_model(
+                receipt.handle,
+                receipt.reserved_footprint,
+                incompatible_receipt_failure(mismatch),
+            )),
         }
+    }
+
+    pub(super) fn validate_load_receipt(
+        &self,
+        transaction: &ModelLoadTransaction,
+        receipt: &inference_runtime::LoadReceipt,
+    ) -> Result<ValidatedLoad, LoadReceiptMismatch> {
+        if receipt.handle.id != MODEL_ID {
+            return Err(LoadReceiptMismatch::ModelIdentity);
+        }
+        let execution_scalar_type = application_scalar_type(receipt.execution_scalar_type)
+            .ok_or(LoadReceiptMismatch::ExecutionScalar)?;
+        let actual_device = application_device(receipt.execution_device)
+            .ok_or(LoadReceiptMismatch::ExecutionDevice)?;
+        let descriptor = receipt.descriptor;
+        let descriptor_declaration = match descriptor.metadata.configuration_declared_scalar_type {
+            None => None,
+            Some(value) => {
+                Some(application_scalar_type(value).ok_or(LoadReceiptMismatch::Declaration)?)
+            }
+        };
+        if descriptor_declaration
+            != transaction
+                .resolved
+                .model
+                .configuration_declared_scalar_type()
+        {
+            return Err(LoadReceiptMismatch::Declaration);
+        }
+        if transaction.admission.selected_device != self.state.selected_device()
+            || transaction.admission.selected_device != actual_device
+            || transaction.admission.execution_device != receipt.execution_device
+        {
+            return Err(LoadReceiptMismatch::SelectedDevice);
+        }
+        if transaction.admission.memory_budget != self.memory_budget {
+            return Err(LoadReceiptMismatch::MemoryBudget);
+        }
+        if !Self::load_footprint_matches(&transaction.admission, receipt.reserved_footprint) {
+            return Err(LoadReceiptMismatch::FinalFootprint);
+        }
+        if !observed_tensor_scalar_types_are_present(
+            descriptor.metadata.observed_tensor_scalar_types,
+        ) {
+            return Err(LoadReceiptMismatch::ObservedEvidence);
+        }
+        let required_operations = CapabilitySet::PREFILL.union(CapabilitySet::INCREMENTAL_DECODE);
+        if !descriptor
+            .capabilities
+            .operations
+            .contains(required_operations)
+        {
+            return Err(LoadReceiptMismatch::Capabilities);
+        }
+        if descriptor.backend != CANDLE_BACKEND_ID
+            || descriptor.metadata.architecture != ModelArchitecture::Llama
+            || descriptor.metadata.quantization != QuantizationFormat::None
+        {
+            return Err(LoadReceiptMismatch::Composition);
+        }
+        if descriptor.metadata.context_length == 0
+            || descriptor.capabilities.maximum_context_tokens != descriptor.metadata.context_length
+            || descriptor.capabilities.maximum_prefill_batch == 0
+            || descriptor.capabilities.maximum_prefill_batch
+                > descriptor.capabilities.maximum_context_tokens
+            || descriptor.capabilities.maximum_sequences == 0
+        {
+            return Err(LoadReceiptMismatch::Limits);
+        }
+        if transaction.resolved.tokenizer_vocabulary_size != descriptor.metadata.vocabulary_size {
+            return Err(LoadReceiptMismatch::TokenizerVocabulary);
+        }
+
+        let resolved = &transaction.resolved.model;
+        let generation_mode = match resolved.chat_compatibility() {
+            ChatCompatibility::Supported => ApplicationGenerationMode::Chat,
+            ChatCompatibility::Unsupported => ApplicationGenerationMode::DirectCompletion,
+        };
         let loaded = LoadedModel::new(
             receipt.handle,
             resolved.selection().clone(),
@@ -287,108 +459,29 @@ impl ApplicationRuntime {
             descriptor.metadata.vocabulary_size,
             descriptor.capabilities.maximum_context_tokens,
             descriptor.capabilities.maximum_prefill_batch,
+            generation_mode,
+            ApplicationMemoryFootprint::from(receipt.reserved_footprint),
         );
-        self.retained_model_cleanup = None;
-        self.state.set_loaded(loaded.clone());
-        ApplicationEvent::ModelLoaded { model: loaded }
-    }
-
-    fn loaded_compatibility_matches(
-        &self,
-        admission: Option<LoadAdmission>,
-        ticket: CommandTicket,
-        receipt: &inference_runtime::LoadReceipt,
-        resolved: &ResolvedModel,
-        actual_device: ApplicationDevice,
-    ) -> bool {
-        let Some(admission) = admission else {
-            return false;
-        };
-        let Some(tokenizer) = self.tokenizer.as_ref() else {
-            return false;
-        };
-        let Some(artifacts) = self.resolved_artifacts.as_ref() else {
-            return false;
-        };
-        let descriptor = receipt.descriptor;
-        let artifact_selection = ModelSelection::new(&artifacts.repository, &artifacts.revision);
-        let artifact_configuration_declared_scalar_type = artifacts
-            .configuration_declared_scalar_type
-            .map(application_configuration_declared_scalar_type);
-        let descriptor_configuration_declared_scalar_type =
-            match descriptor.metadata.configuration_declared_scalar_type {
-                None => None,
-                Some(value) => {
-                    let Some(value) = application_scalar_type(value) else {
-                        return false;
-                    };
-                    Some(value)
-                }
-            };
-        let required_operations = CapabilitySet::PREFILL.union(CapabilitySet::INCREMENTAL_DECODE);
-
-        admission.ticket == ticket
-            && receipt.handle.id == MODEL_ID
-            && admission.configuration_declared_scalar_type
-                == descriptor_configuration_declared_scalar_type
-            && admission.configuration_declared_scalar_type
-                == resolved.configuration_declared_scalar_type()
-            && admission.configuration_declared_scalar_type
-                == artifact_configuration_declared_scalar_type
-            && admission.selected_device == self.state.selected_device()
-            && admission.selected_device == actual_device
-            && admission.execution_device == receipt.execution_device
-            && admission.memory_budget == self.memory_budget
-            && Self::load_footprint_matches(admission, receipt.reserved_footprint)
-            && observed_tensor_scalar_types_are_present(
-                descriptor.metadata.observed_tensor_scalar_types,
-            )
-            && descriptor
-                .capabilities
-                .operations
-                .contains(required_operations)
-            && resolved.selection() == &artifact_selection
-            && resolved.identity().repository() == artifacts.repository
-            && resolved.identity().commit() == artifacts.commit
-            && descriptor.backend == CANDLE_BACKEND_ID
-            && descriptor.metadata.architecture == ModelArchitecture::Llama
-            && descriptor.metadata.quantization == QuantizationFormat::None
-            && descriptor.metadata.context_length > 0
-            && descriptor.capabilities.maximum_context_tokens == descriptor.metadata.context_length
-            && descriptor.capabilities.maximum_prefill_batch > 0
-            && descriptor.capabilities.maximum_prefill_batch
-                <= descriptor.capabilities.maximum_context_tokens
-            && descriptor.capabilities.maximum_sequences > 0
-            && tokenizer.vocabulary_size() == descriptor.metadata.vocabulary_size
+        Ok(ValidatedLoad { loaded })
     }
 
     pub(super) fn load_footprint_matches(
-        admission: LoadAdmission,
+        admission: &LoadAdmission,
         footprint: MemoryFootprint,
     ) -> bool {
-        let Some(host_bytes) = footprint.checked_host_bytes() else {
-            return false;
-        };
-        let Some(device_bytes) = footprint.checked_device_bytes() else {
-            return false;
-        };
-        if host_bytes > admission.memory_budget.host_bytes
-            || device_bytes > admission.memory_budget.device_bytes
-        {
-            return false;
-        }
-
-        match admission.selected_device {
-            ApplicationDevice::Cpu => {
-                footprint.device_weight_bytes == 0 && footprint.device_working_bytes == 0
-            }
-            ApplicationDevice::Cuda { .. } => footprint.host_weight_bytes == 0,
-        }
+        footprint
+            .checked_host_bytes()
+            .zip(footprint.checked_device_bytes())
+            .is_some_and(|(host_bytes, device_bytes)| {
+                host_bytes <= admission.memory_budget.host_bytes
+                    && device_bytes <= admission.memory_budget.device_bytes
+            })
     }
 
     fn persist_resolved(
         &mut self,
         artifacts: &ResolvedSafetensorsLlamaArtifacts,
+        resolved: &ResolvedModel,
     ) -> Result<(), redb_storage::StorageError> {
         let mut candidate = self.preferences.clone();
         candidate
@@ -401,10 +494,10 @@ impl ApplicationRuntime {
             name: format!("{}@{}", artifacts.repository, artifacts.commit),
             repository: artifacts.repository.clone(),
             revision: artifacts.commit.clone(),
-            configuration_declared_scalar_type: artifacts
-                .configuration_declared_scalar_type
+            configuration_declared_scalar_type: resolved
+                .configuration_declared_scalar_type()
                 .map(stored_configuration_declared_scalar_type),
-            last_used_unix_milliseconds: unix_milliseconds(),
+            last_resolved_unix_milliseconds: unix_milliseconds(),
         })
     }
 }
@@ -440,7 +533,14 @@ const fn observed_tensor_scalar_types_are_present(observed: ScalarTypeSet) -> bo
     !observed.is_empty()
 }
 
-fn model_load_failure(error: inference_runtime::RuntimeError) -> ApplicationFailure {
+fn incompatible_receipt_failure(mismatch: LoadReceiptMismatch) -> ApplicationFailure {
+    ApplicationFailure::new(
+        ApplicationFailureKind::IncompatibleReceipt,
+        mismatch.message(),
+    )
+}
+
+pub(super) fn model_load_failure(error: RuntimeError) -> ApplicationFailure {
     let kind = model_load_failure_kind(error);
     let context = match kind {
         ApplicationFailureKind::UnsupportedArtifact => "model artifact or layout is unsupported",
@@ -450,14 +550,11 @@ fn model_load_failure(error: inference_runtime::RuntimeError) -> ApplicationFail
     ApplicationFailure::from_debug(kind, context, error)
 }
 
-const fn model_load_failure_kind(error: inference_runtime::RuntimeError) -> ApplicationFailureKind {
+const fn model_load_failure_kind(error: RuntimeError) -> ApplicationFailureKind {
     match error {
-        inference_runtime::RuntimeError::Load(error) => load_error_failure_kind(error),
-        inference_runtime::RuntimeError::InsufficientMemory { .. } => {
-            ApplicationFailureKind::MemoryAdmission
-        }
-        inference_runtime::RuntimeError::CleanupFailed(_)
-        | inference_runtime::RuntimeError::CleanupRetryExhausted(_) => {
+        RuntimeError::Load(error) => load_error_failure_kind(error),
+        RuntimeError::InsufficientMemory { .. } => ApplicationFailureKind::MemoryAdmission,
+        RuntimeError::CleanupFailed(_) | RuntimeError::CleanupRetryExhausted(_) => {
             ApplicationFailureKind::RetainedCleanup
         }
         _ => ApplicationFailureKind::ModelLoad,
@@ -482,16 +579,4 @@ const fn load_error_failure_kind(error: LoadError) -> ApplicationFailureKind {
         },
         _ => ApplicationFailureKind::ModelLoad,
     }
-}
-
-fn retained_model_load_cleanup_failure(
-    error: inference_runtime::RuntimeError,
-    exhausted: bool,
-) -> ApplicationFailure {
-    let context = if exhausted {
-        "model load failed and retained cleanup is exhausted"
-    } else {
-        "model load failed and retained cleanup is pending"
-    };
-    ApplicationFailure::from_debug(ApplicationFailureKind::RetainedCleanup, context, error)
 }

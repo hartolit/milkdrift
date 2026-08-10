@@ -51,15 +51,8 @@ impl ApplicationRuntime {
                 Err(inference_runtime::RuntimeReceiveError::Disconnected) => {
                     self.shutdown_control.record_inference_disconnect();
                     self.state.disconnect_inference();
-                    self.release_incompatible_model_cleanup();
-                    self.retained_model_cleanup = None;
+                    self.mark_model_worker_disconnected();
                     self.handle_generation_runtime_disconnected();
-                    if matches!(
-                        self.state.activity(),
-                        ApplicationActivity::Loading | ApplicationActivity::Unloading
-                    ) {
-                        self.state.set_idle();
-                    }
                     return Some(ApplicationEvent::RuntimeDisconnected);
                 }
             }
@@ -130,8 +123,7 @@ impl ApplicationRuntime {
             Err(LocalSubmitError::Disconnected) => {
                 self.shutdown_control.record_inference_disconnect();
                 self.state.disconnect_inference();
-                self.release_incompatible_model_cleanup();
-                self.retained_model_cleanup = None;
+                self.mark_model_worker_disconnected();
                 Err(ApplicationError::RuntimeDisconnected)
             }
         }
@@ -140,18 +132,25 @@ impl ApplicationRuntime {
     fn process_runtime_event(&mut self, event: &RuntimeEvent) -> Option<ApplicationEvent> {
         match event {
             RuntimeEvent::ModelLoaded { ticket, result } => {
-                Some(self.process_model_loaded(*ticket, *result))
+                self.process_model_loaded(*ticket, *result)
             }
             RuntimeEvent::ModelUnload { ticket, result } => {
-                Some(self.process_model_unload(*ticket, *result))
+                self.process_model_unload(*ticket, *result)
             }
             RuntimeEvent::GenerationAdmitted { .. }
             | RuntimeEvent::GenerationCancellationRequested { .. } => {
                 self.process_generation_runtime_event(event)
             }
             RuntimeEvent::Snapshot {
-                ticket, runtime, ..
-            } => self.process_retained_model_cleanup_snapshot(*ticket, runtime),
+                ticket,
+                runtime,
+                retained_models,
+                ..
+            } => self.process_retained_model_cleanup_snapshot(
+                *ticket,
+                runtime,
+                retained_models.as_slice(),
+            ),
             RuntimeEvent::Shutdown { .. }
             | RuntimeEvent::RequestStarted { .. }
             | RuntimeEvent::PrefillCompleted { .. }

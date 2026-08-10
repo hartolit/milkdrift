@@ -3,9 +3,8 @@
 use std::time::{Duration, Instant};
 
 use application_runtime::{
-    ApplicationActivity, ApplicationDevice, ApplicationEngine, ApplicationEvent,
-    ApplicationModelFormat, ApplicationRuntime, ApplicationScalarType, ApplicationSource,
-    LoadedModel, ModelSelection, ModelUnloadBehavior, ResolvedModel,
+    ApplicationActivity, ApplicationDevice, ApplicationEvent, ApplicationRuntime,
+    ApplicationScalarType, LoadedModel, ModelSelection, ModelUnloadBehavior, ResolvedModel,
 };
 
 use super::super::observation::DeviceObserver;
@@ -69,9 +68,12 @@ pub(super) fn load_model(
                         "exact Candle model load failed: {failure}"
                     )));
                 }
-                ApplicationEvent::ModelCleanupPending { exhausted, failure } => {
+                ApplicationEvent::ModelCleanupPending { cleanup } => {
                     return Err(BenchmarkError::new(format!(
-                        "exact Candle model load retained E0 cleanup ownership (exhausted={exhausted}): {failure}"
+                        "exact Candle model load retained E0 cleanup ownership: disposition={:?}, primary_failure={}, cleanup_failure={:?}",
+                        cleanup.cleanup(),
+                        cleanup.primary_failure(),
+                        cleanup.cleanup_failure()
                     )));
                 }
                 ApplicationEvent::ModelCompatibilityFailed { failure } => {
@@ -104,18 +106,7 @@ pub(super) fn unload_model(
     runtime: &mut ApplicationRuntime,
     loaded: &LoadedModel,
 ) -> BenchmarkResult<UnloadResult> {
-    let state = runtime.state();
-    if state.activity() != ApplicationActivity::Idle
-        || state.loaded() != Some(loaded)
-        || state.active_generation().is_some()
-        || !state.hub_available()
-        || !state.inference_available()
-        || !state.can_unload()
-    {
-        return Err(BenchmarkError::new(
-            "RejectIfBusy unload requires the exact loaded handle in connected, idle E1 state after every request release",
-        ));
-    }
+    validate_unload_admission(runtime, loaded)?;
 
     let started_at = Instant::now();
     runtime
@@ -172,9 +163,12 @@ pub(super) fn unload_model(
                         "RejectIfBusy model unload failed: {failure}"
                     )));
                 }
-                ApplicationEvent::ModelCleanupPending { exhausted, failure } => {
+                ApplicationEvent::ModelCleanupPending { cleanup } => {
                     return Err(BenchmarkError::new(format!(
-                        "model cleanup retained E0 ownership during unload (exhausted={exhausted}): {failure}"
+                        "model cleanup retained E0 ownership during unload: disposition={:?}, primary_failure={}, cleanup_failure={:?}",
+                        cleanup.cleanup(),
+                        cleanup.primary_failure(),
+                        cleanup.cleanup_failure()
                     )));
                 }
                 ApplicationEvent::GenerationCleanupPending {
@@ -208,6 +202,25 @@ pub(super) fn unload_model(
     }
 }
 
+fn validate_unload_admission(
+    runtime: &ApplicationRuntime,
+    loaded: &LoadedModel,
+) -> BenchmarkResult {
+    let state = runtime.state();
+    if state.activity() != ApplicationActivity::Idle
+        || state.loaded() != Some(loaded)
+        || state.active_generation().is_some()
+        || !state.hub_available()
+        || !state.inference_available()
+        || !state.can_unload()
+    {
+        return Err(BenchmarkError::new(
+            "RejectIfBusy unload requires the exact loaded handle in connected, idle E1 state after every request release",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_loaded_state(
     runtime: &ApplicationRuntime,
     loaded: &LoadedModel,
@@ -230,17 +243,14 @@ fn validate_loaded_state(
 
     if loaded.selection() != selection
         || loaded.identity() != resolved.identity()
-        || loaded.engine() != ApplicationEngine::Candle
-        || loaded.source() != ApplicationSource::HuggingFaceHub
         || loaded.device() != requested_application_device(planned.requested_device)
-        || loaded.format() != ApplicationModelFormat::Safetensors
         || loaded.vocabulary_size() != EXPECTED_VOCABULARY_SIZE
         || loaded.vocabulary_size() != resolved.vocabulary_size()
         || loaded.maximum_context_tokens() != EXPECTED_CONTEXT_TOKENS
         || loaded.maximum_prefill_batch() != EXPECTED_CONTEXT_TOKENS
     {
         return Err(BenchmarkError::new(format!(
-            "loaded model did not retain the exact resolved TinyLlama identity, selected/actual device, and capacities: {loaded:?}"
+            "loaded model did not retain the exact resolved TinyLlama selection, identity, actual device, execution declaration, and capacities: {loaded:?}"
         )));
     }
 

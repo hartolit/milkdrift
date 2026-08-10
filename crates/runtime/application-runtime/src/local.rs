@@ -92,19 +92,15 @@ fn translate_device_summary(
         ));
     }
 
-    let mut label = expected.base_label();
-    if let Some(name) = summary
+    let display_name = summary
         .display_name
         .as_deref()
         .map(str::trim)
-        .filter(|name| !name.is_empty() && *name != label.as_str())
-    {
-        label.push_str(" — ");
-        label.push_str(name);
-    }
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned);
     Ok(ApplicationDeviceSummary::discovered(
         expected,
-        label,
+        display_name,
         summary.total_memory_bytes,
         summary.available_memory_bytes,
         summary
@@ -264,7 +260,7 @@ mod tests {
         .map_err(|failure| format!("summary translation failed: {failure:?}"))?;
 
         assert_eq!(translated.device(), device);
-        assert_eq!(translated.label(), "CUDA 3 — NVIDIA Test Device");
+        assert_eq!(translated.display_name(), Some("NVIDIA Test Device"));
         assert!(translated.available());
         assert_eq!(translated.total_memory_bytes(), Some(16_000));
         assert_eq!(translated.available_memory_bytes(), Some(12_000));
@@ -279,10 +275,10 @@ mod tests {
     }
 
     #[test]
-    fn cpu_label_remains_cpu_in_every_feature_build() {
+    fn cpu_summary_needs_no_discovered_display_name() {
         let cpu = ApplicationDeviceSummary::cpu();
         assert_eq!(cpu.device(), ApplicationDevice::Cpu);
-        assert_eq!(cpu.label(), "CPU");
+        assert_eq!(cpu.display_name(), None);
         assert!(cpu.available());
     }
 }

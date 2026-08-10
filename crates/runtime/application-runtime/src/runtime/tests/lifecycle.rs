@@ -25,6 +25,28 @@ fn generation_requires_a_loaded_model() -> TestResult {
 }
 
 #[test]
+fn terminal_generation_phases_reject_late_cancellation() -> TestResult {
+    with_loaded_runtime(default_test_configuration, |runtime, _loaded| {
+        let request_id = runtime
+            .start_generation("prompt seed", deterministic_settings(3))
+            .map_err(application_error)?;
+        for phase in [
+            GenerationPhase::Finishing,
+            GenerationPhase::CleanupPending,
+            GenerationPhase::CleanupExhausted,
+        ] {
+            runtime.state.set_generation_phase(phase);
+            assert!(!runtime.state().can_cancel_generation());
+            assert_eq!(
+                runtime.cancel_generation(request_id),
+                Err(ApplicationError::GenerationNotCancellable { request_id, phase })
+            );
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn candle_runs_e1_direct_completion_scenario() -> TestResult {
     with_loaded_runtime(default_test_configuration, |runtime, loaded| {
         run_e1_direct_completion_scenario(
@@ -473,7 +495,7 @@ fn drain_unload_allows_natural_completion_before_release() -> TestResult {
 fn application_retains_inference_worker_disconnection_as_terminal() -> TestResult {
     let database_path = unique_database_path();
     let test_result = (|| {
-        let mut configuration = ApplicationRuntimeConfiguration::desktop(&database_path);
+        let mut configuration = ApplicationRuntimeConfiguration::new(&database_path);
         default_test_configuration(&mut configuration);
         let mut runtime = ApplicationRuntime::start(configuration).map_err(application_error)?;
         let ticket = runtime.next_ticket().map_err(application_error)?;
@@ -560,7 +582,7 @@ fn shutdown_retries_retained_worker_joins_after_timeout() -> TestResult {
 fn terminal_cleanup_failure_remains_sticky_after_worker_join() -> TestResult {
     let database_path = unique_database_path();
     let test_result = (|| {
-        let mut configuration = ApplicationRuntimeConfiguration::desktop(&database_path);
+        let mut configuration = ApplicationRuntimeConfiguration::new(&database_path);
         default_test_configuration(&mut configuration);
         let mut runtime = ApplicationRuntime::start(configuration).map_err(application_error)?;
         runtime.shutdown_control.forced_runtime_shutdown_failure = Some(terminal_cleanup_failure());

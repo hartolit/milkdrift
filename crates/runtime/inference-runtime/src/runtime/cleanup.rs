@@ -486,6 +486,6 @@ pub(super) const fn cleanup_retention_error(state: CleanupRetryState) -> Runtime
     if state.exhausted() {
         RuntimeError::CleanupRetryExhausted(state)
     } else {
-        RuntimeError::CleanupFailed(state.failure)
+        RuntimeError::CleanupFailed(state)
     }
 }

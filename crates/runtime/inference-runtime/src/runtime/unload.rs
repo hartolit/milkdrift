@@ -315,7 +315,7 @@ where
             return Err(if state.exhausted() {
                 RuntimeError::CleanupRetryExhausted(state)
             } else {
-                RuntimeError::CleanupFailed(state.failure)
+                RuntimeError::CleanupFailed(state)
             });
         }
         let Some(generation) = self.generations.get(&handle.id).copied() else {

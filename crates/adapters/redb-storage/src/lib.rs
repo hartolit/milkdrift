@@ -1,4 +1,13 @@
 //! Versioned desktop persistence over redb.
+//!
+//! Application settings are written as `LAS1` version 2 records; exact version 1
+//! records remain readable. Model catalogue entries are written as `LAM1` version
+//! 3 records, whose optional configuration-declared scalar type uses a separate
+//! presence tag. Exact `LAM1` version 1 (mandatory scalar) and version 2 (scalar
+//! code `3` means absent) records remain readable without an implicit rewrite.
+//! Legacy timestamp bytes decode unchanged as
+//! [`ModelRecord::last_resolved_unix_milliseconds`]. Model reads also require the
+//! redb table key to equal the embedded [`ModelRecord::name`].
 
 #![forbid(unsafe_code)]
 
@@ -15,6 +24,7 @@ const SETTINGS_VERSION_V1: u16 = 1;
 const SETTINGS_VERSION_V2: u16 = 2;
 const MODEL_VERSION_V1: u16 = 1;
 const MODEL_VERSION_V2: u16 = 2;
+const MODEL_VERSION_V3: u16 = 3;
 const SETTINGS_TABLE: TableDefinition<&str, &[u8]> =
     TableDefinition::new("application_settings_v1");
 const MODELS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("model_catalogue_v1");
@@ -105,8 +115,8 @@ pub struct ModelRecord {
     /// This is producer intent only. It does not describe per-tensor inventory or
     /// the scalar type selected for execution.
     pub configuration_declared_scalar_type: Option<StoredScalarType>,
-    /// Last successful use in Unix milliseconds, supplied by the application.
-    pub last_used_unix_milliseconds: u64,
+    /// Last successful model resolution in Unix milliseconds, supplied by the application.
+    pub last_resolved_unix_milliseconds: u64,
 }
 
 impl ModelRecord {
@@ -164,6 +174,15 @@ pub enum StorageError {
     InvalidAcceleratorMemoryLimit(u64),
     /// Persisted configuration-declared scalar metadata code is unknown.
     InvalidScalarType(u8),
+    /// Persisted configuration-declared scalar metadata presence tag is unknown.
+    InvalidScalarTypePresenceTag(u8),
+    /// A redb model key disagreed with the logical name embedded in its record.
+    ModelNameMismatch {
+        /// Model catalogue table key.
+        key: String,
+        /// Model name embedded in the persisted record.
+        embedded_name: String,
+    },
     /// Bytes remained after a complete versioned record was decoded.
     TrailingBytes,
 }
@@ -214,6 +233,18 @@ impl Display for StorageError {
                     "unknown persistent configuration-declared scalar type: {code}"
                 )
             }
+            Self::InvalidScalarTypePresenceTag(tag) => {
+                write!(
+                    formatter,
+                    "unknown persistent configuration-declared scalar presence tag: {tag}"
+                )
+            }
+            Self::ModelNameMismatch { key, embedded_name } => {
+                write!(
+                    formatter,
+                    "model catalogue key {key:?} does not match embedded model name {embedded_name:?}"
+                )
+            }
             Self::TrailingBytes => formatter.write_str("persistent record contains trailing bytes"),
         }
     }
@@ -233,6 +264,8 @@ impl Error for StorageError {
             | Self::InvalidAcceleratorMemoryPolicyTag(_)
             | Self::InvalidAcceleratorMemoryLimit(_)
             | Self::InvalidScalarType(_)
+            | Self::InvalidScalarTypePresenceTag(_)
+            | Self::ModelNameMismatch { .. }
             | Self::TrailingBytes => None,
         }
     }
@@ -298,7 +331,7 @@ impl RedbStorage {
         decode_settings(bytes.as_slice()).map(Some)
     }
 
-    /// Atomically inserts or replaces one model catalogue entry as `LAM1` version 2.
+    /// Atomically inserts or replaces one model catalogue entry as `LAM1` version 3.
     ///
     /// # Errors
     ///
@@ -316,15 +349,16 @@ impl RedbStorage {
     /// # Errors
     ///
     /// Returns [`StorageError::InvalidField`] if `name` is empty or consists
-    /// only of whitespace, or [`StorageError::Database`] if the read fails.
-    /// Returns a record decoding or validation error if the stored model bytes
-    /// are malformed, unsupported, or contain invalid fields.
+    /// only of whitespace, [`StorageError::Database`] if the read fails, or
+    /// [`StorageError::ModelNameMismatch`] if `name` differs from the name embedded
+    /// in the stored record. Returns a record decoding or validation error if the
+    /// stored model bytes are malformed, unsupported, or contain invalid fields.
     pub fn load_model(&self, name: &str) -> Result<Option<ModelRecord>, StorageError> {
         validate_non_empty(name, Field::ModelName)?;
         let Some(bytes) = self.get(MODELS_TABLE, name)? else {
             return Ok(None);
         };
-        decode_model(bytes.as_slice()).map(Some)
+        validate_model_key(name, decode_model(bytes.as_slice())?).map(Some)
     }
 
     /// Removes one catalogue entry and reports whether it existed.
@@ -359,9 +393,10 @@ impl RedbStorage {
     ///
     /// # Errors
     ///
-    /// Returns [`StorageError::Database`] if opening or iterating the table
-    /// fails. Returns a record decoding or validation error if any stored model
-    /// is malformed, unsupported, or contains invalid fields.
+    /// Returns [`StorageError::Database`] if opening or iterating the table fails,
+    /// or [`StorageError::ModelNameMismatch`] if a table key differs from the name
+    /// embedded in its record. Returns a record decoding or validation error if
+    /// any stored model is malformed, unsupported, or contains invalid fields.
     pub fn list_models(&self) -> Result<Vec<ModelRecord>, StorageError> {
         let read = self
             .database
@@ -375,8 +410,11 @@ impl RedbStorage {
             .iter()
             .map_err(|error| StorageError::Database(error.into()))?;
         for entry in iterator {
-            let (_key, value) = entry.map_err(|error| StorageError::Database(error.into()))?;
-            records.push(decode_model(value.value())?);
+            let (key, value) = entry.map_err(|error| StorageError::Database(error.into()))?;
+            records.push(validate_model_key(
+                key.value(),
+                decode_model(value.value())?,
+            )?);
         }
         Ok(records)
     }
@@ -517,17 +555,18 @@ fn decode_settings_v2(decoder: &mut Decoder<'_>) -> Result<ApplicationSettings, 
 fn encode_model(record: &ModelRecord) -> Result<Vec<u8>, StorageError> {
     let mut output = Vec::new();
     output.extend_from_slice(&MODEL_MAGIC);
-    output.extend_from_slice(&MODEL_VERSION_V2.to_le_bytes());
+    output.extend_from_slice(&MODEL_VERSION_V3.to_le_bytes());
     encode_string(&mut output, &record.name)?;
     encode_string(&mut output, &record.repository)?;
     encode_string(&mut output, &record.revision)?;
-    output.push(match record.configuration_declared_scalar_type {
-        Some(StoredScalarType::F32) => 0,
-        Some(StoredScalarType::F16) => 1,
-        Some(StoredScalarType::Bf16) => 2,
-        None => 3,
-    });
-    output.extend_from_slice(&record.last_used_unix_milliseconds.to_le_bytes());
+    match record.configuration_declared_scalar_type {
+        Some(scalar_type) => {
+            output.push(1);
+            output.push(stored_scalar_type_code(scalar_type));
+        }
+        None => output.push(0),
+    }
+    output.extend_from_slice(&record.last_resolved_unix_milliseconds.to_le_bytes());
     Ok(output)
 }
 
@@ -536,6 +575,7 @@ fn decode_model(bytes: &[u8]) -> Result<ModelRecord, StorageError> {
     let record = match version {
         MODEL_VERSION_V1 => decode_model_v1(&mut decoder)?,
         MODEL_VERSION_V2 => decode_model_v2(&mut decoder)?,
+        MODEL_VERSION_V3 => decode_model_v3(&mut decoder)?,
         version => return Err(StorageError::UnsupportedVersion(version)),
     };
     decoder.finish()?;
@@ -549,7 +589,7 @@ fn decode_model_v1(decoder: &mut Decoder<'_>) -> Result<ModelRecord, StorageErro
         repository: decoder.string()?,
         revision: decoder.string()?,
         configuration_declared_scalar_type: Some(decode_stored_scalar_type(decoder.u8()?)?),
-        last_used_unix_milliseconds: decoder.u64()?,
+        last_resolved_unix_milliseconds: decoder.u64()?,
     })
 }
 
@@ -561,15 +601,43 @@ fn decode_model_v2(decoder: &mut Decoder<'_>) -> Result<ModelRecord, StorageErro
         3 => None,
         code => Some(decode_stored_scalar_type(code)?),
     };
-    let last_used_unix_milliseconds = decoder.u64()?;
+    let last_resolved_unix_milliseconds = decoder.u64()?;
 
     Ok(ModelRecord {
         name,
         repository,
         revision,
         configuration_declared_scalar_type,
-        last_used_unix_milliseconds,
+        last_resolved_unix_milliseconds,
     })
+}
+
+fn decode_model_v3(decoder: &mut Decoder<'_>) -> Result<ModelRecord, StorageError> {
+    let name = decoder.string()?;
+    let repository = decoder.string()?;
+    let revision = decoder.string()?;
+    let configuration_declared_scalar_type = match decoder.u8()? {
+        0 => None,
+        1 => Some(decode_stored_scalar_type(decoder.u8()?)?),
+        tag => return Err(StorageError::InvalidScalarTypePresenceTag(tag)),
+    };
+    let last_resolved_unix_milliseconds = decoder.u64()?;
+
+    Ok(ModelRecord {
+        name,
+        repository,
+        revision,
+        configuration_declared_scalar_type,
+        last_resolved_unix_milliseconds,
+    })
+}
+
+const fn stored_scalar_type_code(scalar_type: StoredScalarType) -> u8 {
+    match scalar_type {
+        StoredScalarType::F32 => 0,
+        StoredScalarType::F16 => 1,
+        StoredScalarType::Bf16 => 2,
+    }
 }
 
 fn decode_stored_scalar_type(code: u8) -> Result<StoredScalarType, StorageError> {
@@ -578,6 +646,17 @@ fn decode_stored_scalar_type(code: u8) -> Result<StoredScalarType, StorageError>
         1 => Ok(StoredScalarType::F16),
         2 => Ok(StoredScalarType::Bf16),
         code => Err(StorageError::InvalidScalarType(code)),
+    }
+}
+
+fn validate_model_key(key: &str, record: ModelRecord) -> Result<ModelRecord, StorageError> {
+    if record.name == key {
+        Ok(record)
+    } else {
+        Err(StorageError::ModelNameMismatch {
+            key: key.to_owned(),
+            embedded_name: record.name,
+        })
     }
 }
 

@@ -404,7 +404,7 @@ fn application_configuration(
     cache_directory: &Path,
     requested: RequestedDevice,
 ) -> ApplicationRuntimeConfiguration {
-    let mut configuration = ApplicationRuntimeConfiguration::desktop(database_path);
+    let mut configuration = ApplicationRuntimeConfiguration::new(database_path);
     model::MODEL_REPOSITORY.clone_into(&mut configuration.defaults.default_repository);
     model::MODEL_REVISION.clone_into(&mut configuration.defaults.default_revision);
     configuration.defaults.selected_device = requested_application_device(requested);

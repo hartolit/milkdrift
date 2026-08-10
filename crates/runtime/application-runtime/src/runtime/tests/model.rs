@@ -1,13 +1,13 @@
 use domain_contracts::{
     BackendFailure, BackendFailureKind, BackendId, CapacityExhausted, CapacityResource, DeviceId,
-    DeviceKind, ExecutionDevice, LoadError, MemoryBudget, MemoryFootprint, MemoryKind, ScalarType,
-    ScalarTypeSet,
+    DeviceKind, ExecutionDevice, LoadError, MemoryBudget, MemoryFootprint, MemoryKind, ModelId,
+    ScalarType, ScalarTypeSet,
 };
-use hf_hub_adapter::ArtifactScalarType;
+
 use redb_storage::{RedbStorage, StoredScalarType};
 
 use super::support::*;
-use crate::runtime::model::LoadAdmission;
+use crate::runtime::model::{LoadAdmission, LoadReceiptMismatch};
 use crate::{
     ApplicationDevice, ApplicationError, ApplicationEvent, ApplicationFailureKind,
     ApplicationRuntime, ApplicationScalarType, ModelSelection, ResolvedModel,
@@ -147,23 +147,17 @@ fn controlled_mixed_dtype_receipt_allows_bf16_declaration_with_f32_execution() -
         // This isolates E1 evidence handling. The physical fixture loaded by Candle is F32;
         // this test deliberately controls only the private resolution/admission/receipt facts and
         // does not claim that the backend executed a BF16 fixture.
-        runtime
-            .resolved_artifacts
-            .as_mut()
-            .ok_or_else(|| "resolved artifacts were absent".to_owned())?
-            .configuration_declared_scalar_type = Some(ArtifactScalarType::Bf16);
-        runtime
+        let transaction = runtime
             .pending_load
             .as_mut()
-            .ok_or_else(|| "load admission evidence was absent".to_owned())?
-            .configuration_declared_scalar_type = Some(ApplicationScalarType::Bf16);
-        runtime.state.set_resolved(ResolvedModel::new(
+            .ok_or_else(|| "load transaction was absent".to_owned())?;
+        transaction.resolved.model = ResolvedModel::new(
             resolved.selection().clone(),
             resolved.identity().clone(),
             resolved.vocabulary_size(),
             Some(ApplicationScalarType::Bf16),
-            resolved.chat_compatibility(),
-        ));
+            resolved.prompt_compatibility_profile(),
+        );
         receipt
             .descriptor
             .metadata
@@ -174,7 +168,7 @@ fn controlled_mixed_dtype_receipt_allows_bf16_declaration_with_f32_execution() -
         receipt.execution_scalar_type = ScalarType::F32;
 
         let event = runtime.process_model_loaded(ticket, Ok(receipt));
-        let ApplicationEvent::ModelLoaded { model } = event else {
+        let Some(ApplicationEvent::ModelLoaded { model }) = event else {
             return Err(format!(
                 "controlled scalar evidence was rejected: {event:?}"
             ));
@@ -202,7 +196,7 @@ fn execution_scalar_is_taken_from_the_verified_receipt_not_declaration_or_device
         // E1 does not reproduce Candle's declaration- or device-aware scalar-selection policy.
         receipt.execution_scalar_type = ScalarType::F16;
         let event = runtime.process_model_loaded(ticket, Ok(receipt));
-        let ApplicationEvent::ModelLoaded { model } = event else {
+        let Some(ApplicationEvent::ModelLoaded { model }) = event else {
             return Err(format!(
                 "supported execution scalar was rejected: {event:?}"
             ));
@@ -210,6 +204,168 @@ fn execution_scalar_is_taken_from_the_verified_receipt_not_declaration_or_device
         assert_eq!(model.execution_scalar_type(), ApplicationScalarType::F16);
         assert_eq!(model.device(), ApplicationDevice::Cpu);
 
+        runtime.unload_model().map_err(application_error)?;
+        let _unloaded = wait_for_event(runtime, |event| {
+            matches!(event, ApplicationEvent::ModelUnloaded { .. })
+        })?;
+        Ok(())
+    })
+}
+
+#[test]
+fn observed_scalar_extras_are_lower_evidence_not_e1_compatibility_policy() -> TestResult {
+    with_runtime(default_test_configuration, |runtime| {
+        let (selection, _resolved) =
+            resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
+        runtime.load_model(&selection).map_err(application_error)?;
+        let (ticket, mut receipt) = receive_successful_load_receipt(runtime)?;
+        receipt.descriptor.metadata.observed_tensor_scalar_types =
+            ScalarTypeSet::from_scalar(ScalarType::F32)
+                .union(ScalarTypeSet::from_scalar(ScalarType::F16))
+                .union(ScalarTypeSet::from_scalar(ScalarType::Bf16))
+                .union(ScalarTypeSet::from_scalar(ScalarType::I8))
+                .union(ScalarTypeSet::from_scalar(ScalarType::U8))
+                .union(ScalarTypeSet::from_scalar(ScalarType::Other(7)));
+
+        let event = runtime.process_model_loaded(ticket, Ok(receipt));
+        let Some(ApplicationEvent::ModelLoaded { model }) = event else {
+            return Err(format!(
+                "E1 rejected lower-accepted unused scalar extras: {event:?}"
+            ));
+        };
+        assert_eq!(model.execution_scalar_type(), ApplicationScalarType::F32);
+
+        runtime.unload_model().map_err(application_error)?;
+        let _unloaded = wait_for_event(runtime, |event| {
+            matches!(event, ApplicationEvent::ModelUnloaded { .. })
+        })?;
+        Ok(())
+    })
+}
+
+#[test]
+fn load_receipt_validation_classifies_each_independent_transaction_fact() -> TestResult {
+    with_runtime(default_test_configuration, |runtime| {
+        let (selection, _resolved) =
+            resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
+        runtime.load_model(&selection).map_err(application_error)?;
+        let (_ticket, receipt) = receive_successful_load_receipt(runtime)?;
+
+        let transaction = runtime
+            .pending_load
+            .as_ref()
+            .ok_or_else(|| "load transaction was absent".to_owned())?;
+        assert!(runtime.validate_load_receipt(transaction, &receipt).is_ok());
+
+        let mut mismatched = receipt;
+        mismatched.handle.id = ModelId::new(2);
+        assert_eq!(
+            runtime
+                .validate_load_receipt(transaction, &mismatched)
+                .err(),
+            Some(LoadReceiptMismatch::ModelIdentity)
+        );
+
+        let mut mismatched = receipt;
+        mismatched
+            .descriptor
+            .metadata
+            .configuration_declared_scalar_type = None;
+        assert_eq!(
+            runtime
+                .validate_load_receipt(transaction, &mismatched)
+                .err(),
+            Some(LoadReceiptMismatch::Declaration)
+        );
+
+        let mut mismatched = receipt;
+        mismatched.execution_scalar_type = ScalarType::I8;
+        assert_eq!(
+            runtime
+                .validate_load_receipt(transaction, &mismatched)
+                .err(),
+            Some(LoadReceiptMismatch::ExecutionScalar)
+        );
+
+        let mut mismatched = receipt;
+        mismatched.execution_device = ExecutionDevice::new(DeviceId::new(1), DeviceKind::Cpu);
+        assert_eq!(
+            runtime
+                .validate_load_receipt(transaction, &mismatched)
+                .err(),
+            Some(LoadReceiptMismatch::ExecutionDevice)
+        );
+
+        let mut mismatched = receipt;
+        mismatched.execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda);
+        assert_eq!(
+            runtime
+                .validate_load_receipt(transaction, &mismatched)
+                .err(),
+            Some(LoadReceiptMismatch::SelectedDevice)
+        );
+
+        let mut mismatched = receipt;
+        mismatched.reserved_footprint.host_weight_bytes = u64::MAX;
+        mismatched.reserved_footprint.host_working_bytes = 1;
+        assert_eq!(
+            runtime
+                .validate_load_receipt(transaction, &mismatched)
+                .err(),
+            Some(LoadReceiptMismatch::FinalFootprint)
+        );
+
+        let mut mismatched = receipt;
+        mismatched.descriptor.metadata.observed_tensor_scalar_types = ScalarTypeSet::EMPTY;
+        assert_eq!(
+            runtime
+                .validate_load_receipt(transaction, &mismatched)
+                .err(),
+            Some(LoadReceiptMismatch::ObservedEvidence)
+        );
+
+        let original_budget = runtime.memory_budget;
+        runtime.memory_budget.host_bytes = original_budget.host_bytes.saturating_sub(1);
+        let transaction = runtime
+            .pending_load
+            .as_ref()
+            .ok_or_else(|| "load transaction disappeared".to_owned())?;
+        assert_eq!(
+            runtime.validate_load_receipt(transaction, &receipt).err(),
+            Some(LoadReceiptMismatch::MemoryBudget)
+        );
+        runtime.memory_budget = original_budget;
+        Ok(())
+    })
+}
+
+#[test]
+fn stale_load_events_do_not_consume_the_active_transaction() -> TestResult {
+    with_runtime(default_test_configuration, |runtime| {
+        let (selection, _resolved) =
+            resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
+        runtime.load_model(&selection).map_err(application_error)?;
+        let (ticket, receipt) = receive_successful_load_receipt(runtime)?;
+        let stale_ticket = inference_runtime::CommandTicket::new(ticket.get().saturating_add(1));
+
+        assert_eq!(
+            runtime.process_model_loaded(
+                stale_ticket,
+                Err(inference_runtime::RuntimeError::Load(
+                    LoadError::UnsupportedFormat
+                )),
+            ),
+            None
+        );
+        assert!(runtime.pending_load.is_some());
+        assert_eq!(
+            runtime.process_model_loaded(stale_ticket, Ok(receipt)),
+            None
+        );
+        assert!(runtime.pending_load.is_some());
+
+        let event = runtime.process_model_loaded(ticket, Ok(receipt));
+        assert!(matches!(event, Some(ApplicationEvent::ModelLoaded { .. })));
         runtime.unload_model().map_err(application_error)?;
         let _unloaded = wait_for_event(runtime, |event| {
             matches!(event, ApplicationEvent::ModelUnloaded { .. })
@@ -245,22 +401,19 @@ fn unloading_clears_loaded_execution_facts_but_preserves_resolution_and_selectio
 
 #[test]
 fn model_load_failures_are_normalized_into_stable_application_categories() -> TestResult {
-    with_runtime(default_test_configuration, |runtime| {
+    with_runtime(default_test_configuration, |_runtime| {
         let cases = [
             (
-                1,
                 inference_runtime::RuntimeError::Load(LoadError::UnsupportedFormat),
                 ApplicationFailureKind::UnsupportedArtifact,
             ),
             (
-                2,
                 inference_runtime::RuntimeError::Load(LoadError::CapacityExhausted(
                     CapacityExhausted::new(CapacityResource::BackendScratch, 65, 64),
                 )),
                 ApplicationFailureKind::UnsupportedArtifact,
             ),
             (
-                3,
                 inference_runtime::RuntimeError::Load(LoadError::Backend(BackendFailure::new(
                     BackendId::new(1),
                     BackendFailureKind::Unsupported,
@@ -269,7 +422,6 @@ fn model_load_failures_are_normalized_into_stable_application_categories() -> Te
                 ApplicationFailureKind::UnsupportedArtifact,
             ),
             (
-                4,
                 inference_runtime::RuntimeError::Load(LoadError::InsufficientMemory {
                     kind: MemoryKind::Host,
                     required_bytes: 2,
@@ -278,7 +430,6 @@ fn model_load_failures_are_normalized_into_stable_application_categories() -> Te
                 ApplicationFailureKind::MemoryAdmission,
             ),
             (
-                5,
                 inference_runtime::RuntimeError::Load(LoadError::Backend(BackendFailure::new(
                     BackendId::new(1),
                     BackendFailureKind::DeviceExecution,
@@ -288,12 +439,8 @@ fn model_load_failures_are_normalized_into_stable_application_categories() -> Te
             ),
         ];
 
-        for (ticket, error, expected_kind) in cases {
-            let ticket = inference_runtime::CommandTicket::new(ticket);
-            let event = runtime.process_model_loaded(ticket, Err(error));
-            let ApplicationEvent::ModelLoadFailed { failure } = event else {
-                return Err(format!("load failure was not normalized: {event:?}"));
-            };
+        for (error, expected_kind) in cases {
+            let failure = crate::runtime::model::model_load_failure(error);
             assert_eq!(failure.kind, expected_kind);
         }
         Ok(())
@@ -301,34 +448,44 @@ fn model_load_failures_are_normalized_into_stable_application_categories() -> Te
 }
 
 #[test]
-fn load_footprint_validation_rejects_budget_overflow_and_wrong_memory_domains() {
-    let cpu_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu);
+fn load_footprint_validation_checks_only_arithmetic_and_budget() {
     let admission = LoadAdmission {
-        ticket: inference_runtime::CommandTicket::new(1),
-        configuration_declared_scalar_type: Some(ApplicationScalarType::F32),
         selected_device: ApplicationDevice::Cpu,
-        execution_device: cpu_device,
+        execution_device: ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu),
         memory_budget: MemoryBudget {
             host_bytes: 100,
             device_bytes: 100,
         },
     };
-    let valid_cpu = MemoryFootprint {
-        host_weight_bytes: 60,
-        host_working_bytes: 40,
-        ..MemoryFootprint::default()
+
+    let mixed_domains = MemoryFootprint {
+        host_weight_bytes: 40,
+        device_weight_bytes: 40,
+        host_working_bytes: 10,
+        device_working_bytes: 10,
     };
     assert!(ApplicationRuntime::load_footprint_matches(
-        admission, valid_cpu
+        &admission,
+        mixed_domains
     ));
 
-    let over_budget = MemoryFootprint {
-        host_weight_bytes: 61,
-        ..valid_cpu
+    let host_over_budget = MemoryFootprint {
+        host_weight_bytes: 91,
+        host_working_bytes: 10,
+        ..MemoryFootprint::default()
     };
     assert!(!ApplicationRuntime::load_footprint_matches(
-        admission,
-        over_budget
+        &admission,
+        host_over_budget
+    ));
+    let device_over_budget = MemoryFootprint {
+        device_weight_bytes: 91,
+        device_working_bytes: 10,
+        ..MemoryFootprint::default()
+    };
+    assert!(!ApplicationRuntime::load_footprint_matches(
+        &admission,
+        device_over_budget
     ));
     let overflowing = MemoryFootprint {
         host_weight_bytes: u64::MAX,
@@ -336,51 +493,7 @@ fn load_footprint_validation_rejects_budget_overflow_and_wrong_memory_domains() 
         ..MemoryFootprint::default()
     };
     assert!(!ApplicationRuntime::load_footprint_matches(
-        admission,
+        &admission,
         overflowing
-    ));
-    let cpu_with_device_weight = MemoryFootprint {
-        host_weight_bytes: 99,
-        device_weight_bytes: 1,
-        ..MemoryFootprint::default()
-    };
-    assert!(!ApplicationRuntime::load_footprint_matches(
-        admission,
-        cpu_with_device_weight
-    ));
-
-    let cuda_admission = LoadAdmission {
-        selected_device: CUDA_ZERO,
-        execution_device: ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda),
-        ..admission
-    };
-    let valid_cuda = MemoryFootprint {
-        device_weight_bytes: 60,
-        host_working_bytes: 20,
-        device_working_bytes: 40,
-        ..MemoryFootprint::default()
-    };
-    assert!(ApplicationRuntime::load_footprint_matches(
-        cuda_admission,
-        valid_cuda
-    ));
-    let cuda_with_host_weight = MemoryFootprint {
-        host_weight_bytes: 1,
-        device_weight_bytes: 59,
-        host_working_bytes: 20,
-        device_working_bytes: 40,
-    };
-    assert!(!ApplicationRuntime::load_footprint_matches(
-        cuda_admission,
-        cuda_with_host_weight
-    ));
-    let cuda_device_overflow = MemoryFootprint {
-        device_weight_bytes: u64::MAX,
-        device_working_bytes: 1,
-        ..MemoryFootprint::default()
-    };
-    assert!(!ApplicationRuntime::load_footprint_matches(
-        cuda_admission,
-        cuda_device_overflow
     ));
 }

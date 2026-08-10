@@ -14,12 +14,13 @@ use hf_tokenizer::HfTokenizer;
 use host_runtime::{BoundedReceiver, BoundedSender, HostThread};
 use redb_storage::RedbStorage;
 
-use self::model::LoadAdmission;
+use self::model::ModelLoadTransaction;
 use self::retained_cleanup::{IncompatibleModelCleanup, RetainedModelCleanup};
 use crate::conversation::ConversationState;
 use crate::generation::GenerationBridge;
 use crate::hub_worker::{HubCommand, HubEvent};
 use crate::local::{DeviceProbe, LocalInference};
+use crate::unload::ModelUnloadTransaction;
 use crate::{
     ApplicationPreferences, ApplicationRuntimeConfiguration, ApplicationState, ContextDiagnostics,
     ModelSelection,
@@ -39,7 +40,8 @@ pub struct ApplicationRuntime {
     pub(crate) state: ApplicationState,
     resolved_artifacts: Option<ResolvedSafetensorsLlamaArtifacts>,
     pending_hub_selection: Option<ModelSelection>,
-    pending_load: Option<LoadAdmission>,
+    pending_load: Option<ModelLoadTransaction>,
+    pub(crate) pending_unload: Option<ModelUnloadTransaction>,
     pub(crate) tokenizer: Option<HfTokenizer>,
     pub(crate) generation: GenerationBridge,
     pub(crate) conversation: ConversationState,

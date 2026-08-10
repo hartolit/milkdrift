@@ -2,15 +2,15 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use application_runtime::{
-    ApplicationError, ApplicationEvent, ApplicationFailure, ApplicationRuntime, ChatCompatibility,
-    GenerationSettings, ResolvedModel,
+    ApplicationError, ApplicationEvent, ApplicationFailure, ApplicationRetainedModel,
+    ApplicationRuntime, GenerationSettings, ResolvedModel,
 };
 use slint::ComponentHandle;
 
 use super::devices::DeviceSelectorModel;
 use super::model::{
-    ComposerMode, composer_mode, current_artifact_target_label, device_availability_label,
-    device_label, engine_label, loaded_model_summary, resolved_model_summary, selected_model,
+    ComposerMode, composer_mode, device_availability_label, device_label, loaded_model_summary,
+    resolved_model_summary, retained_model_resource_label, retained_model_summary, selected_model,
 };
 use super::output::{
     PresentationState, format_terminal_outcome, render_generated_output_update,
@@ -118,7 +118,7 @@ fn connect_resolve(
 }
 
 const fn resolution_progress_message() -> &'static str {
-    "Resolving Hub metadata and immutable cached Safetensors artifacts…"
+    "Resolving model metadata and immutable cached artifacts…"
 }
 
 fn connect_load(
@@ -135,8 +135,7 @@ fn connect_load(
         let selected_device = runtime.borrow().state().selected_device();
         window.set_status_text(
             format!(
-                "Loading {} on selected device {}.",
-                current_artifact_target_label(),
+                "Loading the selected model on selected device {}.",
                 device_label(selected_device),
             )
             .into(),
@@ -196,7 +195,8 @@ fn connect_submit_message(
                 submit_direct_completion(&window, &runtime, &presentation, &message);
             }
             ComposerMode::Unavailable => {
-                window.set_status_text("Load a model before submitting input.".into());
+                let retained_model = runtime.borrow().state().retained_model().is_some();
+                window.set_status_text(mode.guidance(retained_model).into());
             }
         }
         synchronize_controls(&window, &runtime.borrow(), &device_selector);
@@ -322,13 +322,7 @@ fn generation_submission_message(
 ) -> String {
     let target = runtime.state().loaded().map_or_else(
         || "the loaded model".to_owned(),
-        |loaded| {
-            format!(
-                "{} on execution device {}",
-                engine_label(loaded.engine()),
-                device_label(loaded.device())
-            )
-        },
+        |loaded| format!("the loaded model ({})", loaded_model_summary(loaded)),
     );
     match mode {
         ComposerMode::Chat => format!("Chat response {request_id} submitted to {target}."),
@@ -472,22 +466,23 @@ pub(super) fn apply_event(window: &AppWindow, event: ApplicationEvent) {
             window.set_status_text(format!("Model resolution failed: {failure}").into());
         }
         ApplicationEvent::ModelLoaded { model } => {
-            window.set_status_text(
-                format!(
-                    "Loaded {} as generation {} with {} vocabulary entries.",
-                    loaded_model_summary(&model),
-                    model.handle().generation.get(),
-                    model.vocabulary_size(),
-                )
-                .into(),
-            );
+            window
+                .set_status_text(format!("Model loaded • {}", loaded_model_summary(&model)).into());
         }
         ApplicationEvent::ModelLoadFailed { failure } => {
             window.set_status_text(format!("Model load failed: {failure}").into());
         }
-        ApplicationEvent::ModelCleanupPending { exhausted, failure } => {
-            let state = if exhausted { "exhausted" } else { "pending" };
-            window.set_status_text(format!("Model cleanup {state}: {failure}").into());
+        ApplicationEvent::ModelCleanupPending { cleanup } => {
+            apply_model_cleanup_pending(window, &cleanup);
+        }
+        ApplicationEvent::ModelCleanupReleased { resource } => {
+            window.set_status_text(
+                format!(
+                    "Previously retained {} were released.",
+                    retained_model_resource_label(resource),
+                )
+                .into(),
+            );
         }
         ApplicationEvent::ModelCompatibilityFailed { failure } => {
             window.set_status_text(format!("Model compatibility check failed: {failure}").into());
@@ -560,29 +555,28 @@ pub(super) fn apply_event(window: &AppWindow, event: ApplicationEvent) {
     }
 }
 
+fn apply_model_cleanup_pending(window: &AppWindow, cleanup: &ApplicationRetainedModel) {
+    let mut message = format!(
+        "{} • Primary failure: {}",
+        retained_model_summary(cleanup),
+        cleanup.primary_failure(),
+    );
+    if let Some(failure) = cleanup.cleanup_failure() {
+        message.push_str(" • Cleanup failure: ");
+        message.push_str(&failure.to_string());
+    }
+    window.set_status_text(message.into());
+}
+
 fn apply_model_resolved(
     window: &AppWindow,
     model: &ResolvedModel,
     persistence_warning: Option<ApplicationFailure>,
 ) {
-    let artifact = resolved_model_summary(model);
-    let mode = match model.chat_compatibility() {
-        ChatCompatibility::Supported(_) => "verified Chat mode",
-        ChatCompatibility::Unsupported => "Direct completion mode; chat is not verified",
-    };
+    let facts = resolved_model_summary(model);
     let message = persistence_warning.map_or_else(
-        || {
-            format!(
-                "Resolved {artifact} ({} vocabulary entries, {mode}) and ready for loading.",
-                model.vocabulary_size(),
-            )
-        },
-        |warning| {
-            format!(
-                "Resolved {artifact} ({} vocabulary entries, {mode}); catalogue persistence failed: {warning}",
-                model.vocabulary_size(),
-            )
-        },
+        || format!("{facts} • Ready for loading."),
+        |warning| format!("{facts} • Ready for loading; catalogue persistence failed: {warning}"),
     );
     window.set_status_text(message.into());
 }

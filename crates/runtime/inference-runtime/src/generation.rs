@@ -475,7 +475,7 @@ fn advance_task<L: ModelLoader>(
             runtime.cancel_request(request_id, reason).err()
         } else {
             runtime
-                .request_cleanup_failure(request_id)
+                .request_cleanup_state(request_id)
                 .map(RuntimeError::CleanupFailed)
         };
         task.phase = terminal_phase(
@@ -735,18 +735,10 @@ fn terminal_phase<L: ModelLoader>(
 ) -> GenerationPhase {
     let retained_cleanup = runtime.request_cleanup_state(request_id);
     let (outcome, initial_cleanup) = match cleanup_error {
-        Some(error @ RuntimeError::CleanupFailed(_)) => {
-            let cleanup =
-                retained_cleanup.or_else(|| cleanup_state_from_error(runtime, request_id, error));
-            if cleanup.is_some() {
-                (outcome, cleanup)
-            } else {
-                (GenerationOutcome::Failed(error), None)
-            }
-        }
+        Some(RuntimeError::CleanupFailed(state)) => (outcome, Some(state)),
         Some(error @ RuntimeError::CleanupRetryExhausted(_)) => (
             outcome,
-            retained_cleanup.or_else(|| cleanup_state_from_error(runtime, request_id, error)),
+            retained_cleanup.or_else(|| cleanup_state_from_error(error)),
         ),
         Some(error) => (GenerationOutcome::Failed(error), retained_cleanup),
         None => (outcome, retained_cleanup),
@@ -769,21 +761,18 @@ fn terminal_phase_from_runtime_error<L: ModelLoader>(
         outcome: GenerationOutcome::Failed(error),
         initial_cleanup: runtime
             .request_cleanup_state(request_id)
-            .or_else(|| cleanup_state_from_error(runtime, request_id, error)),
+            .or_else(|| cleanup_state_from_error(error)),
         terminal_published: false,
         cleanup_published: false,
         exhaustion_published: false,
     })
 }
 
-fn cleanup_state_from_error<L: ModelLoader>(
-    runtime: &InferenceRuntime<L>,
-    request_id: RequestId,
-    error: RuntimeError,
-) -> Option<CleanupRetryState> {
+const fn cleanup_state_from_error(error: RuntimeError) -> Option<CleanupRetryState> {
     match error {
-        RuntimeError::CleanupFailed(_) => runtime.request_cleanup_state(request_id),
-        RuntimeError::CleanupRetryExhausted(state) => Some(state),
+        RuntimeError::CleanupFailed(state) | RuntimeError::CleanupRetryExhausted(state) => {
+            Some(state)
+        }
         _ => None,
     }
 }

@@ -1,7 +1,8 @@
 use application_runtime::{
-    ApplicationDevice, ApplicationEngine, ApplicationModelFormat, ApplicationRuntime,
-    ApplicationScalarType, ApplicationSource, ChatCompatibility, ImmutableModelIdentity,
-    LoadedModel, ModelSelection, ResolvedModel,
+    ApplicationDevice, ApplicationGenerationMode, ApplicationModelCleanupDisposition,
+    ApplicationRetainedModel, ApplicationRetainedModelResource, ApplicationRetainedOwnership,
+    ApplicationRuntime, ApplicationScalarType, ChatCompatibility, LoadedModel, ModelSelection,
+    ResolvedModel,
 };
 
 use crate::AppWindow;
@@ -27,20 +28,23 @@ pub(super) enum ComposerMode {
 impl ComposerMode {
     pub(super) const fn label(self) -> &'static str {
         match self {
-            Self::Unavailable => "No model loaded",
+            Self::Unavailable => "Unavailable",
             Self::Chat => "Chat",
             Self::DirectCompletion => "Direct completion",
         }
     }
 
-    pub(super) const fn guidance(self) -> &'static str {
+    pub(super) const fn guidance(self, retained_model: bool) -> &'static str {
         match self {
+            Self::Unavailable if retained_model => {
+                "Generation is unavailable while retained model resources await release."
+            }
             Self::Unavailable => "Load a model to enable generation.",
             Self::Chat => {
                 "Verified chat compatibility: E1 owns conversation history, prompt rendering, and regeneration."
             }
             Self::DirectCompletion => {
-                "No verified chat profile: input is submitted as an E1 direct-completion prompt without inferred history or template semantics."
+                "Chat compatibility is unsupported: input is submitted as an E1 direct-completion prompt without inferred history or template semantics."
             }
         }
     }
@@ -60,33 +64,18 @@ impl ComposerMode {
     }
 }
 
-pub(super) const fn composer_mode_from_evidence(
-    has_loaded_model: bool,
-    has_verified_chat_compatibility: bool,
+pub(super) const fn composer_mode_from_generation_mode(
+    mode: ApplicationGenerationMode,
 ) -> ComposerMode {
-    if !has_loaded_model {
-        ComposerMode::Unavailable
-    } else if has_verified_chat_compatibility {
-        ComposerMode::Chat
-    } else {
-        ComposerMode::DirectCompletion
+    match mode {
+        ApplicationGenerationMode::Unavailable => ComposerMode::Unavailable,
+        ApplicationGenerationMode::DirectCompletion => ComposerMode::DirectCompletion,
+        ApplicationGenerationMode::Chat => ComposerMode::Chat,
     }
 }
 
 pub(super) fn composer_mode(runtime: &ApplicationRuntime) -> ComposerMode {
-    let state = runtime.state();
-    let Some(loaded) = state.loaded() else {
-        return ComposerMode::Unavailable;
-    };
-    let has_verified_chat_compatibility = state.resolved().is_some_and(|resolved| {
-        resolved.selection() == loaded.selection()
-            && resolved.identity() == loaded.identity()
-            && matches!(
-                resolved.chat_compatibility(),
-                ChatCompatibility::Supported(_)
-            )
-    });
-    composer_mode_from_evidence(true, has_verified_chat_compatibility)
+    composer_mode_from_generation_mode(runtime.state().generation_mode())
 }
 
 pub(super) fn selected_model_summary(
@@ -95,8 +84,7 @@ pub(super) fn selected_model_summary(
     selected_device_available: bool,
 ) -> String {
     format!(
-        "{} • Repository: {} • Revision: {} • Selected device: {} • Availability: {} • Identity: pending resolution",
-        current_artifact_target_label(),
+        "Repository: {} • Revision: {} • Selected device: {} • Availability: {}",
         selection.repository(),
         selection.revision(),
         device_label(selected_device),
@@ -104,89 +92,137 @@ pub(super) fn selected_model_summary(
     )
 }
 
-pub(super) const UNRESOLVED_MODEL_SUMMARY: &str = "Not resolved.";
-pub(super) const UNLOADED_MODEL_SUMMARY: &str = "Not loaded.";
+pub(super) const UNRESOLVED_MODEL_SUMMARY: &str = "No resolved model facts.";
+pub(super) const UNLOADED_MODEL_SUMMARY: &str = "No loaded or retained model resources.";
 
 pub(super) fn resolved_model_summary(model: &ResolvedModel) -> String {
-    let target = artifact_target_label(model.engine(), model.source(), model.format());
-    let identity = immutable_identity_label(model.identity());
     resolved_model_facts_summary(
-        &target,
         model.configuration_declared_scalar_type(),
-        &identity,
-    )
-}
-
-pub(super) fn loaded_model_summary(model: &LoadedModel) -> String {
-    let target = artifact_target_label(model.engine(), model.source(), model.format());
-    let identity = immutable_identity_label(model.identity());
-    loaded_model_facts_summary(
-        &target,
-        model.execution_scalar_type(),
-        model.device(),
-        &identity,
+        model.chat_compatibility(),
     )
 }
 
 pub(super) fn resolved_model_facts_summary(
-    target: &str,
     configuration_declared_scalar_type: Option<ApplicationScalarType>,
-    identity: &str,
+    chat_compatibility: ChatCompatibility,
 ) -> String {
+    let compatibility = chat_compatibility_label(chat_compatibility);
     configuration_declared_scalar_type.map_or_else(
-        || format!("{target} • Identity: {identity}"),
+        || format!("Resolved • Chat compatibility: {compatibility}"),
         |scalar_type| {
             format!(
-                "{target} • Configuration-declared scalar: {} • Identity: {identity}",
+                "Resolved • Recognized configuration scalar declaration: {} • Chat compatibility: {compatibility}",
                 scalar_type_label(scalar_type)
             )
         },
     )
 }
 
+pub(super) fn loaded_model_summary(model: &LoadedModel) -> String {
+    loaded_model_facts_summary(model.execution_scalar_type(), model.device())
+}
+
 pub(super) fn loaded_model_facts_summary(
-    target: &str,
     execution_scalar_type: ApplicationScalarType,
     execution_device: ApplicationDevice,
-    identity: &str,
 ) -> String {
     format!(
-        "{target} • Execution scalar: {} • Execution device: {} • Identity: {identity}",
-        scalar_type_label(execution_scalar_type),
+        "Execution device: {} • Execution scalar: {}",
         device_label(execution_device),
+        scalar_type_label(execution_scalar_type),
     )
 }
 
-pub(super) fn current_artifact_target_label() -> String {
-    artifact_target_label(
-        ApplicationEngine::Candle,
-        ApplicationSource::HuggingFaceHub,
-        ApplicationModelFormat::Safetensors,
-    )
-}
-
-pub(super) fn artifact_target_label(
-    engine: ApplicationEngine,
-    source: ApplicationSource,
-    format: ApplicationModelFormat,
+pub(super) fn model_residency_summary(
+    loaded: Option<&LoadedModel>,
+    retained: Option<&ApplicationRetainedModel>,
 ) -> String {
-    format!(
-        "Engine: {} • Source: {} • Format: {}",
-        engine_label(engine),
-        source_label(source),
-        model_format_label(format)
-    )
+    let loaded = loaded.map(loaded_model_summary);
+    let retained = retained.map(retained_model_summary);
+    model_residency_facts_summary(loaded.as_deref(), retained.as_deref())
 }
 
-pub(super) const fn engine_label(engine: ApplicationEngine) -> &'static str {
-    match engine {
-        ApplicationEngine::Candle => "Candle",
+pub(super) fn model_residency_facts_summary(
+    loaded: Option<&str>,
+    retained: Option<&str>,
+) -> String {
+    match (loaded, retained) {
+        (Some(loaded), Some(retained)) => format!("{loaded} • {retained}"),
+        (Some(loaded), None) => loaded.to_owned(),
+        (_, Some(retained)) => retained.to_owned(),
+        (None, None) => UNLOADED_MODEL_SUMMARY.to_owned(),
     }
 }
 
-const fn source_label(source: ApplicationSource) -> &'static str {
-    match source {
-        ApplicationSource::HuggingFaceHub => "Hugging Face Hub",
+pub(super) fn retained_model_summary(model: &ApplicationRetainedModel) -> String {
+    retained_model_facts_summary(model.resource(), model.ownership(), model.cleanup())
+}
+
+pub(super) fn retained_model_facts_summary(
+    resource: ApplicationRetainedModelResource,
+    ownership: ApplicationRetainedOwnership,
+    cleanup: ApplicationModelCleanupDisposition,
+) -> String {
+    format!(
+        "Retained {} • Ownership certainty: {} • Cleanup disposition: {}",
+        retained_model_resource_label(resource),
+        retained_ownership_label(ownership),
+        model_cleanup_disposition_label(cleanup),
+    )
+}
+
+pub(super) const fn retained_model_resource_label(
+    resource: ApplicationRetainedModelResource,
+) -> &'static str {
+    match resource {
+        ApplicationRetainedModelResource::FailedLoad { .. } => "failed-load resources",
+        ApplicationRetainedModelResource::LoadedModel { .. } => "loaded-model resources",
+        ApplicationRetainedModelResource::IncompatibleModel { .. } => {
+            "incompatible-model resources"
+        }
+        ApplicationRetainedModelResource::UnconfirmedLoad => "unconfirmed-load resources",
+        ApplicationRetainedModelResource::UnconfirmedModel => "unconfirmed-model resources",
+    }
+}
+
+const fn retained_ownership_label(ownership: ApplicationRetainedOwnership) -> &'static str {
+    match ownership {
+        ApplicationRetainedOwnership::Exact(_) => "exact",
+        ApplicationRetainedOwnership::Unverified { .. } => "unverified",
+        ApplicationRetainedOwnership::Unknown => "unknown",
+    }
+}
+
+fn model_cleanup_disposition_label(cleanup: ApplicationModelCleanupDisposition) -> String {
+    match cleanup {
+        ApplicationModelCleanupDisposition::Pending => "pending".to_owned(),
+        ApplicationModelCleanupDisposition::LowerRetryable {
+            attempts,
+            maximum_attempts,
+        } => format!("lower cleanup retryable ({attempts}/{maximum_attempts} attempts)"),
+        ApplicationModelCleanupDisposition::LowerExhausted {
+            attempts,
+            maximum_attempts,
+        } => format!("lower cleanup exhausted ({attempts}/{maximum_attempts} attempts)"),
+        ApplicationModelCleanupDisposition::CoordinationRetryAvailable {
+            attempts,
+            maximum_attempts,
+        } => format!(
+            "application coordination retry available ({attempts}/{maximum_attempts} attempts)"
+        ),
+        ApplicationModelCleanupDisposition::WorkerDisconnected => {
+            "worker disconnected without confirmed release".to_owned()
+        }
+        ApplicationModelCleanupDisposition::RetainedUntilProcessExit => {
+            "retained until process exit".to_owned()
+        }
+    }
+}
+
+const fn chat_compatibility_label(compatibility: ChatCompatibility) -> &'static str {
+    match compatibility {
+        ChatCompatibility::Supported => "supported",
+        ChatCompatibility::Unsupported => "unsupported",
     }
 }
 
@@ -205,24 +241,10 @@ pub(super) const fn device_availability_label(available: bool) -> &'static str {
     }
 }
 
-const fn model_format_label(format: ApplicationModelFormat) -> &'static str {
-    match format {
-        ApplicationModelFormat::Safetensors => "Safetensors",
-    }
-}
-
 pub(super) const fn scalar_type_label(value: ApplicationScalarType) -> &'static str {
     match value {
         ApplicationScalarType::F32 => "F32",
         ApplicationScalarType::F16 => "F16",
         ApplicationScalarType::Bf16 => "BF16",
     }
-}
-
-fn immutable_identity_label(identity: &ImmutableModelIdentity) -> String {
-    format!(
-        "Hub commit {} ({})",
-        identity.commit(),
-        identity.repository()
-    )
 }

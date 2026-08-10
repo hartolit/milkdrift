@@ -52,9 +52,12 @@ pub(super) fn resolve_model(
                         "exact Hub resolution failed for {MODEL_REPOSITORY}@{MODEL_REVISION}: {failure}"
                     )));
                 }
-                ApplicationEvent::ModelCleanupPending { exhausted, failure } => {
+                ApplicationEvent::ModelCleanupPending { cleanup } => {
                     return Err(BenchmarkError::new(format!(
-                        "model cleanup retained E0 ownership during immutable resolution (exhausted={exhausted}): {failure}"
+                        "model cleanup retained E0 ownership during immutable resolution: disposition={:?}, primary_failure={}, cleanup_failure={:?}",
+                        cleanup.cleanup(),
+                        cleanup.primary_failure(),
+                        cleanup.cleanup_failure()
                     )));
                 }
                 ApplicationEvent::HubDisconnected => {
