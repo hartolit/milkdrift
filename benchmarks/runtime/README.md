@@ -62,23 +62,23 @@ cargo run --release --locked \
   --mode synthetic \
   --warmup 1 \
   --cycles 3 \
-  > target/runtime-evidence/synthetic-schema3.json
+  > target/runtime-evidence/synthetic-schema4.json
 ```
 
 The runner writes one schema-versioned JSON document to stdout and progress plus a compact summary to stderr. It excludes generated text, token IDs, credentials, secrets, and broad environment dumps.
 
-Each schema-3 E0 cycle creates an observer-owned, unmaterialized `prepare_load` transaction before the timed E0 load. The opaque preparation is dropped without materialization after copying its public plan. The report then keeps these facts separate:
+Each schema-4 E0 cycle creates an observer-owned, unmaterialized `prepare_load` transaction before the timed E0 load. The opaque preparation is dropped without materialization after copying its public plan. The report then keeps these facts separate:
 
 - `prepared.configuration_declared_scalar`: optional producer-intent metadata (`null` when absent);
 - `prepared.observed_tensor_scalars`: deterministic labels derived from the plan descriptor's observed `ScalarTypeSet` in stable category-bit order;
 - `prepared.planned_execution_scalar` and `prepared.planned_execution_device`: execution selected by the exact preparation;
-- `prepared.exact_final_footprint`: exact final deterministic tensor ownership from `LoadPlan::expected_footprint`;
+- `prepared.exact_final_footprint`: exact final deterministic tensor ownership from `LoadPlan::final_footprint`;
 - `prepared.loading_peak_footprint`: exact component-wise deterministic loading peak from `LoadPlan::loading_peak_footprint`;
 - `receipt.actual_execution_scalar` and `receipt.actual_execution_device`: actual facts verified by E0 against its accepted plan and loaded model;
 - `receipt.reserved_footprint`: direct E0 post-load reserved ownership, required to equal the exact final footprint;
 - snapshot `process_memory`: sampled process RSS/HWM, separate from every E0 reserved footprint.
 
-The loading peak is an admission-phase deterministic tensor quantity, not post-load reserved ownership or physical RSS. The fixture remains homogeneous F32; schema 3 makes that truth explicit as declared `F32`, observed `{F32}`, planned F32 CPU execution, and actual F32 CPU execution.
+The loading peak is an admission-phase deterministic tensor quantity, not post-load reserved ownership or physical RSS. The fixture remains homogeneous F32; schema 4 makes that truth explicit as declared `F32`, observed `{F32}`, planned F32 CPU execution, and actual F32 CPU execution. Byte-footprint records contain no sequence-cache rate.
 
 ### Synthetic schema history
 
@@ -86,7 +86,9 @@ The loading peak is an admission-phase deterministic tensor quantity, not post-l
 
 **Synthetic schema 2 (historical):** the split download-free report introduced the current synthetic-E0 and E1-lifecycle result organization. `fixture.scalar_type: "F32"` was the reviewed homogeneous fixture label, while E0 snapshots recorded reserved ownership and process memory. It did not record an observer preparation or loading peak.
 
-**Synthetic schema 3 (current):** replaces the singular fixture scalar with per-cycle prepared declaration/layout/planned facts and actual E0 receipt facts, including exact final and loading-peak footprints. Existing timing and snapshot units retain their schema-2 meanings.
+**Synthetic schema 3 (historical):** replaces the singular fixture scalar with per-cycle prepared declaration/layout/planned facts and actual E0 receipt facts, including exact final and loading-peak footprints. Existing timing and snapshot units retain their schema-2 meanings.
+
+**Synthetic schema 4 (current):** removes `cache_bytes_per_token` from byte-footprint records because cache rate is planning data rather than current ownership. All other schema-3 evidence groups retain their meanings.
 
 Synthetic and external reports have independent version sequences.
 
@@ -96,7 +98,7 @@ The external binary fixes `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable revi
 
 The profile's configuration declaration is optional in the schema but required to equal `Some(BF16)` for this exact revision. An accepted run also requires the observer `prepare_load` descriptor to report homogeneous observed `{BF16}`. CPU planning selects F32 execution; supported CUDA planning selects BF16 execution. E1's loaded model supplies the actual execution scalar and actual device after E0 receipt validation.
 
-External schema 4 records:
+External schema 5 records:
 
 - repository, immutable revision/commit, license-metadata provenance, and the fixed artifact layout;
 - `configuration_declared_scalar` separately from `observed_tensor_scalars`;
@@ -130,20 +132,20 @@ target/phase12-cpu/release/external-baseline \
   --allow-network \
   --cache-dir target/phase10-external-cache \
   --device cpu \
-  > target/phase12-evidence/tinyllama-cpu-schema4.json
+  > target/phase12-evidence/tinyllama-cpu-schema5.json
 
 target/phase12-cuda/release/external-baseline \
   --allow-network \
   --cache-dir target/phase10-external-cache \
   --device cuda:0 \
-  > target/phase12-evidence/tinyllama-cuda-schema4.json
+  > target/phase12-evidence/tinyllama-cuda-schema5.json
 ```
 
 The primary cycle on each device runs one compatible-chat proof, one direct-completion warmup, three measured 32-token completions, and one progress-triggered cancellation. The CUDA invocation then runs two additional load/generate/release/cancel/unload/shutdown stability cycles, yielding three complete CUDA lifecycle cycles total. Stdout contains one schema-versioned report; progress and the compact summary use stderr.
 
 CUDA total/free/used observations are safe driver observations for the whole device, not process-attributed memory. Each cycle establishes its own pre-load baseline after the observer preparation; retained-delta stability uses post-unload and post-owner-drop deltas while preserving absolute observations. Public E1 does not expose the product worker's E0 `RuntimeSnapshot`, so the external report does not fabricate E0 reserved ownership or a post-unload accounting snapshot. Direct E0 zero-accounting evidence remains a separate download-free hardware test.
 
-Every safe Candle `discover_device` observation constructs a temporary Candle CUDA device and cudarc context. Schema 4 records the exact number of those discovery calls. The separate observer `prepare_load` call also initializes its requested device but is not mislabeled as a discovery call. All are cold lifecycle operations and never per token. Safe reuse would require exposing production context ownership or adding a lower-level benchmark dependency, neither of which is justified by this inward observer.
+Every safe Candle `discover_device` observation constructs a temporary Candle CUDA device and cudarc context. Schema 5 records the exact number of those discovery calls. The separate observer `prepare_load` call also initializes its requested device but is not mislabeled as a discovery call. All are cold lifecycle operations and never per token. Safe reuse would require exposing production context ownership or adding a lower-level benchmark dependency, neither of which is justified by this inward observer.
 
 Ordinary tests and shared CI compile this path but never execute it, access the network, or require CUDA hardware. Resource preflight, hardware tests, report review, and the bounded manual Slint procedure are in [controlled CPU and CUDA external product evidence](../../docs/project/validation.md#controlled-cpu-and-cuda-external-product-evidence); curated historical results live only in [performance evidence](../../docs/project/performance.md#external-product-evidence).
 
@@ -155,7 +157,9 @@ Ordinary tests and shared CI compile this path but never execute it, access the 
 
 **External schema 3 (historical):** renamed `execution_dtype` to `execution_scalar`, renamed the plan evidence to `accounted_footprint`, and added bounded CUDA discovery/context-call evidence. Its schema-3 regression remains attributed to its recorded commit/tree and does not replace the schema-2 timing tables.
 
-**External schema 4 (current):** replaces singular source-scalar evidence with optional configuration declaration plus observed `ScalarTypeSet`, splits planned from actual execution scalar, records exact final and loading-peak preparation quantities, and names process RSS, absent direct E0 reserved ownership, and whole-device CUDA observation independently.
+**External schema 4 (historical):** replaces singular source-scalar evidence with optional configuration declaration plus observed `ScalarTypeSet`, splits planned from actual execution scalar, records exact final and loading-peak preparation quantities, and names process RSS, absent direct E0 reserved ownership, and whole-device CUDA observation independently.
+
+**External schema 5 (current):** removes `cache_bytes_per_token` from byte-footprint records because cache rate is separate descriptor planning data. All other schema-4 evidence groups retain their meanings.
 
 No legacy parser has been added for schemas 1–3. Their descriptions and preserved measurements remain provenance records, not migration inputs.
 

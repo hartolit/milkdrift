@@ -25,10 +25,12 @@ const CUDA_0: ExecutionDevice = ExecutionDevice::new(DeviceId::new(0), DeviceKin
 const VOCABULARY_SIZE: usize = 16;
 const F32_EXECUTION_WEIGHT_BYTES: u64 = 3_680;
 const F32_CACHE_BYTES_PER_TOKEN: u64 = 64;
+const F32_SEQUENCE_WORKING_BYTES: u64 = 1_280;
 const F32_CPU_LOADING_WORKING_BYTES: u64 = 227;
 const F32_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 1_027;
 const HALF_EXECUTION_WEIGHT_BYTES: u64 = 1_840;
 const HALF_CACHE_BYTES_PER_TOKEN: u64 = 32;
+const HALF_SEQUENCE_WORKING_BYTES: u64 = 640;
 const HALF_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 513;
 
 type TestResult<T = ()> = Result<T, String>;
@@ -183,13 +185,12 @@ fn cuda_mixed_bf16_f32_executes_as_bf16() -> TestResult {
 
 fn assert_exact_f32_cpu_footprints(result: &FixtureExecution) {
     assert_eq!(
-        result.accounted_footprint,
+        result.reported_footprint,
         MemoryFootprint {
             host_weight_bytes: F32_EXECUTION_WEIGHT_BYTES,
             device_weight_bytes: 0,
             host_working_bytes: 0,
             device_working_bytes: 0,
-            cache_bytes_per_token: F32_CACHE_BYTES_PER_TOKEN,
         }
     );
     assert_eq!(
@@ -199,20 +200,31 @@ fn assert_exact_f32_cpu_footprints(result: &FixtureExecution) {
             device_weight_bytes: 0,
             host_working_bytes: F32_CPU_LOADING_WORKING_BYTES,
             device_working_bytes: 0,
-            cache_bytes_per_token: F32_CACHE_BYTES_PER_TOKEN,
+        }
+    );
+    assert_eq!(
+        result.sequence_cache_bytes_per_token,
+        F32_CACHE_BYTES_PER_TOKEN
+    );
+    assert_eq!(
+        result.sequence_footprint,
+        MemoryFootprint {
+            host_weight_bytes: 0,
+            device_weight_bytes: 0,
+            host_working_bytes: F32_SEQUENCE_WORKING_BYTES,
+            device_working_bytes: 0,
         }
     );
 }
 
 fn assert_exact_f32_cuda_footprints(result: &FixtureExecution) {
     assert_eq!(
-        result.accounted_footprint,
+        result.reported_footprint,
         MemoryFootprint {
             host_weight_bytes: 0,
             device_weight_bytes: F32_EXECUTION_WEIGHT_BYTES,
             host_working_bytes: 0,
             device_working_bytes: 0,
-            cache_bytes_per_token: F32_CACHE_BYTES_PER_TOKEN,
         }
     );
     assert_eq!(
@@ -222,20 +234,31 @@ fn assert_exact_f32_cuda_footprints(result: &FixtureExecution) {
             device_weight_bytes: F32_EXECUTION_WEIGHT_BYTES,
             host_working_bytes: F32_CUDA_HOST_LOADING_PEAK_BYTES,
             device_working_bytes: 0,
-            cache_bytes_per_token: F32_CACHE_BYTES_PER_TOKEN,
+        }
+    );
+    assert_eq!(
+        result.sequence_cache_bytes_per_token,
+        F32_CACHE_BYTES_PER_TOKEN
+    );
+    assert_eq!(
+        result.sequence_footprint,
+        MemoryFootprint {
+            host_weight_bytes: 0,
+            device_weight_bytes: 0,
+            host_working_bytes: 0,
+            device_working_bytes: F32_SEQUENCE_WORKING_BYTES,
         }
     );
 }
 
 fn assert_exact_half_cuda_footprints(result: &FixtureExecution) {
     assert_eq!(
-        result.accounted_footprint,
+        result.reported_footprint,
         MemoryFootprint {
             host_weight_bytes: 0,
             device_weight_bytes: HALF_EXECUTION_WEIGHT_BYTES,
             host_working_bytes: 0,
             device_working_bytes: 0,
-            cache_bytes_per_token: HALF_CACHE_BYTES_PER_TOKEN,
         }
     );
     assert_eq!(
@@ -245,7 +268,19 @@ fn assert_exact_half_cuda_footprints(result: &FixtureExecution) {
             device_weight_bytes: HALF_EXECUTION_WEIGHT_BYTES,
             host_working_bytes: HALF_CUDA_HOST_LOADING_PEAK_BYTES,
             device_working_bytes: 0,
-            cache_bytes_per_token: HALF_CACHE_BYTES_PER_TOKEN,
+        }
+    );
+    assert_eq!(
+        result.sequence_cache_bytes_per_token,
+        HALF_CACHE_BYTES_PER_TOKEN
+    );
+    assert_eq!(
+        result.sequence_footprint,
+        MemoryFootprint {
+            host_weight_bytes: 0,
+            device_weight_bytes: 0,
+            host_working_bytes: 0,
+            device_working_bytes: HALF_SEQUENCE_WORKING_BYTES,
         }
     );
 }
@@ -255,8 +290,9 @@ struct FixtureExecution {
     observed_scalar_types: ScalarTypeSet,
     execution_scalar_type: ScalarType,
     execution_device: ExecutionDevice,
-    accounted_footprint: MemoryFootprint,
+    reported_footprint: MemoryFootprint,
     loading_peak_footprint: MemoryFootprint,
+    sequence_cache_bytes_per_token: u64,
     sequence_footprint: MemoryFootprint,
     prefill_logits: Vec<f32>,
     decode_logits: Vec<f32>,
@@ -279,10 +315,7 @@ fn execute_fixture(
     let sequence_plan = model
         .plan_sequence(&sequence_configuration)
         .map_err(|error| format!("plan sequence: {error:?}"))?;
-    assert_eq!(
-        sequence_plan.expected_footprint.cache_bytes_per_token,
-        plan.expected_footprint.cache_bytes_per_token
-    );
+    let sequence_cache_bytes_per_token = plan.descriptor.sequence_cache_bytes_per_token;
     let mut sequence = model
         .create_sequence(SequenceId::new(1), &sequence_configuration)
         .map_err(|error| format!("create sequence: {error:?}"))?;
@@ -330,7 +363,7 @@ fn execute_fixture(
         .map_err(|error| format!("destroy sequence: {error:?}"))?;
     drop(sequence);
     let execution_scalar_type = model.execution_scalar_type();
-    let accounted_footprint = model.accounted_footprint();
+    let reported_footprint = model.reported_footprint();
     model
         .prepare_unload()
         .map_err(|error| format!("prepare unload: {error:?}"))?;
@@ -341,8 +374,9 @@ fn execute_fixture(
         observed_scalar_types,
         execution_scalar_type,
         execution_device,
-        accounted_footprint,
+        reported_footprint,
         loading_peak_footprint: plan.loading_peak_footprint,
+        sequence_cache_bytes_per_token,
         sequence_footprint: sequence_plan.expected_footprint,
         prefill_logits,
         decode_logits,
@@ -388,7 +422,7 @@ fn load_fixture(
     assert_eq!(model.descriptor(), &plan.descriptor);
     assert_eq!(model.execution_scalar_type(), plan.execution_scalar_type);
     assert_eq!(model.execution_device(), execution_device);
-    assert_eq!(model.accounted_footprint(), plan.expected_footprint);
+    assert_eq!(model.reported_footprint(), plan.final_footprint);
 
     Ok(LoadedFixture {
         model,

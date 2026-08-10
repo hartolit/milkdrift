@@ -13,9 +13,9 @@ Hard harness timeouts stop hangs only. Lifecycle, fixture, identity, output, cle
 | Deterministic allocation | Harness-free `domain-contracts` allocation executable and the sampling allocator test | Project-global allocator behavior within the named preallocated regions | Candle/native/driver/OS/device allocation behavior |
 | Sampling component | `crates/domain/sampling/benches/sampling_pipeline.rs` | Comparative timing of public sampling and stop matching with caller-owned prepared storage | E0/E1 latency, product throughput, or allocation attribution |
 | Hosted E0 component-like | `benchmarks/runtime/benches/runtime.rs` | Public command submission through matching completion event, including bounded transport and dispatch | Raw Candle kernel timing, E1/product latency, RSS, or full-generation throughput |
-| Synthetic system/integration | `benchmarks/runtime` normal `baseline` binary; current synthetic schema 3 | Download-free hosted-E0 lifecycle/output plus separate prepared declared/observed/planned facts, actual E0 receipt/reserved ownership, exact final/loading-peak plans, process RSS, and fresh E1 start/shutdown cycles | Product-model speed or quality, representative scale, steady-state serving, physical residency, or device memory |
+| Synthetic system/integration | `benchmarks/runtime` normal `baseline` binary; current synthetic schema 4 | Download-free hosted-E0 lifecycle/output plus separate prepared declared/observed/planned facts, actual E0 receipt/reserved ownership, exact final/loading-peak plans, process RSS, and fresh E1 start/shutdown cycles | Product-model speed or quality, representative scale, steady-state serving, physical residency, or device memory |
 | Compile-only | Workspace benchmark compilation | Target/API compatibility | Runtime correctness or performance |
-| External real-product | `runtime-benchmarks` `external-baseline` binary plus focused E0/E1 device and ownership validation; current external schema 4 | Current report semantics for the exact homogeneous TinyLlama profile: declared/observed/planned/actual facts, exact final/loading-peak preparation, E1 acceptance without fabricated direct E0 ownership, process RSS, and whole-device CUDA observations. Curated CPU/CUDA timings remain the preserved schema-2 Commit E evidence below; historical CPU-only Commit C and schema-3 regression evidence also remain below. | Mixed-checkpoint evidence, model quality, other hosts/models/layouts/devices, serving capacity, GPU sampling, process-attributed device memory, generic NVIDIA behavior, leak/non-leak proof, or a portable regression threshold |
+| External real-product | `runtime-benchmarks` `external-baseline` binary plus focused E0/E1 device and ownership validation; current external schema 5 | Current report semantics for the exact homogeneous TinyLlama profile: declared/observed/planned/actual facts, exact final/loading-peak preparation, E1 acceptance without fabricated direct E0 ownership, process RSS, and whole-device CUDA observations. Curated CPU/CUDA timings remain the preserved schema-2 Commit E evidence below; historical CPU-only Commit C and schema-3 regression evidence also remain below. | Mixed-checkpoint evidence, model quality, other hosts/models/layouts/devices, serving capacity, GPU sampling, process-attributed device memory, generic NVIDIA behavior, leak/non-leak proof, or a portable regression threshold |
 
 ## Sampling methodology
 
@@ -105,9 +105,9 @@ The runner writes one schema-versioned JSON document to stdout and compact progr
 
 Raw JSON, Criterion reports, profiles, caches, and compiler output remain beneath root `target` or outside the repository. The runner writes no result file itself.
 
-### Current synthetic schema 3 contract
+### Current synthetic schema 4 contract
 
-Phase 12 advances the normal synthetic report independently from schema 2 to **synthetic schema 3**. This is a structural evidence change; no Phase 10 timing or RSS value below is rewritten as a Phase 12 measurement. The closure-tree `runtime-benchmarks` tests passed the schema contract, but no new controlled synthetic report is curated here.
+The runtime-ownership amendment advances the normal synthetic report from schema 3 to **synthetic schema 4** by removing `cache_bytes_per_token` from every serialized byte-footprint record. Sequence-cache rate is descriptor planning data, not current ownership. Schema 3 introduced the prepared declaration/layout/planned and actual E0 receipt groups described below; it retains that historical meaning. This structural change does not rewrite any prior timing or RSS value, and no new controlled synthetic report is curated here.
 
 Each E0 cycle records two related but distinct evidence groups:
 
@@ -122,7 +122,7 @@ Each E0 cycle records two related but distinct evidence groups:
 | `receipt.reserved_footprint` | Direct E0 post-load ownership reservation, required to equal the exact final footprint. |
 | snapshot `process_memory` | Sampled whole-process RSS/HWM, independent of plan and ownership accounting. |
 
-The committed synthetic artifact remains homogeneous F32, so its truthful schema-3 facts are declared `F32`, observed `{F32}`, planned F32/CPU, and actual F32/CPU. The schema does not turn that fixture into mixed-layout evidence. Synthetic schemas 1 and 2 retain their historical meanings; no legacy report parser was introduced.
+The committed synthetic artifact remains homogeneous F32, so its truthful schema-4 facts are declared `F32`, observed `{F32}`, planned F32/CPU, and actual F32/CPU. The schema does not turn that fixture into mixed-layout evidence. Synthetic schemas 1–3 retain their historical meanings; no legacy report parser was introduced.
 
 ## Commit A controlled baseline
 
@@ -244,11 +244,11 @@ Elevated post-unload RSS was not treated as retained model ownership because all
 
 ## External product evidence
 
-### Current Phase 12 external schema-4 contract
+### Current external schema-5 contract
 
-Phase 12 advances the external report independently to **external schema 4**. Closure-tree unit tests validate serialization and semantic separation, but no schema-4 CPU or CUDA product run is accepted here. Therefore every Phase 10/11 timing and memory table below remains attributed to its original code, report schema, and environment.
+The runtime-ownership amendment advances the external report from schema 4 to **external schema 5** by removing `cache_bytes_per_token` from serialized final/loading byte-footprint records. Sequence-cache rate remains separate descriptor planning data. Unit tests validate serialization and semantic separation, but no schema-5 CPU or CUDA product run is accepted here. Therefore every Phase 10/11 timing and memory table below remains attributed to its original code, report schema, and environment.
 
-Schema 4 records:
+Schema 5 records:
 
 - optional `configuration_declared_scalar` separately from `observed_tensor_scalars` read through the adapter's prepared-load descriptor;
 - `planned_execution_scalar` separately from E1's `actual_execution_scalar` after E0 receipt verification;
@@ -276,7 +276,7 @@ The evidence classes must remain distinct:
 
 The pinned `TinyLlama/TinyLlama-1.1B-Chat-v1.0` revision is configuration-declared BF16 and observed homogeneous `{BF16}`. It remains the established lifecycle/chat profile and is **not mixed-checkpoint evidence**. No suitable immutable, license-reviewed external mixed-dtype Llama profile with an auditable direct-completion procedure has been established, so external mixed CPU/CUDA evidence remains absent. A missing network path or credential would be an acquisition failure, not model incompatibility; only an acquired artifact that fails inspection/preparation/execution can support an incompatibility finding.
 
-External schemas 1–3 retain their historical field meanings. No legacy parser was added merely to reinterpret old reports.
+External schemas 1–4 retain their historical field meanings. No legacy parser was added merely to reinterpret old reports.
 
 ### Historical post-Phase 11 external schema-3 observation contract
 

@@ -575,7 +575,7 @@ fn terminal_cleanup_failure_remains_sticky_after_worker_join() -> TestResult {
             ApplicationError::Failure(ApplicationFailure {
                 kind: ApplicationFailureKind::Inference,
                 message,
-            }) if message.contains("CleanupRetryExhausted")
+            }) if message.contains("TerminalCleanupRetention")
         ));
         assert_eq!(
             runtime.shutdown_control.status,

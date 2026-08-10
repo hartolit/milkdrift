@@ -480,9 +480,12 @@ fn assert_released_snapshot(hosted: &HostedRuntime<CandleLlamaSource>) -> SmokeR
             ticket,
             runtime,
             models,
+            retained_models,
         } if ticket == CommandTicket::new(5) => {
             if runtime.loaded_models != 1
                 || runtime.active_requests != 0
+                || runtime.unverified_ownership.is_some()
+                || runtime.admission_blocked
                 || runtime.generation_workspaces != 0
                 || runtime.reserved_generation_workspace != MemoryFootprint::default()
                 || runtime.pending_cleanup_models != 0
@@ -491,6 +494,7 @@ fn assert_released_snapshot(hosted: &HostedRuntime<CandleLlamaSource>) -> SmokeR
                 || runtime.exhausted_cleanup_sequences != 0
                 || runtime.maintenance_error.is_some()
                 || models.len() != 1
+                || !retained_models.is_empty()
             {
                 return Err(SmokeError::runtime(format!(
                     "generation ownership remained after release: {runtime:?}"
@@ -537,10 +541,13 @@ fn assert_unloaded_snapshot(hosted: &HostedRuntime<CandleLlamaSource>) -> SmokeR
             ticket,
             runtime,
             models,
+            retained_models,
         } if ticket == CommandTicket::new(7) => {
             if runtime.loaded_models != 0
                 || runtime.active_requests != 0
                 || runtime.reserved_footprint != MemoryFootprint::default()
+                || runtime.unverified_ownership.is_some()
+                || runtime.admission_blocked
                 || runtime.generation_workspaces != 0
                 || runtime.reserved_generation_workspace != MemoryFootprint::default()
                 || runtime.pending_cleanup_models != 0
@@ -549,6 +556,7 @@ fn assert_unloaded_snapshot(hosted: &HostedRuntime<CandleLlamaSource>) -> SmokeR
                 || runtime.exhausted_cleanup_sequences != 0
                 || runtime.maintenance_error.is_some()
                 || !models.is_empty()
+                || !retained_models.is_empty()
             {
                 return Err(SmokeError::runtime(format!(
                     "runtime retained ownership after unload: {runtime:?}"

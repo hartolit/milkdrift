@@ -36,7 +36,7 @@ pub(super) fn capture_snapshot(
     let record = SnapshotCheckpoint {
         checkpoint,
         process_memory: process_memory()?,
-        runtime: runtime_accounting(runtime),
+        runtime: runtime_accounting(&runtime),
         models: model_records,
     };
     Ok(CapturedSnapshot {
@@ -51,7 +51,9 @@ fn validate_no_cleanup_failure(
     models: &[inference_runtime::ModelSnapshot],
     checkpoint: &str,
 ) -> BenchmarkResult {
-    if runtime.pending_cleanup_models != 0
+    if runtime.unverified_ownership.is_some()
+        || runtime.admission_blocked
+        || runtime.pending_cleanup_models != 0
         || runtime.pending_cleanup_sequences != 0
         || runtime.exhausted_cleanup_models != 0
         || runtime.exhausted_cleanup_sequences != 0
@@ -77,6 +79,8 @@ pub(super) fn validate_empty_snapshot(
     if runtime.loaded_models != 0
         || runtime.active_requests != 0
         || runtime.reserved_footprint != MemoryFootprint::default()
+        || runtime.unverified_ownership.is_some()
+        || runtime.admission_blocked
         || runtime.generation_workspaces != 0
         || runtime.reserved_generation_workspace != MemoryFootprint::default()
         || runtime.pending_cleanup_models != 0
@@ -106,6 +110,8 @@ pub(super) fn validate_loaded_idle_snapshot(
     if runtime.loaded_models != 1
         || runtime.active_requests != 0
         || runtime.reserved_footprint != expected_footprint
+        || runtime.unverified_ownership.is_some()
+        || runtime.admission_blocked
         || runtime.generation_workspaces != 0
         || runtime.reserved_generation_workspace != MemoryFootprint::default()
         || runtime.last_cleanup.is_some()
@@ -142,11 +148,12 @@ pub(super) fn validate_active_snapshot(
         && generation_workspace.device_weight_bytes == 0
         && generation_workspace.host_working_bytes != 0
         && generation_workspace.device_working_bytes == 0
-        && generation_workspace.cache_bytes_per_token == 0
         && footprint_contains(request_footprint, generation_workspace);
     if runtime.loaded_models != 1
         || runtime.active_requests != 1
         || runtime.reserved_footprint != expected_footprint
+        || runtime.unverified_ownership.is_some()
+        || runtime.admission_blocked
         || !exact_generation_workspace
         || runtime.last_cleanup.is_some()
         || runtime.shutting_down
@@ -173,28 +180,8 @@ fn checked_add_footprints(
     right: MemoryFootprint,
     checkpoint: &str,
 ) -> BenchmarkResult<MemoryFootprint> {
-    Ok(MemoryFootprint {
-        host_weight_bytes: left
-            .host_weight_bytes
-            .checked_add(right.host_weight_bytes)
-            .ok_or_else(|| footprint_overflow(checkpoint))?,
-        device_weight_bytes: left
-            .device_weight_bytes
-            .checked_add(right.device_weight_bytes)
-            .ok_or_else(|| footprint_overflow(checkpoint))?,
-        host_working_bytes: left
-            .host_working_bytes
-            .checked_add(right.host_working_bytes)
-            .ok_or_else(|| footprint_overflow(checkpoint))?,
-        device_working_bytes: left
-            .device_working_bytes
-            .checked_add(right.device_working_bytes)
-            .ok_or_else(|| footprint_overflow(checkpoint))?,
-        cache_bytes_per_token: left
-            .cache_bytes_per_token
-            .checked_add(right.cache_bytes_per_token)
-            .ok_or_else(|| footprint_overflow(checkpoint))?,
-    })
+    left.checked_add(right)
+        .ok_or_else(|| footprint_overflow(checkpoint))
 }
 
 fn footprint_overflow(checkpoint: &str) -> BenchmarkError {
@@ -202,11 +189,7 @@ fn footprint_overflow(checkpoint: &str) -> BenchmarkError {
 }
 
 const fn footprint_contains(available: MemoryFootprint, required: MemoryFootprint) -> bool {
-    available.host_weight_bytes >= required.host_weight_bytes
-        && available.device_weight_bytes >= required.device_weight_bytes
-        && available.host_working_bytes >= required.host_working_bytes
-        && available.device_working_bytes >= required.device_working_bytes
-        && available.cache_bytes_per_token >= required.cache_bytes_per_token
+    available.contains_components(required)
 }
 
 fn only_model<'a>(
@@ -224,7 +207,7 @@ fn only_model<'a>(
         .ok_or_else(|| BenchmarkError::new(format!("{checkpoint} model snapshot disappeared")))
 }
 
-fn runtime_accounting(snapshot: RuntimeSnapshot) -> RuntimeAccounting {
+fn runtime_accounting(snapshot: &RuntimeSnapshot) -> RuntimeAccounting {
     RuntimeAccounting {
         loaded_models: snapshot.loaded_models,
         active_requests: snapshot.active_requests,
@@ -273,6 +256,5 @@ const fn footprint(value: MemoryFootprint) -> MemoryFootprintRecord {
         device_weight_bytes: value.device_weight_bytes,
         host_working_bytes: value.host_working_bytes,
         device_working_bytes: value.device_working_bytes,
-        cache_bytes_per_token: value.cache_bytes_per_token,
     }
 }

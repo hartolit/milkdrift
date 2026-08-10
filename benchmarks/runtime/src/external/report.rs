@@ -5,7 +5,7 @@ use serde::Serialize;
 use crate::memory::ProcessMemory;
 use crate::report::{GitMetadata, MemoryFootprintRecord, SystemMetadata, ToolchainMetadata};
 
-pub(super) const SCHEMA_VERSION: u32 = 4;
+pub(super) const SCHEMA_VERSION: u32 = 5;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct ExternalBaselineReport {
@@ -409,7 +409,6 @@ mod tests {
             device_weight_bytes: 2_200,
             host_working_bytes: 0,
             device_working_bytes: 0,
-            cache_bytes_per_token: 22,
         }
     }
 
@@ -770,9 +769,9 @@ mod tests {
     }
 
     #[test]
-    fn schema_four_serializes_declared_observed_planned_and_actual_facts() -> Result<(), String> {
+    fn schema_five_serializes_declared_observed_planned_and_actual_facts() -> Result<(), String> {
         let value = serde_json::to_value(fixture_report()).map_err(|error| error.to_string())?;
-        assert_eq!(value_at(&value, &["schema_version"])?.as_u64(), Some(4));
+        assert_eq!(value_at(&value, &["schema_version"])?.as_u64(), Some(5));
         assert_eq!(
             value_at(&value, &["model", "configuration_declared_scalar"])?.as_str(),
             Some("BF16")
@@ -880,6 +879,7 @@ mod tests {
         assert!(readme.contains("**External schema 1 (historical):**"));
         assert!(readme.contains("**External schema 2 (historical):**"));
         assert!(readme.contains("**External schema 3 (historical):**"));
-        assert!(readme.contains("**External schema 4 (current):**"));
+        assert!(readme.contains("**External schema 4 (historical):**"));
+        assert!(readme.contains("**External schema 5 (current):**"));
     }
 }

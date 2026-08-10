@@ -81,8 +81,8 @@ impl LoadedModel for TestModel {
                 device_weight_bytes: 0,
                 host_working_bytes: 0,
                 device_working_bytes: 0,
-                cache_bytes_per_token: 0,
             },
+            sequence_cache_bytes_per_token: 0,
         };
         &DESCRIPTOR
     }
@@ -95,7 +95,7 @@ impl LoadedModel for TestModel {
         ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu)
     }
 
-    fn accounted_footprint(&self) -> MemoryFootprint {
+    fn reported_footprint(&self) -> MemoryFootprint {
         MemoryFootprint::default()
     }
 

@@ -2,7 +2,10 @@ use domain_contracts::{
     CapabilitySet, DeviceId, DeviceKind, ExecutionDevice, ModelGeneration, ModelHandle, ModelId,
     ScalarType, ScalarTypeSet,
 };
-use inference_runtime::{RuntimeCommand, RuntimeEvent, RuntimeSnapshot};
+use inference_runtime::{
+    ConservativeFootprint, RuntimeCommand, RuntimeEvent, RuntimeSnapshot,
+    UnverifiedOwnershipSummary,
+};
 
 use super::support::*;
 use crate::runtime::retained_cleanup::{
@@ -432,6 +435,41 @@ fn retryable_sequence_cleanup_snapshot_remains_pending_until_ownership_is_zero()
             Some(RetainedModelCleanup::PendingInspection { .. })
         ));
         assert_eq!(runtime.state().activity(), ApplicationActivity::Unloading);
+        Ok(())
+    })
+}
+
+#[test]
+fn unverified_ownership_never_counts_as_zero_exact_ownership() -> TestResult {
+    with_runtime(default_test_configuration, |runtime| {
+        let ticket = inference_runtime::CommandTicket::new(81);
+        runtime.retained_model_cleanup = Some(RetainedModelCleanup::InspectionSubmitted { ticket });
+        runtime.state.begin_unloading();
+        let snapshot = RuntimeSnapshot {
+            unverified_ownership: Some(UnverifiedOwnershipSummary {
+                owners: 1,
+                conservative_footprint: ConservativeFootprint::Known(
+                    domain_contracts::MemoryFootprint::default(),
+                ),
+            }),
+            admission_blocked: true,
+            ..RuntimeSnapshot::default()
+        };
+
+        let event = runtime.process_retained_model_cleanup_snapshot(ticket, &snapshot);
+        assert!(matches!(
+            event,
+            Some(ApplicationEvent::ModelCleanupPending {
+                exhausted: true,
+                ..
+            })
+        ));
+        assert_eq!(
+            runtime.retained_model_cleanup,
+            Some(RetainedModelCleanup::Exhausted)
+        );
+        assert_eq!(runtime.state().activity(), ApplicationActivity::Unloading);
+        assert!(!runtime.state().can_select_device());
         Ok(())
     })
 }

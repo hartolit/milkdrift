@@ -511,6 +511,9 @@ fn remember_pending_unload<L>(
                 )
             });
     if pending {
+        if pending_unloads.contains_key(&model_id) {
+            return;
+        }
         let failure_reported = matches!(event, RuntimeEvent::ModelUnload { result: Err(_), .. });
         let cancelled_requests = match event {
             RuntimeEvent::ModelUnload {
@@ -664,6 +667,7 @@ where
                 ticket,
                 runtime: runtime.snapshot(),
                 models: runtime.model_snapshots(),
+                retained_models: runtime.retained_model_snapshots(),
             },
             None,
         ),

@@ -37,12 +37,14 @@ thread_local! {
     static TEST_CLEANUP_SYNCHRONIZATION_FAILURES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// Exact source-, device-, and plan-bound Candle load preparation.
+/// Exact source-, configuration-, device-, and plan-bound Candle preparation.
 ///
-/// Before materialization this value owns retained open shards, parsed config,
-/// and the selected device and is ordinary-drop-safe. After any materialization
-/// failure it is the sole owner of every completed and in-flight tensor and any
-/// constructed model; [`PreparedLoad::cleanup`] is retryable and idempotent.
+/// Its retained files, parsed config, selected device, and cleanup authority are
+/// not cloned or replaced during loading, and its plan remains stable for the
+/// value's lifetime. Before materialization it is ordinary-drop-safe. After any
+/// materialization failure it is the sole cleanup owner of every completed and
+/// in-flight tensor and any constructed model; [`PreparedLoad::cleanup`] is
+/// all-or-nothing, retryable, and idempotent.
 #[derive(Debug)]
 pub struct CandleLlamaPreparedLoad {
     pub(super) backend: BackendId,
@@ -61,7 +63,12 @@ pub struct CandleLlamaPreparedLoad {
 
 impl CandleLlamaPreparedLoad {
     pub(super) fn materialize(&mut self) -> Result<(), LoadError> {
-        self.materialize_with_observer(&mut NoopMaterializationObserver)
+        match catch_unwind(AssertUnwindSafe(|| {
+            self.materialize_with_observer(&mut NoopMaterializationObserver)
+        })) {
+            Ok(result) => result,
+            Err(_) => Err(invalid_model_failure(self.backend, CODE_MODEL_LOAD_PANIC)),
+        }
     }
 
     fn materialize_with_observer<O: MaterializationObserver>(
@@ -279,9 +286,12 @@ impl CandleLlamaPreparedLoad {
             .source_dtype
             .alignment()
             .ok_or_else(|| unsupported_scalar(self.backend))?;
+        let alignment_padding = alignment
+            .checked_sub(1)
+            .ok_or_else(|| invalid_model_failure(self.backend, CODE_NUMERIC_OVERFLOW))?;
         let allocation_bytes = facts
             .source_bytes
-            .checked_add(alignment.saturating_sub(1))
+            .checked_add(alignment_padding)
             .ok_or_else(|| invalid_model_failure(self.backend, CODE_NUMERIC_OVERFLOW))?;
         let allocation_length = usize::try_from(allocation_bytes)
             .map_err(|_| invalid_model_failure(self.backend, CODE_NUMERIC_OVERFLOW))?;
@@ -1019,6 +1029,7 @@ mod tests {
     fn cleanup_failure_retains_all_handles_and_retry_is_idempotent() -> Result<(), String> {
         let shard = inspected_shard(br"{}", &[], Vec::new())?;
         let mut prepared = test_prepared(vec![shard], DType::F32)?;
+        let stable_plan = *prepared.plan();
         let tensor = Tensor::ones(1, DType::F32, &Device::Cpu)
             .map_err(|error| format!("create cleanup tensor: {error}"))?;
         prepared
@@ -1038,6 +1049,7 @@ mod tests {
         assert!(prepared.config.is_some());
         assert!(prepared.device.is_some());
         assert!(!prepared.cleanup_complete);
+        assert_eq!(prepared.plan(), &stable_plan);
 
         prepared
             .cleanup()
@@ -1050,6 +1062,7 @@ mod tests {
         assert!(prepared.config.is_none());
         assert!(prepared.device.is_none());
         assert!(prepared.cleanup_complete);
+        assert_eq!(prepared.plan(), &stable_plan);
         prepared
             .cleanup()
             .map_err(|error| format!("idempotent cleanup: {error:?}"))?;
@@ -1208,6 +1221,7 @@ mod tests {
                 maximum_prefill_batch: 16,
             },
             estimated_footprint: MemoryFootprint::default(),
+            sequence_cache_bytes_per_token: 0,
         };
         let plan = LoadPlan {
             accepted_configuration: LoadConfiguration {
@@ -1217,7 +1231,7 @@ mod tests {
             },
             descriptor,
             execution_scalar_type: ScalarType::F32,
-            expected_footprint: MemoryFootprint::default(),
+            final_footprint: MemoryFootprint::default(),
             loading_peak_footprint: MemoryFootprint::default(),
         };
         let mut final_tensors = HashMap::new();

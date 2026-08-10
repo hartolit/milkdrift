@@ -95,7 +95,7 @@ A successful E0 receipt is not automatically a public model. Before publication 
 - checked final reserved footprint within that budget and in the expected CPU/CUDA memory domain;
 - Candle backend, Llama architecture, unquantized Safetensors category, required capabilities, ordered nonzero limits, and tokenizer vocabulary.
 
-E0 has already verified the complete descriptor, planned/actual execution scalar/device, and final accounted footprint against the exact prepared load. E1 relies on that ownership boundary rather than trying to reconstruct the loading peak or per-tensor algorithm from a receipt.
+E0 has already verified the complete descriptor, planned/actual execution scalar/device, and final reported footprint against the exact prepared load. E1 relies on that ownership boundary rather than trying to reconstruct the loading peak or per-tensor algorithm from a receipt. A lower incompatible complete model is not exposed as an exact receipt: E0 retains explicit unverified ownership and blocks admission until cleanup succeeds.
 
 Only after all checks pass does E1 construct public `LoadedModel`. Any mismatch publishes no resident model and enters the existing private incompatible-receipt unload/retention path.
 
@@ -224,7 +224,7 @@ The frontend still owns only event-loop integration, callbacks, frame-batched ou
 
 Normal closure calls `ApplicationRuntime::shutdown`; `Drop` is not an unbounded join protocol. The private controller retains running, stopping, cleanly stopped, retryable failure, and terminal failure.
 
-A command/event/join timeout keeps unfinished worker handles owned so a later call can retry. A terminal E0 cleanup failure remains sticky independently from join handles. E0 may terminate after publishing `CleanupRetryExhausted` while deliberately retaining native ownership until process exit; E1 never infers clean success from handle absence. Clean idempotent success requires observed clean E0 shutdown and confirmed worker joins. [ADR-0006](../agent/decisions/0006-explicit-bounded-shutdown.md) remains unchanged by Phase 12.
+A command/event/join timeout keeps unfinished worker handles owned so a later call can retry. A terminal E0 cleanup failure remains sticky independently from join handles. E0 may terminate after publishing `TerminalCleanupRetention` with a bounded ownership summary while deliberately retaining native ownership until process exit; E1 never infers clean success from handle absence. Clean idempotent success requires observed clean E0 shutdown and confirmed worker joins. [ADR-0006](../agent/decisions/0006-explicit-bounded-shutdown.md) remains unchanged by Phase 12.
 
 ## Execution and validation boundary
 

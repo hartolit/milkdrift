@@ -5,7 +5,9 @@ use domain_contracts::{
     prefill_checked,
 };
 
-use crate::{DecodeReceipt, FailureClass, PrefillReceipt, RuntimeError, RuntimeOperation};
+use crate::{
+    DecodeReceipt, FailureClass, FailureDetail, PrefillReceipt, RuntimeError, RuntimeOperation,
+};
 
 use super::{InferenceRuntime, memory::saturating_u64};
 
@@ -105,7 +107,7 @@ where
                     preserve_primary_cleanup(self.remove_request(
                         request_id,
                         finish_operation(reason),
-                        finish_failure_class(reason),
+                        finish_failure_detail(reason),
                     ))?;
                 }
                 Ok(PrefillReceipt { outcome, usage })
@@ -114,7 +116,7 @@ where
                 preserve_primary_cleanup(self.remove_request(
                     request_id,
                     RuntimeOperation::Prefill,
-                    primary.failure_class(),
+                    primary.failure_detail(),
                 ))?;
                 Err(primary)
             }
@@ -203,7 +205,7 @@ where
                     preserve_primary_cleanup(self.remove_request(
                         request_id,
                         finish_operation(reason),
-                        finish_failure_class(reason),
+                        finish_failure_detail(reason),
                     ))?;
                 }
                 Ok(DecodeReceipt { outcome, usage })
@@ -212,7 +214,7 @@ where
                 preserve_primary_cleanup(self.remove_request(
                     request_id,
                     RuntimeOperation::Decode,
-                    primary.failure_class(),
+                    primary.failure_detail(),
                 ))?;
                 Err(primary)
             }
@@ -233,7 +235,7 @@ where
         self.remove_request(
             request_id,
             finish_operation(reason),
-            finish_failure_class(reason),
+            finish_failure_detail(reason),
         )?;
         Ok(reason)
     }
@@ -252,7 +254,7 @@ where
         self.remove_request(
             request_id,
             RuntimeOperation::Cancellation,
-            FailureClass::Cancellation,
+            FailureDetail::Class(FailureClass::Cancellation),
         )?;
         Ok(FinishReason::Cancelled(reason))
     }
@@ -268,7 +270,7 @@ where
         operation: RuntimeOperation,
         failure: FailureClass,
     ) -> Result<(), RuntimeError> {
-        self.remove_request(request_id, operation, failure)
+        self.remove_request(request_id, operation, FailureDetail::Class(failure))
     }
 }
 
@@ -288,13 +290,13 @@ const fn finish_operation(reason: FinishReason) -> RuntimeOperation {
     }
 }
 
-const fn finish_failure_class(reason: FinishReason) -> FailureClass {
-    match reason {
+const fn finish_failure_detail(reason: FinishReason) -> FailureDetail {
+    FailureDetail::Class(match reason {
         FinishReason::Cancelled(_) => FailureClass::Cancellation,
         FinishReason::BufferExhausted(_) => FailureClass::Capacity,
         FinishReason::EndOfSequence(_) | FinishReason::TokenLimit | FinishReason::StopCondition => {
             FailureClass::Completion
         }
         _ => FailureClass::Completion,
-    }
+    })
 }

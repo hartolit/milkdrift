@@ -117,6 +117,8 @@ impl ApplicationRuntime {
             && snapshot.exhausted_cleanup_sequences == 0
             && snapshot.maintenance_error.is_none()
             && snapshot.reserved_footprint == MemoryFootprint::default()
+            && snapshot.unverified_ownership.is_none()
+            && !snapshot.admission_blocked
             && snapshot.reserved_generation_workspace == MemoryFootprint::default();
         if ownership_released {
             self.retained_model_cleanup = None;

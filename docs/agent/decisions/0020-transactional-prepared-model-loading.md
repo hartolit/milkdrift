@@ -2,9 +2,9 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-08
-- **Amended:** 2026-08-10
-- **Phase:** 12 plus post-audit artifact-loading hardening
-- **Implementation:** `58490fe693fef7a2635956181088664cd90685e8`, `12510695aa29be6a2665dbf3777cccbb8172c2d1`, and the pristine artifact-loading amendment recorded by this revision
+- **Amended:** 2026-08-10 for artifact loading and retained-ownership certainty
+- **Phase:** 12 plus post-audit artifact-loading and runtime-ownership hardening
+- **Implementation:** `58490fe693fef7a2635956181088664cd90685e8`, `12510695aa29be6a2665dbf3777cccbb8172c2d1`, the pristine artifact-loading amendment, and the pristine runtime-ownership amendment recorded by this revision
 - **Amends:** [ADR-0019](0019-explicit-cuda-execution-foundation.md) for scalar/source terminology, load planning/materialization, E1 loaded facts, model-catalogue persistence, and Phase 12 evidence claims
 - **Preserves:** [ADR-0006](0006-explicit-bounded-shutdown.md), [ADR-0010](0010-verify-backend-contracts-at-e0.md), and [ADR-0013](0013-candle-only-local-execution.md)
 
@@ -19,6 +19,7 @@ Those assumptions were too weak for reviewed mixed F16/F32 and BF16/F32 Safetens
 - final model ownership and transient loading peak are different quantities;
 - per-tensor cast/transfer can fail after native resources exist;
 - E0 cannot quarantine a partial load if error conversion discards its only owner;
+- a complete backend model that has already contradicted its accepted contract cannot be assigned the planned peak as though that remained proven exact ownership;
 - E1 and Slint should not become a second Safetensors loader merely to display the change.
 
 The correction must strengthen one local Candle endpoint without changing Milkdrift's workflow-first identity, introducing another engine, weakening explicit CUDA selection, or moving format details into portable workflow/domain boundaries.
@@ -71,9 +72,9 @@ Each required tensor is independently converted to the selected execution dtype 
 - `prepare_load(&mut self, source, configuration) -> Result<Prepared, LoadError>` creates one exact source/configuration/device-bound preparation and exposes its `LoadPlan` through `PreparedLoad::plan()`;
 - `load_prepared(&mut self, prepared) -> Result<Model, FailedLoad<Prepared>>` consumes that exact preparation without replanning.
 
-An unmaterialized preparation is ordinary-drop-safe. This permits E0 to reject an invalid plan or insufficient aggregate peak without invoking backend cleanup.
+An unmaterialized preparation is ordinary-drop-safe. This permits E0 to reject an invalid plan or insufficient aggregate peak without invoking backend cleanup. Its `plan()` is stable for the preparation's lifetime and describes the one accepted source/configuration/device transaction; E0 reads it once and never calls a second planner or reconstructs backend policy.
 
-After materialization begins, failure returns `FailedLoad<Prepared>` containing both the primary `LoadError` and the sole cleanup owner. `PreparedLoad::cleanup(&mut self)` is explicit and retryable: failure leaves the owner valid and complete; success authorizes drop as fully released.
+After materialization begins, failure returns `FailedLoad<Prepared>` containing both the primary `LoadError` and the sole cleanup owner. `FailedLoad` does not expose replaceable public fields, and neither `PreparedLoad` nor `LoadedModel` may alias cleanup authority elsewhere. `PreparedLoad::cleanup(&mut self)` is explicit and retryable: failure leaves the owner valid, complete, and report-stable; success is the only ordinary transition that authorizes drop as fully released. Consuming `load_prepared` makes a preparation impossible to materialize twice through the portable API.
 
 ### Bind accepted weight facts to retained files and whole-shard identities
 
@@ -94,7 +95,7 @@ One private production limit set rejects hostile growth before device initializa
 
 ### Distinguish exact final ownership from the loading peak
 
-`LoadPlan::expected_footprint` is exact final required execution-tensor ownership plus cache bytes per token. `LoadPlan::loading_peak_footprint` is the exact component-wise deterministic tensor peak for selective materialization. Neither is physical RSS/VRAM or allocator/driver accounting.
+`LoadPlan::final_footprint` is exact final required execution-tensor byte ownership. `LoadPlan::loading_peak_footprint` is the exact component-wise deterministic byte peak for selective materialization. `MemoryFootprint` contains only host/device weight and host/device working bytes. `ModelDescriptor::sequence_cache_bytes_per_token` is a separate planning rate used to derive concrete `SequencePlan` ownership; a rate is not current ownership. None of these quantities is physical RSS/VRAM or allocator/driver accounting.
 
 For required tensor `i`, let:
 
@@ -102,8 +103,7 @@ For required tensor `i`, let:
 - `E_i` be exact execution bytes;
 - `A_i = S_i + alignment_i - 1` be the aligned staging allocation bound;
 - `P_i` be required execution bytes already retained before tensor `i`;
-- `R = sum(E_i)` be all required Llama execution bytes;
-- `C` be exact cache bytes per token at execution width.
+- `R = sum(E_i)` be all required Llama execution bytes.
 
 Unused tensors enter no formula. The CPU final footprint owns `R` host weight bytes. Its host loading peak is:
 
@@ -115,7 +115,7 @@ Hcpu = max(
 )
 ```
 
-The CPU loading footprint records `R` host weight bytes and `Hcpu - R` host working bytes.
+The CPU final footprint records `R` host weight bytes. The CPU loading footprint records `R` host weight bytes and `Hcpu - R` host working bytes.
 
 The CUDA final footprint owns `R` device weight bytes. Its host staging peak is:
 
@@ -127,33 +127,39 @@ Hcuda = max(
 )
 ```
 
-The CUDA loading footprint records `Hcuda` host working bytes, `R` device weight bytes, and zero device working bytes. Final and loading phases carry the same `C`. Every operation uses checked arithmetic. The fixed 64 KiB verification buffer and bounded config/header/inspection metadata are governed by separate structural ceilings rather than `MemoryFootprint`; allocator bookkeeping/fragmentation, driver/context allocation, process RSS, and whole-device observations remain outside deterministic tensor accounting.
+The CUDA final footprint records `R` device weight bytes. The CUDA loading footprint records `Hcuda` host working bytes, `R` device weight bytes, and zero device working bytes. The descriptor separately reports the exact sequence-cache byte rate at execution width. Every operation uses checked arithmetic. The fixed 64 KiB verification buffer and bounded config/header/inspection metadata are governed by separate structural ceilings rather than `MemoryFootprint`; allocator bookkeeping/fragmentation, driver/context allocation, process RSS, and whole-device observations remain outside deterministic tensor accounting.
 
 ### Admit the peak at E0 before materialization
 
-E0 validates that the preparation accepted its exact `LoadConfiguration`, the descriptor is coherent and has a nonempty observed set, checked final/peak totals do not overflow, every peak ownership component contains the corresponding final component, and cache bytes per token agree.
+E0 validates that the preparation accepted its exact `LoadConfiguration`, the descriptor is coherent and has a nonempty observed set, checked final/peak totals do not overflow, and every peak ownership component contains the corresponding final component.
 
 Given a pre-load reservation `R0`, E0 independently admits both `R0 + loading_peak` and `R0 + final` against its fixed aggregate budget. It reserves `R0 + loading_peak` before calling `load_prepared`.
 
-On success, E0 verifies handle, complete descriptor, actual device, actual execution scalar, final accounted footprint, and lifecycle transition. Only then does it commit a model slot, replace peak reservation with final reservation, and publish a receipt.
+On success, E0 verifies handle, complete descriptor, actual device, actual execution scalar, final reported footprint, and lifecycle transition. Only then does it commit a model slot, replace peak reservation with final reservation, and publish a receipt.
 
 On materialization failure, E0 immediately attempts `PreparedLoad::cleanup`:
 
 - success restores `R0` and returns the original load failure;
-- failure retains `PendingModelOwner::FailedLoad(prepared)`, the model identity, and the full loading peak;
-- the cleanup resource is `FailedLoad { model_id }`;
+- failure retains `PendingModelOwner::FailedPreparation(prepared)`, the generation-safe model identity, and the full exact loading peak;
+- the cleanup resource is `FailedLoad { handle }`;
 - primary model-load and cleanup failure classes remain separate;
 - the initial failure is attempt one, bounded retry is shared with existing cleanup policy, and exhausted ownership remains quarantined/accounted.
 
-A complete model that fails post-load E0 verification follows the existing explicit unload/quarantine path and conservatively retains the loading peak if unload preparation fails.
+A complete model that fails post-load E0 verification first follows explicit unload. If unload succeeds, no owner remains. If unload fails, E0 must not retain the accepted loading peak as exact: the backend has already contradicted its contract, so the peak is not proof that hidden, larger, or differently classified ownership is absent. E0 retains `PendingModelOwner::IncompatibleModel(model)` with `RetainedOwnership::Unverified` containing the accepted peak, the backend-reported footprint, and their checked component-wise conservative maximum. If a component or aggregate host/device total overflows, evidence is `ConservativeFootprint::Overflow`; E0 does not saturate, substitute `u64::MAX`, or use sampled RSS/device memory as ownership accounting.
 
-This extends ADR-0010's E0 verification boundary. It does not trust the adapter because preparation exists.
+Unverified ownership is excluded from the exact `reserved_footprint`, exposed separately in snapshots and cleanup state, and blocks every new model, sequence, cache, and workspace admission because no exact upper bound has been established. Existing admitted healthy work remains runnable. A later successful cleanup removes the owner exactly once, records `RetainedOwnership::Released` even on the final permitted attempt, and unlocks admission. Exhaustion remains observable and admission-blocking until process reclamation. The same unverified rule applies when a correct footprint is paired with a wrong handle, descriptor, device, or scalar, and when the report is smaller than planned.
+
+This extends ADR-0010's E0 verification boundary. E0 verifies portable claim consistency but cannot prove a third-party backend's physical allocation, placement, hidden aliases, or completeness after that backend violates the contract.
+
+### Rotate cleanup opportunities fairly
+
+`poll_cleanup` remains bounded to at most one backend cleanup opportunity. Selection rotates across pending sequences, failed preparations, and complete models, then rotates among eligible owners within each class. Retry budgets remain per owner; exhausted owners are observable but skipped automatically. Shutdown deterministically consumes the finite remaining opportunities under the same ordering.
 
 ### Preserve explicit terminal cleanup policy
 
 Phase 12 introduces no adapter-local hidden `mem::forget`. Failed preparations remain reachable through E0 while retry is possible or exhausted ownership is observable.
 
-ADR-0006 remains authoritative for terminal shutdown: if the finite explicit cleanup budget is exhausted while the complete E0 runtime still owns native resources, the worker may use the named `RetainUntilProcessExit` disposition and forget the complete runtime only after publishing structured terminal failure. Process termination remains the reclamation boundary. This is distinct from ordinary prepared-load retry.
+ADR-0006 remains authoritative for terminal shutdown: if the finite explicit cleanup budget is exhausted while the complete E0 runtime still owns native resources, shutdown returns `TerminalCleanupRetention` with the first exhausted owner and a bounded summary distinguishing failed preparations, verified models, incompatible models, retained sequences, and aggregate unverified evidence. The worker may then use the named `RetainUntilProcessExit` disposition and retain the complete runtime allocation only after publishing that structured terminal failure. A directly owned synchronous runtime also retains unresolved backend-owner maps on implicit drop, because explicit cleanup success is the only ordinary drop authorization. Process termination remains the reclamation boundary. Endpoint disconnection or worker-handle absence never becomes proof of release. This is distinct from ordinary prepared-load retry.
 
 ### Keep E1 and Slint narrow
 
@@ -199,8 +205,11 @@ No default feature reaches CUDA. Explicit CUDA failure never falls back to CPU. 
 - Mixed F16/F32 and BF16/F32 **required** layouts are supported only under the exact reviewed declaration policy; complete observed extras cannot select execution.
 - Structurally understood unused tensors are inspected and identity-bound but never staged, converted, transferred, or retained.
 - CPU behavior remains F32→F32, F16→F16, and BF16→F32; CUDA policy remains explicit and capability-checked.
-- Final and loading ownership exclude ignored extras; failed cleanup retains the exact admitted loading peak.
-- E0 can retry or exhaust a failed partial load without publishing a model or losing identity/accounting.
+- Final and loading footprints contain concrete bytes only; sequence-cache rate is separate, and ignored extras enter neither load footprint.
+- Failed preparations retain the exact admitted loading peak; verified model unload failures retain exact final ownership.
+- Contract-violating complete models retain explicit unverified evidence, block admission, and are never mislabeled exact.
+- E0 can retry or exhaust a failed partial load or incompatible complete model without publishing it or losing generation-safe identity/accounting state.
+- Cleanup polling is bounded and fair across owner classes and identities; terminal retention remains structured through process exit.
 - E1 and Slint become simpler: resolved declaration and loaded execution facts are no longer collapsed into one source-scalar label.
 - Persistence can represent absent declarations without storing per-tensor runtime evidence.
 - Benchmark/evidence observers may copy public plan/receipt facts inward, but production APIs are not expanded for reports.
@@ -208,6 +217,6 @@ No default feature reaches CUDA. Explicit CUDA failure never falls back to CPU. 
 
 ## Review trigger
 
-Review this decision when adding another accepted scalar set, execution dtype, quantized format, model architecture, loading algorithm, asynchronous materialization contract, source-identity mechanism, or cleanup owner; when final/peak formulas change; when E1 has a demonstrated consumer for additional source-layout facts; or when another backend cannot honestly implement prepared loading.
+Review this decision when adding another accepted scalar set, execution dtype, quantized format, model architecture, loading algorithm, asynchronous materialization contract, source-identity mechanism, ownership-certainty class, or cleanup owner; when final/peak/cache-rate formulas change; when E1 has a demonstrated consumer for additional source-layout facts; or when another backend cannot honestly implement prepared loading and retryable sole-owner cleanup.
 
 Device selection, default-feature, fallback, and hardware-support changes continue to trigger ADR-0019 review. Terminal process-lifetime cleanup changes trigger ADR-0006 review. Backend substitution changes trigger ADR-0010 review. A second local engine triggers ADR-0013 review rather than silently weakening this transaction.

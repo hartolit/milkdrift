@@ -26,7 +26,7 @@ pub(crate) fn prepared_load_record(plan: &LoadPlan) -> BenchmarkResult<PreparedL
         planned_execution_device: execution_device_record(
             plan.accepted_configuration.execution_device,
         )?,
-        exact_final_footprint: footprint_record(plan.expected_footprint),
+        exact_final_footprint: footprint_record(plan.final_footprint),
         loading_peak_footprint: footprint_record(plan.loading_peak_footprint),
     })
 }
@@ -39,7 +39,7 @@ pub(crate) fn e0_load_receipt_record(
         || receipt.execution_device != plan.accepted_configuration.execution_device
         || receipt.execution_scalar_type != plan.execution_scalar_type
         || receipt.descriptor != plan.descriptor
-        || receipt.reserved_footprint != plan.expected_footprint
+        || receipt.reserved_footprint != plan.final_footprint
     {
         return Err(BenchmarkError::new(
             "E0 load receipt did not match the exact observer preparation and final ownership plan",
@@ -53,7 +53,7 @@ pub(crate) fn e0_load_receipt_record(
 }
 
 pub(crate) fn validate_prepared_load_plan(plan: &LoadPlan) -> BenchmarkResult {
-    let final_footprint = plan.expected_footprint;
+    let final_footprint = plan.final_footprint;
     let loading_peak = plan.loading_peak_footprint;
     let final_host = final_footprint.checked_host_bytes().ok_or_else(|| {
         BenchmarkError::new("prepared exact final host footprint overflowed its component sum")
@@ -67,12 +67,7 @@ pub(crate) fn validate_prepared_load_plan(plan: &LoadPlan) -> BenchmarkResult {
     let loading_device = loading_peak.checked_device_bytes().ok_or_else(|| {
         BenchmarkError::new("prepared loading-peak device footprint overflowed its component sum")
     })?;
-    let loading_contains_final = loading_peak.host_weight_bytes
-        >= final_footprint.host_weight_bytes
-        && loading_peak.device_weight_bytes >= final_footprint.device_weight_bytes
-        && loading_peak.host_working_bytes >= final_footprint.host_working_bytes
-        && loading_peak.device_working_bytes >= final_footprint.device_working_bytes
-        && loading_peak.cache_bytes_per_token == final_footprint.cache_bytes_per_token;
+    let loading_contains_final = loading_peak.contains_components(final_footprint);
 
     if plan
         .descriptor
@@ -118,7 +113,6 @@ pub(crate) const fn footprint_record(value: MemoryFootprint) -> MemoryFootprintR
         device_weight_bytes: value.device_weight_bytes,
         host_working_bytes: value.host_working_bytes,
         device_working_bytes: value.device_working_bytes,
-        cache_bytes_per_token: value.cache_bytes_per_token,
     }
 }
 

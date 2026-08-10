@@ -7,6 +7,10 @@
 //! feature-gated CUDA device selection.
 
 #![forbid(unsafe_code)]
+#![expect(
+    clippy::large_types_passed_by_value,
+    reason = "the observer preserves E0's bounded Copy outcome evidence without changing production representation"
+)]
 
 mod cli;
 /// Benchmark-only hosted-E0 support shared with the separate Criterion crate.

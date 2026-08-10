@@ -78,7 +78,7 @@ An unmaterialized preparation rejected by E0 is ordinary-drop-safe. After materi
 
 ## Final and loading-peak formulas
 
-`MemoryFootprint` contains deterministic required-tensor ownership and cache bytes. The fixed 64 KiB verification buffer, parsed config/header/inspection metadata, and required-name/load-map metadata are independently capped by the limits above. Required maps cannot exceed 16,384 entries or 8 MiB aggregate names; one name clone is transient per materialized tensor, and failure-safe model construction temporarily duplicates one map's names/shallow tensor handles under the same bounds. Platform-dependent map bucket overhead, allocator bookkeeping/fragmentation, driver/context allocation, process RSS, and whole-device observations remain outside the tensor footprint.
+`MemoryFootprint` contains deterministic concrete required-tensor bytes only. The exact sequence-cache bytes-per-token rate is stored separately in `ModelDescriptor` and multiplied by accepted sequence capacity to produce a concrete `SequencePlan` footprint. The fixed 64 KiB verification buffer, parsed config/header/inspection metadata, and required-name/load-map metadata are independently capped by the limits above. Required maps cannot exceed 16,384 entries or 8 MiB aggregate names; one name clone is transient per materialized tensor, and failure-safe model construction temporarily duplicates one map's names/shallow tensor handles under the same bounds. Platform-dependent map bucket overhead, allocator bookkeeping/fragmentation, driver/context allocation, process RSS, and whole-device observations remain outside the tensor footprint.
 
 For each required tensor `i` in materialization order:
 
@@ -100,8 +100,8 @@ Hcpu = max(
     max_cast_i(Pᵢ + Sᵢ + Eᵢ)
 )
 
-final:   host weights R, host working 0, device weights/working 0, cache C
-loading: host weights R, host working Hcpu - R, device weights/working 0, cache C
+final:   host weights R, host working 0, device weights/working 0
+loading: host weights R, host working Hcpu - R, device weights/working 0
 ```
 
 This matches real ordering: aligned bytes and a source tensor coexist; for a cast, source and execution tensors coexist; already completed required tensors remain retained.
@@ -115,8 +115,8 @@ Hcuda = max(
     max_cast_i(Sᵢ + Eᵢ)
 )
 
-final:   host weights/working 0, device weights R, device working 0, cache C
-loading: host weights 0, host working Hcuda, device weights R, device working 0, cache C
+final:   host weights/working 0, device weights R, device working 0
+loading: host weights 0, host working Hcuda, device weights R, device working 0
 ```
 
 The host execution tensor remains live until its transferred device tensor has synchronized and entered the final map. Only required device tensors are ever transferred, so ignored extras require no device headroom. `ModelDescriptor::estimated_footprint` is the device-independent CPU final estimate; `prepare_load` produces exact target-specific final and loading plans and checks the loading peak against host/device budgets and current CUDA availability before materialization.
@@ -147,7 +147,7 @@ The compatibility path executes:
 prepare exact load
 -> admit loading peak
 -> sequentially verify shards and materialize required tensors only
--> verify final descriptor/device/execution scalar/accounted footprint in E0
+-> verify final descriptor/device/execution scalar/reported footprint in E0
 -> commit final reservation and publish receipt
 -> create independent sequences
 -> prefill and interleave decode

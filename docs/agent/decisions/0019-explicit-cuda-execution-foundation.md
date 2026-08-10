@@ -53,7 +53,7 @@ Nonzero CPU IDs, unsupported kinds, CUDA in a build without the feature, driver 
 - `prepare_load` binds an exact plan to retained source/device state, `load_prepared` consumes it without replanning, and `FailedLoad<PreparedLoad>` preserves partial-load cleanup ownership;
 - final ownership and loading-peak headroom are separate deterministic footprints.
 
-E0 reserves the exact loading peak before materialization. On success it verifies complete descriptor, requested/actual device, planned/actual execution scalar, and final planned/actual accounted footprint, then commits the final reservation. On failed materialization or post-load validation, explicit cleanup/quarantine retains the loading peak when cleanup fails. This preserves [ADR-0010](0010-verify-backend-contracts-at-e0.md) and [ADR-0006](0006-explicit-bounded-shutdown.md).
+E0 reserves the exact loading peak before materialization. On success it verifies complete descriptor, requested/actual device, planned/actual execution scalar, and final planned/reported footprint, then commits the final reservation. Failed materialization cleanup retains the exact accepted loading peak. A complete model that violates its accepted post-load contract and then fails unload instead retains explicitly unverified accepted/reported/conservative evidence and blocks admission; the accepted peak is not treated as a proven exact upper bound after backend violation. This preserves [ADR-0010](0010-verify-backend-contracts-at-e0.md) and [ADR-0006](0006-explicit-bounded-shutdown.md), with retained-certainty semantics owned by ADR-0020.
 
 ### Sampling and synchronization
 

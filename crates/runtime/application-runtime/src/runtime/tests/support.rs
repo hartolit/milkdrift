@@ -3,14 +3,18 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use domain_contracts::{CancellationReason, FinishReason, ModelId, RequestId};
+use domain_contracts::{
+    CancellationReason, FinishReason, MemoryFootprint, ModelGeneration, ModelHandle, ModelId,
+    RequestId,
+};
 use hf_hub_adapter::{
     ArtifactContentIdentity, ArtifactContentIdentityAuthority, ArtifactScalarType,
     ResolvedSafetensorsLlamaArtifacts, ResolvedSafetensorsShard,
 };
 use inference_runtime::{
-    CleanupFailureReport, CleanupResource, CleanupRetryState, CommandTicket, FailureClass,
-    LoadReceipt, RuntimeError, RuntimeEvent, RuntimeOperation,
+    CleanupFailureReport, CleanupResource, CleanupRetryState, CommandTicket, ConservativeFootprint,
+    FailureClass, LoadReceipt, RetainedOwnership, RuntimeError, RuntimeEvent, RuntimeOperation,
+    TerminalRetentionSummary,
 };
 
 use super::super::ApplicationRuntime;
@@ -32,6 +36,12 @@ pub(super) const TEST_POLL: Duration = Duration::from_millis(1);
 pub(super) const TEST_CUDA_MEMORY_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 pub(super) const CUDA_ZERO: ApplicationDevice = ApplicationDevice::Cuda { ordinal: 0 };
 
+const EMPTY_FOOTPRINT: MemoryFootprint = MemoryFootprint {
+    host_weight_bytes: 0,
+    device_weight_bytes: 0,
+    host_working_bytes: 0,
+    device_working_bytes: 0,
+};
 const CANDLE_FIXTURE_WEIGHT_BYTES: u64 = 4_800;
 const CANDLE_FIXTURE_WEIGHT_SHA256: [u8; 32] = [
     0xcc, 0x47, 0x98, 0xaf, 0x93, 0x48, 0x8b, 0x4f, 0xb2, 0xae, 0x05, 0x48, 0xc2, 0xb2, 0x8a, 0xce,
@@ -63,7 +73,7 @@ pub(super) const fn retryable_model_unload_cleanup_failure() -> RuntimeError {
 pub(super) const fn exhausted_failed_load_cleanup_failure() -> RuntimeError {
     RuntimeError::CleanupRetryExhausted(CleanupRetryState {
         resource: CleanupResource::FailedLoad {
-            model_id: ModelId::new(1),
+            handle: ModelHandle::new(ModelId::new(1), ModelGeneration::new(1)),
         },
         failure: CleanupFailureReport::new(
             RuntimeOperation::ModelLoad,
@@ -71,15 +81,16 @@ pub(super) const fn exhausted_failed_load_cleanup_failure() -> RuntimeError {
             RuntimeOperation::FailedLoadCleanup,
             FailureClass::Synchronization,
         ),
+        ownership: RetainedOwnership::Exact(EMPTY_FOOTPRINT),
         attempts: 3,
         maximum_attempts: 3,
     })
 }
 
 pub(super) const fn terminal_cleanup_failure() -> RuntimeError {
-    RuntimeError::CleanupRetryExhausted(CleanupRetryState {
+    let first = CleanupRetryState {
         resource: CleanupResource::Model {
-            model_id: ModelId::new(1),
+            handle: ModelHandle::new(ModelId::new(1), ModelGeneration::new(1)),
         },
         failure: CleanupFailureReport::new(
             RuntimeOperation::Shutdown,
@@ -87,9 +98,20 @@ pub(super) const fn terminal_cleanup_failure() -> RuntimeError {
             RuntimeOperation::ModelUnload,
             FailureClass::Synchronization,
         ),
+        ownership: RetainedOwnership::Exact(EMPTY_FOOTPRINT),
         attempts: 3,
         maximum_attempts: 3,
-    })
+    };
+    RuntimeError::TerminalCleanupRetention {
+        first,
+        summary: TerminalRetentionSummary {
+            failed_preparations: 0,
+            verified_models: 1,
+            incompatible_models: 0,
+            sequences: 0,
+            unverified_conservative_footprint: ConservativeFootprint::Known(EMPTY_FOOTPRINT),
+        },
+    }
 }
 
 pub(super) fn with_loaded_runtime<C, F>(configure: C, test: F) -> TestResult

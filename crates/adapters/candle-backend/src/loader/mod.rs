@@ -26,7 +26,7 @@ use crate::failure::{
 use crate::model::{CandleLlamaModel, CandleLlamaModelParameters};
 use crate::source::CandleLlamaSource;
 
-use self::footprint::{calculate, validate_memory_plan};
+use self::footprint::{calculate, sequence_cache_bytes_per_token, validate_memory_plan};
 use self::manifest::{InspectedShard, InspectionLimits};
 pub use self::prepared::CandleLlamaPreparedLoad;
 use self::scalar::{execution_scalar_type, select_execution_dtype, select_required_primary};
@@ -88,11 +88,11 @@ impl CandleLlamaLoader {
         )?;
         let cpu_execution_dtype =
             select_execution_dtype(self.backend, primary_scalar_type, DeviceKind::Cpu, false)?;
-        let cpu_footprints = calculate(
+        let cpu_footprints =
+            calculate(self.backend, &shards, DeviceKind::Cpu, cpu_execution_dtype)?;
+        let sequence_cache_bytes_per_token = sequence_cache_bytes_per_token(
             self.backend,
             &parsed_config.config,
-            &shards,
-            DeviceKind::Cpu,
             cpu_execution_dtype,
         )?;
 
@@ -121,6 +121,7 @@ impl CandleLlamaLoader {
                 maximum_prefill_batch: context_length,
             },
             estimated_footprint: cpu_footprints.final_footprint,
+            sequence_cache_bytes_per_token,
         };
 
         Ok(InspectedSource {
@@ -169,11 +170,12 @@ impl ModelLoader for CandleLlamaLoader {
         let execution_scalar_type = execution_scalar_type(self.backend, execution_dtype)?;
         let footprints = calculate(
             self.backend,
-            &inspected.config,
             &inspected.shards,
             configuration.execution_device.kind,
             execution_dtype,
         )?;
+        inspected.descriptor.sequence_cache_bytes_per_token =
+            sequence_cache_bytes_per_token(self.backend, &inspected.config, execution_dtype)?;
         validate_memory_plan(
             self.backend,
             footprints.loading_peak_footprint,
@@ -185,7 +187,7 @@ impl ModelLoader for CandleLlamaLoader {
             accepted_configuration: *configuration,
             descriptor: inspected.descriptor,
             execution_scalar_type,
-            expected_footprint: footprints.final_footprint,
+            final_footprint: footprints.final_footprint,
             loading_peak_footprint: footprints.loading_peak_footprint,
         };
         Ok(CandleLlamaPreparedLoad {
@@ -259,7 +261,7 @@ impl ModelLoader for CandleLlamaLoader {
                 handle: configuration.handle,
                 execution_device: configuration.execution_device,
                 descriptor: prepared.plan.descriptor,
-                accounted_footprint: prepared.plan.expected_footprint,
+                reported_footprint: prepared.plan.final_footprint,
                 config,
                 dtype: prepared.execution_dtype,
                 execution_scalar_type: prepared.plan.execution_scalar_type,

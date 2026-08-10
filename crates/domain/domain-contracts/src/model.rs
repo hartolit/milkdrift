@@ -215,62 +215,129 @@ pub struct ModelCapabilities {
     pub maximum_prefill_batch: u32,
 }
 
-/// Deterministic tensor ownership and headroom for a named accounting phase.
+/// Deterministic byte ownership and headroom for a named accounting phase.
 ///
 /// The field or operation carrying a footprint names its phase, such as final
-/// post-load ownership or the loading transaction peak. A footprint includes
-/// only deterministic tensor ownership and explicitly planned deterministic
-/// tensor headroom for that phase. It excludes allocator bookkeeping and
-/// fragmentation, driver or device-context allocations, process RSS, and
-/// serialized headers, configuration, and other metadata.
+/// post-load ownership or the loading transaction peak. A footprint contains
+/// only concrete byte ownership and explicitly planned deterministic headroom
+/// for that phase; rates and other planning coefficients belong outside it. It
+/// excludes allocator bookkeeping and fragmentation, driver or device-context
+/// allocations, process RSS, and serialized headers, configuration, and other
+/// metadata.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MemoryFootprint {
     /// Host-resident weight tensor ownership.
     pub host_weight_bytes: u64,
     /// Device-resident weight tensor ownership.
     pub device_weight_bytes: u64,
-    /// Host tensor working memory and deterministic headroom excluding weights.
+    /// Host working ownership and deterministic headroom excluding weights.
     pub host_working_bytes: u64,
-    /// Device tensor working memory and deterministic headroom excluding weights and caches.
+    /// Device working ownership and deterministic headroom excluding weights.
     pub device_working_bytes: u64,
-    /// Sequence-cache tensor bytes required per token.
-    pub cache_bytes_per_token: u64,
 }
 
 impl MemoryFootprint {
-    /// Returns the exact non-cache host byte total, or `None` on overflow.
-    ///
-    /// Exact admission must use this checked total rather than [`Self::host_bytes`].
+    /// Returns the exact component-wise sum, or `None` if any component overflows.
+    #[must_use]
+    pub const fn checked_add(self, other: Self) -> Option<Self> {
+        match (
+            self.host_weight_bytes.checked_add(other.host_weight_bytes),
+            self.device_weight_bytes
+                .checked_add(other.device_weight_bytes),
+            self.host_working_bytes
+                .checked_add(other.host_working_bytes),
+            self.device_working_bytes
+                .checked_add(other.device_working_bytes),
+        ) {
+            (
+                Some(host_weight_bytes),
+                Some(device_weight_bytes),
+                Some(host_working_bytes),
+                Some(device_working_bytes),
+            ) => Some(Self {
+                host_weight_bytes,
+                device_weight_bytes,
+                host_working_bytes,
+                device_working_bytes,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Returns the exact component-wise difference, or `None` if any component underflows.
+    #[must_use]
+    pub const fn checked_sub(self, other: Self) -> Option<Self> {
+        match (
+            self.host_weight_bytes.checked_sub(other.host_weight_bytes),
+            self.device_weight_bytes
+                .checked_sub(other.device_weight_bytes),
+            self.host_working_bytes
+                .checked_sub(other.host_working_bytes),
+            self.device_working_bytes
+                .checked_sub(other.device_working_bytes),
+        ) {
+            (
+                Some(host_weight_bytes),
+                Some(device_weight_bytes),
+                Some(host_working_bytes),
+                Some(device_working_bytes),
+            ) => Some(Self {
+                host_weight_bytes,
+                device_weight_bytes,
+                host_working_bytes,
+                device_working_bytes,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Returns the component-wise maximum of two ownership phases.
+    #[must_use]
+    pub const fn component_max(self, other: Self) -> Self {
+        Self {
+            host_weight_bytes: if self.host_weight_bytes >= other.host_weight_bytes {
+                self.host_weight_bytes
+            } else {
+                other.host_weight_bytes
+            },
+            device_weight_bytes: if self.device_weight_bytes >= other.device_weight_bytes {
+                self.device_weight_bytes
+            } else {
+                other.device_weight_bytes
+            },
+            host_working_bytes: if self.host_working_bytes >= other.host_working_bytes {
+                self.host_working_bytes
+            } else {
+                other.host_working_bytes
+            },
+            device_working_bytes: if self.device_working_bytes >= other.device_working_bytes {
+                self.device_working_bytes
+            } else {
+                other.device_working_bytes
+            },
+        }
+    }
+
+    /// Returns whether every component is at least the corresponding required component.
+    #[must_use]
+    pub const fn contains_components(self, required: Self) -> bool {
+        self.host_weight_bytes >= required.host_weight_bytes
+            && self.device_weight_bytes >= required.device_weight_bytes
+            && self.host_working_bytes >= required.host_working_bytes
+            && self.device_working_bytes >= required.device_working_bytes
+    }
+
+    /// Returns the exact host byte total, or `None` on overflow.
     #[must_use]
     pub const fn checked_host_bytes(self) -> Option<u64> {
         self.host_weight_bytes.checked_add(self.host_working_bytes)
     }
 
-    /// Returns the exact non-cache device byte total, or `None` on overflow.
-    ///
-    /// Exact admission must use this checked total rather than [`Self::device_bytes`].
+    /// Returns the exact device byte total, or `None` on overflow.
     #[must_use]
     pub const fn checked_device_bytes(self) -> Option<u64> {
         self.device_weight_bytes
             .checked_add(self.device_working_bytes)
-    }
-
-    /// Returns the non-cache host byte total using saturating arithmetic.
-    ///
-    /// This convenience total is suitable for bounded reporting, not exact admission.
-    #[must_use]
-    pub const fn host_bytes(self) -> u64 {
-        self.host_weight_bytes
-            .saturating_add(self.host_working_bytes)
-    }
-
-    /// Returns the non-cache device byte total using saturating arithmetic.
-    ///
-    /// This convenience total is suitable for bounded reporting, not exact admission.
-    #[must_use]
-    pub const fn device_bytes(self) -> u64 {
-        self.device_weight_bytes
-            .saturating_add(self.device_working_bytes)
     }
 }
 
@@ -329,6 +396,12 @@ pub struct ModelDescriptor {
     pub capabilities: ModelCapabilities,
     /// Inspection-phase, device-independent deterministic tensor footprint estimate.
     pub estimated_footprint: MemoryFootprint,
+    /// Deterministic sequence-cache planning rate in bytes per token.
+    ///
+    /// This coefficient scales a requested maximum sequence length during
+    /// sequence planning. It is a rate, not current byte ownership, reserved
+    /// capacity, or a component of [`Self::estimated_footprint`].
+    pub sequence_cache_bytes_per_token: u64,
 }
 
 /// Cold-path configuration for loading one model instance.
@@ -343,6 +416,9 @@ pub struct LoadConfiguration {
 }
 
 /// Exact transaction plan exposed by a prepared model load.
+///
+/// [`Self::final_footprint`] and [`Self::loading_peak_footprint`] are exact,
+/// explicitly named byte-ownership phases, not estimates or rates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LoadPlan {
     /// Exact caller configuration accepted and bound to this load transaction.
@@ -351,12 +427,13 @@ pub struct LoadPlan {
     pub descriptor: ModelDescriptor,
     /// Scalar type selected for materialized backend execution tensors.
     pub execution_scalar_type: ScalarType,
-    /// Exact final post-load accounted ownership transferred to the loaded model.
-    pub expected_footprint: MemoryFootprint,
-    /// Exact component-wise deterministic tensor peak for this load transaction.
+    /// Exact final post-materialization ownership claimed for the loaded model.
+    pub final_footprint: MemoryFootprint,
+    /// Exact component-wise ownership peak for this loading transaction.
     ///
-    /// This includes final ownership and transient tensor staging, conversion,
-    /// or duplicate-residency headroom required by the selected loading algorithm.
+    /// This phase includes final ownership and transient tensor staging,
+    /// conversion, or duplicate-residency headroom required by the selected
+    /// loading algorithm.
     pub loading_peak_footprint: MemoryFootprint,
 }
 
@@ -385,7 +462,7 @@ impl SequenceConfiguration {
 pub struct SequencePlan {
     /// Accepted sequence configuration.
     pub configuration: SequenceConfiguration,
-    /// Expected sequence-specific memory footprint.
+    /// Exact maximum sequence-specific ownership for the accepted configuration.
     pub expected_footprint: MemoryFootprint,
     /// Required logits elements for each decode operation.
     pub logits_capacity: usize,

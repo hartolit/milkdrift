@@ -14,20 +14,28 @@ use crate::{CapacityExhausted, CapacityResource, ModelHandle, SequenceId};
 
 /// Backend-owned preparation for one exact model-load transaction.
 ///
+/// The preparation owns the accepted source, configuration, and device
+/// authority needed to execute its plan. [`Self::plan`] is stable for the
+/// value's entire lifetime, including after materialization or cleanup errors.
+/// Implementations must not clone or otherwise alias the preparation's cleanup
+/// authority.
+///
 /// A preparation that has not been passed to [`ModelLoader::load_prepared`] is
-/// unmaterialized. If its public plan is rejected, ordinary drop is safe and no
-/// explicit cleanup call is required. After a materialization attempt fails,
-/// the preparation returned as the cleanup owner must instead follow the
-/// retryable [`Self::cleanup`] contract.
+/// unmaterialized and ordinary-drop-safe if its plan is rejected. Once a
+/// materialization attempt acquires native resources, failures must be returned
+/// without unwinding. A failed attempt returns this exact value as the sole
+/// cleanup owner and subjects it to the retryable [`Self::cleanup`] contract.
 pub trait PreparedLoad: Sized {
-    /// Returns the exact plan bound to this preparation.
+    /// Returns the exact, lifetime-stable plan bound to this preparation.
     fn plan(&self) -> &LoadPlan;
 
     /// Completes explicit cleanup after a failed materialization attempt.
     ///
-    /// Cleanup is retryable. An error must leave this owner valid, as the sole
-    /// owner of any remaining backend resources, so the caller can try again.
-    /// Success authorizes the caller to drop the owner as fully released.
+    /// Cleanup is all-or-nothing and retryable. An error must preserve every
+    /// remaining resource, the sole cleanup authority, and all portable reports
+    /// unchanged so another attempt observes the same plan and ownership claim.
+    /// Implementations must not unwind. Success is the sole ordinary
+    /// authorization to drop a post-attempt cleanup owner as fully released.
     ///
     /// # Errors
     ///
@@ -36,21 +44,20 @@ pub trait PreparedLoad: Sized {
     fn cleanup(&mut self) -> Result<(), SynchronizationError>;
 }
 
-/// A model-load failure that retains the sole partial-load cleanup owner.
+/// A model-load failure encapsulating the sole partial-load cleanup owner.
 ///
-/// The primary error describes why materialization failed. `cleanup_owner` must
-/// remain reachable until [`PreparedLoad::cleanup`] succeeds; a cleanup failure
-/// leaves it valid for another attempt.
+/// The primary error describes why materialization failed. The exact preparation
+/// remains private and reachable through the accessors until
+/// [`PreparedLoad::cleanup`] succeeds. A cleanup error is ownership-preserving:
+/// the same report and cleanup authority remain valid for a later retry.
 #[must_use = "a failed load retains a cleanup owner that must be handled"]
 #[derive(Debug)]
-pub struct FailedLoad<P> {
-    /// Primary model-loading error.
-    pub primary: LoadError,
-    /// Sole owner of resources left by the failed materialization attempt.
-    pub cleanup_owner: P,
+pub struct FailedLoad<P: PreparedLoad> {
+    primary: LoadError,
+    cleanup_owner: P,
 }
 
-impl<P> FailedLoad<P> {
+impl<P: PreparedLoad> FailedLoad<P> {
     /// Creates a failed-load result from its primary error and cleanup owner.
     pub const fn new(primary: LoadError, cleanup_owner: P) -> Self {
         Self {
@@ -85,6 +92,20 @@ impl<P> FailedLoad<P> {
 }
 
 /// Cold-path model loader implemented by one concrete backend adapter.
+///
+/// Preparation binds one exact source, caller configuration, selected device,
+/// and stable plan. Materialization consumes that authority exactly once: it
+/// must not replan, inspect or consult a replacement source, or clone/alias the
+/// cleanup authority. After native resources are acquired, implementations must
+/// return failures rather than unwind.
+///
+/// # Generic trust boundary
+///
+/// The generic E0 boundary verifies portable reports, including handles,
+/// descriptors, scalar/device identities, exact footprints, and component-wise
+/// arithmetic. Those checks cannot prove physical allocation, actual device
+/// placement, or the absence of hidden native aliases; those remain backend
+/// implementation responsibilities.
 pub trait ModelLoader {
     /// Backend-specific model source descriptor.
     type Source;
@@ -103,7 +124,8 @@ pub trait ModelLoader {
 
     /// Creates one exact source-and-configuration-bound load preparation.
     ///
-    /// The returned preparation exposes the exact plan used for admission. An
+    /// The returned value owns the accepted source, configuration, selected
+    /// device, and cleanup authority needed by its lifetime-stable plan. An
     /// unmaterialized preparation rejected by the caller is ordinary-drop-safe.
     /// An error must leave no explicit backend ownership created by this
     /// preparation attempt and therefore returns no cleanup owner.
@@ -118,12 +140,14 @@ pub trait ModelLoader {
         configuration: &LoadConfiguration,
     ) -> Result<Self::Prepared, LoadError>;
 
-    /// Consumes and materializes the exact accepted preparation without replanning.
+    /// Consumes the exact accepted preparation once, without replanning.
     ///
-    /// On success, the loaded model owns the plan's final accounted footprint.
-    /// On failure, [`FailedLoad`] returns the primary [`LoadError`] together with
-    /// the exact preparation as the sole cleanup owner; ownership must not be
-    /// discarded or replaced inside error conversion.
+    /// Materialization must use only the preparation's retained authority; it
+    /// must not consult a replacement source or substitute configuration/device
+    /// state. On success, the model reports the plan's final ownership and the
+    /// consumed preparation is fully released. On failure, [`FailedLoad`]
+    /// retains that exact preparation as the sole cleanup owner; implementations
+    /// must neither discard nor alias it while converting the primary error.
     ///
     /// # Errors
     ///
@@ -175,11 +199,13 @@ pub trait LoadedModel {
     /// Returns the actual backend-visible device used by this loaded model.
     fn execution_device(&self) -> ExecutionDevice;
 
-    /// Returns the complete model footprint accepted for runtime accounting.
+    /// Returns the backend's exact post-materialization ownership claim.
     ///
-    /// This is the load's accounted quantity, not an observation of physical
-    /// memory currently allocated by the backend or available on the device.
-    fn accounted_footprint(&self) -> MemoryFootprint;
+    /// This report is not already accepted accounting. E0 must verify it against
+    /// the prepared plan before admission is committed. The portable equality
+    /// check does not prove physical allocation, device placement, or absence of
+    /// hidden native aliases.
+    fn reported_footprint(&self) -> MemoryFootprint;
 
     /// Validates and reports sequence resource requirements before allocation.
     ///
@@ -247,10 +273,13 @@ pub trait LoadedModel {
     /// Releases backend-owned resources before a sequence value is dropped.
     ///
     /// Backends with model-owned or shared cache arenas use this hook to clear
-    /// native sequence state and return a backend slot. The sequence is borrowed
-    /// so a failed release leaves the runtime-owned value available for a later
-    /// retry instead of losing the only cleanup handle. Backends whose resources
-    /// are entirely sequence-owned may return success without modifying it.
+    /// native sequence state and return a backend slot. Implementations must not
+    /// clone or alias cleanup authority and must not unwind after acquiring
+    /// native resources. Failure is all-or-nothing: model and sequence ownership,
+    /// lifecycle state, and portable reports remain stable and retryable. Success
+    /// is the sole ordinary authorization to drop the sequence as fully released.
+    /// Backends whose resources are entirely sequence-owned may return success
+    /// without modifying it.
     ///
     /// # Errors
     ///
@@ -276,10 +305,12 @@ pub trait LoadedModel {
 
     /// Prepares deterministic resource destruction after all sequences are gone.
     ///
-    /// A failure must leave the model value valid for a later explicit retry.
-    /// Success is the only transition that permits the owner to drop or consume
-    /// the model as fully released. Backends that cannot provide this retry
-    /// contract must not advertise unload through this interface.
+    /// Implementations must not clone or alias cleanup authority and must not
+    /// unwind after acquiring native resources. Failure is all-or-nothing: it
+    /// preserves model ownership, lifecycle state, and all portable reports for
+    /// an identical explicit retry. Success is the sole ordinary authorization
+    /// to drop or consume the model as fully released. Backends that cannot
+    /// provide this contract must not advertise unload through this interface.
     ///
     /// # Errors
     ///

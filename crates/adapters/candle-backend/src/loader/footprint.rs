@@ -1,4 +1,4 @@
-//! Exact required-tensor loading and final footprint simulation.
+//! Exact required-tensor load phases and sequence cache-rate calculation.
 
 use candle_core::DType;
 use candle_transformers::models::llama::Config;
@@ -19,14 +19,12 @@ pub(super) struct CalculatedFootprints {
 
 pub(super) fn calculate(
     backend: BackendId,
-    config: &Config,
     shards: &[InspectedShard],
     device_kind: DeviceKind,
     execution_dtype: DType,
 ) -> Result<CalculatedFootprints, LoadError> {
     let execution_width =
         dtype_bytes(execution_dtype).ok_or_else(|| unsupported_scalar(backend))?;
-    let cache_bytes_per_token = cache_bytes_per_token(backend, config, execution_width)?;
     let mut required_execution_bytes = 0_u64;
     let mut host_peak = 0_u64;
 
@@ -43,9 +41,12 @@ pub(super) fn calculate(
             .source_dtype
             .alignment()
             .ok_or_else(|| unsupported_scalar(backend))?;
+        let alignment_padding = alignment
+            .checked_sub(1)
+            .ok_or_else(|| numeric_error(backend))?;
         let aligned_staging = tensor
             .source_bytes
-            .checked_add(alignment.saturating_sub(1))
+            .checked_add(alignment_padding)
             .ok_or_else(|| numeric_error(backend))?;
         let source_dtype = tensor
             .source_dtype
@@ -88,17 +89,8 @@ pub(super) fn calculate(
     }
 
     match device_kind {
-        DeviceKind::Cpu => cpu_footprints(
-            backend,
-            required_execution_bytes,
-            host_peak,
-            cache_bytes_per_token,
-        ),
-        DeviceKind::Cuda => Ok(cuda_footprints(
-            required_execution_bytes,
-            host_peak,
-            cache_bytes_per_token,
-        )),
+        DeviceKind::Cpu => cpu_footprints(backend, required_execution_bytes, host_peak),
+        DeviceKind::Cuda => Ok(cuda_footprints(required_execution_bytes, host_peak)),
         _ => Err(LoadError::InvalidConfiguration),
     }
 }
@@ -107,7 +99,6 @@ fn cpu_footprints(
     backend: BackendId,
     required_execution_bytes: u64,
     host_peak: u64,
-    cache_bytes_per_token: u64,
 ) -> Result<CalculatedFootprints, LoadError> {
     let host_peak = host_peak.max(required_execution_bytes);
     let host_working_bytes = host_peak
@@ -119,37 +110,29 @@ fn cpu_footprints(
             device_weight_bytes: 0,
             host_working_bytes: 0,
             device_working_bytes: 0,
-            cache_bytes_per_token,
         },
         loading_peak_footprint: MemoryFootprint {
             host_weight_bytes: required_execution_bytes,
             device_weight_bytes: 0,
             host_working_bytes,
             device_working_bytes: 0,
-            cache_bytes_per_token,
         },
     })
 }
 
-const fn cuda_footprints(
-    required_execution_bytes: u64,
-    host_peak: u64,
-    cache_bytes_per_token: u64,
-) -> CalculatedFootprints {
+const fn cuda_footprints(required_execution_bytes: u64, host_peak: u64) -> CalculatedFootprints {
     CalculatedFootprints {
         final_footprint: MemoryFootprint {
             host_weight_bytes: 0,
             device_weight_bytes: required_execution_bytes,
             host_working_bytes: 0,
             device_working_bytes: 0,
-            cache_bytes_per_token,
         },
         loading_peak_footprint: MemoryFootprint {
             host_weight_bytes: 0,
             device_weight_bytes: required_execution_bytes,
             host_working_bytes: host_peak,
             device_working_bytes: 0,
-            cache_bytes_per_token,
         },
     }
 }
@@ -192,12 +175,16 @@ pub(super) fn validate_memory_plan(
     Ok(())
 }
 
-fn cache_bytes_per_token(
+pub(super) fn sequence_cache_bytes_per_token(
     backend: BackendId,
     config: &Config,
-    scalar_bytes: u64,
+    execution_dtype: DType,
 ) -> Result<u64, LoadError> {
-    let head_dimension = config.hidden_size / config.num_attention_heads;
+    let scalar_bytes = dtype_bytes(execution_dtype).ok_or_else(|| unsupported_scalar(backend))?;
+    let head_dimension = config
+        .hidden_size
+        .checked_div(config.num_attention_heads)
+        .ok_or_else(|| numeric_error(backend))?;
     let factors = [
         u64::try_from(config.num_hidden_layers),
         Ok(2_u64),
@@ -233,7 +220,7 @@ mod tests {
     use candle_transformers::models::llama::Config;
     use domain_contracts::{BackendId, DeviceKind, MemoryFootprint};
 
-    use super::{CalculatedFootprints, calculate};
+    use super::{CalculatedFootprints, calculate, sequence_cache_bytes_per_token};
     use crate::loader::identity::{EstablishedIdentityAuthority, EstablishedShardIdentity};
     use crate::loader::manifest::{
         InspectedShard, InspectedTensor, SourceTensorDType, TensorShape,
@@ -253,7 +240,6 @@ mod tests {
         assert_eq!(
             calculate(
                 backend,
-                &config,
                 std::slice::from_ref(&shard),
                 DeviceKind::Cpu,
                 DType::F16,
@@ -265,21 +251,18 @@ mod tests {
                     device_weight_bytes: 0,
                     host_working_bytes: 0,
                     device_working_bytes: 0,
-                    cache_bytes_per_token: 32,
                 },
                 loading_peak_footprint: MemoryFootprint {
                     host_weight_bytes: 28,
                     device_weight_bytes: 0,
                     host_working_bytes: 27,
                     device_working_bytes: 0,
-                    cache_bytes_per_token: 32,
                 },
             }
         );
         assert_eq!(
             calculate(
                 backend,
-                &config,
                 std::slice::from_ref(&shard),
                 DeviceKind::Cuda,
                 DType::F16,
@@ -291,16 +274,24 @@ mod tests {
                     device_weight_bytes: 28,
                     host_working_bytes: 0,
                     device_working_bytes: 0,
-                    cache_bytes_per_token: 32,
                 },
                 loading_peak_footprint: MemoryFootprint {
                     host_weight_bytes: 0,
                     device_weight_bytes: 28,
                     host_working_bytes: 41,
                     device_working_bytes: 0,
-                    cache_bytes_per_token: 32,
                 },
             }
+        );
+        assert_eq!(
+            sequence_cache_bytes_per_token(backend, &config, DType::F16)
+                .map_err(|error| format!("F16 cache rate: {error:?}"))?,
+            32
+        );
+        assert_eq!(
+            sequence_cache_bytes_per_token(backend, &config, DType::F32)
+                .map_err(|error| format!("F32 cache rate: {error:?}"))?,
+            64
         );
         Ok(())
     }

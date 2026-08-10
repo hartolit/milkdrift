@@ -76,8 +76,8 @@ impl domain_contracts::LoadedModel for TestModel {
                 device_weight_bytes: 0,
                 host_working_bytes: 0,
                 device_working_bytes: 0,
-                cache_bytes_per_token: 0,
             },
+            sequence_cache_bytes_per_token: 0,
         };
         &DESCRIPTOR
     }
@@ -93,7 +93,7 @@ impl domain_contracts::LoadedModel for TestModel {
         )
     }
 
-    fn accounted_footprint(&self) -> domain_contracts::MemoryFootprint {
+    fn reported_footprint(&self) -> domain_contracts::MemoryFootprint {
         domain_contracts::MemoryFootprint::default()
     }
 
@@ -209,6 +209,8 @@ impl domain_contracts::LoadedModel for TestModel {
 struct RetryablePreparation {
     plan: LoadPlan,
     cleanup_should_fail: bool,
+    cleanup_authority_owned: bool,
+    cleanup_attempts: u32,
 }
 
 impl PreparedLoad for RetryablePreparation {
@@ -217,10 +219,12 @@ impl PreparedLoad for RetryablePreparation {
     }
 
     fn cleanup(&mut self) -> Result<(), SynchronizationError> {
+        self.cleanup_attempts += 1;
         if self.cleanup_should_fail {
             self.cleanup_should_fail = false;
             Err(SynchronizationError::InvalidState)
         } else {
+            self.cleanup_authority_owned = false;
             Ok(())
         }
     }
@@ -261,7 +265,6 @@ fn memory_footprint_checked_totals_detect_overflow() {
         device_weight_bytes: 13,
         host_working_bytes: 17,
         device_working_bytes: 19,
-        cache_bytes_per_token: 23,
     };
     assert_eq!(footprint.checked_host_bytes(), Some(28));
     assert_eq!(footprint.checked_device_bytes(), Some(32));
@@ -271,16 +274,126 @@ fn memory_footprint_checked_totals_detect_overflow() {
         device_weight_bytes: u64::MAX - 1,
         host_working_bytes: 1,
         device_working_bytes: 2,
-        cache_bytes_per_token: 0,
     };
     assert_eq!(overflowing.checked_host_bytes(), None);
     assert_eq!(overflowing.checked_device_bytes(), None);
-    assert_eq!(overflowing.host_bytes(), u64::MAX);
-    assert_eq!(overflowing.device_bytes(), u64::MAX);
 }
 
 #[test]
-fn failed_load_preserves_retryable_cleanup_ownership() {
+fn memory_footprint_checked_component_arithmetic_is_exact() {
+    let left = MemoryFootprint {
+        host_weight_bytes: 11,
+        device_weight_bytes: 13,
+        host_working_bytes: 17,
+        device_working_bytes: 19,
+    };
+    let right = MemoryFootprint {
+        host_weight_bytes: 23,
+        device_weight_bytes: 7,
+        host_working_bytes: 5,
+        device_working_bytes: 29,
+    };
+    let sum = MemoryFootprint {
+        host_weight_bytes: 34,
+        device_weight_bytes: 20,
+        host_working_bytes: 22,
+        device_working_bytes: 48,
+    };
+    let maximum = MemoryFootprint {
+        host_weight_bytes: 23,
+        device_weight_bytes: 13,
+        host_working_bytes: 17,
+        device_working_bytes: 29,
+    };
+
+    assert_eq!(left.checked_add(right), Some(sum));
+    assert_eq!(sum.checked_sub(left), Some(right));
+    assert_eq!(sum.checked_sub(right), Some(left));
+    assert_eq!(left.component_max(right), maximum);
+    assert_eq!(right.component_max(left), maximum);
+    assert!(sum.contains_components(left));
+    assert!(sum.contains_components(right));
+    assert!(maximum.contains_components(left));
+    assert!(maximum.contains_components(right));
+    assert!(!left.contains_components(right));
+    assert!(!right.contains_components(left));
+}
+
+#[test]
+fn memory_footprint_component_arithmetic_detects_every_overflow_and_underflow() {
+    let zero = MemoryFootprint::default();
+    let overflow_cases = [
+        (
+            MemoryFootprint {
+                host_weight_bytes: u64::MAX,
+                ..zero
+            },
+            MemoryFootprint {
+                host_weight_bytes: 1,
+                ..zero
+            },
+        ),
+        (
+            MemoryFootprint {
+                device_weight_bytes: u64::MAX,
+                ..zero
+            },
+            MemoryFootprint {
+                device_weight_bytes: 1,
+                ..zero
+            },
+        ),
+        (
+            MemoryFootprint {
+                host_working_bytes: u64::MAX,
+                ..zero
+            },
+            MemoryFootprint {
+                host_working_bytes: 1,
+                ..zero
+            },
+        ),
+        (
+            MemoryFootprint {
+                device_working_bytes: u64::MAX,
+                ..zero
+            },
+            MemoryFootprint {
+                device_working_bytes: 1,
+                ..zero
+            },
+        ),
+    ];
+    for (left, right) in overflow_cases {
+        assert_eq!(left.checked_add(right), None);
+    }
+
+    let underflow_cases = [
+        MemoryFootprint {
+            host_weight_bytes: 1,
+            ..zero
+        },
+        MemoryFootprint {
+            device_weight_bytes: 1,
+            ..zero
+        },
+        MemoryFootprint {
+            host_working_bytes: 1,
+            ..zero
+        },
+        MemoryFootprint {
+            device_working_bytes: 1,
+            ..zero
+        },
+    ];
+    for required in underflow_cases {
+        assert_eq!(zero.checked_sub(required), None);
+        assert!(!zero.contains_components(required));
+    }
+}
+
+#[test]
+fn failed_load_encapsulates_retryable_cleanup_ownership() {
     let model = TestModel { vocabulary: 16 };
     let plan = LoadPlan {
         accepted_configuration: LoadConfiguration {
@@ -293,7 +406,7 @@ fn failed_load_preserves_retryable_cleanup_ownership() {
         },
         descriptor: *domain_contracts::LoadedModel::descriptor(&model),
         execution_scalar_type: ScalarType::F32,
-        expected_footprint: MemoryFootprint::default(),
+        final_footprint: MemoryFootprint::default(),
         loading_peak_footprint: MemoryFootprint::default(),
     };
     let mut failed = FailedLoad::new(
@@ -301,20 +414,35 @@ fn failed_load_preserves_retryable_cleanup_ownership() {
         RetryablePreparation {
             plan,
             cleanup_should_fail: true,
+            cleanup_authority_owned: true,
+            cleanup_attempts: 0,
         },
     );
 
     assert_eq!(failed.primary(), LoadError::InvalidSource);
     assert_eq!(failed.cleanup_owner().plan(), &plan);
+    assert!(failed.cleanup_owner().cleanup_authority_owned);
+    assert_eq!(failed.cleanup_owner().cleanup_attempts, 0);
+
     assert_eq!(
         failed.cleanup_owner_mut().cleanup(),
         Err(SynchronizationError::InvalidState)
     );
+    assert_eq!(failed.primary(), LoadError::InvalidSource);
+    assert_eq!(failed.cleanup_owner().plan(), &plan);
+    assert!(failed.cleanup_owner().cleanup_authority_owned);
+    assert_eq!(failed.cleanup_owner().cleanup_attempts, 1);
+
     assert_eq!(failed.cleanup_owner_mut().cleanup(), Ok(()));
+    assert_eq!(failed.primary(), LoadError::InvalidSource);
+    assert_eq!(failed.cleanup_owner().plan(), &plan);
+    assert!(!failed.cleanup_owner().cleanup_authority_owned);
+    assert_eq!(failed.cleanup_owner().cleanup_attempts, 2);
 
     let (primary, cleanup_owner) = failed.into_parts();
     assert_eq!(primary, LoadError::InvalidSource);
     assert_eq!(cleanup_owner.plan(), &plan);
+    assert!(!cleanup_owner.cleanup_authority_owned);
 }
 
 #[test]

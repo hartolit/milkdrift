@@ -9,7 +9,8 @@ use domain_contracts::{
 };
 
 use crate::{
-    CleanupFailureReport, CleanupResource, CleanupRetryState, RuntimeError, RuntimeLimits,
+    CleanupFailureReport, CleanupResource, CleanupRetryState, RetainedOwnership, RuntimeError,
+    RuntimeLimits,
 };
 
 mod admission;
@@ -21,6 +22,10 @@ mod shutdown;
 mod unload;
 
 /// Synchronous inference registry with exclusive ownership of every loaded model.
+///
+/// Explicit [`Self::shutdown`] is the ordinary release protocol. Dropping a registry
+/// that still owns backend resources retains those owners until process exit rather
+/// than treating implicit backend `Drop` as successful cleanup.
 pub struct InferenceRuntime<L>
 where
     L: ModelLoader,
@@ -40,6 +45,7 @@ where
     generation_workspaces: u32,
     pending_cleanup_sequences: u32,
     last_cleanup: Option<CleanupRetryState>,
+    cleanup_scheduler: CleanupScheduler,
     maintenance_error: Option<RuntimeError>,
     shutting_down: bool,
 }
@@ -67,8 +73,9 @@ where
     M: LoadedModel,
     P: PreparedLoad,
 {
-    Complete(M),
-    FailedLoad(P),
+    VerifiedModel(M),
+    IncompatibleModel(M),
+    FailedPreparation(P),
 }
 
 impl<M, P> PendingModelOwner<M, P>
@@ -78,20 +85,28 @@ where
 {
     fn cleanup(&mut self) -> Result<(), SynchronizationError> {
         match self {
-            Self::Complete(model) => model.prepare_unload(),
-            Self::FailedLoad(prepared) => prepared.cleanup(),
+            Self::VerifiedModel(model) | Self::IncompatibleModel(model) => model.prepare_unload(),
+            Self::FailedPreparation(prepared) => prepared.cleanup(),
         }
     }
 
-    const fn cleanup_resource(&self, model_id: ModelId) -> CleanupResource {
+    const fn cleanup_resource(&self, handle: ModelHandle) -> CleanupResource {
         match self {
-            Self::Complete(_) => CleanupResource::Model { model_id },
-            Self::FailedLoad(_) => CleanupResource::FailedLoad { model_id },
+            Self::VerifiedModel(_) => CleanupResource::Model { handle },
+            Self::IncompatibleModel(_) => CleanupResource::IncompatibleModel { handle },
+            Self::FailedPreparation(_) => CleanupResource::FailedLoad { handle },
+        }
+    }
+
+    const fn cleanup_class(&self) -> CleanupClass {
+        match self {
+            Self::FailedPreparation(_) => CleanupClass::FailedPreparation,
+            Self::VerifiedModel(_) | Self::IncompatibleModel(_) => CleanupClass::CompleteModel,
         }
     }
 
     const fn is_complete(&self) -> bool {
-        matches!(self, Self::Complete(_))
+        matches!(self, Self::VerifiedModel(_) | Self::IncompatibleModel(_))
     }
 }
 
@@ -100,11 +115,47 @@ where
     M: LoadedModel,
     P: PreparedLoad,
 {
+    handle: ModelHandle,
     owner: PendingModelOwner<M, P>,
-    footprint: MemoryFootprint,
+    ownership: RetainedOwnership,
     failure: CleanupFailureReport,
     attempts: u32,
     cancelled_requests: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CleanupClass {
+    Sequence,
+    FailedPreparation,
+    CompleteModel,
+}
+
+impl CleanupClass {
+    const fn next(self) -> Self {
+        match self {
+            Self::Sequence => Self::FailedPreparation,
+            Self::FailedPreparation => Self::CompleteModel,
+            Self::CompleteModel => Self::Sequence,
+        }
+    }
+}
+
+struct CleanupScheduler {
+    next_class: CleanupClass,
+    sequence_cursor: Option<(ModelId, RequestId)>,
+    failed_preparation_cursor: Option<ModelId>,
+    complete_model_cursor: Option<ModelId>,
+}
+
+impl CleanupScheduler {
+    const fn new() -> Self {
+        Self {
+            next_class: CleanupClass::Sequence,
+            sequence_cursor: None,
+            failed_preparation_cursor: None,
+            complete_model_cursor: None,
+        }
+    }
 }
 
 struct PendingSequence<S>
@@ -131,6 +182,21 @@ where
     usage: GenerationUsage,
 }
 
+impl<L> Drop for InferenceRuntime<L>
+where
+    L: ModelLoader,
+{
+    fn drop(&mut self) {
+        if self.models.is_empty() && self.pending_models.is_empty() {
+            return;
+        }
+        let models = std::mem::take(&mut self.models);
+        let pending_models = std::mem::take(&mut self.pending_models);
+        std::mem::forget(models);
+        std::mem::forget(pending_models);
+    }
+}
+
 impl<L> InferenceRuntime<L>
 where
     L: ModelLoader,
@@ -154,6 +220,7 @@ where
             generation_workspaces: 0,
             pending_cleanup_sequences: 0,
             last_cleanup: None,
+            cleanup_scheduler: CleanupScheduler::new(),
             maintenance_error: None,
             shutting_down: false,
         }
@@ -171,6 +238,25 @@ where
         self.limits.cleanup_retry.maximum_attempts.get()
     }
 
+    fn unverified_owner_count(&self) -> u32 {
+        u32::try_from(
+            self.pending_models
+                .values()
+                .filter(|pending| pending.ownership.blocks_admission())
+                .count(),
+        )
+        .unwrap_or(u32::MAX)
+    }
+
+    fn reject_if_admission_blocked(&self) -> Result<(), RuntimeError> {
+        let owners = self.unverified_owner_count();
+        if owners == 0 {
+            Ok(())
+        } else {
+            Err(RuntimeError::AdmissionBlockedByUnverifiedOwnership { owners })
+        }
+    }
+
     fn next_handle(&self, model_id: ModelId) -> Result<ModelHandle, RuntimeError> {
         let current = self
             .generations
@@ -180,6 +266,20 @@ where
             .checked_add(1)
             .ok_or(RuntimeError::ModelGenerationExhausted(model_id))?;
         Ok(ModelHandle::new(model_id, ModelGeneration::new(next)))
+    }
+
+    fn exact_model(&self, handle: ModelHandle) -> Result<&ModelSlot<L::Model>, RuntimeError> {
+        let slot = self
+            .models
+            .get(&handle.id)
+            .ok_or(RuntimeError::ModelNotLoaded(handle.id))?;
+        if slot.handle != handle {
+            return Err(RuntimeError::StaleModelHandle {
+                provided: handle,
+                current: slot.handle,
+            });
+        }
+        Ok(slot)
     }
 
     fn exact_model_mut(

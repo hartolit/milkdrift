@@ -1,5 +1,10 @@
 //! Transaction rollback tests using a deliberately nonconforming backend.
 
+#![expect(
+    clippy::result_large_err,
+    reason = "test helpers return the runtime's bounded allocation-free structured error directly"
+)]
+
 use std::cell::Cell;
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -9,14 +14,16 @@ use domain_contracts::{
     CapabilitySet, DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind,
     ExecutionDevice, FailedLoad, LoadConfiguration, LoadError, LoadPlan, LoadedModel, MemoryBudget,
     MemoryFootprint, MemoryKind, ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError,
-    ModelHandle, ModelId, ModelLoader, ModelMetadata, MonotonicMillis, PrefillBufferRequirements,
-    PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedLoad, PreparedPrefillBuffers,
-    QuantizationFormat, RequestId, ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceError,
-    SequenceId, SequencePlan, SequenceState, SynchronizationError, UnloadPolicy,
+    ModelGeneration, ModelHandle, ModelId, ModelLoader, ModelMetadata, MonotonicMillis,
+    PrefillBufferRequirements, PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedLoad,
+    PreparedPrefillBuffers, QuantizationFormat, RequestId, ScalarType, ScalarTypeSet,
+    SequenceConfiguration, SequenceError, SequenceId, SequencePlan, SequenceState,
+    SynchronizationError, UnloadPolicy,
 };
 use inference_runtime::{
-    CleanupPoll, CleanupResource, CleanupRetryPolicy, FailureClass, InferenceRuntime, RuntimeError,
-    RuntimeLimits, RuntimeOperation,
+    CleanupPoll, CleanupResource, CleanupRetryPolicy, ConservativeFootprint, FailureClass,
+    FailureDetail, InferenceRuntime, RetainedOwnership, RuntimeError, RuntimeLimits,
+    RuntimeOperation,
 };
 
 const BACKEND_ID: BackendId = BackendId::new(92);
@@ -54,12 +61,20 @@ impl Faults {
     const EMPTY_OBSERVED_TENSOR_SET: Self = Self(1 << 24);
     const OVERFLOWING_FINAL_FOOTPRINT: Self = Self(1 << 25);
     const LOADING_PEAK_BELOW_FINAL: Self = Self(1 << 26);
-    const MISMATCHED_LOADING_CACHE: Self = Self(1 << 27);
     const FAIL_LOAD: Self = Self(1 << 28);
     const FAIL_FAILED_LOAD_CLEANUP: Self = Self(1 << 29);
     const FAIL_FAILED_LOAD_CLEANUP_ONCE: Self = Self(1 << 30);
     const OVERFLOWING_LOADING_PEAK: Self = Self(1 << 31);
     const RECLASSIFIED_LOADING_PEAK: Self = Self(1 << 32);
+    const REPORTED_LARGER_THAN_PEAK: Self = Self(1 << 33);
+    const REPORTED_RECLASSIFIED_TO_DEVICE: Self = Self(1 << 34);
+    const REPORTED_OVERFLOWING_HOST: Self = Self(1 << 35);
+    const REPORTED_OVERFLOWING_DEVICE: Self = Self(1 << 36);
+    const REPORTED_SMALLER_THAN_FINAL: Self = Self(1 << 37);
+    const MUTATE_MODEL_REPORT_ON_CLEANUP_FAILURE: Self = Self(1 << 38);
+    const MUTATE_FAILED_PLAN_ON_CLEANUP_FAILURE: Self = Self(1 << 39);
+    const ALTERNATING_PLAN_REPORT: Self = Self(1 << 40);
+    const FAIL_MODEL_CLEANUP_TWICE: Self = Self(1 << 41);
 
     const fn contains(self, fault: Self) -> bool {
         self.0 & fault.0 != 0
@@ -80,21 +95,29 @@ struct CleanupCounts {
     retained_partial_load_bytes: Cell<u64>,
     sequence_creations: Cell<u32>,
     sequence_destructions: Cell<u32>,
+    plan_reads: Cell<u32>,
+    prepared_drops: Cell<u32>,
+    retained_prepared_drops: Cell<u32>,
+    successful_model_cleanups: Cell<u32>,
+    model_drops_while_owned: Cell<u32>,
 }
 
 #[derive(Clone, Copy)]
 struct FaultSource {
     source_scalar_type: ScalarType,
     planned_execution_scalar_type: ScalarType,
+    faults: Faults,
 }
 
 const DEFAULT_SOURCE: FaultSource = FaultSource {
     source_scalar_type: ScalarType::F32,
     planned_execution_scalar_type: ScalarType::F32,
+    faults: Faults(0),
 };
 const BF16_SOURCE_WITH_F32_EXECUTION: FaultSource = FaultSource {
     source_scalar_type: ScalarType::Bf16,
     planned_execution_scalar_type: ScalarType::F32,
+    faults: Faults(0),
 };
 
 struct FaultLoader {
@@ -104,16 +127,27 @@ struct FaultLoader {
 
 struct FaultPrepared {
     plan: LoadPlan,
+    alternate_plan: LoadPlan,
     source: FaultSource,
     faults: Faults,
     counts: Rc<CleanupCounts>,
+    plan_reads: Cell<u32>,
     remaining_cleanup_failures: u32,
     partial_resources_retained: bool,
 }
 
 impl PreparedLoad for FaultPrepared {
     fn plan(&self) -> &LoadPlan {
-        &self.plan
+        let reads = self.plan_reads.get();
+        self.plan_reads.set(reads.saturating_add(1));
+        self.counts
+            .plan_reads
+            .set(self.counts.plan_reads.get().saturating_add(1));
+        if reads > 0 && self.faults.contains(Faults::ALTERNATING_PLAN_REPORT) {
+            &self.alternate_plan
+        } else {
+            &self.plan
+        }
     }
 
     fn cleanup(&mut self) -> Result<(), SynchronizationError> {
@@ -124,6 +158,16 @@ impl PreparedLoad for FaultPrepared {
             || self.remaining_cleanup_failures > 0
         {
             self.remaining_cleanup_failures = self.remaining_cleanup_failures.saturating_sub(1);
+            if self
+                .faults
+                .contains(Faults::MUTATE_FAILED_PLAN_ON_CLEANUP_FAILURE)
+            {
+                self.plan.loading_peak_footprint.host_working_bytes = self
+                    .plan
+                    .loading_peak_footprint
+                    .host_working_bytes
+                    .saturating_add(7);
+            }
             return Err(SynchronizationError::Backend(backend_failure(4)));
         }
         if !self.partial_resources_retained {
@@ -146,20 +190,35 @@ impl PreparedLoad for FaultPrepared {
     }
 }
 
+impl Drop for FaultPrepared {
+    fn drop(&mut self) {
+        self.counts
+            .prepared_drops
+            .set(self.counts.prepared_drops.get().saturating_add(1));
+        if self.partial_resources_retained {
+            self.counts
+                .retained_prepared_drops
+                .set(self.counts.retained_prepared_drops.get().saturating_add(1));
+        }
+    }
+}
+
 struct FaultModel {
     handle: ModelHandle,
     execution_device: ExecutionDevice,
     execution_scalar_type: ScalarType,
     descriptor: ModelDescriptor,
-    accounted_footprint: MemoryFootprint,
+    reported_footprint: MemoryFootprint,
     remaining_model_cleanup_failures: u32,
     faults: Faults,
     counts: Rc<CleanupCounts>,
+    released: bool,
 }
 
 struct FaultSequence {
     id: SequenceId,
     state: SequenceState,
+    position: usize,
     token_capacity: usize,
 }
 
@@ -173,7 +232,7 @@ impl BackendSequence for FaultSequence {
     }
 
     fn position(&self) -> usize {
-        0
+        self.position
     }
 
     fn token_capacity(&self) -> usize {
@@ -187,38 +246,39 @@ impl ModelLoader for FaultLoader {
     type Model = FaultModel;
 
     fn inspect(&self, source: &Self::Source) -> Result<ModelDescriptor, LoadError> {
+        let faults = self.faults.union(source.faults);
         let mut descriptor = descriptor(source.source_scalar_type);
-        if self.faults.contains(Faults::MISSING_MULTIPLE_SEQUENCES) {
+        if faults.contains(Faults::MISSING_MULTIPLE_SEQUENCES) {
             descriptor.capabilities.operations = CapabilitySet::PREFILL
                 .union(CapabilitySet::INCREMENTAL_DECODE)
                 .union(CapabilitySet::EXPLICIT_SYNCHRONIZATION);
         }
-        if self.faults.contains(Faults::ZERO_VOCABULARY) {
+        if faults.contains(Faults::ZERO_VOCABULARY) {
             descriptor.metadata.vocabulary_size = 0;
         }
-        if self.faults.contains(Faults::ZERO_CONTEXT_LENGTH) {
+        if faults.contains(Faults::ZERO_CONTEXT_LENGTH) {
             descriptor.metadata.context_length = 0;
         }
-        if self.faults.contains(Faults::ZERO_MAXIMUM_CONTEXT) {
+        if faults.contains(Faults::ZERO_MAXIMUM_CONTEXT) {
             descriptor.capabilities.maximum_context_tokens = 0;
         }
-        if self.faults.contains(Faults::ZERO_MAXIMUM_SEQUENCES) {
+        if faults.contains(Faults::ZERO_MAXIMUM_SEQUENCES) {
             descriptor.capabilities.maximum_sequences = 0;
         }
-        if self.faults.contains(Faults::ZERO_MAXIMUM_PREFILL) {
+        if faults.contains(Faults::ZERO_MAXIMUM_PREFILL) {
             descriptor.capabilities.maximum_prefill_batch = 0;
         }
-        if self.faults.contains(Faults::CONTEXT_EXCEEDS_METADATA) {
+        if faults.contains(Faults::CONTEXT_EXCEEDS_METADATA) {
             descriptor.capabilities.maximum_context_tokens =
                 descriptor.metadata.context_length.saturating_add(1);
         }
-        if self.faults.contains(Faults::PREFILL_EXCEEDS_CONTEXT) {
+        if faults.contains(Faults::PREFILL_EXCEEDS_CONTEXT) {
             descriptor.capabilities.maximum_prefill_batch = descriptor
                 .capabilities
                 .maximum_context_tokens
                 .saturating_add(1);
         }
-        if self.faults.contains(Faults::EMPTY_OBSERVED_TENSOR_SET) {
+        if faults.contains(Faults::EMPTY_OBSERVED_TENSOR_SET) {
             descriptor.metadata.observed_tensor_scalar_types = ScalarTypeSet::EMPTY;
         }
         Ok(descriptor)
@@ -232,9 +292,10 @@ impl ModelLoader for FaultLoader {
         self.counts
             .preparations
             .set(self.counts.preparations.get().saturating_add(1));
+        let faults = self.faults.union(source.faults);
         let descriptor = self.inspect(source)?;
         let mut accepted_configuration = *configuration;
-        if self.faults.contains(Faults::WRONG_ACCEPTED_CONFIGURATION) {
+        if faults.contains(Faults::WRONG_ACCEPTED_CONFIGURATION) {
             accepted_configuration.execution_device.id = DeviceId::new(
                 accepted_configuration
                     .execution_device
@@ -244,47 +305,55 @@ impl ModelLoader for FaultLoader {
             );
         }
         let mut expected_footprint = descriptor.estimated_footprint;
-        if self.faults.contains(Faults::OVERFLOWING_FINAL_FOOTPRINT) {
+        if faults.contains(Faults::OVERFLOWING_FINAL_FOOTPRINT) {
             expected_footprint.host_weight_bytes = u64::MAX;
             expected_footprint.host_working_bytes = 1;
         }
         let mut loading_peak_footprint = loading_peak_footprint();
-        if self.faults.contains(Faults::OVERFLOWING_LOADING_PEAK) {
+        if faults.contains(Faults::OVERFLOWING_LOADING_PEAK) {
             loading_peak_footprint.host_weight_bytes = u64::MAX;
             loading_peak_footprint.host_working_bytes = 1;
         }
-        if self.faults.contains(Faults::LOADING_PEAK_BELOW_FINAL) {
+        if faults.contains(Faults::LOADING_PEAK_BELOW_FINAL) {
             loading_peak_footprint.host_working_bytes = 0;
         }
-        if self.faults.contains(Faults::MISMATCHED_LOADING_CACHE) {
-            loading_peak_footprint.cache_bytes_per_token = loading_peak_footprint
-                .cache_bytes_per_token
-                .saturating_add(1);
-        }
-        if self.faults.contains(Faults::RECLASSIFIED_LOADING_PEAK) {
+
+        if faults.contains(Faults::RECLASSIFIED_LOADING_PEAK) {
             loading_peak_footprint.host_working_bytes = loading_peak_footprint
                 .host_working_bytes
                 .saturating_add(loading_peak_footprint.host_weight_bytes);
             loading_peak_footprint.host_weight_bytes = 0;
         }
+        let plan = LoadPlan {
+            accepted_configuration,
+            descriptor,
+            execution_scalar_type: source.planned_execution_scalar_type,
+            final_footprint: expected_footprint,
+            loading_peak_footprint,
+        };
+        let mut alternate_plan = plan;
+        alternate_plan.loading_peak_footprint.host_working_bytes = alternate_plan
+            .loading_peak_footprint
+            .host_working_bytes
+            .saturating_add(1);
         Ok(FaultPrepared {
-            plan: LoadPlan {
-                accepted_configuration,
-                descriptor,
-                execution_scalar_type: source.planned_execution_scalar_type,
-                expected_footprint,
-                loading_peak_footprint,
-            },
+            plan,
+            alternate_plan,
             source: *source,
-            faults: self.faults,
+            faults,
             counts: Rc::clone(&self.counts),
+            plan_reads: Cell::new(0),
             remaining_cleanup_failures: u32::from(
-                self.faults.contains(Faults::FAIL_FAILED_LOAD_CLEANUP_ONCE),
+                faults.contains(Faults::FAIL_FAILED_LOAD_CLEANUP_ONCE),
             ),
             partial_resources_retained: false,
         })
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the deterministic malicious loader keeps all complete-model report mutations in one exhaustive fixture boundary"
+    )]
     fn load_prepared(
         &mut self,
         mut prepared: Self::Prepared,
@@ -292,7 +361,8 @@ impl ModelLoader for FaultLoader {
         self.counts
             .model_loads
             .set(self.counts.model_loads.get().saturating_add(1));
-        if self.faults.contains(Faults::FAIL_LOAD) {
+        let faults = prepared.faults;
+        if faults.contains(Faults::FAIL_LOAD) {
             prepared.partial_resources_retained = true;
             self.counts.retained_partial_load_bytes.set(
                 self.counts
@@ -309,62 +379,87 @@ impl ModelLoader for FaultLoader {
         let source = prepared.source;
         let configuration = prepared.plan.accepted_configuration;
         let mut descriptor = prepared.plan.descriptor;
-        if self.faults.contains(Faults::MISMATCHED_METADATA) {
+        if faults.contains(Faults::MISMATCHED_METADATA) {
             descriptor.metadata.vocabulary_size =
                 descriptor.metadata.vocabulary_size.saturating_add(1);
         }
-        if self.faults.contains(Faults::MISMATCHED_DESCRIPTOR) {
+        if faults.contains(Faults::MISMATCHED_DESCRIPTOR) {
             descriptor.capabilities.maximum_prefill_batch = descriptor
                 .capabilities
                 .maximum_prefill_batch
                 .saturating_add(1);
         }
-        let handle = if self.faults.contains(Faults::WRONG_MODEL_HANDLE) {
+        let handle = if faults.contains(Faults::WRONG_MODEL_HANDLE) {
             ModelHandle::new(ModelId::new(999), configuration.handle.generation)
         } else {
             configuration.handle
         };
         let mut execution_device = configuration.execution_device;
-        if self.faults.contains(Faults::WRONG_DEVICE_ID) {
+        if faults.contains(Faults::WRONG_DEVICE_ID) {
             execution_device.id = DeviceId::new(execution_device.id.get().saturating_add(1));
         }
-        if self.faults.contains(Faults::WRONG_DEVICE_KIND) {
+        if faults.contains(Faults::WRONG_DEVICE_KIND) {
             execution_device.kind = DeviceKind::Cuda;
         }
-        let execution_scalar_type = if self
-            .faults
-            .contains(Faults::SOURCE_SCALAR_AS_EXECUTION_SCALAR)
-        {
+        let execution_scalar_type = if faults.contains(Faults::SOURCE_SCALAR_AS_EXECUTION_SCALAR) {
             descriptor
                 .metadata
                 .configuration_declared_scalar_type
                 .unwrap_or(source.source_scalar_type)
-        } else if self
-            .faults
-            .contains(Faults::UNSUPPORTED_ACTUAL_EXECUTION_SCALAR)
-        {
+        } else if faults.contains(Faults::UNSUPPORTED_ACTUAL_EXECUTION_SCALAR) {
             ScalarType::Other(u16::MAX)
-        } else if self.faults.contains(Faults::WRONG_EXECUTION_SCALAR) {
+        } else if faults.contains(Faults::WRONG_EXECUTION_SCALAR) {
             ScalarType::F16
         } else {
             source.planned_execution_scalar_type
         };
-        let mut accounted_footprint = prepared.plan.expected_footprint;
-        if self.faults.contains(Faults::WRONG_MODEL_FOOTPRINT) {
-            accounted_footprint.host_working_bytes =
-                accounted_footprint.host_working_bytes.saturating_add(1);
+        let mut reported_footprint = prepared.plan.final_footprint;
+        if faults.contains(Faults::WRONG_MODEL_FOOTPRINT) {
+            reported_footprint.host_working_bytes =
+                reported_footprint.host_working_bytes.saturating_add(1);
+        }
+        if faults.contains(Faults::REPORTED_LARGER_THAN_PEAK) {
+            reported_footprint.host_weight_bytes = 200;
+            reported_footprint.host_working_bytes = 100;
+        }
+        if faults.contains(Faults::REPORTED_RECLASSIFIED_TO_DEVICE) {
+            reported_footprint = MemoryFootprint {
+                host_weight_bytes: 0,
+                device_weight_bytes: 100,
+                host_working_bytes: 0,
+                device_working_bytes: 10,
+            };
+        }
+        if faults.contains(Faults::REPORTED_OVERFLOWING_HOST) {
+            reported_footprint.host_weight_bytes = u64::MAX;
+            reported_footprint.host_working_bytes = 1;
+        }
+        if faults.contains(Faults::REPORTED_OVERFLOWING_DEVICE) {
+            reported_footprint.device_weight_bytes = u64::MAX;
+            reported_footprint.device_working_bytes = 1;
+        }
+        if faults.contains(Faults::REPORTED_SMALLER_THAN_FINAL) {
+            reported_footprint = MemoryFootprint {
+                host_weight_bytes: 50,
+                device_weight_bytes: 0,
+                host_working_bytes: 0,
+                device_working_bytes: 0,
+            };
         }
         Ok(FaultModel {
             handle,
             execution_device,
             execution_scalar_type,
             descriptor,
-            accounted_footprint,
-            remaining_model_cleanup_failures: u32::from(
-                self.faults.contains(Faults::FAIL_MODEL_CLEANUP_ONCE),
-            ),
-            faults: self.faults,
+            reported_footprint,
+            remaining_model_cleanup_failures: if faults.contains(Faults::FAIL_MODEL_CLEANUP_TWICE) {
+                2
+            } else {
+                u32::from(faults.contains(Faults::FAIL_MODEL_CLEANUP_ONCE))
+            },
+            faults,
             counts: Rc::clone(&self.counts),
+            released: false,
         })
     }
 }
@@ -388,8 +483,8 @@ impl LoadedModel for FaultModel {
         self.execution_scalar_type
     }
 
-    fn accounted_footprint(&self) -> MemoryFootprint {
-        self.accounted_footprint
+    fn reported_footprint(&self) -> MemoryFootprint {
+        self.reported_footprint
     }
 
     fn plan_sequence(
@@ -433,6 +528,7 @@ impl LoadedModel for FaultModel {
         Ok(FaultSequence {
             id,
             state: SequenceState::Empty,
+            position: 0,
             token_capacity,
         })
     }
@@ -455,20 +551,37 @@ impl LoadedModel for FaultModel {
 
     fn prefill_prepared(
         &mut self,
-        _sequence: &mut Self::Sequence,
-        _input: PrefillInput<'_>,
+        sequence: &mut Self::Sequence,
+        input: PrefillInput<'_>,
         _buffers: PreparedPrefillBuffers<'_>,
     ) -> Result<PrefillOutcome, SequenceError> {
-        Err(SequenceError::Unsupported)
+        sequence.position = sequence
+            .position
+            .checked_add(input.tokens.len())
+            .ok_or(SequenceError::InvalidState)?;
+        sequence.state = SequenceState::Ready;
+        Ok(PrefillOutcome::Ready {
+            consumed_tokens: input.tokens.len(),
+            position: sequence.position,
+            logits_written: 0,
+        })
     }
 
     fn decode_prepared(
         &mut self,
-        _sequence: &mut Self::Sequence,
+        sequence: &mut Self::Sequence,
         _input: DecodeInput,
         _buffers: PreparedDecodeBuffers<'_>,
     ) -> Result<DecodeOutcome, SequenceError> {
-        Err(SequenceError::Unsupported)
+        sequence.position = sequence
+            .position
+            .checked_add(1)
+            .ok_or(SequenceError::InvalidState)?;
+        sequence.state = SequenceState::Ready;
+        Ok(DecodeOutcome::Ready {
+            position: sequence.position,
+            logits_written: 0,
+        })
     }
 
     fn destroy_sequence(&mut self, sequence: &mut Self::Sequence) -> Result<(), SequenceError> {
@@ -500,9 +613,37 @@ impl LoadedModel for FaultModel {
         {
             self.remaining_model_cleanup_failures =
                 self.remaining_model_cleanup_failures.saturating_sub(1);
+            if self
+                .faults
+                .contains(Faults::MUTATE_MODEL_REPORT_ON_CLEANUP_FAILURE)
+            {
+                self.reported_footprint.device_working_bytes = self
+                    .reported_footprint
+                    .device_working_bytes
+                    .saturating_add(11);
+            }
             Err(SynchronizationError::Backend(backend_failure(3)))
+        } else if self.released {
+            Err(SynchronizationError::InvalidState)
         } else {
+            self.released = true;
+            self.counts.successful_model_cleanups.set(
+                self.counts
+                    .successful_model_cleanups
+                    .get()
+                    .saturating_add(1),
+            );
             Ok(())
+        }
+    }
+}
+
+impl Drop for FaultModel {
+    fn drop(&mut self) {
+        if !self.released {
+            self.counts
+                .model_drops_while_owned
+                .set(self.counts.model_drops_while_owned.get().saturating_add(1));
         }
     }
 }
@@ -530,7 +671,7 @@ fn wrong_device_kind_after_native_load_is_cleaned_without_publication() {
 }
 
 #[test]
-fn correct_execution_scalar_wrong_accounted_footprint_is_cleaned_without_publication() {
+fn correct_execution_scalar_wrong_reported_footprint_is_cleaned_without_publication() {
     assert_model_admission_mismatch_is_cleaned(Faults::WRONG_MODEL_FOOTPRINT);
 }
 
@@ -616,16 +757,34 @@ fn wrong_execution_scalar_cleanup_failure_retains_accounting_until_successful_re
     let retained = runtime.snapshot();
     assert_eq!(retained.loaded_models, 0);
     assert_eq!(retained.pending_cleanup_models, 1);
-    assert_eq!(retained.reserved_footprint, loading_peak_footprint());
+    assert_eq!(retained.reserved_footprint, MemoryFootprint::default());
+    assert_eq!(
+        retained.unverified_ownership,
+        Some(inference_runtime::UnverifiedOwnershipSummary {
+            owners: 1,
+            conservative_footprint: ConservativeFootprint::Known(loading_peak_footprint()),
+        })
+    );
+    assert!(retained.admission_blocked);
     assert!(runtime.model_snapshots().is_empty());
     assert!(matches!(
         runtime.model_cleanup_state(ModelId::new(1)),
-        Some(state) if state.attempts == 1 && !state.exhausted()
+        Some(state)
+            if state.attempts == 1
+                && !state.exhausted()
+                && state.resource
+                    == CleanupResource::IncompatibleModel {
+                        handle: expected_handle(1),
+                    }
+                && matches!(state.ownership, RetainedOwnership::Unverified { .. })
     ));
 
     assert!(matches!(
         runtime.poll_cleanup().map_err(debug_error)?,
-        CleanupPoll::Released(state) if state.attempts == 2 && !state.exhausted()
+        CleanupPoll::Released(state)
+            if state.attempts == 2
+                && state.ownership == RetainedOwnership::Released
+                && !state.exhausted()
     ));
     assert_eq!(counts.model_cleanups.get(), 2);
     assert_empty(&runtime);
@@ -708,7 +867,304 @@ fn device_mismatch_cleanup_failure_preserves_primary_error_ownership_and_account
     let snapshot = runtime.snapshot();
     assert_eq!(snapshot.loaded_models, 0);
     assert_eq!(snapshot.pending_cleanup_models, 1);
-    assert_eq!(snapshot.reserved_footprint, loading_peak_footprint());
+    assert_eq!(snapshot.reserved_footprint, MemoryFootprint::default());
+    assert!(snapshot.unverified_ownership.is_some());
+    assert!(snapshot.admission_blocked);
+    assert!(matches!(
+        runtime.model_cleanup_state(ModelId::new(1)),
+        Some(state)
+            if state.resource
+                == CleanupResource::IncompatibleModel {
+                    handle: expected_handle(1),
+                }
+                && matches!(state.ownership, RetainedOwnership::Unverified { .. })
+    ));
+}
+
+#[test]
+fn incompatible_complete_model_matrix_retains_unverified_evidence_and_unlocks_on_release()
+-> TestResult {
+    for (report_fault, reported_footprint, conservative_footprint) in complete_report_cases() {
+        let counts = Rc::new(CleanupCounts::default());
+        let mut runtime = runtime_with_resources(
+            Faults::default(),
+            Rc::clone(&counts),
+            3,
+            2,
+            2,
+            MemoryBudget {
+                host_bytes: 10_000,
+                device_bytes: 10_000,
+            },
+        );
+        let faults = report_fault
+            .union(Faults::FAIL_MODEL_CLEANUP_ONCE)
+            .union(Faults::MUTATE_MODEL_REPORT_ON_CLEANUP_FAILURE);
+        let result = load_model_id(&mut runtime, 1, source_with_faults(faults));
+        assert!(matches!(
+            result,
+            Err(RuntimeError::CleanupFailed(report))
+                if report.primary_detail
+                    == FailureDetail::Class(FailureClass::BackendContract)
+                    && report.cleanup_detail
+                        == FailureDetail::Synchronization(SynchronizationError::Backend(
+                            backend_failure(3),
+                        ))
+        ));
+        let expected_ownership = RetainedOwnership::Unverified {
+            accepted_loading_peak: loading_peak_footprint(),
+            reported_footprint,
+            conservative_footprint,
+        };
+        let state = runtime
+            .model_cleanup_state(ModelId::new(1))
+            .ok_or_else(|| "incompatible owner was not retained".to_owned())?;
+        assert_eq!(
+            state.resource,
+            CleanupResource::IncompatibleModel {
+                handle: expected_handle(1),
+            }
+        );
+        assert_eq!(state.ownership, expected_ownership);
+        let retained = runtime.snapshot();
+        assert_eq!(retained.reserved_footprint, MemoryFootprint::default());
+        assert_eq!(
+            retained.unverified_ownership,
+            Some(inference_runtime::UnverifiedOwnershipSummary {
+                owners: 1,
+                conservative_footprint,
+            })
+        );
+        assert!(retained.admission_blocked);
+        assert_eq!(runtime.retained_model_snapshots().len(), 1);
+
+        let preparations = counts.preparations.get();
+        assert!(matches!(
+            load_model_id(&mut runtime, 2, DEFAULT_SOURCE),
+            Err(RuntimeError::AdmissionBlockedByUnverifiedOwnership { owners: 1 })
+        ));
+        assert_eq!(counts.preparations.get(), preparations);
+
+        assert!(matches!(
+            runtime.poll_cleanup().map_err(debug_error)?,
+            CleanupPoll::Released(released)
+                if released.attempts == 2
+                    && released.ownership == RetainedOwnership::Released
+                    && !released.exhausted()
+        ));
+        assert_eq!(counts.successful_model_cleanups.get(), 1);
+        assert_eq!(counts.model_drops_while_owned.get(), 0);
+        let released = runtime.snapshot();
+        assert_eq!(released.reserved_footprint, MemoryFootprint::default());
+        assert_eq!(released.unverified_ownership, None);
+        assert!(!released.admission_blocked);
+        assert!(matches!(
+            released.last_cleanup,
+            Some(state)
+                if state.ownership == RetainedOwnership::Released && !state.exhausted()
+        ));
+        assert!(runtime.retained_model_snapshots().is_empty());
+
+        let loaded = load_model_id(&mut runtime, 2, DEFAULT_SOURCE).map_err(debug_error)?;
+        runtime
+            .unload_model(
+                loaded.handle,
+                UnloadPolicy::RejectIfBusy,
+                MonotonicMillis::new(0),
+            )
+            .map_err(debug_error)?;
+        assert_eq!(counts.successful_model_cleanups.get(), 2);
+        assert_eq!(
+            runtime.poll_cleanup().map_err(debug_error)?,
+            CleanupPoll::Idle
+        );
+        assert_empty(&runtime);
+    }
+    Ok(())
+}
+
+#[test]
+fn cleanup_success_on_final_attempt_is_released_not_exhausted() -> TestResult {
+    let counts = Rc::new(CleanupCounts::default());
+    let faults = Faults::WRONG_EXECUTION_SCALAR.union(Faults::FAIL_MODEL_CLEANUP_TWICE);
+    let mut runtime = runtime(Faults::default(), Rc::clone(&counts));
+
+    assert!(matches!(
+        load_model_id(&mut runtime, 1, source_with_faults(faults)),
+        Err(RuntimeError::CleanupFailed(_))
+    ));
+    assert!(matches!(
+        runtime.poll_cleanup().map_err(debug_error)?,
+        CleanupPoll::RetryFailed(state)
+            if state.attempts == 2
+                && !state.exhausted()
+                && matches!(state.ownership, RetainedOwnership::Unverified { .. })
+    ));
+    let released = match runtime.poll_cleanup().map_err(debug_error)? {
+        CleanupPoll::Released(state) => state,
+        other => {
+            return Err(format!(
+                "final cleanup attempt did not release ownership: {other:?}"
+            ));
+        }
+    };
+    assert_eq!(released.attempts, 3);
+    assert_eq!(released.ownership, RetainedOwnership::Released);
+    assert!(!released.exhausted());
+    let snapshot = runtime.snapshot();
+    assert_eq!(snapshot.last_cleanup, Some(released));
+    assert_eq!(snapshot.unverified_ownership, None);
+    assert!(!snapshot.admission_blocked);
+    assert!(runtime.retained_model_snapshots().is_empty());
+    assert_eq!(counts.model_cleanups.get(), 3);
+
+    let loaded = load_model_id(&mut runtime, 2, DEFAULT_SOURCE).map_err(debug_error)?;
+    runtime
+        .unload_model(
+            loaded.handle,
+            UnloadPolicy::RejectIfBusy,
+            MonotonicMillis::new(0),
+        )
+        .map_err(debug_error)?;
+    assert_empty(&runtime);
+    Ok(())
+}
+
+#[test]
+fn unverified_owner_blocks_new_resources_but_existing_healthy_work_progresses() -> TestResult {
+    let counts = Rc::new(CleanupCounts::default());
+    let mut runtime = runtime_with_resources(
+        Faults::default(),
+        Rc::clone(&counts),
+        3,
+        2,
+        3,
+        MemoryBudget {
+            host_bytes: 10_000,
+            device_bytes: 10_000,
+        },
+    );
+    let healthy = load_model_id(&mut runtime, 1, DEFAULT_SOURCE).map_err(debug_error)?;
+    start(&mut runtime, healthy.handle, 10, 100).map_err(debug_error)?;
+
+    let incompatible =
+        source_with_faults(Faults::WRONG_EXECUTION_SCALAR.union(Faults::FAIL_MODEL_CLEANUP_ONCE));
+    assert!(matches!(
+        load_model_id(&mut runtime, 2, incompatible),
+        Err(RuntimeError::CleanupFailed(_))
+    ));
+    assert!(matches!(
+        start(&mut runtime, healthy.handle, 11, 101),
+        Err(RuntimeError::AdmissionBlockedByUnverifiedOwnership { owners: 1 })
+    ));
+    let mut no_logits = [];
+    let prefill = runtime
+        .prefill(
+            RequestId::new(10),
+            &[domain_contracts::TokenId::new(1)],
+            false,
+            &mut no_logits,
+        )
+        .map_err(debug_error)?;
+    assert!(matches!(
+        prefill.outcome,
+        PrefillOutcome::Ready {
+            consumed_tokens: 1,
+            position: 1,
+            logits_written: 0,
+        }
+    ));
+    runtime
+        .cancel_request(RequestId::new(10), CancellationReason::UserRequested)
+        .map_err(debug_error)?;
+    assert!(matches!(
+        runtime.poll_cleanup().map_err(debug_error)?,
+        CleanupPoll::Released(_)
+    ));
+    assert!(!runtime.snapshot().admission_blocked);
+
+    start(&mut runtime, healthy.handle, 11, 101).map_err(debug_error)?;
+    runtime
+        .cancel_request(RequestId::new(11), CancellationReason::UserRequested)
+        .map_err(debug_error)?;
+    runtime
+        .unload_model(
+            healthy.handle,
+            UnloadPolicy::RejectIfBusy,
+            MonotonicMillis::new(0),
+        )
+        .map_err(debug_error)?;
+    assert_empty(&runtime);
+    assert_eq!(counts.model_drops_while_owned.get(), 0);
+    Ok(())
+}
+
+#[test]
+fn incompatible_complete_model_matrix_exhausts_to_process_retention() {
+    for (report_fault, reported_footprint, conservative_footprint) in complete_report_cases() {
+        let counts = Rc::new(CleanupCounts::default());
+        let mut runtime = runtime_with_resources(
+            Faults::default(),
+            Rc::clone(&counts),
+            3,
+            1,
+            1,
+            MemoryBudget {
+                host_bytes: 10_000,
+                device_bytes: 10_000,
+            },
+        );
+        let faults = report_fault.union(Faults::FAIL_MODEL_CLEANUP);
+        assert!(matches!(
+            load_model_id(&mut runtime, 1, source_with_faults(faults)),
+            Err(RuntimeError::CleanupFailed(_))
+        ));
+        let terminal = runtime.shutdown();
+        assert!(matches!(
+            terminal,
+            Err(RuntimeError::TerminalCleanupRetention { first, summary })
+                if first.attempts == 3
+                    && first.exhausted()
+                    && first.resource
+                        == CleanupResource::IncompatibleModel {
+                            handle: expected_handle(1),
+                        }
+                    && first.ownership
+                        == RetainedOwnership::Unverified {
+                            accepted_loading_peak: loading_peak_footprint(),
+                            reported_footprint,
+                            conservative_footprint,
+                        }
+                    && summary.failed_preparations == 0
+                    && summary.verified_models == 0
+                    && summary.incompatible_models == 1
+                    && summary.sequences == 0
+                    && summary.unverified_conservative_footprint == conservative_footprint
+        ));
+        let snapshot = runtime.snapshot();
+        assert_eq!(snapshot.reserved_footprint, MemoryFootprint::default());
+        assert!(snapshot.admission_blocked);
+        assert_eq!(snapshot.exhausted_cleanup_models, 1);
+        assert_eq!(counts.model_drops_while_owned.get(), 0);
+        drop(runtime);
+        assert_eq!(counts.model_drops_while_owned.get(), 0);
+    }
+}
+
+#[test]
+fn all_complete_model_report_mismatches_cleanup_without_publication() {
+    for (report_fault, _, _) in complete_report_cases() {
+        let counts = Rc::new(CleanupCounts::default());
+        let mut runtime = runtime(report_fault, Rc::clone(&counts));
+        assert_eq!(
+            load(&mut runtime),
+            Err(RuntimeError::BackendContractViolation)
+        );
+        assert_eq!(counts.model_cleanups.get(), 1);
+        assert_eq!(counts.successful_model_cleanups.get(), 1);
+        assert_eq!(counts.model_drops_while_owned.get(), 0);
+        assert_empty(&runtime);
+    }
 }
 
 #[test]
@@ -718,6 +1174,9 @@ fn exact_preparation_is_consumed_once_without_replanning() -> TestResult {
 
     let loaded = load(&mut runtime).map_err(debug_error)?;
     assert_eq!(counts.preparations.get(), 1);
+    assert_eq!(counts.plan_reads.get(), 1);
+    assert_eq!(counts.prepared_drops.get(), 1);
+    assert_eq!(counts.retained_prepared_drops.get(), 0);
     assert_eq!(counts.model_loads.get(), 1);
     assert_eq!(counts.failed_load_cleanups.get(), 0);
     assert_eq!(runtime.snapshot().reserved_footprint, model_footprint());
@@ -741,7 +1200,6 @@ fn invalid_prepared_plans_are_rejected_before_materialization() {
         Faults::OVERFLOWING_FINAL_FOOTPRINT,
         Faults::OVERFLOWING_LOADING_PEAK,
         Faults::LOADING_PEAK_BELOW_FINAL,
-        Faults::MISMATCHED_LOADING_CACHE,
         Faults::RECLASSIFIED_LOADING_PEAK,
     ] {
         let counts = Rc::new(CleanupCounts::default());
@@ -752,11 +1210,92 @@ fn invalid_prepared_plans_are_rejected_before_materialization() {
             Err(RuntimeError::BackendContractViolation)
         );
         assert_eq!(counts.preparations.get(), 1);
+        assert_eq!(counts.plan_reads.get(), 1);
+        assert_eq!(counts.prepared_drops.get(), 1);
+        assert_eq!(counts.retained_prepared_drops.get(), 0);
         assert_eq!(counts.model_loads.get(), 0);
         assert_eq!(counts.failed_load_cleanups.get(), 0);
         assert_eq!(counts.model_cleanups.get(), 0);
         assert_empty(&runtime);
     }
+}
+
+#[test]
+fn plan_is_read_once_and_cleanup_retries_use_accepted_evidence() -> TestResult {
+    let counts = Rc::new(CleanupCounts::default());
+    let faults = Faults::FAIL_LOAD
+        .union(Faults::FAIL_FAILED_LOAD_CLEANUP_ONCE)
+        .union(Faults::MUTATE_FAILED_PLAN_ON_CLEANUP_FAILURE)
+        .union(Faults::ALTERNATING_PLAN_REPORT);
+    let mut runtime = runtime(faults, Rc::clone(&counts));
+
+    assert!(matches!(
+        load(&mut runtime),
+        Err(RuntimeError::CleanupFailed(_))
+    ));
+    assert_eq!(counts.plan_reads.get(), 1);
+    assert_eq!(counts.prepared_drops.get(), 0);
+    assert_eq!(
+        runtime
+            .model_cleanup_state(ModelId::new(1))
+            .map(|state| state.ownership),
+        Some(RetainedOwnership::Exact(loading_peak_footprint()))
+    );
+    assert!(matches!(
+        runtime.poll_cleanup().map_err(debug_error)?,
+        CleanupPoll::Released(state)
+            if state.ownership == RetainedOwnership::Released && !state.exhausted()
+    ));
+    assert_eq!(counts.plan_reads.get(), 1);
+    assert_eq!(counts.prepared_drops.get(), 1);
+    assert_eq!(counts.retained_prepared_drops.get(), 0);
+    assert_empty(&runtime);
+    Ok(())
+}
+
+#[test]
+fn retained_failed_transaction_release_then_reload_advances_generation() -> TestResult {
+    let counts = Rc::new(CleanupCounts::default());
+    let mut runtime = runtime_with_resources(
+        Faults::default(),
+        Rc::clone(&counts),
+        3,
+        1,
+        1,
+        MemoryBudget {
+            host_bytes: 1_024,
+            device_bytes: 0,
+        },
+    );
+    let failed_source =
+        source_with_faults(Faults::FAIL_LOAD.union(Faults::FAIL_FAILED_LOAD_CLEANUP_ONCE));
+    assert!(matches!(
+        load_model_id(&mut runtime, 1, failed_source),
+        Err(RuntimeError::CleanupFailed(_))
+    ));
+    assert!(matches!(
+        runtime.poll_cleanup().map_err(debug_error)?,
+        CleanupPoll::Released(_)
+    ));
+    let loaded = load_model_id(&mut runtime, 1, DEFAULT_SOURCE).map_err(debug_error)?;
+    assert_eq!(loaded.handle.generation, ModelGeneration::new(2));
+    assert!(matches!(
+        runtime.unload_model(
+            expected_handle(1),
+            UnloadPolicy::RejectIfBusy,
+            MonotonicMillis::new(0),
+        ),
+        Err(RuntimeError::StaleModelHandle { current, .. }) if current == loaded.handle
+    ));
+    runtime
+        .unload_model(
+            loaded.handle,
+            UnloadPolicy::RejectIfBusy,
+            MonotonicMillis::new(0),
+        )
+        .map_err(debug_error)?;
+    assert_empty(&runtime);
+    Ok(())
 }
 
 #[test]
@@ -827,8 +1366,9 @@ fn failed_load_cleanup_failure_retains_owner_and_full_loading_peak() {
                 && !state.exhausted()
                 && state.resource
                     == (CleanupResource::FailedLoad {
-                        model_id: ModelId::new(1),
+                        handle: expected_handle(1),
                     })
+                && state.ownership == RetainedOwnership::Exact(loading_peak_footprint())
     ));
     assert_eq!(counts.failed_load_cleanups.get(), 1);
     assert_eq!(counts.successful_failed_load_cleanups.get(), 0);
@@ -858,8 +1398,10 @@ fn failed_load_cleanup_retry_releases_owner_and_accounting_once() -> TestResult 
             if state.attempts == 2
                 && state.resource
                     == (CleanupResource::FailedLoad {
-                        model_id: ModelId::new(1),
+                        handle: expected_handle(1),
                     })
+                && state.ownership == RetainedOwnership::Released
+                && !state.exhausted()
     ));
     assert_eq!(
         runtime.poll_cleanup().map_err(debug_error)?,
@@ -904,16 +1446,23 @@ fn failed_load_cleanup_exhaustion_survives_shutdown_accounted_and_owned() {
     ));
     assert!(matches!(
         runtime.shutdown(),
-        Err(RuntimeError::CleanupRetryExhausted(state))
+        Err(RuntimeError::TerminalCleanupRetention { first: state, summary })
             if state.attempts == 3
                 && state.exhausted()
                 && state.resource
                     == (CleanupResource::FailedLoad {
-                        model_id: ModelId::new(1),
+                        handle: expected_handle(1),
                     })
+                && state.ownership == RetainedOwnership::Exact(loading_peak_footprint())
                 && state.failure.primary_operation == RuntimeOperation::ModelLoad
                 && state.failure.primary_failure == FailureClass::Load
+                && state.failure.primary_detail
+                    == FailureDetail::Load(LoadError::Backend(backend_failure(5)))
                 && state.failure.cleanup_operation == RuntimeOperation::FailedLoadCleanup
+                && summary.failed_preparations == 1
+                && summary.verified_models == 0
+                && summary.incompatible_models == 0
+                && summary.sequences == 0
     ));
     assert_eq!(counts.failed_load_cleanups.get(), 3);
     assert_eq!(counts.successful_failed_load_cleanups.get(), 0);
@@ -1093,10 +1642,10 @@ fn repeated_sequence_cleanup_failure_exhausts_without_releasing_accounting() -> 
                 && matches!(
                     state.resource,
                     CleanupResource::Sequence {
-                        model_id,
+                        handle,
                         request_id,
                         sequence_id,
-                    } if model_id == loaded.handle.id
+                    } if handle == loaded.handle
                         && request_id == RequestId::new(10)
                         && sequence_id == SequenceId::new(100)
                 )
@@ -1114,10 +1663,148 @@ fn repeated_sequence_cleanup_failure_exhausts_without_releasing_accounting() -> 
     assert_eq!(snapshot.reserved_footprint, checked_total_footprint());
     assert!(matches!(
         runtime.shutdown(),
-        Err(RuntimeError::CleanupRetryExhausted(state))
-            if state.attempts == 3 && state.exhausted()
+        Err(RuntimeError::TerminalCleanupRetention { first: state, summary })
+            if state.attempts == 3
+                && state.exhausted()
+                && summary.sequences == 1
+                && summary.failed_preparations == 0
+                && summary.verified_models == 1
+                && summary.incompatible_models == 0
     ));
     assert_eq!(counts.sequence_destructions.get(), 3);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the six-owner fairness scenario keeps class and within-class poll order explicit"
+)]
+fn cleanup_selection_rotates_across_classes_and_owners() -> TestResult {
+    let counts = Rc::new(CleanupCounts::default());
+    let mut runtime = runtime_with_resources(
+        Faults::default(),
+        Rc::clone(&counts),
+        2,
+        6,
+        4,
+        MemoryBudget {
+            host_bytes: 10_000,
+            device_bytes: 10_000,
+        },
+    );
+
+    let sequence_model = load_model_id(
+        &mut runtime,
+        1,
+        source_with_faults(Faults::FAIL_SEQUENCE_DESTRUCTION),
+    )
+    .map_err(debug_error)?;
+    start(&mut runtime, sequence_model.handle, 10, 100).map_err(debug_error)?;
+    assert!(matches!(
+        runtime.cancel_request(RequestId::new(10), CancellationReason::UserRequested),
+        Err(RuntimeError::CleanupFailed(_))
+    ));
+    let second_sequence_model = load_model_id(
+        &mut runtime,
+        5,
+        source_with_faults(Faults::FAIL_SEQUENCE_DESTRUCTION),
+    )
+    .map_err(debug_error)?;
+    start(&mut runtime, second_sequence_model.handle, 11, 101).map_err(debug_error)?;
+    assert!(matches!(
+        runtime.cancel_request(RequestId::new(11), CancellationReason::UserRequested),
+        Err(RuntimeError::CleanupFailed(_))
+    ));
+
+    assert!(matches!(
+        load_model_id(
+            &mut runtime,
+            2,
+            source_with_faults(Faults::FAIL_LOAD.union(Faults::FAIL_FAILED_LOAD_CLEANUP),),
+        ),
+        Err(RuntimeError::CleanupFailed(_))
+    ));
+    assert!(matches!(
+        load_model_id(
+            &mut runtime,
+            6,
+            source_with_faults(Faults::FAIL_LOAD.union(Faults::FAIL_FAILED_LOAD_CLEANUP),),
+        ),
+        Err(RuntimeError::CleanupFailed(_))
+    ));
+
+    let verified = load_model_id(
+        &mut runtime,
+        3,
+        source_with_faults(Faults::FAIL_MODEL_CLEANUP),
+    )
+    .map_err(debug_error)?;
+    assert!(matches!(
+        runtime.unload_model(
+            verified.handle,
+            UnloadPolicy::RejectIfBusy,
+            MonotonicMillis::new(0),
+        ),
+        Err(RuntimeError::CleanupFailed(_))
+    ));
+
+    assert!(matches!(
+        load_model_id(
+            &mut runtime,
+            4,
+            source_with_faults(Faults::WRONG_EXECUTION_SCALAR.union(Faults::FAIL_MODEL_CLEANUP),),
+        ),
+        Err(RuntimeError::CleanupFailed(_))
+    ));
+
+    let expected = [
+        CleanupResource::Sequence {
+            handle: sequence_model.handle,
+            request_id: RequestId::new(10),
+            sequence_id: SequenceId::new(100),
+        },
+        CleanupResource::FailedLoad {
+            handle: expected_handle(2),
+        },
+        CleanupResource::Model {
+            handle: verified.handle,
+        },
+        CleanupResource::Sequence {
+            handle: second_sequence_model.handle,
+            request_id: RequestId::new(11),
+            sequence_id: SequenceId::new(101),
+        },
+        CleanupResource::FailedLoad {
+            handle: expected_handle(6),
+        },
+        CleanupResource::IncompatibleModel {
+            handle: expected_handle(4),
+        },
+    ];
+    for resource in expected {
+        assert!(matches!(
+            runtime.poll_cleanup().map_err(debug_error)?,
+            CleanupPoll::Exhausted(state)
+                if state.resource == resource && state.attempts == 2
+        ));
+    }
+    assert_eq!(
+        runtime.poll_cleanup().map_err(debug_error)?,
+        CleanupPoll::Idle
+    );
+
+    assert!(matches!(
+        runtime.shutdown(),
+        Err(RuntimeError::TerminalCleanupRetention { summary, .. })
+            if summary.failed_preparations == 2
+                && summary.verified_models == 3
+                && summary.incompatible_models == 1
+                && summary.sequences == 2
+    ));
+    drop(runtime);
+    assert_eq!(counts.retained_prepared_drops.get(), 0);
+    assert_eq!(counts.model_drops_while_owned.get(), 0);
     Ok(())
 }
 
@@ -1174,9 +1861,10 @@ fn normal_model_unload_failure_uses_the_bounded_cleanup_state_machine() -> TestR
         runtime.poll_cleanup().map_err(debug_error)?,
         CleanupPoll::Exhausted(state)
             if state.attempts == 3
+                && state.ownership == RetainedOwnership::Exact(model_footprint())
                 && matches!(
                     state.resource,
-                    CleanupResource::Model { model_id } if model_id == loaded.handle.id
+                    CleanupResource::Model { handle } if handle == loaded.handle
                 )
     ));
     assert_eq!(
@@ -1209,14 +1897,19 @@ fn shutdown_reports_model_cleanup_exhaustion_with_shutdown_as_primary() -> TestR
 
     assert!(matches!(
         runtime.shutdown(),
-        Err(RuntimeError::CleanupRetryExhausted(state))
+        Err(RuntimeError::TerminalCleanupRetention { first: state, summary })
             if state.attempts == 3
                 && state.failure.primary_operation == RuntimeOperation::Shutdown
                 && state.failure.primary_failure == FailureClass::Shutdown
+                && state.ownership == RetainedOwnership::Exact(model_footprint())
                 && matches!(
                     state.resource,
-                    CleanupResource::Model { model_id } if model_id == loaded.handle.id
+                    CleanupResource::Model { handle } if handle == loaded.handle
                 )
+                && summary.verified_models == 1
+                && summary.failed_preparations == 0
+                && summary.incompatible_models == 0
+                && summary.sequences == 0
     ));
     assert_eq!(counts.model_cleanups.get(), 3);
     let snapshot = runtime.snapshot();
@@ -1285,16 +1978,34 @@ fn runtime_with_limits(
     maximum_attempts: u32,
     host_bytes: u64,
 ) -> InferenceRuntime<FaultLoader> {
+    runtime_with_resources(
+        faults,
+        counts,
+        maximum_attempts,
+        1,
+        2,
+        MemoryBudget {
+            host_bytes,
+            device_bytes: 0,
+        },
+    )
+}
+
+fn runtime_with_resources(
+    faults: Faults,
+    counts: Rc<CleanupCounts>,
+    maximum_attempts: u32,
+    maximum_models: u32,
+    maximum_requests: u32,
+    memory_budget: MemoryBudget,
+) -> InferenceRuntime<FaultLoader> {
     let maximum_attempts = NonZeroU32::new(maximum_attempts).unwrap_or(NonZeroU32::MIN);
     InferenceRuntime::new(
         FaultLoader { faults, counts },
         RuntimeLimits::new(
-            NonZeroU32::MIN,
-            NonZeroU32::new(2).unwrap_or(NonZeroU32::MIN),
-            MemoryBudget {
-                host_bytes,
-                device_bytes: 0,
-            },
+            NonZeroU32::new(maximum_models).unwrap_or(NonZeroU32::MIN),
+            NonZeroU32::new(maximum_requests).unwrap_or(NonZeroU32::MIN),
+            memory_budget,
         )
         .with_cleanup_retry_policy(CleanupRetryPolicy::new(maximum_attempts)),
     )
@@ -1310,8 +2021,16 @@ fn load_source(
     runtime: &mut InferenceRuntime<FaultLoader>,
     source: FaultSource,
 ) -> Result<inference_runtime::LoadReceipt, RuntimeError> {
+    load_model_id(runtime, 1, source)
+}
+
+fn load_model_id(
+    runtime: &mut InferenceRuntime<FaultLoader>,
+    model_id: u64,
+    source: FaultSource,
+) -> Result<inference_runtime::LoadReceipt, RuntimeError> {
     runtime.load_model(
-        ModelId::new(1),
+        ModelId::new(model_id),
         &source,
         ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu),
     )
@@ -1378,6 +2097,13 @@ fn assert_only_model_reserved(runtime: &InferenceRuntime<FaultLoader>) {
     );
 }
 
+const fn source_with_faults(faults: Faults) -> FaultSource {
+    FaultSource {
+        faults,
+        ..DEFAULT_SOURCE
+    }
+}
+
 const fn descriptor(source_scalar_type: ScalarType) -> ModelDescriptor {
     ModelDescriptor {
         backend: BACKEND_ID,
@@ -1399,6 +2125,7 @@ const fn descriptor(source_scalar_type: ScalarType) -> ModelDescriptor {
             maximum_prefill_batch: 4,
         },
         estimated_footprint: model_footprint(),
+        sequence_cache_bytes_per_token: 0,
     }
 }
 
@@ -1408,7 +2135,6 @@ const fn model_footprint() -> MemoryFootprint {
         device_weight_bytes: 0,
         host_working_bytes: 10,
         device_working_bytes: 0,
-        cache_bytes_per_token: 0,
     }
 }
 
@@ -1418,7 +2144,6 @@ const fn loading_peak_footprint() -> MemoryFootprint {
         device_weight_bytes: 0,
         host_working_bytes: 40,
         device_working_bytes: 0,
-        cache_bytes_per_token: 0,
     }
 }
 
@@ -1432,7 +2157,6 @@ const fn checked_total_footprint() -> MemoryFootprint {
         device_weight_bytes: 0,
         host_working_bytes: 18,
         device_working_bytes: 0,
-        cache_bytes_per_token: 0,
     }
 }
 
@@ -1442,8 +2166,91 @@ const fn sequence_footprint() -> MemoryFootprint {
         device_weight_bytes: 0,
         host_working_bytes: 8,
         device_working_bytes: 0,
-        cache_bytes_per_token: 0,
     }
+}
+
+fn complete_report_cases() -> [(Faults, MemoryFootprint, ConservativeFootprint); 8] {
+    [
+        (
+            Faults::REPORTED_LARGER_THAN_PEAK,
+            MemoryFootprint {
+                host_weight_bytes: 200,
+                device_weight_bytes: 0,
+                host_working_bytes: 100,
+                device_working_bytes: 0,
+            },
+            ConservativeFootprint::Known(MemoryFootprint {
+                host_weight_bytes: 200,
+                device_weight_bytes: 0,
+                host_working_bytes: 100,
+                device_working_bytes: 0,
+            }),
+        ),
+        (
+            Faults::REPORTED_RECLASSIFIED_TO_DEVICE,
+            MemoryFootprint {
+                host_weight_bytes: 0,
+                device_weight_bytes: 100,
+                host_working_bytes: 0,
+                device_working_bytes: 10,
+            },
+            ConservativeFootprint::Known(MemoryFootprint {
+                host_weight_bytes: 100,
+                device_weight_bytes: 100,
+                host_working_bytes: 40,
+                device_working_bytes: 10,
+            }),
+        ),
+        (
+            Faults::REPORTED_OVERFLOWING_HOST,
+            MemoryFootprint {
+                host_weight_bytes: u64::MAX,
+                device_weight_bytes: 0,
+                host_working_bytes: 1,
+                device_working_bytes: 0,
+            },
+            ConservativeFootprint::Overflow,
+        ),
+        (
+            Faults::REPORTED_OVERFLOWING_DEVICE,
+            MemoryFootprint {
+                host_weight_bytes: 100,
+                device_weight_bytes: u64::MAX,
+                host_working_bytes: 10,
+                device_working_bytes: 1,
+            },
+            ConservativeFootprint::Overflow,
+        ),
+        (
+            Faults::REPORTED_SMALLER_THAN_FINAL,
+            MemoryFootprint {
+                host_weight_bytes: 50,
+                device_weight_bytes: 0,
+                host_working_bytes: 0,
+                device_working_bytes: 0,
+            },
+            ConservativeFootprint::Known(loading_peak_footprint()),
+        ),
+        (
+            Faults::WRONG_DEVICE_ID,
+            model_footprint(),
+            ConservativeFootprint::Known(loading_peak_footprint()),
+        ),
+        (
+            Faults::WRONG_EXECUTION_SCALAR,
+            model_footprint(),
+            ConservativeFootprint::Known(loading_peak_footprint()),
+        ),
+        (
+            Faults::MISMATCHED_DESCRIPTOR,
+            model_footprint(),
+            ConservativeFootprint::Known(loading_peak_footprint()),
+        ),
+    ]
+}
+
+const fn expected_handle(model_id: u64) -> ModelHandle {
+    ModelHandle::new(ModelId::new(model_id), ModelGeneration::new(1))
 }
 
 const fn backend_failure(code: u32) -> BackendFailure {

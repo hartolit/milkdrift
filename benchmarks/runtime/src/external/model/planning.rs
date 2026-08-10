@@ -85,7 +85,7 @@ pub(super) fn plan_resolved_model(
     let planned = PlannedModelEvidence {
         prepared_load: PreparedLoadEvidence {
             planned_execution_device: requested_device_identity(requested_device),
-            exact_final_footprint: footprint_record(plan.expected_footprint),
+            exact_final_footprint: footprint_record(plan.final_footprint),
             loading_peak_footprint: footprint_record(plan.loading_peak_footprint),
             e1_load_accepted: false,
             e0_reserved_ownership_observed: false,
@@ -270,9 +270,12 @@ fn validate_exact_adapter_plan(
         plan.execution_scalar_type,
         requested_device,
     )?;
-    validate_inspection_footprint(descriptor.estimated_footprint)?;
+    validate_inspection_footprint(
+        descriptor.estimated_footprint,
+        descriptor.sequence_cache_bytes_per_token,
+    )?;
     if requested_device == RequestedDevice::Cpu
-        && descriptor.estimated_footprint != plan.expected_footprint
+        && descriptor.estimated_footprint != plan.final_footprint
     {
         return Err(BenchmarkError::new(
             "CPU prepare_load exact final footprint differed from the same source's exact CPU inspection footprint",
@@ -311,16 +314,19 @@ fn validate_scalar_facts(
     })
 }
 
-fn validate_inspection_footprint(footprint: MemoryFootprint) -> BenchmarkResult {
+fn validate_inspection_footprint(
+    footprint: MemoryFootprint,
+    sequence_cache_bytes_per_token: u64,
+) -> BenchmarkResult {
     if footprint.checked_host_bytes().is_none()
         || footprint.checked_device_bytes().is_none()
         || footprint.host_weight_bytes == 0
         || footprint.device_weight_bytes != 0
         || footprint.device_working_bytes != 0
-        || footprint.cache_bytes_per_token == 0
+        || sequence_cache_bytes_per_token == 0
     {
         return Err(BenchmarkError::new(
-            "device-independent inspection did not expose a nonzero exact CPU tensor footprint",
+            "device-independent inspection did not expose a nonzero exact CPU tensor footprint and separate sequence-cache planning rate",
         ));
     }
     Ok(())
@@ -333,11 +339,7 @@ fn validate_recorded_footprints(
 ) -> BenchmarkResult {
     let final_footprint = memory_footprint(exact_final);
     let loading_footprint = memory_footprint(loading_peak);
-    let contains_final = loading_footprint.host_weight_bytes >= final_footprint.host_weight_bytes
-        && loading_footprint.device_weight_bytes >= final_footprint.device_weight_bytes
-        && loading_footprint.host_working_bytes >= final_footprint.host_working_bytes
-        && loading_footprint.device_working_bytes >= final_footprint.device_working_bytes
-        && loading_footprint.cache_bytes_per_token == final_footprint.cache_bytes_per_token;
+    let contains_final = loading_footprint.contains_components(final_footprint);
     let placement_matches = match requested_device {
         RequestedDevice::Cpu => {
             final_footprint.host_weight_bytes > 0
@@ -411,7 +413,6 @@ const fn memory_footprint(value: MemoryFootprintRecord) -> MemoryFootprint {
         device_weight_bytes: value.device_weight_bytes,
         host_working_bytes: value.host_working_bytes,
         device_working_bytes: value.device_working_bytes,
-        cache_bytes_per_token: value.cache_bytes_per_token,
     }
 }
 

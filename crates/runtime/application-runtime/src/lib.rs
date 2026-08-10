@@ -1,6 +1,11 @@
 //! Frontend-neutral orchestration for local model acquisition, lifecycle, and generation.
 
 #![forbid(unsafe_code)]
+#![expect(
+    clippy::large_enum_variant,
+    clippy::large_types_passed_by_value,
+    reason = "E1 forwards E0's bounded Copy cleanup evidence without introducing boxing; representation changes remain a later application concern"
+)]
 
 mod chat;
 mod configuration;

@@ -21,7 +21,7 @@ pub(crate) struct CandleLlamaModelParameters {
     pub(crate) handle: ModelHandle,
     pub(crate) execution_device: ExecutionDevice,
     pub(crate) descriptor: ModelDescriptor,
-    pub(crate) accounted_footprint: MemoryFootprint,
+    pub(crate) reported_footprint: MemoryFootprint,
     pub(crate) config: Config,
     pub(crate) dtype: DType,
     pub(crate) execution_scalar_type: ScalarType,
@@ -34,7 +34,7 @@ pub struct CandleLlamaModel {
     handle: ModelHandle,
     execution_device: ExecutionDevice,
     descriptor: ModelDescriptor,
-    accounted_footprint: MemoryFootprint,
+    reported_footprint: MemoryFootprint,
     vocabulary_size: usize,
     config: Config,
     dtype: DType,
@@ -51,7 +51,7 @@ impl CandleLlamaModel {
             handle: parameters.handle,
             execution_device: parameters.execution_device,
             descriptor: parameters.descriptor,
-            accounted_footprint: parameters.accounted_footprint,
+            reported_footprint: parameters.reported_footprint,
             vocabulary_size: parameters.config.vocab_size,
             config: parameters.config,
             dtype: parameters.dtype,
@@ -83,20 +83,25 @@ impl CandleLlamaModel {
     ) -> Result<MemoryFootprint, ModelError> {
         let maximum_tokens = u64::from(configuration.maximum_tokens.get());
         let cache_bytes = self
-            .accounted_footprint
-            .cache_bytes_per_token
+            .descriptor
+            .sequence_cache_bytes_per_token
             .checked_mul(maximum_tokens)
             .ok_or_else(|| numeric_model_error(self.backend))?;
-        let head_dimension = self.config.hidden_size / self.config.num_attention_heads;
+        let head_dimension = self
+            .config
+            .hidden_size
+            .checked_div(self.config.num_attention_heads)
+            .ok_or_else(|| numeric_model_error(self.backend))?;
+        let scalar_bytes =
+            dtype_bytes(self.dtype).ok_or_else(|| numeric_model_error(self.backend))?;
         let rope_bytes = u64::try_from(self.config.max_position_embeddings)
             .ok()
             .and_then(|positions| positions.checked_mul(u64::try_from(head_dimension).ok()?))
-            .and_then(|elements| elements.checked_mul(dtype_bytes(self.dtype)))
+            .and_then(|elements| elements.checked_mul(scalar_bytes))
             .ok_or_else(|| numeric_model_error(self.backend))?;
         let working_bytes = cache_bytes
             .checked_add(rope_bytes)
             .ok_or_else(|| numeric_model_error(self.backend))?;
-        let cache_bytes_per_token = self.accounted_footprint.cache_bytes_per_token;
 
         match self.execution_device.kind {
             DeviceKind::Cpu => Ok(MemoryFootprint {
@@ -104,14 +109,12 @@ impl CandleLlamaModel {
                 device_weight_bytes: 0,
                 host_working_bytes: working_bytes,
                 device_working_bytes: 0,
-                cache_bytes_per_token,
             }),
             DeviceKind::Cuda => Ok(MemoryFootprint {
                 host_weight_bytes: 0,
                 device_weight_bytes: 0,
                 host_working_bytes: 0,
                 device_working_bytes: working_bytes,
-                cache_bytes_per_token,
             }),
             _ => Err(ModelError::Unsupported),
         }
@@ -192,8 +195,8 @@ impl LoadedModel for CandleLlamaModel {
         self.execution_device
     }
 
-    fn accounted_footprint(&self) -> MemoryFootprint {
-        self.accounted_footprint
+    fn reported_footprint(&self) -> MemoryFootprint {
+        self.reported_footprint
     }
 
     fn plan_sequence(
@@ -393,7 +396,7 @@ pub struct CandleLlamaSequence {
 }
 
 impl CandleLlamaSequence {
-    /// Returns the estimated sequence-specific memory footprint.
+    /// Returns the exact planned maximum sequence-specific ownership.
     #[must_use]
     pub const fn expected_footprint(&self) -> MemoryFootprint {
         self.expected_footprint
@@ -453,11 +456,11 @@ fn copy_cpu_storage(
     Ok(())
 }
 
-const fn dtype_bytes(dtype: DType) -> u64 {
+const fn dtype_bytes(dtype: DType) -> Option<u64> {
     match dtype {
-        DType::F32 => 4,
-        DType::F16 | DType::BF16 => 2,
-        _ => 0,
+        DType::F32 => Some(4),
+        DType::F16 | DType::BF16 => Some(2),
+        _ => None,
     }
 }
 

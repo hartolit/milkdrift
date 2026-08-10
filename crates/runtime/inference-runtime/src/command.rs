@@ -8,7 +8,9 @@ use domain_contracts::{
     RequestId, ScalarType, SequenceConfiguration, SequenceId, TokenId, UnloadPolicy,
 };
 
-use crate::{CleanupRetryState, GenerationAdmission, GenerationRequest, RuntimeError};
+use crate::{
+    CleanupRetryState, ConservativeFootprint, GenerationAdmission, GenerationRequest, RuntimeError,
+};
 
 /// Caller-assigned command correlation value.
 #[repr(transparent)]
@@ -97,6 +99,15 @@ pub enum UnloadStatus {
     Unloaded,
 }
 
+/// Aggregate evidence for incompatible complete-model ownership.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnverifiedOwnershipSummary {
+    /// Number of incompatible complete-model owners.
+    pub owners: u32,
+    /// Checked aggregate conservative reservation evidence for those owners.
+    pub conservative_footprint: ConservativeFootprint,
+}
+
 /// Aggregate runtime state without owned model or backend references.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RuntimeSnapshot {
@@ -104,8 +115,15 @@ pub struct RuntimeSnapshot {
     pub loaded_models: u32,
     /// Number of active request-owned sequences.
     pub active_requests: u32,
-    /// Aggregate reserved footprint, including quarantined resources.
+    /// Exact aggregate reservation for verified and exact retained ownership.
+    ///
+    /// Incompatible complete models are excluded rather than falsely represented
+    /// as exact; their evidence is exposed by [`Self::unverified_ownership`].
     pub reserved_footprint: MemoryFootprint,
+    /// Aggregate unverified complete-model ownership evidence, when present.
+    pub unverified_ownership: Option<UnverifiedOwnershipSummary>,
+    /// Whether unverified ownership rejects every new resource admission.
+    pub admission_blocked: bool,
     /// Generation tasks retaining host workspaces until terminal output is released.
     pub generation_workspaces: u32,
     /// Host workspace bytes retained by active or terminal generation tasks.
@@ -124,6 +142,15 @@ pub struct RuntimeSnapshot {
     pub maintenance_error: Option<RuntimeError>,
     /// Whether shutdown rejects new work.
     pub shutting_down: bool,
+}
+
+/// Snapshot of one retained model-level cleanup owner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RetainedModelSnapshot {
+    /// Accepted generation-safe identity reserved by the transaction.
+    pub handle: ModelHandle,
+    /// Complete retry, failure, resource-origin, and ownership-certainty state.
+    pub cleanup: CleanupRetryState,
 }
 
 /// Snapshot of one resident model generation.
@@ -278,6 +305,10 @@ impl<S> RuntimeCommand<S> {
 }
 
 /// Event returned through the bounded worker event queue.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "snapshot events carry bounded inline cleanup evidence and move through an already bounded cold-path queue"
+)]
 pub enum RuntimeEvent {
     /// Completion of a model-load command.
     ModelLoaded {
@@ -355,6 +386,8 @@ pub enum RuntimeEvent {
         runtime: RuntimeSnapshot,
         /// Per-model state allocated at this cold inspection boundary.
         models: Vec<ModelSnapshot>,
+        /// Retained model-level cleanup owners, bounded by the model limit.
+        retained_models: Vec<RetainedModelSnapshot>,
     },
     /// Worker shutdown response.
     Shutdown {

@@ -80,6 +80,10 @@ pub struct GenerationRequest {
 
 /// Stable generation outcome retained independently from cleanup disposition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "failed outcomes retain bounded allocation-free runtime evidence and remain Copy"
+)]
 pub enum GenerationOutcome {
     /// Generation reached a graceful terminal reason.
     Finished(FinishReason),
@@ -156,6 +160,10 @@ struct GenerationTask {
 }
 
 #[derive(Clone, Copy)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "terminal publication retains bounded cleanup evidence inline until ordered release"
+)]
 enum GenerationPhase {
     Prefill,
     Decode,
@@ -831,7 +839,6 @@ fn generation_workspace_footprint(
         device_weight_bytes: 0,
         host_working_bytes,
         device_working_bytes: 0,
-        cache_bytes_per_token: 0,
     })
 }
 

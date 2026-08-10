@@ -4,8 +4,8 @@ use domain_contracts::{
 };
 
 use crate::{
-    CleanupFailureReport, CleanupResource, CleanupRetryState, FailureClass, RuntimeError,
-    RuntimeOperation, UnloadReceipt, UnloadStatus,
+    CleanupFailureReport, CleanupRetryState, FailureClass, FailureDetail, RetainedOwnership,
+    RuntimeError, RuntimeOperation, UnloadReceipt, UnloadStatus,
 };
 
 use super::{
@@ -163,16 +163,20 @@ where
 
         let pending_unload = self.models.iter().find_map(|(model_id, slot)| {
             if slot.lifecycle.state() == ModelLifecycleState::Unloading {
-                Some((*model_id, slot.handle))
+                Some((
+                    *model_id,
+                    slot.handle,
+                    slot.cancelled_requests_during_unload,
+                ))
             } else {
                 None
             }
         });
-        if let Some((model_id, handle)) = pending_unload {
+        if let Some((model_id, handle, cancelled_requests)) = pending_unload {
             let result = self.release_model(model_id).map(|()| UnloadReceipt {
                 handle,
                 status: UnloadStatus::Unloaded,
-                cancelled_requests: 0,
+                cancelled_requests,
             });
             return Some((handle, result));
         }
@@ -196,7 +200,7 @@ where
             match self.remove_request(
                 request_id,
                 RuntimeOperation::Cancellation,
-                FailureClass::Cancellation,
+                FailureDetail::Class(FailureClass::Cancellation),
             ) {
                 Ok(()) => {
                     cancelled = cancelled.saturating_add(1);
@@ -236,12 +240,13 @@ where
         primary_operation: RuntimeOperation,
         primary_failure: FailureClass,
     ) -> Result<(), RuntimeError> {
-        let cleanup_failure = {
+        let next_reserved = {
             let slot = self
                 .models
-                .get_mut(&model_id)
+                .get(&model_id)
                 .ok_or(RuntimeError::ModelNotLoaded(model_id))?;
-            if !slot.requests.is_empty()
+            if self.pending_models.contains_key(&model_id)
+                || !slot.requests.is_empty()
                 || !slot.pending_sequences.is_empty()
                 || slot.lifecycle.state() != ModelLifecycleState::Unloading
                 || slot.reserved_footprint != slot.model_footprint
@@ -250,51 +255,46 @@ where
                     domain_contracts::LifecycleError::InvalidTransition,
                 ));
             }
-            slot.model.prepare_unload().err()
+            let mut released_lifecycle = slot.lifecycle;
+            released_lifecycle.complete_unload()?;
+            checked_sub_footprint(self.reserved_footprint, slot.model_footprint)?
         };
 
-        if let Some(cleanup) = cleanup_failure {
-            let report = CleanupFailureReport::new(
+        let mut slot = self
+            .models
+            .remove(&model_id)
+            .ok_or(RuntimeError::ModelNotLoaded(model_id))?;
+        if let Err(cleanup) = slot.model.prepare_unload() {
+            let report = CleanupFailureReport::with_details(
                 primary_operation,
-                primary_failure,
+                FailureDetail::Class(primary_failure),
                 RuntimeOperation::ModelUnload,
-                RuntimeError::Synchronization(cleanup).failure_class(),
+                FailureDetail::Synchronization(cleanup),
             );
-            let slot = self
-                .models
-                .remove(&model_id)
-                .ok_or(RuntimeError::ModelNotLoaded(model_id))?;
-            self.pending_models.insert(
-                model_id,
-                PendingModel {
-                    owner: PendingModelOwner::Complete(slot.model),
-                    footprint: slot.model_footprint,
-                    failure: report,
-                    attempts: 1,
-                    cancelled_requests: slot.cancelled_requests_during_unload,
-                },
-            );
-            let state = CleanupRetryState {
-                resource: CleanupResource::Model { model_id },
+            let handle = slot.handle;
+            let ownership = RetainedOwnership::Exact(slot.model_footprint);
+            let pending = PendingModel {
+                handle,
+                owner: PendingModelOwner::VerifiedModel(slot.model),
+                ownership,
                 failure: report,
+                attempts: 1,
+                cancelled_requests: slot.cancelled_requests_during_unload,
+            };
+            let state = CleanupRetryState {
+                resource: pending.owner.cleanup_resource(handle),
+                failure: report,
+                ownership,
                 attempts: 1,
                 maximum_attempts: self.maximum_cleanup_attempts(),
             };
+            let replaced = self.pending_models.insert(model_id, pending);
+            debug_assert!(replaced.is_none(), "model release was prevalidated");
             self.last_cleanup = Some(state);
             return Err(cleanup_retention_error(state));
         }
 
-        self.models
-            .get_mut(&model_id)
-            .ok_or(RuntimeError::ModelNotLoaded(model_id))?
-            .lifecycle
-            .complete_unload()?;
-        let slot = self
-            .models
-            .remove(&model_id)
-            .ok_or(RuntimeError::ModelNotLoaded(model_id))?;
-        self.reserved_footprint =
-            checked_sub_footprint(self.reserved_footprint, slot.model_footprint)?;
+        self.reserved_footprint = next_reserved;
         Ok(())
     }
 

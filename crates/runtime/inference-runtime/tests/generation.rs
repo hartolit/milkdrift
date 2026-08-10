@@ -21,12 +21,15 @@ use inference_runtime::{
     CleanupPoll, CleanupResource, CommandTicket, FailureClass, GenerationOutcome,
     GenerationOutputCapacityPolicy, GenerationOutputState, GenerationRequest,
     GenerationStopSequence, HostedRuntime, HostedRuntimeConfiguration, InferenceRuntime,
-    RuntimeCommand, RuntimeError, RuntimeEvent, RuntimeLimits, RuntimeThread, start_hosted_runtime,
+    RetainedOwnership, RuntimeCommand, RuntimeError, RuntimeEvent, RuntimeLimits, RuntimeThread,
+    start_hosted_runtime,
 };
 use sampling::SamplingConfig;
 
 const BACKEND: BackendId = BackendId::new(93);
 const MODEL: ModelId = ModelId::new(1);
+const MODEL_HOST_BYTES: u64 = 100;
+const SEQUENCE_HOST_BYTES: u64 = 32;
 
 const fn cpu_device() -> ExecutionDevice {
     ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu)
@@ -184,7 +187,7 @@ impl PreparedLoad for FakePrepared {
                 counters.successful_failed_load_cleanups.saturating_add(1);
             counters.retained_memory_bytes = counters
                 .retained_memory_bytes
-                .saturating_sub(model_footprint().host_bytes());
+                .saturating_sub(MODEL_HOST_BYTES);
         }
         Ok(())
     }
@@ -207,7 +210,7 @@ struct FakeModel {
     execution_device: ExecutionDevice,
     execution_scalar_type: ScalarType,
     descriptor: ModelDescriptor,
-    accounted_footprint: MemoryFootprint,
+    reported_footprint: MemoryFootprint,
     source: FakeSource,
     counters: Arc<Mutex<Counters>>,
     remaining_destroy_failures: u32,
@@ -260,7 +263,7 @@ impl ModelLoader for FakeLoader {
                 accepted_configuration: *configuration,
                 descriptor: self.inspect(source)?,
                 execution_scalar_type: ScalarType::F32,
-                expected_footprint: model_footprint(),
+                final_footprint: model_footprint(),
                 loading_peak_footprint: model_footprint(),
             },
             source: source.clone(),
@@ -278,7 +281,7 @@ impl ModelLoader for FakeLoader {
         mut prepared: Self::Prepared,
     ) -> Result<Self::Model, FailedLoad<Self::Prepared>> {
         if prepared.source.failed_load_cleanup_failures.is_some() {
-            let retained_bytes = model_footprint().host_bytes();
+            let retained_bytes = MODEL_HOST_BYTES;
             let retained = (|| {
                 let mut counters = self
                     .counters
@@ -315,7 +318,7 @@ impl ModelLoader for FakeLoader {
             counters.loads = counters.loads.saturating_add(1);
             counters.retained_memory_bytes = counters
                 .retained_memory_bytes
-                .saturating_add(model_footprint().host_bytes());
+                .saturating_add(MODEL_HOST_BYTES);
             Ok::<(), LoadError>(())
         })();
         if let Err(primary) = load_attempt {
@@ -329,7 +332,7 @@ impl ModelLoader for FakeLoader {
             execution_device: prepared.configuration.execution_device,
             execution_scalar_type: ScalarType::F32,
             descriptor: prepared.plan.descriptor,
-            accounted_footprint: prepared.plan.expected_footprint,
+            reported_footprint: prepared.plan.final_footprint,
             source: prepared.source.clone(),
             counters: Arc::clone(&self.counters),
             remaining_destroy_failures,
@@ -358,8 +361,8 @@ impl LoadedModel for FakeModel {
         self.execution_scalar_type
     }
 
-    fn accounted_footprint(&self) -> MemoryFootprint {
-        self.accounted_footprint
+    fn reported_footprint(&self) -> MemoryFootprint {
+        self.reported_footprint
     }
 
     fn plan_sequence(
@@ -386,7 +389,7 @@ impl LoadedModel for FakeModel {
         counters.active_sequences = counters.active_sequences.saturating_add(1);
         counters.retained_memory_bytes = counters
             .retained_memory_bytes
-            .saturating_add(sequence_footprint().host_bytes());
+            .saturating_add(SEQUENCE_HOST_BYTES);
         drop(counters);
         Ok(FakeSequence {
             id: sequence_id,
@@ -581,7 +584,7 @@ impl LoadedModel for FakeModel {
             counters.active_sequences = counters.active_sequences.saturating_sub(1);
             counters.retained_memory_bytes = counters
                 .retained_memory_bytes
-                .saturating_sub(sequence_footprint().host_bytes());
+                .saturating_sub(SEQUENCE_HOST_BYTES);
         }
         drop(counters);
         Ok(())
@@ -616,7 +619,7 @@ impl LoadedModel for FakeModel {
             self.model_released = true;
             counters.retained_memory_bytes = counters
                 .retained_memory_bytes
-                .saturating_sub(model_footprint().host_bytes());
+                .saturating_sub(MODEL_HOST_BYTES);
         }
 
         drop(counters);
@@ -789,15 +792,28 @@ fn exhausted_failed_preparation_is_retained_until_process_exit() -> TestResult {
             ticket: CommandTicket::new(61),
         })
         .map_err(|_| "failed-load shutdown command rejected")?;
-    assert!(matches!(
-        hosted
-            .receive_timeout(Duration::from_secs(2))
-            .map_err(|error| format!("failed-load shutdown event: {error:?}"))?,
+    match hosted
+        .receive_timeout(Duration::from_secs(2))
+        .map_err(|error| format!("failed-load shutdown event: {error:?}"))?
+    {
         RuntimeEvent::Shutdown {
-            result: Err(RuntimeError::CleanupRetryExhausted(state)),
+            result: Err(RuntimeError::TerminalCleanupRetention { first, summary }),
             ..
-        } if state.resource == (CleanupResource::FailedLoad { model_id: MODEL })
-    ));
+        } => {
+            assert_eq!(
+                first.resource,
+                CleanupResource::FailedLoad {
+                    handle: ModelHandle::new(MODEL, ModelGeneration::new(1)),
+                }
+            );
+            assert_eq!(first.ownership, RetainedOwnership::Exact(model_footprint()));
+            assert_eq!(summary.failed_preparations, 1);
+            assert_eq!(summary.verified_models, 0);
+            assert_eq!(summary.incompatible_models, 0);
+            assert_eq!(summary.sequences, 0);
+        }
+        _ => return Err("unexpected failed-load shutdown event".into()),
+    }
     drop(hosted);
     thread.join().map_err(|error| error.to_string())?;
 
@@ -805,10 +821,7 @@ fn exhausted_failed_preparation_is_retained_until_process_exit() -> TestResult {
     assert_eq!(counters.loads, 1);
     assert_eq!(counters.failed_load_cleanup_attempts, 3);
     assert_eq!(counters.successful_failed_load_cleanups, 0);
-    assert_eq!(
-        counters.retained_memory_bytes,
-        model_footprint().host_bytes()
-    );
+    assert_eq!(counters.retained_memory_bytes, MODEL_HOST_BYTES);
     assert_eq!(counters.prepared_drops, 0);
     assert_eq!(counters.retained_prepared_drops, 0);
     drop(counters);
@@ -845,10 +858,7 @@ fn backend_failure_and_cleanup_retry_preserve_both_terminal_states() -> TestResu
     assert_eq!(counters.destruction_attempts, 3);
     assert_eq!(counters.successful_destructions, 1);
     assert_eq!(counters.active_sequences, 0);
-    assert_eq!(
-        counters.retained_memory_bytes,
-        model_footprint().host_bytes()
-    );
+    assert_eq!(counters.retained_memory_bytes, MODEL_HOST_BYTES);
     drop(counters);
     shutdown(hosted, thread)
 }
@@ -969,10 +979,7 @@ fn generation_admission_rejects_oversized_prefill_before_native_creation() -> Te
     {
         let counters = counters.lock().map_err(|_| "counter mutex poisoned")?;
         assert_eq!(counters.sequence_creations, 0);
-        assert_eq!(
-            counters.retained_memory_bytes,
-            model_footprint().host_bytes()
-        );
+        assert_eq!(counters.retained_memory_bytes, MODEL_HOST_BYTES);
         drop(counters);
     }
     shutdown(hosted, thread)?;
@@ -1032,16 +1039,17 @@ fn generation_workspace_bytes_are_admitted_before_native_sequence_creation() -> 
     {
         let counters = counters.lock().map_err(|_| "counter mutex poisoned")?;
         assert_eq!(counters.sequence_creations, 0);
-        assert_eq!(
-            counters.retained_memory_bytes,
-            model_footprint().host_bytes()
-        );
+        assert_eq!(counters.retained_memory_bytes, MODEL_HOST_BYTES);
         drop(counters);
     }
     shutdown(hosted, thread)
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the hosted workspace-retention scenario keeps ordered terminal and snapshot evidence together"
+)]
 fn generation_workspace_accounting_is_retained_until_terminal_output_release() -> TestResult {
     let source = FakeSource::scripted([1; 8], 8);
     let (hosted, thread, counters, handle) = hosted(source, 1, 1)?;
@@ -1072,11 +1080,34 @@ fn generation_workspace_accounting_is_retained_until_terminal_output_release() -
         .receive_timeout(Duration::from_secs(2))
         .map_err(|error| format!("snapshot event failed: {error:?}"))?
     {
-        RuntimeEvent::Snapshot { runtime, .. } => {
+        RuntimeEvent::Snapshot {
+            runtime,
+            retained_models,
+            ..
+        } => {
             assert_eq!(runtime.active_requests, 0);
             assert_eq!(runtime.generation_workspaces, 1);
-            assert_eq!(runtime.reserved_generation_workspace.host_bytes(), 64);
-            assert_eq!(runtime.reserved_footprint.host_bytes(), 164);
+            assert_eq!(
+                runtime.reserved_generation_workspace,
+                MemoryFootprint {
+                    host_weight_bytes: 0,
+                    device_weight_bytes: 0,
+                    host_working_bytes: 64,
+                    device_working_bytes: 0,
+                }
+            );
+            assert_eq!(
+                runtime.reserved_footprint,
+                MemoryFootprint {
+                    host_weight_bytes: MODEL_HOST_BYTES,
+                    device_weight_bytes: 0,
+                    host_working_bytes: 64,
+                    device_working_bytes: 0,
+                }
+            );
+            assert!(runtime.unverified_ownership.is_none());
+            assert!(!runtime.admission_blocked);
+            assert!(retained_models.is_empty());
         }
         _ => return Err("unexpected snapshot event".into()),
     }
@@ -1115,13 +1146,20 @@ fn generation_workspace_accounting_is_retained_until_terminal_output_release() -
         .receive_timeout(Duration::from_secs(2))
         .map_err(|error| format!("snapshot event failed: {error:?}"))?
     {
-        RuntimeEvent::Snapshot { runtime, .. } => {
+        RuntimeEvent::Snapshot {
+            runtime,
+            retained_models,
+            ..
+        } => {
             assert_eq!(runtime.generation_workspaces, 0);
             assert_eq!(
                 runtime.reserved_generation_workspace,
                 MemoryFootprint::default()
             );
             assert_eq!(runtime.reserved_footprint, model_footprint());
+            assert!(runtime.unverified_ownership.is_none());
+            assert!(!runtime.admission_blocked);
+            assert!(retained_models.is_empty());
         }
         _ => return Err("unexpected snapshot event".into()),
     }
@@ -1346,11 +1384,17 @@ fn ready_results_preserve_sequence_state_identity_and_capacity() -> TestResult {
             assert!(matches!(
                 cleanup.resource,
                 CleanupResource::Sequence {
+                    handle: retained_handle,
                     request_id: retained_request,
                     sequence_id: retained_sequence,
-                    ..
-                } if retained_request == request_id && retained_sequence == sequence_id
+                } if retained_handle == handle
+                    && retained_request == request_id
+                    && retained_sequence == sequence_id
             ));
+            assert_eq!(
+                cleanup.ownership,
+                RetainedOwnership::Exact(sequence_footprint())
+            );
             assert!(matches!(
                 runtime.poll_cleanup().map_err(debug_error)?,
                 CleanupPoll::Released(_)
@@ -1652,13 +1696,19 @@ fn model_unload_retry_recovers_and_releases_accounting_once() -> TestResult {
         .map_err(|error| format!("snapshot event failed: {error:?}"))?
     {
         RuntimeEvent::Snapshot {
-            runtime, models, ..
+            runtime,
+            models,
+            retained_models,
+            ..
         } => {
             assert_eq!(runtime.loaded_models, 0);
             assert_eq!(runtime.pending_cleanup_models, 0);
             assert_eq!(runtime.exhausted_cleanup_models, 0);
             assert_eq!(runtime.reserved_footprint, MemoryFootprint::default());
+            assert!(runtime.unverified_ownership.is_none());
+            assert!(!runtime.admission_blocked);
             assert!(models.is_empty());
+            assert!(retained_models.is_empty());
         }
         _ => return Err("unexpected snapshot event".into()),
     }
@@ -1775,10 +1825,7 @@ fn healthy_model_progresses_while_another_model_retries_cleanup() -> TestResult 
         assert_eq!(counters.successful_destructions, 2);
         assert_eq!(counters.sampling_opportunities, 3);
         assert_eq!(counters.active_sequences, 0);
-        assert_eq!(
-            counters.retained_memory_bytes,
-            model_footprint().host_bytes().saturating_mul(2)
-        );
+        assert_eq!(counters.retained_memory_bytes, 200);
         drop(counters);
     }
     shutdown(hosted, thread)?;
@@ -2200,16 +2247,16 @@ const fn descriptor(operations: CapabilitySet) -> ModelDescriptor {
             maximum_prefill_batch: 8,
         },
         estimated_footprint: model_footprint(),
+        sequence_cache_bytes_per_token: 0,
     }
 }
 
 const fn model_footprint() -> MemoryFootprint {
     MemoryFootprint {
-        host_weight_bytes: 100,
+        host_weight_bytes: MODEL_HOST_BYTES,
         device_weight_bytes: 0,
         host_working_bytes: 0,
         device_working_bytes: 0,
-        cache_bytes_per_token: 0,
     }
 }
 
@@ -2217,9 +2264,8 @@ const fn sequence_footprint() -> MemoryFootprint {
     MemoryFootprint {
         host_weight_bytes: 0,
         device_weight_bytes: 0,
-        host_working_bytes: 32,
+        host_working_bytes: SEQUENCE_HOST_BYTES,
         device_working_bytes: 0,
-        cache_bytes_per_token: 0,
     }
 }
 

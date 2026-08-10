@@ -3,11 +3,15 @@ use domain_contracts::{
 };
 
 use crate::{
-    CleanupFailureReport, CleanupResource, CleanupRetryState, ModelSnapshot, RuntimeError,
-    RuntimeSnapshot,
+    CleanupFailureReport, CleanupResource, CleanupRetryState, ConservativeFootprint, ModelSnapshot,
+    RetainedModelSnapshot, RetainedOwnership, RuntimeError, RuntimeSnapshot,
+    UnverifiedOwnershipSummary,
 };
 
-use super::{InferenceRuntime, PendingModel, PendingSequence, memory::saturating_u32};
+use super::{
+    InferenceRuntime, PendingModel, PendingSequence,
+    memory::{add_conservative_footprint, saturating_u32},
+};
 
 impl<L> InferenceRuntime<L>
 where
@@ -17,10 +21,13 @@ where
     #[must_use]
     pub fn snapshot(&self) -> RuntimeSnapshot {
         let maximum_attempts = self.maximum_cleanup_attempts();
+        let unverified_ownership = self.unverified_ownership_summary();
         RuntimeSnapshot {
             loaded_models: saturating_u32(self.models.len()),
             active_requests: self.active_requests,
             reserved_footprint: self.reserved_footprint,
+            unverified_ownership,
+            admission_blocked: unverified_ownership.is_some(),
             generation_workspaces: self.generation_workspaces,
             reserved_generation_workspace: self.reserved_generation_workspace,
             pending_cleanup_models: saturating_u32(self.pending_models.len()),
@@ -42,6 +49,28 @@ where
             maintenance_error: self.maintenance_error,
             shutting_down: self.shutting_down,
         }
+    }
+
+    fn unverified_ownership_summary(&self) -> Option<UnverifiedOwnershipSummary> {
+        let mut owners = 0_u32;
+        let mut conservative_footprint =
+            ConservativeFootprint::Known(domain_contracts::MemoryFootprint::default());
+        for pending in self.pending_models.values() {
+            let RetainedOwnership::Unverified {
+                conservative_footprint: owner_footprint,
+                ..
+            } = pending.ownership
+            else {
+                continue;
+            };
+            owners = owners.saturating_add(1);
+            conservative_footprint =
+                add_conservative_footprint(conservative_footprint, owner_footprint);
+        }
+        (owners > 0).then_some(UnverifiedOwnershipSummary {
+            owners,
+            conservative_footprint,
+        })
     }
 
     pub(crate) fn model_lifecycle_state(&self, model_id: ModelId) -> Option<ModelLifecycleState> {
@@ -74,6 +103,18 @@ where
             })
             .collect()
     }
+    /// Collects retained model-level owners at a cold inspection boundary.
+    #[must_use]
+    pub fn retained_model_snapshots(&self) -> Vec<RetainedModelSnapshot> {
+        self.pending_models
+            .values()
+            .map(|pending| RetainedModelSnapshot {
+                handle: pending.handle,
+                cleanup: self.model_cleanup_retry_state(pending),
+            })
+            .collect()
+    }
+
     /// Returns whether a request still owns a normally active sequence.
     #[must_use]
     pub fn is_request_active(&self, request_id: RequestId) -> bool {
@@ -95,7 +136,8 @@ where
             .get(&model_id)?
             .pending_sequences
             .get(&request_id)?;
-        Some(self.sequence_cleanup_state(model_id, pending))
+        let handle = self.models.get(&model_id)?.handle;
+        Some(self.sequence_cleanup_state(handle, pending))
     }
 
     /// Returns the retained two-failure report for one quarantined request.
@@ -110,7 +152,7 @@ where
     pub fn model_cleanup_state(&self, model_id: ModelId) -> Option<CleanupRetryState> {
         self.pending_models
             .get(&model_id)
-            .map(|pending| self.model_cleanup_retry_state(model_id, pending))
+            .map(|pending| self.model_cleanup_retry_state(pending))
     }
 
     /// Returns whether a complete model or failed load is retained for explicit cleanup.
@@ -190,16 +232,17 @@ where
     }
     const fn sequence_cleanup_state(
         &self,
-        model_id: ModelId,
+        handle: ModelHandle,
         pending: &PendingSequence<<L::Model as LoadedModel>::Sequence>,
     ) -> CleanupRetryState {
         CleanupRetryState {
             resource: CleanupResource::Sequence {
-                model_id,
+                handle,
                 request_id: pending.request_id,
                 sequence_id: pending.sequence_id,
             },
             failure: pending.failure,
+            ownership: RetainedOwnership::Exact(pending.footprint),
             attempts: pending.attempts,
             maximum_attempts: self.maximum_cleanup_attempts(),
         }
@@ -207,25 +250,25 @@ where
 
     const fn model_cleanup_retry_state(
         &self,
-        model_id: ModelId,
         pending: &PendingModel<L::Model, L::Prepared>,
     ) -> CleanupRetryState {
         CleanupRetryState {
-            resource: pending.owner.cleanup_resource(model_id),
+            resource: pending.owner.cleanup_resource(pending.handle),
             failure: pending.failure,
+            ownership: pending.ownership,
             attempts: pending.attempts,
             maximum_attempts: self.maximum_cleanup_attempts(),
         }
     }
 
     pub(super) fn first_pending_cleanup_state(&self) -> Option<CleanupRetryState> {
-        for (model_id, slot) in &self.models {
+        for slot in self.models.values() {
             if let Some((_, pending)) = slot.pending_sequences.first_key_value() {
-                return Some(self.sequence_cleanup_state(*model_id, pending));
+                return Some(self.sequence_cleanup_state(slot.handle, pending));
             }
         }
         self.pending_models
             .first_key_value()
-            .map(|(model_id, pending)| self.model_cleanup_retry_state(*model_id, pending))
+            .map(|(_, pending)| self.model_cleanup_retry_state(pending))
     }
 }

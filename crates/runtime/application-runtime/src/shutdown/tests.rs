@@ -107,7 +107,7 @@ impl ModelLoader for TestLoader {
                 accepted_configuration: *configuration,
                 descriptor,
                 execution_scalar_type: ScalarType::F32,
-                expected_footprint: descriptor.estimated_footprint,
+                final_footprint: descriptor.estimated_footprint,
                 loading_peak_footprint: descriptor.estimated_footprint,
             },
         })
@@ -152,7 +152,7 @@ impl LoadedModel for TestModel {
         self.execution_device
     }
 
-    fn accounted_footprint(&self) -> MemoryFootprint {
+    fn reported_footprint(&self) -> MemoryFootprint {
         self.descriptor.estimated_footprint
     }
 
@@ -326,20 +326,28 @@ fn shutdown_cancels_active_request_and_unloads_model() -> TestResult {
 #[test]
 fn failed_cleanup_shutdown_retains_runtime_until_process_exit() -> TestResult {
     let (runtime, thread, counts) = test_runtime_with_counts(true)?;
-    let _loaded = load_model(&runtime, 20)?;
+    let loaded = load_model(&runtime, 20)?;
 
     let outcome =
         shutdown_runtime_worker(&runtime, CommandTicket::new(21), TEST_TIMEOUT, TEST_POLL)
             .map_err(debug_error)?;
-    let RuntimeShutdown::Finished(Err(RuntimeError::CleanupRetryExhausted(state))) = outcome else {
+    let RuntimeShutdown::Finished(Err(RuntimeError::TerminalCleanupRetention {
+        first: state,
+        summary,
+    })) = outcome
+    else {
         return Err(format!("unexpected failed-cleanup shutdown: {outcome:?}"));
     };
     assert_eq!(
         state.resource,
         CleanupResource::Model {
-            model_id: ModelId::new(20),
+            handle: loaded.handle,
         }
     );
+    assert_eq!(summary.verified_models, 1);
+    assert_eq!(summary.failed_preparations, 0);
+    assert_eq!(summary.incompatible_models, 0);
+    assert_eq!(summary.sequences, 0);
     assert_eq!(state.failure.primary_operation, RuntimeOperation::Shutdown);
     assert_eq!(state.failure.primary_failure, FailureClass::Shutdown);
     assert_eq!(
@@ -492,8 +500,8 @@ fn descriptor() -> ModelDescriptor {
             device_weight_bytes: 0,
             host_working_bytes: 0,
             device_working_bytes: 0,
-            cache_bytes_per_token: 0,
         },
+        sequence_cache_bytes_per_token: 0,
     }
 }
 

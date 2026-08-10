@@ -17,8 +17,10 @@ use domain_contracts::{
     SequenceState, SynchronizationError, TokenId, UnloadPolicy,
 };
 use inference_runtime::{
-    CommandTicket, HostedRuntime, HostedRuntimeConfiguration, InferenceRuntime, LoadReceipt,
-    RuntimeCommand, RuntimeEvent, RuntimeLimits, UnloadStatus, start_hosted_runtime,
+    CleanupPoll, CleanupResource, CommandTicket, FailureDetail, HostedRuntime,
+    HostedRuntimeConfiguration, InferenceRuntime, LoadReceipt, RetainedOwnership, RuntimeCommand,
+    RuntimeError, RuntimeEvent, RuntimeLimits, RuntimeOperation, UnloadStatus,
+    start_hosted_runtime,
 };
 
 const BACKEND_ID: BackendId = BackendId::new(91);
@@ -58,7 +60,7 @@ struct MockModel {
     execution_device: ExecutionDevice,
     execution_scalar_type: ScalarType,
     descriptor: ModelDescriptor,
-    accounted_footprint: MemoryFootprint,
+    reported_footprint: MemoryFootprint,
     unloading: bool,
     destroy_failure_consumed: bool,
 }
@@ -118,7 +120,7 @@ impl ModelLoader for MockLoader {
             accepted_configuration: *configuration,
             descriptor,
             execution_scalar_type: ScalarType::F32,
-            expected_footprint: descriptor.estimated_footprint,
+            final_footprint: descriptor.estimated_footprint,
             loading_peak_footprint: descriptor.estimated_footprint,
         };
         Ok(MockPrepared {
@@ -139,7 +141,7 @@ impl ModelLoader for MockLoader {
             execution_device: prepared.configuration.execution_device,
             execution_scalar_type: ScalarType::F32,
             descriptor,
-            accounted_footprint: prepared.plan.expected_footprint,
+            reported_footprint: prepared.plan.final_footprint,
             unloading: false,
             destroy_failure_consumed: false,
         })
@@ -165,8 +167,8 @@ impl LoadedModel for MockModel {
         self.execution_scalar_type
     }
 
-    fn accounted_footprint(&self) -> MemoryFootprint {
-        self.accounted_footprint
+    fn reported_footprint(&self) -> MemoryFootprint {
+        self.reported_footprint
     }
 
     fn plan_sequence(
@@ -183,7 +185,6 @@ impl LoadedModel for MockModel {
                 device_weight_bytes: 0,
                 host_working_bytes: u64::from(configuration.maximum_tokens.get()),
                 device_working_bytes: 0,
-                cache_bytes_per_token: 1,
             },
             logits_capacity: self.descriptor.metadata.vocabulary_size as usize,
         })
@@ -238,6 +239,9 @@ impl LoadedModel for MockModel {
         input: PrefillInput<'_>,
         mut buffers: PreparedPrefillBuffers<'_>,
     ) -> Result<PrefillOutcome, SequenceError> {
+        if sequence.id == SequenceId::new(998) {
+            return Err(SequenceError::Backend(mock_failure(3)));
+        }
         if sequence.state == SequenceState::Finished || input.tokens.is_empty() {
             return Err(SequenceError::InvalidState);
         }
@@ -281,7 +285,7 @@ impl LoadedModel for MockModel {
     }
 
     fn destroy_sequence(&mut self, sequence: &mut Self::Sequence) -> Result<(), SequenceError> {
-        if sequence.id == SequenceId::new(999) && !self.destroy_failure_consumed {
+        if matches!(sequence.id.get(), 998 | 999) && !self.destroy_failure_consumed {
             self.destroy_failure_consumed = true;
             return Err(SequenceError::Backend(mock_failure(2)));
         }
@@ -394,6 +398,9 @@ fn registry_interleaves_sequences_and_reclaims_all_resources() -> Result<(), Str
     if snapshot.loaded_models != 0
         || snapshot.active_requests != 0
         || snapshot.reserved_footprint != MemoryFootprint::default()
+        || snapshot.unverified_ownership.is_some()
+        || snapshot.admission_blocked
+        || !runtime.retained_model_snapshots().is_empty()
     {
         return Err("registry retained resources after unload".into());
     }
@@ -431,20 +438,118 @@ fn failed_sequence_release_preserves_request_for_retry() -> Result<(), String> {
     ) {
         return Err(format!("unexpected first release result: {first:?}"));
     }
-    if runtime.snapshot().active_requests != 0 || runtime.snapshot().pending_cleanup_sequences != 1
+    let snapshot = runtime.snapshot();
+    if snapshot.active_requests != 0
+        || snapshot.pending_cleanup_sequences != 1
+        || snapshot.unverified_ownership.is_some()
+        || snapshot.admission_blocked
+        || !runtime.retained_model_snapshots().is_empty()
     {
         return Err("failed sequence release did not quarantine ownership".into());
     }
 
     if !matches!(
         runtime.poll_cleanup().map_err(debug_error)?,
-        inference_runtime::CleanupPoll::Released(_)
+        inference_runtime::CleanupPoll::Released(state)
+            if state.ownership == RetainedOwnership::Released && !state.exhausted()
     ) {
         return Err("pending cleanup was not retried".into());
     }
-    if runtime.snapshot().pending_cleanup_sequences != 0 {
+    let snapshot = runtime.snapshot();
+    if snapshot.pending_cleanup_sequences != 0
+        || snapshot.unverified_ownership.is_some()
+        || snapshot.admission_blocked
+        || !runtime.retained_model_snapshots().is_empty()
+    {
         return Err("successful release retry retained the sequence".into());
     }
+    Ok(())
+}
+
+#[test]
+fn direct_prefill_preserves_primary_and_exposes_retained_cleanup() -> Result<(), String> {
+    let mut runtime = InferenceRuntime::new(MockLoader, limits(1, 1, 10_000));
+    let loaded = runtime
+        .load_model(
+            ModelId::new(10),
+            &MockSource {
+                model_bytes: 100,
+                vocabulary_size: 4,
+            },
+            cpu_device(),
+        )
+        .map_err(debug_error)?;
+    runtime
+        .start_request(
+            loaded.handle,
+            RequestId::new(100),
+            SequenceId::new(998),
+            sequence_configuration(8, 4)?,
+        )
+        .map_err(debug_error)?;
+
+    let mut logits = [0.0_f32; 4];
+    let result = runtime.prefill(RequestId::new(100), &[TokenId::new(1)], true, &mut logits);
+    if !matches!(
+        result,
+        Err(RuntimeError::Sequence(SequenceError::Backend(failure)))
+            if failure == mock_failure(3)
+    ) {
+        return Err(format!(
+            "primary prefill failure was not preserved: {result:?}"
+        ));
+    }
+
+    let snapshot = runtime.snapshot();
+    let cleanup = snapshot
+        .last_cleanup
+        .ok_or("failed cleanup was not exposed by the runtime snapshot")?;
+    let resource = CleanupResource::Sequence {
+        handle: loaded.handle,
+        request_id: RequestId::new(100),
+        sequence_id: SequenceId::new(998),
+    };
+    if snapshot.active_requests != 0
+        || snapshot.pending_cleanup_sequences != 1
+        || cleanup.resource != resource
+        || cleanup.failure.primary_operation != RuntimeOperation::Prefill
+        || cleanup.failure.primary_detail
+            != FailureDetail::Sequence(SequenceError::Backend(mock_failure(3)))
+        || cleanup.failure.cleanup_detail
+            != FailureDetail::Sequence(SequenceError::Backend(mock_failure(2)))
+        || cleanup.ownership
+            != RetainedOwnership::Exact(MemoryFootprint {
+                host_weight_bytes: 0,
+                device_weight_bytes: 0,
+                host_working_bytes: 8,
+                device_working_bytes: 0,
+            })
+    {
+        return Err("retained direct-prefill cleanup state lost structured identity".into());
+    }
+
+    if !matches!(
+        runtime.poll_cleanup().map_err(debug_error)?,
+        CleanupPoll::Released(state)
+            if state.resource == resource
+                && state.ownership == RetainedOwnership::Released
+                && !state.exhausted()
+    ) {
+        return Err("retained direct-prefill sequence was not released exactly once".into());
+    }
+    let model = runtime
+        .model_snapshot(loaded.handle)
+        .ok_or("model disappeared after sequence cleanup")?;
+    if runtime.snapshot().pending_cleanup_sequences != 0 || model.degraded {
+        return Err("successful cleanup did not clear retained sequence state".into());
+    }
+    runtime
+        .unload_model(
+            loaded.handle,
+            UnloadPolicy::RejectIfBusy,
+            MonotonicMillis::new(0),
+        )
+        .map_err(debug_error)?;
     Ok(())
 }
 
@@ -492,7 +597,13 @@ fn drain_timeout_force_cancels_and_unloads() -> Result<(), String> {
     {
         return Err("drain did not escalate at deadline".into());
     }
-    if runtime.snapshot().loaded_models != 0 || runtime.snapshot().active_requests != 0 {
+    let snapshot = runtime.snapshot();
+    if snapshot.loaded_models != 0
+        || snapshot.active_requests != 0
+        || snapshot.unverified_ownership.is_some()
+        || snapshot.admission_blocked
+        || !runtime.retained_model_snapshots().is_empty()
+    {
         return Err("timeout escalation did not reclaim registry state".into());
     }
     Ok(())
@@ -530,7 +641,12 @@ fn undersized_logits_finish_request_without_backend_overwrite() -> Result<(), St
     ) {
         return Err("undersized logits did not finish with BufferExhausted".into());
     }
-    if runtime.snapshot().active_requests != 0 {
+    let snapshot = runtime.snapshot();
+    if snapshot.active_requests != 0
+        || snapshot.unverified_ownership.is_some()
+        || snapshot.admission_blocked
+        || !runtime.retained_model_snapshots().is_empty()
+    {
         return Err("buffer-exhausted request remained active".into());
     }
     Ok(())
@@ -567,7 +683,12 @@ fn aggregate_sequence_memory_is_admitted_before_allocation() -> Result<(), Strin
     ) {
         return Err(format!("unexpected sequence admission error: {error:?}"));
     }
-    if runtime.snapshot().active_requests != 0 {
+    let snapshot = runtime.snapshot();
+    if snapshot.active_requests != 0
+        || snapshot.unverified_ownership.is_some()
+        || snapshot.admission_blocked
+        || !runtime.retained_model_snapshots().is_empty()
+    {
         return Err("failed admission changed active-request state".into());
     }
     Ok(())
@@ -701,6 +822,10 @@ fn hosted_worker_retries_a_failed_forced_release() -> Result<(), String> {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the hosted regression keeps accepted, duplicate, completion, and terminal ticket ordering explicit"
+)]
 fn hosted_worker_reports_terminal_unload_after_natural_drain() -> Result<(), String> {
     let hosted_configuration = HostedRuntimeConfiguration::new(
         non_zero_usize(4)?,
@@ -761,8 +886,26 @@ fn hosted_worker_reports_terminal_unload_after_natural_drain() -> Result<(), Str
     }
 
     hosted
-        .try_submit(RuntimeCommand::CompleteRequest {
+        .try_submit(RuntimeCommand::UnloadModel {
             ticket: CommandTicket::new(93),
+            handle: loaded.handle,
+            policy: UnloadPolicy::CancelActive,
+        })
+        .map_err(|_| "duplicate unload command rejected by the queue")?;
+    match hosted
+        .receive_timeout(Duration::from_secs(2))
+        .map_err(|error| format!("duplicate unload event failed: {error:?}"))?
+    {
+        RuntimeEvent::ModelUnload {
+            ticket,
+            result: Err(_),
+        } if ticket == CommandTicket::new(93) => {}
+        _ => return Err("duplicate unload was not rejected on its own ticket".into()),
+    }
+
+    hosted
+        .try_submit(RuntimeCommand::CompleteRequest {
+            ticket: CommandTicket::new(94),
             request_id: RequestId::new(90),
             reason: FinishReason::StopCondition,
         })
@@ -775,7 +918,7 @@ fn hosted_worker_reports_terminal_unload_after_natural_drain() -> Result<(), Str
             ticket,
             result: Ok(FinishReason::StopCondition),
             ..
-        } if ticket == CommandTicket::new(93) => {}
+        } if ticket == CommandTicket::new(94) => {}
         _ => return Err("unexpected request completion event".into()),
     }
 
@@ -794,7 +937,7 @@ fn hosted_worker_reports_terminal_unload_after_natural_drain() -> Result<(), Str
 
     hosted
         .try_submit(RuntimeCommand::Shutdown {
-            ticket: CommandTicket::new(94),
+            ticket: CommandTicket::new(95),
         })
         .map_err(|_| "shutdown command rejected")?;
     match hosted
@@ -809,6 +952,10 @@ fn hosted_worker_reports_terminal_unload_after_natural_drain() -> Result<(), Str
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the bounded-queue deadline scenario keeps event backpressure and unload ordering explicit"
+)]
 fn hosted_worker_enforces_deadline_while_event_queue_is_full() -> Result<(), String> {
     let hosted_configuration = HostedRuntimeConfiguration::new(
         non_zero_usize(4)?,
@@ -892,8 +1039,16 @@ fn hosted_worker_enforces_deadline_while_event_queue_is_full() -> Result<(), Str
         .map_err(|error| format!("snapshot event failed: {error:?}"))?
     {
         RuntimeEvent::Snapshot {
-            runtime, models, ..
-        } if runtime.loaded_models == 0 && runtime.active_requests == 0 && models.is_empty() => {}
+            runtime,
+            models,
+            retained_models,
+            ..
+        } if runtime.loaded_models == 0
+            && runtime.active_requests == 0
+            && runtime.unverified_ownership.is_none()
+            && !runtime.admission_blocked
+            && models.is_empty()
+            && retained_models.is_empty() => {}
         _ => return Err("deadline did not reclaim model under event backpressure".into()),
     }
 
@@ -944,8 +1099,8 @@ const fn descriptor(source: MockSource) -> ModelDescriptor {
             device_weight_bytes: 0,
             host_working_bytes: 10,
             device_working_bytes: 0,
-            cache_bytes_per_token: 1,
         },
+        sequence_cache_bytes_per_token: 1,
     }
 }
 

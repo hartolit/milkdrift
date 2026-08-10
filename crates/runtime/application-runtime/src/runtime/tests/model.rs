@@ -369,7 +369,6 @@ fn load_footprint_validation_rejects_budget_overflow_and_wrong_memory_domains() 
         device_weight_bytes: 59,
         host_working_bytes: 20,
         device_working_bytes: 40,
-        ..MemoryFootprint::default()
     };
     assert!(!ApplicationRuntime::load_footprint_matches(
         cuda_admission,

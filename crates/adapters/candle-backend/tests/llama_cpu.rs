@@ -27,55 +27,50 @@ const BACKEND: BackendId = BackendId::new(1);
 const REQUIRED_ELEMENTS: u64 = 920;
 const VOCABULARY_SIZE: usize = 16;
 const PER_SHARD_HEADER_LIMIT: u64 = 8 * 1024 * 1024;
+const F32_SEQUENCE_CACHE_BYTES_PER_TOKEN: u64 = 64;
+const F16_SEQUENCE_CACHE_BYTES_PER_TOKEN: u64 = 32;
 
 const CPU_F32_FINAL: MemoryFootprint = MemoryFootprint {
     host_weight_bytes: 3_680,
     device_weight_bytes: 0,
     host_working_bytes: 0,
     device_working_bytes: 0,
-    cache_bytes_per_token: 64,
 };
 const CPU_F32_LOADING_PEAK: MemoryFootprint = MemoryFootprint {
     host_weight_bytes: 3_680,
     device_weight_bytes: 0,
     host_working_bytes: 227,
     device_working_bytes: 0,
-    cache_bytes_per_token: 64,
 };
 const CPU_F16_FINAL: MemoryFootprint = MemoryFootprint {
     host_weight_bytes: 1_840,
     device_weight_bytes: 0,
     host_working_bytes: 0,
     device_working_bytes: 0,
-    cache_bytes_per_token: 32,
 };
 const CPU_F16_LOADING_PEAK: MemoryFootprint = MemoryFootprint {
     host_weight_bytes: 1_840,
     device_weight_bytes: 0,
     host_working_bytes: 113,
     device_working_bytes: 0,
-    cache_bytes_per_token: 32,
 };
 const CPU_MIXED_F16_F32_LOADING_PEAK: MemoryFootprint = MemoryFootprint {
     host_weight_bytes: 1_840,
     device_weight_bytes: 0,
     host_working_bytes: 129,
     device_working_bytes: 0,
-    cache_bytes_per_token: 32,
 };
 const CPU_BF16_TO_F32_LOADING_PEAK: MemoryFootprint = MemoryFootprint {
     host_weight_bytes: 3_680,
     device_weight_bytes: 0,
     host_working_bytes: 96,
     device_working_bytes: 0,
-    cache_bytes_per_token: 64,
 };
 const CPU_MIXED_BF16_F32_LOADING_PEAK: MemoryFootprint = MemoryFootprint {
     host_weight_bytes: 3_680,
     device_weight_bytes: 0,
     host_working_bytes: 128,
     device_working_bytes: 0,
-    cache_bytes_per_token: 64,
 };
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -361,16 +356,20 @@ fn huge_ignored_extra_does_not_change_exact_cpu_footprints_or_working_bytes() ->
     let descriptor = loader.inspect(&huge_source).map_err(debug_error)?;
     let (huge_plan, mut model) = prepare_and_load(&mut loader, &huge_source, load_configuration())?;
 
-    assert_eq!(base_plan.expected_footprint, CPU_F32_FINAL);
+    assert_eq!(base_plan.final_footprint, CPU_F32_FINAL);
     assert_eq!(base_plan.loading_peak_footprint, CPU_F32_LOADING_PEAK);
-    assert_eq!(huge_plan.expected_footprint, base_plan.expected_footprint);
+    assert_eq!(huge_plan.final_footprint, base_plan.final_footprint);
     assert_eq!(
         huge_plan.loading_peak_footprint,
         base_plan.loading_peak_footprint
     );
     assert_eq!(descriptor.estimated_footprint, CPU_F32_FINAL);
+    assert_eq!(
+        descriptor.sequence_cache_bytes_per_token,
+        F32_SEQUENCE_CACHE_BYTES_PER_TOKEN
+    );
     assert_eq!(huge_plan.loading_peak_footprint.device_working_bytes, 0);
-    assert_eq!(model.accounted_footprint(), CPU_F32_FINAL);
+    assert_eq!(model.reported_footprint(), CPU_F32_FINAL);
     clean_model(&mut model)
 }
 
@@ -459,10 +458,7 @@ fn prepared_load_consumes_retained_file_after_path_deletion() -> TestResult {
         .map_err(|error| format!("remove prepared path: {error}"))?;
 
     let mut model = load_exact_preparation(&mut loader, prepared)?;
-    assert_eq!(
-        model.accounted_footprint(),
-        accepted_plan.expected_footprint
-    );
+    assert_eq!(model.reported_footprint(), accepted_plan.final_footprint);
     clean_model(&mut model)
 }
 
@@ -703,7 +699,7 @@ fn shard_reorder_sorts_complete_identity_pairs_and_loads() -> TestResult {
 
     let mut loader = CandleLlamaLoader::new(BACKEND);
     let (plan, mut model) = prepare_and_load(&mut loader, &source, load_configuration())?;
-    assert_eq!(plan.expected_footprint, CPU_F16_FINAL);
+    assert_eq!(plan.final_footprint, CPU_F16_FINAL);
     assert_eq!(plan.loading_peak_footprint, CPU_MIXED_F16_F32_LOADING_PEAK);
     clean_model(&mut model)
 }
@@ -771,16 +767,25 @@ fn execute_profile(
         expected_observed
     );
     assert_eq!(descriptor.estimated_footprint, expected_final);
+    let expected_cache_rate = match expected_execution {
+        ScalarType::F32 => F32_SEQUENCE_CACHE_BYTES_PER_TOKEN,
+        ScalarType::F16 | ScalarType::Bf16 => F16_SEQUENCE_CACHE_BYTES_PER_TOKEN,
+        _ => return Err("test profile selected a non-floating execution scalar".to_owned()),
+    };
+    assert_eq!(
+        descriptor.sequence_cache_bytes_per_token,
+        expected_cache_rate
+    );
 
     let (plan, mut model) = prepare_and_load(&mut loader, &source, load_configuration())?;
     assert_eq!(plan.descriptor, descriptor);
     assert_eq!(plan.execution_scalar_type, expected_execution);
-    assert_eq!(plan.expected_footprint, expected_final);
+    assert_eq!(plan.final_footprint, expected_final);
     assert_eq!(plan.loading_peak_footprint, expected_loading);
     assert_eq!(plan.loading_peak_footprint.device_working_bytes, 0);
     assert_eq!(model.descriptor(), &descriptor);
     assert_eq!(model.execution_scalar_type(), expected_execution);
-    assert_eq!(model.accounted_footprint(), expected_final);
+    assert_eq!(model.reported_footprint(), expected_final);
     exercise_model(&mut model)?;
     clean_model(&mut model)
 }
@@ -790,6 +795,30 @@ fn exercise_model(model: &mut CandleLlamaModel) -> TestResult {
         NonZeroU32::new(16).ok_or_else(|| "maximum tokens must be nonzero".to_owned())?,
         NonZeroU32::new(8).ok_or_else(|| "maximum prefill must be nonzero".to_owned())?,
     );
+    let sequence_plan = model.plan_sequence(&configuration).map_err(debug_error)?;
+    let rope_bytes = match model.execution_scalar_type() {
+        ScalarType::F32 => 256,
+        ScalarType::F16 | ScalarType::Bf16 => 128,
+        _ => return Err("test model selected a non-floating execution scalar".to_owned()),
+    };
+    let cache_bytes = model
+        .descriptor()
+        .sequence_cache_bytes_per_token
+        .checked_mul(u64::from(configuration.maximum_tokens.get()))
+        .ok_or_else(|| "test sequence cache bytes overflowed".to_owned())?;
+    let expected_working_bytes = cache_bytes
+        .checked_add(rope_bytes)
+        .ok_or_else(|| "test sequence working bytes overflowed".to_owned())?;
+    assert_eq!(
+        sequence_plan.expected_footprint,
+        MemoryFootprint {
+            host_weight_bytes: 0,
+            device_weight_bytes: 0,
+            host_working_bytes: expected_working_bytes,
+            device_working_bytes: 0,
+        }
+    );
+
     let mut first = model
         .create_sequence(SequenceId::new(1), &configuration)
         .map_err(debug_error)?;

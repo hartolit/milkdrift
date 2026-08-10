@@ -584,11 +584,11 @@ Review both current external schema-4 reports programmatically without printing 
 - RTX 5070 Ti identity, driver/toolkit metadata, compute capability 12.0, and build target 120 only in the CUDA report;
 - complete cancellation, unload, shutdown, workspace-removal, and three-cycle CUDA stability results.
 
-The exact final footprint is the prepared transaction's deterministic post-load tensor ownership. The loading peak is the separate aggregate admission requirement during materialization. Neither is process RSS or physical whole-device memory. Public E1 accepts the E0 load contract but does not expose a same-worker E0 `RuntimeSnapshot`, so external schema 4 deliberately does not claim direct E0 reserved ownership or post-unload zero accounting. The opted-in E0 fixture test remains the owner for exact zero model/request/workspace/cleanup accounting.
+The exact final footprint is the prepared transaction's deterministic post-load tensor ownership. The loading peak is the separate aggregate admission requirement during materialization. Neither is process RSS or physical whole-device memory. Public E1 accepts the E0 load contract but does not expose a same-worker E0 `RuntimeSnapshot`, so external schema 5 deliberately does not claim direct E0 reserved ownership or post-unload zero accounting. The opted-in E0 fixture test remains the owner for exact zero model/request/workspace/cleanup accounting.
 
 Each CUDA cycle establishes a new whole-device pre-load baseline. Interpret post-unload and post-owner-drop retained deltas with absolute observations; desktop or other GPU activity can perturb either. Safe Candle `discover_device` calls and their temporary contexts remain bounded cold observations recorded as audit evidence, never per-token work or a threshold.
 
-No schema-4 product report has been accepted on the Phase 12 closure tree, so no new measured values replace the historical Phase 10/11 evidence in [performance evidence](performance.md#external-product-evidence).
+No schema-5 product report has been accepted on the runtime-ownership tree, so no new measured values replace the historical Phase 10/11 evidence in [performance evidence](performance.md#external-product-evidence).
 
 ### External mixed-checkpoint evidence gap
 

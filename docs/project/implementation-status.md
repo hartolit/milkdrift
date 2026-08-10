@@ -10,8 +10,10 @@ Phase 12 complete for its 2026-08-08 deterministic CPU and exact local CUDA
 closure matrix.
 The 2026-08-10 pristine artifact-loading amendment passed targeted CPU quality,
 the exact CUDA compile graph, and the complete local CUDA hardware matrix.
-The amended tree has not run the complete canonical/portable/policy/link gate or
-a GitHub self-hosted workflow, and external mixed-checkpoint evidence is absent.
+The subsequent pristine runtime-ownership amendment passed targeted native CPU
+quality and isolated portable checks. CUDA compilation was blocked because `nvcc`
+is absent; CUDA hardware, complete canonical/policy/link closure, GitHub self-hosted
+execution, and external mixed-checkpoint evidence are absent for that later tree.
 No subsequent product phase is active.
 ```
 
@@ -26,7 +28,8 @@ Phase 12 production work is split across:
 - commit `58490fe693fef7a2635956181088664cd90685e8`, which introduced exact prepared loading, per-tensor Safetensors inspection and conversion, conversion-aware final/loading-peak accounting, and retained partial-load cleanup through E0;
 - commit `12510695aa29be6a2665dbf3777cccbb8172c2d1`, which integrated optional configuration metadata, E1 receipt semantics, persistence versioning, cleanup events, and thin Slint presentation;
 - the 2026-08-08 closure segment, which broadened deterministic mixed-layout adapter/E0 coverage, updated the inward benchmark observer and guarded CUDA workflow, and reconciled canonical evidence owners;
-- the 2026-08-10 pristine artifact-loading amendment, which adds strict declaration truth, complete-observed versus required scalar separation, selective materialization, whole-shard identity authorities, required-only footprints, structural metadata bounds, and the internal loader module split.
+- the 2026-08-10 pristine artifact-loading amendment, which adds strict declaration truth, complete-observed versus required scalar separation, selective materialization, whole-shard identity authorities, required-only footprints, structural metadata bounds, and the internal loader module split;
+- the subsequent pristine runtime-ownership amendment, which makes footprints byte-only, separates sequence-cache planning rate, distinguishes released, exact, and unverified ownership, fails admission closed under uncertainty, makes sequence/load/cleanup transitions explicit, rotates cleanup fairly, and reports terminal process-lifetime retention without inferring release from handle absence.
 
 On 2026-08-08, the Phase 12 closure tree passed the focused download-free CPU suites, the canonical gate from a previously absent Cargo target directory, both portable-domain target matrices, locked dependency policy, offline Markdown links, the exact CUDA compile chain, and the exact local deterministic hardware matrix. On 2026-08-10, the artifact-loading amendment separately passed its targeted CPU quality commands, exact CUDA compile graph, and complete local hardware matrix; it did not rerun the full canonical/portable/policy/link gate. Both hardware runs were local rather than GitHub Actions. No external mixed-dtype checkpoint has been accepted.
 
@@ -92,25 +95,27 @@ A genuine required F16+BF16 mixture, empty required set, required unsupported dt
 
 Every shard path remains paired with identity authority. Verified immutable identity currently means exact Hugging Face LFS SHA-256 and length at the resolved commit and skips a pre-admission payload pass. Project-established and unverified mutable sources are sequentially hashed from Candle's retained open file before admission. Materialization then processes each retained shard once from byte zero, verifies its header, hashes ignored ranges through a fixed 64 KiB buffer, stages only required ranges, and checks exact EOF/length and whole-shard SHA-256 before model publication. There are no per-tensor seeks/digests, mmap, unsafe code, or whole-model host buffers.
 
-Two deterministic footprint phases are distinct:
+Two deterministic byte-ownership phases are distinct:
 
-- **Final footprint** is exact post-load required execution-tensor ownership plus cache bytes per token.
-- **Loading peak** is the exact required-only peak for aligned source staging, source tensor, optional cast tensor, required CUDA transfer, and already retained required weights. Ignored extras contribute no host/device tensor headroom. The fixed verification buffer and parsed metadata are independently bounded rather than hidden inside `MemoryFootprint`.
+- **Final footprint** is exact post-load required execution-tensor byte ownership.
+- **Loading peak** is the exact required-only byte peak for aligned source staging, source tensor, optional cast tensor, required CUDA transfer, and already retained required weights. Ignored extras contribute no host/device tensor headroom. The fixed verification buffer and parsed metadata are independently bounded rather than hidden inside `MemoryFootprint`.
 
-The exact formulas are canonical in [Candle backend](candle-backend.md). E0 admits both the peak and final quantities against its aggregate budget, reserves the peak before materialization, and commits only the final quantity after complete model verification.
+`MemoryFootprint` has only host/device weight and host/device working-byte components. `ModelDescriptor::sequence_cache_bytes_per_token` is a separate rate used by model sequence planning to produce a concrete per-sequence footprint; a rate is not current ownership. The exact formulas are canonical in [Candle backend](candle-backend.md). E0 admits both load phases against its aggregate budget, reserves the peak before materialization, and commits only the final quantity after complete model verification.
 
 ## Load failure and cleanup ownership
 
 A failed materialization returns `FailedLoad<PreparedLoad>`: the primary `LoadError` and the sole owner of every completed or pending tensor/device resource. E0 immediately attempts `PreparedLoad::cleanup`.
 
 - Cleanup success restores the pre-load reservation and returns the original load failure.
-- Cleanup failure moves the preparation into E0 pending-model cleanup as `CleanupResource::FailedLoad`, retains the complete loading-peak footprint, and reports primary model-load failure separately from failed-load cleanup failure.
-- The initial failed cleanup is attempt one. `poll_cleanup` performs at most one additional retained operation, uses the configured finite total-attempt budget (three by default), releases ownership/accounting exactly once on success, and leaves exhausted ownership quarantined and accounted.
-- A complete loaded model that fails E0 post-load verification follows the same no-publication rule and retains the conservative loading-peak quantity if explicit unload preparation fails.
+- Cleanup failure moves the preparation into E0 pending-model cleanup as generation-safe `CleanupResource::FailedLoad { handle }`, retains the exact accepted loading-peak footprint, and reports primary model-load failure separately from failed-load cleanup failure.
+- The initial failed cleanup is attempt one. `poll_cleanup` performs at most one additional retained operation, rotates across sequences, failed preparations, and complete models and within each class, uses the configured finite total-attempt budget (three by default), releases ownership/accounting exactly once into an explicit `Released` state (including success on the final attempt), and skips exhausted owners without hiding them.
+- A verified ordinary model-unload failure retains exact final ownership.
+- A complete loaded model that contradicts any E0 post-load claim and then fails explicit unload is retained as `RetainedOwnership::Unverified`, including the accepted peak, backend-reported footprint, and checked conservative component evidence. Aggregate overflow is represented as `ConservativeFootprint::Overflow`; no saturation or synthetic maximum is used.
+- Unverified ownership is separate from exact `reserved_footprint` and blocks every new resource admission until cleanup succeeds or process exit reclaims the owner. Existing healthy admitted work remains runnable.
 
-E1 publishes no resident `LoadedModel` for any such failure. `ApplicationEvent::ModelCleanupPending { exhausted, failure }` distinguishes retained cleanup from an ordinary owner-free `ModelLoadFailed`; application activity remains unloading and device selection remains locked until a private E0 snapshot proves zero aggregate ownership, disconnection/confirmed worker stop resolves ownership, or exhaustion remains explicit.
+E1 publishes no resident `LoadedModel` for any such failure. `ApplicationEvent::ModelCleanupPending { exhausted, failure }` distinguishes retained cleanup from an ordinary owner-free `ModelLoadFailed`; its zero-ownership snapshot check now requires no exact reservation, no unverified summary, and no admission lock. Broader E1 retained-cleanup/disconnection semantics remain owned by the following application work package.
 
-These semantics extend rather than replace [ADR-0006](../agent/decisions/0006-explicit-bounded-shutdown.md): terminal shutdown exhaustion still uses `RetainUntilProcessExit`, and process termination remains the final reclamation boundary for deliberately retained native ownership.
+These semantics extend rather than replace [ADR-0006](../agent/decisions/0006-explicit-bounded-shutdown.md): terminal shutdown returns `TerminalCleanupRetention` with a bounded owner summary, then uses `RetainUntilProcessExit`; process termination remains the final reclamation boundary for deliberately retained native ownership, and endpoint/handle absence is not release evidence.
 
 ## E1, persistence, and Slint boundary
 
@@ -126,11 +131,13 @@ Slint remains a thin reference host. Resolved summaries may show the optional co
 
 | Evidence class | Current state on 2026-08-10 |
 |---|---|
-| Production implementation | Original Phase 12 in commits `58490fe` and `1251069`; pristine artifact-loading amendment present in the current coherent change. |
-| Amended focused/download-free CPU quality | Passed: formatting; all-target checks; 24 Candle unit + 1 fixture-consistency + 25 Candle CPU integration tests; 23 Hub tests; 3 hosted native-E0 tests; 79 application tests; 78 benchmark tests; strict all-target Clippy; warning-denied rustdoc. |
-| Amended CUDA compile graph | Metadata, architecture, hygiene, six-package all-target check/Clippy as applicable, and four-package test compilation passed with `CUDA_COMPUTE_CAP=120`. |
-| Amended local CUDA hardware execution | Passed explicit CPU-in-CUDA, exactly four adapter tests, mixed hosted-E0 lifecycle, 32 E0 faults, E1 no-fallback, and E1 CUDA lifecycle on NVIDIA GeForce RTX 5070 Ti ordinal 0, driver/KMD 610.43.03, CUDA UMD/toolkit 13.3, `nvcc` 13.3.73, compute capability 12.0, build cap 120. |
-| Amended complete canonical/portable/policy/link gate | Not run. The 2026-08-08 Phase 12 closure result remains historical and is not reused as amended-tree evidence. |
+| Production implementation | Original Phase 12 in commits `58490fe` and `1251069`; pristine artifact-loading and runtime-ownership amendments present in the current coherent change. |
+| Artifact-loading focused/download-free CPU quality | Historical to the preceding amendment tree: formatting; all-target checks; 24 Candle unit + 1 fixture-consistency + 25 Candle CPU integration tests; 23 Hub tests; 3 hosted native-E0 tests; 79 application tests; 78 benchmark tests; strict all-target Clippy; warning-denied rustdoc passed. |
+| Artifact-loading CUDA compile/hardware | Historical to the preceding amendment tree: exact compile graph and local deterministic RTX 5070 Ti matrix passed as recorded above. Those results are not reused for runtime-ownership code. |
+| Runtime-ownership targeted native quality | Passed: workspace formatting; owned-package all-target checks; 9 domain-contract tests; 9 host-runtime tests; 24 Candle unit + 1 fixture-consistency + 25 CPU integration tests (1 maintenance test intentionally ignored); 4 E0 unit + 40 fault + 25 generation + 3 native Candle + 11 registry/hosted tests; 77 application unit + 3 state tests; 78 benchmark unit tests plus both Criterion smoke targets; strict all-target Clippy for the six changed/affected packages; warning-denied rustdoc for the same six packages. |
+| Runtime-ownership portable domain checks | Passed for `domain-contracts` on `wasm32-unknown-unknown` and `thumbv7em-none-eabihf` using isolated target directories, which were removed afterward. |
+| Runtime-ownership CUDA compile/hardware | `CUDA_COMPUTE_CAP=120 cargo check --locked -p inference-runtime --features cuda --all-targets` was attempted and stopped in `cudarc` because `nvcc --version` could not execute (`nvcc` is not installed). No Rust CUDA diagnostic or hardware execution result is claimed. |
+| Runtime-ownership complete canonical/policy/link gate | Not run. `git diff --check` passed. Offline Markdown link checking could not run because `lychee` is not installed. The 2026-08-08 and artifact-loading closure results remain historical and are not reused. |
 | GitHub self-hosted workflow | Not run for Phase 12 or the amendment; no remote workflow provenance is claimed. |
 | External mixed-dtype checkpoint | Absent. No immutable, license-reviewed external mixed checkpoint has been accepted or executed. |
 | Benchmark/evidence additions | Inward observer compilation/tests passed; no new performance measurement or external product report is claimed. |
@@ -148,7 +155,7 @@ Historical external TinyLlama CPU/CUDA evidence remains attributed to clean Comm
 
 ## Evidence infrastructure
 
-`runtime-benchmarks` remains the sole non-production cross-crate observer. No production, tooling, test, or application package depends on it. The closure tree updates its synthetic and external schemas to distinguish optional configuration declaration, observed scalar set, planned execution scalar/device, exact final footprint, loading peak, actual receipt facts where public, process RSS, and whole-device CUDA observations. It uses an unmaterialized observer `prepare_load`, copies the public plan, and drops the preparation without turning benchmark needs into a new production API.
+`runtime-benchmarks` remains the sole non-production cross-crate observer. No production, tooling, test, or application package depends on it. Current synthetic schema 4 and external schema 5 retain optional configuration declaration, observed scalar set, planned execution scalar/device, exact final footprint, loading peak, actual receipt facts where public, process RSS, and whole-device CUDA observations while removing cache rate from serialized byte-footprint records. It uses an unmaterialized observer `prepare_load`, copies the public plan, and drops the preparation without turning benchmark needs into a new production API.
 
 Historical reports retain their original schema meanings and measurements. No Phase 12 performance result or external checkpoint/product report is inferred merely because observer or workflow definitions changed. The separately executed local CUDA compile and hardware-correctness results are recorded above.
 

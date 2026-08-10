@@ -8,7 +8,7 @@ use serde::Serialize;
 use crate::fixture::FixtureIdentity;
 use crate::memory::ProcessMemory;
 
-pub(crate) const SCHEMA_VERSION: u32 = 3;
+pub(crate) const SCHEMA_VERSION: u32 = 4;
 
 #[derive(Serialize)]
 pub(crate) struct BaselineReport {
@@ -193,12 +193,15 @@ pub(crate) struct RuntimeAccounting {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "serialized footprint fields retain explicit byte units and domain/component names"
+)]
 pub(crate) struct MemoryFootprintRecord {
     pub(crate) host_weight_bytes: u64,
     pub(crate) device_weight_bytes: u64,
     pub(crate) host_working_bytes: u64,
     pub(crate) device_working_bytes: u64,
-    pub(crate) cache_bytes_per_token: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -234,13 +237,11 @@ mod tests {
             device_weight_bytes: 0,
             host_working_bytes,
             device_working_bytes: 0,
-            cache_bytes_per_token: 64,
         }
     }
 
     #[test]
-    fn schema_three_serializes_prepared_and_actual_e0_load_facts_separately() -> Result<(), String>
-    {
+    fn schema_four_serializes_prepared_and_actual_e0_load_facts_separately() -> Result<(), String> {
         let evidence = SyntheticLoadEvidence {
             prepared: PreparedLoadRecord {
                 configuration_declared_scalar: Some("F32"),
@@ -257,7 +258,7 @@ mod tests {
             },
         };
         let value = serde_json::to_value(evidence).map_err(|error| error.to_string())?;
-        assert_eq!(SCHEMA_VERSION, 3);
+        assert_eq!(SCHEMA_VERSION, 4);
         assert_eq!(
             value_at(&value, &["prepared", "configuration_declared_scalar"])?.as_str(),
             Some("F32")
@@ -307,7 +308,8 @@ mod tests {
         let readme = include_str!("../README.md");
         assert!(readme.contains("**Synthetic schema 1 (historical):**"));
         assert!(readme.contains("**Synthetic schema 2 (historical):**"));
-        assert!(readme.contains("**Synthetic schema 3 (current):**"));
+        assert!(readme.contains("**Synthetic schema 3 (historical):**"));
+        assert!(readme.contains("**Synthetic schema 4 (current):**"));
     }
 
     fn value_at<'a>(value: &'a Value, path: &[&str]) -> Result<&'a Value, String> {

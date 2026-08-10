@@ -11,8 +11,9 @@ use candle_core::{DType, Device, Tensor};
 use domain_contracts::{
     BackendId, CancellationReason, CapabilitySet, DeviceId, DeviceKind, ExecutionDevice,
     FinishReason, LoadConfiguration, LoadPlan, MemoryBudget, MemoryFootprint, ModelArchitecture,
-    ModelGeneration, ModelHandle, ModelId, ModelLoader, PreparedLoad, RequestId, ScalarType,
-    ScalarTypeSet, SequenceConfiguration, SequenceId, TokenId, UnloadPolicy, YieldReason,
+    ModelCapabilities, ModelDescriptor, ModelGeneration, ModelHandle, ModelId, ModelLoader,
+    ModelMetadata, PreparedLoad, QuantizationFormat, RequestId, ScalarType, ScalarTypeSet,
+    SequenceConfiguration, SequenceId, TokenId, UnloadPolicy, YieldReason,
 };
 
 use host_runtime::TokenOutputRecordKind;
@@ -36,8 +37,42 @@ const UNLOAD_TICKET: CommandTicket = CommandTicket::new(90);
 const UNLOADED_SNAPSHOT_TICKET: CommandTicket = CommandTicket::new(91);
 const SHUTDOWN_TICKET: CommandTicket = CommandTicket::new(92);
 
-const REQUIRED_GENERATION_OPERATIONS: CapabilitySet =
-    CapabilitySet::PREFILL.union(CapabilitySet::INCREMENTAL_DECODE);
+const EXPECTED_CANDLE_OPERATIONS: CapabilitySet = CapabilitySet::PREFILL
+    .union(CapabilitySet::INCREMENTAL_DECODE)
+    .union(CapabilitySet::MULTIPLE_SEQUENCES)
+    .union(CapabilitySet::EXPLICIT_SYNCHRONIZATION);
+const HOMOGENEOUS_F32_FINAL_FOOTPRINT: MemoryFootprint = MemoryFootprint {
+    host_weight_bytes: 3_680,
+    device_weight_bytes: 0,
+    host_working_bytes: 0,
+    device_working_bytes: 0,
+};
+const HOMOGENEOUS_F32_LOADING_PEAK_FOOTPRINT: MemoryFootprint = MemoryFootprint {
+    host_weight_bytes: 3_680,
+    device_weight_bytes: 0,
+    host_working_bytes: 227,
+    device_working_bytes: 0,
+};
+const HOMOGENEOUS_F32_CACHE_BYTES_PER_TOKEN: u64 = 64;
+const HOMOGENEOUS_F32_DESCRIPTOR: ModelDescriptor = ModelDescriptor {
+    backend: CANDLE_BACKEND,
+    metadata: ModelMetadata {
+        architecture: ModelArchitecture::Llama,
+        configuration_declared_scalar_type: Some(ScalarType::F32),
+        observed_tensor_scalar_types: ScalarTypeSet::from_scalar(ScalarType::F32),
+        quantization: QuantizationFormat::None,
+        vocabulary_size: VOCABULARY_SIZE,
+        context_length: CONTEXT_LENGTH,
+    },
+    capabilities: ModelCapabilities {
+        operations: EXPECTED_CANDLE_OPERATIONS,
+        maximum_context_tokens: CONTEXT_LENGTH,
+        maximum_sequences: u32::MAX,
+        maximum_prefill_batch: CONTEXT_LENGTH,
+    },
+    estimated_footprint: HOMOGENEOUS_F32_FINAL_FOOTPRINT,
+    sequence_cache_bytes_per_token: HOMOGENEOUS_F32_CACHE_BYTES_PER_TOKEN,
+};
 const MIXED_EXECUTION_WEIGHT_BYTES: u64 = 1_840;
 const MIXED_CACHE_BYTES_PER_TOKEN: u64 = 32;
 const MIXED_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 513;
@@ -47,9 +82,14 @@ type CandleRuntime = HostedRuntime<CandleLlamaSource>;
 
 #[test]
 fn candle_fixture_covers_generation_sampling_eos_and_lifecycle() -> TestResult {
+    let source = candle_fixture_source()?;
+    let execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu);
+    let plan = prepare_plan(&source, execution_device)?;
+    assert_homogeneous_f32_plan(&plan, execution_device);
+
     let (hosted, thread) = hosted_runtime(16, 64)?;
-    let loaded = load_model(&hosted, candle_fixture_source()?)?;
-    assert_loaded_fixture(&loaded);
+    let loaded = load_model(&hosted, source)?;
+    assert_receipt_matches_plan(&loaded, &plan);
     let handle = loaded.handle;
 
     // Three generated tokens require one prompt prefill and two incremental
@@ -64,13 +104,7 @@ fn candle_fixture_covers_generation_sampling_eos_and_lifecycle() -> TestResult {
     )?;
     assert_eq!(greedy_output.tokens, vec![EXPECTED_GREEDY_TOKEN; 3]);
     assert_finished(&greedy_output, FinishReason::TokenLimit);
-    assert_released_snapshot(
-        &hosted,
-        handle,
-        loaded.execution_scalar_type,
-        loaded.reserved_footprint,
-        CommandTicket::new(20),
-    )?;
+    assert_released_snapshot(&hosted, &loaded, CommandTicket::new(20))?;
 
     let sampling = stochastic_sampling();
     let first_seeded = generation_request(2, 102, 5, sampling, 0x5eed, Box::new([]))?;
@@ -89,13 +123,7 @@ fn candle_fixture_covers_generation_sampling_eos_and_lifecycle() -> TestResult {
             .all(|token| token.get() < VOCABULARY_SIZE)
     );
     assert_finished(&first_seeded_output, FinishReason::TokenLimit);
-    assert_released_snapshot(
-        &hosted,
-        handle,
-        loaded.execution_scalar_type,
-        loaded.reserved_footprint,
-        CommandTicket::new(21),
-    )?;
+    assert_released_snapshot(&hosted, &loaded, CommandTicket::new(21))?;
 
     let second_seeded = generation_request(3, 103, 5, sampling, 0x5eed, Box::new([]))?;
     submit_generation(&hosted, handle, CommandTicket::new(12), &second_seeded)?;
@@ -108,13 +136,7 @@ fn candle_fixture_covers_generation_sampling_eos_and_lifecycle() -> TestResult {
     assert_eq!(second_seeded_output.tokens.len(), 5);
     assert_eq!(first_seeded_output.tokens, second_seeded_output.tokens);
     assert_finished(&second_seeded_output, FinishReason::TokenLimit);
-    assert_released_snapshot(
-        &hosted,
-        handle,
-        loaded.execution_scalar_type,
-        loaded.reserved_footprint,
-        CommandTicket::new(22),
-    )?;
+    assert_released_snapshot(&hosted, &loaded, CommandTicket::new(22))?;
 
     let eos = generation_request(
         4,
@@ -136,13 +158,7 @@ fn candle_fixture_covers_generation_sampling_eos_and_lifecycle() -> TestResult {
         &eos_output,
         FinishReason::EndOfSequence(EXPECTED_GREEDY_TOKEN),
     );
-    assert_released_snapshot(
-        &hosted,
-        handle,
-        loaded.execution_scalar_type,
-        loaded.reserved_footprint,
-        CommandTicket::new(23),
-    )?;
+    assert_released_snapshot(&hosted, &loaded, CommandTicket::new(23))?;
 
     unload_model(&hosted, handle)?;
     shutdown(hosted, thread)
@@ -158,7 +174,7 @@ fn mixed_f16_f32_fixture_covers_e0_generation_accounting_and_lifecycle() -> Test
 
     let (hosted, thread) = hosted_runtime(16, 64)?;
     let loaded = load_model(&hosted, source)?;
-    assert_mixed_f16_receipt(&loaded, &plan, execution_device);
+    assert_receipt_matches_plan(&loaded, &plan);
     let handle = loaded.handle;
 
     let request = generation_request(5, 105, 3, SamplingConfig::greedy(), 37, Box::new([]))?;
@@ -171,13 +187,7 @@ fn mixed_f16_f32_fixture_covers_e0_generation_accounting_and_lifecycle() -> Test
     )?;
     assert_eq!(output.tokens, vec![EXPECTED_GREEDY_TOKEN; 3]);
     assert_finished(&output, FinishReason::TokenLimit);
-    assert_released_snapshot(
-        &hosted,
-        handle,
-        ScalarType::F16,
-        plan.expected_footprint,
-        CommandTicket::new(24),
-    )?;
+    assert_released_snapshot(&hosted, &loaded, CommandTicket::new(24))?;
 
     unload_model(&hosted, handle)?;
     shutdown(hosted, thread)
@@ -185,9 +195,14 @@ fn mixed_f16_f32_fixture_covers_e0_generation_accounting_and_lifecycle() -> Test
 
 #[test]
 fn candle_fixture_covers_output_backpressure_and_cancellation() -> TestResult {
+    let source = candle_fixture_source()?;
+    let execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu);
+    let plan = prepare_plan(&source, execution_device)?;
+    assert_homogeneous_f32_plan(&plan, execution_device);
+
     let (hosted, thread) = hosted_runtime(1, 64)?;
-    let loaded = load_model(&hosted, candle_fixture_source()?)?;
-    assert_loaded_fixture(&loaded);
+    let loaded = load_model(&hosted, source)?;
+    assert_receipt_matches_plan(&loaded, &plan);
     let handle = loaded.handle;
 
     let backpressured = generation_request(10, 110, 4, SamplingConfig::greedy(), 23, Box::new([]))?;
@@ -198,13 +213,7 @@ fn candle_fixture_covers_output_backpressure_and_cancellation() -> TestResult {
     assert_eq!(backpressured_output.tokens, vec![EXPECTED_GREEDY_TOKEN; 4]);
     assert_output_backpressure(&backpressured_output);
     assert_finished(&backpressured_output, FinishReason::TokenLimit);
-    assert_released_snapshot(
-        &hosted,
-        handle,
-        loaded.execution_scalar_type,
-        loaded.reserved_footprint,
-        CommandTicket::new(40),
-    )?;
+    assert_released_snapshot(&hosted, &loaded, CommandTicket::new(40))?;
 
     let cancelled = generation_request(11, 111, 12, SamplingConfig::greedy(), 29, Box::new([]))?;
     submit_generation(&hosted, handle, CommandTicket::new(31), &cancelled)?;
@@ -225,13 +234,7 @@ fn candle_fixture_covers_output_backpressure_and_cancellation() -> TestResult {
         &cancelled_output,
         FinishReason::Cancelled(CancellationReason::UserRequested),
     );
-    assert_released_snapshot(
-        &hosted,
-        handle,
-        loaded.execution_scalar_type,
-        loaded.reserved_footprint,
-        CommandTicket::new(41),
-    )?;
+    assert_released_snapshot(&hosted, &loaded, CommandTicket::new(41))?;
 
     unload_model(&hosted, handle)?;
     shutdown(hosted, thread)
@@ -250,7 +253,7 @@ fn candle_mixed_cuda_fixture_covers_e0_generation_accounting_and_lifecycle() -> 
 
     let (hosted, thread) = hosted_cuda_runtime()?;
     let loaded = load_cuda_model(&hosted, source)?;
-    assert_mixed_f16_receipt(&loaded, &plan, execution_device);
+    assert_receipt_matches_plan(&loaded, &plan);
     let handle = loaded.handle;
 
     let request = generation_request(50, 150, 3, SamplingConfig::greedy(), 31, Box::new([]))?;
@@ -263,7 +266,7 @@ fn candle_mixed_cuda_fixture_covers_e0_generation_accounting_and_lifecycle() -> 
     )?;
     assert_eq!(output.tokens, vec![EXPECTED_GREEDY_TOKEN; 3]);
     assert_finished(&output, FinishReason::TokenLimit);
-    assert_cuda_released_snapshot(&hosted, handle, ScalarType::F16, loaded.reserved_footprint)?;
+    assert_cuda_released_snapshot(&hosted, &loaded)?;
 
     unload_model(&hosted, handle)?;
     shutdown(hosted, thread)
@@ -301,7 +304,7 @@ fn prepare_plan(
     };
     let prepared = loader
         .prepare_load(source, &configuration)
-        .map_err(|error| format!("prepare mixed fixture: {error:?}"))?;
+        .map_err(|error| format!("prepare fixture: {error:?}"))?;
     let plan = *prepared.plan();
     drop(prepared);
     Ok(plan)
@@ -329,18 +332,16 @@ fn assert_mixed_f16_plan(plan: &LoadPlan, execution_device: ExecutionDevice) -> 
             device_weight_bytes: 0,
             host_working_bytes: 0,
             device_working_bytes: 0,
-            cache_bytes_per_token: MIXED_CACHE_BYTES_PER_TOKEN,
         },
         DeviceKind::Cuda => MemoryFootprint {
             host_weight_bytes: 0,
             device_weight_bytes: MIXED_EXECUTION_WEIGHT_BYTES,
             host_working_bytes: 0,
             device_working_bytes: 0,
-            cache_bytes_per_token: MIXED_CACHE_BYTES_PER_TOKEN,
         },
         _ => return Err("mixed fixture test selected an unsupported execution device".to_owned()),
     };
-    assert_eq!(plan.expected_footprint, expected_final);
+    assert_eq!(plan.final_footprint, expected_final);
     assert_eq!(
         plan.descriptor.estimated_footprint,
         MemoryFootprint {
@@ -348,11 +349,10 @@ fn assert_mixed_f16_plan(plan: &LoadPlan, execution_device: ExecutionDevice) -> 
             device_weight_bytes: 0,
             host_working_bytes: 0,
             device_working_bytes: 0,
-            cache_bytes_per_token: MIXED_CACHE_BYTES_PER_TOKEN,
         }
     );
     assert_eq!(
-        plan.loading_peak_footprint.cache_bytes_per_token,
+        plan.descriptor.sequence_cache_bytes_per_token,
         MIXED_CACHE_BYTES_PER_TOKEN
     );
 
@@ -383,15 +383,17 @@ fn assert_mixed_f16_plan(plan: &LoadPlan, execution_device: ExecutionDevice) -> 
     Ok(())
 }
 
-fn assert_mixed_f16_receipt(
-    loaded: &LoadReceipt,
-    plan: &LoadPlan,
-    execution_device: ExecutionDevice,
-) {
-    assert_eq!(loaded.execution_device, execution_device);
-    assert_eq!(loaded.execution_scalar_type, ScalarType::F16);
-    assert_eq!(loaded.descriptor, plan.descriptor);
-    assert_eq!(loaded.reserved_footprint, plan.expected_footprint);
+fn assert_receipt_matches_plan(loaded: &LoadReceipt, plan: &LoadPlan) {
+    assert_eq!(
+        *loaded,
+        LoadReceipt {
+            handle: plan.accepted_configuration.handle,
+            execution_device: plan.accepted_configuration.execution_device,
+            execution_scalar_type: plan.execution_scalar_type,
+            descriptor: plan.descriptor,
+            reserved_footprint: plan.final_footprint,
+        }
+    );
 }
 
 fn hosted_runtime(
@@ -494,37 +496,28 @@ fn load_cuda_model(hosted: &CandleRuntime, source: CandleLlamaSource) -> TestRes
     }
 }
 
-fn assert_loaded_fixture(loaded: &LoadReceipt) {
+fn assert_homogeneous_f32_plan(plan: &LoadPlan, execution_device: ExecutionDevice) {
     assert_eq!(
-        loaded.execution_device,
-        ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu)
+        plan.descriptor.metadata.observed_tensor_scalar_types,
+        ScalarTypeSet::from_scalar(ScalarType::F32)
     );
-    assert_eq!(loaded.execution_scalar_type, ScalarType::F32);
-    let descriptor = loaded.descriptor;
-    assert_eq!(descriptor.backend, CANDLE_BACKEND);
-    assert_eq!(descriptor.metadata.architecture, ModelArchitecture::Llama);
     assert_eq!(
-        descriptor.metadata.configuration_declared_scalar_type,
-        Some(ScalarType::F32)
+        *plan,
+        LoadPlan {
+            accepted_configuration: LoadConfiguration {
+                handle: ModelHandle::new(MODEL, ModelGeneration::new(1)),
+                execution_device,
+                memory_budget: MemoryBudget {
+                    host_bytes: u64::MAX,
+                    device_bytes: u64::MAX,
+                },
+            },
+            descriptor: HOMOGENEOUS_F32_DESCRIPTOR,
+            execution_scalar_type: ScalarType::F32,
+            final_footprint: HOMOGENEOUS_F32_FINAL_FOOTPRINT,
+            loading_peak_footprint: HOMOGENEOUS_F32_LOADING_PEAK_FOOTPRINT,
+        }
     );
-    assert!(
-        descriptor
-            .metadata
-            .observed_tensor_scalar_types
-            .contains(ScalarType::F32)
-    );
-    assert_eq!(descriptor.metadata.vocabulary_size, VOCABULARY_SIZE);
-    assert_eq!(descriptor.metadata.context_length, CONTEXT_LENGTH);
-    assert!(
-        descriptor
-            .capabilities
-            .operations
-            .contains(REQUIRED_GENERATION_OPERATIONS)
-    );
-    assert!(descriptor.capabilities.maximum_context_tokens >= CONTEXT_LENGTH);
-    assert!(descriptor.capabilities.maximum_prefill_batch >= 2);
-    assert!(descriptor.capabilities.maximum_sequences >= 1);
-    assert_ne!(loaded.reserved_footprint, MemoryFootprint::default());
 }
 
 fn submit_generation(
@@ -758,9 +751,7 @@ fn assert_output_backpressure(output: &CollectedOutput) {
 
 fn assert_released_snapshot(
     hosted: &CandleRuntime,
-    handle: ModelHandle,
-    execution_scalar_type: ScalarType,
-    model_footprint: MemoryFootprint,
+    loaded: &LoadReceipt,
     ticket: CommandTicket,
 ) -> TestResult {
     hosted
@@ -774,10 +765,13 @@ fn assert_released_snapshot(
             ticket: event_ticket,
             runtime,
             models,
+            retained_models,
         } if event_ticket == ticket => {
             assert_eq!(runtime.loaded_models, 1);
             assert_eq!(runtime.active_requests, 0);
-            assert_eq!(runtime.reserved_footprint, model_footprint);
+            assert_eq!(runtime.reserved_footprint, loaded.reserved_footprint);
+            assert!(runtime.unverified_ownership.is_none());
+            assert!(!runtime.admission_blocked);
             assert_eq!(runtime.generation_workspaces, 0);
             assert_eq!(
                 runtime.reserved_generation_workspace,
@@ -788,15 +782,14 @@ fn assert_released_snapshot(
             assert_eq!(runtime.exhausted_cleanup_models, 0);
             assert_eq!(runtime.exhausted_cleanup_sequences, 0);
             assert!(runtime.maintenance_error.is_none());
+            assert!(retained_models.is_empty());
             assert_eq!(models.len(), 1);
             let model = models.first().ok_or("loaded model snapshot missing")?;
-            assert_eq!(model.handle, handle);
-            assert_eq!(
-                model.execution_device,
-                ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu)
-            );
-            assert_eq!(model.execution_scalar_type, execution_scalar_type);
-            assert_eq!(model.reserved_footprint, model_footprint);
+            assert_eq!(model.handle, loaded.handle);
+            assert_eq!(model.execution_device, loaded.execution_device);
+            assert_eq!(model.execution_scalar_type, loaded.execution_scalar_type);
+            assert_eq!(model.descriptor, loaded.descriptor);
+            assert_eq!(model.reserved_footprint, loaded.reserved_footprint);
             assert_eq!(model.active_requests, 0);
             assert_eq!(model.pending_cleanup_sequences, 0);
             assert_eq!(model.exhausted_cleanup_sequences, 0);
@@ -811,12 +804,7 @@ fn assert_released_snapshot(
 }
 
 #[cfg(feature = "cuda")]
-fn assert_cuda_released_snapshot(
-    hosted: &CandleRuntime,
-    handle: ModelHandle,
-    execution_scalar_type: ScalarType,
-    model_footprint: MemoryFootprint,
-) -> TestResult {
+fn assert_cuda_released_snapshot(hosted: &CandleRuntime, loaded: &LoadReceipt) -> TestResult {
     let ticket = CommandTicket::new(51);
     hosted
         .try_submit(RuntimeCommand::Snapshot { ticket })
@@ -829,10 +817,13 @@ fn assert_cuda_released_snapshot(
             ticket: event_ticket,
             runtime,
             models,
+            retained_models,
         } if event_ticket == ticket => {
             assert_eq!(runtime.loaded_models, 1);
             assert_eq!(runtime.active_requests, 0);
-            assert_eq!(runtime.reserved_footprint, model_footprint);
+            assert_eq!(runtime.reserved_footprint, loaded.reserved_footprint);
+            assert!(runtime.unverified_ownership.is_none());
+            assert!(!runtime.admission_blocked);
             assert_eq!(runtime.generation_workspaces, 0);
             assert_eq!(
                 runtime.reserved_generation_workspace,
@@ -840,16 +831,20 @@ fn assert_cuda_released_snapshot(
             );
             assert_eq!(runtime.pending_cleanup_models, 0);
             assert_eq!(runtime.pending_cleanup_sequences, 0);
+            assert_eq!(runtime.exhausted_cleanup_models, 0);
+            assert_eq!(runtime.exhausted_cleanup_sequences, 0);
+            assert!(runtime.maintenance_error.is_none());
+            assert!(retained_models.is_empty());
             assert_eq!(models.len(), 1);
             let model = models.first().ok_or("CUDA model snapshot missing")?;
-            assert_eq!(model.handle, handle);
-            assert_eq!(
-                model.execution_device,
-                ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda)
-            );
-            assert_eq!(model.execution_scalar_type, execution_scalar_type);
-            assert_eq!(model.reserved_footprint, model_footprint);
+            assert_eq!(model.handle, loaded.handle);
+            assert_eq!(model.execution_device, loaded.execution_device);
+            assert_eq!(model.execution_scalar_type, loaded.execution_scalar_type);
+            assert_eq!(model.descriptor, loaded.descriptor);
+            assert_eq!(model.reserved_footprint, loaded.reserved_footprint);
             assert_eq!(model.active_requests, 0);
+            assert_eq!(model.pending_cleanup_sequences, 0);
+            assert_eq!(model.exhausted_cleanup_sequences, 0);
             assert!(!model.degraded);
             Ok(())
         }
@@ -904,10 +899,13 @@ fn assert_unloaded_snapshot(hosted: &CandleRuntime) -> TestResult {
             ticket,
             runtime,
             models,
+            retained_models,
         } if ticket == UNLOADED_SNAPSHOT_TICKET => {
             assert_eq!(runtime.loaded_models, 0);
             assert_eq!(runtime.active_requests, 0);
             assert_eq!(runtime.reserved_footprint, MemoryFootprint::default());
+            assert!(runtime.unverified_ownership.is_none());
+            assert!(!runtime.admission_blocked);
             assert_eq!(runtime.generation_workspaces, 0);
             assert_eq!(
                 runtime.reserved_generation_workspace,
@@ -919,6 +917,7 @@ fn assert_unloaded_snapshot(hosted: &CandleRuntime) -> TestResult {
             assert_eq!(runtime.exhausted_cleanup_sequences, 0);
             assert!(runtime.maintenance_error.is_none());
             assert!(models.is_empty());
+            assert!(retained_models.is_empty());
             Ok(())
         }
         event => Err(format!(
