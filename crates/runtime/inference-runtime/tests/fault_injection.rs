@@ -13,13 +13,12 @@ use domain_contracts::{
     BackendFailure, BackendFailureKind, BackendId, BackendSequence, CancellationReason,
     CapabilitySet, DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind,
     ExecutionDevice, FailedLoad, FailedLoadOwner, LoadConfiguration, LoadError, LoadPlan,
-    LoadedModel, MemoryBudget,
-    MemoryFootprint, MemoryKind, ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError,
-    ModelGeneration, ModelHandle, ModelId, ModelLoader, ModelMetadata, MonotonicMillis,
-    PrefillBufferRequirements, PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedLoad,
-    PreparedPrefillBuffers, QuantizationFormat, RequestId, ScalarType, ScalarTypeSet,
-    SequenceConfiguration, SequenceError, SequenceId, SequencePlan, SequenceState,
-    SynchronizationError, UnloadPolicy,
+    LoadedModel, MemoryBudget, MemoryFootprint, MemoryKind, ModelArchitecture, ModelCapabilities,
+    ModelDescriptor, ModelError, ModelGeneration, ModelHandle, ModelId, ModelLoader, ModelMetadata,
+    MonotonicMillis, PrefillBufferRequirements, PrefillInput, PrefillOutcome,
+    PreparedDecodeBuffers, PreparedLoad, PreparedPrefillBuffers, QuantizationFormat, RequestId,
+    ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceError, SequenceId, SequencePlan,
+    SequenceState, SynchronizationError, UnloadPolicy,
 };
 use inference_runtime::{
     CleanupPoll, CleanupResource, CleanupRetryPolicy, ConservativeFootprint, FailureClass,
@@ -1278,7 +1277,10 @@ fn failed_owner_plan_substitution_blocks_admission_until_release() -> TestResult
     ));
     assert_eq!(state.failure.primary_failure, FailureClass::BackendContract);
     assert!(runtime.snapshot().admission_blocked);
-    assert_eq!(runtime.snapshot().reserved_footprint, MemoryFootprint::default());
+    assert_eq!(
+        runtime.snapshot().reserved_footprint,
+        MemoryFootprint::default()
+    );
     assert!(matches!(
         runtime.poll_cleanup().map_err(debug_error)?,
         CleanupPoll::Released(released)
@@ -1321,7 +1323,10 @@ fn failed_owner_plan_mutation_during_cleanup_blocks_admission_until_release() ->
     ));
     assert_eq!(state.failure.primary_failure, FailureClass::BackendContract);
     assert!(runtime.snapshot().admission_blocked);
-    assert_eq!(runtime.snapshot().reserved_footprint, MemoryFootprint::default());
+    assert_eq!(
+        runtime.snapshot().reserved_footprint,
+        MemoryFootprint::default()
+    );
 
     assert!(matches!(
         runtime.poll_cleanup().map_err(debug_error)?,

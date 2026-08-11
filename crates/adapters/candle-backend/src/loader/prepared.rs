@@ -10,8 +10,8 @@ use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::llama::{Config, Llama};
 use domain_contracts::{
-    BackendFailureKind, BackendId, DeviceKind, FailedLoadOwner, LoadError, LoadPlan,
-    PreparedLoad, SynchronizationError,
+    BackendFailureKind, BackendId, DeviceKind, FailedLoadOwner, LoadError, LoadPlan, PreparedLoad,
+    SynchronizationError,
 };
 use sha2::{Digest, Sha256};
 
@@ -751,8 +751,8 @@ mod tests {
     use candle_core::{DType, Device, Tensor};
     use candle_transformers::models::llama::Config;
     use domain_contracts::{
-        BackendId, CapabilitySet, DeviceId, DeviceKind, ExecutionDevice, LoadConfiguration,
-        FailedLoadOwner, LoadError, LoadPlan, MemoryBudget, MemoryFootprint, ModelArchitecture,
+        BackendId, CapabilitySet, DeviceId, DeviceKind, ExecutionDevice, FailedLoadOwner,
+        LoadConfiguration, LoadError, LoadPlan, MemoryBudget, MemoryFootprint, ModelArchitecture,
         ModelCapabilities, ModelDescriptor, ModelGeneration, ModelHandle, ModelId, ModelMetadata,
         PreparedLoad, QuantizationFormat, ScalarType, ScalarTypeSet,
     };

@@ -253,7 +253,6 @@ impl Drop for RetryableFailedPreparation {
     }
 }
 
-
 fn test_load_plan() -> LoadPlan {
     let model = TestModel { vocabulary: 16 };
     LoadPlan {

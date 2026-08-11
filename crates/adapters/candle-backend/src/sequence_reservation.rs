@@ -169,7 +169,12 @@ impl ReservationInputs {
         )?;
         let cuda_forward_device_bytes = checked_sum(
             backend,
-            &[rope_bytes, kv_cache_bytes, mask_cache_bytes, model_forward_peak_bytes],
+            &[
+                rope_bytes,
+                kv_cache_bytes,
+                mask_cache_bytes,
+                model_forward_peak_bytes,
+            ],
         )?;
         let cuda_creation_host_bytes = checked_sum(
             backend,

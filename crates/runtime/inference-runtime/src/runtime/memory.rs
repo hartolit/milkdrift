@@ -126,9 +126,7 @@ pub(super) const fn extend_conservative_footprint(
     }
 }
 
-const fn validated_conservative_footprint(
-    footprint: MemoryFootprint,
-) -> ConservativeFootprint {
+const fn validated_conservative_footprint(footprint: MemoryFootprint) -> ConservativeFootprint {
     if footprint.checked_host_bytes().is_some() && footprint.checked_device_bytes().is_some() {
         ConservativeFootprint::Known(footprint)
     } else {

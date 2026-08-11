@@ -6,13 +6,12 @@ use std::time::Duration;
 use domain_contracts::{
     BackendFailure, BackendFailureKind, BackendId, BackendSequence, CapabilitySet,
     DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind, ExecutionDevice,
-    FailedLoad, FailedLoadOwner, LoadConfiguration, LoadError, LoadPlan, LoadedModel,
-    MemoryBudget, MemoryFootprint,
-    ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError, ModelHandle, ModelId,
-    ModelLoader, ModelMetadata, PrefillBufferRequirements, PrefillInput, PrefillOutcome,
-    PreparedDecodeBuffers, PreparedLoad, PreparedPrefillBuffers, QuantizationFormat, RequestId,
-    ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceError, SequenceId, SequencePlan,
-    SequenceState, SynchronizationError,
+    FailedLoad, FailedLoadOwner, LoadConfiguration, LoadError, LoadPlan, LoadedModel, MemoryBudget,
+    MemoryFootprint, ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError,
+    ModelHandle, ModelId, ModelLoader, ModelMetadata, PrefillBufferRequirements, PrefillInput,
+    PrefillOutcome, PreparedDecodeBuffers, PreparedLoad, PreparedPrefillBuffers,
+    QuantizationFormat, RequestId, ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceError,
+    SequenceId, SequencePlan, SequenceState, SynchronizationError,
 };
 use host_runtime::spawn_named;
 use inference_runtime::{

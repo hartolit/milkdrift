@@ -180,8 +180,8 @@ fn gqa_and_non_gqa_layer_terms_are_both_exact() -> TestResult {
         tie_word_embeddings: false,
     };
     let configuration = sequence_configuration(7, 3)?;
-    let inputs = ReservationInputs::new(BACKEND, &config, DType::F32, configuration)
-        .map_err(debug_error)?;
+    let inputs =
+        ReservationInputs::new(BACKEND, &config, DType::F32, configuration).map_err(debug_error)?;
     let components = inputs.components(BACKEND).map_err(debug_error)?;
     assert_eq!(inputs.head_dimension, 4);
     assert_eq!(inputs.grouped_kv_width, 8);

@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use domain_contracts::{
-    BackendSequence, ExecutionDevice, FailedLoad, FailedLoadOwner, GenerationUsage, LoadedModel,
-    LoadPlan, MemoryFootprint, ModelDescriptor, ModelGeneration, ModelHandle, ModelId,
+    BackendSequence, ExecutionDevice, FailedLoad, FailedLoadOwner, GenerationUsage, LoadPlan,
+    LoadedModel, MemoryFootprint, ModelDescriptor, ModelGeneration, ModelHandle, ModelId,
     ModelLifecycle, ModelLoader, RequestId, ScalarType, SequenceId, SynchronizationError,
 };
 
@@ -33,8 +33,7 @@ where
     loader: L,
     limits: RuntimeLimits,
     models: BTreeMap<ModelId, ModelSlot<L::Model>>,
-    pending_models:
-        BTreeMap<ModelId, PendingModel<L::Model, FailedLoad<L::FailedPreparation>>>,
+    pending_models: BTreeMap<ModelId, PendingModel<L::Model, FailedLoad<L::FailedPreparation>>>,
     request_index: BTreeMap<RequestId, ModelId>,
     sequence_index: BTreeMap<SequenceId, RequestId>,
     pending_request_index: BTreeMap<RequestId, ModelId>,
@@ -76,10 +75,7 @@ where
 {
     VerifiedModel(M),
     IncompatibleModel(M),
-    FailedPreparation {
-        owner: P,
-        accepted_plan: LoadPlan,
-    },
+    FailedPreparation { owner: P, accepted_plan: LoadPlan },
 }
 
 impl<M, P> PendingModelOwner<M, P>

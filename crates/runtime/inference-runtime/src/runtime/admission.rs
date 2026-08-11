@@ -2,10 +2,9 @@ use std::collections::BTreeMap;
 
 use domain_contracts::{
     BackendSequence, CapabilitySet, CapacityExhausted, CapacityResource, ExecutionDevice,
-    FailedLoad, GenerationUsage, LoadConfiguration, LoadPlan, LoadedModel,
-    MemoryFootprint, ModelDescriptor, ModelError, ModelHandle, ModelId, ModelLifecycle,
-    ModelLifecycleState, ModelLoader, PreparedLoad, RequestId, ScalarType, SequenceConfiguration,
-    SequenceId,
+    FailedLoad, GenerationUsage, LoadConfiguration, LoadPlan, LoadedModel, MemoryFootprint,
+    ModelDescriptor, ModelError, ModelHandle, ModelId, ModelLifecycle, ModelLifecycleState,
+    ModelLoader, PreparedLoad, RequestId, ScalarType, SequenceConfiguration, SequenceId,
 };
 
 use crate::{
@@ -222,8 +221,7 @@ where
         let failed_plan_before_cleanup = *failed.plan();
         let cleanup_result = failed.cleanup();
         let failed_plan_after_cleanup = *failed.plan();
-        let plan_matches =
-            failed_plan_before_cleanup == plan && failed_plan_after_cleanup == plan;
+        let plan_matches = failed_plan_before_cleanup == plan && failed_plan_after_cleanup == plan;
         let primary = if plan_matches {
             RuntimeError::Load(load_failure)
         } else {

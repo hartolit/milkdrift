@@ -17,8 +17,6 @@ mod sequence_reservation;
 mod source;
 
 pub use device::{CandleDeviceSummary, CudaComputeCapability};
-pub use loader::{
-    CandleLlamaFailedPreparation, CandleLlamaLoader, CandleLlamaPreparedLoad,
-};
+pub use loader::{CandleLlamaFailedPreparation, CandleLlamaLoader, CandleLlamaPreparedLoad};
 pub use model::{CandleLlamaModel, CandleLlamaSequence};
 pub use source::{CandleLlamaSource, CandleShardIdentity, CandleWeightShard, SourceError};
