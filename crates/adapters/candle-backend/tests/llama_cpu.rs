@@ -391,6 +391,28 @@ fn configuration_declaration_must_match_required_primary() -> TestResult {
 }
 
 #[test]
+fn mixed_required_layouts_require_matching_configuration_declarations() -> TestResult {
+    for (profile, declaration) in [
+        (RequiredProfile::MixedF16F32, ConfigDeclaration::F16),
+        (RequiredProfile::MixedBf16F32, ConfigDeclaration::Bf16),
+    ] {
+        let fixture = TinyLlamaFixture::create(profile, &[])?;
+        let absent = fixture.source(ConfigDeclaration::Absent)?;
+        let mut loader = CandleLlamaLoader::new(BACKEND);
+        assert_unsupported(loader.inspect(&absent));
+        assert_unsupported(loader.prepare_load(&absent, &load_configuration()));
+
+        let declared = fixture.source(declaration)?;
+        loader.inspect(&declared).map_err(debug_error)?;
+        let prepared = loader
+            .prepare_load(&declared, &load_configuration())
+            .map_err(debug_error)?;
+        drop(prepared);
+    }
+    Ok(())
+}
+
+#[test]
 fn owned_config_bytes_remain_bound_while_local_paths_stay_late_bound() -> TestResult {
     let fixture = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
     let local_source = fixture.source(ConfigDeclaration::F32)?;
@@ -947,7 +969,7 @@ fn load_exact_preparation(
         Ok(model) => Ok(model),
         Err(mut failed) => {
             let primary = failed.primary();
-            let cleanup = failed.cleanup_owner_mut().cleanup();
+            let cleanup = failed.cleanup();
             Err(format!(
                 "prepared load failed: {primary:?}; cleanup: {cleanup:?}"
             ))
@@ -966,13 +988,13 @@ fn assert_failed_preparation_invalid_model(
             return Err("mutated or mismatched preparation unexpectedly loaded".to_owned());
         }
     };
-    let (error, mut cleanup_owner) = failed.into_parts();
     assert!(matches!(
-        error,
+        failed.primary(),
         LoadError::Backend(failure) if failure.kind == BackendFailureKind::InvalidModel
     ));
-    cleanup_owner.cleanup().map_err(debug_error)?;
-    cleanup_owner.cleanup().map_err(debug_error)
+    let mut failed = failed;
+    failed.cleanup().map_err(debug_error)?;
+    failed.cleanup().map_err(debug_error)
 }
 
 fn assert_unverified_prepared_mutation_rejected(mutation: PreparedMutation) -> TestResult {

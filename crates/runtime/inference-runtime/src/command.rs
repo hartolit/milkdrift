@@ -103,10 +103,10 @@ pub enum UnloadStatus {
     Unloaded,
 }
 
-/// Aggregate evidence for incompatible complete-model ownership.
+/// Aggregate evidence for retained ownership without an exact verified bound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UnverifiedOwnershipSummary {
-    /// Number of incompatible complete-model owners.
+    /// Number of retained owners carrying unverified ownership.
     pub owners: u32,
     /// Checked aggregate conservative reservation evidence for those owners.
     pub conservative_footprint: ConservativeFootprint,
@@ -123,10 +123,10 @@ pub struct RuntimeSnapshot {
     ///
     /// Sequence entries contribute their admitted logical-payload reservation
     /// arithmetic rather than an instantaneous allocation measurement.
-    /// Incompatible complete models are excluded rather than falsely represented
+    /// Unverified retained owners are excluded rather than falsely represented
     /// as exact; their evidence is exposed by [`Self::unverified_ownership`].
     pub reserved_footprint: MemoryFootprint,
-    /// Aggregate unverified complete-model ownership evidence, when present.
+    /// Aggregate unverified retained-ownership evidence, when present.
     pub unverified_ownership: Option<UnverifiedOwnershipSummary>,
     /// Whether unverified ownership rejects every new resource admission.
     pub admission_blocked: bool,

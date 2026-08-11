@@ -155,7 +155,7 @@ where
         };
         for pending in self.pending_models.values() {
             match &pending.owner {
-                PendingModelOwner::FailedPreparation(_) => {
+                PendingModelOwner::FailedPreparation { .. } => {
                     summary.failed_preparations = summary.failed_preparations.saturating_add(1);
                 }
                 PendingModelOwner::VerifiedModel(_) => {
@@ -163,17 +163,17 @@ where
                 }
                 PendingModelOwner::IncompatibleModel(_) => {
                     summary.incompatible_models = summary.incompatible_models.saturating_add(1);
-                    if let RetainedOwnership::Unverified {
-                        conservative_footprint,
-                        ..
-                    } = pending.ownership
-                    {
-                        summary.unverified_conservative_footprint = add_conservative_footprint(
-                            summary.unverified_conservative_footprint,
-                            conservative_footprint,
-                        );
-                    }
                 }
+            }
+            if let RetainedOwnership::Unverified {
+                conservative_footprint,
+                ..
+            } = pending.ownership
+            {
+                summary.unverified_conservative_footprint = add_conservative_footprint(
+                    summary.unverified_conservative_footprint,
+                    conservative_footprint,
+                );
             }
         }
         summary.sequences = saturating_u32(

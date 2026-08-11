@@ -256,7 +256,7 @@ where
         model_id: domain_contracts::ModelId,
     ) -> Result<CleanupPoll, RuntimeError> {
         let maximum_attempts = self.maximum_cleanup_attempts();
-        let (next_attempts, next_reserved) = {
+        let (next_attempts, reserved_after_release) = {
             let pending = self
                 .pending_models
                 .get(&model_id)
@@ -264,7 +264,7 @@ where
             if pending.attempts >= maximum_attempts {
                 return Err(RuntimeError::BackendContractViolation);
             }
-            let next_reserved = match pending.ownership.exact_footprint() {
+            let reserved_after_release = match pending.ownership.exact_footprint() {
                 Some(footprint) => checked_sub_footprint(self.reserved_footprint, footprint)?,
                 None => self.reserved_footprint,
             };
@@ -273,7 +273,7 @@ where
                     .attempts
                     .checked_add(1)
                     .ok_or(RuntimeError::BackendContractViolation)?,
-                next_reserved,
+                reserved_after_release,
             )
         };
 
@@ -282,10 +282,23 @@ where
             .remove(&model_id)
             .ok_or(RuntimeError::ModelNotLoaded(model_id))?;
         pending.attempts = next_attempts;
+
+        // A failed-preparation owner must continue to report the exact plan that
+        // E0 admitted. Check both sides of the retry because a failing cleanup
+        // attempt may itself mutate a dishonest backend report.
+        pending.reconcile_failed_preparation_contract();
         let cleanup_result = pending.owner.cleanup();
+        pending.reconcile_failed_preparation_contract();
+
         if let Err(error) = cleanup_result {
             pending.failure.cleanup_failure = FailureDetail::Synchronization(error).class();
             pending.failure.cleanup_detail = FailureDetail::Synchronization(error);
+            if pending.ownership.blocks_admission() {
+                // The formerly exact reservation is no longer represented as an
+                // exact quantity. The conservative evidence remains observable,
+                // and admission stays blocked until explicit cleanup succeeds.
+                self.reserved_footprint = reserved_after_release;
+            }
             let state = model_cleanup_state(&pending, maximum_attempts);
             let replaced = self.pending_models.insert(model_id, pending);
             debug_assert!(replaced.is_none(), "cleanup owner was removed for retry");
@@ -298,7 +311,7 @@ where
         }
 
         let state = model_cleanup_state(&pending, maximum_attempts).released();
-        self.reserved_footprint = next_reserved;
+        self.reserved_footprint = reserved_after_release;
         self.last_cleanup = Some(state);
         Ok(CleanupPoll::Released(state))
     }
@@ -471,7 +484,7 @@ fn model_cleanup_state<M, P>(
 ) -> CleanupRetryState
 where
     M: LoadedModel,
-    P: domain_contracts::PreparedLoad,
+    P: domain_contracts::FailedLoadOwner,
 {
     CleanupRetryState {
         resource: pending.owner.cleanup_resource(pending.handle),

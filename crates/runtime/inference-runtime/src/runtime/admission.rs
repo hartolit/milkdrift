@@ -2,9 +2,10 @@ use std::collections::BTreeMap;
 
 use domain_contracts::{
     BackendSequence, CapabilitySet, CapacityExhausted, CapacityResource, ExecutionDevice,
-    FailedLoad, GenerationUsage, LoadConfiguration, LoadPlan, LoadedModel, MemoryFootprint,
-    ModelDescriptor, ModelError, ModelHandle, ModelId, ModelLifecycle, ModelLifecycleState,
-    ModelLoader, PreparedLoad, RequestId, ScalarType, SequenceConfiguration, SequenceId,
+    FailedLoad, GenerationUsage, LoadConfiguration, LoadPlan, LoadedModel,
+    MemoryFootprint, ModelDescriptor, ModelError, ModelHandle, ModelId, ModelLifecycle,
+    ModelLifecycleState, ModelLoader, PreparedLoad, RequestId, ScalarType, SequenceConfiguration,
+    SequenceId,
 };
 
 use crate::{
@@ -215,29 +216,58 @@ where
         model_id: ModelId,
         preflight: LoadPreflight,
         plan: LoadPlan,
-        failed: FailedLoad<L::Prepared>,
+        mut failed: FailedLoad<L::FailedPreparation>,
     ) -> RuntimeError {
-        let (primary, mut cleanup_owner) = failed.into_parts();
-        if let Err(cleanup) = cleanup_owner.cleanup() {
+        let load_failure = failed.primary();
+        let failed_plan_before_cleanup = *failed.plan();
+        let cleanup_result = failed.cleanup();
+        let failed_plan_after_cleanup = *failed.plan();
+        let plan_matches =
+            failed_plan_before_cleanup == plan && failed_plan_after_cleanup == plan;
+        let primary = if plan_matches {
+            RuntimeError::Load(load_failure)
+        } else {
+            RuntimeError::BackendContractViolation
+        };
+
+        if let Err(cleanup) = cleanup_result {
             let report = CleanupFailureReport::with_details(
-                RuntimeOperation::ModelLoad,
-                FailureDetail::Load(primary),
+                if plan_matches {
+                    RuntimeOperation::ModelLoad
+                } else {
+                    RuntimeOperation::ModelAdmission
+                },
+                primary.failure_detail(),
                 RuntimeOperation::FailedLoadCleanup,
                 FailureDetail::Synchronization(cleanup),
             );
-            let pending = PendingModel {
+            let mut pending = PendingModel {
                 handle: preflight.handle,
-                owner: PendingModelOwner::FailedPreparation(cleanup_owner),
+                owner: PendingModelOwner::FailedPreparation {
+                    owner: failed,
+                    accepted_plan: plan,
+                },
                 ownership: RetainedOwnership::Exact(plan.loading_peak_footprint),
                 failure: report,
                 attempts: 1,
                 cancelled_requests: 0,
             };
-            let state = self.commit_pending_model(model_id, pending, self.reserved_footprint);
+
+            // Preserve every contradictory report observed around the cleanup
+            // attempt. A backend cannot shrink previously published conservative
+            // evidence by changing its report again on a later retry.
+            pending.reconcile_failed_preparation_report(plan, failed_plan_before_cleanup);
+            pending.reconcile_failed_preparation_report(plan, failed_plan_after_cleanup);
+            let exact_reserved = if pending.ownership.exact_footprint().is_some() {
+                self.reserved_footprint
+            } else {
+                preflight.previous_reserved
+            };
+            let state = self.commit_pending_model(model_id, pending, exact_reserved);
             cleanup_retention_error(state)
         } else {
             self.reserved_footprint = preflight.previous_reserved;
-            RuntimeError::Load(primary)
+            primary
         }
     }
 
@@ -284,7 +314,7 @@ where
     fn commit_pending_model(
         &mut self,
         model_id: ModelId,
-        pending: PendingModel<L::Model, L::Prepared>,
+        pending: PendingModel<L::Model, FailedLoad<L::FailedPreparation>>,
         exact_reserved: MemoryFootprint,
     ) -> CleanupRetryState {
         let state = CleanupRetryState {

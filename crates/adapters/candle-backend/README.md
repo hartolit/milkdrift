@@ -58,11 +58,11 @@ The required-primary matrix is exact:
 |---|---:|---:|
 | `{F32}` | F32 | absent or F32 |
 | `{F16}` | F16 | absent or F16 |
-| `{F16,F32}` | F16 | absent or F16 |
+| `{F16,F32}` | F16 | **F16 required** |
 | `{BF16}` | BF16 | absent or BF16 |
-| `{BF16,F32}` | BF16 | absent or BF16 |
+| `{BF16,F32}` | BF16 | **BF16 required** |
 
-Empty, F16+BF16, and any required set containing another category are rejected. Complete observed extras never affect this matrix.
+Empty, F16+BF16, and any required set containing another category are rejected. Complete observed extras never affect this matrix. A mixed required set is deliberately not self-describing: `{F16,F32}` and `{BF16,F32}` do not reveal which dtype is producer-intended primary. Milkdrift therefore requires the matching recognized declaration before performing a lossy conversion; an absent declaration is accepted only for homogeneous required sets.
 
 Execution selection remains:
 
@@ -115,7 +115,7 @@ After identity establishment and admission, each retained shard is processed by 
 6. at EOF, verify exact length and the accepted whole-file SHA-256;
 7. only after every shard verifies, construct and synchronize the Llama model for publication.
 
-There are no per-tensor seeks, no mmap, and no unsafe code. Unused tensors are never staged into tensor-sized storage, converted, transferred, inserted into Candle's load map, or retained by the model. Header mutation fails before payload processing. Payload mutation, extension, and truncation fail before model publication. A late digest mismatch returns the same prepared value as the sole cleanup owner of all tensors already materialized.
+There are no per-tensor seeks, no mmap, and no unsafe code. Unused tensors are never staged into tensor-sized storage, converted, transferred, inserted into Candle's load map, or retained by the model. Header mutation fails before payload processing. Payload mutation, extension, and truncation fail before model publication. A late digest mismatch consumes the ordinary-drop-safe preparation and returns a distinct `CandleLlamaFailedPreparation` as the sole cleanup owner of all tensors already materialized.
 
 ## Exact required-only footprints
 
@@ -195,9 +195,22 @@ cache bytes/token = C
 
 All arithmetic is checked. There is no extra headroom for ignored tensors.
 
+## Sequence reservation follows simultaneous lifetimes
+
+`SequencePlan::expected_footprint` is a checked conservative upper bound over reviewed live logical tensor payload and source-transfer bytes. It is not physical RSS/VRAM and does not sum allocations that cannot be live together. The locked Candle Llama 0.11.0 path separates:
+
+- **persistent per-layer ownership** — KV cache for every transformer block, plus retained rotary and mask caches;
+- **one-block transient peak** — attention, normalization, residual, MLP, conversion, and matmul tensors that can coexist inside one `Block::forward`;
+- **outer model peak** — embedding/current hidden state, one block result, final normalization, selected final-token state, logits, and F32 logit conversion; and
+- **creation/source-transfer phases** — token/mask host staging and device cache construction.
+
+Candle advances blocks sequentially (`x = block.forward(...)`), so persistent KV ownership scales with `num_hidden_layers`, while the complete block transient peak is admitted once rather than multiplied by layer count. CPU and CUDA take the component-wise maximum of creation and execution phases in their own memory domains. Realistic 22-layer TinyLlama regression arithmetic locks this distinction so transformer depth cannot silently multiply transient activation headroom again. Caller-owned E0 logits/sampling workspaces remain separately admitted.
+
 ## Transactional ownership and cleanup
 
-`CandleLlamaPreparedLoad` remains the only partial-load owner. It retains:
+`CandleLlamaPreparedLoad` is the ordinary-drop-safe, pre-materialization transaction. `load_prepared` consumes it exactly once. If materialization acquires resources and then fails, the adapter returns the distinct `CandleLlamaFailedPreparation` typestate; only that failed typestate implements `FailedLoadOwner` and exposes retryable cleanup. This prevents the public API from assigning incompatible drop semantics to one type.
+
+The failed owner retains:
 
 - parsed config and selected device;
 - every retained open shard and accepted whole-file identity;
@@ -205,7 +218,7 @@ All arithmetic is checked. There is no extra headroom for ignored tensors.
 - pending source, cast-host, and transferred-device tensor endpoints;
 - a constructed model if a later checkpoint or final synchronization fails.
 
-Each endpoint is stored before subsequent fallible validation, synchronization, insertion, or publication work. CPU/CUDA synchronization occurs before explicit release. `PreparedLoad::cleanup` is retryable and idempotent: synchronization failure leaves every handle intact for another attempt; only successful synchronization clears the model, tensors, shards, config, and device. The adapter does not use `mem::forget`.
+Each endpoint is stored before subsequent fallible validation, synchronization, insertion, or publication work. CPU/CUDA synchronization occurs before explicit release. `FailedLoadOwner::cleanup` is retryable and idempotent: synchronization failure leaves every handle and the lifetime-stable accepted plan intact for another attempt; only successful synchronization clears the model, tensors, shards, config, and device. The raw Candle owner performs no hidden abandonment. The project-owned `FailedLoad` guard encapsulates it and deliberately retains an unresolved owner if a direct caller abandons the failure before cleanup succeeds; E0 normally remains the reachable owner and performs bounded retries. E0 verifies the failed owner's plan before and after every cleanup attempt; report substitution or mutation becomes unverified retained ownership and blocks admission until release.
 
 Private deterministic instrumentation covers hashed ignored ranges versus required materialization events, the immutable fast path versus project-established/unverified mutable baselines, source/cast/transfer/map/model/final-sync ownership checkpoints, mutation and truncation, and cleanup failure/retry. No fault-injection hook is public.
 

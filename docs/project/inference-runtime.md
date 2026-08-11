@@ -17,7 +17,7 @@ presentation, or frontend labels.
 InferenceRuntime<L>
 ├── committed model slots with exact final ownership
 ├── pending model cleanup
-│   ├── failed preparations with exact accepted loading peak
+│   ├── failed-materialization owners with exact peak or unverified evidence
 │   ├── verified models with exact final footprint
 │   └── incompatible complete models with unverified evidence
 ├── active and cleanup-retained sequences
@@ -32,9 +32,10 @@ incompatible complete models are not normal model slots, and retained model owne
 are not simultaneously reported as ordinary loaded models.
 
 `RuntimeSnapshot::reserved_footprint` contains only verified exact ownership.
-`unverified_ownership` and `admission_blocked` separately report complete models
-whose exact upper bound is not established. A zero exact aggregate therefore does
-not prove that an unverified owner was released.
+`unverified_ownership` and `admission_blocked` separately report any retained
+backend owner whose exact upper bound is not established, including a failed-load
+owner that mutates or substitutes its accepted plan. A zero exact aggregate
+therefore does not prove that an unverified owner was released.
 
 ## Exact prepared-load transaction
 
@@ -96,15 +97,20 @@ and final formulas.
 ## Failed-load cleanup and full retry state
 
 `load_prepared` returns either a complete model or
-`FailedLoad<L::Prepared>`. The failure separates the primary materialization error
-from the cleanup owner. E0 immediately calls explicit cleanup while the accepted
-loading peak remains reserved.
+`FailedLoad<L::FailedPreparation>`. The ordinary-drop-safe preparation and the
+resource-bearing failed typestate are distinct associated types. The failure
+separates the primary materialization error from the sole cleanup owner. E0 reads
+the failed owner's accepted-plan report, calls explicit cleanup while the accepted
+loading peak remains reserved, then reads the report again.
 
-If cleanup succeeds, E0 restores `R₀`, publishes no model or receipt, and returns
-the original `RuntimeError::Load(primary)`.
+If both reports match and cleanup succeeds, E0 restores `R₀`, publishes no model
+or receipt, and returns the original `RuntimeError::Load(primary)`.
 
-If cleanup fails, E0 retains the preparation, loading-peak reservation, and
-model-generation identity. Crucially,
+If cleanup fails with matching reports, E0 retains the failed typestate, exact
+loading-peak reservation, and model-generation identity. If either report differs
+from the accepted plan, E0 records a backend-contract failure, removes the now
+unproven quantity from exact aggregate accounting, preserves monotonic conservative
+evidence, and blocks every new admission until explicit release. Crucially,
 `RuntimeError::CleanupFailed(CleanupRetryState)` carries the **full** retry state;
 it is not reduced to one cleanup error or boolean:
 
@@ -130,7 +136,8 @@ and sequence identity. `RetainedOwnership` distinguishes:
 - `Released`, produced only by explicit successful cleanup;
 - `Exact(footprint)` for a trustworthy named ownership phase; and
 - `Unverified { accepted_loading_peak, reported_footprint,
-  conservative_footprint }` for a complete contract-violating model.
+  conservative_footprint }` for any retained owner that contradicts its accepted
+  contract, including a complete model or failed-materialization owner.
 
 `CleanupFailureReport` preserves primary and cleanup operations, classes, and
 bounded details independently. Cleanup failure never replaces the primary outcome.

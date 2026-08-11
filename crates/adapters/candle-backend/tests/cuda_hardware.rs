@@ -474,7 +474,7 @@ fn load_fixture(
         Ok(model) => model,
         Err(mut failed) => {
             let primary = failed.primary();
-            let cleanup = failed.cleanup_owner_mut().cleanup();
+            let cleanup = failed.cleanup();
             return Err(format!(
                 "load fixture on {execution_device:?}: {primary:?}; cleanup: {cleanup:?}"
             ));

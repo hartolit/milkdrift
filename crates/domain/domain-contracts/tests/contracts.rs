@@ -1,12 +1,14 @@
 //! Integration tests for backend contracts, lifecycle transitions, and capacity guards.
 
 use core::num::NonZeroU32;
+use std::cell::Cell;
+use std::rc::Rc;
 
 use domain_contracts::{
     BackendSequence, CancellationReason, CancellationStatus, CapacityResource,
     DecodeBufferRequirements, DecodeBuffers, DecodeInput, DecodeOutcome, DrainTimeout, FailedLoad,
-    FinishReason, LifecycleAction, LoadConfiguration, LoadError, LoadPlan, MemoryBudget,
-    MemoryFootprint, ModelLifecycle, ModelLifecycleState, MonotonicMillis,
+    FailedLoadOwner, FinishReason, LifecycleAction, LoadConfiguration, LoadError, LoadPlan,
+    MemoryBudget, MemoryFootprint, ModelLifecycle, ModelLifecycleState, MonotonicMillis,
     PrefillBufferRequirements, PrefillBuffers, PrefillInput, PrefillOutcome, PreparedDecodeBuffers,
     PreparedLoad, PreparedPrefillBuffers, ScalarType, ScalarTypeSet, SequenceId, SequenceState,
     SynchronizationError, TokenId, UnloadPolicy, decode_checked, prefill_checked,
@@ -208,26 +210,73 @@ impl domain_contracts::LoadedModel for TestModel {
 
 struct RetryablePreparation {
     plan: LoadPlan,
-    cleanup_should_fail: bool,
-    cleanup_authority_owned: bool,
-    cleanup_attempts: u32,
 }
 
 impl PreparedLoad for RetryablePreparation {
+    type Failed = RetryableFailedPreparation;
+
+    fn plan(&self) -> &LoadPlan {
+        &self.plan
+    }
+}
+
+#[derive(Debug)]
+struct RetryableFailedPreparation {
+    plan: LoadPlan,
+    cleanup_should_fail: bool,
+    cleanup_authority_owned: Rc<Cell<bool>>,
+    cleanup_attempts: Rc<Cell<u32>>,
+    drops: Rc<Cell<u32>>,
+}
+
+impl FailedLoadOwner for RetryableFailedPreparation {
     fn plan(&self) -> &LoadPlan {
         &self.plan
     }
 
     fn cleanup(&mut self) -> Result<(), SynchronizationError> {
-        self.cleanup_attempts += 1;
+        self.cleanup_attempts
+            .set(self.cleanup_attempts.get().saturating_add(1));
         if self.cleanup_should_fail {
             self.cleanup_should_fail = false;
             Err(SynchronizationError::InvalidState)
         } else {
-            self.cleanup_authority_owned = false;
+            self.cleanup_authority_owned.set(false);
             Ok(())
         }
     }
+}
+
+impl Drop for RetryableFailedPreparation {
+    fn drop(&mut self) {
+        self.drops.set(self.drops.get().saturating_add(1));
+    }
+}
+
+
+fn test_load_plan() -> LoadPlan {
+    let model = TestModel { vocabulary: 16 };
+    LoadPlan {
+        accepted_configuration: LoadConfiguration {
+            handle: domain_contracts::LoadedModel::handle(&model),
+            execution_device: domain_contracts::LoadedModel::execution_device(&model),
+            memory_budget: MemoryBudget {
+                host_bytes: 1,
+                device_bytes: 1,
+            },
+        },
+        descriptor: *domain_contracts::LoadedModel::descriptor(&model),
+        execution_scalar_type: ScalarType::F32,
+        final_footprint: MemoryFootprint::default(),
+        loading_peak_footprint: MemoryFootprint::default(),
+    }
+}
+
+#[test]
+fn preparation_and_failed_materialization_are_distinct_typestates() {
+    let plan = test_load_plan();
+    let prepared = RetryablePreparation { plan };
+    assert_eq!(prepared.plan(), &plan);
 }
 
 #[test]
@@ -394,55 +443,70 @@ fn memory_footprint_component_arithmetic_detects_every_overflow_and_underflow() 
 
 #[test]
 fn failed_load_encapsulates_retryable_cleanup_ownership() {
-    let model = TestModel { vocabulary: 16 };
-    let plan = LoadPlan {
-        accepted_configuration: LoadConfiguration {
-            handle: domain_contracts::LoadedModel::handle(&model),
-            execution_device: domain_contracts::LoadedModel::execution_device(&model),
-            memory_budget: MemoryBudget {
-                host_bytes: 1,
-                device_bytes: 1,
-            },
-        },
-        descriptor: *domain_contracts::LoadedModel::descriptor(&model),
-        execution_scalar_type: ScalarType::F32,
-        final_footprint: MemoryFootprint::default(),
-        loading_peak_footprint: MemoryFootprint::default(),
-    };
+    let plan = test_load_plan();
+    let cleanup_authority_owned = Rc::new(Cell::new(true));
+    let cleanup_attempts = Rc::new(Cell::new(0));
+    let drops = Rc::new(Cell::new(0));
     let mut failed = FailedLoad::new(
         LoadError::InvalidSource,
-        RetryablePreparation {
+        RetryableFailedPreparation {
             plan,
             cleanup_should_fail: true,
-            cleanup_authority_owned: true,
-            cleanup_attempts: 0,
+            cleanup_authority_owned: Rc::clone(&cleanup_authority_owned),
+            cleanup_attempts: Rc::clone(&cleanup_attempts),
+            drops: Rc::clone(&drops),
         },
     );
 
     assert_eq!(failed.primary(), LoadError::InvalidSource);
-    assert_eq!(failed.cleanup_owner().plan(), &plan);
-    assert!(failed.cleanup_owner().cleanup_authority_owned);
-    assert_eq!(failed.cleanup_owner().cleanup_attempts, 0);
+    assert_eq!(failed.plan(), &plan);
+    assert!(!failed.cleanup_complete());
+    assert!(cleanup_authority_owned.get());
+    assert_eq!(cleanup_attempts.get(), 0);
 
-    assert_eq!(
-        failed.cleanup_owner_mut().cleanup(),
-        Err(SynchronizationError::InvalidState)
+    assert_eq!(failed.cleanup(), Err(SynchronizationError::InvalidState));
+    assert_eq!(failed.primary(), LoadError::InvalidSource);
+    assert_eq!(failed.plan(), &plan);
+    assert!(!failed.cleanup_complete());
+    assert!(cleanup_authority_owned.get());
+    assert_eq!(cleanup_attempts.get(), 1);
+    assert_eq!(drops.get(), 0);
+
+    assert_eq!(failed.cleanup(), Ok(()));
+    assert_eq!(failed.primary(), LoadError::InvalidSource);
+    assert_eq!(failed.plan(), &plan);
+    assert!(failed.cleanup_complete());
+    assert!(!cleanup_authority_owned.get());
+    assert_eq!(cleanup_attempts.get(), 2);
+    assert_eq!(failed.cleanup(), Ok(()));
+    assert_eq!(cleanup_attempts.get(), 2);
+
+    drop(failed);
+    assert_eq!(drops.get(), 1);
+}
+
+#[test]
+fn unresolved_failed_load_guard_retains_raw_owner_instead_of_dropping_it() {
+    let plan = test_load_plan();
+    let cleanup_authority_owned = Rc::new(Cell::new(true));
+    let cleanup_attempts = Rc::new(Cell::new(0));
+    let drops = Rc::new(Cell::new(0));
+    let failed = FailedLoad::new(
+        LoadError::InvalidSource,
+        RetryableFailedPreparation {
+            plan,
+            cleanup_should_fail: false,
+            cleanup_authority_owned: Rc::clone(&cleanup_authority_owned),
+            cleanup_attempts: Rc::clone(&cleanup_attempts),
+            drops: Rc::clone(&drops),
+        },
     );
-    assert_eq!(failed.primary(), LoadError::InvalidSource);
-    assert_eq!(failed.cleanup_owner().plan(), &plan);
-    assert!(failed.cleanup_owner().cleanup_authority_owned);
-    assert_eq!(failed.cleanup_owner().cleanup_attempts, 1);
 
-    assert_eq!(failed.cleanup_owner_mut().cleanup(), Ok(()));
-    assert_eq!(failed.primary(), LoadError::InvalidSource);
-    assert_eq!(failed.cleanup_owner().plan(), &plan);
-    assert!(!failed.cleanup_owner().cleanup_authority_owned);
-    assert_eq!(failed.cleanup_owner().cleanup_attempts, 2);
+    drop(failed);
 
-    let (primary, cleanup_owner) = failed.into_parts();
-    assert_eq!(primary, LoadError::InvalidSource);
-    assert_eq!(cleanup_owner.plan(), &plan);
-    assert!(!cleanup_owner.cleanup_authority_owned);
+    assert!(cleanup_authority_owned.get());
+    assert_eq!(cleanup_attempts.get(), 0);
+    assert_eq!(drops.get(), 0);
 }
 
 #[test]

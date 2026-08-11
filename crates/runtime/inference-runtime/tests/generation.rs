@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 use domain_contracts::{
     BackendFailure, BackendFailureKind, BackendId, BackendSequence, CapabilitySet,
     DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind, DrainTimeout,
-    ExecutionDevice, FailedLoad, FinishReason, LoadConfiguration, LoadError, LoadPlan, LoadedModel,
+    ExecutionDevice, FailedLoad, FailedLoadOwner, FinishReason, LoadConfiguration, LoadError,
+    LoadPlan, LoadedModel,
     MemoryBudget, MemoryFootprint, ModelArchitecture, ModelCapabilities, ModelDescriptor,
     ModelError, ModelGeneration, ModelHandle, ModelId, ModelLoader, ModelMetadata,
     PrefillBufferRequirements, PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedLoad,
@@ -164,6 +165,14 @@ struct FakePrepared {
 }
 
 impl PreparedLoad for FakePrepared {
+    type Failed = FakePrepared;
+
+    fn plan(&self) -> &LoadPlan {
+        &self.plan
+    }
+}
+
+impl FailedLoadOwner for FakePrepared {
     fn plan(&self) -> &LoadPlan {
         &self.plan
     }
@@ -247,6 +256,7 @@ impl BackendSequence for FakeSequence {
 impl ModelLoader for FakeLoader {
     type Source = FakeSource;
     type Prepared = FakePrepared;
+    type FailedPreparation = FakePrepared;
     type Model = FakeModel;
 
     fn inspect(&self, source: &Self::Source) -> Result<ModelDescriptor, LoadError> {
@@ -279,7 +289,7 @@ impl ModelLoader for FakeLoader {
     fn load_prepared(
         &mut self,
         mut prepared: Self::Prepared,
-    ) -> Result<Self::Model, FailedLoad<Self::Prepared>> {
+    ) -> Result<Self::Model, FailedLoad<Self::FailedPreparation>> {
         if prepared.source.failed_load_cleanup_failures.is_some() {
             let retained_bytes = MODEL_HOST_BYTES;
             let retained = (|| {

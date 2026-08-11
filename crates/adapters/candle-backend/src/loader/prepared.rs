@@ -10,8 +10,8 @@ use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::llama::{Config, Llama};
 use domain_contracts::{
-    BackendFailureKind, BackendId, DeviceKind, LoadError, LoadPlan, PreparedLoad,
-    SynchronizationError,
+    BackendFailureKind, BackendId, DeviceKind, FailedLoadOwner, LoadError, LoadPlan,
+    PreparedLoad, SynchronizationError,
 };
 use sha2::{Digest, Sha256};
 
@@ -37,12 +37,12 @@ thread_local! {
 
 /// Exact source-, configuration-, device-, and plan-bound Candle preparation.
 ///
-/// Its retained files, parsed config, selected device, and cleanup authority are
-/// not cloned or replaced during loading, and its plan remains stable for the
-/// value's lifetime. Before materialization it is ordinary-drop-safe. After any
-/// materialization failure it is the sole cleanup owner of every completed and
-/// in-flight tensor and any constructed model; [`PreparedLoad::cleanup`] is
-/// all-or-nothing, retryable, and idempotent.
+/// Its retained files, parsed config, selected device, and materialization
+/// authority are not cloned or replaced during loading, and its plan remains
+/// stable for the value's lifetime. This pre-attempt typestate is always
+/// ordinary-drop-safe. A failed materialization consumes it into
+/// [`CandleLlamaFailedPreparation`], which becomes the sole explicit cleanup
+/// owner of every completed and in-flight tensor and any constructed model.
 #[derive(Debug)]
 pub struct CandleLlamaPreparedLoad {
     pub(super) backend: BackendId,
@@ -60,6 +60,55 @@ pub struct CandleLlamaPreparedLoad {
 }
 
 impl CandleLlamaPreparedLoad {
+    pub(super) fn into_failed(self) -> CandleLlamaFailedPreparation {
+        CandleLlamaFailedPreparation {
+            plan: self.plan,
+            prepared: Some(self),
+        }
+    }
+
+    fn cleanup_failed_materialization(&mut self) -> Result<(), SynchronizationError> {
+        if self.cleanup_complete {
+            return Ok(());
+        }
+        #[cfg(test)]
+        if TEST_CLEANUP_SYNCHRONIZATION_FAILURES.with(|remaining| {
+            let value = remaining.get();
+            if value == 0 {
+                false
+            } else {
+                remaining.set(value - 1);
+                true
+            }
+        }) {
+            return Err(SynchronizationError::Backend(failure(
+                self.backend,
+                BackendFailureKind::Synchronization,
+                CODE_PARTIAL_LOAD_SYNCHRONIZE,
+            )));
+        }
+        if let Some(device) = &self.device {
+            device.synchronize().map_err(|_| {
+                SynchronizationError::Backend(failure(
+                    self.backend,
+                    BackendFailureKind::Synchronization,
+                    CODE_PARTIAL_LOAD_SYNCHRONIZE,
+                ))
+            })?;
+        }
+
+        self.constructed_model = None;
+        self.final_tensors.clear();
+        self.pending_device_tensor = None;
+        self.pending_host_tensor = None;
+        self.pending_source_tensor = None;
+        self.shards.clear();
+        self.config = None;
+        self.device = None;
+        self.cleanup_complete = true;
+        Ok(())
+    }
+
     pub(super) fn materialize(&mut self) -> Result<(), LoadError> {
         match catch_unwind(AssertUnwindSafe(|| {
             self.materialize_with_observer(&mut NoopMaterializationObserver)
@@ -569,49 +618,36 @@ impl CandleLlamaPreparedLoad {
 }
 
 impl PreparedLoad for CandleLlamaPreparedLoad {
+    type Failed = CandleLlamaFailedPreparation;
+
+    fn plan(&self) -> &LoadPlan {
+        &self.plan
+    }
+}
+
+/// Sole cleanup owner after a Candle Llama materialization failure.
+///
+/// This type is deliberately distinct from [`CandleLlamaPreparedLoad`]: only a
+/// consumed materialization attempt can produce it. Cleanup is retryable and
+/// idempotent, and a failed cleanup retains the complete preparation unchanged.
+#[must_use = "a failed Candle load retains native resources requiring explicit cleanup"]
+#[derive(Debug)]
+pub struct CandleLlamaFailedPreparation {
+    plan: LoadPlan,
+    prepared: Option<CandleLlamaPreparedLoad>,
+}
+
+impl FailedLoadOwner for CandleLlamaFailedPreparation {
     fn plan(&self) -> &LoadPlan {
         &self.plan
     }
 
     fn cleanup(&mut self) -> Result<(), SynchronizationError> {
-        if self.cleanup_complete {
+        let Some(prepared) = self.prepared.as_mut() else {
             return Ok(());
-        }
-        #[cfg(test)]
-        if TEST_CLEANUP_SYNCHRONIZATION_FAILURES.with(|remaining| {
-            let value = remaining.get();
-            if value == 0 {
-                false
-            } else {
-                remaining.set(value - 1);
-                true
-            }
-        }) {
-            return Err(SynchronizationError::Backend(failure(
-                self.backend,
-                BackendFailureKind::Synchronization,
-                CODE_PARTIAL_LOAD_SYNCHRONIZE,
-            )));
-        }
-        if let Some(device) = &self.device {
-            device.synchronize().map_err(|_| {
-                SynchronizationError::Backend(failure(
-                    self.backend,
-                    BackendFailureKind::Synchronization,
-                    CODE_PARTIAL_LOAD_SYNCHRONIZE,
-                ))
-            })?;
-        }
-
-        self.constructed_model = None;
-        self.final_tensors.clear();
-        self.pending_device_tensor = None;
-        self.pending_host_tensor = None;
-        self.pending_source_tensor = None;
-        self.shards.clear();
-        self.config = None;
-        self.device = None;
-        self.cleanup_complete = true;
+        };
+        prepared.cleanup_failed_materialization()?;
+        self.prepared = None;
         Ok(())
     }
 }
@@ -716,9 +752,9 @@ mod tests {
     use candle_transformers::models::llama::Config;
     use domain_contracts::{
         BackendId, CapabilitySet, DeviceId, DeviceKind, ExecutionDevice, LoadConfiguration,
-        LoadError, LoadPlan, MemoryBudget, MemoryFootprint, ModelArchitecture, ModelCapabilities,
-        ModelDescriptor, ModelGeneration, ModelHandle, ModelId, ModelMetadata, PreparedLoad,
-        QuantizationFormat, ScalarType, ScalarTypeSet,
+        FailedLoadOwner, LoadError, LoadPlan, MemoryBudget, MemoryFootprint, ModelArchitecture,
+        ModelCapabilities, ModelDescriptor, ModelGeneration, ModelHandle, ModelId, ModelMetadata,
+        PreparedLoad, QuantizationFormat, ScalarType, ScalarTypeSet,
     };
     use sha2::{Digest, Sha256};
 
@@ -1016,7 +1052,8 @@ mod tests {
             )?;
             assert!(prepared.constructed_model.is_some());
             assert_eq!(prepared.final_tensors.len(), 12);
-            prepared
+            let mut failed = prepared.into_failed();
+            failed
                 .cleanup()
                 .map_err(|error| format!("cleanup constructed model: {error:?}"))?;
         }
@@ -1037,33 +1074,32 @@ mod tests {
         prepared.pending_host_tensor = Some(tensor.clone());
         prepared.pending_device_tensor = Some(tensor);
 
+        let mut failed = prepared.into_failed();
         TEST_CLEANUP_SYNCHRONIZATION_FAILURES.with(|remaining| remaining.set(1));
-        assert!(prepared.cleanup().is_err());
-        assert_eq!(prepared.final_tensors.len(), 1);
-        assert!(prepared.pending_source_tensor.is_some());
-        assert!(prepared.pending_host_tensor.is_some());
-        assert!(prepared.pending_device_tensor.is_some());
-        assert_eq!(prepared.shards.len(), 1);
-        assert!(prepared.config.is_some());
-        assert!(prepared.device.is_some());
-        assert!(!prepared.cleanup_complete);
-        assert_eq!(prepared.plan(), &stable_plan);
+        assert!(failed.cleanup().is_err());
+        let retained = failed
+            .prepared
+            .as_ref()
+            .ok_or_else(|| "cleanup failure discarded the retained owner".to_owned())?;
+        assert_eq!(retained.final_tensors.len(), 1);
+        assert!(retained.pending_source_tensor.is_some());
+        assert!(retained.pending_host_tensor.is_some());
+        assert!(retained.pending_device_tensor.is_some());
+        assert_eq!(retained.shards.len(), 1);
+        assert!(retained.config.is_some());
+        assert!(retained.device.is_some());
+        assert!(!retained.cleanup_complete);
+        assert_eq!(failed.plan(), &stable_plan);
 
-        prepared
+        failed
             .cleanup()
             .map_err(|error| format!("retry cleanup: {error:?}"))?;
-        assert!(prepared.final_tensors.is_empty());
-        assert!(prepared.pending_source_tensor.is_none());
-        assert!(prepared.pending_host_tensor.is_none());
-        assert!(prepared.pending_device_tensor.is_none());
-        assert!(prepared.shards.is_empty());
-        assert!(prepared.config.is_none());
-        assert!(prepared.device.is_none());
-        assert!(prepared.cleanup_complete);
-        assert_eq!(prepared.plan(), &stable_plan);
-        prepared
+        assert!(failed.prepared.is_none());
+        assert_eq!(failed.plan(), &stable_plan);
+        failed
             .cleanup()
             .map_err(|error| format!("idempotent cleanup: {error:?}"))?;
+        drop(failed);
         Ok(())
     }
 

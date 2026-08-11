@@ -147,7 +147,7 @@ The current foundation provides:
 - a frontend-neutral application/reference composition and thin Slint host;
 - incubating task-graph and corrective-workflow foundations.
 
-The Candle loader now performs bounded complete Safetensors inspection while materializing only required Llama tensors. Configuration declaration, complete observed categories, required scalar set/primary, and execution scalar are separate facts: unused F16/BF16/integer/boolean/other extras remain truthful observed evidence but cannot change precision, consume tensor/device headroom, or cause rejection merely because they are unused. Required F32, F16, mixed F16/F32, BF16, and mixed BF16/F32 policies remain explicit; genuine required F16/BF16 mixtures, required unsupported dtypes, quantization, malformed structure, and contradictory or unsupported declarations fail before device initialization.
+The Candle loader now performs bounded complete Safetensors inspection while materializing only required Llama tensors. Configuration declaration, complete observed categories, required scalar set/primary, and execution scalar are separate facts: unused F16/BF16/integer/boolean/other extras remain truthful observed evidence but cannot change precision, consume tensor/device headroom, or cause rejection merely because they are unused. Homogeneous required F32, F16, and BF16 layouts may use direct observation when the declaration is absent. Mixed required F16/F32 and BF16/F32 layouts require the matching recognized producer declaration before lossy conversion. Genuine required F16/BF16 mixtures, required unsupported dtypes, quantization, malformed structure, and contradictory, unsupported, or ambiguous declarations fail before device initialization.
 
 Selected Hugging Face LFS shards use provider SHA-256/length identity at the resolved commit; mutable project-established or unverified sources receive a safe pre-admission baseline. Materialization verifies each retained shard sequentially, skips tensor allocation for ignored ranges, and preserves one retryable partial-load owner on failure. Final and loading footprints contain required tensors only. The 2026-08-08 local and GitHub RTX 5070 Ti runs remain historical Phase 12 evidence for commit `181a069`; current-tree CPU/CUDA validation and hardware status are recorded in [implementation status](docs/project/implementation-status.md). No suitable immutable, license-reviewed external mixed checkpoint has been established.
 
@@ -195,9 +195,13 @@ A future `crates/core/` root is appropriate only for portable, vendor-neutral sc
 - hosted Quality [run 31281013257](https://github.com/hartolit/milkdrift/actions/runs/31281013257) exhausted disk after its canonical native work passed, so it is CI-infrastructure history rather than a WASM/product failure;
 - external mixed-checkpoint evidence remains absent, and compatibility stops at the reviewed unquantized Llama layout boundary.
 
+### Current maintenance boundary — foundation repair validation
+
+The post-closure repair corrects mixed-layout ambiguity, separates ordinary load preparation from failed native ownership, verifies failed-owner plan stability around cleanup, and reserves sequence memory from simultaneous Candle lifetimes rather than multiplying one block's transient peak by transformer depth. These changes are not accepted evidence until the exact applied tree passes the native, portable, hosted, and supported CUDA gates in [validation](docs/project/validation.md).
+
 ### Planned direction — workflow, workspace, and authority
 
-This direction is not yet a ratified product program.
+This direction is not yet a ratified product program and remains blocked until the current foundation repair is validated.
 
 - ratify versioned workflow, node, port, artifact, workspace, authority, capability, budget, and target schemas;
 - implement a minimal general workflow runtime and headless host;

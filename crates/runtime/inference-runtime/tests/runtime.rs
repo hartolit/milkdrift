@@ -8,7 +8,8 @@ use std::time::Duration;
 use domain_contracts::{
     BackendFailure, BackendFailureKind, BackendId, BackendSequence, CancellationReason,
     CapabilitySet, DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind,
-    DrainTimeout, ExecutionDevice, FailedLoad, FinishReason, LoadConfiguration, LoadError,
+    DrainTimeout, ExecutionDevice, FailedLoad, FailedLoadOwner, FinishReason, LoadConfiguration,
+    LoadError,
     LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint, MemoryKind, ModelArchitecture,
     ModelCapabilities, ModelDescriptor, ModelError, ModelHandle, ModelId, ModelLoader,
     ModelMetadata, MonotonicMillis, PrefillBufferRequirements, PrefillInput, PrefillOutcome,
@@ -45,6 +46,14 @@ struct MockPrepared {
 }
 
 impl PreparedLoad for MockPrepared {
+    type Failed = MockPrepared;
+
+    fn plan(&self) -> &LoadPlan {
+        &self.plan
+    }
+}
+
+impl FailedLoadOwner for MockPrepared {
     fn plan(&self) -> &LoadPlan {
         &self.plan
     }
@@ -93,6 +102,7 @@ impl BackendSequence for MockSequence {
 impl ModelLoader for MockLoader {
     type Source = MockSource;
     type Prepared = MockPrepared;
+    type FailedPreparation = MockPrepared;
     type Model = MockModel;
 
     fn inspect(&self, source: &Self::Source) -> Result<ModelDescriptor, LoadError> {
@@ -133,7 +143,7 @@ impl ModelLoader for MockLoader {
     fn load_prepared(
         &mut self,
         prepared: Self::Prepared,
-    ) -> Result<Self::Model, FailedLoad<Self::Prepared>> {
+    ) -> Result<Self::Model, FailedLoad<Self::FailedPreparation>> {
         let descriptor = descriptor(prepared.source);
         Ok(MockModel {
             _thread_confined: Rc::new(()),

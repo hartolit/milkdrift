@@ -263,19 +263,23 @@ Architecture validates locked typed Cargo metadata, explicit manifest roles, the
 Ordinary tests and the canonical gate do not resolve or download external models. Run focused artifact-loading checks sequentially:
 
 ```sh
+cargo test --locked -p domain-contracts
 cargo test --locked -p candle-backend
 cargo test --locked -p hf-hub-adapter
 cargo test --locked -p inference-runtime --test native_backend_generation
 cargo test --locked -p inference-runtime --test fault_injection
+cargo test --locked -p inference-runtime
 cargo test --locked -p application-runtime
 cargo test --locked -p runtime-benchmarks
 ```
 
-The Candle package is the deterministic owner for required-versus-complete-observed scalar policy, all declaration states, every Safetensors 0.8 category, required unsupported-dtype rejection, ignored-extra non-materialization/transfer, exact required-only CPU/CUDA footprints, whole-shard identity authorities, verified and mutable mutation handling, bounded structural metadata/allocation failure, malformed/duplicate/gapped/overlapping/truncated/reordered shards, and partial-load ownership at every stage. Its host-budget test requires loading-peak rejection before materialization. The Hub package owns bounded immutable-commit discovery, strict declaration parsing, shard selection, exact LFS identity proof, and project-established fallback hashing.
+The portable contract tests prove that ordinary pre-attempt preparation and resource-bearing failed materialization are distinct associated typestates. The `FailedLoad` guard keeps the sole raw owner encapsulated, retries cleanup idempotently, permits ordinary drop only after explicit cleanup success, and deliberately retains an unresolved raw owner when direct error propagation abandons the guard.
+
+The Candle package is the deterministic owner for required-versus-complete-observed scalar policy, all declaration states, every Safetensors 0.8 category, required unsupported-dtype rejection, ignored-extra non-materialization/transfer, exact required-only CPU/CUDA load footprints, whole-shard identity authorities, verified and mutable mutation handling, bounded structural metadata/allocation failure, malformed/duplicate/gapped/overlapping/truncated/reordered shards, and partial-load ownership at every stage. Homogeneous required layouts may accept an absent declaration; mixed required F16/F32 and BF16/F32 fixtures must reject absence and require their matching declaration. Sequence-plan tests separately prove that all-layer persistent KV ownership scales with depth while one block's transient forward peak does not, including the realistic 22-layer TinyLlama configuration. The host-budget test requires loading-peak rejection before materialization. The Hub package owns bounded immutable-commit discovery, strict declaration parsing, shard selection, exact LFS identity proof, and project-established fallback hashing.
 
 The native E0 suite includes `mixed_f16_f32_fixture_covers_e0_generation_accounting_and_lifecycle`. It compares the independent preparation with the E0 receipt, exercises hosted prefill/decode and generation, restores model-only reserved ownership after release, unloads to exact empty model/request/workspace/cleanup accounting, and completes bounded shutdown and join.
 
-The fault suite deterministically covers invalid preparations, loading-peak admission before materialization, immediate failed-load cleanup, retained ownership and full loading-peak accounting when cleanup fails, retry release exactly once, cleanup exhaustion through shutdown, and no model publication on contract failure. The focused E1 checks keep a controlled mixed declaration distinct from actual F32 execution and prove that an unavailable selected CUDA target blocks load without CPU fallback. The benchmark package tests the report contracts without running a model download or statistical measurement.
+The fault suite deterministically covers invalid preparations, loading-peak admission before materialization, immediate failed-load cleanup, retained ownership and full loading-peak accounting when cleanup fails, retry release exactly once, cleanup exhaustion through shutdown, and no model publication on contract failure. It also substitutes and mutates a failed owner's plan before and during cleanup, proving that E0 removes formerly exact accounting once, preserves monotonic conservative evidence, blocks admission under uncertainty, and releases only after explicit cleanup succeeds. The focused E1 checks keep a controlled mixed declaration distinct from actual F32 execution and prove that an unavailable selected CUDA target blocks load without CPU fallback. The benchmark package tests the report contracts without running a model download or statistical measurement.
 
 These commands establish only their named download-free CPU contracts. They do not establish external artifact availability, language quality, product performance, CUDA compilation or hardware execution, allocation freedom inside upstream libraries, or a full repository gate.
 

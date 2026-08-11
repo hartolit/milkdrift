@@ -69,11 +69,11 @@ pub enum ApplicationRetainedModelResource {
 pub enum ApplicationRetainedOwnership {
     /// A named lower ownership phase still has an exact byte footprint.
     Exact(ApplicationMemoryFootprint),
-    /// A contract-violating complete model has no verified exact upper bound.
+    /// A contract-violating lower owner has no verified exact upper bound.
     Unverified {
         /// Exact loading reservation accepted before materialization.
         accepted_loading_peak: ApplicationMemoryFootprint,
-        /// Contradictory footprint reported by the complete lower model.
+        /// Contradictory footprint reported by the retained lower owner.
         reported_footprint: ApplicationMemoryFootprint,
         /// Checked component-wise conservative evidence.
         conservative_footprint: ApplicationConservativeFootprint,

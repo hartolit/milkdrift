@@ -30,7 +30,8 @@ explicit transport to a native or remote host. No browser transport or generic
 The reference UI deliberately projects a small application-owned fact set:
 
 - selected repository and revision;
-- recognized-or-absent configuration declaration;
+- recognized-or-absent configuration declaration, without treating absence as
+  mixed-layout conversion authority;
 - selected device identity and availability;
 - receipt-reported actual execution scalar and device; and
 - retained resource, ownership certainty, cleanup disposition, and failures.

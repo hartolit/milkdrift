@@ -12,7 +12,8 @@ use std::rc::Rc;
 use domain_contracts::{
     BackendFailure, BackendFailureKind, BackendId, BackendSequence, CancellationReason,
     CapabilitySet, DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind,
-    ExecutionDevice, FailedLoad, LoadConfiguration, LoadError, LoadPlan, LoadedModel, MemoryBudget,
+    ExecutionDevice, FailedLoad, FailedLoadOwner, LoadConfiguration, LoadError, LoadPlan,
+    LoadedModel, MemoryBudget,
     MemoryFootprint, MemoryKind, ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError,
     ModelGeneration, ModelHandle, ModelId, ModelLoader, ModelMetadata, MonotonicMillis,
     PrefillBufferRequirements, PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedLoad,
@@ -136,18 +137,31 @@ struct FaultPrepared {
     partial_resources_retained: bool,
 }
 
+fn reported_fault_plan(prepared: &FaultPrepared) -> &LoadPlan {
+    let reads = prepared.plan_reads.get();
+    prepared.plan_reads.set(reads.saturating_add(1));
+    prepared
+        .counts
+        .plan_reads
+        .set(prepared.counts.plan_reads.get().saturating_add(1));
+    if reads % 2 == 1 && prepared.faults.contains(Faults::ALTERNATING_PLAN_REPORT) {
+        &prepared.alternate_plan
+    } else {
+        &prepared.plan
+    }
+}
+
 impl PreparedLoad for FaultPrepared {
+    type Failed = FaultPrepared;
+
     fn plan(&self) -> &LoadPlan {
-        let reads = self.plan_reads.get();
-        self.plan_reads.set(reads.saturating_add(1));
-        self.counts
-            .plan_reads
-            .set(self.counts.plan_reads.get().saturating_add(1));
-        if reads > 0 && self.faults.contains(Faults::ALTERNATING_PLAN_REPORT) {
-            &self.alternate_plan
-        } else {
-            &self.plan
-        }
+        reported_fault_plan(self)
+    }
+}
+
+impl FailedLoadOwner for FaultPrepared {
+    fn plan(&self) -> &LoadPlan {
+        reported_fault_plan(self)
     }
 
     fn cleanup(&mut self) -> Result<(), SynchronizationError> {
@@ -243,6 +257,7 @@ impl BackendSequence for FaultSequence {
 impl ModelLoader for FaultLoader {
     type Source = FaultSource;
     type Prepared = FaultPrepared;
+    type FailedPreparation = FaultPrepared;
     type Model = FaultModel;
 
     fn inspect(&self, source: &Self::Source) -> Result<ModelDescriptor, LoadError> {
@@ -357,7 +372,7 @@ impl ModelLoader for FaultLoader {
     fn load_prepared(
         &mut self,
         mut prepared: Self::Prepared,
-    ) -> Result<Self::Model, FailedLoad<Self::Prepared>> {
+    ) -> Result<Self::Model, FailedLoad<Self::FailedPreparation>> {
         self.counts
             .model_loads
             .set(self.counts.model_loads.get().saturating_add(1));
@@ -1233,11 +1248,10 @@ fn invalid_prepared_plans_are_rejected_before_materialization() {
 }
 
 #[test]
-fn plan_is_read_once_and_cleanup_retries_use_accepted_evidence() -> TestResult {
+fn failed_owner_plan_substitution_blocks_admission_until_release() -> TestResult {
     let counts = Rc::new(CleanupCounts::default());
     let faults = Faults::FAIL_LOAD
         .union(Faults::FAIL_FAILED_LOAD_CLEANUP_ONCE)
-        .union(Faults::MUTATE_FAILED_PLAN_ON_CLEANUP_FAILURE)
         .union(Faults::ALTERNATING_PLAN_REPORT);
     let mut runtime = runtime(faults, Rc::clone(&counts));
 
@@ -1245,20 +1259,76 @@ fn plan_is_read_once_and_cleanup_retries_use_accepted_evidence() -> TestResult {
         load(&mut runtime),
         Err(RuntimeError::CleanupFailed(_))
     ));
-    assert_eq!(counts.plan_reads.get(), 1);
+    assert_eq!(counts.plan_reads.get(), 4);
     assert_eq!(counts.prepared_drops.get(), 0);
-    assert_eq!(
-        runtime
-            .model_cleanup_state(ModelId::new(1))
-            .map(|state| state.ownership),
-        Some(RetainedOwnership::Exact(loading_peak_footprint()))
-    );
+    let state = runtime
+        .model_cleanup_state(ModelId::new(1))
+        .ok_or_else(|| "failed preparation cleanup state was not retained".to_owned())?;
+    assert!(matches!(
+        state.ownership,
+        RetainedOwnership::Unverified {
+            accepted_loading_peak,
+            reported_footprint,
+            conservative_footprint: ConservativeFootprint::Known(conservative),
+        } if accepted_loading_peak == loading_peak_footprint()
+            && reported_footprint.host_working_bytes
+                == loading_peak_footprint().host_working_bytes.saturating_add(1)
+            && conservative.host_working_bytes
+                == loading_peak_footprint().host_working_bytes.saturating_add(1)
+    ));
+    assert_eq!(state.failure.primary_failure, FailureClass::BackendContract);
+    assert!(runtime.snapshot().admission_blocked);
+    assert_eq!(runtime.snapshot().reserved_footprint, MemoryFootprint::default());
     assert!(matches!(
         runtime.poll_cleanup().map_err(debug_error)?,
-        CleanupPoll::Released(state)
-            if state.ownership == RetainedOwnership::Released && !state.exhausted()
+        CleanupPoll::Released(released)
+            if released.ownership == RetainedOwnership::Released && !released.exhausted()
     ));
-    assert_eq!(counts.plan_reads.get(), 1);
+    assert_eq!(counts.plan_reads.get(), 6);
+    assert_eq!(counts.prepared_drops.get(), 1);
+    assert_eq!(counts.retained_prepared_drops.get(), 0);
+    assert_empty(&runtime);
+    Ok(())
+}
+
+#[test]
+fn failed_owner_plan_mutation_during_cleanup_blocks_admission_until_release() -> TestResult {
+    let counts = Rc::new(CleanupCounts::default());
+    let faults = Faults::FAIL_LOAD
+        .union(Faults::FAIL_FAILED_LOAD_CLEANUP_ONCE)
+        .union(Faults::MUTATE_FAILED_PLAN_ON_CLEANUP_FAILURE);
+    let mut runtime = runtime(faults, Rc::clone(&counts));
+
+    assert!(matches!(
+        load(&mut runtime),
+        Err(RuntimeError::CleanupFailed(_))
+    ));
+    assert_eq!(counts.plan_reads.get(), 4);
+    let state = runtime
+        .model_cleanup_state(ModelId::new(1))
+        .ok_or_else(|| "mutated failed owner was not retained".to_owned())?;
+    assert!(matches!(
+        state.ownership,
+        RetainedOwnership::Unverified {
+            accepted_loading_peak,
+            reported_footprint,
+            conservative_footprint: ConservativeFootprint::Known(conservative),
+        } if accepted_loading_peak == loading_peak_footprint()
+            && reported_footprint.host_working_bytes
+                == loading_peak_footprint().host_working_bytes.saturating_add(7)
+            && conservative.host_working_bytes
+                == loading_peak_footprint().host_working_bytes.saturating_add(7)
+    ));
+    assert_eq!(state.failure.primary_failure, FailureClass::BackendContract);
+    assert!(runtime.snapshot().admission_blocked);
+    assert_eq!(runtime.snapshot().reserved_footprint, MemoryFootprint::default());
+
+    assert!(matches!(
+        runtime.poll_cleanup().map_err(debug_error)?,
+        CleanupPoll::Released(released)
+            if released.ownership == RetainedOwnership::Released && !released.exhausted()
+    ));
+    assert_eq!(counts.plan_reads.get(), 6);
     assert_eq!(counts.prepared_drops.get(), 1);
     assert_eq!(counts.retained_prepared_drops.get(), 0);
     assert_empty(&runtime);

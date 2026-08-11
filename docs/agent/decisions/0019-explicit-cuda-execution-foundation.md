@@ -53,7 +53,7 @@ Nonzero CPU IDs, unsupported kinds, CUDA in a build without the feature, driver 
 - required F16+BF16 and required unsupported/quantized tensor types are rejected, while structurally understood unused extras remain observed but are not materialized;
 - CPU maps F32→F32, F16→F16, and BF16→F32;
 - CUDA policy maps F32→F32, F16→F16, and BF16→BF16 only when the selected device reports support;
-- `prepare_load` binds an exact plan to retained source/device state, `load_prepared` consumes it without replanning, and `FailedLoad<PreparedLoad>` preserves partial-load cleanup ownership;
+- `prepare_load` returns an ordinary-drop-safe preparation bound to exact source/device state, `load_prepared` consumes it without replanning, and `FailedLoad<FailedPreparation>` preserves the distinct resource-bearing cleanup typestate;
 - final ownership and loading-peak headroom are separate deterministic footprints.
 
 E0 reserves the exact loading peak before materialization. On success it verifies complete descriptor, requested/actual device, planned/actual execution scalar, and final planned/reported footprint, then commits the final reservation. Failed materialization cleanup retains the exact accepted loading peak. A complete model that violates its accepted post-load contract and then fails unload instead retains explicitly unverified accepted/reported/conservative evidence and blocks admission; the accepted peak is not treated as a proven exact upper bound after backend violation. This preserves [ADR-0010](0010-verify-backend-contracts-at-e0.md) and [ADR-0006](0006-explicit-bounded-shutdown.md), with retained-certainty semantics owned by ADR-0020.

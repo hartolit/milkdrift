@@ -51,18 +51,25 @@ the default policy permits three total attempts and may be overridden through
 snapshot. After the total-attempt limit is reached, automatic maintenance skips the
 resource while retaining its ownership and capacity. A successful retry removes
 ownership and accounting exactly once and records `RetainedOwnership::Released`; a
-release on the final permitted attempt is released, not exhausted. Model unload preparation follows the same
-rule: success is the only ordinary permission to release the owner.
+release on the final permitted attempt is released, not exhausted. Model unload
+preparation follows the same rule: success is the only ordinary permission to
+release the owner.
 
-Verified models and failed preparations retain `RetainedOwnership::Exact` for their
-named final or accepted-loading phase. A complete model that contradicts its
-accepted handle, descriptor, device, scalar, or footprint becomes
-`RetainedOwnership::Unverified` if unload fails. E0 preserves the accepted peak,
-reported footprint, and checked conservative component evidence, but does not call
-any of them an exact upper bound. That owner is exposed separately from exact
-`reserved_footprint` and blocks new resource admission until cleanup succeeds or
-process exit reclaims the process. Existing healthy admitted work remains runnable. Successful cleanup transitions
-that retry record to `Released` while removing the owner exactly once.
+A conforming verified model retains `RetainedOwnership::Exact` for its named final
+phase. A failed materialization owner initially retains the accepted loading peak
+exactly only while its reported plan remains identical to the admitted plan. E0
+checks that report before and after every cleanup attempt; substitution or mutation
+reclassifies the owner as `RetainedOwnership::Unverified`, removes the formerly
+exact reservation once, preserves monotonic conservative evidence, and blocks new
+admission until release.
+
+A complete model that contradicts its accepted handle, descriptor, device, scalar,
+or footprint is likewise `RetainedOwnership::Unverified` if unload fails. E0
+preserves the accepted peak, reported footprint, and checked conservative component
+evidence, but does not call any of them an exact upper bound. Unverified owners are
+exposed separately from exact `reserved_footprint`; existing healthy admitted work
+remains runnable. Successful cleanup transitions the retry record to `Released`
+while removing the owner exactly once.
 
 Generation output orders `Terminal`, optional `CleanupPending`, optional
 `CleanupExhausted`, and `Released` records. A terminal generation task also retains

@@ -89,9 +89,11 @@ Resolution is device-independent. Public `ResolvedModel` exposes:
 - unit `ChatCompatibility::{Supported, Unsupported}`.
 
 It does not expose engine, source, format, private artifact/source helper types,
-cache paths, prompt-profile internals, observed tensor sets, required scalar
-policy, execution scalar, or execution device. The declaration is producer intent,
-not tensor-homogeneity evidence.
+cache paths, prompt-profile internals, observed tensor sets, required scalar policy,
+execution scalar, or execution device. The declaration is producer intent, not
+tensor-homogeneity evidence. Absence therefore does not authorize E1 to infer a
+mixed-layout primary; the selected local adapter rejects ambiguous mixed required
+sets below E1.
 
 ### `LoadedModel`
 
@@ -113,8 +115,9 @@ publication:
    `CandleLlamaSource`, submit one ticketed E0 command, and retain
    `ModelLoadTransaction { ticket, resolved, admission }`.
 3. **E0 prepared load** — E0 prepares once, applies generic plan/admission checks,
-   reserves the loading peak, consumes the same preparation, verifies the complete
-   result, and either commits or retains cleanup ownership.
+   reserves the loading peak, consumes the ordinary-drop-safe preparation, verifies
+   the complete result, and either commits or retains the distinct failed-load or
+   complete-model cleanup owner.
 4. **E1 receipt validation** — correlate and apply generic application checks before
    constructing `LoadedModel`.
 

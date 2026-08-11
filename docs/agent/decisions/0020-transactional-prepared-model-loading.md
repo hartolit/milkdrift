@@ -49,11 +49,11 @@ The Candle Llama/Safetensors adapter accepts exactly these **required** sets:
 |---|---|---|
 | `{F32}` | F32 | absent or F32 |
 | `{F16}` | F16 | absent or F16 |
-| `{F16,F32}` | F16 | absent or F16 |
+| `{F16,F32}` | F16 | **F16 required** |
 | `{BF16}` | BF16 | absent or BF16 |
-| `{BF16,F32}` | BF16 | absent or BF16 |
+| `{BF16,F32}` | BF16 | **BF16 required** |
 
-A genuine required F16+BF16 mixture remains rejected, with or without F32. An empty required set or a required integer, boolean, FP8, bit-packed, complex, or otherwise non-executable category is rejected before device initialization. Structurally understood **unused** tensors may use any Safetensors 0.8 dtype: they remain in complete observed evidence but do not affect compatibility, execution, transfer, or footprint policy.
+A genuine required F16+BF16 mixture remains rejected, with or without F32. An empty required set or a required integer, boolean, FP8, bit-packed, complex, or otherwise non-executable category is rejected before device initialization. Structurally understood **unused** tensors may use any Safetensors 0.8 dtype: they remain in complete observed evidence but do not affect compatibility, execution, transfer, or footprint policy. A mixed required set is not itself evidence of primary precision: the same set can describe a lower-precision model with F32 auxiliaries or an F32 model with an incidental lower-precision tensor. Milkdrift therefore requires the matching recognized declaration before a lossy mixed conversion; only homogeneous required sets may use an absent declaration.
 
 The execution policy is:
 
@@ -65,16 +65,16 @@ The execution policy is:
 
 Each required tensor is independently converted to the selected execution dtype when needed. Vocabulary logits still cross to E0 as host F32.
 
-### Replace `plan_load`/`load` with one prepared transaction
+### Replace `plan_load`/`load` with one prepared transaction and distinct failure typestate
 
-`ModelLoader` has an associated `Prepared: PreparedLoad` and two load operations:
+`ModelLoader` has associated `Prepared: PreparedLoad`, `FailedPreparation: FailedLoadOwner`, and `Model` types plus two load operations:
 
 - `prepare_load(&mut self, source, configuration) -> Result<Prepared, LoadError>` creates one exact source/configuration/device-bound preparation and exposes its `LoadPlan` through `PreparedLoad::plan()`;
-- `load_prepared(&mut self, prepared) -> Result<Model, FailedLoad<Prepared>>` consumes that exact preparation without replanning.
+- `load_prepared(&mut self, prepared) -> Result<Model, FailedLoad<FailedPreparation>>` consumes that exact preparation without replanning.
 
-An unmaterialized preparation is ordinary-drop-safe. This permits E0 to reject an invalid plan or insufficient aggregate peak without invoking backend cleanup. Its `plan()` is stable for the preparation's lifetime and describes the one accepted source/configuration/device transaction; E0 reads it once and never calls a second planner or reconstructs backend policy.
+`PreparedLoad::Failed` must equal the loader's `FailedPreparation`. An unmaterialized preparation is ordinary-drop-safe. This permits E0 to reject an invalid plan or insufficient aggregate peak without invoking backend cleanup. Its `plan()` is stable for the preparation's lifetime and describes the one accepted source/configuration/device transaction; E0 reads it once and never calls a second planner or reconstructs backend policy.
 
-After materialization begins, failure returns `FailedLoad<Prepared>` containing both the primary `LoadError` and the sole cleanup owner. `FailedLoad` does not expose replaceable public fields, and neither `PreparedLoad` nor `LoadedModel` may alias cleanup authority elsewhere. `PreparedLoad::cleanup(&mut self)` is explicit and retryable: failure leaves the owner valid, complete, and report-stable; success is the only ordinary transition that authorizes drop as fully released. Consuming `load_prepared` makes a preparation impossible to materialize twice through the portable API.
+After materialization begins, failure returns `FailedLoad<FailedPreparation>` containing both the primary `LoadError` and the distinct sole cleanup owner. `FailedLoad` does not expose replaceable public fields, and neither the preparation, failed typestate, nor loaded model may alias cleanup authority elsewhere. `FailedLoadOwner::cleanup(&mut self)` is explicit and retryable: failure leaves the owner valid, complete, and plan-report-stable; success is the only ordinary transition that proves explicit release. Consuming `load_prepared` makes a preparation impossible to materialize twice through the portable API, while separating the associated types prevents one public type from carrying contradictory pre-attempt and post-failure drop semantics.
 
 ### Bind accepted weight facts to retained files and whole-shard identities
 
@@ -137,13 +137,14 @@ Given a pre-load reservation `R0`, E0 independently admits both `R0 + loading_pe
 
 On success, E0 verifies handle, complete descriptor, actual device, actual execution scalar, final reported footprint, and lifecycle transition. Only then does it commit a model slot, replace peak reservation with final reservation, and publish a receipt.
 
-On materialization failure, E0 immediately attempts `PreparedLoad::cleanup`:
+On materialization failure, E0 reads the failed owner's lifetime-stable plan, immediately attempts `FailedLoadOwner::cleanup`, and reads the plan again:
 
-- success restores `R0` and returns the original load failure;
-- failure retains `PendingModelOwner::FailedPreparation(prepared)`, the generation-safe model identity, and the full exact loading peak;
+- matching reports plus cleanup success restore `R0` and return the original load failure;
+- matching reports plus cleanup failure retain `PendingModelOwner::FailedPreparation { owner, accepted_plan }`, the generation-safe model identity, and the full exact loading peak;
+- any plan substitution or mutation becomes a backend-contract failure and `RetainedOwnership::Unverified`; every contradictory report extends conservative evidence monotonically and cannot be erased by a later smaller report;
 - the cleanup resource is `FailedLoad { handle }`;
-- primary model-load and cleanup failure classes remain separate;
-- the initial failure is attempt one, bounded retry is shared with existing cleanup policy, and exhausted ownership remains quarantined/accounted.
+- primary model-load/contract and cleanup failure classes remain separate;
+- the initial failure is attempt one, bounded retry is shared with existing cleanup policy, and exhausted ownership remains quarantined/accounted or admission-blocking according to ownership certainty.
 
 A complete model that fails post-load E0 verification first follows explicit unload. If unload succeeds, no owner remains. If unload fails, E0 must not retain the accepted loading peak as exact: the backend has already contradicted its contract, so the peak is not proof that hidden, larger, or differently classified ownership is absent. E0 retains `PendingModelOwner::IncompatibleModel(model)` with `RetainedOwnership::Unverified` containing the accepted peak, the backend-reported footprint, and their checked component-wise conservative maximum. If a component or aggregate host/device total overflows, evidence is `ConservativeFootprint::Overflow`; E0 does not saturate, substitute `u64::MAX`, or use sampled RSS/device memory as ownership accounting.
 
@@ -157,7 +158,7 @@ This extends ADR-0010's E0 verification boundary. E0 verifies portable claim con
 
 ### Preserve explicit terminal cleanup policy
 
-Phase 12 introduces no adapter-local hidden `mem::forget`. Failed preparations remain reachable through E0 while retry is possible or exhausted ownership is observable.
+The raw adapter failed typestate performs no hidden abandonment. It is encapsulated by the project-owned `FailedLoad` guard, which is the portable cleanup authority and deliberately retains an unresolved raw owner when a direct caller abandons the failure before cleanup succeeds. Under normal operation E0 remains the reachable owner through retry or exhaustion; the guard's fail-closed drop is the direct-API safety net, not a substitute for E0 cleanup.
 
 ADR-0006 remains authoritative for terminal shutdown: if the finite explicit cleanup budget is exhausted while the complete E0 runtime still owns native resources, shutdown returns `TerminalCleanupRetention` with the first exhausted owner and a bounded summary distinguishing failed preparations, verified models, incompatible models, retained sequences, and aggregate unverified evidence. The worker may then use the named `RetainUntilProcessExit` disposition and retain the complete runtime allocation only after publishing that structured terminal failure. A directly owned synchronous runtime also retains unresolved backend-owner maps on implicit drop, because explicit cleanup success is the only ordinary drop authorization. Process termination remains the reclamation boundary. Endpoint disconnection or worker-handle absence never becomes proof of release. This is distinct from ordinary prepared-load retry.
 

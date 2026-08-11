@@ -28,7 +28,7 @@ use crate::source::{CandleConfigurationSource, CandleLlamaSource};
 
 use self::footprint::{calculate, sequence_cache_bytes_per_token, validate_memory_plan};
 use self::manifest::{InspectedShard, InspectionLimits};
-pub use self::prepared::CandleLlamaPreparedLoad;
+pub use self::prepared::{CandleLlamaFailedPreparation, CandleLlamaPreparedLoad};
 use self::scalar::{execution_scalar_type, select_execution_dtype, select_required_primary};
 
 pub(super) const VERIFICATION_BUFFER_BYTES: usize = 64 * 1024;
@@ -147,6 +147,7 @@ impl CandleLlamaLoader {
 impl ModelLoader for CandleLlamaLoader {
     type Source = CandleLlamaSource;
     type Prepared = CandleLlamaPreparedLoad;
+    type FailedPreparation = CandleLlamaFailedPreparation;
     type Model = CandleLlamaModel;
 
     fn inspect(&self, source: &Self::Source) -> Result<ModelDescriptor, LoadError> {
@@ -219,9 +220,9 @@ impl ModelLoader for CandleLlamaLoader {
     fn load_prepared(
         &mut self,
         mut prepared: Self::Prepared,
-    ) -> Result<Self::Model, FailedLoad<Self::Prepared>> {
+    ) -> Result<Self::Model, FailedLoad<Self::FailedPreparation>> {
         if let Err(error) = prepared.materialize() {
-            return Err(FailedLoad::new(error, prepared));
+            return Err(FailedLoad::new(error, prepared.into_failed()));
         }
         if prepared.constructed_model.is_none()
             || prepared.config.is_none()
@@ -232,21 +233,21 @@ impl ModelLoader for CandleLlamaLoader {
         {
             return Err(FailedLoad::new(
                 invalid_model_failure(self.backend, CODE_MODEL_LOAD),
-                prepared,
+                prepared.into_failed(),
             ));
         }
 
         let Some(loaded) = prepared.constructed_model.take() else {
             return Err(FailedLoad::new(
                 invalid_model_failure(self.backend, CODE_MODEL_LOAD),
-                prepared,
+                prepared.into_failed(),
             ));
         };
         let Some(config) = prepared.config.take() else {
             prepared.constructed_model = Some(loaded);
             return Err(FailedLoad::new(
                 invalid_model_failure(self.backend, CODE_MODEL_LOAD),
-                prepared,
+                prepared.into_failed(),
             ));
         };
         let Some(device) = prepared.device.take() else {
@@ -254,7 +255,7 @@ impl ModelLoader for CandleLlamaLoader {
             prepared.config = Some(config);
             return Err(FailedLoad::new(
                 invalid_model_failure(self.backend, CODE_MODEL_LOAD),
-                prepared,
+                prepared.into_failed(),
             ));
         };
 

@@ -1,5 +1,5 @@
 use domain_contracts::{
-    LoadedModel, ModelHandle, ModelId, ModelLifecycleState, ModelLoader, RequestId,
+    FailedLoad, LoadedModel, ModelHandle, ModelId, ModelLifecycleState, ModelLoader, RequestId,
 };
 
 use crate::{
@@ -250,7 +250,7 @@ where
 
     const fn model_cleanup_retry_state(
         &self,
-        pending: &PendingModel<L::Model, L::Prepared>,
+        pending: &PendingModel<L::Model, FailedLoad<L::FailedPreparation>>,
     ) -> CleanupRetryState {
         CleanupRetryState {
             resource: pending.owner.cleanup_resource(pending.handle),

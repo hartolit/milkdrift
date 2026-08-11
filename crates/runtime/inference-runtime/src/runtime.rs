@@ -3,14 +3,14 @@
 use std::collections::BTreeMap;
 
 use domain_contracts::{
-    BackendSequence, ExecutionDevice, GenerationUsage, LoadedModel, MemoryFootprint,
-    ModelDescriptor, ModelGeneration, ModelHandle, ModelId, ModelLifecycle, ModelLoader,
-    PreparedLoad, RequestId, ScalarType, SequenceId, SynchronizationError,
+    BackendSequence, ExecutionDevice, FailedLoad, FailedLoadOwner, GenerationUsage, LoadedModel,
+    LoadPlan, MemoryFootprint, ModelDescriptor, ModelGeneration, ModelHandle, ModelId,
+    ModelLifecycle, ModelLoader, RequestId, ScalarType, SequenceId, SynchronizationError,
 };
 
 use crate::{
-    CleanupFailureReport, CleanupResource, CleanupRetryState, RetainedOwnership, RuntimeError,
-    RuntimeLimits,
+    CleanupFailureReport, CleanupResource, CleanupRetryState, FailureClass, FailureDetail,
+    RetainedOwnership, RuntimeError, RuntimeLimits, RuntimeOperation,
 };
 
 mod admission;
@@ -33,7 +33,8 @@ where
     loader: L,
     limits: RuntimeLimits,
     models: BTreeMap<ModelId, ModelSlot<L::Model>>,
-    pending_models: BTreeMap<ModelId, PendingModel<L::Model, L::Prepared>>,
+    pending_models:
+        BTreeMap<ModelId, PendingModel<L::Model, FailedLoad<L::FailedPreparation>>>,
     request_index: BTreeMap<RequestId, ModelId>,
     sequence_index: BTreeMap<SequenceId, RequestId>,
     pending_request_index: BTreeMap<RequestId, ModelId>,
@@ -71,22 +72,25 @@ where
 enum PendingModelOwner<M, P>
 where
     M: LoadedModel,
-    P: PreparedLoad,
+    P: FailedLoadOwner,
 {
     VerifiedModel(M),
     IncompatibleModel(M),
-    FailedPreparation(P),
+    FailedPreparation {
+        owner: P,
+        accepted_plan: LoadPlan,
+    },
 }
 
 impl<M, P> PendingModelOwner<M, P>
 where
     M: LoadedModel,
-    P: PreparedLoad,
+    P: FailedLoadOwner,
 {
     fn cleanup(&mut self) -> Result<(), SynchronizationError> {
         match self {
             Self::VerifiedModel(model) | Self::IncompatibleModel(model) => model.prepare_unload(),
-            Self::FailedPreparation(prepared) => prepared.cleanup(),
+            Self::FailedPreparation { owner, .. } => owner.cleanup(),
         }
     }
 
@@ -94,14 +98,24 @@ where
         match self {
             Self::VerifiedModel(_) => CleanupResource::Model { handle },
             Self::IncompatibleModel(_) => CleanupResource::IncompatibleModel { handle },
-            Self::FailedPreparation(_) => CleanupResource::FailedLoad { handle },
+            Self::FailedPreparation { .. } => CleanupResource::FailedLoad { handle },
         }
     }
 
     const fn cleanup_class(&self) -> CleanupClass {
         match self {
-            Self::FailedPreparation(_) => CleanupClass::FailedPreparation,
+            Self::FailedPreparation { .. } => CleanupClass::FailedPreparation,
             Self::VerifiedModel(_) | Self::IncompatibleModel(_) => CleanupClass::CompleteModel,
+        }
+    }
+
+    fn failed_preparation_plans(&self) -> Option<(LoadPlan, LoadPlan)> {
+        match self {
+            Self::FailedPreparation {
+                owner,
+                accepted_plan,
+            } => Some((*accepted_plan, *owner.plan())),
+            Self::VerifiedModel(_) | Self::IncompatibleModel(_) => None,
         }
     }
 
@@ -113,7 +127,7 @@ where
 struct PendingModel<M, P>
 where
     M: LoadedModel,
-    P: PreparedLoad,
+    P: FailedLoadOwner,
 {
     handle: ModelHandle,
     owner: PendingModelOwner<M, P>,
@@ -121,6 +135,57 @@ where
     failure: CleanupFailureReport,
     attempts: u32,
     cancelled_requests: u32,
+}
+
+impl<M, P> PendingModel<M, P>
+where
+    M: LoadedModel,
+    P: FailedLoadOwner,
+{
+    /// Reclassifies a failed preparation whose report no longer matches the
+    /// accepted transaction. The returned footprint was previously counted as
+    /// exact and must be removed from aggregate exact accounting once.
+    fn reconcile_failed_preparation_contract(&mut self) -> Option<MemoryFootprint> {
+        let (accepted_plan, reported_plan) = self.owner.failed_preparation_plans()?;
+        self.reconcile_failed_preparation_report(accepted_plan, reported_plan)
+    }
+
+    /// Records one observed failed-owner report without losing earlier evidence.
+    fn reconcile_failed_preparation_report(
+        &mut self,
+        accepted_plan: LoadPlan,
+        reported_plan: LoadPlan,
+    ) -> Option<MemoryFootprint> {
+        if accepted_plan == reported_plan {
+            return None;
+        }
+
+        let formerly_exact = self.ownership.exact_footprint();
+        let conservative_footprint = match self.ownership {
+            RetainedOwnership::Unverified {
+                conservative_footprint,
+                ..
+            } => memory::extend_conservative_footprint(
+                conservative_footprint,
+                reported_plan.loading_peak_footprint,
+            ),
+            RetainedOwnership::Exact(_) | RetainedOwnership::Released => {
+                memory::conservative_footprint(
+                    accepted_plan.loading_peak_footprint,
+                    reported_plan.loading_peak_footprint,
+                )
+            }
+        };
+        self.ownership = RetainedOwnership::Unverified {
+            accepted_loading_peak: accepted_plan.loading_peak_footprint,
+            reported_footprint: reported_plan.loading_peak_footprint,
+            conservative_footprint,
+        };
+        self.failure.primary_operation = RuntimeOperation::ModelAdmission;
+        self.failure.primary_failure = FailureClass::BackendContract;
+        self.failure.primary_detail = FailureDetail::Class(FailureClass::BackendContract);
+        formerly_exact
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

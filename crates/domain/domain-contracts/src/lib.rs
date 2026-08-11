@@ -14,8 +14,8 @@ pub mod sequence;
 pub mod time;
 
 pub use backend::{
-    BackendSequence, FailedLoad, LoadedModel, ModelLoader, PreparedLoad, decode_checked,
-    prefill_checked,
+    BackendSequence, FailedLoad, FailedLoadOwner, LoadedModel, ModelLoader, PreparedLoad,
+    decode_checked, prefill_checked,
 };
 pub use capacity::{CapacityExhausted, CapacityResource};
 pub use error::{

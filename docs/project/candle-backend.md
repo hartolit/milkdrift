@@ -27,9 +27,9 @@ Modern `dtype` does not silently fall back to legacy `torch_dtype`. Both absent/
 |---|---|---|---|---|
 | `{F32}` | F32 | absent or F32 | F32 | F32 |
 | `{F16}` | F16 | absent or F16 | F16 | F16 |
-| `{F16,F32}` | F16 | absent or F16 | F16 | F16 |
+| `{F16,F32}` | F16 | **F16 required** | F16 | F16 |
 | `{BF16}` | BF16 | absent or BF16 | F32 | BF16 when supported |
-| `{BF16,F32}` | BF16 | absent or BF16 | F32 | BF16 when supported |
+| `{BF16,F32}` | BF16 | **BF16 required** | F32 | BF16 when supported |
 
 A genuine required F16+BF16 mixture, empty required set, required unsupported dtype, quantized representation, malformed/duplicate tensor layout, missing required tensor, shape mismatch, gap/overlap, bounds failure, or arithmetic overflow is rejected before execution-device initialization. Complete observed extras never alter this matrix. A BF16 CUDA request on a device without reported BF16 support fails during preparation; unsupported devices fail explicitly and there is no CPU fallback. Final vocabulary logits cross to E0 as caller-owned host F32.
 
@@ -72,9 +72,9 @@ Candle trusts no cache name, symlink target, Git object ID, ETag, inode, mtime, 
 5. verify exact EOF, length, and whole-shard SHA-256;
 6. after every shard verifies, construct `Llama` behind `catch_unwind` and synchronize before publication.
 
-There are no per-tensor seeks, payload digests, mmap, unsafe code, or whole-model host buffers. Unused tensors are never converted, transferred, inserted into Candle's map, or retained. Removing/replacing the path cannot redirect an open retained file; header mutation fails before payload processing, while payload mutation, truncation, and extension fail before model publication. A late whole-shard mismatch returns the same prepared value as sole owner of already materialized resources.
+There are no per-tensor seeks, payload digests, mmap, unsafe code, or whole-model host buffers. Unused tensors are never converted, transferred, inserted into Candle's map, or retained. Removing/replacing the path cannot redirect an open retained file; header mutation fails before payload processing, while payload mutation, truncation, and extension fail before model publication. A late whole-shard mismatch consumes the pre-attempt preparation and returns a distinct failed-materialization owner containing every already materialized resource.
 
-An unmaterialized preparation rejected by E0 is ordinary-drop-safe. After materialization starts, every failure returns `FailedLoad<PreparedLoad>` and requires explicit cleanup.
+An unmaterialized `CandleLlamaPreparedLoad` rejected by E0 is ordinary-drop-safe. After materialization starts, every failure returns `FailedLoad<CandleLlamaFailedPreparation>` and requires explicit cleanup through `FailedLoadOwner`.
 
 ## Final and loading-peak formulas
 
@@ -121,9 +121,23 @@ loading: host weights 0, host working Hcuda, device weights R, device working 0
 
 The host execution tensor remains live until its transferred device tensor has synchronized and entered the final map. Only required device tensors are ever transferred, so ignored extras require no device headroom. `ModelDescriptor::estimated_footprint` is the device-independent CPU final estimate; `prepare_load` produces exact target-specific final and loading plans and checks the loading peak against host/device budgets and current CUDA availability before materialization.
 
+## Sequence reservation follows simultaneous lifetimes
+
+The adapter's `SequencePlan::expected_footprint` is a checked conservative upper bound for reviewed live logical tensor payload and source-transfer bytes, not a physical allocator measurement and not a sum of mutually exclusive phases. The locked batch-one, non-flash Candle Llama 0.11.0 model separates persistent all-layer KV/cache ownership from one transformer block's transient forward peak and the outer embedding/norm/logit peak.
+
+Candle's model loop replaces the current hidden state while executing blocks sequentially. Consequently:
+
+```text
+persistent = KV for every layer + rotary cache + retained mask cache
+execution peak = persistent + one block transient peak + outer model peak
+reservation = component-wise max(sequence creation, execution)
+```
+
+Only the persistent KV term scales with `num_hidden_layers`; multiplying the complete block transient set by layer count would reserve tensors that are never simultaneously live and can reject valid requests by tens of GiB. CPU and CUDA retain separate host/device source-transfer phases, and E0 separately reserves caller-owned logits, sampling, history, stop, and output state. Exact synthetic cases plus a 22-layer TinyLlama full-context regression lock the reviewed formula.
+
 ## Failed materialization ownership
 
-`CandleLlamaPreparedLoad` is the sole transaction owner of:
+`CandleLlamaPreparedLoad` is the ordinary-drop-safe transaction before materialization. Consuming it either returns a complete model or creates the distinct `CandleLlamaFailedPreparation`, whose sole purpose is to retain and explicitly clean resources acquired by the failed attempt. The failed owner contains:
 
 - retained device and parsed configuration;
 - open inspected shards;
@@ -131,9 +145,9 @@ The host execution tensor remains live until its transferred device tensor has s
 - pending source, cast-host, or transferred-device tensor;
 - a completed native model when final synchronization fails.
 
-`load_prepared` returns `FailedLoad<CandleLlamaPreparedLoad>` on any materialization, construction, or synchronization failure. It never converts away the only owner.
+`load_prepared` returns `FailedLoad<CandleLlamaFailedPreparation>` on any materialization, construction, or synchronization failure. It never converts away or aliases the only cleanup owner.
 
-`PreparedLoad::cleanup` is retryable and idempotent after success. It synchronizes the retained device first. A synchronization failure leaves every owner reachable and the preparation valid for another attempt. Only successful synchronization clears the model, final/pending tensors, shards, configuration, and device and marks cleanup complete. E0 owns bounded retry, peak accounting, exhaustion, and terminal shutdown policy; see [Inference runtime](inference-runtime.md) and [ADR-0020](../agent/decisions/0020-transactional-prepared-model-loading.md).
+`FailedLoadOwner::cleanup` is retryable and idempotent after success. It synchronizes the retained device first. A synchronization failure leaves every owner reachable and the failed typestate valid for another attempt. Only successful synchronization clears the model, final/pending tensors, shards, configuration, and device and marks cleanup complete. The failed owner must report the accepted plan for its entire lifetime; E0 checks that report on both sides of each cleanup attempt and reclassifies any contradiction as unverified ownership. E0 owns bounded retry, peak accounting, exhaustion, and terminal shutdown policy; see [Inference runtime](inference-runtime.md) and [ADR-0020](../agent/decisions/0020-transactional-prepared-model-loading.md).
 
 ## Generation lifecycle
 

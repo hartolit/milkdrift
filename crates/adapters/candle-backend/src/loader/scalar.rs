@@ -13,24 +13,24 @@ pub(super) fn select_required_primary(
     let f32_set = ScalarTypeSet::from_scalar(ScalarType::F32);
     let f16_set = ScalarTypeSet::from_scalar(ScalarType::F16);
     let bf16_set = ScalarTypeSet::from_scalar(ScalarType::Bf16);
-    let primary = if required == f32_set {
-        ScalarType::F32
-    } else if required == f16_set || required == f16_set.union(f32_set) {
-        ScalarType::F16
-    } else if required == bf16_set || required == bf16_set.union(f32_set) {
-        ScalarType::Bf16
+    let (primary, declaration_required) = if required == f32_set {
+        (ScalarType::F32, false)
+    } else if required == f16_set {
+        (ScalarType::F16, false)
+    } else if required == bf16_set {
+        (ScalarType::Bf16, false)
+    } else if required == f16_set.union(f32_set) {
+        (ScalarType::F16, true)
+    } else if required == bf16_set.union(f32_set) {
+        (ScalarType::Bf16, true)
     } else {
         return Err(unsupported_scalar(backend));
     };
 
     match declaration {
-        None => Ok(primary),
-        Some(ScalarType::F32 | ScalarType::F16 | ScalarType::Bf16)
-            if declaration == Some(primary) =>
-        {
-            Ok(primary)
-        }
-        Some(_) => Err(unsupported_scalar(backend)),
+        Some(declared) if declared == primary => Ok(primary),
+        None if !declaration_required => Ok(primary),
+        None | Some(_) => Err(unsupported_scalar(backend)),
     }
 }
 
@@ -97,14 +97,19 @@ mod tests {
             );
         }
 
-        assert_eq!(
-            select_required_primary(BACKEND, f16.union(f32), None),
-            Ok(ScalarType::F16)
-        );
-        assert_eq!(
-            select_required_primary(BACKEND, bf16.union(f32), None),
-            Ok(ScalarType::Bf16)
-        );
+        for (required, declaration, expected) in [
+            (f16.union(f32), ScalarType::F16, ScalarType::F16),
+            (bf16.union(f32), ScalarType::Bf16, ScalarType::Bf16),
+        ] {
+            assert_eq!(
+                select_required_primary(BACKEND, required, Some(declaration)),
+                Ok(expected)
+            );
+            assert!(matches!(
+                select_required_primary(BACKEND, required, None),
+                Err(LoadError::Backend(failure)) if failure.code == CODE_UNSUPPORTED_SCALAR
+            ));
+        }
     }
 
     #[test]

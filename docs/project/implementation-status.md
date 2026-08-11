@@ -1,11 +1,11 @@
 # Current implementation status
 
-**Status date:** 2026-08-10
+**Status date:** 2026-08-11
 
 ```text
 Phase 12 and the artifact-loading, runtime-ownership, and application-boundary amendments are implemented.
-The infrastructure-truth maintenance implementation and local CPU/portable/policy/link gates are complete.
-Current-tree CUDA compilation and hardware execution are not claimed from this agent environment because no NVIDIA device nodes, nvidia-smi, or nvcc are exposed.
+The post-closure foundation repair rejects ambiguous mixed precision, separates failed-load typestate, and corrects sequence reservation to simultaneous lifetimes.
+That repair requires fresh local and remote validation after application; predecessor-tree CPU/portable/policy/link results are retained below only as historical evidence.
 No later product phase is active, and workflow/workspace direction is not yet a ratified program.
 ```
 
@@ -35,8 +35,8 @@ General workflow definitions/runs, durable context workspaces, plugin execution,
 | Artifact source | Hugging Face revision resolved to an immutable commit. Selected LFS shards carry exact provider SHA-256/length identity; non-LFS and arbitrary local paths use explicit mutable-source fallback semantics. |
 | Format/architecture | Unquantized Safetensors through the current Llama compatibility path. All selected structure is inspected; only required Llama tensors are materialized. |
 | Required scalar layouts | Exactly `{F32}`, `{F16}`, `{F16,F32}`, `{BF16}`, and `{BF16,F32}` under the strict declaration policy below. Understood unused extras may broaden complete observed evidence without changing execution. |
-| CPU | Mandatory in every build and the default selection. The current infrastructure working tree passed the complete canonical native gate. |
-| CUDA | Non-default explicit ordinal 0 with no fallback. Implementation remains scoped to the exact RTX 5070 Ti row; Phase 12 remote hardware evidence applies only to `181a069`, and the artifact-loading amendment has later local hardware evidence. This infrastructure/application tree has no new CUDA compile or hardware result in the present agent environment. |
+| CPU | Mandatory in every build and the default selection. The predecessor infrastructure tree passed the complete canonical native gate; the post-closure repair remains unvalidated until the exact applied tree passes the same gate. |
+| CUDA | Non-default explicit ordinal 0 with no fallback. Implementation remains scoped to the exact RTX 5070 Ti row; Phase 12 remote hardware evidence applies only to `181a069`, and the artifact-loading amendment has later local hardware evidence. No post-closure-repair CUDA compile or hardware result is accepted until the exact applied tree passes the supported CUDA gates. |
 | Resident models | One selected/resident model in E1. |
 | Completion/chat | Direct completion for every loaded compatible model; built-in chat only for exact TinyLlama profile/revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`. |
 | Persistence | redb preferences and model catalogue; `LAS1` writes v2/reads v1; `LAM1` writes v3 and reads exact v1/v2 without automatic rewrite. Conversation history remains memory-only. |
@@ -51,7 +51,7 @@ The loader keeps four facts separate:
 3. **Required set and primary** — adapter-private compatibility facts for tensors consumed by the supported Llama schema.
 4. **Execution scalar** — selected during exact device-aware preparation and verified from the loaded backend by E0.
 
-A genuine required F16+BF16 mixture, required unsupported dtype, empty required set, quantization, malformed structure, or contradictory declaration fails before publication. Structurally understood unused integer, boolean, FP8/bit-packed, wider numeric, complex, or other tensors remain observed/identity-checked evidence but are never staged, cast, transferred, retained, or counted in tensor footprints.
+A genuine required F16+BF16 mixture, required unsupported dtype, empty required set, quantization, malformed structure, or contradictory declaration fails before publication. Mixed required `{F16,F32}` and `{BF16,F32}` layouts require the matching recognized declaration because the set alone does not establish a primary precision; absent declarations remain accepted only for homogeneous required sets. Structurally understood unused integer, boolean, FP8/bit-packed, wider numeric, complex, or other tensors remain observed/identity-checked evidence but are never staged, cast, transferred, retained, or counted in tensor footprints.
 
 Source identity has two paths:
 
@@ -60,11 +60,11 @@ Source identity has two paths:
 
 Materialization re-verifies retained header/payload/EOF identity while hashing ignored ranges through a fixed buffer and allocating only required ranges. Path replacement cannot redirect the retained file.
 
-`MemoryFootprint` contains concrete host/device weight/working bytes only. Sequence-cache bytes per token is a separate planning rate. `LoadPlan::final_footprint` is exact post-load required-tensor ownership; `loading_peak_footprint` is the separate required-only materialization peak. Parsed metadata, the fixed verification buffer, allocator/driver overhead, process RSS, and whole-device memory remain separate bounded or sampled facts.
+`MemoryFootprint` contains concrete host/device weight/working bytes only. Sequence-cache bytes per token is a separate planning rate. `LoadPlan::final_footprint` is exact post-load required-tensor ownership; `loading_peak_footprint` is the separate required-only materialization peak. `SequencePlan::expected_footprint` is a checked conservative logical-payload bound: persistent KV ownership scales across every layer, but Candle's sequential block loop admits only one block's simultaneous transient peak plus outer embedding/norm/logit state. Parsed metadata, the fixed verification buffer, allocator/driver overhead, process RSS, and whole-device memory remain separate bounded or sampled facts.
 
 ## Retained ownership truth
 
-E0 reserves the accepted loading peak before materialization and commits only verified final ownership. Failed materialization retains the sole prepared owner and exact accepted peak when cleanup fails. Verified unload failure retains exact final ownership. A complete model that contradicts its contract and cannot unload retains `Unverified` accepted/reported/conservative evidence, is excluded from exact aggregate bytes, and blocks new admission.
+E0 reserves the accepted loading peak before materialization and commits only verified final ownership. An ordinary-drop-safe preparation is consumed into a distinct failed-materialization typestate when native acquisition fails. Matching failed-owner plan reports retain the exact accepted peak while cleanup is pending. A substituted or mutated failed-owner plan, like a contradictory complete model, becomes `Unverified` accepted/reported/conservative evidence, is excluded from exact aggregate bytes, preserves earlier larger reports monotonically, and blocks new admission. Verified unload failure retains exact final ownership.
 
 Release requires correlated explicit cleanup/unload/shutdown evidence. Zero exact bytes, a bounded snapshot omission, endpoint disconnection, or worker/join-handle absence does not prove release. Cleanup rotates fairly with bounded attempts and reports terminal process-lifetime retention when native ownership cannot be released.
 
@@ -87,9 +87,9 @@ GitHub Quality now has independent native, WASM, embedded, policy, nursery, and 
 
 External evidence schema 6 observes the public E1 product path without an independent adapter preparation. It retains variable provenance/timing/count/process/whole-device observations and removes shadow planning fields, derivable duplication, invariant prose, and tautological success flags. No schema-6 CPU/CUDA product report is accepted; historical reports retain their original schema and commit attribution.
 
-## Current local validation
+## Predecessor-tree local validation
 
-The following results apply to the infrastructure-truth working tree, not yet to a pushed Actions run:
+The following results apply to the predecessor infrastructure-truth working tree. They do **not** validate the post-closure foundation repair described above; that exact applied tree must rerun the commands in [validation](validation.md) before receiving a green status:
 
 | Evidence class | Result |
 |---|---|
@@ -111,13 +111,13 @@ Isolated validation targets and temporary tool installation directories are remo
 - Phase 11 shared Quality [run 30942153370](https://github.com/hartolit/milkdrift/actions/runs/30942153370) and CUDA [run 30942148369](https://github.com/hartolit/milkdrift/actions/runs/30942148369) passed on commit `1a62d2ed6623500e9052b4b8386ebd058984bd89`.
 - Phase 12 CUDA [run 31281013243](https://github.com/hartolit/milkdrift/actions/runs/31281013243) passed on closure commit `181a069ce81525e9c144fe8de051ced8e3c0b9d7`.
 - Phase 12 Quality [run 31281013257](https://github.com/hartolit/milkdrift/actions/runs/31281013257) passed its canonical native work, then the old workspace-wide bench build left roughly 49 MiB free and the later WASM/root-target work failed with `No space left on device`. The linker bus error was consequential. This is infrastructure history, not a Rust/WASM product failure.
-- Those runs do not prove `d4a1e43`, `b43d0f4`, `1f91cba`, or the infrastructure-truth tree.
+- Those runs do not prove `d4a1e43`, `b43d0f4`, `1f91cba`, the infrastructure-truth tree, or the post-closure foundation repair.
 
 ## Unsupported behavior and open evidence
 
 - Quantized/GGUF loading, non-Llama architectures, arbitrary required mixtures, required F16+BF16, required unsupported dtypes, Metal, cuDNN, flash attention, NCCL, multi-GPU, generic `gpu`, automatic CPU fallback, and GPU-side sampling are unsupported.
 - CUDA outside an actually observed exact row is unclaimed. The current tree still needs post-push self-hosted execution of all dedicated suites.
-- No current-tree hosted Quality/native/portable run exists until the commit is pushed.
+- No post-closure-repair native, portable, hosted Quality, or CUDA result is accepted until the exact applied tree passes the canonical gates.
 - No schema-6 external product run or immutable reviewed external mixed-checkpoint evidence exists.
 - Multi-model E1 residency, generalized chat, conversation persistence, general workflows/workspaces/plugins/providers/peers, and browser/remote transport are not implemented.
 - Synthetic fixtures prove deterministic compatibility/lifecycle behavior, not language quality, representative scale, production throughput, or external-checkpoint compatibility.

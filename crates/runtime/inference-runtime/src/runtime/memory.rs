@@ -106,10 +106,31 @@ pub(super) const fn conservative_footprint(
     accepted_loading_peak: MemoryFootprint,
     reported_footprint: MemoryFootprint,
 ) -> ConservativeFootprint {
-    let conservative = accepted_loading_peak.component_max(reported_footprint);
-    if conservative.checked_host_bytes().is_some() && conservative.checked_device_bytes().is_some()
-    {
-        ConservativeFootprint::Known(conservative)
+    validated_conservative_footprint(accepted_loading_peak.component_max(reported_footprint))
+}
+
+/// Extends retained unverified evidence without losing an earlier, larger report.
+///
+/// A backend whose report changes more than once is never allowed to shrink the
+/// conservative evidence already published by E0. Once checked host/device
+/// arithmetic overflows, later reports cannot restore a representable claim.
+pub(super) const fn extend_conservative_footprint(
+    current: ConservativeFootprint,
+    reported_footprint: MemoryFootprint,
+) -> ConservativeFootprint {
+    match current {
+        ConservativeFootprint::Known(current) => {
+            validated_conservative_footprint(current.component_max(reported_footprint))
+        }
+        ConservativeFootprint::Overflow => ConservativeFootprint::Overflow,
+    }
+}
+
+const fn validated_conservative_footprint(
+    footprint: MemoryFootprint,
+) -> ConservativeFootprint {
+    if footprint.checked_host_bytes().is_some() && footprint.checked_device_bytes().is_some() {
+        ConservativeFootprint::Known(footprint)
     } else {
         ConservativeFootprint::Overflow
     }
@@ -265,6 +286,52 @@ mod tests {
                 device_weight_bytes: 96,
                 ..MemoryFootprint::default()
             })
+        );
+    }
+
+    #[test]
+    fn conservative_extension_is_monotonic_across_changing_reports() {
+        let initial = ConservativeFootprint::Known(MemoryFootprint {
+            host_weight_bytes: 64,
+            host_working_bytes: 32,
+            ..MemoryFootprint::default()
+        });
+        let larger_device_report = MemoryFootprint {
+            device_weight_bytes: 128,
+            device_working_bytes: 16,
+            ..MemoryFootprint::default()
+        };
+        let extended = extend_conservative_footprint(initial, larger_device_report);
+        assert_eq!(
+            extended,
+            ConservativeFootprint::Known(MemoryFootprint {
+                host_weight_bytes: 64,
+                device_weight_bytes: 128,
+                host_working_bytes: 32,
+                device_working_bytes: 16,
+            })
+        );
+
+        let smaller_report = MemoryFootprint {
+            host_weight_bytes: 1,
+            device_weight_bytes: 2,
+            host_working_bytes: 3,
+            device_working_bytes: 4,
+        };
+        assert_eq!(
+            extend_conservative_footprint(extended, smaller_report),
+            extended
+        );
+    }
+
+    #[test]
+    fn conservative_overflow_is_sticky() {
+        assert_eq!(
+            extend_conservative_footprint(
+                ConservativeFootprint::Overflow,
+                MemoryFootprint::default(),
+            ),
+            ConservativeFootprint::Overflow
         );
     }
 }

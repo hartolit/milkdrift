@@ -73,11 +73,14 @@ kernel. It exclusively owns:
 - scheduling, sampling, cancellation boundaries, draining, and unload; and
 - cleanup retry/exhaustion plus terminal process-lifetime retention.
 
-`prepare_load` returns one source/configuration/device/budget-bound opaque
-preparation and stable plan. E0 validates and reserves the loading peak, passes the
-same preparation to `load_prepared`, verifies the complete model, and replaces the
-peak with final exact ownership only on commit. A contract-violating complete model
-that cannot unload becomes unverified ownership and blocks new admission.
+`prepare_load` returns one ordinary-drop-safe,
+source/configuration/device/budget-bound preparation and stable plan. E0 validates
+and reserves the loading peak, consumes that preparation through `load_prepared`,
+verifies the complete model, and replaces the peak with final exact ownership only
+on commit. Failed materialization returns a distinct resource-bearing typestate
+inside the fail-closed `FailedLoad` guard. A failed owner that changes its accepted
+plan, or a contract-violating complete model that cannot unload, becomes unverified
+ownership and blocks new admission.
 
 Public handles carry generation-safe identity, not shared model ownership. Hosted
 providers and peers are not E0 backends merely because they produce text; their
@@ -112,9 +115,12 @@ selection, immutable identity, vocabulary, recognized-or-absent declaration, and
 unit chat compatibility. It exposes no engine/source/format helpers. Public
 `LoadedModel` gets actual execution scalar/device only from E0's verified receipt.
 
-Hub declaration states are strict: absent or recognized declarations continue;
-malformed, unsupported, or conflicting declarations fail resolution with stable
-Hub/application categories and no raw vendor value.
+Hub declaration states are strict: absent or recognized declarations continue
+through device-independent resolution; malformed, unsupported, or conflicting
+declarations fail with stable Hub/application categories and no raw vendor value.
+At Candle inspection, an absent declaration is sufficient only for a homogeneous
+required tensor set. Mixed required `{F16,F32}` and `{BF16,F32}` layouts require the
+matching recognized producer declaration before any lossy conversion.
 
 E1's load transaction snapshots resolution/admission, submits one ticketed E0
 load, and applies named generic receipt checks for correlation, identity,

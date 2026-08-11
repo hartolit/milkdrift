@@ -190,15 +190,17 @@ pub enum RetainedOwnership {
     /// For a retained sequence this preserves the accepted logical-payload upper
     /// bound; it does not claim exact instantaneous physical allocation.
     Exact(MemoryFootprint),
-    /// A complete model contradicted its accepted contract.
+    /// A retained backend owner contradicted its accepted contract.
     ///
-    /// Neither the accepted loading peak nor the backend report is promoted to
-    /// exact ownership. `conservative_footprint` preserves their component-wise
-    /// conservative reservation when checked arithmetic can represent it.
+    /// This can be a complete model or a failed-materialization owner whose
+    /// lifetime-stable plan report changed. Neither the accepted loading peak
+    /// nor the contradictory backend report is promoted to exact ownership.
+    /// `conservative_footprint` preserves component-wise conservative evidence
+    /// when checked arithmetic can represent it.
     Unverified {
         /// Exact loading reservation accepted before materialization.
         accepted_loading_peak: MemoryFootprint,
-        /// Backend's contradictory post-materialization footprint report.
+        /// Backend's contradictory retained-ownership footprint report.
         reported_footprint: MemoryFootprint,
         /// Checked component-wise conservative reservation evidence.
         conservative_footprint: ConservativeFootprint,
@@ -338,7 +340,7 @@ pub struct TerminalRetentionSummary {
     pub incompatible_models: u32,
     /// Backend sequences retained after destruction failure.
     pub sequences: u32,
-    /// Checked aggregate conservative evidence for incompatible models.
+    /// Checked aggregate conservative evidence for every unverified retained owner.
     pub unverified_conservative_footprint: ConservativeFootprint,
 }
 
@@ -367,12 +369,12 @@ pub enum RuntimeError {
     ModelGenerationExhausted(ModelId),
     /// Runtime shutdown has begun and new work is rejected.
     ShuttingDown,
-    /// A retained incompatible complete model has no established exact upper bound.
+    /// A retained backend owner has no established exact upper bound.
     ///
     /// Cleanup, inspection, shutdown, and already admitted healthy execution remain
     /// available, but every new model, sequence, cache, or workspace admission fails closed.
     AdmissionBlockedByUnverifiedOwnership {
-        /// Number of incompatible complete-model owners retaining uncertainty.
+        /// Number of retained owners carrying unverified ownership.
         owners: u32,
     },
     /// The configured resident-model count was exceeded.

@@ -60,7 +60,11 @@ source, model format, private prompt profile, cache paths, and source-constructi
 helper types are not part of `ResolvedModel`.
 
 The optional declaration is producer intent. It is neither tensor-homogeneity
-proof nor the execution scalar.
+proof nor the execution scalar. Homogeneous required tensor sets may be
+self-describing, but a mixed required F16/F32 or BF16/F32 set must carry
+the matching recognized declaration before Candle may select a lossy
+execution primary. E1 observes the result without reimplementing that
+adapter policy.
 
 ## Load transaction
 

@@ -6,7 +6,8 @@ use std::time::Duration;
 use domain_contracts::{
     BackendFailure, BackendFailureKind, BackendId, BackendSequence, CapabilitySet,
     DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind, ExecutionDevice,
-    FailedLoad, LoadConfiguration, LoadError, LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint,
+    FailedLoad, FailedLoadOwner, LoadConfiguration, LoadError, LoadPlan, LoadedModel,
+    MemoryBudget, MemoryFootprint,
     ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError, ModelHandle, ModelId,
     ModelLoader, ModelMetadata, PrefillBufferRequirements, PrefillInput, PrefillOutcome,
     PreparedDecodeBuffers, PreparedLoad, PreparedPrefillBuffers, QuantizationFormat, RequestId,
@@ -78,6 +79,14 @@ impl BackendSequence for TestSequence {
 }
 
 impl PreparedLoad for TestPrepared {
+    type Failed = TestPrepared;
+
+    fn plan(&self) -> &LoadPlan {
+        &self.plan
+    }
+}
+
+impl FailedLoadOwner for TestPrepared {
     fn plan(&self) -> &LoadPlan {
         &self.plan
     }
@@ -90,6 +99,7 @@ impl PreparedLoad for TestPrepared {
 impl ModelLoader for TestLoader {
     type Source = TestSource;
     type Prepared = TestPrepared;
+    type FailedPreparation = TestPrepared;
     type Model = TestModel;
 
     fn inspect(&self, _source: &Self::Source) -> Result<ModelDescriptor, LoadError> {
@@ -116,7 +126,7 @@ impl ModelLoader for TestLoader {
     fn load_prepared(
         &mut self,
         prepared: Self::Prepared,
-    ) -> Result<Self::Model, FailedLoad<Self::Prepared>> {
+    ) -> Result<Self::Model, FailedLoad<Self::FailedPreparation>> {
         Ok(TestModel {
             handle: prepared.plan.accepted_configuration.handle,
             execution_device: prepared.plan.accepted_configuration.execution_device,

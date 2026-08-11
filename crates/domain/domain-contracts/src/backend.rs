@@ -16,26 +16,46 @@ use crate::{CapacityExhausted, CapacityResource, ModelHandle, SequenceId};
 ///
 /// The preparation owns the accepted source, configuration, and device
 /// authority needed to execute its plan. [`Self::plan`] is stable for the
-/// value's entire lifetime, including after materialization or cleanup errors.
-/// Implementations must not clone or otherwise alias the preparation's cleanup
-/// authority.
+/// value's entire lifetime. Implementations must not clone or otherwise alias
+/// the preparation's materialization authority.
 ///
-/// A preparation that has not been passed to [`ModelLoader::load_prepared`] is
-/// unmaterialized and ordinary-drop-safe if its plan is rejected. Once a
-/// materialization attempt acquires native resources, failures must be returned
-/// without unwinding. A failed attempt returns this exact value as the sole
-/// cleanup owner and subjects it to the retryable [`Self::cleanup`] contract.
+/// This pre-attempt value is always ordinary-drop-safe. If materialization
+/// acquires native resources and then fails, [`ModelLoader::load_prepared`]
+/// consumes this value and returns the distinct [`Self::Failed`] owner instead.
+/// That typestate separation prevents callers and runtimes from confusing an
+/// unmaterialized plan with a resource-bearing failed attempt.
 pub trait PreparedLoad: Sized {
+    /// Resource-bearing owner returned if this preparation fails to materialize.
+    type Failed: FailedLoadOwner;
+
     /// Returns the exact, lifetime-stable plan bound to this preparation.
     fn plan(&self) -> &LoadPlan;
+}
 
-    /// Completes explicit cleanup after a failed materialization attempt.
+/// Sole explicit cleanup owner after a failed materialization attempt.
+///
+/// A failed owner may retain source handles, host/device tensors, native model
+/// state, or other backend resources acquired while consuming one
+/// [`PreparedLoad`]. It must not be constructible by cloning or aliasing that
+/// authority. Ordinary success from [`Self::cleanup`] is the only portable
+/// proof that the retained resources were explicitly released. The public
+/// [`FailedLoad`] guard encapsulates this raw owner and deliberately retains it
+/// when the guard is abandoned before cleanup succeeds, so ordinary error
+/// propagation cannot invoke unverified native destruction. Implementations
+/// must keep the raw owner valid and retryable after every cleanup error.
+pub trait FailedLoadOwner: Sized {
+    /// Returns the exact plan whose materialization produced this owner.
+    ///
+    /// The report is lifetime-stable and allows E0 to verify that a backend did
+    /// not substitute a different cleanup owner after consuming an accepted
+    /// preparation.
+    fn plan(&self) -> &LoadPlan;
+
+    /// Completes explicit cleanup after failed materialization.
     ///
     /// Cleanup is all-or-nothing and retryable. An error must preserve every
-    /// remaining resource, the sole cleanup authority, and all portable reports
-    /// unchanged so another attempt observes the same plan and ownership claim.
-    /// Implementations must not unwind. Success is the sole ordinary
-    /// authorization to drop a post-attempt cleanup owner as fully released.
+    /// remaining resource and the sole cleanup authority unchanged so another
+    /// attempt can retry safely. Implementations must not unwind.
     ///
     /// # Errors
     ///
@@ -46,23 +66,34 @@ pub trait PreparedLoad: Sized {
 
 /// A model-load failure encapsulating the sole partial-load cleanup owner.
 ///
-/// The primary error describes why materialization failed. The exact preparation
-/// remains private and reachable through the accessors until
-/// [`PreparedLoad::cleanup`] succeeds. A cleanup error is ownership-preserving:
-/// the same report and cleanup authority remain valid for a later retry.
+/// The primary error describes why materialization failed. The raw backend
+/// owner is never exposed: this guard is itself the only portable cleanup
+/// authority. Successful [`FailedLoadOwner::cleanup`] authorizes ordinary drop
+/// of the contained backend value. Dropping the guard before that proof fails
+/// closed by deliberately retaining the unresolved owner until process exit
+/// rather than invoking unverified native destruction.
+///
+/// The guard continues to report the backend owner's current plan before and
+/// after every cleanup attempt. Runtimes can therefore detect substitution or
+/// mutation instead of trusting the fallback plan captured at construction.
 #[must_use = "a failed load retains a cleanup owner that must be handled"]
 #[derive(Debug)]
-pub struct FailedLoad<P: PreparedLoad> {
+pub struct FailedLoad<F: FailedLoadOwner> {
     primary: LoadError,
-    cleanup_owner: P,
+    fallback_plan: LoadPlan,
+    cleanup_owner: Option<F>,
+    cleanup_complete: bool,
 }
 
-impl<P: PreparedLoad> FailedLoad<P> {
-    /// Creates a failed-load result from its primary error and cleanup owner.
-    pub const fn new(primary: LoadError, cleanup_owner: P) -> Self {
+impl<F: FailedLoadOwner> FailedLoad<F> {
+    /// Creates the fail-closed guard for one failed materialization owner.
+    pub fn new(primary: LoadError, cleanup_owner: F) -> Self {
+        let fallback_plan = *cleanup_owner.plan();
         Self {
             primary,
-            cleanup_owner,
+            fallback_plan,
+            cleanup_owner: Some(cleanup_owner),
+            cleanup_complete: false,
         }
     }
 
@@ -72,22 +103,65 @@ impl<P: PreparedLoad> FailedLoad<P> {
         self.primary
     }
 
-    /// Returns the retained cleanup owner.
+    /// Returns the backend owner's current plan report.
+    ///
+    /// The report is checked by E0 before and after every cleanup attempt. A
+    /// conforming owner returns the same exact plan for its entire lifetime.
     #[must_use]
-    pub const fn cleanup_owner(&self) -> &P {
-        &self.cleanup_owner
+    pub fn plan(&self) -> &LoadPlan {
+        match &self.cleanup_owner {
+            Some(cleanup_owner) => cleanup_owner.plan(),
+            None => &self.fallback_plan,
+        }
     }
 
-    /// Returns the retained cleanup owner mutably for a cleanup attempt.
-    #[must_use]
-    pub const fn cleanup_owner_mut(&mut self) -> &mut P {
-        &mut self.cleanup_owner
+    /// Attempts explicit cleanup of the retained backend owner.
+    ///
+    /// Successful cleanup is idempotent and authorizes ordinary destruction of
+    /// the raw backend value when this guard is dropped. A failure retains the
+    /// same sole owner for a later retry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SynchronizationError`] when cleanup cannot yet complete.
+    pub fn cleanup(&mut self) -> Result<(), SynchronizationError> {
+        if self.cleanup_complete {
+            return Ok(());
+        }
+
+        let Some(cleanup_owner) = self.cleanup_owner.as_mut() else {
+            return Ok(());
+        };
+        cleanup_owner.cleanup()?;
+        self.cleanup_complete = true;
+        Ok(())
     }
 
-    /// Separates the primary error from the retained cleanup owner.
+    /// Returns whether explicit cleanup has completed successfully.
     #[must_use]
-    pub fn into_parts(self) -> (LoadError, P) {
-        (self.primary, self.cleanup_owner)
+    pub const fn cleanup_complete(&self) -> bool {
+        self.cleanup_complete
+    }
+}
+
+impl<F: FailedLoadOwner> FailedLoadOwner for FailedLoad<F> {
+    fn plan(&self) -> &LoadPlan {
+        Self::plan(self)
+    }
+
+    fn cleanup(&mut self) -> Result<(), SynchronizationError> {
+        Self::cleanup(self)
+    }
+}
+
+impl<F: FailedLoadOwner> Drop for FailedLoad<F> {
+    fn drop(&mut self) {
+        if self.cleanup_complete {
+            return;
+        }
+        if let Some(cleanup_owner) = self.cleanup_owner.take() {
+            core::mem::forget(cleanup_owner);
+        }
     }
 }
 
@@ -110,7 +184,9 @@ pub trait ModelLoader {
     /// Backend-specific model source descriptor.
     type Source;
     /// Backend-owned exact load preparation.
-    type Prepared: PreparedLoad;
+    type Prepared: PreparedLoad<Failed = Self::FailedPreparation>;
+    /// Sole cleanup owner returned after failed materialization.
+    type FailedPreparation: FailedLoadOwner;
     /// Concrete loaded-model type produced by this loader.
     type Model: LoadedModel;
 
@@ -146,8 +222,9 @@ pub trait ModelLoader {
     /// must not consult a replacement source or substitute configuration/device
     /// state. On success, the model reports the plan's final ownership and the
     /// consumed preparation is fully released. On failure, [`FailedLoad`]
-    /// retains that exact preparation as the sole cleanup owner; implementations
-    /// must neither discard nor alias it while converting the primary error.
+    /// retains the associated failed typestate as the sole cleanup owner;
+    /// implementations must neither discard nor alias it while converting the
+    /// primary error.
     ///
     /// # Errors
     ///
@@ -156,7 +233,7 @@ pub trait ModelLoader {
     fn load_prepared(
         &mut self,
         prepared: Self::Prepared,
-    ) -> Result<Self::Model, FailedLoad<Self::Prepared>>;
+    ) -> Result<Self::Model, FailedLoad<Self::FailedPreparation>>;
 }
 
 /// Sequence-owned cache and position state that never owns model weights.
