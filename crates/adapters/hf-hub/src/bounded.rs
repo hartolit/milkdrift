@@ -1,20 +1,9 @@
-use std::fs::File;
 use std::io::{self, Read};
-use std::path::Path;
 
 #[derive(Debug)]
 pub(crate) enum BoundedReadError {
     Io(io::Error),
     Limit,
-}
-
-pub(crate) fn read_bounded_file(
-    path: &Path,
-    maximum_bytes: u64,
-) -> Result<Vec<u8>, BoundedReadError> {
-    let file = File::open(path).map_err(BoundedReadError::Io)?;
-    let known_byte_length = file.metadata().map_err(BoundedReadError::Io)?.len();
-    read_bounded(file, known_byte_length, maximum_bytes)
 }
 
 pub(crate) fn read_bounded<R: Read>(
