@@ -10,7 +10,8 @@ The orchestration-boundary repair is implemented: task-graph is generic and allo
 Its focused host, WASM, embedded, architecture, hygiene, and documentation gates pass locally in an isolated target directory.
 The CI resource-topology repair is implemented: the local composite and hosted native components share one metadata-owned plan, and hosted profiles now use separate standard-runner targets with centralized cleanup.
 No workflow/workspace product program has been ratified or activated.
-The new component/portable plans pass local source-tree validation; remote Quality, current CUDA hardware, external-model, and final execution evidence remain separate and pending.
+Exact-tree local CPU, component, composite, portable, policy, and link acceptance passes on commit b1f7e90b1ba67f1cf968d773052b5062ef8cbbb9, tree fcb3ee6fa00243734abd74b64218aa0db2e340c1.
+No repair was required during closure validation; remote Quality, current CUDA hardware, and external-model evidence remain separate and pending.
 ```
 
 ## Current maintenance scope
@@ -107,16 +108,59 @@ Current component and support truth is owned by
 - External mixed-checkpoint evidence remains absent. Historical reports retain
   their original schema and exact commit attribution.
 
+## Foundation closure 05 local evidence
+
+The exact clean executable candidate was commit
+`b1f7e90b1ba67f1cf968d773052b5062ef8cbbb9`, tree
+`fcb3ee6fa00243734abd74b64218aa0db2e340c1`. A tracked document cannot name the
+commit/tree created by committing itself; the resulting documentation-only
+closure commit and its post-commit checks belong in the completion report.
+
+The host was Linux `7.1.6-arch1-1` x86_64 with Rust 1.96.1, Cargo 1.96.1, an
+AMD Ryzen 9 7940HS (8 physical/16 logical cores), 60 GiB reported memory, 4 GiB
+zram swap, and a 953 GiB Btrfs filesystem with 782 GiB initially free. The
+observed display adapter was AMD Radeon 780M. `nvidia-smi` and `nvcc` were absent;
+CUDA was therefore not attempted and is not a local failure. Clean evidence
+targets used `CARGO_INCREMENTAL=0` and were built sequentially.
+
+Thirty-one validation commands passed with no failing command: six structural,
+fourteen focused, six hosted-parity components, one composite, two portable, and
+two policy/link commands. The focused commands reported 564 passing libtest or
+doctest cases, plus successful harness-free allocation targets; the canonical
+workspace test plan reported 525 passing cases. The sole ignored test was the
+explicit source-tree fixture-regeneration maintenance operation.
+
+The focused matrix ran `application-runtime` three times, `redb-storage`,
+`domain-contracts`, Candle CPU and full package tests, all four maintained E0
+runtime/generation/fault/native-backend targets, `task-graph`,
+`corrective-workflow`, and the complete `xtask` suite. It proves the deterministic
+CPU fixtures and scalar facts, sequence plan/create/prefill/decode/destroy and
+reservation checks, backpressure/cancellation, ordinary unload, failed-load
+cleanup/retry/exhaustion, mismatch and unverified retention, the unified E1
+coordinator, and bounded shutdown/disconnection truth. No RSS leak claim is made.
+
+Fresh hosted-parity target observations were 145,840 KiB (structure), 2,027,432
+KiB (check), 7,681,172 KiB (tests), 2,027,432 KiB (Clippy), 2,041,140 KiB
+(rustdoc), and 1,253,884 KiB (exact benches). The clean local composite retained
+10,405,360 KiB. Each portable target retained 152,232 KiB and compiled exactly
+`context-planner`, `domain-contracts`, `sampling`, `task-graph`, and
+`tokenization` plus `libm`. Pinned cargo-deny 0.20.2 passed advisories, bans,
+licenses, and sources; pinned Lychee 0.24.2 checked 256 links with 0 errors.
+
+No source, test, workflow, or documentation defect was exposed before evidence
+recording. GitHub-hosted Quality, current self-hosted RTX CUDA acceptance, and a
+reviewed external mixed checkpoint remain pending. This local result does not
+authorize AMD support or the workflow/workspace product program.
+
 ## Handoff and acceptance order
 
-1. Run the isolated canonical `cargo xtask verify` gate when complete repository
-   acceptance is required; hosted CI must use the matching typed component plans.
-2. Run both named portable target matrices in isolated targets.
-3. On the supported NVIDIA host, run the exact CUDA check/Clippy graph and all
+1. Push only when requested and observe the redesigned hosted Quality run on the
+   exact pushed closure commit.
+2. On the supported NVIDIA host, run the exact CUDA check/Clippy graph and all
    dedicated adapter/E0/fault/E1 hardware suites.
-4. Record only results from the exact repaired commit/tree. Update current
+3. Record only results from the exact repaired commit/tree. Update current
    evidence and history after those results exist, not before.
-5. Refuse workflow/workspace activation while any correctness, ownership,
+4. Refuse AMD or workflow/workspace activation while any correctness, ownership,
    capacity, portability, or documentation contradiction remains.
 
 Canonical owners:

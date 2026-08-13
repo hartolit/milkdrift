@@ -114,6 +114,120 @@ and NVIDIA device nodes are absent on this host, so no Rust CUDA compilation or
 hardware execution is claimed. Prompt 6 owns remote CUDA acceptance. These are
 source-tree results; the completion report records the resulting commit and tree.
 
+## Foundation closure 05 local evidence
+
+On 2026-08-13, clean commit
+`b1f7e90b1ba67f1cf968d773052b5062ef8cbbb9`, tree
+`fcb3ee6fa00243734abd74b64218aa0db2e340c1`, passed the complete local
+CPU/portable closure matrix on the UM790 Pro. This is executable-source evidence;
+the documentation-only closure commit cannot be named by the tracked document
+that creates it and is reported separately with its post-commit checks.
+
+The host was Linux `7.1.6-arch1-1` x86_64, Rust 1.96.1, Cargo 1.96.1, AMD Ryzen
+9 7940HS (8 physical/16 logical cores), 60 GiB reported memory, 4 GiB zram swap,
+and Btrfs with 782 GiB initially free. AMD Radeon 780M was the only display
+adapter observed. `nvidia-smi` and `nvcc` were absent, so CUDA was not attempted.
+Every clean evidence build set `CARGO_INCREMENTAL=0`; heavy Cargo builds ran
+sequentially.
+
+The fast matrix passed:
+
+```sh
+git status --short
+git diff --check
+cargo metadata --locked --format-version 1 --no-deps
+cargo fmt --all -- --check
+cargo xtask architecture
+cargo xtask hygiene
+```
+
+The focused matrix passed in one fresh target, including three consecutive E1
+runs:
+
+```sh
+cargo test --locked -p application-runtime
+cargo test --locked -p redb-storage
+cargo test --locked -p application-runtime
+cargo test --locked -p application-runtime
+cargo test --locked -p domain-contracts
+cargo test --locked -p candle-backend --test llama_cpu
+cargo test --locked -p candle-backend
+cargo test --locked -p inference-runtime --test runtime
+cargo test --locked -p inference-runtime --test generation
+cargo test --locked -p inference-runtime --test fault_injection
+cargo test --locked -p inference-runtime --test native_backend_generation
+cargo test --locked -p task-graph
+cargo test --locked -p corrective-workflow
+cargo test --locked -p xtask
+```
+
+These commands reported 564 passing libtest/doctest cases, no failures, and one
+ignored explicit fixture-regeneration maintenance test. The domain/task-graph
+harness-free allocation executables also succeeded. The matrix covers the public
+headless E1 boundary and redb migrations; homogeneous and mixed CPU fixtures;
+independent scalar facts; sequence plan/create/prefill/decode/destroy and logical
+reservation; output backpressure/cancellation; ordinary unload; failed-load
+immediate cleanup, retry, and exhaustion; complete-model and mutable-owner
+contradictions; unified E1 cleanup; and bounded shutdown/disconnection truth.
+No process RSS observation or physical leak claim was made.
+
+Every hosted native plan then passed from its own fresh target through the same
+interface used by Quality:
+
+```sh
+cargo xtask verify-component structure
+cargo xtask verify-component check
+cargo xtask verify-component test
+cargo xtask verify-component clippy
+cargo xtask verify-component docs
+cargo xtask verify-component benches
+```
+
+Fresh retained target observations were respectively 145,840 KiB, 2,027,432
+KiB, 7,681,172 KiB, 2,027,432 KiB, 2,041,140 KiB, and 1,253,884 KiB. The
+workspace test plan reported 525 passing libtest/doctest cases, no failures, and
+the same one intentionally ignored fixture-maintenance operation. The exact two
+maintained benchmark targets compiled without statistical execution.
+
+The local developer composite passed from another fresh target:
+
+```sh
+cargo xtask verify
+```
+
+Its retained target was 10,405,360 KiB, separately demonstrating why the
+multi-profile local command consumes more disk than any one hosted component.
+These are fresh-target end observations with no in-command target cleanup, not
+continuously sampled byte-exact peaks or product-performance measurements.
+
+Both portable plans passed in separate fresh targets:
+
+```sh
+cargo xtask portable wasm32-unknown-unknown
+cargo xtask portable thumbv7em-none-eabihf
+```
+
+Each retained 152,232 KiB and printed the exact owned package set:
+`context-planner`, `domain-contracts`, `sampling`, `task-graph`, and
+`tokenization`; only portable `libm` joined that local graph. No adapter, native
+runtime, storage, UI, benchmark, or tooling package leaked into either target
+check.
+
+Finally, the repository-pinned tools passed:
+
+```sh
+cargo deny --workspace --locked check advisories bans licenses sources
+lychee --config lychee.toml --offline '**/*.md'
+```
+
+Cargo-deny 0.20.2 reported advisories, bans, licenses, and sources all `ok`;
+duplicate versions remained configured warnings. Lychee 0.24.2 checked 256
+links: 235 OK, 21 excluded, and 0 errors. Across the six structural, fourteen
+focused, six component, one composite, two portable, and two policy/link gates,
+31 commands passed and none failed. Validation exposed no code, test, workflow,
+or documentation repair. Remote Quality, current self-hosted RTX CUDA acceptance,
+and a reviewed external mixed checkpoint remain pending.
+
 ## Canonical repository gate
 
 The ordinary composite gate is:

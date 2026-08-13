@@ -5,7 +5,7 @@
 ```text
 Phase 12 and the artifact-loading, runtime-ownership, and application-boundary amendments are implemented.
 The post-closure foundation repair rejects ambiguous mixed precision, separates failed-load typestate, and corrects sequence reservation to simultaneous lifetimes.
-The sequence-accounting closure passes its required focused local matrix; canonical, portable, remote, and CUDA hardware acceptance remain separate pending evidence.
+The exact-tree foundation closure passes its focused CPU, canonical native, portable, dependency-policy, and offline-link matrices locally; hosted Quality and current CUDA hardware acceptance remain separate pending evidence.
 The orchestration-boundary repair makes task-graph generic and allocation-free and moves corrective semantics into validated reference-template data; its focused host, portable, architecture, and hygiene matrix passes locally.
 The CI resource-topology repair gives each hosted verification profile an independently bounded metadata-owned plan; its local component, portability, workflow-policy, and shell/YAML validation passes, while redesigned remote runs remain pending.
 No later product phase is active, and workflow/workspace direction is not yet a ratified program.
@@ -37,7 +37,7 @@ General workflow definitions/runs, durable context workspaces, plugin execution,
 | Artifact source | Hugging Face revision resolved to an immutable commit. Selected LFS shards carry exact provider SHA-256/length identity; non-LFS and arbitrary local paths use explicit mutable-source fallback semantics. |
 | Format/architecture | Unquantized Safetensors through the current Llama compatibility path. All selected structure is inspected; only required Llama tensors are materialized. |
 | Required scalar layouts | Exactly `{F32}`, `{F16}`, `{F16,F32}`, `{BF16}`, and `{BF16,F32}` under the strict declaration policy below. Understood unused extras may broaden complete observed evidence without changing execution. |
-| CPU | Mandatory in every build and the default selection. The post-closure sequence-accounting package passes its exact focused domain/Candle/E0 checks, tests, Clippy, and rustdoc matrix in an isolated target. This is not a complete canonical or portable result. |
+| CPU | Mandatory in every build and the default selection. The exact-tree local closure passes focused domain/Candle/E0/E1 lifecycle and accounting suites, all six native components, the clean canonical composite, and both portable domain targets. This is local evidence, not remote Quality, CUDA, external-model, leak, or performance evidence. |
 | CUDA | Non-default explicit ordinal 0 with no fallback. Implementation remains scoped to the exact RTX 5070 Ti row; Phase 12 remote hardware evidence applies only to `181a069`, and the artifact-loading amendment has later local hardware evidence. The current package's dedicated graph is registered, but local compilation stops in `cudarc` before Rust compilation because `nvcc` is absent. No current-tree CUDA compile or hardware result is accepted. |
 | Resident models | One selected/resident model in E1. |
 | Completion/chat | Direct completion for every loaded compatible model; built-in chat only for exact TinyLlama profile/revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`. |
@@ -127,6 +127,33 @@ The redesigned command-plan and workflow tests pass locally, including composite
 
 The standard hosted class remains Ubuntu 24.04 with 14 GB total SSD; no larger runner is selected. The separate self-hosted CUDA gate retains its 20 GiB host-specific reserve: historical run 31281013243 observed 139 GiB free on that runner's 1.9 TiB root filesystem. The redesigned Quality and CUDA workflows still require exact-tree remote execution before they can be accepted.
 
+## Foundation closure 05 local acceptance
+
+The clean source candidate `b1f7e90b1ba67f1cf968d773052b5062ef8cbbb9`,
+tree `fcb3ee6fa00243734abd74b64218aa0db2e340c1`, passed the complete
+download-free local closure matrix on the UM790 Pro. The result includes fast
+structure, the focused E1/persistence/Candle/E0/orchestration/tooling suites, all
+six native component plans, the fresh canonical composite, both portable domain
+targets, pinned dependency policy, and pinned offline Markdown links. Three
+consecutive complete `application-runtime` runs were stable. No repair was
+required.
+
+The CPU lifecycle verdict is accepted for the deterministic project fixtures:
+homogeneous and mixed loads, independent declaration/observed/required/execution
+scalar facts, sequence reservation and execution, output backpressure and
+cancellation, ordinary unload to zero deterministic ownership, retained and
+exhausted cleanup states, complete-model contradictions, the unified E1 cleanup
+coordinator, and bounded shutdown/disconnection behavior all passed. This proves
+the checked accounting and lifecycle contracts, not physical leak freedom,
+representative performance, language quality, or an external checkpoint.
+
+The portable plans compiled only the five metadata-owned domain libraries for
+both `wasm32-unknown-unknown` and `thumbv7em-none-eabihf`. Cargo-deny 0.20.2
+passed advisories, bans, licenses, and sources. Lychee 0.24.2 checked 256 links
+with no errors. GitHub-hosted Quality, current RTX CUDA compile/hardware suites,
+and external-model evidence remain pending and cannot be inferred from this
+local acceptance.
+
 ## Predecessor-tree local validation
 
 The following results apply to the predecessor infrastructure-truth working tree. They do **not** validate the post-closure foundation repair described above; the current package's separate focused source-tree results are recorded in [validation](validation.md):
@@ -157,9 +184,9 @@ Isolated validation targets and temporary tool installation directories are remo
 
 - Quantized/GGUF loading, non-Llama architectures, arbitrary required mixtures, required F16+BF16, required unsupported dtypes, Metal, cuDNN, flash attention, NCCL, multi-GPU, generic `gpu`, automatic CPU fallback, and GPU-side sampling are unsupported.
 - CUDA outside an actually observed exact row is unclaimed. The current tree still needs post-push self-hosted execution of all dedicated suites.
-- The focused post-closure native matrix passes. The orchestration package's named
-  portable matrices also pass; complete canonical workspace, hosted Quality, and
-  current CUDA results remain pending.
+- The exact-tree local focused, canonical, portable, policy, and offline-link
+  matrices pass. Hosted Quality and current CUDA compile/hardware results remain
+  pending.
 - No schema-6 external product run or immutable reviewed external mixed-checkpoint evidence exists.
 - Multi-model E1 residency, generalized chat, conversation persistence, general workflows/workspaces/plugins/providers/peers, and browser/remote transport are not implemented.
 - Synthetic fixtures prove deterministic compatibility/lifecycle behavior, not language quality, representative scale, production throughput, or external-checkpoint compatibility.
