@@ -8,9 +8,12 @@ use application_runtime::{
 };
 
 use crate::error::{BenchmarkError, BenchmarkResult};
+use crate::support::application_wait::{
+    ApplicationWaitStage, WaitStatus, drive_application_wait, unexpected_event,
+};
 
 use super::identity::{validate_exact_selection, validate_resolved_facts};
-use super::{MODEL_REPOSITORY, MODEL_REVISION, checked_deadline, wait_for_next_poll};
+use super::{MODEL_REPOSITORY, MODEL_REVISION};
 
 const RESOLUTION_TIMEOUT: Duration = Duration::from_mins(30);
 
@@ -27,60 +30,48 @@ pub(super) fn resolve_model(
             "exact Hub resolution could not be submitted for {MODEL_REPOSITORY}@{MODEL_REVISION}: {error}"
         ))
     })?;
-    let deadline = checked_deadline(RESOLUTION_TIMEOUT, "immutable Hub resolution")?;
+    let model = drive_application_wait(runtime, RESOLUTION_TIMEOUT, ResolutionStage { selection })?;
+    Ok((model, started_at.elapsed()))
+}
 
-    loop {
-        if let Some(event) = runtime.poll_event() {
-            match event {
-                ApplicationEvent::ModelResolved {
-                    model,
-                    persistence_warning: None,
-                } => {
-                    validate_resolved_state(runtime, &model, selection)?;
-                    return Ok((model, started_at.elapsed()));
-                }
-                ApplicationEvent::ModelResolved {
-                    persistence_warning: Some(warning),
-                    ..
-                } => {
-                    return Err(BenchmarkError::new(format!(
-                        "Hub resolution succeeded but immutable catalogue persistence reported a warning: {warning}"
-                    )));
-                }
-                ApplicationEvent::ModelResolutionFailed { failure } => {
-                    return Err(BenchmarkError::new(format!(
-                        "exact Hub resolution failed for {MODEL_REPOSITORY}@{MODEL_REVISION}: {failure}"
-                    )));
-                }
-                ApplicationEvent::ModelCleanupPending { .. } => {
-                    let cleanup = runtime.state().retained_model().ok_or_else(|| {
-                        BenchmarkError::new("cleanup event omitted durable retained state")
-                    })?;
-                    return Err(BenchmarkError::new(format!(
-                        "model cleanup retained E0 ownership during immutable resolution: disposition={:?}, primary_failure={}, cleanup_failure={:?}",
-                        cleanup.cleanup(),
-                        cleanup.primary_failure(),
-                        cleanup.cleanup_failure()
-                    )));
-                }
-                ApplicationEvent::HubDisconnected => {
-                    return Err(BenchmarkError::new(
-                        "Hub worker disconnected during exact immutable resolution",
-                    ));
-                }
-                ApplicationEvent::RuntimeDisconnected => {
-                    return Err(BenchmarkError::new(
-                        "inference worker disconnected during exact immutable resolution",
-                    ));
-                }
-                unexpected => {
-                    return Err(BenchmarkError::new(format!(
-                        "unexpected application event during immutable resolution: {unexpected:?}"
-                    )));
-                }
+struct ResolutionStage<'a> {
+    selection: &'a ModelSelection,
+}
+
+impl ApplicationWaitStage<ApplicationRuntime> for ResolutionStage<'_> {
+    type Output = ResolvedModel;
+
+    fn name(&self) -> &'static str {
+        "immutable Hub resolution"
+    }
+
+    fn observe_event(
+        &mut self,
+        runtime: &mut ApplicationRuntime,
+        event: ApplicationEvent,
+        _observed_at: Instant,
+    ) -> BenchmarkResult<WaitStatus<Self::Output>> {
+        match event {
+            ApplicationEvent::ModelResolved {
+                model,
+                persistence_warning: None,
+            } => {
+                validate_resolved_state(runtime, &model, self.selection)?;
+                Ok(WaitStatus::Complete(model))
             }
+            ApplicationEvent::ModelResolved {
+                persistence_warning: Some(warning),
+                ..
+            } => Err(BenchmarkError::new(format!(
+                "Hub resolution succeeded but immutable catalogue persistence reported a warning: {warning}"
+            ))),
+            ApplicationEvent::ModelResolutionFailed { failure } => {
+                Err(BenchmarkError::new(format!(
+                    "exact Hub resolution failed for {MODEL_REPOSITORY}@{MODEL_REVISION}: {failure}"
+                )))
+            }
+            unexpected => Err(unexpected_event(self.name(), &unexpected)),
         }
-        wait_for_next_poll(deadline, "immutable Hub resolution")?;
     }
 }
 

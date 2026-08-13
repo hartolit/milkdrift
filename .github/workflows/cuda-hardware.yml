@@ -139,21 +139,10 @@ jobs:
           .github/scripts/ci-resource.sh prepare 20971520 "${CUDA_HARDWARE_TARGET_DIR}"
           df -h "${RUNNER_TEMP}" "${CARGO_HOME}"
 
-      - name: Run metadata-owned CUDA hardware suites
+      - name: Run metadata-owned CUDA hardware profile
         run: |
           set -eu
-          CARGO_TARGET_DIR="${CUDA_HARDWARE_TARGET_DIR}" cargo xtask cuda-hardware
-
-      - name: Run deterministic failure cleanup suite
-        run: |
-          set -eu
-          CARGO_TARGET_DIR="${CUDA_HARDWARE_TARGET_DIR}" cargo test --release --locked \
-            -p inference-runtime \
-            --features cuda \
-            --test fault_injection \
-            -- \
-            --nocapture \
-            --test-threads=1
+          CARGO_TARGET_DIR="${CUDA_HARDWARE_TARGET_DIR}" cargo xtask hardware cuda
 
       - name: Observe CUDA hardware target and disk
         run: |

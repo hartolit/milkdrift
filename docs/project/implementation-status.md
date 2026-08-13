@@ -1,6 +1,6 @@
 # Current implementation status
 
-**Status date:** 2026-08-13
+**Status date:** 2026-08-14
 
 ```text
 Phase 12 and the artifact-loading, runtime-ownership, and application-boundary amendments are implemented.
@@ -10,6 +10,7 @@ The orchestration-boundary repair makes task-graph generic and allocation-free a
 The CI resource-topology repair gives each hosted verification profile an independently bounded metadata-owned plan; its local component, portability, workflow-policy, and shell/YAML validation passes, and the redesigned hosted Quality topology has passed remotely.
 The remaining fixture-support cleanup removes parallel CPU/CUDA runtime, loading, snapshot, and mixed-lifecycle code behind one device-parameterized path and one cuda-hardware-tests entry point. Its local matrix passes; its exact remote rerun remains pending.
 The artifact/accelerator amendment separates provider provenance from Candle expected-content verification, replaces per-tensor CUDA synchronization with bounded shard-aware transfer batches, and exposes fixed-size benchmark evidence. Its focused default matrix and the six-case local RTX 5070 Ti adapter suite pass; no speedup or external-model result is inferred.
+The benchmark/evidence consolidation owns digest, deadline, application polling, disconnection, and retained-cleanup mechanics in one private support layer. Synthetic schema 6 removes duplicate loader copies of plan/accepted ownership and successful-only outcome/cleanup fields with no nontrivial writer. Package metadata now registers exact hardware profiles, including the serial CUDA fault-cleanup target; workflows execute the generated profile rather than a raw Cargo command.
 No later product phase is active, and workflow/workspace direction is not yet a ratified program.
 ```
 
@@ -121,9 +122,9 @@ runtime-benchmarks / runtime
 sampling           / sampling_pipeline
 ```
 
-`cargo xtask verify` compiles those exact targets only. It never runs `cargo bench --workspace --no-run`. Its six canonical plans are also exposed as `cargo xtask verify-component structure|check|test|clippy|docs|benches`; both entry points consume the same typed metadata-owned operations. The exploratory scheduled plan is `verify-component nursery`.
+`cargo xtask verify` compiles those exact targets only. It never runs `cargo bench --workspace --no-run`. Its six canonical plans are also exposed as `cargo xtask verify-component structure|check|test|clippy|docs|benches`; both entry points consume the same typed metadata-owned operations. The exploratory scheduled plan is `verify-component nursery`. Hardware suites use package-local `hardware-suites` metadata containing a profile, Cargo test target, activation feature, and audited runner mode. `cargo xtask hardware cuda` currently resolves three harness-free suites plus the serial `inference-runtime/fault_injection` target; unregistered profile names fail closed.
 
-GitHub Quality now has six independent native matrix legs plus separate WASM, embedded, policy, nursery, and link jobs. Every leg owns a unique `RUNNER_TEMP` target, disables incremental compilation, records disk use, rejects checkout-local targets, and unconditionally removes its target/tool/shim resources through the reviewed shared script. Only the nursery lint-report step is non-blocking. CUDA preserves separate check and release-hardware targets and runs whole dedicated harness-free adapter/E0/E1 suites without parsing function names. All first-party checkout steps use immutable v7.0.1 commit `3d3c42e5aac5ba805825da76410c181273ba90b1` with read-only permission and credentials disabled.
+GitHub Quality now has six independent native matrix legs plus separate WASM, embedded, policy, nursery, and link jobs. Every leg owns a unique `RUNNER_TEMP` target, disables incremental compilation, records disk use, rejects checkout-local targets, and unconditionally removes its target/tool/shim resources through the reviewed shared script. Only the nursery lint-report step is non-blocking. CUDA preserves separate check and release-hardware targets and executes one metadata-owned profile without parsing test names in shell. All first-party checkout steps use immutable v7.0.1 commit `3d3c42e5aac5ba805825da76410c181273ba90b1` with read-only permission and credentials disabled.
 
 External evidence schema 6 observes the public E1 product path without an independent adapter preparation. It retains variable provenance/timing/count/process/whole-device observations and removes shadow planning fields, derivable duplication, invariant prose, and tautological success flags. No schema-6 CPU/CUDA product report is accepted; historical reports retain their original schema and commit attribution.
 

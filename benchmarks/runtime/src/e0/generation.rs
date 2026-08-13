@@ -19,6 +19,7 @@ use super::lifecycle::{GENERATION_PROMPT_TOKEN_COUNT, sequence_configuration};
 use super::observation::{CapturedSnapshot, capture_snapshot, validate_active_snapshot};
 use crate::error::{BenchmarkError, BenchmarkResult};
 use crate::fixture::{CONTEXT_CAPACITY, VOCABULARY_SIZE};
+use crate::support::deadline::Deadline;
 
 const EXPECTED_GREEDY_TOKEN: TokenId = TokenId::new(2);
 pub(crate) const FIRST_TOKEN_GENERATION_LIMIT: u32 = 6;
@@ -30,7 +31,6 @@ pub(crate) const CANCELLATION_HOLD_MILLISECONDS: u64 = 25;
 const BACKPRESSURE_HOLD: Duration = Duration::from_millis(BACKPRESSURE_HOLD_MILLISECONDS);
 const CANCELLATION_HOLD: Duration = Duration::from_millis(CANCELLATION_HOLD_MILLISECONDS);
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
-const POLL_INTERVAL: Duration = Duration::from_millis(1);
 
 pub(super) struct FirstTokenMeasurement {
     pub(super) first_token: Duration,
@@ -74,7 +74,7 @@ pub(super) fn measure_first_token_and_proxy(
         sequence_id,
         scheduler_quantum,
     )?;
-    let deadline = checked_deadline(started, OPERATION_TIMEOUT, "first-token generation")?;
+    let deadline = Deadline::from_start(started, OPERATION_TIMEOUT, "first-token generation")?;
     let mut output = OutputObservation::default();
     while output.generated_tokens == 0 {
         pull_output(harness, request_id, &mut output)?;
@@ -86,7 +86,7 @@ pub(super) fn measure_first_token_and_proxy(
                 "first-token generation released before a token was observed",
             ));
         }
-        wait_until(deadline, "first token at the public pull boundary")?;
+        deadline.wait_for_poll("first token at the public pull boundary")?;
     }
     let first_observed = Instant::now();
     let first_token = first_observed.saturating_duration_since(started);
@@ -103,7 +103,7 @@ pub(super) fn measure_first_token_and_proxy(
                 "generation released before the fixed post-first-token proxy window completed",
             ));
         }
-        wait_until(deadline, "post-first-token proxy window")?;
+        deadline.wait_for_poll("post-first-token proxy window")?;
     }
     let post_first_proxy = first_observed.elapsed();
     collect_until_released(harness, request_id, deadline, &mut output)?;
@@ -164,13 +164,14 @@ pub(super) fn measure_backpressure(
             "controlled hold did not expose one retained token and explicit output backpressure",
         ));
     }
-    let deadline = checked_deadline(recovery_started, OPERATION_TIMEOUT, "backpressure recovery")?;
+    let deadline =
+        Deadline::from_start(recovery_started, OPERATION_TIMEOUT, "backpressure recovery")?;
     while output.generated_tokens < 2 {
         pull_output(harness, request_id, &mut output)?;
         if output.generated_tokens >= 2 {
             break;
         }
-        wait_until(deadline, "next token after freeing public pull output")?;
+        deadline.wait_for_poll("next token after freeing public pull output")?;
     }
     let recovery_to_next_token = recovery_started.elapsed();
     collect_until_released(harness, request_id, deadline, &mut output)?;
@@ -199,7 +200,7 @@ pub(super) fn measure_cancellation(
     };
     let started = Instant::now();
     harness.submit(command, "generation cancellation")?;
-    let deadline = checked_deadline(started, OPERATION_TIMEOUT, "generation cancellation")?;
+    let deadline = Deadline::from_start(started, OPERATION_TIMEOUT, "generation cancellation")?;
     let expected =
         GenerationOutcome::Finished(FinishReason::Cancelled(CancellationReason::UserRequested));
     let observations = observe_cancellation(
@@ -246,7 +247,7 @@ fn setup_cancellation_generation(
         scheduler_quantum,
     )?;
     let started = Instant::now();
-    let deadline = checked_deadline(
+    let deadline = Deadline::from_start(
         started,
         OPERATION_TIMEOUT,
         "cancellation precondition token",
@@ -262,7 +263,7 @@ fn setup_cancellation_generation(
                 "cancellation precondition generation ended before its first token",
             ));
         }
-        wait_until(deadline, "cancellation precondition token")?;
+        deadline.wait_for_poll("cancellation precondition token")?;
     }
     std::thread::sleep(CANCELLATION_HOLD);
     Ok((request_id, output))
@@ -273,7 +274,7 @@ fn observe_cancellation(
     request_id: RequestId,
     cancellation_ticket: CommandTicket,
     started: Instant,
-    deadline: Instant,
+    deadline: Deadline,
     expected: GenerationOutcome,
     output: &mut OutputObservation,
 ) -> BenchmarkResult<CancellationObservation> {
@@ -299,10 +300,7 @@ fn observe_cancellation(
         if acknowledgement.is_some() && terminal.is_some() && released.is_some() {
             break;
         }
-        wait_until(
-            deadline,
-            "cancellation Terminal, acknowledgement, and Released",
-        )?;
+        deadline.wait_for_poll("cancellation Terminal, acknowledgement, and Released")?;
     }
     Ok(CancellationObservation {
         generated_tokens: output.generated_tokens,
@@ -492,7 +490,7 @@ fn record_outcome(
 fn collect_until_released(
     harness: &HostedE0Harness,
     request_id: RequestId,
-    deadline: Instant,
+    deadline: Deadline,
     output: &mut OutputObservation,
 ) -> BenchmarkResult {
     while output.released.is_none() {
@@ -500,7 +498,7 @@ fn collect_until_released(
         if output.released.is_some() {
             break;
         }
-        wait_until(deadline, "generation Released state")?;
+        deadline.wait_for_poll("generation Released state")?;
     }
     Ok(())
 }
@@ -548,29 +546,6 @@ fn generation_request(
         scheduler_quantum: NonZeroU32::MIN,
         output_capacity: GenerationOutputCapacityPolicy::new(NonZeroUsize::MIN, NonZeroUsize::MIN),
     })
-}
-
-fn checked_deadline(
-    started: Instant,
-    timeout: Duration,
-    operation: &str,
-) -> BenchmarkResult<Instant> {
-    started
-        .checked_add(timeout)
-        .ok_or_else(|| BenchmarkError::new(format!("{operation} deadline overflowed")))
-}
-
-fn wait_until(deadline: Instant, operation: &str) -> BenchmarkResult {
-    let remaining = deadline
-        .checked_duration_since(Instant::now())
-        .filter(|duration| !duration.is_zero())
-        .ok_or_else(|| {
-            BenchmarkError::new(format!(
-                "{operation} exceeded the hard operational timeout; no performance threshold was applied"
-            ))
-        })?;
-    std::thread::sleep(POLL_INTERVAL.min(remaining));
-    Ok(())
 }
 
 fn usize_from_u32(value: u32) -> BenchmarkResult<usize> {

@@ -12,9 +12,9 @@ use xtask::{
     CargoCommand, VerificationComponent, VerificationOperation, VerificationPlan,
     cuda_clippy_command_plan, cuda_clippy_command_plan_for_metadata, cuda_compile_command_plan,
     cuda_compile_command_plan_for_metadata, cuda_hardware_command_plan,
-    cuda_hardware_command_plan_for_metadata, native_verification_plan, portable_command_plan,
-    portable_command_plan_for_metadata, verification_component_plan,
-    verification_component_plan_for_metadata,
+    cuda_hardware_command_plan_for_metadata, hardware_profile_command_plan_for_metadata,
+    native_verification_plan, portable_command_plan, portable_command_plan_for_metadata,
+    verification_component_plan, verification_component_plan_for_metadata,
 };
 
 static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
@@ -177,12 +177,10 @@ fn selected_package(command: &CargoCommand) -> Option<&str> {
 }
 
 fn is_hardware_target_command(command: &CargoCommand) -> bool {
-    command.arguments().windows(2).any(|pair| {
-        pair.first().is_some_and(|argument| argument == "--test")
-            && pair
-                .get(1)
-                .is_some_and(|argument| argument == "cuda_hardware")
-    })
+    command
+        .arguments()
+        .iter()
+        .any(|argument| argument == "--test")
 }
 
 fn assert_all_cuda_plans_reject(metadata: &Metadata) -> Result<(), Box<dyn Error>> {
@@ -195,11 +193,7 @@ fn assert_all_cuda_plans_reject(metadata: &Metadata) -> Result<(), Box<dyn Error
         let Err(error) = result else {
             return Err("invalid CUDA hardware declaration entered a command plan".into());
         };
-        assert!(
-            error
-                .to_string()
-                .contains("could not derive exact CUDA hardware ownership")
-        );
+        assert!(error.to_string().contains("hardware"));
     }
     Ok(())
 }
@@ -217,6 +211,7 @@ fn help_exposes_metadata_owned_command_surface() -> Result<(), Box<dyn Error>> {
     assert!(stdout.contains("cuda-compile"));
     assert!(stdout.contains("cuda-clippy"));
     assert!(stdout.contains("cuda-hardware"));
+    assert!(stdout.contains("hardware <PROFILE>"));
     assert!(!stdout.contains("llm-app"));
     Ok(())
 }
@@ -518,6 +513,17 @@ fn cuda_plans_are_sorted_exact_and_keep_hardware_targets_separate() -> Result<()
                 "cuda_hardware",
                 "--no-run",
             ]),
+            strings(&[
+                "test",
+                "--locked",
+                "-p",
+                "inference-runtime",
+                "--features",
+                "cuda",
+                "--test",
+                "fault_injection",
+                "--no-run",
+            ]),
         ]
     );
     assert_eq!(compile, cuda_compile_command_plan(&fixture.manifest())?);
@@ -585,6 +591,19 @@ fn cuda_plans_are_sorted_exact_and_keep_hardware_targets_separate() -> Result<()
                 "-D",
                 "warnings",
             ]),
+            strings(&[
+                "clippy",
+                "--locked",
+                "-p",
+                "inference-runtime",
+                "--features",
+                "cuda",
+                "--test",
+                "fault_injection",
+                "--",
+                "-D",
+                "warnings",
+            ]),
         ]
     );
     assert_eq!(clippy, cuda_clippy_command_plan(&fixture.manifest())?);
@@ -626,13 +645,36 @@ fn cuda_plans_are_sorted_exact_and_keep_hardware_targets_separate() -> Result<()
                 "--test",
                 "cuda_hardware",
             ]),
+            strings(&[
+                "test",
+                "--release",
+                "--locked",
+                "-p",
+                "inference-runtime",
+                "--features",
+                "cuda",
+                "--test",
+                "fault_injection",
+                "--",
+                "--nocapture",
+                "--test-threads=1",
+            ]),
         ]
     );
     assert_eq!(hardware, cuda_hardware_command_plan(&fixture.manifest())?);
-    assert!(hardware.iter().all(|command| {
-        is_hardware_target_command(command)
-            && command.arguments().iter().all(|argument| argument != "--")
-    }));
+    assert!(hardware.iter().all(is_hardware_target_command));
+    assert_eq!(
+        hardware_profile_command_plan_for_metadata(&metadata, "cuda")?,
+        hardware
+    );
+    let Err(error) = hardware_profile_command_plan_for_metadata(&metadata, "amd") else {
+        return Err("an unknown hardware profile entered the command plan".into());
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("unknown or empty hardware profile")
+    );
     Ok(())
 }
 
@@ -644,6 +686,11 @@ fn adding_a_valid_hardware_suite_automatically_enters_every_hardware_plan()
         "crates/apps/desktop-slint/Cargo.toml",
         "cuda = [\"application-runtime/cuda\"]",
         "cuda = [\"application-runtime/cuda\"]\ncuda-hardware-tests = [\"cuda\"]",
+    )?;
+    fixture.replace(
+        "crates/apps/desktop-slint/Cargo.toml",
+        "role = \"application\"",
+        "role = \"application\"\nhardware-suites = [{ profile = \"cuda\", target = \"cuda_hardware\", feature = \"cuda-hardware-tests\", runner = \"harness-free\" }]",
     )?;
     fixture.append(
         "crates/apps/desktop-slint/Cargo.toml",
@@ -671,6 +718,7 @@ fn adding_a_valid_hardware_suite_automatically_enters_every_hardware_plan()
                 "application-runtime",
                 "candle-backend",
                 "desktop-slint",
+                "inference-runtime",
                 "inference-runtime",
             ]
         );

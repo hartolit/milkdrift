@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 
 use candle_backend::{CandleExpectedContentIdentity, CandleLlamaSource, CandleWeightShard};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::error::{BenchmarkError, BenchmarkResult};
+use crate::support::digest::sha256_hex;
 
 pub(crate) const CONFIG_SHA256: &str =
     "e30225f7b8cbeb18c6fe2e9f623e87bd5d7cec3e28dd7e23a3f36ee107c69c4d";
@@ -149,24 +149,6 @@ fn verify_file(
     Ok(())
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut encoded = String::with_capacity(digest.len().saturating_mul(2));
-    for byte in digest {
-        encoded.push(hex_digit(byte >> 4));
-        encoded.push(hex_digit(byte & 0x0f));
-    }
-    encoded
-}
-
-fn hex_digit(value: u8) -> char {
-    match value {
-        0..=9 => char::from(b'0' + value),
-        10..=15 => char::from(b'a' + (value - 10)),
-        _ => '?',
-    }
-}
-
 fn verify_configuration(path: &Path) -> BenchmarkResult {
     let bytes = fs::read(path).map_err(|error| {
         BenchmarkError::new(format!(
@@ -213,7 +195,7 @@ fn verify_configuration(path: &Path) -> BenchmarkResult {
 
 #[cfg(test)]
 mod tests {
-    use super::{FixtureConfiguration, VerifiedFixture, sha256_hex, verify_configuration};
+    use super::{FixtureConfiguration, VerifiedFixture, verify_configuration};
     use std::path::PathBuf;
 
     #[test]
@@ -228,14 +210,6 @@ mod tests {
         VerifiedFixture::verify()
             .map(|_| ())
             .map_err(|error| error.to_string())
-    }
-
-    #[test]
-    fn sha256_encoding_matches_the_standard_vector() {
-        assert_eq!(
-            sha256_hex(b"abc"),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
     }
 
     #[test]

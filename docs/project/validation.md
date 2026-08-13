@@ -545,37 +545,16 @@ cargo clippy --locked \
 
 Do not use workspace `--all-features`; the exact graph is `runtime-benchmarks/cuda -> application-runtime/cuda -> candle-backend/cuda`, `desktop-slint/cuda -> application-runtime/cuda`, plus the development-only `inference-runtime/cuda -> candle-backend/cuda` test edge. This exact compile chain passed locally on both the 2026-08-08 closure tree and the 2026-08-10 artifact-loading amendment with `CUDA_COMPUTE_CAP=120`.
 
-Hardware execution is absent from ordinary CPU tests and requires both the package-local `cuda-hardware-tests` feature and `MILKDRIFT_CUDA_TEST=1`. Each owning package declares one explicit harness-free `cuda_hardware` target. The source macro requires one or more registered cases, the runner counts every attempted case, and absence of opt-in is a failure rather than a successful skip. Cargo fails when a target is missing; adding a case to a suite runs it without a workflow edit.
+Hardware execution is absent from ordinary CPU tests and requires both the package-local `cuda-hardware-tests` feature and `MILKDRIFT_CUDA_TEST=1`. Each owning package declares one explicit harness-free `cuda_hardware` target. Package-local `hardware-suites` metadata binds each profile to an exact Cargo target, activation feature, and either harness-free or serial-libtest execution. The source macro requires one or more registered cases, the runner counts every attempted case, and absence of opt-in is a failure rather than a successful skip. Cargo fails when a target is missing; adding a case to a suite runs it without a workflow edit.
 
-Run the complete adapter, E0, deterministic cleanup, and E1 boundaries sequentially:
+Run the complete adapter, E0, deterministic cleanup, and E1 boundaries sequentially through the fail-closed metadata plan:
 
 ```sh
 export CUDA_VISIBLE_DEVICES=0
 export CUDA_COMPUTE_CAP=120
 export MILKDRIFT_CUDA_TEST=1
 
-cargo test --release --locked \
-    -p candle-backend \
-    --features cuda-hardware-tests \
-    --test cuda_hardware
-
-cargo test --release --locked \
-    -p inference-runtime \
-    --features cuda-hardware-tests \
-    --test cuda_hardware
-
-cargo test --release --locked \
-    -p inference-runtime \
-    --features cuda \
-    --test fault_injection \
-    -- \
-    --nocapture \
-    --test-threads=1
-
-cargo test --release --locked \
-    -p application-runtime \
-    --features cuda-hardware-tests \
-    --test cuda_hardware
+cargo xtask hardware cuda
 ```
 
 The adapter suite owns explicit CPU execution in a CUDA build, invalid-ordinal rejection, ordinal-0 F32 identity/logit comparison, homogeneous BF16, mixed F16/F32, and mixed BF16/F32. The E0 suite owns mixed execution, preparation/receipt identity, scheduled generation, sequence release, unload, and zero accounting. The complete fault target owns deterministic failed-load and cleanup behavior. The E1 suite owns explicit unavailable-CUDA no-fallback plus real discovery, selection, actual scalar/device, unload, and bounded shutdown.
@@ -598,7 +577,7 @@ The security boundary is deliberate:
 
 The runner administrator maintains `/var/tmp/milkdrift-cargo-home` as a dependency-only Cargo cache without credentials. The trusted workflow synchronizes exact `Cargo.lock` packages after preflight; `cargo fetch` does not execute package build scripts, and the immediately following offline metadata step is the completeness check. The job fails before compilation when synchronization or that check fails, the cache is inaccessible, `RUNNER_TEMP` has less than 20 GiB free, or the Cargo-home filesystem has less than 4 GiB free. The 20 GiB threshold is a host-specific operational reserve for this self-hosted machine, not a standard-runner or product requirement: historical run 31281013243 observed its `/dev/mapper/root` filesystem at 1.9 TiB total with 139 GiB free before compilation. The redesigned job records both target sizes and filesystem availability so prompt-6 evidence can reassess that reserve. The runner must be Actions Runner 2.327.1 or newer for pinned checkout v7's Node 24 runtime.
 
-The job validates the exact RTX 5070 Ti / CUDA ordinal 0 / compute capability 12.0 / Toolkit 12.8+ / build-cap-120 matrix. It compiles metadata/policy, the exact CUDA check/Clippy graph, and all dedicated suites in `${RUNNER_TEMP}/milkdrift-cuda-check-target`, reports its size, and removes it before release execution. It then runs the complete adapter, E0, fault-cleanup, and E1 suite boundaries in `${RUNNER_TEMP}/milkdrift-cuda-hardware-target`, reports target/Cargo-home/filesystem use, and always cleans both targets. No shell registry contains test function names.
+The job validates the exact RTX 5070 Ti / CUDA ordinal 0 / compute capability 12.0 / Toolkit 12.8+ / build-cap-120 matrix. It compiles metadata/policy, the exact CUDA check/Clippy graph, and every registered profile target in `${RUNNER_TEMP}/milkdrift-cuda-check-target`, reports its size, and removes it before release execution. It then runs the metadata-owned `cuda` profile—adapter, E0, serial fault cleanup, and E1—in `${RUNNER_TEMP}/milkdrift-cuda-hardware-target`, reports target/Cargo-home/filesystem use, and always cleans both targets. No shell registry contains test names.
 
 The job does not run TinyLlama, network resolution, Criterion, elapsed-time thresholds, Slint interaction, or arbitrary models. Toolkit 12.8+ preflight does not broaden product support beyond an actually observed row. Historical Phase 12 run `31281013243` succeeded before this suite redesign; redesigned run `31696186329` passed on exact commit `6df699c`, and later trees require their own post-push run.
 

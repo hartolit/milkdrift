@@ -10,6 +10,9 @@ publish = false
 [package.metadata.milkdrift]
 role = "adapter"
 cuda-provider = true
+hardware-suites = [
+    { profile = "cuda", target = "cuda_hardware", feature = "cuda-hardware-tests", runner = "harness-free" },
+]
 
 [features]
 default = []

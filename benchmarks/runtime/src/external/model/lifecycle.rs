@@ -10,13 +10,15 @@ use application_runtime::{
 use super::super::observation::DeviceObserver;
 use super::super::report::UnloadResult;
 use crate::error::{BenchmarkError, BenchmarkResult};
+use crate::support::application_wait::{
+    ApplicationWaitStage, WaitStatus, drive_application_wait, unexpected_event,
+};
 
 use super::identity::{
     EXPECTED_CONTEXT_TOKENS, EXPECTED_VOCABULARY_SIZE, validate_exact_selection,
     validate_resolved_facts,
 };
 use super::resolution::validate_resolved_state;
-use super::{checked_deadline, wait_for_next_poll};
 
 const LOAD_TIMEOUT: Duration = Duration::from_mins(10);
 const UNLOAD_TIMEOUT: Duration = Duration::from_mins(2);
@@ -46,55 +48,16 @@ pub(super) fn load_model(
             "exact Candle model load could not be submitted: {error}"
         ))
     })?;
-    let deadline = checked_deadline(LOAD_TIMEOUT, "Candle model load")?;
-
-    loop {
-        if let Some(event) = runtime.poll_event() {
-            match event {
-                ApplicationEvent::ModelLoaded { model } => {
-                    validate_loaded_state(runtime, &model, &resolved, selection, observer)?;
-                    return Ok((model, started_at.elapsed()));
-                }
-                ApplicationEvent::ModelLoadFailed { failure } => {
-                    return Err(BenchmarkError::new(format!(
-                        "exact Candle model load failed: {failure}"
-                    )));
-                }
-                ApplicationEvent::ModelCleanupPending { .. } => {
-                    let cleanup = runtime.state().retained_model().ok_or_else(|| {
-                        BenchmarkError::new("cleanup event omitted durable retained state")
-                    })?;
-                    return Err(BenchmarkError::new(format!(
-                        "exact Candle model load retained E0 cleanup ownership: disposition={:?}, primary_failure={}, cleanup_failure={:?}",
-                        cleanup.cleanup(),
-                        cleanup.primary_failure(),
-                        cleanup.cleanup_failure()
-                    )));
-                }
-                ApplicationEvent::ModelCompatibilityFailed { failure } => {
-                    return Err(BenchmarkError::new(format!(
-                        "resolved and loaded model compatibility failed: {failure}"
-                    )));
-                }
-                ApplicationEvent::HubDisconnected => {
-                    return Err(BenchmarkError::new(
-                        "Hub worker disconnected while the exact model was loading",
-                    ));
-                }
-                ApplicationEvent::RuntimeDisconnected => {
-                    return Err(BenchmarkError::new(
-                        "inference worker disconnected during exact model load",
-                    ));
-                }
-                unexpected => {
-                    return Err(BenchmarkError::new(format!(
-                        "unexpected application event during exact model load: {unexpected:?}"
-                    )));
-                }
-            }
-        }
-        wait_for_next_poll(deadline, "Candle model load")?;
-    }
+    let model = drive_application_wait(
+        runtime,
+        LOAD_TIMEOUT,
+        LoadStage {
+            selection,
+            resolved: &resolved,
+            observer,
+        },
+    )?;
+    Ok((model, started_at.elapsed()))
 }
 
 pub(super) fn unload_model(
@@ -111,88 +74,111 @@ pub(super) fn unload_model(
                 "RejectIfBusy model unload could not be submitted after release: {error}"
             ))
         })?;
-    let deadline = checked_deadline(UNLOAD_TIMEOUT, "model unload")?;
+    let (cancelled_requests, observed_at) =
+        drive_application_wait(runtime, UNLOAD_TIMEOUT, UnloadStage { loaded })?;
+    let duration = observed_at
+        .checked_duration_since(started_at)
+        .ok_or_else(|| {
+            BenchmarkError::new("synchronized model unload observation preceded its submission")
+        })?;
+    Ok(UnloadResult {
+        duration_ns: super::super::generation::duration_ns(
+            duration,
+            "synchronized E1 model unload",
+        )?,
+        cancelled_requests,
+    })
+}
 
-    loop {
-        if let Some(event) = runtime.poll_event() {
-            match event {
-                ApplicationEvent::ModelUnloaded {
-                    handle,
-                    cancelled_requests,
-                } => {
-                    if handle != loaded.handle() || cancelled_requests != 0 {
-                        return Err(BenchmarkError::new(format!(
-                            "model unload receipt did not match the loaded handle with zero cancellations: handle={handle:?}, cancelled_requests={cancelled_requests}"
-                        )));
-                    }
-                    let state = runtime.state();
-                    if state.activity() != ApplicationActivity::Idle
-                        || state.loaded().is_some()
-                        || state.active_generation().is_some()
-                        || !state.hub_available()
-                        || !state.inference_available()
-                    {
-                        return Err(BenchmarkError::new(
-                            "public E1 state retained loaded/active ownership or disconnected after synchronized model removal",
-                        ));
-                    }
-                    return Ok(UnloadResult {
-                        duration_ns: super::super::generation::duration_ns(
-                            started_at.elapsed(),
-                            "synchronized E1 model unload",
-                        )?,
-                        cancelled_requests,
-                    });
-                }
-                ApplicationEvent::ModelDraining { handle } => {
-                    return Err(BenchmarkError::new(format!(
-                        "RejectIfBusy unload entered draining for handle {handle:?} after all requests were already released"
-                    )));
-                }
-                ApplicationEvent::ModelUnloadFailed { failure } => {
-                    return Err(BenchmarkError::new(format!(
-                        "RejectIfBusy model unload failed: {failure}"
-                    )));
-                }
-                ApplicationEvent::ModelCleanupPending { .. } => {
-                    let cleanup = runtime.state().retained_model().ok_or_else(|| {
-                        BenchmarkError::new("cleanup event omitted durable retained state")
-                    })?;
-                    return Err(BenchmarkError::new(format!(
-                        "model cleanup retained E0 ownership during unload: disposition={:?}, primary_failure={}, cleanup_failure={:?}",
-                        cleanup.cleanup(),
-                        cleanup.primary_failure(),
-                        cleanup.cleanup_failure()
-                    )));
-                }
-                ApplicationEvent::GenerationCleanupPending {
-                    request_id,
-                    exhausted,
-                    failure,
-                } => {
-                    return Err(BenchmarkError::new(format!(
-                        "generation cleanup remained pending for request {} during unload (exhausted={exhausted}): {failure}",
-                        request_id.get()
-                    )));
-                }
-                ApplicationEvent::HubDisconnected => {
-                    return Err(BenchmarkError::new(
-                        "Hub worker disconnected before explicit shutdown",
-                    ));
-                }
-                ApplicationEvent::RuntimeDisconnected => {
-                    return Err(BenchmarkError::new(
-                        "inference worker disconnected during model unload",
-                    ));
-                }
-                unexpected => {
-                    return Err(BenchmarkError::new(format!(
-                        "unexpected application event during model unload: {unexpected:?}"
-                    )));
-                }
+struct LoadStage<'a> {
+    selection: &'a ModelSelection,
+    resolved: &'a ResolvedModel,
+    observer: &'a DeviceObserver,
+}
+
+impl ApplicationWaitStage<ApplicationRuntime> for LoadStage<'_> {
+    type Output = LoadedModel;
+
+    fn name(&self) -> &'static str {
+        "Candle model load"
+    }
+
+    fn observe_event(
+        &mut self,
+        runtime: &mut ApplicationRuntime,
+        event: ApplicationEvent,
+        _observed_at: Instant,
+    ) -> BenchmarkResult<WaitStatus<Self::Output>> {
+        match event {
+            ApplicationEvent::ModelLoaded { model } => {
+                validate_loaded_state(
+                    runtime,
+                    &model,
+                    self.resolved,
+                    self.selection,
+                    self.observer,
+                )?;
+                Ok(WaitStatus::Complete(model))
             }
+            ApplicationEvent::ModelLoadFailed { failure } => Err(BenchmarkError::new(format!(
+                "exact Candle model load failed: {failure}"
+            ))),
+            ApplicationEvent::ModelCompatibilityFailed { failure } => Err(BenchmarkError::new(
+                format!("resolved and loaded model compatibility failed: {failure}"),
+            )),
+            unexpected => Err(unexpected_event(self.name(), &unexpected)),
         }
-        wait_for_next_poll(deadline, "model unload")?;
+    }
+}
+
+struct UnloadStage<'a> {
+    loaded: &'a LoadedModel,
+}
+
+impl ApplicationWaitStage<ApplicationRuntime> for UnloadStage<'_> {
+    type Output = (u32, Instant);
+
+    fn name(&self) -> &'static str {
+        "model unload"
+    }
+
+    fn observe_event(
+        &mut self,
+        runtime: &mut ApplicationRuntime,
+        event: ApplicationEvent,
+        observed_at: Instant,
+    ) -> BenchmarkResult<WaitStatus<Self::Output>> {
+        match event {
+            ApplicationEvent::ModelUnloaded {
+                handle,
+                cancelled_requests,
+            } => {
+                if handle != self.loaded.handle() || cancelled_requests != 0 {
+                    return Err(BenchmarkError::new(format!(
+                        "model unload receipt did not match the loaded handle with zero cancellations: handle={handle:?}, cancelled_requests={cancelled_requests}"
+                    )));
+                }
+                let state = runtime.state();
+                if state.activity() != ApplicationActivity::Idle
+                    || state.loaded().is_some()
+                    || state.active_generation().is_some()
+                    || !state.hub_available()
+                    || !state.inference_available()
+                {
+                    return Err(BenchmarkError::new(
+                        "public E1 state retained loaded/active ownership or disconnected after synchronized model removal",
+                    ));
+                }
+                Ok(WaitStatus::Complete((cancelled_requests, observed_at)))
+            }
+            ApplicationEvent::ModelDraining { handle } => Err(BenchmarkError::new(format!(
+                "RejectIfBusy unload entered draining for handle {handle:?} after all requests were already released"
+            ))),
+            ApplicationEvent::ModelUnloadFailed { failure } => Err(BenchmarkError::new(format!(
+                "RejectIfBusy model unload failed: {failure}"
+            ))),
+            unexpected => Err(unexpected_event(self.name(), &unexpected)),
+        }
     }
 }
 

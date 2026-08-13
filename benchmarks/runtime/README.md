@@ -39,8 +39,8 @@ CPU and CUDA use the same CLI, binary, E1 lifecycle, generation observer, cleanu
 | --- | --- | --- | --- |
 | `runtime/e0_hosted_checked_prefill/4_tokens` | Synthetic Criterion performance: hosted-E0 submission through checked-prefill completion. Correctness invariants gate each sample. | `runtime-benchmarks` `benches/runtime.rs` | Criterion raw samples under root `target/criterion`; committed synthetic fixture; controlled local host. |
 | `runtime/e0_hosted_incremental_decode/1_token_after_2_token_prefill` | Synthetic Criterion performance: hosted-E0 submission through one incremental decode after a two-token prefill. Correctness invariants gate each sample. | `runtime-benchmarks` `benches/runtime.rs` | Criterion raw samples under root `target/criterion`; committed synthetic fixture; controlled local host. |
-| `baseline.synthetic_e0` | Synthetic lifecycle/accounting/process evidence: E0 load, bounded loader observation, prefill, generation, backpressure, cancellation, unload, shutdown, E0 snapshots, and process RSS/HWM. | `runtime-benchmarks` `baseline` | Synthetic schema-5 JSON; committed fixture; no network or external model. |
-| `baseline.synthetic_e1_cold_lifecycle` | Synthetic process/lifecycle evidence: cold E1 process start and bounded shutdown overhead without resolution, model load, or generation. | `runtime-benchmarks` `baseline` | The `application_lifecycle` cycles in synthetic schema-5 JSON; temporary redb state; no network. |
+| `baseline.synthetic_e0` | Synthetic lifecycle/accounting/process evidence: E0 load, bounded loader observation, prefill, generation, backpressure, cancellation, unload, shutdown, E0 snapshots, and process RSS/HWM. | `runtime-benchmarks` `baseline` | Synthetic schema-6 JSON; committed fixture; no network or external model. |
+| `baseline.synthetic_e1_cold_lifecycle` | Synthetic process/lifecycle evidence: cold E1 process start and bounded shutdown overhead without resolution, model load, or generation. | `runtime-benchmarks` `baseline` | The `application_lifecycle` cycles in synthetic schema-6 JSON; temporary redb state; no network. |
 | `external-baseline.e1_product` | External product/process/device evidence: public E1 resolution, actual load/generation/cancellation/unload/shutdown facts, process RSS/HWM, and qualified whole-device CUDA observations. | `runtime-benchmarks` `external-baseline` | External schema-6 JSON; clean committed tree; immutable TinyLlama cache; explicit CPU or approved CUDA environment. |
 | `sampling_pipeline` | Criterion sampling-pipeline performance, maintained outside this package. | `sampling` `benches/sampling_pipeline.rs` | Sampling package Criterion artifacts and its documented fixture/environment. |
 | Schema and validator tests | Correctness only: schema shape, fixed identities, parsers, lifecycle plans, summaries, and observer invariants. They are not measurements or evidence runs. | `runtime-benchmarks` unit tests | `cargo test --locked -p runtime-benchmarks`; network-free and hardware-free by default. |
@@ -68,7 +68,7 @@ CUDA_COMPUTE_CAP=120 cargo check --locked \
 
 These commands compile the two maintained Criterion targets without claiming hardware execution or a product baseline. Ordinary tests remain network-free.
 
-The separate [`cuda-hardware` workflow](../../.github/workflows/cuda-hardware.yml) runs the exact CUDA feature graph and committed adapter/E0/E1 fixtures on the dedicated `milkdrift-cuda-5070ti` self-hosted label. It accepts only trusted `main` pushes or owner dispatches of `main`, uses read-only permissions and offline Cargo, and never runs this package's external model binary or a performance threshold. The full security and maintenance procedure is in [validation](../../docs/project/validation.md#self-hosted-cuda-hardware-correctness-gate).
+The separate [`cuda-hardware` workflow](../../.github/workflows/cuda-hardware.yml) runs the exact metadata-declared CUDA hardware profile, including committed adapter/E0/E1 fixtures and the serial deterministic fault-cleanup target, on the dedicated `milkdrift-cuda-5070ti` self-hosted label. It accepts only trusted `main` pushes or owner dispatches of `main`, uses read-only permissions and offline Cargo, and never runs this package's external model binary or a performance threshold. The full security and maintenance procedure is in [validation](../../docs/project/validation.md#self-hosted-cuda-hardware-correctness-gate).
 
 ## Run the synthetic baseline
 
@@ -81,12 +81,12 @@ cargo run --release --locked \
   --mode synthetic \
   --warmup 1 \
   --cycles 3 \
-  > target/runtime-evidence/synthetic-schema5.json
+  > target/runtime-evidence/synthetic-schema6.json
 ```
 
 The runner writes one schema-versioned JSON document to stdout and progress plus a compact summary to stderr. It excludes generated text, token IDs, credentials, secrets, and broad environment dumps.
 
-Each schema-5 E0 cycle attaches one fixed-size observation channel to the same production loader transaction that produces the hosted `ModelLoaded` event. There is no independent preparation, so observation cannot pre-read the fixture or warm page-cache/device state before the public load. The report keeps these related facts separate:
+Each schema-6 E0 cycle attaches one fixed-size observation channel to the same production loader transaction that produces the hosted `ModelLoaded` event. There is no independent preparation, so observation cannot pre-read the fixture or warm page-cache/device state before the public load. The report keeps these related facts separate:
 
 - `prepared.configuration_declared_scalar`: optional producer-intent metadata (`null` when absent);
 - `prepared.observed_tensor_scalars`: deterministic labels derived from the plan descriptor's observed `ScalarTypeSet` in stable category-bit order;
@@ -98,11 +98,9 @@ Each schema-5 E0 cycle attaches one fixed-size observation channel to the same p
 - `loader.preparation_duration_ns` and `loader.materialization_duration_ns`: adapter-internal phase durations within that actual hosted load;
 - `loader.required_bytes_read` and `loader.whole_file_verification_bytes_read`: required tensor payload bytes and all Safetensors shard bytes read for whole-file identity verification by that transaction;
 - `loader.transfer_batches` and `loader.loading_device_synchronizations`: actual accelerator transfer-batch and load-time synchronization call counts (both zero for the maintained CPU fixture);
-- `loader.planned_final_footprint`, `loader.planned_loading_peak_footprint`, and `loader.actual_e0_final_ownership`: the observed plan beside the matching accepted E0 ownership receipt;
-- `loader.outcome` plus cleanup outcome/attempt/failure counts: bounded terminal instrumentation; a normal report still aborts instead of serializing a failed lifecycle cycle;
 - snapshot `process_memory`: sampled process RSS/HWM, separate from every E0 reserved footprint.
 
-The loading peak is an admission-phase deterministic logical loading-ownership quantity, not post-load reserved ownership or physical RSS. The fixture remains homogeneous F32; schema 5 makes that truth explicit as declared `F32`, observed `{F32}`, planned F32 CPU execution, and actual F32 CPU execution. Byte-footprint records contain no sequence-cache rate. Loader observation uses fixed-size state rather than a tensor/event log; its instrumentation overhead is part of this benchmark build, while Criterion's observed fixture load remains outside the timed prefill/decode intervals.
+The `prepared` record is the sole serialized owner of plan projections, the `receipt` is the sole owner of accepted E0 ownership, and `loader` owns only successful transaction-stage observations. A failed load still aborts the normal report after bounded cleanup instead of serializing tautological outcome or unreachable cleanup variants. The loading peak is an admission-phase deterministic logical loading-ownership quantity, not post-load reserved ownership or physical RSS. The fixture remains homogeneous F32; schema 6 records that truth as declared `F32`, observed `{F32}`, planned F32 CPU execution, and actual F32 CPU execution. Byte-footprint records contain no sequence-cache rate. Loader observation uses fixed-size state rather than a tensor/event log; its instrumentation overhead is part of this benchmark build, while Criterion's observed fixture load remains outside the timed prefill/decode intervals.
 
 ### Synthetic schema history
 
@@ -114,7 +112,9 @@ The loading peak is an admission-phase deterministic logical loading-ownership q
 
 **Synthetic schema 4 (historical):** removes `cache_bytes_per_token` from byte-footprint records because cache rate is planning data rather than current ownership. All other schema-3 evidence groups retain their meanings.
 
-**Synthetic schema 5 (current):** removes the independent unmaterialized shadow preparation. It derives `prepared` from the plan produced by the actual hosted transaction and adds bounded `loader` phase timing, byte-read, transfer-batch, synchronization, planned-footprint, accepted E0 ownership, outcome, and cleanup evidence. No prior timing or RSS record is reinterpreted.
+**Synthetic schema 5 (historical):** removes the independent unmaterialized shadow preparation. It derives `prepared` from the plan produced by the actual hosted transaction and adds bounded `loader` phase timing, byte-read, transfer-batch, synchronization, copied planned-footprint and accepted-E0-ownership fields, outcome, and cleanup evidence. No prior timing or RSS record is reinterpreted.
+
+**Synthetic schema 6 (current):** removes the duplicate plan and accepted-ownership copies from `loader`, plus outcome/cleanup fields that the successful-only normal writer could not populate nontrivially. `prepared` remains the sole plan projection, `receipt` remains the sole accepted E0 ownership record, and `loader` retains only phase timing, byte-read, transfer-batch, and synchronization evidence. It adds no new measurement and does not reinterpret historical values.
 
 Synthetic and external reports have independent version sequences.
 

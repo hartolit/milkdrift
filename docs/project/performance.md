@@ -15,8 +15,8 @@ Hard harness timeouts stop hangs only. Lifecycle, fixture, identity, output, cle
 | `sampling.stop-suffix` | Public `match_stop_suffix`; synthetic component performance | Deterministic caller-owned inputs; host bench profile | Criterion target `sampling/sampling_pipeline` | Generation/product latency |
 | `e0.checked-prefill` | Public E0 submission through matching checked-prefill completion; synthetic hosted-E0 performance | Committed Candle fixture; CPU bench profile | Criterion target `runtime-benchmarks/runtime` | Raw Candle kernel timing, E1 latency, RSS, or generation throughput |
 | `e0.incremental-decode` | Public E0 decode after untimed two-token prefill; synthetic hosted-E0 performance | Committed Candle fixture; CPU bench profile | Criterion target `runtime-benchmarks/runtime` | Product latency or full-generation throughput |
-| `e0.lifecycle-process` | Hosted E0 load/generate/backpressure/cancel/unload/shutdown, bounded actual-transaction loader observation, direct accounting, and RSS/HWM; synthetic/process evidence | Release CPU binary; committed fixture; no network | `benchmarks/runtime/src/report.rs`, synthetic schema 5 | Product-model speed/quality, representative scale, or physical device residency |
-| `e1.cold-start-process` | Fresh E1 start/shutdown and process RSS; process sampling | Empty temporary redb state; no network | Synthetic schema 5 application-lifecycle records | Resolution, load, or generation behavior |
+| `e0.lifecycle-process` | Hosted E0 load/generate/backpressure/cancel/unload/shutdown, bounded actual-transaction loader observation, direct accounting, and RSS/HWM; synthetic/process evidence | Release CPU binary; committed fixture; no network | `benchmarks/runtime/src/report.rs`, synthetic schema 6 | Product-model speed/quality, representative scale, or physical device residency |
+| `e1.cold-start-process` | Fresh E1 start/shutdown and process RSS; process sampling | Empty temporary redb state; no network | Synthetic schema 6 application-lifecycle records | Resolution, load, or generation behavior |
 | `e1.tinyllama-product` | Public E1 resolve/load/chat/direct/cancel/unload/shutdown plus actual scalar/device; external product/process/device evidence | Clean commit, explicit cache/network, fixed TinyLlama revision, CPU or exact reviewed CUDA row | `benchmarks/runtime/src/external/report.rs`, external schema 6 | Mixed-checkpoint evidence, model quality, generic NVIDIA support, process-attributed VRAM, leak proof, or a portable threshold |
 | `cuda.fixture-correctness` | Dedicated adapter/E0/E1 CUDA suites; hardware correctness | Download-free fixture; exact self-hosted RTX 5070 Ti matrix | GitHub/local test logs | Product performance or external-model compatibility |
 | `compile.maintained-benches` | Exact registered Cargo bench targets; compile-only | Locked graph; bench profile | `xtask` manifest registry | Runtime correctness or performance |
@@ -111,9 +111,9 @@ The runner writes one schema-versioned JSON document to stdout and compact progr
 
 Raw JSON, Criterion reports, profiles, caches, and compiler output remain beneath root `target` or outside the repository. The runner writes no result file itself.
 
-### Current synthetic schema 5 contract
+### Current synthetic schema 6 contract
 
-The artifact-accelerator amendment advances the normal synthetic report from schema 4 to **synthetic schema 5**. The harness now attaches a bounded, feature-gated recorder to the one production Candle loader transaction that produces the hosted `ModelLoaded` event. It removes the prior independent unmaterialized preparation, which duplicated work and could pre-read the fixture before the timed public load. No new controlled synthetic report is curated here, and no historical timing or RSS value is reinterpreted.
+The artifact-accelerator amendment advanced the normal synthetic report from schema 4 to schema 5 by attaching a bounded, feature-gated recorder to the one production Candle loader transaction that produces the hosted `ModelLoaded` event. Synthetic schema 6 removes only the recorder's duplicate plan and accepted-ownership projections: `prepared` is the sole serialized plan projection, `receipt` is the sole accepted E0 ownership record, and `loader` owns transaction-stage observations. No new controlled synthetic report is curated here, and no historical timing or RSS value is reinterpreted.
 
 Each E0 cycle records three related but distinct evidence groups:
 
@@ -129,12 +129,9 @@ Each E0 cycle records three related but distinct evidence groups:
 | `loader.preparation_duration_ns` / `materialization_duration_ns` | Adapter-internal phase durations within the actual hosted load; they are nested observations, not additions to public model-load time. |
 | `loader.required_bytes_read` / `whole_file_verification_bytes_read` | Required tensor payload bytes and all Safetensors shard bytes read for whole-file identity verification by that transaction. |
 | `loader.transfer_batches` / `loading_device_synchronizations` | Actual accelerator transfer batches and load-time device synchronization calls; the maintained CPU fixture records zero for both. |
-| `loader.planned_final_footprint` / `planned_loading_peak_footprint` | The exact plan copied from the actual loader transaction, deliberately adjacent to the stable `prepared` projection. |
-| `loader.actual_e0_final_ownership` | Matching accepted E0 receipt ownership, validated against the same plan. |
-| `loader.outcome` and cleanup counters | Bounded terminal instrumentation. A failed normal lifecycle still aborts the report rather than becoming a performance sample. |
 | snapshot `process_memory` | Sampled whole-process RSS/HWM, independent of plan and ownership accounting. |
 
-The committed synthetic artifact remains homogeneous F32, so its truthful schema-5 facts are declared `F32`, observed `{F32}`, planned F32/CPU, and actual F32/CPU. Loader observation retains fixed-size state rather than a tensor/event log. Its instrumentation overhead is present in this benchmark build; it does not establish a production optimization or a speedup. Synthetic schemas 1–4 retain their historical meanings, including schema 4's removal of `cache_bytes_per_token`; no legacy report parser was introduced.
+The successful-only normal writer cannot populate loader outcome/cleanup variants nontrivially, so schema 6 omits them; a failed lifecycle aborts instead of becoming a performance sample. The committed synthetic artifact remains homogeneous F32, so its truthful schema-6 facts are declared `F32`, observed `{F32}`, planned F32/CPU, and actual F32/CPU. Loader observation retains fixed-size state rather than a tensor/event log. Its instrumentation overhead is present in this benchmark build; it does not establish a production optimization or a speedup. Synthetic schemas 1–5 retain their historical meanings, including schema 4's removal of `cache_bytes_per_token` and schema 5's duplicate loader ownership projections; no legacy report parser was introduced.
 
 ## Commit A controlled baseline
 

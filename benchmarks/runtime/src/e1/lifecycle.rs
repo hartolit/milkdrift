@@ -12,7 +12,7 @@ use crate::memory::process_memory;
 use crate::report::{ApplicationLifecycleCycle, CycleSet, checked_duration_ns};
 use crate::workspace::TemporaryWorkspace;
 
-use super::cleanup_runtime_after_failure;
+use crate::support::cleanup::cleanup_runtime_after_failure;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(1);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);

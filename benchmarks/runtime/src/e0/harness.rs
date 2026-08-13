@@ -14,13 +14,13 @@ use inference_runtime::{
 };
 
 use crate::error::{BenchmarkError, BenchmarkResult};
+use crate::support::deadline::Deadline;
 
 pub(super) const CANDLE_BACKEND: BackendId = BackendId::new(10_001);
 
 pub(super) const FIXTURE_MODEL_ID: ModelId = ModelId::new(7);
 const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
 const JOIN_TIMEOUT: Duration = Duration::from_secs(10);
-const WAIT_INTERVAL: Duration = Duration::from_millis(1);
 const COMMAND_CAPACITY: usize = 16;
 const EVENT_CAPACITY: usize = 16;
 static RETAINED_WORKERS: Mutex<Vec<RuntimeThread>> = Mutex::new(Vec::new());
@@ -279,18 +279,9 @@ impl HostedE0Harness {
         if !tolerate_pending_events {
             return self.receive(ticket, "runtime shutdown");
         }
-        let deadline = Instant::now()
-            .checked_add(EVENT_TIMEOUT)
-            .ok_or_else(|| BenchmarkError::new("runtime shutdown deadline overflowed"))?;
+        let deadline = Deadline::after(EVENT_TIMEOUT, "runtime shutdown event")?;
         loop {
-            let remaining = deadline
-                .checked_duration_since(Instant::now())
-                .filter(|duration| !duration.is_zero())
-                .ok_or_else(|| {
-                    BenchmarkError::new(
-                        "runtime shutdown event did not arrive within the operational timeout",
-                    )
-                })?;
+            let remaining = deadline.remaining("matching runtime shutdown event")?;
             let event = self.runtime()?.receive_timeout(remaining).map_err(|error| {
                 BenchmarkError::new(format!(
                     "runtime shutdown event did not arrive within the operational timeout: {error:?}"
@@ -303,9 +294,7 @@ impl HostedE0Harness {
     }
 
     fn join_worker(&mut self, started: Instant) -> BenchmarkResult {
-        let deadline = started
-            .checked_add(JOIN_TIMEOUT)
-            .ok_or_else(|| BenchmarkError::new("runtime join deadline overflowed"))?;
+        let deadline = Deadline::from_start(started, JOIN_TIMEOUT, "runtime worker join")?;
         loop {
             let finished = self
                 .thread
@@ -315,15 +304,7 @@ impl HostedE0Harness {
             if finished {
                 break;
             }
-            let remaining = deadline
-                .checked_duration_since(Instant::now())
-                .filter(|duration| !duration.is_zero())
-                .ok_or_else(|| {
-                    BenchmarkError::new(
-                        "runtime worker did not finish within the operational join timeout; its handle is retained until process exit",
-                    )
-                })?;
-            std::thread::sleep(WAIT_INTERVAL.min(remaining));
+            deadline.wait_for_poll("runtime worker completion before retained-handle join")?;
         }
         let thread = self
             .thread

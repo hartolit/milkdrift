@@ -7,6 +7,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use serde_yaml_ng::Value;
+use xtask::{VerificationComponent, hardware_profile_command_plan, is_supported_portable_target};
+
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 fn workspace_root() -> PathBuf {
@@ -15,6 +18,42 @@ fn workspace_root() -> PathBuf {
 
 fn read(relative: &str) -> Result<String, Box<dyn Error>> {
     Ok(fs::read_to_string(workspace_root().join(relative))?)
+}
+
+fn yaml_key<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+    value.as_mapping()?.get(Value::String(key.to_owned()))
+}
+
+fn matrix_strings(workflow: &Value, job: &str, field: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    let include = yaml_key(workflow, "jobs")
+        .and_then(|jobs| yaml_key(jobs, job))
+        .and_then(|job| yaml_key(job, "strategy"))
+        .and_then(|strategy| yaml_key(strategy, "matrix"))
+        .and_then(|matrix| yaml_key(matrix, "include"))
+        .and_then(Value::as_sequence)
+        .ok_or_else(|| format!("missing {job} matrix include list"))?;
+    include
+        .iter()
+        .map(|entry| {
+            yaml_key(entry, field)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| format!("missing string {field} in {job} matrix").into())
+        })
+        .collect()
+}
+
+fn workflow_run_bodies(workflow: &Value) -> Vec<&str> {
+    let Some(jobs) = yaml_key(workflow, "jobs").and_then(Value::as_mapping) else {
+        return Vec::new();
+    };
+    jobs.values()
+        .filter_map(|job| yaml_key(job, "steps"))
+        .filter_map(Value::as_sequence)
+        .flatten()
+        .filter_map(|step| yaml_key(step, "run"))
+        .filter_map(Value::as_str)
+        .collect()
 }
 
 fn leading_spaces(line: &str) -> usize {
@@ -217,6 +256,43 @@ fn maintained_workflows_parse_as_yaml() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn workflows_reference_only_declared_components_targets_and_profiles() -> Result<(), Box<dyn Error>>
+{
+    let quality: Value = serde_yaml_ng::from_str(&read(".github/workflows/quality.yml")?)?;
+    for component in matrix_strings(&quality, "native-components", "component")? {
+        assert!(
+            VerificationComponent::parse(&component).is_some(),
+            "workflow references unknown native component {component}"
+        );
+    }
+    for target in matrix_strings(&quality, "portable", "target")? {
+        assert!(
+            is_supported_portable_target(&target),
+            "workflow references unknown portable target {target}"
+        );
+    }
+
+    let cuda: Value = serde_yaml_ng::from_str(&read(".github/workflows/cuda-hardware.yml")?)?;
+    let run_bodies = workflow_run_bodies(&cuda);
+    let profiles = run_bodies
+        .iter()
+        .flat_map(|body| body.lines())
+        .filter_map(|line| {
+            line.split_once("cargo xtask hardware ")
+                .map(|(_, value)| value)
+        })
+        .filter_map(|value| value.split_whitespace().next())
+        .collect::<Vec<_>>();
+    assert_eq!(profiles.len(), 1);
+    for profile in profiles {
+        let plan = hardware_profile_command_plan(&workspace_root().join("Cargo.toml"), profile)?;
+        assert!(!plan.is_empty());
+    }
+    assert!(run_bodies.iter().all(|body| !body.contains("cargo test")));
+    Ok(())
+}
+
+#[test]
 fn cuda_workflow_limits_network_to_locked_cache_synchronization() -> Result<(), Box<dyn Error>> {
     let cuda = read(".github/workflows/cuda-hardware.yml")?;
     let sync_name = "      - name: Synchronize locked CUDA dependency cache";
@@ -312,6 +388,8 @@ fn resource_script_prepares_shims_cleans_and_fails_closed() -> Result<(), Box<dy
     assert!(output.status.success());
     assert!(!target.exists());
     assert!(!tools.exists());
+    let output = environment.run(&["cleanup", &target_text, &tools_text])?;
+    assert!(output.status.success());
 
     fs::create_dir(environment.workspace.join("target"))?;
     let output = environment.run(&["prepare", "1024", &target_text])?;
@@ -321,5 +399,15 @@ fn resource_script_prepares_shims_cleans_and_fails_closed() -> Result<(), Box<dy
     let outside = environment.root.join("outside");
     let output = environment.run(&["prepare", "1024", &outside.to_string_lossy()])?;
     assert!(!output.status.success());
+    for dangerous in [
+        environment.runner_temp.clone(),
+        environment.runner_temp.join("nested/target"),
+        environment.runner_temp.join("."),
+        environment.runner_temp.join(".."),
+        outside,
+    ] {
+        let dangerous = dangerous.to_string_lossy().into_owned();
+        assert!(!environment.run(&["cleanup", &dangerous])?.status.success());
+    }
     Ok(())
 }

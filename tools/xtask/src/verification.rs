@@ -5,9 +5,9 @@ use std::path::Path;
 use cargo_metadata::Metadata;
 
 use crate::workspace::{
-    CUDA_FEATURE, CudaHardwareTarget, WorkspaceInventoryIssue, benchmark_inventory,
+    CUDA_FEATURE, HardwareSuite, WorkspaceInventoryIssue, benchmark_inventory,
     cuda_feature_package_inventory, cuda_hardware_target_inventory, domain_package_inventory,
-    load_metadata, workspace_package_inventory,
+    hardware_suite_inventory, load_metadata, workspace_package_inventory,
 };
 
 const PORTABLE_TARGETS: [&str; 2] = ["wasm32-unknown-unknown", "thumbv7em-none-eabihf"];
@@ -54,11 +54,7 @@ impl CargoCommand {
         Self { arguments }
     }
 
-    fn hardware_target(
-        prefix: &[&str],
-        hardware_target: &CudaHardwareTarget,
-        suffix: &[&str],
-    ) -> Self {
+    fn hardware_target(prefix: &[&str], hardware_target: &HardwareSuite, suffix: &[&str]) -> Self {
         let mut arguments = prefix
             .iter()
             .map(|argument| (*argument).to_owned())
@@ -524,18 +520,55 @@ pub fn cuda_hardware_command_plan(
 pub fn cuda_hardware_command_plan_for_metadata(
     metadata: &Metadata,
 ) -> Result<Vec<CargoCommand>, CommandPlanError> {
-    let hardware_targets = cuda_hardware_target_inventory(metadata)
-        .map_err(|issues| CommandPlanError::inventory("exact CUDA hardware ownership", issues))?;
+    hardware_profile_command_plan_for_metadata(metadata, CUDA_FEATURE)
+}
+
+/// Loads locked Cargo metadata and plans one declared hardware profile.
+///
+/// # Errors
+///
+/// Returns an error if the profile is unknown or any registered suite is invalid.
+pub fn hardware_profile_command_plan(
+    manifest_path: &Path,
+    profile: &str,
+) -> Result<Vec<CargoCommand>, CommandPlanError> {
+    let metadata = load_metadata(manifest_path, true)
+        .map_err(|error| CommandPlanError::metadata("hardware profile planning", error))?;
+    hardware_profile_command_plan_for_metadata(&metadata, profile)
+}
+
+/// Plans all release test invocations registered for one hardware profile.
+///
+/// # Errors
+///
+/// Returns an error if the profile is unknown or any registered suite is invalid.
+pub fn hardware_profile_command_plan_for_metadata(
+    metadata: &Metadata,
+    profile: &str,
+) -> Result<Vec<CargoCommand>, CommandPlanError> {
+    let hardware_targets = hardware_suite_inventory(metadata, profile).map_err(|issues| {
+        CommandPlanError::inventory(&format!("`{profile}` hardware profile ownership"), issues)
+    })?;
     Ok(hardware_targets
         .iter()
         .map(|target| {
-            CargoCommand::hardware_target(&["test", "--release", "--locked"], target, &[])
+            CargoCommand::hardware_target(
+                &["test", "--release", "--locked"],
+                target,
+                target.runner().execution_arguments(),
+            )
         })
         .collect())
 }
 
+/// Returns whether a portable target name is maintained by the command planner.
+#[must_use]
+pub fn is_supported_portable_target(target: &str) -> bool {
+    PORTABLE_TARGETS.contains(&target)
+}
+
 fn validate_portable_target(target: &str) -> Result<(), CommandPlanError> {
-    if PORTABLE_TARGETS.contains(&target) {
+    if is_supported_portable_target(target) {
         Ok(())
     } else {
         Err(CommandPlanError::invalid(format!(

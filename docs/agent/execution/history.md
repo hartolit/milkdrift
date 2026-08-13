@@ -684,3 +684,54 @@ sits behind a single hardware entry point, reducing the support module by 100
 lines without adding files or lint allowances. Its 93 E0 tests, strict Clippy,
 tooling policy, architecture/hygiene, rustdoc, formatting, and offline links pass
 locally. That cleanup still requires exact remote Quality and CUDA evidence.
+
+## Verification and evidence infrastructure consolidation
+
+**Prepared:** 2026-08-14
+
+**Input baseline:** `716ae9a23ea12fc81374e4d576d3a3a61f2ae8e9`, tree
+`131f457dd32b6e31886769980637cda49f72fd8a`
+
+**Recorded outcome at this revision:** the complete locally available work package passed;
+the resulting coherent commit is reported externally, while CUDA and post-push evidence remain
+explicitly pending
+
+The benchmark now has one private support boundary for SHA-256 formatting, checked deadlines,
+typed application-event waits, and bounded cleanup. Resolution, load, unload, and generation share
+one polling and disconnection policy without weakening generation identity, terminal, cancellation,
+or release checks. The benchmark Rust footprint moved from 10,709 to 10,509 lines. The tooling
+footprint moved from 7,089 to 7,534 lines to replace workflow-owned command duplication with a
+validated metadata registry and its malformed-fixture coverage.
+
+Synthetic report schema 6 keeps prepared-plan, accepted E0 receipt, and successful loader facts in
+separate sole-owner records. It removes the loader's duplicate plan/receipt footprint fields and
+tautological success/cleanup state; failed or retained-cleanup loads remain correctness failures and
+cannot become normal performance samples. External schema 6 remains an independent E1 writer and
+does not reconstruct E0. No historical evidence was rewritten.
+
+Cargo package metadata now owns every CUDA hardware suite as profile, exact test target, activation
+feature, and audited runner mode. `cargo xtask hardware cuda` resolves three harness-free suites and
+the serial `inference-runtime/fault_injection` suite; unknown, empty, malformed, mismatched, and
+duplicate identities fail closed. The CUDA workflow selects only the `cuda` profile. Workflow tests
+parse every native component, portable target, and hardware profile through the production planners,
+and resource-script tests prove missing-path cleanup is idempotent while checkout, nested, dot,
+dot-dot, and outside-runner paths are rejected.
+
+Local acceptance used `CARGO_INCREMENTAL=0` and only isolated target directories. Focused benchmark
+and xtask tests passed, including 75 benchmark tests, 3 xtask unit tests, 23 architecture tests,
+9 hygiene tests, 10 verification tests, and 7 workflow tests; strict all-target Clippy also passed.
+The canonical `cargo xtask verify` composite then passed structure, check, tests/doctests, strict
+Clippy, warning-denied rustdoc, and exact compilation of only `runtime-benchmarks/runtime` and
+`sampling/sampling_pipeline`. Both five-package portable plans passed for
+`wasm32-unknown-unknown` and `thumbv7em-none-eabihf`.
+
+The retained native validation target was 12,582,544 KiB; each portable target was 153,752 KiB.
+After validation, the `/home` filesystem had 811,469,856 KiB free and `/tmp` had 14,403,360 KiB
+free. An earlier fresh `/tmp` composite reached 8,045,628 KiB before the user quota produced
+`Disk quota exceeded`; its later linker bus error was consequential. That target was removed with
+the reviewed cleanup script, validation was restarted under `/home`, and the full composite passed.
+This is infrastructure-capacity evidence, not product-performance evidence.
+
+This environment exposes no `nvidia-smi`, `nvcc`, or NVIDIA device nodes. Therefore no current-tree
+CUDA compilation, hardware-suite execution, or GPU behavior is claimed. Exact-tree self-hosted CUDA
+and hosted Quality evidence remain post-push work; this package does not push.

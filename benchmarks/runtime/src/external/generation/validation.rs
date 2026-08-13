@@ -1,7 +1,5 @@
 //! Readiness, conversation, outcome, release, and cleanup invariants.
 
-use std::fmt::Display;
-
 use application_runtime::{
     ApplicationActivity, ApplicationRuntime, ConversationProvenance, ConversationRole,
     ConversationTokenEstimate, GenerationTerminal, GenerationTerminalKind,
@@ -270,23 +268,6 @@ pub(super) fn validate_terminal_consistency(
         )));
     }
     Ok(())
-}
-
-pub(super) fn output_cleanup_pending_error() -> BenchmarkError {
-    BenchmarkError::new("generation output entered cleanup-pending state")
-}
-
-pub(super) fn output_cleanup_exhausted_error() -> BenchmarkError {
-    BenchmarkError::new("generation output exhausted cleanup while retaining ownership")
-}
-
-pub(super) fn generation_cleanup_pending_error(
-    exhausted: bool,
-    failure: &impl Display,
-) -> BenchmarkError {
-    BenchmarkError::new(format!(
-        "generation cleanup remained pending (exhausted={exhausted}): {failure}"
-    ))
 }
 
 #[cfg(test)]

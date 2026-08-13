@@ -10,9 +10,13 @@ use domain_contracts::{FinishReason, GenerationUsage, RequestId};
 
 use super::validation::{self, GenerationExpectation};
 use crate::error::{BenchmarkError, BenchmarkResult};
+use crate::support::application_wait::{
+    ApplicationWaitStage, WaitStatus, drive_application_wait, unexpected_event,
+};
+use crate::support::cleanup::generation_output_cleanup_error;
 
-const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const GENERATION_TIMEOUT: Duration = Duration::from_mins(10);
+const GENERATION_STAGE: &str = "generation terminal release";
 
 pub(super) struct GenerationEvidence {
     pub(super) terminal: GenerationTerminal,
@@ -158,10 +162,20 @@ impl GenerationObserver {
                 self.output_phase = OutputPhase::Terminal;
             }
             ApplicationOutputRecordKind::State(ApplicationOutputState::CleanupPending) => {
-                return Err(validation::output_cleanup_pending_error());
+                return Err(generation_output_cleanup_error(
+                    GENERATION_STAGE,
+                    self.request_id,
+                    false,
+                    self.terminal_output.map(|observation| observation.value),
+                ));
             }
             ApplicationOutputRecordKind::State(ApplicationOutputState::CleanupExhausted) => {
-                return Err(validation::output_cleanup_exhausted_error());
+                return Err(generation_output_cleanup_error(
+                    GENERATION_STAGE,
+                    self.request_id,
+                    true,
+                    self.terminal_output.map(|observation| observation.value),
+                ));
             }
             ApplicationOutputRecordKind::State(ApplicationOutputState::Released(kind)) => {
                 if self.output_phase != OutputPhase::Terminal {
@@ -240,16 +254,6 @@ impl GenerationObserver {
                     "UserRequested generation cancellation failed: {failure}"
                 )))
             }
-            ApplicationEvent::GenerationCleanupPending {
-                request_id,
-                exhausted,
-                failure,
-            } => {
-                self.require_request_id(request_id, "GenerationCleanupPending")?;
-                Err(validation::generation_cleanup_pending_error(
-                    exhausted, &failure,
-                ))
-            }
             ApplicationEvent::GenerationFinished { terminal } => {
                 self.require_request_id(terminal.request_id, "GenerationFinished")?;
                 if self
@@ -266,21 +270,7 @@ impl GenerationObserver {
                 }
                 Ok(())
             }
-            ApplicationEvent::ModelCleanupPending {
-                resource,
-                disposition,
-            } => Err(BenchmarkError::new(format!(
-                "model cleanup retained E0 ownership during generation observation: resource={resource:?}, disposition={disposition:?}"
-            ))),
-            ApplicationEvent::HubDisconnected => Err(BenchmarkError::new(
-                "Hub worker disconnected during generation",
-            )),
-            ApplicationEvent::RuntimeDisconnected => Err(BenchmarkError::new(
-                "inference worker disconnected during generation",
-            )),
-            unexpected => Err(BenchmarkError::new(format!(
-                "unexpected application event during generation: {unexpected:?}"
-            ))),
+            unexpected => Err(unexpected_event(GENERATION_STAGE, &unexpected)),
         }
     }
 
@@ -432,12 +422,61 @@ pub(super) fn drive_generation(
         ));
     }
 
-    let deadline = checked_deadline(GENERATION_TIMEOUT, "generation terminal release")?;
-    let mut observer = GenerationObserver::new(request_id, expectation, submitted_at);
-    loop {
-        if let Some(event) = runtime.poll_event() {
-            observer.observe_event_at(event, Instant::now())?;
-        }
+    drive_application_wait(
+        runtime,
+        GENERATION_TIMEOUT,
+        GenerationStage {
+            observer: Some(GenerationObserver::new(
+                request_id,
+                expectation,
+                submitted_at,
+            )),
+            before_cancellation_checkpoint,
+            observe,
+        },
+    )
+}
+
+struct GenerationStage<'a, Observe> {
+    observer: Option<GenerationObserver>,
+    before_cancellation_checkpoint: Option<&'static str>,
+    observe: &'a mut Observe,
+}
+
+impl<Observe> ApplicationWaitStage<ApplicationRuntime> for GenerationStage<'_, Observe>
+where
+    Observe: FnMut(&'static str) -> BenchmarkResult,
+{
+    type Output = GenerationEvidence;
+
+    fn name(&self) -> &'static str {
+        GENERATION_STAGE
+    }
+
+    fn expected_request_id(&self) -> Option<RequestId> {
+        self.observer.as_ref().map(|observer| observer.request_id)
+    }
+
+    fn observe_event(
+        &mut self,
+        _runtime: &mut ApplicationRuntime,
+        event: ApplicationEvent,
+        observed_at: Instant,
+    ) -> BenchmarkResult<WaitStatus<Self::Output>> {
+        self.observer
+            .as_mut()
+            .ok_or_else(|| BenchmarkError::new("generation observer disappeared before finish"))?
+            .observe_event_at(event, observed_at)?;
+        Ok(WaitStatus::Pending)
+    }
+
+    fn observe_progress(
+        &mut self,
+        runtime: &mut ApplicationRuntime,
+    ) -> BenchmarkResult<WaitStatus<Self::Output>> {
+        let observer = self.observer.as_mut().ok_or_else(|| {
+            BenchmarkError::new("generation observer disappeared before progress polling")
+        })?;
         observer.pull(runtime)?;
 
         if observer.cancellation_was_preempted() {
@@ -446,25 +485,30 @@ pub(super) fn drive_generation(
             ));
         }
         if observer.ready_to_request_cancellation() {
-            let checkpoint = before_cancellation_checkpoint.ok_or_else(|| {
+            let checkpoint = self.before_cancellation_checkpoint.ok_or_else(|| {
                 BenchmarkError::new("cancellation checkpoint label disappeared before submission")
             })?;
-            observe(checkpoint)?;
+            (self.observe)(checkpoint)?;
             let cancellation_submitted_at = Instant::now();
-            runtime.cancel_generation(request_id).map_err(|error| {
-                BenchmarkError::new(format!(
-                    "UserRequested cancellation could not be submitted after generation progress: {error}"
-                ))
-            })?;
+            runtime
+                .cancel_generation(observer.request_id)
+                .map_err(|error| {
+                    BenchmarkError::new(format!(
+                        "UserRequested cancellation could not be submitted after generation progress: {error}"
+                    ))
+                })?;
             observer.record_cancellation_submission(cancellation_submitted_at)?;
         }
 
-        if observer.has_all_terminal_facts() {
-            let evidence = observer.finish()?;
-            validation::validate_released_runtime(runtime, &evidence.terminal)?;
-            return Ok(evidence);
+        if !observer.has_all_terminal_facts() {
+            return Ok(WaitStatus::Pending);
         }
-        wait_for_next_poll(deadline, "generation terminal release")?;
+        let observer = self.observer.take().ok_or_else(|| {
+            BenchmarkError::new("generation observer disappeared at terminal finish")
+        })?;
+        let evidence = observer.finish()?;
+        validation::validate_released_runtime(runtime, &evidence.terminal)?;
+        Ok(WaitStatus::Complete(evidence))
     }
 }
 
@@ -539,23 +583,6 @@ fn cancellation_timings(
             "Released output state after cancellation",
         )?,
     })
-}
-
-fn checked_deadline(timeout: Duration, operation: &'static str) -> BenchmarkResult<Instant> {
-    Instant::now().checked_add(timeout).ok_or_else(|| {
-        BenchmarkError::new(format!(
-            "deadline overflow while preparing to wait for {operation}"
-        ))
-    })
-}
-
-fn wait_for_next_poll(deadline: Instant, operation: &'static str) -> BenchmarkResult {
-    let remaining = deadline
-        .checked_duration_since(Instant::now())
-        .filter(|duration| !duration.is_zero())
-        .ok_or_else(|| BenchmarkError::new(format!("timed out waiting for {operation}")))?;
-    std::thread::sleep(POLL_INTERVAL.min(remaining));
-    Ok(())
 }
 
 fn elapsed_since(

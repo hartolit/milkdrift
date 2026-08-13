@@ -19,9 +19,9 @@ use super::report::{
     CancellationResult, DirectCompletionSample, LifecycleResult, PrimaryCycleResult,
     ResourceCheckpoint, ShutdownResult, StabilityCycleResult, StabilitySummary,
 };
-use crate::e1::cleanup_runtime_after_failure;
 use crate::error::{BenchmarkError, BenchmarkResult};
 use crate::evidence::application_device_record;
+use crate::support::cleanup::cleanup_runtime_after_failure;
 use crate::workspace::TemporaryWorkspace;
 
 const PRIMARY_CYCLE_ORDINAL: u32 = 1;

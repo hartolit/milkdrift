@@ -9,11 +9,10 @@ mod report;
 
 use std::ffi::OsString;
 
-use sha2::{Digest, Sha256};
-
 use crate::error::{BenchmarkError, BenchmarkResult};
 use crate::evidence::application_scalar_type_label;
 use crate::metadata;
+use crate::support::digest::sha256_hex;
 use crate::workspace::{TemporaryWorkspace, repository_root};
 
 use observation::DeviceObserver;
@@ -200,24 +199,6 @@ fn byte_len(value: &str) -> BenchmarkResult<u64> {
         .map_err(|_| BenchmarkError::new("workload byte length conversion to u64 failed"))
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut encoded = String::with_capacity(digest.len().saturating_mul(2));
-    for byte in digest {
-        encoded.push(hex_digit(byte >> 4));
-        encoded.push(hex_digit(byte & 0x0f));
-    }
-    encoded
-}
-
-fn hex_digit(value: u8) -> char {
-    match value {
-        0..=9 => char::from(b'0' + value),
-        10..=15 => char::from(b'a' + (value - 10)),
-        _ => '?',
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::report::{
@@ -269,13 +250,5 @@ mod tests {
             assert!(!json.contains(prohibited), "unexpected field {prohibited}");
         }
         Ok(())
-    }
-
-    #[test]
-    fn prompt_hash_uses_standard_sha256_encoding() {
-        assert_eq!(
-            super::sha256_hex(b"abc"),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
     }
 }

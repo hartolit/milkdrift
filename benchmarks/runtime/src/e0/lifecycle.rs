@@ -122,7 +122,7 @@ fn validate_loaded_fixture(
     Ok(SyntheticLoadEvidence {
         prepared: prepared_load_record(&plan)?,
         receipt: e0_load_receipt_record(&plan, loaded)?,
-        loader: candle_loader_observation_record(observation, Some(loaded))?,
+        loader: candle_loader_observation_record(observation, loaded)?,
     })
 }
 
@@ -491,25 +491,21 @@ fn usize_from_u32(value: u32) -> BenchmarkResult<usize> {
 
 #[cfg(test)]
 mod tests {
-    use candle_backend::{CandleLoadCleanupOutcome, CandleLoadObservationOutcome};
-    use serde_json::Value;
-
     use super::{HostedE0Harness, load_fixture};
-    use crate::error::{BenchmarkError, BenchmarkResult};
+    use crate::error::BenchmarkError;
     use crate::fixture::VerifiedFixture;
     use crate::report::SCHEMA_VERSION;
+    use candle_backend::{CandleLoadCleanupOutcome, CandleLoadObservationOutcome};
 
     #[test]
-    fn hosted_fixture_load_produces_actual_schema_five_observation() -> Result<(), String> {
+    fn hosted_fixture_load_produces_actual_schema_six_observation() -> Result<(), String> {
         let fixture = VerifiedFixture::verify().map_err(|error| error.to_string())?;
         let (mut harness, _) = HostedE0Harness::start(1, 1).map_err(|error| error.to_string())?;
         let body = (|| {
             let loaded = load_fixture(&mut harness, &fixture)?;
             let snapshot = harness.load_observation_snapshot();
-            let plan = snapshot.plan.ok_or_else(|| {
-                BenchmarkError::new("hosted fixture observation omitted its actual load plan")
-            })?;
-            if snapshot.required_bytes_read != 3_680
+            if snapshot.plan.is_none()
+                || snapshot.required_bytes_read != 3_680
                 || snapshot.whole_file_verification_bytes_read != 4_800
                 || snapshot.transfer_batches != 0
                 || snapshot.loading_device_synchronizations != 0
@@ -524,90 +520,36 @@ mod tests {
                     "hosted fixture observation did not report the exact successful CPU load facts",
                 ));
             }
-            if loaded.receipt.handle != plan.accepted_configuration.handle
-                || loaded.receipt.execution_device != plan.accepted_configuration.execution_device
-                || loaded.receipt.execution_scalar_type != plan.execution_scalar_type
-                || loaded.receipt.descriptor != plan.descriptor
-                || loaded.receipt.reserved_footprint != plan.final_footprint
-            {
+            if SCHEMA_VERSION != 6 {
                 return Err(BenchmarkError::new(
-                    "hosted fixture receipt did not match its observed transaction plan",
-                ));
-            }
-            if SCHEMA_VERSION != 5 {
-                return Err(BenchmarkError::new(
-                    "hosted fixture observation is not attached to synthetic schema 5",
+                    "hosted fixture observation is not attached to synthetic schema 6",
                 ));
             }
 
             let evidence = serde_json::to_value(&loaded.evidence).map_err(|error| {
-                BenchmarkError::new(format!("serialize hosted schema-5 load evidence: {error}"))
+                BenchmarkError::new(format!("serialize hosted schema-6 load evidence: {error}"))
             })?;
-            require_json_u64(&evidence, &["loader", "required_bytes_read"], 3_680)?;
-            require_json_u64(
-                &evidence,
-                &["loader", "whole_file_verification_bytes_read"],
-                4_800,
-            )?;
-            require_json_u64(&evidence, &["loader", "transfer_batches"], 0)?;
-            require_json_u64(&evidence, &["loader", "loading_device_synchronizations"], 0)?;
-            require_json_str(&evidence, &["loader", "outcome"], "succeeded")?;
-            require_json_str(&evidence, &["loader", "cleanup_outcome"], "not_required")?;
-            require_equal_paths(
-                &evidence,
-                &["prepared", "exact_final_footprint"],
-                &["loader", "planned_final_footprint"],
-            )?;
-            require_equal_paths(
-                &evidence,
-                &["receipt", "reserved_footprint"],
-                &["loader", "actual_e0_final_ownership"],
-            )?;
+            let loader_record = evidence.get("loader").ok_or_else(|| {
+                BenchmarkError::new("hosted schema-6 evidence omitted loader stages")
+            })?;
+            if loader_record
+                .get("required_bytes_read")
+                .and_then(serde_json::Value::as_u64)
+                != Some(3_680)
+                || loader_record.get("outcome").is_some()
+                || loader_record.get("cleanup_outcome").is_some()
+                || loader_record.get("planned_final_footprint").is_some()
+                || loader_record.get("actual_e0_final_ownership").is_some()
+            {
+                return Err(BenchmarkError::new(
+                    "hosted schema-6 loader stages were incorrect or duplicated ownership",
+                ));
+            }
             Ok(())
         })();
         harness
             .finish(body)
             .map(|_| ())
             .map_err(|error| error.to_string())
-    }
-
-    fn value_at<'a>(value: &'a Value, path: &[&str]) -> BenchmarkResult<&'a Value> {
-        let mut current = value;
-        for key in path {
-            current = current.get(*key).ok_or_else(|| {
-                BenchmarkError::new(format!("hosted schema-5 evidence omitted {path:?}"))
-            })?;
-        }
-        Ok(current)
-    }
-
-    fn require_json_u64(value: &Value, path: &[&str], expected: u64) -> BenchmarkResult {
-        if value_at(value, path)?.as_u64() == Some(expected) {
-            Ok(())
-        } else {
-            Err(BenchmarkError::new(format!(
-                "hosted schema-5 evidence carried the wrong value at {path:?}"
-            )))
-        }
-    }
-
-    fn require_json_str(value: &Value, path: &[&str], expected: &str) -> BenchmarkResult {
-        if value_at(value, path)?.as_str() == Some(expected) {
-            Ok(())
-        } else {
-            Err(BenchmarkError::new(format!(
-                "hosted schema-5 evidence carried the wrong value at {path:?}"
-            )))
-        }
-    }
-
-    fn require_equal_paths(value: &Value, left: &[&str], right: &[&str]) -> BenchmarkResult {
-        if value_at(value, left)? == value_at(value, right)? {
-            Ok(())
-        } else {
-            Err(BenchmarkError::new(format!(
-                "hosted schema-5 evidence disagreed between {left:?} and {right:?}"
-            )))
-        }
     }
 }

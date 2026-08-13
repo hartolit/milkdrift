@@ -11,8 +11,8 @@ use std::process::{Command, ExitCode, ExitStatus, Stdio};
 use xtask::{
     CargoCommand, VerificationComponent, VerificationOperation, VerificationPlan,
     cuda_clippy_command_plan, cuda_compile_command_plan, cuda_hardware_command_plan,
-    native_verification_plan, portable_command_plan, validate_repository_hygiene,
-    validate_workspace, verification_component_plan,
+    hardware_profile_command_plan, native_verification_plan, portable_command_plan,
+    validate_repository_hygiene, validate_workspace, verification_component_plan,
 };
 
 const HELP: &str = "\
@@ -22,6 +22,7 @@ USAGE:
     cargo xtask <command>
     cargo xtask verify-component <structure|check|test|clippy|docs|benches|nursery>
     cargo xtask portable <wasm32-unknown-unknown|thumbv7em-none-eabihf>
+    cargo xtask hardware <PROFILE>
 
 COMMANDS:
     architecture    Validate workspace roles, layout, dependency DAG, and feature policy
@@ -32,7 +33,8 @@ COMMANDS:
     portable        Check every metadata-owned domain library for one portable target
     cuda-compile    Check CUDA owners and compile CUDA tests and exact hardware suites
     cuda-clippy     Lint CUDA owners and exact hardware suites with warnings denied
-    cuda-hardware   Run every exact harness-free CUDA hardware suite in release mode
+    hardware        Run every Cargo-metadata suite in a declared hardware profile
+    cuda-hardware   Compatibility alias for `hardware cuda`
     help            Print this message
 
 Canonical matrices are derived from locked Cargo metadata; ordinary Cargo operations remain direct.
@@ -58,13 +60,7 @@ fn execute() -> io::Result<ExitCode> {
     };
 
     let success = match command {
-        "help" | "--help" | "-h" => {
-            if !remaining.is_empty() {
-                return Ok(argument_error("help does not accept arguments"));
-            }
-            print!("{HELP}");
-            return Ok(ExitCode::SUCCESS);
-        }
+        "help" | "--help" | "-h" => return Ok(help(&remaining)),
         "architecture" => {
             if !remaining.is_empty() {
                 return Ok(argument_error("architecture does not accept arguments"));
@@ -100,13 +96,9 @@ fn execute() -> io::Result<ExitCode> {
             run_verification_plan(&plan)
         }
         "portable" => {
-            let [target] = remaining.as_slice() else {
-                return Ok(argument_error(
-                    "portable requires exactly one maintained target",
-                ));
-            };
-            let Some(target) = target.to_str() else {
-                return Ok(argument_error("portable target must be valid UTF-8"));
+            let target = match exact_utf8_argument(&remaining, "portable", "maintained target") {
+                Ok(target) => target,
+                Err(message) => return Ok(argument_error(&message)),
             };
             let commands =
                 portable_command_plan(&workspace_manifest(), target).map_err(io::Error::other)?;
@@ -136,6 +128,15 @@ fn execute() -> io::Result<ExitCode> {
                 cuda_hardware_command_plan(&workspace_manifest()).map_err(io::Error::other)?;
             run_cargo_plan(&commands)
         }
+        "hardware" => {
+            let profile = match exact_utf8_argument(&remaining, "hardware", "declared profile") {
+                Ok(profile) => profile,
+                Err(message) => return Ok(argument_error(&message)),
+            };
+            let commands = hardware_profile_command_plan(&workspace_manifest(), profile)
+                .map_err(io::Error::other)?;
+            run_cargo_plan(&commands)
+        }
         _ => {
             eprintln!("unknown command: {command}\n");
             print!("{HELP}");
@@ -148,6 +149,27 @@ fn execute() -> io::Result<ExitCode> {
     } else {
         ExitCode::FAILURE
     })
+}
+
+fn help(arguments: &[OsString]) -> ExitCode {
+    if !arguments.is_empty() {
+        return argument_error("help does not accept arguments");
+    }
+    print!("{HELP}");
+    ExitCode::SUCCESS
+}
+
+fn exact_utf8_argument<'a>(
+    arguments: &'a [OsString],
+    command: &str,
+    argument: &str,
+) -> Result<&'a str, String> {
+    let [value] = arguments else {
+        return Err(format!("{command} requires exactly one {argument} name"));
+    };
+    value
+        .to_str()
+        .ok_or_else(|| format!("{command} {argument} must be valid UTF-8"))
 }
 
 fn argument_error(message: &str) -> ExitCode {

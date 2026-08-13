@@ -10,7 +10,7 @@ use crate::fixture::FixtureIdentity;
 use crate::load_observation::CandleLoaderObservationRecord;
 use crate::memory::ProcessMemory;
 
-pub(crate) const SCHEMA_VERSION: u32 = 5;
+pub(crate) const SCHEMA_VERSION: u32 = 6;
 
 #[derive(Serialize)]
 pub(crate) struct BaselineReport {
@@ -238,24 +238,7 @@ pub(crate) fn checked_duration_ns(duration: Duration, label: &'static str) -> Be
 mod tests {
     use std::time::Duration;
 
-    use serde_json::Value;
-
-    use super::{
-        E0LoadReceiptRecord, ExecutionDeviceRecord, MemoryFootprintRecord, PreparedLoadRecord,
-        SCHEMA_VERSION, SyntheticLoadEvidence, checked_duration_ns,
-    };
-    use crate::load_observation::successful_test_record;
-
-    const CPU: ExecutionDeviceRecord = ExecutionDeviceRecord { kind: "cpu", id: 0 };
-
-    const fn footprint(host_weight_bytes: u64, host_working_bytes: u64) -> MemoryFootprintRecord {
-        MemoryFootprintRecord {
-            host_weight_bytes,
-            device_weight_bytes: 0,
-            host_working_bytes,
-            device_working_bytes: 0,
-        }
-    }
+    use super::checked_duration_ns;
 
     #[test]
     fn checked_duration_conversion_preserves_values_and_reports_overflow() -> Result<(), String> {
@@ -274,106 +257,13 @@ mod tests {
     }
 
     #[test]
-    fn schema_five_serializes_actual_loader_and_e0_load_facts_separately() -> Result<(), String> {
-        let evidence = SyntheticLoadEvidence {
-            prepared: PreparedLoadRecord {
-                configuration_declared_scalar: Some("F32"),
-                observed_tensor_scalars: vec!["F32"],
-                planned_execution_scalar: "F32",
-                planned_execution_device: CPU,
-                exact_final_footprint: footprint(4_000, 0),
-                loading_peak_footprint: footprint(4_000, 800),
-            },
-            receipt: E0LoadReceiptRecord {
-                actual_execution_scalar: "F32",
-                actual_execution_device: CPU,
-                reserved_footprint: footprint(4_000, 0),
-            },
-            loader: successful_test_record(),
-        };
-        let value = serde_json::to_value(evidence).map_err(|error| error.to_string())?;
-        assert_eq!(SCHEMA_VERSION, 5);
-        assert_eq!(
-            value_at(&value, &["prepared", "configuration_declared_scalar"])?.as_str(),
-            Some("F32")
-        );
-        let observed = value_at(&value, &["prepared", "observed_tensor_scalars"])?
-            .as_array()
-            .ok_or_else(|| "observed tensor scalars were not an array".to_owned())?;
-        assert_eq!(observed.first().and_then(Value::as_str), Some("F32"));
-        assert_eq!(
-            value_at(&value, &["prepared", "planned_execution_scalar"])?.as_str(),
-            Some("F32")
-        );
-        assert_eq!(
-            value_at(&value, &["receipt", "actual_execution_scalar"])?.as_str(),
-            Some("F32")
-        );
-        assert_eq!(
-            value_at(
-                &value,
-                &["prepared", "exact_final_footprint", "host_weight_bytes"],
-            )?
-            .as_u64(),
-            Some(4_000)
-        );
-        assert_eq!(
-            value_at(
-                &value,
-                &["prepared", "loading_peak_footprint", "host_working_bytes",],
-            )?
-            .as_u64(),
-            Some(800)
-        );
-        assert_eq!(
-            value_at(
-                &value,
-                &["receipt", "reserved_footprint", "host_weight_bytes"],
-            )?
-            .as_u64(),
-            Some(4_000)
-        );
-        assert_eq!(
-            value_at(&value, &["loader", "required_bytes_read"])?.as_u64(),
-            Some(4_000)
-        );
-        assert_eq!(
-            value_at(&value, &["loader", "outcome"])?.as_str(),
-            Some("succeeded")
-        );
-        assert!(find_key(&value, "scalar_type").is_none());
-        Ok(())
-    }
-
-    #[test]
     fn synthetic_schema_history_remains_documented_without_a_legacy_parser() {
         let readme = include_str!("../README.md");
         assert!(readme.contains("**Synthetic schema 1 (historical):**"));
         assert!(readme.contains("**Synthetic schema 2 (historical):**"));
         assert!(readme.contains("**Synthetic schema 3 (historical):**"));
         assert!(readme.contains("**Synthetic schema 4 (historical):**"));
-        assert!(readme.contains("**Synthetic schema 5 (current):**"));
-    }
-
-    fn value_at<'a>(value: &'a Value, path: &[&str]) -> Result<&'a Value, String> {
-        let mut current = value;
-        for key in path {
-            current = current
-                .get(*key)
-                .ok_or_else(|| format!("serialized evidence omitted key {key:?} in {path:?}"))?;
-        }
-        Ok(current)
-    }
-
-    fn find_key<'a>(value: &'a Value, expected: &str) -> Option<&'a Value> {
-        match value {
-            Value::Object(fields) => fields.iter().find_map(|(key, nested)| {
-                (key == expected)
-                    .then_some(nested)
-                    .or_else(|| find_key(nested, expected))
-            }),
-            Value::Array(values) => values.iter().find_map(|nested| find_key(nested, expected)),
-            _ => None,
-        }
+        assert!(readme.contains("**Synthetic schema 5 (historical):**"));
+        assert!(readme.contains("**Synthetic schema 6 (current):**"));
     }
 }

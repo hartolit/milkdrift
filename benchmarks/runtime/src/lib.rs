@@ -21,12 +21,11 @@ mod error;
 mod evidence;
 mod external;
 mod fixture;
-/// Benchmark-only translation of bounded Candle loader observations.
-#[doc(hidden)]
-pub mod load_observation;
+mod load_observation;
 mod memory;
 mod metadata;
 mod report;
+mod support;
 mod workspace;
 
 use std::ffi::OsString;
