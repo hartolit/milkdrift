@@ -96,6 +96,14 @@ kind = "development"
 rationale = "sampling tests measure the declared zero-allocation region"
 
 [[workspace.metadata.milkdrift.exceptions]]
+id = "external-task-graph-stats-alloc-dev"
+source = "task-graph"
+target = "stats_alloc"
+scope = "external"
+kind = "development"
+rationale = "task-graph tests measure allocation-free validation, provenance, and runtime transitions"
+
+[[workspace.metadata.milkdrift.exceptions]]
 id = "external-sampling-criterion-dev"
 source = "sampling"
 target = "criterion"

@@ -60,6 +60,13 @@ stable domain contracts. Portable domain code does not import runtimes,
 applications, platform implementations, vendor libraries, frontend toolkits, or
 filesystem/network/database implementations.
 
+`task-graph` owns generic directed-work mechanics only: stable task identity,
+topology/acyclicity, bounded attempt state, deterministic ready discovery,
+cancellation/blocked propagation, and identity-only artifact provenance. Its
+generic node operation metadata is caller-owned and uninterpreted. Model/backend
+policy, token/output limits, artifact kind/role, and corrective operations remain
+above the graph boundary.
+
 Cargo's actual normal/build graph among F0/F1 packages must remain acyclic. Ordinary legal inward or peer domain edges are not copied into a second exact-edge registry; the validator derives the graph from Cargo metadata and rejects upward facilities, unsupported external dependencies, and cycles. See [portability](portability.md) and [dependency policy](dependency-policy.md).
 
 ## E0: local inference ownership
@@ -91,8 +98,12 @@ execution boundary.
 
 A capability engine owns independently stateful reusable behavior with a lifecycle
 separate from the application façade. `corrective-workflow` is the current example:
-it owns workflow artifacts, attempts, retries, validation state, bounded output,
-release, and events without owning the application or local-inference lifecycle.
+it owns bounded data-defined corrective operations, typed model/validator ports,
+workflow artifacts, attempts, retries, validation state, bounded output, release,
+and events without owning the application or local-inference lifecycle. Its
+six-stage reference flow is template data interpreted by the same executor used
+for other legal corrective definitions; it is not the final general workflow
+runtime.
 
 New engines require evidence of a coherent independent state/lifecycle boundary.
 They do not depend on one another by default; a higher coordinator composes them.

@@ -9,7 +9,8 @@ Current roles:
 - E0 `inference-runtime` owns local model resources, request admission, token-step
   scheduling, cancellation boundaries, cleanup, and unload;
 - capability engines own independently stateful reusable behavior with a reason to
-  change separate from E1; `corrective-workflow` is the first such engine;
+  change separate from E1; `corrective-workflow` is the first such engine and is a
+  bounded data-defined reference capability rather than the general workflow runtime;
 - E1 `application-runtime` is the frontend-neutral application coordinator.
 
 Dependency direction is E1 → capability engines/E0 and capability engine →

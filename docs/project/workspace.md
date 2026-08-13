@@ -71,7 +71,12 @@ Every tracked non-fixture package manifest must appear in the root workspace, an
 
 Several larger responsibilities are split into private or crate-internal modules without creating new workspace layers:
 
-- `task-graph` separates graph structure/validation (including its owned `TaskId`), artifact-flow validation, runtime state transitions, and errors;
+- `task-graph` separates generic graph structure/validation (including its owned
+  `TaskId`), identity-only artifact provenance, runtime state transitions, and
+  errors; corrective/model policy remains in the runtime capability;
+- `corrective-workflow` separates borrowed definition validation, six-stage
+  reference-template construction, typed artifacts/diagnostics/output, and the
+  bounded data-driven executor;
 - `inference-runtime` separates admission, execution, cleanup, memory/accounting, inspection, unload, and shutdown around one `InferenceRuntime` registry;
 - E1 generation separates admission, the inference/text bridge, bounded output, and generation settings inside `application-runtime`;
 - the desktop presenter separates callback binding, control synchronization, model mapping, and bounded output/conversation presentation.

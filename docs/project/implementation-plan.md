@@ -216,19 +216,20 @@ Sampling configuration is immutable or prepared before generation begins. Runtim
 
 ## `task-graph`
 
-Owns the static representation of multi-model work:
+Owns generic allocation-free bounded directed-work mechanics:
 
 * task node identifiers;
-* dependencies;
-* input artifact references;
-* output contracts;
-* execution policy;
-* retry limits;
-* model selection constraints;
-* budget constraints;
-* task status.
+* dependency integrity and acyclicity;
+* caller-owned opaque operation metadata;
+* bounded attempt and task status transitions;
+* deterministic ready discovery;
+* cancellation and blocked descendants;
+* identity-only external/producer/consumer artifact provenance.
 
-It does not schedule threads, own models, run compilers, or call inference backends.
+It does not own model/backend selection, token or byte budgets, artifact media or
+roles, corrective operations, threads, models, compilers, or inference calls.
+Tasks may produce zero, one, or many artifacts; capability-specific constraints
+remain above this graph boundary.
 
 This keeps orchestration representation separate from orchestration execution.
 
@@ -402,7 +403,8 @@ It does not claim that CUDA, Metal, or another driver immediately returns all re
 
 ## `task-orchestrator`
 
-Consumes `task-graph` definitions and delegates inference work to `inference-runtime`.
+Consumes generic `task-graph` mechanics through a higher workflow/capability schema
+and delegates execution to typed targets.
 
 Responsibilities:
 

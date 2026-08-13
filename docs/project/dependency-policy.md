@@ -13,7 +13,9 @@ The root `[workspace.metadata.milkdrift]` namespace and exact integer `policy-ve
 The current workspace-local development exception is `inference-runtime -> candle-backend`; executable E0 compatibility and dedicated CUDA suites use it without creating a production edge. The current external policy is:
 
 - F0/F1, runtimes, tooling, and observers require exact review for production external dependencies;
-- current portable production review is `sampling -> libm`;
+- current portable production review is `sampling -> libm`; allocation-test
+  development reviews cover `domain-contracts`, `sampling`, and `task-graph`
+  through `stats_alloc`;
 - platform/adapters/apps may use ordinary implementation dependencies appropriate to their boundary, but sensitive CUDA and every development dependency still require exact review;
 - E0's external development `candle-core` edge supports download-free mixed-fixture conversion only;
 - tooling reviews `cargo_metadata`, `serde_json`, and `toml` for policy parsing; and

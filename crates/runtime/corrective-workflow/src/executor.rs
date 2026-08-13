@@ -1,46 +1,32 @@
-//! Canonical corrective workflow construction and synchronous execution.
+//! Validated data-driven corrective scheduling and checked state transitions.
 
 use std::collections::VecDeque;
 use std::num::NonZeroU16;
 
-use task_graph::{
-    ArtifactFlow, GraphValidationScratch, TaskArtifactInput, TaskArtifactOutput, TaskDependency,
-    TaskGraph, TaskNode, TaskOutputContract, TaskRuntimeState, TaskStateTable,
-    validate_artifact_flow, validate_graph,
-};
+use domain_contracts::ArtifactId;
+use task_graph::{TaskAttempt, TaskId, TaskRuntimeState, TaskStateTable, TaskStatus};
 
 use super::output::{normalized_report_size, raw_report_size};
 use super::{
-    Artifact, ArtifactContent, ArtifactId, ArtifactInputs, ArtifactKind, ArtifactReference,
-    ArtifactRole, ArtifactStore, BoundedDiagnosticsSink, BoundedTextSink,
-    CorrectiveWorkflowConfiguration, ModelPolicy, ModelTaskExecutor, ModelTaskRequest,
-    OutputSinkError, TaskAttempt, TaskId, TaskKind, ValidationReport, ValidationTaskExecutor,
-    ValidationTaskRequest, ValidationVerdict, WorkflowError, WorkflowEvent, WorkflowExecutorLimits,
-    WorkflowId, WorkflowIdentifierKind, WorkflowOutcome, WorkflowStage, WorkflowStatus,
+    Artifact, ArtifactContent, ArtifactInputs, ArtifactKind, ArtifactReference, ArtifactRole,
+    ArtifactStore, BoundedDiagnosticsSink, BoundedTextSink, CancellationRequest,
+    CorrectiveOperation, CorrectiveTask, CorrectiveWorkflowDefinition, ModelOperation,
+    ModelTaskContext, ModelTaskExecutor, OutputSinkError, ReferenceCorrectiveConfiguration,
+    ReferenceCorrectiveTemplate, RunAllocationResource, ValidationOperation, ValidationTaskContext,
+    ValidationTaskExecutor, ValidationVerdict, WorkflowError, WorkflowEvent,
+    WorkflowExecutorLimits, WorkflowId, WorkflowIdentifierKind, WorkflowInputBinding,
+    WorkflowOutcome, WorkflowStage, WorkflowStatus,
     diagnostics::normalize_validation_report_bounded,
 };
 
-const TASK_COUNT: usize = 6;
-const WORKFLOW_OUTPUT_COUNT: usize = TASK_COUNT;
-const MODEL_TASK_COUNT: usize = 3;
-const VALIDATION_TASK_COUNT: usize = 2;
-const EVENTS_PER_RETRYABLE_ATTEMPT: usize = 2;
-const NORMALIZATION_EVENT_COUNT: usize = 2;
+const EVENTS_PER_MAXIMUM_ATTEMPT: usize = 2;
 const COMPLETION_EVENT_COUNT: usize = 1;
-const NON_TOKENIZED_TOKEN_BOUND: u32 = 0;
 
-/// Normalization does not tokenize, so token bounds are inapplicable and it runs once.
-const NORMALIZATION_TASK_BUDGET: task_graph::TaskBudget = task_graph::TaskBudget::new(
-    NON_TOKENIZED_TOKEN_BOUND,
-    NON_TOKENIZED_TOKEN_BOUND,
-    NonZeroU16::MIN,
-);
-
-/// Synchronous, statically dispatched owner of corrective workflow orchestration.
+/// Synchronous owner of bounded corrective ports, artifacts, events, and IDs.
 ///
-/// The executor is independent from the hosted model lifecycle. It owns its
-/// ports, immutable artifact store, event queue, and checked identity sequences,
-/// and can execute multiple workflows sequentially without identity reuse.
+/// The executor validates borrowed workflow data before invoking either port.
+/// Ready tasks are selected in generic graph node order and dispatched only by
+/// their declared supported corrective operation.
 pub struct CorrectiveWorkflowExecutor<M, V> {
     model: M,
     validator: V,
@@ -68,30 +54,22 @@ impl<M, V> CorrectiveWorkflowExecutor<M, V> {
         }
     }
 
-    /// Returns the immutable artifact store for application-side inspection.
+    /// Returns immutable committed artifacts for application-side inspection.
     #[must_use]
     pub const fn artifacts(&self) -> &ArtifactStore {
         &self.artifacts
     }
 
-    /// Releases all generated artifacts owned by one completed workflow.
-    ///
-    /// Shared specification artifacts, artifacts owned by other workflows, and
-    /// queued successful-workflow events are preserved. A return value of zero
-    /// means the workflow had no currently stored generated artifacts.
+    /// Releases generated artifacts owned by one workflow.
     pub fn release_workflow(&mut self, workflow: WorkflowId) -> usize {
         self.artifacts.remove_owned_by(workflow)
     }
 
-    /// Allocates and commits one root specification artifact.
+    /// Allocates and commits one shared root specification.
     ///
     /// # Errors
     ///
-    /// Returns [`WorkflowError::SpecificationCapacityExceeded`] when the UTF-8
-    /// payload exceeds its configured limit,
-    /// [`WorkflowError::SpecificationSizeOverflow`] when its length cannot be
-    /// represented, [`WorkflowError::IdentifierExhausted`] if artifact identity
-    /// space is exhausted, or an artifact-store error if insertion fails.
+    /// Returns a typed capacity, allocation, identity, or artifact-store error.
     pub fn insert_specification(
         &mut self,
         specification: String,
@@ -103,7 +81,11 @@ impl<M, V> CorrectiveWorkflowExecutor<M, V> {
             return Err(WorkflowError::SpecificationCapacityExceeded { required, maximum });
         }
         let id = self.allocate_artifact_id()?;
-        let reference = artifact_reference(id, ArtifactKind::Text, ArtifactRole::Specification);
+        let reference = ArtifactReference {
+            id,
+            kind: ArtifactKind::Text,
+            role: ArtifactRole::Specification,
+        };
         self.artifacts.insert(Artifact::new(
             reference,
             ArtifactContent::Specification(specification),
@@ -111,56 +93,26 @@ impl<M, V> CorrectiveWorkflowExecutor<M, V> {
         Ok(id)
     }
 
-    /// Removes and returns the oldest pending identity-only workflow event.
+    /// Removes and returns the oldest pending identity-only event.
     pub fn poll_event(&mut self) -> Option<WorkflowEvent> {
         self.events.pop_front()
     }
 
     fn remaining_event_capacity(&self) -> usize {
-        let capacity = self.limits.maximum_pending_events().get();
-        if self.events.len() >= capacity {
-            0
-        } else {
-            capacity - self.events.len()
-        }
-    }
-
-    fn ensure_event_capacity(&self) -> Result<(), WorkflowError> {
-        let available = self.remaining_event_capacity();
-        if available == 0 {
-            Err(WorkflowError::EventCapacityExceeded {
-                required: 1,
-                available,
-            })
-        } else {
-            Ok(())
-        }
-    }
-
-    fn admit_execution(
-        &self,
-        configuration: &CorrectiveWorkflowConfiguration,
-    ) -> Result<(), WorkflowError> {
-        let artifact_capacity = self.artifacts.remaining_capacity();
-        if artifact_capacity < WORKFLOW_OUTPUT_COUNT {
-            return Err(WorkflowError::ArtifactCapacityExceeded {
-                required: WORKFLOW_OUTPUT_COUNT,
-                available: artifact_capacity,
-            });
-        }
-        let required_events = required_event_capacity(configuration)?;
-        let available_events = self.remaining_event_capacity();
-        if required_events > available_events {
-            return Err(WorkflowError::EventCapacityExceeded {
-                required: required_events,
-                available: available_events,
-            });
-        }
-        Ok(())
+        self.limits
+            .maximum_pending_events()
+            .get()
+            .saturating_sub(self.events.len())
     }
 
     fn enqueue_event(&mut self, event: WorkflowEvent) -> Result<(), WorkflowError> {
-        self.ensure_event_capacity()?;
+        let available = self.remaining_event_capacity();
+        if available == 0 {
+            return Err(WorkflowError::EventCapacityExceeded {
+                required: 1,
+                available,
+            });
+        }
         self.events.push_back(event);
         Ok(())
     }
@@ -184,52 +136,6 @@ impl<M, V> CorrectiveWorkflowExecutor<M, V> {
         let value = allocate_id(&mut self.next_artifact_id, WorkflowIdentifierKind::Artifact)?;
         Ok(ArtifactId::new(value))
     }
-
-    fn reserve_task_ids(&mut self) -> Result<TaskIdentities, WorkflowError> {
-        Ok(TaskIdentities {
-            draft: self.allocate_task_id()?,
-            initial_validation: self.allocate_task_id()?,
-            normalize: self.allocate_task_id()?,
-            review: self.allocate_task_id()?,
-            revise: self.allocate_task_id()?,
-            final_validation: self.allocate_task_id()?,
-        })
-    }
-
-    fn reserve_output_references(&mut self) -> Result<ArtifactReferences, WorkflowError> {
-        Ok(ArtifactReferences {
-            draft: artifact_reference(
-                self.allocate_artifact_id()?,
-                ArtifactKind::Text,
-                ArtifactRole::Draft,
-            ),
-            raw_validation: artifact_reference(
-                self.allocate_artifact_id()?,
-                ArtifactKind::Diagnostics,
-                ArtifactRole::RawDiagnostics,
-            ),
-            normalized_diagnostics: artifact_reference(
-                self.allocate_artifact_id()?,
-                ArtifactKind::Diagnostics,
-                ArtifactRole::NormalizedDiagnostics,
-            ),
-            review: artifact_reference(
-                self.allocate_artifact_id()?,
-                ArtifactKind::Text,
-                ArtifactRole::Review,
-            ),
-            revision: artifact_reference(
-                self.allocate_artifact_id()?,
-                ArtifactKind::Text,
-                ArtifactRole::Revision,
-            ),
-            final_validation: artifact_reference(
-                self.allocate_artifact_id()?,
-                ArtifactKind::Diagnostics,
-                ArtifactRole::FinalValidation,
-            ),
-        })
-    }
 }
 
 impl<M, V> CorrectiveWorkflowExecutor<M, V>
@@ -237,376 +143,477 @@ where
     M: ModelTaskExecutor,
     V: ValidationTaskExecutor,
 {
-    /// Builds, validates, and synchronously executes the canonical six-task graph.
-    ///
-    /// A rejected validator verdict is committed as successful task output and
-    /// does not stop execution. Port errors retry within the corresponding task
-    /// budget. Every successful output is size-checked and committed before the
-    /// graph attempt is marked successful.
+    /// Executes one validated borrowed corrective definition.
     ///
     /// # Errors
     ///
-    /// Returns a typed [`WorkflowError`] for invalid configuration or root input,
-    /// checked identity exhaustion, graph/state failures, output capacity or
-    /// allocation violations, invalid committed artifacts, or terminal port
-    /// exhaustion. Any failure after workflow allocation rolls back that
-    /// workflow's generated artifacts and queued events without reusing IDs.
+    /// Returns a typed preflight, graph, output, port, cancellation, or terminal
+    /// failure. Failures after workflow allocation roll back artifacts and events
+    /// without rewinding workflow, task, or artifact identity sequences.
     pub fn execute(
         &mut self,
-        specification_id: ArtifactId,
-        configuration: CorrectiveWorkflowConfiguration,
+        definition: &CorrectiveWorkflowDefinition<'_>,
+        inputs: &[WorkflowInputBinding],
     ) -> Result<WorkflowOutcome, WorkflowError> {
-        configuration.validate()?;
-        let specification = self.require_specification(specification_id)?;
-        self.admit_execution(&configuration)?;
+        self.execute_with_cancellation(definition, inputs, |_| false)
+    }
+
+    /// Executes the six-stage reference template through [`Self::execute`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same typed failures as reference construction and execution.
+    pub fn execute_reference(
+        &mut self,
+        specification: ArtifactId,
+        configuration: ReferenceCorrectiveConfiguration,
+    ) -> Result<WorkflowOutcome, WorkflowError> {
+        let template = ReferenceCorrectiveTemplate::new(configuration)?;
+        let inputs = [WorkflowInputBinding {
+            definition: template.specification_input(),
+            artifact: specification,
+        }];
+        self.execute(&template.definition(), &inputs)
+    }
+
+    /// Executes a definition while checking cancellation before every attempt.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkflowError::Cancelled`] after marking the selected generic
+    /// task cancelled and its pending descendants blocked. The workflow's
+    /// artifacts and events are then rolled back transactionally.
+    pub fn execute_with_cancellation<F>(
+        &mut self,
+        definition: &CorrectiveWorkflowDefinition<'_>,
+        inputs: &[WorkflowInputBinding],
+        mut is_cancelled: F,
+    ) -> Result<WorkflowOutcome, WorkflowError>
+    where
+        F: FnMut(CancellationRequest) -> bool,
+    {
+        self.preflight(definition, inputs)?;
         let workflow = self.allocate_workflow_id()?;
-        let result = self.execute_allocated(workflow, specification, configuration);
+        let result = self.execute_allocated(workflow, definition, inputs, &mut is_cancelled);
         if result.is_err() {
             self.rollback_failed_workflow(workflow);
         }
         result
     }
 
-    #[allow(clippy::too_many_lines)]
-    fn execute_allocated(
-        &mut self,
-        workflow: WorkflowId,
-        specification: ArtifactReference,
-        configuration: CorrectiveWorkflowConfiguration,
-    ) -> Result<WorkflowOutcome, WorkflowError> {
-        let tasks = self.reserve_task_ids()?;
-        let artifacts = self.reserve_output_references()?;
-        let plan = CanonicalPlan::new(specification, tasks, artifacts, configuration);
-        let graph = TaskGraph::new(&plan.nodes, &plan.dependencies);
-        let flow = ArtifactFlow::new(&plan.workflow_inputs, &plan.task_inputs, &plan.task_outputs);
-        let mut incoming_counts = [0_u32; TASK_COUNT];
-        let mut queue = [0_usize; TASK_COUNT];
-        validate_graph(
-            &graph,
-            GraphValidationScratch {
-                incoming_counts: &mut incoming_counts,
-                queue: &mut queue,
-            },
-        )?;
-        validate_artifact_flow(&graph, &flow)?;
-
-        let mut states = [TaskRuntimeState::default(); TASK_COUNT];
-        let mut state_table = TaskStateTable::new(&graph, &mut states)?;
-
-        self.run_model_stage(
-            workflow,
-            WorkflowStage::Draft,
-            tasks.draft,
-            TaskKind::Draft,
-            configuration.model_policy,
-            configuration.model_budget,
-            &[specification.id],
-            artifacts.draft,
-            configuration.artifact_limits.draft,
-            &graph,
-            &mut state_table,
-            ArtifactContent::Draft,
-        )?;
-        self.run_validation_stage(
-            workflow,
-            WorkflowStage::InitialValidation,
-            tasks.initial_validation,
-            configuration.initial_validation,
-            configuration.validation_budget,
-            &[artifacts.draft.id],
-            artifacts.raw_validation,
-            configuration.artifact_limits.raw_validation,
-            &graph,
-            &mut state_table,
-            ArtifactContent::RawValidation,
-        )?;
-        self.run_normalization_stage(
-            workflow,
-            tasks.normalize,
-            artifacts.raw_validation.id,
-            artifacts.normalized_diagnostics,
-            configuration.artifact_limits.normalized_diagnostics,
-            &graph,
-            &mut state_table,
-        )?;
-        self.run_model_stage(
-            workflow,
-            WorkflowStage::Review,
-            tasks.review,
-            TaskKind::Review,
-            configuration.model_policy,
-            configuration.model_budget,
-            &[
-                specification.id,
-                artifacts.draft.id,
-                artifacts.normalized_diagnostics.id,
-            ],
-            artifacts.review,
-            configuration.artifact_limits.review,
-            &graph,
-            &mut state_table,
-            ArtifactContent::Review,
-        )?;
-        self.run_model_stage(
-            workflow,
-            WorkflowStage::Revise,
-            tasks.revise,
-            TaskKind::Revise,
-            configuration.model_policy,
-            configuration.model_budget,
-            &[
-                specification.id,
-                artifacts.draft.id,
-                artifacts.normalized_diagnostics.id,
-                artifacts.review.id,
-            ],
-            artifacts.revision,
-            configuration.artifact_limits.revision,
-            &graph,
-            &mut state_table,
-            ArtifactContent::Revision,
-        )?;
-        let final_verdict = self.run_validation_stage(
-            workflow,
-            WorkflowStage::FinalValidation,
-            tasks.final_validation,
-            TaskKind::Validate,
-            configuration.validation_budget,
-            &[artifacts.revision.id],
-            artifacts.final_validation,
-            configuration.artifact_limits.final_validation,
-            &graph,
-            &mut state_table,
-            ArtifactContent::FinalValidation,
-        )?;
-
-        let terminal_status = match final_verdict {
-            ValidationVerdict::Passed => WorkflowStatus::Accepted,
-            ValidationVerdict::Rejected => WorkflowStatus::Rejected,
-        };
-        let outcome = match terminal_status {
-            WorkflowStatus::Accepted => WorkflowOutcome::Accepted {
-                workflow,
-                revision: artifacts.revision.id,
-                validation: artifacts.final_validation.id,
-            },
-            WorkflowStatus::Rejected => WorkflowOutcome::Rejected {
-                workflow,
-                revision: artifacts.revision.id,
-                validation: artifacts.final_validation.id,
-            },
-        };
-        self.enqueue_event(WorkflowEvent::Completed {
-            workflow,
-            status: terminal_status,
-            revision: artifacts.revision.id,
-            validation: artifacts.final_validation.id,
-        })?;
-        Ok(outcome)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn run_model_stage<F>(
-        &mut self,
-        workflow: WorkflowId,
-        stage: WorkflowStage,
-        task: TaskId,
-        kind: TaskKind,
-        model_policy: ModelPolicy,
-        budget: task_graph::TaskBudget,
-        input_artifacts: &[ArtifactId],
-        output: ArtifactReference,
-        maximum_bytes: u64,
-        graph: &TaskGraph<'_>,
-        state_table: &mut TaskStateTable<'_>,
-        make_content: F,
-    ) -> Result<(), WorkflowError>
-    where
-        F: Fn(String) -> ArtifactContent,
-    {
-        loop {
-            self.ensure_event_capacity()?;
-            let attempt = state_table.start(graph, task)?;
-            self.enqueue_event(WorkflowEvent::StageStarted {
-                workflow,
-                stage,
-                attempt,
-            })?;
-            let request = ModelTaskRequest {
-                workflow,
-                attempt,
-                kind,
-                model_policy,
-                budget,
-                input_artifacts,
-            };
-            let artifacts = ArtifactInputs::new(&self.artifacts, input_artifacts);
-            let mut output_sink = BoundedTextSink::new(maximum_bytes);
-            let port_result = self
-                .model
-                .execute_model_task(request, &artifacts, &mut output_sink);
-            if let Some(failure) = output_sink.failure() {
-                return Err(output_sink_error(workflow, stage, attempt, output, failure));
-            }
-            match port_result {
-                Ok(()) => {
-                    let value = output_sink.finish().map_err(|failure| {
-                        output_sink_error(workflow, stage, attempt, output, failure)
-                    })?;
-                    self.commit_output(
-                        workflow,
-                        stage,
-                        attempt,
-                        output,
-                        make_content(value),
-                        maximum_bytes,
-                    )?;
-                    state_table.succeed_attempt(graph, attempt)?;
-                    return Ok(());
-                }
-                Err(error) => {
-                    self.handle_operational_failure(
-                        workflow,
-                        stage,
-                        attempt,
-                        budget,
-                        error.to_string(),
-                        graph,
-                        state_table,
-                    )?;
-                }
-            }
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn run_validation_stage<F>(
-        &mut self,
-        workflow: WorkflowId,
-        stage: WorkflowStage,
-        task: TaskId,
-        kind: TaskKind,
-        budget: task_graph::TaskBudget,
-        input_artifacts: &[ArtifactId],
-        output: ArtifactReference,
-        maximum_bytes: u64,
-        graph: &TaskGraph<'_>,
-        state_table: &mut TaskStateTable<'_>,
-        make_content: F,
-    ) -> Result<ValidationVerdict, WorkflowError>
-    where
-        F: Fn(ValidationReport) -> ArtifactContent,
-    {
-        loop {
-            self.ensure_event_capacity()?;
-            let attempt = state_table.start(graph, task)?;
-            self.enqueue_event(WorkflowEvent::StageStarted {
-                workflow,
-                stage,
-                attempt,
-            })?;
-            let request = ValidationTaskRequest {
-                workflow,
-                attempt,
-                kind,
-                budget,
-                input_artifacts,
-            };
-            let artifacts = ArtifactInputs::new(&self.artifacts, input_artifacts);
-            let mut output_sink = BoundedDiagnosticsSink::new(maximum_bytes)
-                .map_err(|failure| output_sink_error(workflow, stage, attempt, output, failure))?;
-            let port_result =
-                self.validator
-                    .execute_validation_task(request, &artifacts, &mut output_sink);
-            if let Some(failure) = output_sink.failure() {
-                return Err(output_sink_error(workflow, stage, attempt, output, failure));
-            }
-            match port_result {
-                Ok(verdict) => {
-                    let report = output_sink.finish(verdict).map_err(|failure| {
-                        output_sink_error(workflow, stage, attempt, output, failure)
-                    })?;
-                    self.commit_output(
-                        workflow,
-                        stage,
-                        attempt,
-                        output,
-                        make_content(report),
-                        maximum_bytes,
-                    )?;
-                    state_table.succeed_attempt(graph, attempt)?;
-                    return Ok(verdict);
-                }
-                Err(error) => {
-                    self.handle_operational_failure(
-                        workflow,
-                        stage,
-                        attempt,
-                        budget,
-                        error.to_string(),
-                        graph,
-                        state_table,
-                    )?;
-                }
-            }
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn run_normalization_stage(
-        &mut self,
-        workflow: WorkflowId,
-        task: TaskId,
-        input: ArtifactId,
-        output: ArtifactReference,
-        maximum_bytes: u64,
-        graph: &TaskGraph<'_>,
-        state_table: &mut TaskStateTable<'_>,
+    fn preflight(
+        &self,
+        definition: &CorrectiveWorkflowDefinition<'_>,
+        inputs: &[WorkflowInputBinding],
     ) -> Result<(), WorkflowError> {
-        self.ensure_event_capacity()?;
-        let attempt = state_table.start(graph, task)?;
-        self.enqueue_event(WorkflowEvent::StageStarted {
-            workflow,
-            stage: WorkflowStage::NormalizeDiagnostics,
-            attempt,
-        })?;
-        let report = self.require_raw_validation(input)?;
-        let normalized =
-            normalize_validation_report_bounded(report, maximum_bytes).map_err(|failure| {
-                output_sink_error(
-                    workflow,
-                    WorkflowStage::NormalizeDiagnostics,
-                    attempt,
-                    output,
-                    failure,
-                )
-            })?;
-        self.commit_output(
-            workflow,
-            WorkflowStage::NormalizeDiagnostics,
-            attempt,
-            output,
-            ArtifactContent::NormalizedDiagnostics(normalized),
-            maximum_bytes,
-        )?;
-        state_table.succeed_attempt(graph, attempt)?;
+        definition
+            .validate_shape(self.limits.shape())
+            .map_err(WorkflowError::InvalidDefinition)?;
+        let node_count = definition.nodes.len();
+        let mut incoming =
+            reserved_default_vec(node_count, RunAllocationResource::GraphState, 0_u32)?;
+        let mut queue =
+            reserved_default_vec(node_count, RunAllocationResource::GraphState, 0_usize)?;
+        definition
+            .validate(self.limits.shape(), &mut incoming, &mut queue)
+            .map_err(WorkflowError::InvalidDefinition)?;
+        self.validate_input_bindings(definition, inputs)?;
+
+        let output_count = definition.task_outputs.len();
+        let artifact_capacity = self.artifacts.remaining_capacity();
+        if output_count > artifact_capacity {
+            return Err(WorkflowError::ArtifactCapacityExceeded {
+                required: output_count,
+                available: artifact_capacity,
+            });
+        }
+        let required_events = required_event_capacity(definition)?;
+        let available_events = self.remaining_event_capacity();
+        if required_events > available_events {
+            return Err(WorkflowError::EventCapacityExceeded {
+                required: required_events,
+                available: available_events,
+            });
+        }
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn handle_operational_failure(
+    fn validate_input_bindings(
+        &self,
+        definition: &CorrectiveWorkflowDefinition<'_>,
+        inputs: &[WorkflowInputBinding],
+    ) -> Result<(), WorkflowError> {
+        for binding in inputs {
+            if !definition.external_inputs.contains(&binding.definition) {
+                return Err(WorkflowError::UnknownWorkflowInput(binding.definition));
+            }
+            if inputs
+                .iter()
+                .filter(|other| other.definition == binding.definition)
+                .count()
+                != 1
+            {
+                return Err(WorkflowError::DuplicateWorkflowInputBinding(
+                    binding.definition,
+                ));
+            }
+            let expected = definition
+                .artifact(binding.definition)
+                .ok_or(WorkflowError::UnknownWorkflowInput(binding.definition))?;
+            let Some(actual) = self.artifacts.get(binding.artifact) else {
+                return Err(WorkflowError::InvalidWorkflowInput {
+                    definition: binding.definition,
+                    artifact: binding.artifact,
+                });
+            };
+            let reference = actual.reference();
+            if reference.kind != expected.kind || reference.role != expected.role {
+                return Err(WorkflowError::InvalidWorkflowInput {
+                    definition: binding.definition,
+                    artifact: binding.artifact,
+                });
+            }
+        }
+        for external in definition.external_inputs {
+            if !inputs.iter().any(|binding| binding.definition == *external) {
+                return Err(WorkflowError::MissingWorkflowInput(*external));
+            }
+        }
+        Ok(())
+    }
+
+    fn execute_allocated<F>(
         &mut self,
         workflow: WorkflowId,
-        stage: WorkflowStage,
-        attempt: TaskAttempt,
-        budget: task_graph::TaskBudget,
-        diagnostic: String,
-        graph: &TaskGraph<'_>,
-        state_table: &mut TaskStateTable<'_>,
+        definition: &CorrectiveWorkflowDefinition<'_>,
+        inputs: &[WorkflowInputBinding],
+        is_cancelled: &mut F,
+    ) -> Result<WorkflowOutcome, WorkflowError>
+    where
+        F: FnMut(CancellationRequest) -> bool,
+    {
+        let mut run = self.prepare_run(definition, inputs)?;
+        let graph = definition.graph();
+
+        loop {
+            let ready_count = {
+                let table = TaskStateTable::new(&graph, &mut run.states)?;
+                table.ready_tasks(&graph, &mut run.ready)?
+            };
+            if ready_count == 0 {
+                break;
+            }
+            let definition_task =
+                run.ready
+                    .first()
+                    .copied()
+                    .ok_or(WorkflowError::RunAllocationFailed(
+                        RunAllocationResource::GraphState,
+                    ))?;
+            let index = graph
+                .node_index(definition_task)
+                .ok_or(task_graph::TaskGraphError::UnknownTask(definition_task))?;
+            let task = run
+                .tasks
+                .get(index)
+                .ok_or(WorkflowError::RunAllocationFailed(
+                    RunAllocationResource::Tasks,
+                ))?;
+            let cancellation = CancellationRequest {
+                workflow,
+                task: task.runtime_id,
+                stage: task.definition.stage,
+            };
+            if is_cancelled(cancellation) {
+                let mut table = TaskStateTable::new(&graph, &mut run.states)?;
+                table.cancel(&graph, definition_task)?;
+                table.propagate_blocked(&graph)?;
+                return Err(WorkflowError::Cancelled {
+                    workflow,
+                    stage: task.definition.stage,
+                    task: task.runtime_id,
+                });
+            }
+            self.execute_ready_task(workflow, definition, &mut run, index)?;
+        }
+
+        if !run
+            .states
+            .iter()
+            .all(|state| state.status == TaskStatus::Succeeded)
+        {
+            return Err(WorkflowError::InvalidTerminalArtifact(
+                definition.terminal_validation,
+            ));
+        }
+        self.terminalize(workflow, definition, &run)
+    }
+
+    fn prepare_run(
+        &mut self,
+        definition: &CorrectiveWorkflowDefinition<'_>,
+        inputs: &[WorkflowInputBinding],
+    ) -> Result<PreparedRun, WorkflowError> {
+        let mut outputs = reserved_vec(
+            definition.task_outputs.len(),
+            RunAllocationResource::Artifacts,
+        )?;
+        for output in definition.task_outputs {
+            let metadata = definition
+                .artifact(output.artifact)
+                .ok_or(WorkflowError::InvalidTerminalArtifact(output.artifact))?;
+            outputs.push(RuntimeArtifact {
+                definition_id: output.artifact,
+                reference: ArtifactReference {
+                    id: self.allocate_artifact_id()?,
+                    kind: metadata.kind,
+                    role: metadata.role,
+                },
+            });
+        }
+
+        let mut tasks = reserved_vec(definition.nodes.len(), RunAllocationResource::Tasks)?;
+        for node in definition.nodes {
+            let output_definition = definition
+                .task_outputs
+                .iter()
+                .find(|output| output.producer == node.id)
+                .map(|output| output.artifact)
+                .ok_or(WorkflowError::InvalidTerminalArtifact(
+                    definition.terminal_result,
+                ))?;
+            let output = runtime_artifact(&outputs, output_definition)
+                .ok_or(WorkflowError::InvalidTerminalArtifact(output_definition))?;
+            let input_count = definition
+                .task_inputs
+                .iter()
+                .filter(|input| input.consumer == node.id)
+                .count();
+            let mut task_inputs = reserved_vec(input_count, RunAllocationResource::TaskInputs)?;
+            for input in definition
+                .task_inputs
+                .iter()
+                .filter(|input| input.consumer == node.id)
+            {
+                task_inputs.push(resolve_runtime_artifact(inputs, &outputs, input.artifact)?);
+            }
+            tasks.push(RuntimeTask {
+                definition: node.operation,
+                definition_id: node.id,
+                runtime_id: self.allocate_task_id()?,
+                output: output.reference,
+                maximum_bytes: definition
+                    .artifact(output_definition)
+                    .map(|artifact| artifact.maximum_bytes)
+                    .ok_or(WorkflowError::InvalidTerminalArtifact(output_definition))?,
+                inputs: task_inputs,
+            });
+        }
+        let states = reserved_default_vec(
+            definition.nodes.len(),
+            RunAllocationResource::GraphState,
+            TaskRuntimeState::default(),
+        )?;
+        let ready = reserved_default_vec(
+            definition.nodes.len(),
+            RunAllocationResource::GraphState,
+            TaskId::new(0),
+        )?;
+        Ok(PreparedRun {
+            outputs,
+            tasks,
+            states,
+            ready,
+        })
+    }
+
+    fn execute_ready_task(
+        &mut self,
+        workflow: WorkflowId,
+        definition: &CorrectiveWorkflowDefinition<'_>,
+        run: &mut PreparedRun,
+        index: usize,
     ) -> Result<(), WorkflowError> {
-        state_table.fail_attempt(graph, attempt)?;
-        if attempt.number.get() < budget.maximum_attempts.get() {
-            let next_number = attempt
+        let graph = definition.graph();
+        let task = run
+            .tasks
+            .get(index)
+            .ok_or(WorkflowError::RunAllocationFailed(
+                RunAllocationResource::Tasks,
+            ))?;
+        let local_attempt = {
+            let mut table = TaskStateTable::new(&graph, &mut run.states)?;
+            table.start(&graph, task.definition_id)?
+        };
+        let attempt = TaskAttempt::new(task.runtime_id, local_attempt.number);
+        self.enqueue_event(WorkflowEvent::StageStarted {
+            workflow,
+            stage: task.definition.stage,
+            attempt,
+        })?;
+
+        let attempt_spec = AttemptSpec {
+            workflow,
+            definition_task: task.definition_id,
+            attempt,
+            definition: task.definition,
+            inputs: &task.inputs,
+            output: task.output,
+            maximum_bytes: task.maximum_bytes,
+        };
+        match self.dispatch_attempt(attempt_spec)? {
+            AttemptResult::Succeeded(content) => {
+                self.commit_output(CommitSpec {
+                    workflow,
+                    stage: task.definition.stage,
+                    attempt,
+                    reference: task.output,
+                    maximum_bytes: task.maximum_bytes,
+                    content,
+                })?;
+                let mut table = TaskStateTable::new(&graph, &mut run.states)?;
+                table.succeed_attempt(&graph, local_attempt)?;
+                Ok(())
+            }
+            AttemptResult::OperationalFailure(diagnostic) => self.handle_operational_failure(
+                OperationalFailure {
+                    workflow,
+                    stage: task.definition.stage,
+                    local_attempt,
+                    runtime_attempt: attempt,
+                    diagnostic,
+                },
+                &graph,
+                &mut run.states,
+            ),
+        }
+    }
+
+    fn dispatch_attempt(&mut self, spec: AttemptSpec<'_>) -> Result<AttemptResult, WorkflowError> {
+        match spec.definition.operation {
+            CorrectiveOperation::Model {
+                operation,
+                policy,
+                token_budget,
+            } => self.execute_model_attempt(spec, operation, policy, token_budget),
+            CorrectiveOperation::Validate {
+                operation,
+                token_budget,
+            } => self.execute_validation_attempt(spec, operation, token_budget),
+            CorrectiveOperation::NormalizeDiagnostics => self.execute_normalization(spec),
+        }
+    }
+
+    fn execute_model_attempt(
+        &mut self,
+        spec: AttemptSpec<'_>,
+        operation: ModelOperation,
+        policy: super::ModelPolicy,
+        token_budget: super::TokenBudget,
+    ) -> Result<AttemptResult, WorkflowError> {
+        let artifacts = ArtifactInputs::new(&self.artifacts, spec.inputs);
+        let context = ModelTaskContext {
+            workflow: spec.workflow,
+            attempt: spec.attempt,
+            definition_task: spec.definition_task,
+            operation,
+            model_policy: policy,
+            token_budget,
+            artifacts,
+        };
+        let mut output = BoundedTextSink::new(spec.maximum_bytes);
+        let port_result = self.model.execute_model_task(context, &mut output);
+        if let Some(failure) = output.failure() {
+            return Err(output_sink_error(spec.error_context(), failure));
+        }
+        match port_result {
+            Ok(()) => {
+                let text = output
+                    .finish()
+                    .map_err(|failure| output_sink_error(spec.error_context(), failure))?;
+                Ok(AttemptResult::Succeeded(match operation {
+                    ModelOperation::Draft => ArtifactContent::Draft(text),
+                    ModelOperation::Review => ArtifactContent::Review(text),
+                    ModelOperation::Revise => ArtifactContent::Revision(text),
+                }))
+            }
+            Err(error) => Ok(AttemptResult::OperationalFailure(error.to_string())),
+        }
+    }
+
+    fn execute_validation_attempt(
+        &mut self,
+        spec: AttemptSpec<'_>,
+        operation: ValidationOperation,
+        token_budget: super::TokenBudget,
+    ) -> Result<AttemptResult, WorkflowError> {
+        let artifacts = ArtifactInputs::new(&self.artifacts, spec.inputs);
+        let context = ValidationTaskContext {
+            workflow: spec.workflow,
+            attempt: spec.attempt,
+            definition_task: spec.definition_task,
+            operation,
+            token_budget,
+            artifacts,
+        };
+        let mut output = BoundedDiagnosticsSink::new(spec.maximum_bytes)
+            .map_err(|failure| output_sink_error(spec.error_context(), failure))?;
+        let port_result = self.validator.execute_validation_task(context, &mut output);
+        if let Some(failure) = output.failure() {
+            return Err(output_sink_error(spec.error_context(), failure));
+        }
+        match port_result {
+            Ok(verdict) => {
+                let report = output
+                    .finish(verdict)
+                    .map_err(|failure| output_sink_error(spec.error_context(), failure))?;
+                let artifact_content = if spec.output.role == ArtifactRole::FinalValidation {
+                    ArtifactContent::FinalValidation(report)
+                } else {
+                    ArtifactContent::RawValidation(report)
+                };
+                Ok(AttemptResult::Succeeded(artifact_content))
+            }
+            Err(error) => Ok(AttemptResult::OperationalFailure(error.to_string())),
+        }
+    }
+
+    fn execute_normalization(&self, spec: AttemptSpec<'_>) -> Result<AttemptResult, WorkflowError> {
+        let input =
+            spec.inputs
+                .first()
+                .copied()
+                .ok_or(WorkflowError::InvalidCommittedArtifact {
+                    artifact: spec.output.id,
+                    expected_role: ArtifactRole::RawDiagnostics,
+                })?;
+        let report = self.require_raw_validation(input)?;
+        let normalized = normalize_validation_report_bounded(report, spec.maximum_bytes)
+            .map_err(|failure| output_sink_error(spec.error_context(), failure))?;
+        Ok(AttemptResult::Succeeded(
+            ArtifactContent::NormalizedDiagnostics(normalized),
+        ))
+    }
+
+    fn handle_operational_failure(
+        &mut self,
+        failure: OperationalFailure,
+        graph: &task_graph::TaskGraph<'_, CorrectiveTask>,
+        states: &mut [TaskRuntimeState],
+    ) -> Result<(), WorkflowError> {
+        let task_status = {
+            let mut table = TaskStateTable::new(graph, states)?;
+            table.fail_attempt(graph, failure.local_attempt)?;
+            table
+                .state(graph, failure.local_attempt.task)
+                .map(|state| state.status)
+                .ok_or(task_graph::TaskGraphError::UnknownTask(
+                    failure.local_attempt.task,
+                ))?
+        };
+        if task_status == TaskStatus::Failed {
+            let next_number = failure
+                .runtime_attempt
                 .number
                 .get()
                 .checked_add(1)
@@ -615,82 +622,87 @@ where
                     WorkflowIdentifierKind::Task,
                 ))?;
             self.enqueue_event(WorkflowEvent::RetryScheduled {
-                workflow,
-                stage,
-                failed_attempt: attempt,
-                next_attempt: TaskAttempt::new(attempt.task, next_number),
+                workflow: failure.workflow,
+                stage: failure.stage,
+                failed_attempt: failure.runtime_attempt,
+                next_attempt: TaskAttempt::new(failure.runtime_attempt.task, next_number),
             })
         } else {
+            let mut table = TaskStateTable::new(graph, states)?;
+            table.propagate_blocked(graph)?;
             Err(WorkflowError::TaskExhausted {
-                workflow,
-                stage,
-                task: attempt.task,
-                attempts: attempt.number.get(),
-                diagnostic,
+                workflow: failure.workflow,
+                stage: failure.stage,
+                task: failure.runtime_attempt.task,
+                attempts: failure.runtime_attempt.number.get(),
+                diagnostic: failure.diagnostic,
             })
         }
     }
 
-    fn commit_output(
-        &mut self,
-        workflow: WorkflowId,
-        stage: WorkflowStage,
-        attempt: TaskAttempt,
-        reference: ArtifactReference,
-        content: ArtifactContent,
-        maximum_bytes: u64,
-    ) -> Result<(), WorkflowError> {
+    fn commit_output(&mut self, spec: CommitSpec) -> Result<(), WorkflowError> {
         let required =
-            artifact_content_size(&content).ok_or(WorkflowError::ArtifactSizeOverflow {
-                workflow,
-                stage,
-                task: attempt.task,
-                artifact: reference.id,
+            artifact_content_size(&spec.content).ok_or(WorkflowError::ArtifactSizeOverflow {
+                workflow: spec.workflow,
+                stage: spec.stage,
+                task: spec.attempt.task,
+                artifact: spec.reference.id,
             })?;
-        if required > maximum_bytes {
+        if required > spec.maximum_bytes {
             return Err(WorkflowError::OutputCapacityExceeded {
-                workflow,
-                stage,
-                task: attempt.task,
-                artifact: reference.id,
+                workflow: spec.workflow,
+                stage: spec.stage,
+                task: spec.attempt.task,
+                artifact: spec.reference.id,
                 required,
-                maximum: maximum_bytes,
+                maximum: spec.maximum_bytes,
             });
         }
-        self.ensure_event_capacity()?;
-        self.artifacts
-            .insert(Artifact::new_owned(reference, workflow, content)?)?;
+        self.artifacts.insert(Artifact::new_owned(
+            spec.reference,
+            spec.workflow,
+            spec.content,
+        )?)?;
         self.enqueue_event(WorkflowEvent::ArtifactCommitted {
-            workflow,
-            stage,
-            attempt,
-            artifact: reference,
+            workflow: spec.workflow,
+            stage: spec.stage,
+            attempt: spec.attempt,
+            artifact: spec.reference,
         })
     }
 
-    fn require_specification(
-        &self,
-        specification_id: ArtifactId,
-    ) -> Result<ArtifactReference, WorkflowError> {
-        let artifact = self
-            .artifacts
-            .get(specification_id)
-            .ok_or(WorkflowError::UnknownSpecification(specification_id))?;
-        let reference = artifact.reference();
-        if reference.kind != ArtifactKind::Text
-            || reference.role != ArtifactRole::Specification
-            || artifact.owner().is_some()
-            || !matches!(artifact.content(), ArtifactContent::Specification(_))
-        {
-            return Err(WorkflowError::InvalidSpecification(reference));
-        }
-        Ok(reference)
+    fn terminalize(
+        &mut self,
+        workflow: WorkflowId,
+        definition: &CorrectiveWorkflowDefinition<'_>,
+        run: &PreparedRun,
+    ) -> Result<WorkflowOutcome, WorkflowError> {
+        let result = run.runtime_artifact(definition.terminal_result).ok_or(
+            WorkflowError::InvalidTerminalArtifact(definition.terminal_result),
+        )?;
+        let validation = run.runtime_artifact(definition.terminal_validation).ok_or(
+            WorkflowError::InvalidTerminalArtifact(definition.terminal_validation),
+        )?;
+        let status = match self.artifacts.get(validation).map(Artifact::content) {
+            Some(ArtifactContent::FinalValidation(report)) => match report.verdict {
+                ValidationVerdict::Passed => WorkflowStatus::Accepted,
+                ValidationVerdict::Rejected => WorkflowStatus::Rejected,
+            },
+            _ => return Err(WorkflowError::InvalidTerminalArtifact(validation)),
+        };
+        self.enqueue_event(WorkflowEvent::Completed {
+            workflow,
+            status,
+            result,
+            validation,
+        })?;
+        Ok(WorkflowOutcome::new(workflow, status, result, validation))
     }
 
     fn require_raw_validation(
         &self,
         artifact_id: ArtifactId,
-    ) -> Result<&ValidationReport, WorkflowError> {
+    ) -> Result<&super::ValidationReport, WorkflowError> {
         let artifact =
             self.artifacts
                 .get(artifact_id)
@@ -708,200 +720,122 @@ where
     }
 }
 
-#[derive(Clone, Copy)]
-struct TaskIdentities {
-    draft: TaskId,
-    initial_validation: TaskId,
-    normalize: TaskId,
-    review: TaskId,
-    revise: TaskId,
-    final_validation: TaskId,
+struct PreparedRun {
+    outputs: Vec<RuntimeArtifact>,
+    tasks: Vec<RuntimeTask>,
+    states: Vec<TaskRuntimeState>,
+    ready: Vec<TaskId>,
+}
+
+impl PreparedRun {
+    fn runtime_artifact(&self, definition_id: ArtifactId) -> Option<ArtifactId> {
+        runtime_artifact(&self.outputs, definition_id).map(|value| value.reference.id)
+    }
+}
+
+struct RuntimeArtifact {
+    definition_id: ArtifactId,
+    reference: ArtifactReference,
+}
+
+struct RuntimeTask {
+    definition: CorrectiveTask,
+    definition_id: TaskId,
+    runtime_id: TaskId,
+    output: ArtifactReference,
+    maximum_bytes: u64,
+    inputs: Vec<ArtifactId>,
 }
 
 #[derive(Clone, Copy)]
-struct ArtifactReferences {
-    draft: ArtifactReference,
-    raw_validation: ArtifactReference,
-    normalized_diagnostics: ArtifactReference,
-    review: ArtifactReference,
-    revision: ArtifactReference,
-    final_validation: ArtifactReference,
+struct AttemptSpec<'a> {
+    workflow: WorkflowId,
+    definition_task: TaskId,
+    attempt: TaskAttempt,
+    definition: CorrectiveTask,
+    inputs: &'a [ArtifactId],
+    output: ArtifactReference,
+    maximum_bytes: u64,
 }
 
-struct CanonicalPlan {
-    nodes: [TaskNode; TASK_COUNT],
-    dependencies: [TaskDependency; 8],
-    workflow_inputs: [ArtifactReference; 1],
-    task_inputs: [TaskArtifactInput; 11],
-    task_outputs: [TaskArtifactOutput; TASK_COUNT],
-}
-
-impl CanonicalPlan {
-    const fn new(
-        specification: ArtifactReference,
-        tasks: TaskIdentities,
-        artifacts: ArtifactReferences,
-        configuration: CorrectiveWorkflowConfiguration,
-    ) -> Self {
-        let nodes = [
-            task_node(
-                tasks.draft,
-                TaskKind::Draft,
-                configuration.model_policy,
-                configuration.model_budget,
-                ArtifactKind::Text,
-                configuration.artifact_limits.draft,
-            ),
-            task_node(
-                tasks.initial_validation,
-                configuration.initial_validation,
-                task_graph::ModelPolicy::Deterministic,
-                configuration.validation_budget,
-                ArtifactKind::Diagnostics,
-                configuration.artifact_limits.raw_validation,
-            ),
-            task_node(
-                tasks.normalize,
-                TaskKind::NormalizeDiagnostics,
-                task_graph::ModelPolicy::Deterministic,
-                NORMALIZATION_TASK_BUDGET,
-                ArtifactKind::Diagnostics,
-                configuration.artifact_limits.normalized_diagnostics,
-            ),
-            task_node(
-                tasks.review,
-                TaskKind::Review,
-                configuration.model_policy,
-                configuration.model_budget,
-                ArtifactKind::Text,
-                configuration.artifact_limits.review,
-            ),
-            task_node(
-                tasks.revise,
-                TaskKind::Revise,
-                configuration.model_policy,
-                configuration.model_budget,
-                ArtifactKind::Text,
-                configuration.artifact_limits.revision,
-            ),
-            task_node(
-                tasks.final_validation,
-                TaskKind::Validate,
-                task_graph::ModelPolicy::Deterministic,
-                configuration.validation_budget,
-                ArtifactKind::Diagnostics,
-                configuration.artifact_limits.final_validation,
-            ),
-        ];
-        let dependencies = [
-            dependency(tasks.draft, tasks.initial_validation),
-            dependency(tasks.initial_validation, tasks.normalize),
-            dependency(tasks.draft, tasks.review),
-            dependency(tasks.normalize, tasks.review),
-            dependency(tasks.draft, tasks.revise),
-            dependency(tasks.normalize, tasks.revise),
-            dependency(tasks.review, tasks.revise),
-            dependency(tasks.revise, tasks.final_validation),
-        ];
-        let task_inputs = [
-            task_input(tasks.draft, specification),
-            task_input(tasks.initial_validation, artifacts.draft),
-            task_input(tasks.normalize, artifacts.raw_validation),
-            task_input(tasks.review, specification),
-            task_input(tasks.review, artifacts.draft),
-            task_input(tasks.review, artifacts.normalized_diagnostics),
-            task_input(tasks.revise, specification),
-            task_input(tasks.revise, artifacts.draft),
-            task_input(tasks.revise, artifacts.normalized_diagnostics),
-            task_input(tasks.revise, artifacts.review),
-            task_input(tasks.final_validation, artifacts.revision),
-        ];
-        let task_outputs = [
-            task_output(tasks.draft, artifacts.draft),
-            task_output(tasks.initial_validation, artifacts.raw_validation),
-            task_output(tasks.normalize, artifacts.normalized_diagnostics),
-            task_output(tasks.review, artifacts.review),
-            task_output(tasks.revise, artifacts.revision),
-            task_output(tasks.final_validation, artifacts.final_validation),
-        ];
-        Self {
-            nodes,
-            dependencies,
-            workflow_inputs: [specification],
-            task_inputs,
-            task_outputs,
+impl AttemptSpec<'_> {
+    const fn error_context(self) -> OutputErrorContext {
+        OutputErrorContext {
+            workflow: self.workflow,
+            stage: self.definition.stage,
+            task: self.attempt.task,
+            artifact: self.output.id,
         }
     }
 }
 
-const fn task_node(
-    id: TaskId,
-    kind: TaskKind,
-    model_policy: task_graph::ModelPolicy,
-    budget: task_graph::TaskBudget,
-    output_kind: ArtifactKind,
+enum AttemptResult {
+    Succeeded(ArtifactContent),
+    OperationalFailure(String),
+}
+
+struct OperationalFailure {
+    workflow: WorkflowId,
+    stage: WorkflowStage,
+    local_attempt: TaskAttempt,
+    runtime_attempt: TaskAttempt,
+    diagnostic: String,
+}
+
+struct CommitSpec {
+    workflow: WorkflowId,
+    stage: WorkflowStage,
+    attempt: TaskAttempt,
+    reference: ArtifactReference,
     maximum_bytes: u64,
-) -> TaskNode {
-    TaskNode {
-        id,
-        kind,
-        model_policy,
-        budget,
-        output: TaskOutputContract {
-            kind: output_kind,
-            maximum_bytes,
-        },
+    content: ArtifactContent,
+}
+
+#[derive(Clone, Copy)]
+struct OutputErrorContext {
+    workflow: WorkflowId,
+    stage: WorkflowStage,
+    task: TaskId,
+    artifact: ArtifactId,
+}
+
+fn runtime_artifact(
+    outputs: &[RuntimeArtifact],
+    definition_id: ArtifactId,
+) -> Option<&RuntimeArtifact> {
+    outputs
+        .iter()
+        .find(|artifact| artifact.definition_id == definition_id)
+}
+
+fn resolve_runtime_artifact(
+    inputs: &[WorkflowInputBinding],
+    outputs: &[RuntimeArtifact],
+    definition_id: ArtifactId,
+) -> Result<ArtifactId, WorkflowError> {
+    if let Some(binding) = inputs
+        .iter()
+        .find(|binding| binding.definition == definition_id)
+    {
+        return Ok(binding.artifact);
     }
-}
-
-const fn dependency(prerequisite: TaskId, dependent: TaskId) -> TaskDependency {
-    TaskDependency {
-        prerequisite,
-        dependent,
-    }
-}
-
-const fn task_input(consumer: TaskId, artifact: ArtifactReference) -> TaskArtifactInput {
-    TaskArtifactInput { consumer, artifact }
-}
-
-const fn task_output(producer: TaskId, artifact: ArtifactReference) -> TaskArtifactOutput {
-    TaskArtifactOutput { producer, artifact }
-}
-
-const fn artifact_reference(
-    id: ArtifactId,
-    kind: ArtifactKind,
-    role: ArtifactRole,
-) -> ArtifactReference {
-    ArtifactReference { id, kind, role }
+    runtime_artifact(outputs, definition_id)
+        .map(|artifact| artifact.reference.id)
+        .ok_or(WorkflowError::InvalidTerminalArtifact(definition_id))
 }
 
 fn required_event_capacity(
-    configuration: &CorrectiveWorkflowConfiguration,
+    definition: &CorrectiveWorkflowDefinition<'_>,
 ) -> Result<usize, WorkflowError> {
-    let model_events = retryable_task_event_capacity(
-        configuration.model_budget.maximum_attempts,
-        MODEL_TASK_COUNT,
-    )?;
-    let validation_events = retryable_task_event_capacity(
-        configuration.validation_budget.maximum_attempts,
-        VALIDATION_TASK_COUNT,
-    )?;
-    model_events
-        .checked_add(validation_events)
-        .and_then(|total| total.checked_add(NORMALIZATION_EVENT_COUNT))
+    definition
+        .nodes
+        .iter()
+        .try_fold(0_usize, |total, node| {
+            usize::from(node.maximum_attempts.get())
+                .checked_mul(EVENTS_PER_MAXIMUM_ATTEMPT)
+                .and_then(|node_events| total.checked_add(node_events))
+        })
         .and_then(|total| total.checked_add(COMPLETION_EVENT_COUNT))
-        .ok_or(WorkflowError::EventCapacityOverflow)
-}
-
-fn retryable_task_event_capacity(
-    maximum_attempts: NonZeroU16,
-    task_count: usize,
-) -> Result<usize, WorkflowError> {
-    usize::from(maximum_attempts.get())
-        .checked_mul(EVENTS_PER_RETRYABLE_ATTEMPT)
-        .and_then(|per_task| per_task.checked_mul(task_count))
         .ok_or(WorkflowError::EventCapacityOverflow)
 }
 
@@ -913,35 +847,50 @@ fn allocate_id(next: &mut u64, kind: WorkflowIdentifierKind) -> Result<u64, Work
     Ok(current)
 }
 
-const fn output_sink_error(
-    workflow: WorkflowId,
-    stage: WorkflowStage,
-    attempt: TaskAttempt,
-    artifact: ArtifactReference,
-    failure: OutputSinkError,
-) -> WorkflowError {
+fn reserved_vec<T>(
+    capacity: usize,
+    resource: RunAllocationResource,
+) -> Result<Vec<T>, WorkflowError> {
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(capacity)
+        .map_err(|_| WorkflowError::RunAllocationFailed(resource))?;
+    Ok(values)
+}
+
+fn reserved_default_vec<T: Clone>(
+    capacity: usize,
+    resource: RunAllocationResource,
+    value: T,
+) -> Result<Vec<T>, WorkflowError> {
+    let mut values = reserved_vec(capacity, resource)?;
+    values.resize(capacity, value);
+    Ok(values)
+}
+
+const fn output_sink_error(context: OutputErrorContext, failure: OutputSinkError) -> WorkflowError {
     match failure {
         OutputSinkError::CapacityExceeded { required, maximum } => {
             WorkflowError::OutputCapacityExceeded {
-                workflow,
-                stage,
-                task: attempt.task,
-                artifact: artifact.id,
+                workflow: context.workflow,
+                stage: context.stage,
+                task: context.task,
+                artifact: context.artifact,
                 required,
                 maximum,
             }
         }
         OutputSinkError::SizeOverflow => WorkflowError::ArtifactSizeOverflow {
-            workflow,
-            stage,
-            task: attempt.task,
-            artifact: artifact.id,
+            workflow: context.workflow,
+            stage: context.stage,
+            task: context.task,
+            artifact: context.artifact,
         },
         OutputSinkError::AllocationFailed { required } => WorkflowError::OutputAllocationFailed {
-            workflow,
-            stage,
-            task: attempt.task,
-            artifact: artifact.id,
+            workflow: context.workflow,
+            stage: context.stage,
+            task: context.task,
+            artifact: context.artifact,
             required,
         },
     }

@@ -6,6 +6,7 @@
 Phase 12 and the artifact-loading, runtime-ownership, and application-boundary amendments are implemented.
 The post-closure foundation repair rejects ambiguous mixed precision, separates failed-load typestate, and corrects sequence reservation to simultaneous lifetimes.
 The sequence-accounting closure passes its required focused local matrix; canonical, portable, remote, and CUDA hardware acceptance remain separate pending evidence.
+The orchestration-boundary repair makes task-graph generic and allocation-free and moves corrective semantics into validated reference-template data; its focused host, portable, architecture, and hygiene matrix passes locally.
 No later product phase is active, and workflow/workspace direction is not yet a ratified program.
 ```
 
@@ -41,6 +42,38 @@ General workflow definitions/runs, durable context workspaces, plugin execution,
 | Completion/chat | Direct completion for every loaded compatible model; built-in chat only for exact TinyLlama profile/revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`. |
 | Persistence | redb preferences and model catalogue; `LAS1` writes v2/reads v1; `LAM1` writes v3 and reads exact v1/v2 without automatic rewrite. Conversation history remains memory-only. |
 | Frontend | Thin Slint reference host. Its state path is now `milkdrift/state.redb`; a sole legacy `llm-app/state.redb` is moved once when no current database exists. |
+| Incubating orchestration foundation | `task-graph` owns generic topology, attempt state, cancellation/blocking, deterministic readiness, and identity-only provenance. `corrective-workflow` owns a bounded data-defined corrective schema/executor and the current six-stage reference template. Neither is the general workflow/workspace product runtime. |
+
+## Orchestration foundation truth
+
+The portable `task-graph` no longer contains corrective task kinds, model/backend
+selection, token budgets, output byte policy, artifact media/roles, or an
+exactly-one-output axiom. `TaskNode<Operation>` carries caller-owned uninterpreted
+metadata; topology, ready selection, attempt identity/retry/exhaustion,
+cancellation/blocked propagation, and identity-only provenance use caller-owned
+scratch/state and allocate nothing.
+
+`corrective-workflow` now validates borrowed bounded definitions containing its
+supported operations, typed artifact meanings, model/validator policy and token
+budgets, attempt limits, artifact bindings, output limits, and terminal artifacts.
+The executor preflights definition shape, graph/provenance, external bindings,
+artifact capacity, and worst-case event capacity before port calls. It selects
+generic ready nodes deterministically, executes through operation-specific typed
+contexts, commits artifacts/events before generic success, rolls back failed or
+cancelled runs without ID reuse, and requires explicit release after success.
+
+The six-stage corrective behavior is `ReferenceCorrectiveTemplate` data passed
+through the ordinary executor path. A structurally different three-node test
+definition uses that same scheduler and proves definition-ordered selection when
+multiple nodes are ready.
+
+The exact focused source-tree matrix passed in one isolated target: format; all
+targets for `domain-contracts`, `task-graph`, and `corrective-workflow`; all
+`task-graph` tests including the harness-free allocation contract; all
+`corrective-workflow` tests; strict Clippy; warning-denied rustdoc; both named
+WASM/embedded portability commands; architecture; hygiene; and diff whitespace.
+This is local source-tree evidence, not complete canonical workspace, remote,
+CUDA, external-model, or product-workflow evidence.
 
 ## Scalar, artifact, and memory truth
 
@@ -117,7 +150,9 @@ Isolated validation targets and temporary tool installation directories are remo
 
 - Quantized/GGUF loading, non-Llama architectures, arbitrary required mixtures, required F16+BF16, required unsupported dtypes, Metal, cuDNN, flash attention, NCCL, multi-GPU, generic `gpu`, automatic CPU fallback, and GPU-side sampling are unsupported.
 - CUDA outside an actually observed exact row is unclaimed. The current tree still needs post-push self-hosted execution of all dedicated suites.
-- The focused post-closure native matrix passes. Complete canonical, portable, hosted Quality, and current CUDA results remain pending.
+- The focused post-closure native matrix passes. The orchestration package's named
+  portable matrices also pass; complete canonical workspace, hosted Quality, and
+  current CUDA results remain pending.
 - No schema-6 external product run or immutable reviewed external mixed-checkpoint evidence exists.
 - Multi-model E1 residency, generalized chat, conversation persistence, general workflows/workspaces/plugins/providers/peers, and browser/remote transport are not implemented.
 - Synthetic fixtures prove deterministic compatibility/lifecycle behavior, not language quality, representative scale, production throughput, or external-checkpoint compatibility.

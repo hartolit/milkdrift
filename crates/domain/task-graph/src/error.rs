@@ -1,12 +1,12 @@
 use domain_contracts::{ArtifactId, CapacityExhausted};
 
 use crate::{
-    artifact::{ArtifactKind, ArtifactReference, TaskArtifactInput},
+    artifact::TaskArtifactInput,
     graph::{TaskDependency, TaskId},
     state::{TaskAttempt, TaskStatus},
 };
 
-/// Stable graph or workflow-state failure.
+/// Stable graph, provenance, or runtime-state failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TaskGraphError {
@@ -14,7 +14,7 @@ pub enum TaskGraphError {
     DuplicateTask(TaskId),
     /// Two identical dependency edges were supplied.
     DuplicateDependency(TaskDependency),
-    /// A dependency references an unknown task.
+    /// A dependency or artifact binding references an unknown task.
     UnknownTask(TaskId),
     /// A task depends directly on itself.
     SelfDependency(TaskId),
@@ -38,37 +38,17 @@ pub enum TaskGraphError {
     },
     /// Task exhausted its configured attempt budget.
     AttemptLimitReached(TaskId),
-    /// Two workflow inputs share one artifact identity.
-    DuplicateWorkflowInput(ArtifactId),
-    /// A workflow input is also declared as a task output.
-    WorkflowInputProducedByTask(ArtifactId),
+    /// Two external inputs share one artifact identity.
+    DuplicateExternalInput(ArtifactId),
+    /// An external input is also declared as task-produced.
+    ExternalInputProducedByTask(ArtifactId),
     /// More than one task output uses one artifact identity.
     DuplicateArtifactProducer(ArtifactId),
-    /// A graph task has no declared artifact output.
-    MissingTaskOutput(TaskId),
-    /// A graph task has more than one declared artifact output.
-    DuplicateTaskOutput(TaskId),
-    /// A task output does not satisfy the node's declared output kind.
-    TaskOutputKindMismatch {
-        /// Task whose output kind is inconsistent.
-        task: TaskId,
-        /// Kind required by the task node.
-        expected: ArtifactKind,
-        /// Kind declared by the artifact output.
-        actual: ArtifactKind,
-    },
-    /// A task input references no workflow input or task output.
+    /// A task input references no external input or task output.
     UnknownArtifact(ArtifactId),
-    /// A task input's kind or role differs from its source declaration.
-    ArtifactReferenceMismatch {
-        /// Complete reference declared by the source.
-        expected: ArtifactReference,
-        /// Complete reference requested by the consumer.
-        actual: ArtifactReference,
-    },
     /// The same task input binding was declared more than once.
     DuplicateTaskArtifactInput(TaskArtifactInput),
-    /// A task consumes an artifact that it produces itself.
+    /// A task consumes an artifact it produces itself.
     SelfArtifactConsumption {
         /// Task consuming its own output.
         task: TaskId,

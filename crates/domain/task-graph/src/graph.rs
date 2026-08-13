@@ -1,10 +1,8 @@
-use core::num::NonZeroU16;
+use domain_contracts::{CapacityExhausted, CapacityResource};
 
-use domain_contracts::{BackendId, CapacityExhausted, CapacityResource, ModelId};
+use crate::error::TaskGraphError;
 
-use crate::{artifact::ArtifactKind, error::TaskGraphError};
-
-/// Identity of one orchestration task.
+/// Identity of one node in a directed task graph.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TaskId(u64);
@@ -23,90 +21,18 @@ impl TaskId {
     }
 }
 
-/// Operation represented by a workflow node.
+/// Immutable node definition carrying caller-owned operation metadata.
+///
+/// Graph algorithms never inspect `operation`; it can be an opaque operation
+/// code or a small domain-specific definition owned by the caller.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum TaskKind {
-    /// Produce an initial response or artifact.
-    Draft,
-    /// Review an artifact for defects.
-    Review,
-    /// Run the Rust compiler or another deterministic type checker.
-    CompileCheck,
-    /// Run a deterministic validator.
-    Validate,
-    /// Normalize raw diagnostics into a stable representation.
-    NormalizeDiagnostics,
-    /// Revise an artifact using prior findings.
-    Revise,
-    /// Aggregate multiple artifacts into one result.
-    Aggregate,
-    /// Application-defined operation code.
-    Other(u16),
-}
-
-/// Output requirements declared before execution.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TaskOutputContract {
-    /// Required artifact category.
-    pub kind: ArtifactKind,
-    /// Hard upper bound for persisted output bytes. Zero means externally bounded.
-    pub maximum_bytes: u64,
-}
-
-/// Model-selection policy interpreted by an orchestration engine.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ModelPolicy {
-    /// Use one exact logical model.
-    Exact(ModelId),
-    /// Prefer any compatible model implemented by one backend.
-    PreferredBackend(BackendId),
-    /// Use any compatible admitted model.
-    AnyCompatible,
-    /// Run no model because the task is deterministic.
-    Deterministic,
-}
-
-/// Hard task budgets known before execution.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TaskBudget {
-    /// Maximum input tokens admitted to the task.
-    pub maximum_input_tokens: u32,
-    /// Maximum output tokens admitted to the task.
-    pub maximum_output_tokens: u32,
-    /// Maximum execution attempts including the first attempt.
-    pub maximum_attempts: NonZeroU16,
-}
-
-impl TaskBudget {
-    /// Creates a task budget from validated bounds.
-    #[must_use]
-    pub const fn new(
-        maximum_input_tokens: u32,
-        maximum_output_tokens: u32,
-        maximum_attempts: NonZeroU16,
-    ) -> Self {
-        Self {
-            maximum_input_tokens,
-            maximum_output_tokens,
-            maximum_attempts,
-        }
-    }
-}
-
-/// Immutable node definition.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TaskNode {
-    /// Stable task identity.
+pub struct TaskNode<Operation> {
+    /// Stable task identity within this graph.
     pub id: TaskId,
-    /// Operation performed by the node.
-    pub kind: TaskKind,
-    /// Model-selection policy.
-    pub model_policy: ModelPolicy,
-    /// Hard execution budgets.
-    pub budget: TaskBudget,
-    /// Declared output contract.
-    pub output: TaskOutputContract,
+    /// Caller-owned operation metadata.
+    pub operation: Operation,
+    /// Maximum attempts, including the first attempt.
+    pub maximum_attempts: core::num::NonZeroU16,
 }
 
 /// Directed dependency requiring one task to succeed before another can start.
@@ -120,17 +46,17 @@ pub struct TaskDependency {
 
 /// Borrowed immutable task graph.
 #[derive(Clone, Copy, Debug)]
-pub struct TaskGraph<'a> {
-    /// Node definitions.
-    pub nodes: &'a [TaskNode],
+pub struct TaskGraph<'a, Operation> {
+    /// Node definitions in deterministic scheduling order.
+    pub nodes: &'a [TaskNode<Operation>],
     /// Directed dependency edges.
     pub dependencies: &'a [TaskDependency],
 }
 
-impl<'a> TaskGraph<'a> {
+impl<'a, Operation> TaskGraph<'a, Operation> {
     /// Creates a borrowed graph view.
     #[must_use]
-    pub const fn new(nodes: &'a [TaskNode], dependencies: &'a [TaskDependency]) -> Self {
+    pub const fn new(nodes: &'a [TaskNode<Operation>], dependencies: &'a [TaskDependency]) -> Self {
         Self {
             nodes,
             dependencies,
@@ -139,7 +65,7 @@ impl<'a> TaskGraph<'a> {
 
     /// Returns the node with the requested identity.
     #[must_use]
-    pub fn node(&self, task_id: TaskId) -> Option<&TaskNode> {
+    pub fn node(&self, task_id: TaskId) -> Option<&TaskNode<Operation>> {
         self.nodes.iter().find(|node| node.id == task_id)
     }
 
@@ -160,15 +86,17 @@ pub struct GraphValidationScratch<'a> {
 
 /// Validates node identity, dependency integrity, and acyclicity.
 ///
+/// The traversal uses only caller-owned scratch and never interprets node
+/// operation metadata.
+///
 /// # Errors
 ///
-/// Returns [`TaskGraphError::CapacityExhausted`] when the validation scratch is
-/// too small or an edge count overflows; [`TaskGraphError::DuplicateTask`] or
-/// [`TaskGraphError::DuplicateDependency`] for duplicate definitions;
-/// [`TaskGraphError::UnknownTask`] or [`TaskGraphError::SelfDependency`] for an
-/// invalid edge; and [`TaskGraphError::CycleDetected`] when the graph is cyclic.
-pub fn validate_graph(
-    graph: &TaskGraph<'_>,
+/// Returns [`TaskGraphError::CapacityExhausted`] when validation scratch is too
+/// small or an edge count overflows; duplicate, unknown, or self-referential
+/// definitions receive their corresponding typed errors; cyclic graphs return
+/// [`TaskGraphError::CycleDetected`].
+pub fn validate_graph<Operation>(
+    graph: &TaskGraph<'_, Operation>,
     scratch: GraphValidationScratch<'_>,
 ) -> Result<(), TaskGraphError> {
     validate_scratch(graph.nodes.len(), &scratch)?;
@@ -198,14 +126,13 @@ pub fn validate_graph(
             ));
         };
         let current = *count;
-        let next = current.checked_add(1).ok_or_else(|| {
+        *count = current.checked_add(1).ok_or_else(|| {
             TaskGraphError::CapacityExhausted(CapacityExhausted::new(
                 CapacityResource::TaskEdges,
                 u64::from(u32::MAX) + 1,
                 u64::from(current),
             ))
         })?;
-        *count = next;
     }
 
     let mut queue_length = 0_usize;
@@ -275,7 +202,7 @@ fn validate_scratch(
     Ok(())
 }
 
-fn validate_nodes(nodes: &[TaskNode]) -> Result<(), TaskGraphError> {
+fn validate_nodes<Operation>(nodes: &[TaskNode<Operation>]) -> Result<(), TaskGraphError> {
     for (left_index, left) in nodes.iter().enumerate() {
         let Some(tail) = nodes.get(left_index.saturating_add(1)..) else {
             continue;
@@ -287,7 +214,9 @@ fn validate_nodes(nodes: &[TaskNode]) -> Result<(), TaskGraphError> {
     Ok(())
 }
 
-fn validate_dependencies(graph: &TaskGraph<'_>) -> Result<(), TaskGraphError> {
+fn validate_dependencies<Operation>(
+    graph: &TaskGraph<'_, Operation>,
+) -> Result<(), TaskGraphError> {
     for (left_index, dependency) in graph.dependencies.iter().enumerate() {
         if graph.node(dependency.prerequisite).is_none() {
             return Err(TaskGraphError::UnknownTask(dependency.prerequisite));

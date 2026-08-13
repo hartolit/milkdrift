@@ -145,7 +145,8 @@ The current foundation provides:
 - a first-party Candle adapter with mandatory/default CPU execution and explicitly selected CUDA ordinal 0, with Phase 12 support limited to the exact locally executed RTX 5070 Ti row;
 - Hugging Face commit resolution with identity-bearing Safetensors shards, tokenizer integration, and redb-backed application state;
 - a frontend-neutral application/reference composition and thin Slint host;
-- incubating task-graph and corrective-workflow foundations.
+- a generic allocation-free task graph plus an incubating data-defined corrective
+  reference capability engine.
 
 The Candle loader now performs bounded complete Safetensors inspection while materializing only required Llama tensors. Configuration declaration, complete observed categories, required scalar set/primary, and execution scalar are separate facts: unused F16/BF16/integer/boolean/other extras remain truthful observed evidence but cannot change precision, consume tensor/device headroom, or cause rejection merely because they are unused. Homogeneous required F32, F16, and BF16 layouts may use direct observation when the declaration is absent. Mixed required F16/F32 and BF16/F32 layouts require the matching recognized producer declaration before lossy conversion. Genuine required F16/BF16 mixtures, required unsupported dtypes, quantization, malformed structure, and contradictory, unsupported, or ambiguous declarations fail before device initialization.
 

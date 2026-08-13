@@ -65,8 +65,8 @@ impl<'a> TaskStateTable<'a> {
     ///
     /// Returns [`TaskGraphError::StateLengthMismatch`] when `states` does not
     /// contain exactly one entry per graph node.
-    pub const fn new(
-        graph: &TaskGraph<'_>,
+    pub const fn new<Operation>(
+        graph: &TaskGraph<'_, Operation>,
         states: &'a mut [TaskRuntimeState],
     ) -> Result<Self, TaskGraphError> {
         if states.len() != graph.nodes.len() {
@@ -80,7 +80,11 @@ impl<'a> TaskStateTable<'a> {
 
     /// Returns immutable state for one task.
     #[must_use]
-    pub fn state(&self, graph: &TaskGraph<'_>, task_id: TaskId) -> Option<TaskRuntimeState> {
+    pub fn state<Operation>(
+        &self,
+        graph: &TaskGraph<'_, Operation>,
+        task_id: TaskId,
+    ) -> Option<TaskRuntimeState> {
         let index = graph.node_index(task_id)?;
         self.states.get(index).copied()
     }
@@ -94,9 +98,9 @@ impl<'a> TaskStateTable<'a> {
     /// unavailable, [`TaskGraphError::InvalidTransition`] when the task is not
     /// pending or failed or its prerequisites have not succeeded, and
     /// [`TaskGraphError::AttemptLimitReached`] when its attempt budget is spent.
-    pub fn start(
+    pub fn start<Operation>(
         &mut self,
-        graph: &TaskGraph<'_>,
+        graph: &TaskGraph<'_, Operation>,
         task_id: TaskId,
     ) -> Result<TaskAttempt, TaskGraphError> {
         let index = graph
@@ -123,7 +127,7 @@ impl<'a> TaskStateTable<'a> {
                 state: current.status,
             });
         }
-        if current.attempts >= node.budget.maximum_attempts.get() {
+        if current.attempts >= node.maximum_attempts.get() {
             return Err(TaskGraphError::AttemptLimitReached(task_id));
         }
         let Some(state) = self.states.get_mut(index) else {
@@ -144,9 +148,9 @@ impl<'a> TaskStateTable<'a> {
     /// Returns [`TaskGraphError::UnknownTask`] when the token's task or state is
     /// absent, or [`TaskGraphError::InvalidAttempt`] when the token is stale or
     /// the identified task is not running.
-    pub fn succeed_attempt(
+    pub fn succeed_attempt<Operation>(
         &mut self,
-        graph: &TaskGraph<'_>,
+        graph: &TaskGraph<'_, Operation>,
         attempt: TaskAttempt,
     ) -> Result<(), TaskGraphError> {
         let index = self.validate_attempt(graph, attempt)?;
@@ -166,9 +170,9 @@ impl<'a> TaskStateTable<'a> {
     /// Returns [`TaskGraphError::UnknownTask`] when the token's task or state is
     /// absent, or [`TaskGraphError::InvalidAttempt`] when the token is stale or
     /// the identified task is not running.
-    pub fn fail_attempt(
+    pub fn fail_attempt<Operation>(
         &mut self,
-        graph: &TaskGraph<'_>,
+        graph: &TaskGraph<'_, Operation>,
         attempt: TaskAttempt,
     ) -> Result<(), TaskGraphError> {
         let index = self.validate_attempt(graph, attempt)?;
@@ -179,7 +183,7 @@ impl<'a> TaskStateTable<'a> {
         let Some(state) = self.states.get_mut(index) else {
             return Err(TaskGraphError::UnknownTask(attempt.task));
         };
-        state.status = if state.attempts >= node.budget.maximum_attempts.get() {
+        state.status = if state.attempts >= node.maximum_attempts.get() {
             TaskStatus::Exhausted
         } else {
             TaskStatus::Failed
@@ -194,7 +198,11 @@ impl<'a> TaskStateTable<'a> {
     /// Returns [`TaskGraphError::UnknownTask`] when the task or its state is
     /// absent, or [`TaskGraphError::InvalidTransition`] when it is not pending,
     /// failed, or running.
-    pub fn cancel(&mut self, graph: &TaskGraph<'_>, task_id: TaskId) -> Result<(), TaskGraphError> {
+    pub fn cancel<Operation>(
+        &mut self,
+        graph: &TaskGraph<'_, Operation>,
+        task_id: TaskId,
+    ) -> Result<(), TaskGraphError> {
         let index = graph
             .node_index(task_id)
             .ok_or(TaskGraphError::UnknownTask(task_id))?;
@@ -220,7 +228,10 @@ impl<'a> TaskStateTable<'a> {
     /// Returns [`TaskGraphError::UnknownTask`] when a dependency references an
     /// absent task, or [`TaskGraphError::StateLengthMismatch`] when runtime state
     /// is unavailable for a graph node.
-    pub fn propagate_blocked(&mut self, graph: &TaskGraph<'_>) -> Result<usize, TaskGraphError> {
+    pub fn propagate_blocked<Operation>(
+        &mut self,
+        graph: &TaskGraph<'_, Operation>,
+    ) -> Result<usize, TaskGraphError> {
         let mut total_changed = 0_usize;
         loop {
             let mut changed = 0_usize;
@@ -257,9 +268,9 @@ impl<'a> TaskStateTable<'a> {
     /// absent task, [`TaskGraphError::StateLengthMismatch`] when runtime state is
     /// unavailable for a graph node, or [`TaskGraphError::CapacityExhausted`]
     /// when `output` cannot hold every ready task.
-    pub fn ready_tasks(
+    pub fn ready_tasks<Operation>(
         &self,
-        graph: &TaskGraph<'_>,
+        graph: &TaskGraph<'_, Operation>,
         output: &mut [TaskId],
     ) -> Result<usize, TaskGraphError> {
         let mut written = 0_usize;
@@ -272,7 +283,7 @@ impl<'a> TaskStateTable<'a> {
             };
             if (state.status == TaskStatus::Pending || state.status == TaskStatus::Failed)
                 && prerequisites_succeeded(graph, self.states, node.id)?
-                && state.attempts < node.budget.maximum_attempts.get()
+                && state.attempts < node.maximum_attempts.get()
             {
                 let available = output.len();
                 let Some(slot) = output.get_mut(written) else {
@@ -289,9 +300,9 @@ impl<'a> TaskStateTable<'a> {
         Ok(written)
     }
 
-    fn validate_attempt(
+    fn validate_attempt<Operation>(
         &self,
-        graph: &TaskGraph<'_>,
+        graph: &TaskGraph<'_, Operation>,
         attempt: TaskAttempt,
     ) -> Result<usize, TaskGraphError> {
         let index = graph
@@ -315,8 +326,8 @@ impl<'a> TaskStateTable<'a> {
     }
 }
 
-fn prerequisites_succeeded(
-    graph: &TaskGraph<'_>,
+fn prerequisites_succeeded<Operation>(
+    graph: &TaskGraph<'_, Operation>,
     states: &[TaskRuntimeState],
     task_id: TaskId,
 ) -> Result<bool, TaskGraphError> {
@@ -341,8 +352,8 @@ fn prerequisites_succeeded(
     Ok(true)
 }
 
-fn has_unsuccessful_prerequisite(
-    graph: &TaskGraph<'_>,
+fn has_unsuccessful_prerequisite<Operation>(
+    graph: &TaskGraph<'_, Operation>,
     states: &[TaskRuntimeState],
     task_id: TaskId,
 ) -> Result<bool, TaskGraphError> {

@@ -10,7 +10,7 @@ The portability contract is established by [ADR-0007](../agent/decisions/0007-po
 | `tokenization` | Yes | Yes | Yes | APIs use caller-owned token/byte storage; no crate-wide measured allocation claim |
 | `context-planner` | Yes | Yes | Yes | Fixed caller-provided entries and output storage; no crate-wide measured allocation claim |
 | `sampling` | Yes | Yes | Yes | Allocation test covers the prepared sampling pipeline and reusable workspace |
-| `task-graph` | Yes | Yes | Yes | Fixed-capacity graph/state APIs; no crate-wide measured allocation claim |
+| `task-graph` | Yes | Yes | Yes | Allocation test covers topology validation, artifact provenance, ready discovery, and attempt transitions after caller preparation |
 
 “Yes” for a cross target means the library compiles for that exact target with the committed lockfile. It does not claim browser integration, JavaScript bindings, firmware integration, target execution tests, or support for every WebAssembly/embedded target.
 

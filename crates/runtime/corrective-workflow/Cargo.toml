@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Typed corrective draft, validation, review, and revision orchestration"
+description = "Bounded data-defined corrective reference capability engine"
 publish = false
 
 [package.metadata.milkdrift]

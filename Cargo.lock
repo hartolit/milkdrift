@@ -6788,6 +6788,7 @@ name = "task-graph"
 version = "0.1.0"
 dependencies = [
  "domain-contracts",
+ "stats_alloc",
 ]
 
 [[package]]

@@ -24,3 +24,5 @@ graph must remain acyclic. Unreviewed domain peers fail closed.
 
 Domain crates are always `no_std`. Host-process facilities, vendor SDKs, filesystem
 I/O, network access, databases, and OS synchronization belong outside this layer.
+`task-graph` additionally measures its generic topology, provenance, and runtime
+state paths and requires zero allocations after caller-owned preparation.

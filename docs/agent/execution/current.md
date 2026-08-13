@@ -6,6 +6,8 @@
 Phase 12 and the first four pristine-state remediation areas remain implemented.
 The post-closure Candle sequence-accounting repair passes its required focused Rust validation matrix in an isolated target directory.
 The E1 cleanup-coordination repair is implemented and its required focused local validation passes in an isolated target directory.
+The orchestration-boundary repair is implemented: task-graph is generic and allocation-free, while the corrective flow is validated template data interpreted by one bounded executor.
+Its focused host, WASM, embedded, architecture, hygiene, and documentation gates pass locally in an isolated target directory.
 No workflow/workspace product program has been ratified or activated.
 Canonical, portable, remote, external-model, and current CUDA hardware evidence remain separate and pending.
 ```
@@ -31,9 +33,19 @@ closure:
 - canonical project documentation describes those stronger contracts without
   promoting them to accepted evidence before validation.
 
-This package does not implement workflow/workspace features. The next product
-program remains inactive until the repaired foundation receives an exact-tree
-greenlight.
+The orchestration repair removes corrective/model policy from `task-graph`, keeps
+only generic topology, attempt state, readiness, cancellation/blocking, and
+identity-only artifact provenance there, and measures those prepared paths for
+zero allocation. `corrective-workflow` now owns borrowed bounded definition data,
+typed corrective artifact/operation/policy vocabulary, a six-stage reference
+template, deterministic ready-node scheduling, transactional artifact/event
+commit, rollback, cancellation, and explicit release. A second structurally
+different definition executes through the same scheduler.
+
+This package repairs incubating workflow foundations but does not activate the
+general workflow/workspace product program. Persistent workspaces, arbitrary
+plugins/nodes, providers/peers, recursive durable runs, effect authority, and a
+visual editor remain unimplemented.
 
 The E1 repair replaces the overlapping incompatible-unload and retained-inspection
 trackers with one private checked coordinator, keeps lower and E1 retry counts
@@ -64,6 +76,12 @@ Current component and support truth is owned by
   E0 fault-injection boundary target also passes. These are source-tree results,
   not canonical, portable, CUDA, remote, external-model, or performance evidence;
   the package completion record names the resulting commit and tree.
+- The orchestration package separately passes its exact requested focused matrix:
+  format; all-target checks for `domain-contracts`, `task-graph`, and
+  `corrective-workflow`; graph and corrective tests; strict Clippy;
+  warning-denied rustdoc; `wasm32-unknown-unknown` and
+  `thumbv7em-none-eabihf`; architecture; hygiene; and diff whitespace. The graph
+  suite includes its harness-free zero-allocation contract.
 - Phase 12 self-hosted CUDA
   [run 31281013243](https://github.com/hartolit/milkdrift/actions/runs/31281013243)
   succeeded on closure commit `181a069ce81525e9c144fe8de051ced8e3c0b9d7` only.
