@@ -11,8 +11,8 @@ Its focused host, WASM, embedded, architecture, hygiene, and documentation gates
 The CI resource-topology repair is implemented: the local composite and hosted native components share one metadata-owned plan, and hosted profiles now use separate standard-runner targets with centralized cleanup.
 No workflow/workspace product program has been ratified or activated.
 Exact-tree local CPU, component, composite, portable, policy, and link acceptance passes on commit b1f7e90b1ba67f1cf968d773052b5062ef8cbbb9, tree fcb3ee6fa00243734abd74b64218aa0db2e340c1.
-Scheduler repair commit 59fa35cf1d6f72c9f18ffa25d04e25e7c482dd7e, tree 78528de42f0eebcca88c61750196324dfb4d6b13, passes exact-tree hosted Quality.
-Its CUDA run still stopped before compilation because the persistent dependency cache was incomplete; a narrow workflow repair now synchronizes locked packages before returning every compilation and execution step to offline mode.
+Cache-lifecycle repair commit db8015c685ce166ed7f2376a02b40f08a48d7339, tree b165bf214506b6832e75ddbfad1b890b58fe693f, passes exact-tree hosted Quality.
+Its CUDA run proves locked cache synchronization, policy, and the complete compile graph, then fails strict Clippy because hardware-only E0 support was exposed under the broader cuda feature; the local repair scopes those helpers to cuda-hardware-tests.
 ```
 
 ## Current maintenance scope
@@ -101,15 +101,16 @@ Current component and support truth is owned by
   CI topology. It is infrastructure history, not evidence for this repair.
 - The predecessor pristine-state tree has local native/portable evidence recorded
   in implementation status; that evidence also predates this repair.
-- Scheduler repair commit `59fa35cf1d6f72c9f18ffa25d04e25e7c482dd7e`
-  passes all required jobs in exact-tree Quality run
-  [31693672969](https://github.com/hartolit/milkdrift/actions/runs/31693672969).
+- Cache-lifecycle repair commit `db8015c685ce166ed7f2376a02b40f08a48d7339`
+  passes every required job in Quality run
+  [31695345591](https://github.com/hartolit/milkdrift/actions/runs/31695345591).
   CUDA run
-  [31693672966](https://github.com/hartolit/milkdrift/actions/runs/31693672966)
-  passed runner/GPU/toolchain preflight, then repeated the missing
-  `serde_yaml_ng` cache failure before compilation. The workflow now owns one
-  locked cache-synchronization boundary; an exact repaired-tree CUDA rerun is
-  still required.
+  [31695345510](https://github.com/hartolit/milkdrift/actions/runs/31695345510)
+  passed exact preflight, locked cache synchronization, metadata/policy, and the
+  metadata-owned CUDA compile graph. Strict Clippy then rejected four E0
+  hardware-only helpers compiled but unused in `native_backend_generation`.
+  Their package-local feature ownership is repaired locally; exact-tree CUDA
+  Clippy and hardware execution remain required.
 - External mixed-checkpoint evidence remains absent. Historical reports retain
   their original schema and exact commit attribution.
 

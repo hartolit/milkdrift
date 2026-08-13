@@ -237,7 +237,7 @@ pub(crate) fn candle_fixture_covers_output_backpressure_and_cancellation() -> Te
     shutdown(hosted, thread)
 }
 
-#[cfg(feature = "cuda")]
+#[cfg(feature = "cuda-hardware-tests")]
 pub(crate) fn candle_mixed_cuda_fixture_covers_e0_generation_accounting_and_lifecycle() -> TestResult
 {
     let converted = ConvertedFixture::create(DType::F16, true)?;
@@ -416,7 +416,7 @@ fn hosted_runtime(
     .map_err(|error| error.to_string())
 }
 
-#[cfg(feature = "cuda")]
+#[cfg(feature = "cuda-hardware-tests")]
 fn hosted_cuda_runtime() -> TestResult<(CandleRuntime, RuntimeThread)> {
     let configuration =
         HostedRuntimeConfiguration::new(nonzero_usize(8)?, nonzero_usize(8)?, NonZeroU64::MIN)
@@ -463,7 +463,7 @@ fn load_model(hosted: &CandleRuntime, source: CandleLlamaSource) -> TestResult<L
     }
 }
 
-#[cfg(feature = "cuda")]
+#[cfg(feature = "cuda-hardware-tests")]
 fn load_cuda_model(hosted: &CandleRuntime, source: CandleLlamaSource) -> TestResult<LoadReceipt> {
     hosted
         .try_submit(RuntimeCommand::LoadModel {
@@ -798,7 +798,7 @@ fn assert_released_snapshot(
     }
 }
 
-#[cfg(feature = "cuda")]
+#[cfg(feature = "cuda-hardware-tests")]
 fn assert_cuda_released_snapshot(hosted: &CandleRuntime, loaded: &LoadReceipt) -> TestResult {
     let ticket = CommandTicket::new(51);
     hosted

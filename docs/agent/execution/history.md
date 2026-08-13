@@ -656,3 +656,17 @@ before compilation. The follow-up workflow repair replaces fallible out-of-band
 priming with one trusted `cargo fetch --locked` boundary and retains offline mode
 for all metadata, policy, compilation, Clippy, and hardware execution; no CUDA
 pass is claimed until that exact repaired tree runs.
+
+That workflow repair became commit
+`db8015c685ce166ed7f2376a02b40f08a48d7339`, tree
+`b165bf214506b6832e75ddbfad1b890b58fe693f`. Quality run
+[31695345591](https://github.com/hartolit/milkdrift/actions/runs/31695345591)
+passed every required job. CUDA run
+[31695345510](https://github.com/hartolit/milkdrift/actions/runs/31695345510)
+proved the new locked synchronization boundary, metadata/policy, and the complete
+CUDA compile graph. Strict Clippy then found four E0 CUDA helpers compiled into
+the ordinary generation target but used only by the dedicated harness-free
+hardware target. The focused follow-up scopes them to the existing package-local
+`cuda-hardware-tests` feature instead of suppressing warnings or duplicating
+support code. CUDA Clippy and hardware execution remain unaccepted until the
+exact follow-up tree runs.
