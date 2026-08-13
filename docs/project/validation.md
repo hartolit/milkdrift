@@ -595,6 +595,20 @@ The security boundary is deliberate:
 
 The runner administrator maintains `/var/tmp/milkdrift-cargo-home` as a dependency-only Cargo cache seeded out of band from a trusted locked checkout. Refresh that cache before a trusted dependency update reaches `main`; do not expose credentials in it or relax the workflow's offline setting. The job fails before compilation when the maintained cache is missing/inaccessible, `RUNNER_TEMP` has less than 20 GiB free, or the Cargo-home filesystem has less than 4 GiB free. The 20 GiB threshold is a host-specific operational reserve for this self-hosted machine, not a standard-runner or product requirement: historical run 31281013243 observed its `/dev/mapper/root` filesystem at 1.9 TiB total with 139 GiB free before compilation. The redesigned job records both target sizes and filesystem availability so prompt-6 evidence can reassess that reserve. The runner must be Actions Runner 2.327.1 or newer for pinned checkout v7's Node 24 runtime.
 
+Refresh and verify the cache as the runner service account from the exact clean,
+trusted checkout before dispatching the offline job:
+
+```sh
+CARGO_HOME=/var/tmp/milkdrift-cargo-home cargo fetch --locked
+CARGO_HOME=/var/tmp/milkdrift-cargo-home \
+    CARGO_NET_OFFLINE=true \
+    cargo metadata --locked --format-version 1 --no-deps > /dev/null
+```
+
+`cargo fetch` does not execute package build scripts. The second command is the
+offline completeness check; do not treat a cache that fails it as product
+evidence.
+
 The job validates the exact RTX 5070 Ti / CUDA ordinal 0 / compute capability 12.0 / Toolkit 12.8+ / build-cap-120 matrix. It compiles metadata/policy, the exact CUDA check/Clippy graph, and all dedicated suites in `${RUNNER_TEMP}/milkdrift-cuda-check-target`, reports its size, and removes it before release execution. It then runs the complete adapter, E0, fault-cleanup, and E1 suite boundaries in `${RUNNER_TEMP}/milkdrift-cuda-hardware-target`, reports target/Cargo-home/filesystem use, and always cleans both targets. No shell registry contains test function names.
 
 The job does not run TinyLlama, network resolution, Criterion, elapsed-time thresholds, Slint interaction, or arbitrary models. Toolkit 12.8+ preflight does not broaden product support beyond an actually observed row. Historical Phase 12 run `31281013243` succeeded before this suite redesign; the redesigned current-tree workflow requires its own post-push run.

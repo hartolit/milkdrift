@@ -436,21 +436,29 @@ impl GenerationScheduler {
     }
 
     fn next_request(&self) -> Option<RequestId> {
-        if let Some(cursor) = self.cursor
-            && let Some((request_id, _)) = self
-                .requests
+        next_request_id(&self.requests, self.cursor)
+    }
+}
+
+fn next_request_id<T>(
+    requests: &BTreeMap<RequestId, T>,
+    cursor: Option<RequestId>,
+) -> Option<RequestId> {
+    cursor
+        .and_then(|cursor| {
+            requests
                 .range((
                     std::ops::Bound::Excluded(cursor),
                     std::ops::Bound::Unbounded,
                 ))
                 .next()
-        {
-            return Some(*request_id);
-        }
-        self.requests
-            .first_key_value()
-            .map(|(request_id, _)| *request_id)
-    }
+                .map(|(request_id, _)| *request_id)
+        })
+        .or_else(|| {
+            requests
+                .first_key_value()
+                .map(|(request_id, _)| *request_id)
+        })
 }
 
 #[expect(
@@ -900,5 +908,33 @@ const fn idle() -> SchedulerAdvance {
     SchedulerAdvance {
         progressed: false,
         completed: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn round_robin_selection_advances_wraps_and_skips_absent_cursors() {
+        let requests = [70_u64, 72, 75]
+            .map(|request_id| (RequestId::new(request_id), false))
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(next_request_id(&requests, None), Some(RequestId::new(70)));
+        assert_eq!(
+            next_request_id(&requests, Some(RequestId::new(70))),
+            Some(RequestId::new(72))
+        );
+        assert_eq!(
+            next_request_id(&requests, Some(RequestId::new(71))),
+            Some(RequestId::new(72))
+        );
+        assert_eq!(
+            next_request_id(&requests, Some(RequestId::new(75))),
+            Some(RequestId::new(70))
+        );
+        assert_eq!(next_request_id::<bool>(&BTreeMap::new(), None), None);
     }
 }

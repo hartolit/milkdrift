@@ -618,3 +618,30 @@ Final available local acceptance passed:
 The retained native target was 10,517,044,748 bytes (9.9 GiB); the post-gate tmpfs observation was 16,544,532 KiB used and 15,229,456 KiB free. The pre-existing ignored root `target/` remained unchanged during the clean gate at 17,615,909,720 bytes and supplied no build artifacts. Fresh portable targets were 6,397,064 bytes for WASM and 6,396,759 bytes for thumb, then removed. These are local CI-infrastructure observations, not hosted peak or product-performance evidence.
 
 The exact current-tree CUDA graph was attempted with `CUDA_COMPUTE_CAP=120` and stopped in `cudarc` because `nvcc --version` was unavailable. This environment also exposes no `nvidia-smi` or NVIDIA device nodes, so no Rust CUDA diagnostic, dedicated hardware-suite run, or current-tree hardware claim exists. `actionlint` and another accepted local workflow linter were unavailable, so no such pass is claimed. Remote current-tree Quality/portable/policy and self-hosted CUDA Actions, plus the hosted disk low-water observation, remain post-push work.
+
+## Foundation remote attempt and scheduler-test repair
+
+On 2026-08-13, exact candidate `f3e2f5bdd56fce3134e9af9ba8d274f0fbbc597e`,
+tree `2761c34c5d637a3c932e455d5520353e9ba1f34b`, was rejected by both
+required remote workflows. Quality run
+[31688874924](https://github.com/hartolit/milkdrift/actions/runs/31688874924)
+passed structure, check, strict Clippy, warning-denied rustdoc, both maintained
+benchmark compilations, both portable targets, and dependency/documentation
+policy. Its test leg failed because a fairness test required global token-record
+alternation even though the two commands were admitted separately; the first
+request could legally progress before the second became runnable. CUDA run
+[31688874952](https://github.com/hartolit/milkdrift/actions/runs/31688874952)
+passed exact runner/GPU/toolkit preflight, then stopped before architecture or
+Rust compilation because the maintained offline Cargo cache lacked
+`serde_yaml_ng`. That is an environment-preparation failure, not CUDA product
+evidence.
+
+The focused repair extracts request selection into one directly tested
+round-robin boundary and reuses the existing multi-request output collector for
+the concurrent completion test, removing the duplicated polling loop and its
+admission-race assumption. All 93 `inference-runtime` tests, its strict
+all-target Clippy gate, 1,000 isolated executions of the repaired concurrent
+test, and a fresh complete `verify-component test` run passed locally. The
+fresh component included the previously unreached workflow/YAML/shell/resource
+self-tests. Exact clean-commit Quality and CUDA reruns remain mandatory after
+the runner service account refreshes and verifies its locked offline cache.

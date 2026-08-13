@@ -8,6 +8,7 @@ The post-closure foundation repair rejects ambiguous mixed precision, separates 
 The exact-tree foundation closure passes its focused CPU, canonical native, portable, dependency-policy, and offline-link matrices locally; hosted Quality and current CUDA hardware acceptance remain separate pending evidence.
 The orchestration-boundary repair makes task-graph generic and allocation-free and moves corrective semantics into validated reference-template data; its focused host, portable, architecture, and hygiene matrix passes locally.
 The CI resource-topology repair gives each hosted verification profile an independently bounded metadata-owned plan; its local component, portability, workflow-policy, and shell/YAML validation passes, while redesigned remote runs remain pending.
+The first exact-candidate remote attempt is rejected: Quality exposed a race-sensitive fairness assertion, and CUDA found the maintained offline dependency cache incomplete before compilation. A focused local scheduler-test repair passes the hosted-parity test component; remote repair-tree acceptance remains pending.
 No later product phase is active, and workflow/workspace direction is not yet a ratified program.
 ```
 

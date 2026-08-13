@@ -215,8 +215,11 @@ admitted -> prefill -> token publication -> decode
 
 Each worker loop checks bounded control work, advances at most one request
 opportunity, performs one cleanup-maintenance opportunity, and flushes bounded
-events. A request blocked by full output performs no backend step. Generation
-terminal outcome and backend resource release remain separate observable facts.
+events. Round-robin selection rotates over the requests that are active at each
+selection point; a newly arriving request cannot retroactively alternate with
+work completed before its admission. A request blocked by full output performs
+no backend step. Generation terminal outcome and backend resource release remain
+separate observable facts.
 
 Output records preserve request identity and ordered state:
 

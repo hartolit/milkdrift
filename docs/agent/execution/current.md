@@ -11,7 +11,8 @@ Its focused host, WASM, embedded, architecture, hygiene, and documentation gates
 The CI resource-topology repair is implemented: the local composite and hosted native components share one metadata-owned plan, and hosted profiles now use separate standard-runner targets with centralized cleanup.
 No workflow/workspace product program has been ratified or activated.
 Exact-tree local CPU, component, composite, portable, policy, and link acceptance passes on commit b1f7e90b1ba67f1cf968d773052b5062ef8cbbb9, tree fcb3ee6fa00243734abd74b64218aa0db2e340c1.
-No repair was required during closure validation; remote Quality, current CUDA hardware, and external-model evidence remain separate and pending.
+The first exact-candidate remote attempt was rejected: Quality exposed a race-sensitive scheduler assertion, and CUDA stopped before compilation on an incomplete offline dependency cache.
+The focused scheduler-test repair now passes the complete hosted-parity test component locally; a clean repair commit, cache refresh, and exact-tree reruns remain pending.
 ```
 
 ## Current maintenance scope
@@ -102,9 +103,12 @@ Current component and support truth is owned by
   in implementation status; that evidence also predates this repair.
 - The redesigned verification plans, workflow policy tests, embedded shell
   syntax checks, six canonical native components, and both portable targets pass
-  locally from fresh isolated targets. The scheduled nursery command starts and
-  reports exploratory lints separately; its findings are not a canonical failure.
-  No redesigned GitHub-hosted Quality or current self-hosted CUDA run exists yet.
+  locally from fresh isolated targets. Exact-candidate Quality run 31688874924
+  passed every non-test required job but failed the race-sensitive generation
+  assertion; CUDA run 31688874952 passed exact hardware preflight but found the
+  maintained offline Cargo cache incomplete before compilation. Neither run is
+  accepted. The focused test repair passes locally; exact repair-tree reruns are
+  still required.
 - External mixed-checkpoint evidence remains absent. Historical reports retain
   their original schema and exact commit attribution.
 

@@ -884,9 +884,10 @@ fn backend_failure_and_cleanup_retry_preserve_both_terminal_states() -> TestResu
 }
 
 #[test]
-fn runnable_requests_advance_round_robin_without_starvation() -> TestResult {
+fn concurrent_runnable_requests_complete_without_starvation() -> TestResult {
     let source = FakeSource::scripted([1, 2, 3, 0, 0, 0, 0, 0], 3);
     let (hosted, thread, _, handle) = hosted(source, 32, 64)?;
+    let request_ids = [RequestId::new(70), RequestId::new(71)];
     for (ticket, request_id, sequence_id) in [(70, 70, 700), (71, 71, 701)] {
         hosted
             .try_submit(RuntimeCommand::Generate {
@@ -905,32 +906,17 @@ fn runnable_requests_advance_round_robin_without_starvation() -> TestResult {
         ));
     }
 
-    let deadline = Instant::now()
-        .checked_add(Duration::from_secs(2))
-        .ok_or("fairness deadline overflow")?;
-    let mut owners = Vec::new();
-    let mut released = BTreeSet::new();
-    while released.len() < 2 {
-        hosted
-            .pull_token_output(|batch| {
-                for record in batch.records {
-                    match record.kind {
-                        TokenOutputRecordKind::Tokens(_) => owners.push(record.request_id),
-                        TokenOutputRecordKind::State(GenerationOutputState::Released(_)) => {
-                            released.insert(record.request_id);
-                        }
-                        TokenOutputRecordKind::State(_) => {}
-                    }
-                }
-            })
-            .map_err(|error| format!("fairness output pull: {error:?}"))?;
-        if Instant::now() >= deadline {
-            return Err("fairness generation timed out".into());
-        }
-        std::thread::sleep(Duration::from_millis(1));
+    let outputs = collect_until_all_released(&hosted, &request_ids, Duration::from_secs(2))?;
+    for request_id in request_ids {
+        let output = outputs
+            .get(&request_id)
+            .ok_or("missing concurrent generation output")?;
+        assert_eq!(output.tokens.len(), 3);
+        assert!(output.states.iter().any(|state| matches!(
+            state,
+            GenerationOutputState::Terminal(GenerationOutcome::Finished(FinishReason::TokenLimit))
+        )));
     }
-    assert_eq!(owners.len(), 6);
-    assert!(owners.windows(2).all(|pair| pair.first() != pair.get(1)));
     shutdown(hosted, thread)
 }
 
