@@ -14,5 +14,13 @@ role = "platform"
 domain-contracts.workspace = true
 flume.workspace = true
 
+[dev-dependencies]
+stats_alloc.workspace = true
+
+[[test]]
+name = "output_allocation"
+path = "tests/output_allocation.rs"
+harness = false
+
 [lints]
 workspace = true

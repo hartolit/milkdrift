@@ -7,10 +7,10 @@ use std::time::Duration;
 
 use domain_contracts::{ModelHandle, ModelId, ModelLifecycleState, ModelLoader, MonotonicMillis};
 use host_runtime::{
-    BoundedReceiver, BoundedSender, HostThread, MonotonicClock, OutputPullError,
-    ReceiveTimeoutError, ThreadPanicked, ThreadSpawnError, TokenOutputBatch, TokenOutputConsumer,
-    TokenOutputInitializationError, TokenOutputProducer, TryReceiveError, TrySendError, bounded,
-    spawn_named, token_output_accumulator,
+    BoundedReceiver, BoundedSender, HostThread, MonotonicClock, OutputInitializationError,
+    OutputPullError, ReceiveTimeoutError, ThreadPanicked, ThreadSpawnError, TokenOutputBatch,
+    TokenOutputConsumer, TokenOutputProducer, TryReceiveError, TrySendError, bounded, spawn_named,
+    token_output_accumulator,
 };
 
 use crate::generation::GenerationScheduler;
@@ -143,7 +143,7 @@ impl RuntimeThread {
 #[derive(Debug)]
 pub enum HostedRuntimeStartError {
     /// Cold allocation of the bounded token accumulator failed.
-    TokenOutput(TokenOutputInitializationError),
+    TokenOutput(OutputInitializationError),
     /// Host thread creation failed.
     Thread(ThreadSpawnError),
 }
@@ -338,6 +338,10 @@ fn run_worker<L>(
         }
 
         let advance = scheduler.advance(&mut runtime, token_output);
+        if advance.output_poisoned {
+            shutdown_after_output_poison(&mut scheduler, runtime);
+            return;
+        }
         if !handled_command && !advance.progressed && queued_events.len() < event_backlog_capacity {
             match commands.receive_timeout(poll_interval) {
                 Ok(command) => {
@@ -403,6 +407,25 @@ where
     if runtime.shutdown().is_err() && runtime.owns_backend_resources() {
         // No endpoint remains to observe or retry cleanup, so apply the same
         // fail-closed process-lifetime retention policy as ticketed shutdown.
+        retain_until_process_exit(runtime);
+    }
+}
+
+fn shutdown_after_output_poison<L>(
+    scheduler: &mut GenerationScheduler,
+    mut runtime: InferenceRuntime<L>,
+) where
+    L: ModelLoader,
+{
+    let mut result = runtime.shutdown();
+    if let Err(error) = scheduler.discard_all(&mut runtime) {
+        if result.is_ok() {
+            result = Err(error);
+        } else {
+            runtime.record_maintenance_error(error);
+        }
+    }
+    if result.is_err() && runtime.owns_backend_resources() {
         retain_until_process_exit(runtime);
     }
 }

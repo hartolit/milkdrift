@@ -8,7 +8,14 @@ The crate is generic over one concrete `ModelLoader`. It owns loaded model weigh
 
 The hosted worker alternates bounded command handling, one fair generation opportunity, one cleanup-maintenance opportunity, unload/deadline maintenance, and nonblocking output publication. Sampling executes inside this crate through the portable `sampling` feature; a frontend never drives individual token steps.
 
-Generated token IDs and ordered terminal state use `host-runtime`'s preallocated pull accumulator. Full output capacity yields without another backend step. Cleanup failure publishes pending and, when applicable, exhausted state while preserving the original terminal classification. Cleanup uses a configurable total-attempt limit and never retries a successfully released or exhausted resource automatically.
+Generated token IDs and ordered terminal state use `host-runtime`'s typed token
+wrapper over its private preallocated bounded-output core. Full output capacity
+yields without another backend step. Cleanup failure publishes pending and, when
+applicable, exhausted state while preserving the original terminal classification.
+Consumer-busy and capacity failures retry without losing pending output; mutex
+poisoning is terminal and initiates bounded worker shutdown. Cleanup uses a
+configurable total-attempt limit and never retries a successfully released or
+exhausted resource automatically.
 
 ## Test coverage
 

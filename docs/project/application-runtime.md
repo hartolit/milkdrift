@@ -279,8 +279,9 @@ the private prompt renderer/profile does not cross the boundary.
 
 Completed historical user/assistant turns remain atomic context-planning units.
 Selected units are rendered in order, exactly tokenized, and corrected with a
-strictly shrinking bounded set before E0 admission. Decoded text uses bounded
-borrowed pulls rather than per-token application events.
+strictly shrinking bounded set before E0 admission. Decoded text uses the typed
+host text-output wrapper and bounded borrowed pulls rather than per-token
+application events; it cannot resolve token-output ranges by construction.
 
 ## Thin Slint reference host
 

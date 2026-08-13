@@ -9,7 +9,6 @@ pub mod generation;
 pub mod identifiers;
 pub mod lifecycle;
 pub mod model;
-pub mod output;
 pub mod sequence;
 pub mod time;
 
@@ -39,7 +38,6 @@ pub use model::{
     ModelMetadata, QuantizationFormat, ScalarType, ScalarTypeSet, SequenceConfiguration,
     SequencePlan, SequenceReservation,
 };
-pub use output::{ByteRange, OutputBatch, OutputCursor, OutputRecord, OutputRecordKind};
 pub use sequence::{
     DecodeBufferRequirements, DecodeBuffers, DecodeInput, PrefillBufferRequirements,
     PrefillBuffers, PrefillInput, PreparedDecodeBuffers, PreparedPrefillBuffers, SequenceState,

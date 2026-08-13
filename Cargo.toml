@@ -96,6 +96,14 @@ kind = "development"
 rationale = "allocation contract tests measure project-owned portable hot paths"
 
 [[workspace.metadata.milkdrift.exceptions]]
+id = "external-host-runtime-stats-alloc-dev"
+source = "host-runtime"
+target = "stats_alloc"
+scope = "external"
+kind = "development"
+rationale = "allocation contract tests measure prepared bounded output push and pull paths"
+
+[[workspace.metadata.milkdrift.exceptions]]
 id = "external-sampling-stats-alloc-dev"
 source = "sampling"
 target = "stats_alloc"

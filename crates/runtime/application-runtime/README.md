@@ -9,7 +9,7 @@ are not appropriate.
 
 The crate owns application selection, device choice, immutable Hub resolution,
 persistence, one-resident-model lifecycle, completion, compatible chat,
-conversation state, bounded output, cancellation, unload, retained-cleanup
+conversation state, typed bounded text output, cancellation, unload, retained-cleanup
 coordination, and explicit shutdown. It owns no Slint or other frontend toolkit
 types.
 

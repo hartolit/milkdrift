@@ -10,7 +10,7 @@ Portable, allocation-neutral contracts shared by inference engines and concrete 
 - Checked prefill and decode helpers validate token and logits capacity before backend entry; the owning runtime verifies backend-reported state transitions and exact output afterward.
 - Capacity exhaustion becomes `FinishReason::BufferExhausted` rather than panic-based control flow.
 - Generation helpers are generic only over the concrete `LoadedModel`; its sequence is an associated type rather than an independent specialization axis.
-- UI output is modeled as a bounded, pull-oriented batch; output saturation yields generation.
+- Portable generation outcomes, request identities, token identifiers, and capacity failures remain independent of any host/UI batching mechanism.
 - Device identity remains compact domain vocabulary: `DeviceId` is interpreted with `DeviceKind`, and a CUDA ordinal is not claimed as a globally permanent hardware identity.
 - The crate is always `no_std` and contains no mandatory heap allocation or third-party dependency.
 

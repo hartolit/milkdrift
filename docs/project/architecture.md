@@ -178,8 +178,10 @@ automatic CPU fallback are not implemented by this composition.
 ## Adapters and frontend boundary
 
 `host-runtime` quarantines bounded channels, named threads, monotonic timing, and
-pull-oriented accumulators. It owns no model, workflow, conversation, or
-application state.
+typed pull-oriented text/token output. One private statically dispatched core owns
+the output locking, fixed storage, monotonic cursors, atomic commit, and allocation
+reuse; text and token ranges remain distinct public types. The platform crate owns
+no model, workflow, conversation, or application state.
 
 Adapters own vendor/model/persistence details and do not depend on runtimes. The
 local reference path composes `hf-hub-adapter`, `hf-tokenizer`, `redb-storage`, and

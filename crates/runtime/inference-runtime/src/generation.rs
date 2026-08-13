@@ -187,6 +187,7 @@ struct TerminalPublication {
 pub(super) struct SchedulerAdvance {
     pub(super) progressed: bool,
     pub(super) completed: Option<RequestId>,
+    pub(super) output_poisoned: bool,
 }
 
 impl GenerationScheduler {
@@ -409,6 +410,7 @@ impl GenerationScheduler {
             return SchedulerAdvance {
                 progressed: false,
                 completed: None,
+                output_poisoned: false,
             };
         };
         self.cursor = Some(request_id);
@@ -417,6 +419,7 @@ impl GenerationScheduler {
                 return SchedulerAdvance {
                     progressed: false,
                     completed: None,
+                    output_poisoned: false,
                 };
             };
             advance_task(runtime, output, request_id, task)
@@ -498,7 +501,10 @@ fn advance_task<L: ModelLoader>(
     if let Some(reason) = task.pending_yield {
         match output.try_push_state(request_id, GenerationOutputState::Yielded(reason)) {
             Ok(()) => task.pending_yield = None,
-            Err(_) => return idle(),
+            Err(OutputPushError::ConsumerBusy | OutputPushError::CapacityExhausted(_)) => {
+                return idle();
+            }
+            Err(OutputPushError::Poisoned) => return output_poisoned(),
         }
     }
 
@@ -519,10 +525,19 @@ fn advance_task<L: ModelLoader>(
                 }
                 return progressed();
             }
-            Err(error) => {
-                task.pending_yield = Some(output_yield(error));
+            Err(OutputPushError::CapacityExhausted(capacity)) => {
+                task.pending_yield = Some(YieldReason::OutputBackpressure(capacity));
                 return idle();
             }
+            Err(OutputPushError::ConsumerBusy) => {
+                task.pending_yield = Some(YieldReason::OutputBackpressure(CapacityExhausted::new(
+                    CapacityResource::OutputRecords,
+                    1,
+                    0,
+                )));
+                return idle();
+            }
+            Err(OutputPushError::Poisoned) => return output_poisoned(),
         }
     }
 
@@ -663,14 +678,15 @@ fn publish_terminal<L: ModelLoader>(
     terminal: &mut TerminalPublication,
 ) -> SchedulerAdvance {
     if !terminal.terminal_published {
-        if output
-            .try_push_state(
-                request_id,
-                GenerationOutputState::Terminal(terminal.outcome),
-            )
-            .is_err()
-        {
-            return idle();
+        match output.try_push_state(
+            request_id,
+            GenerationOutputState::Terminal(terminal.outcome),
+        ) {
+            Ok(()) => {}
+            Err(OutputPushError::ConsumerBusy | OutputPushError::CapacityExhausted(_)) => {
+                return idle();
+            }
+            Err(OutputPushError::Poisoned) => return output_poisoned(),
         }
         terminal.terminal_published = true;
         return progressed();
@@ -681,18 +697,19 @@ fn publish_terminal<L: ModelLoader>(
             let retry = runtime
                 .request_cleanup_state(request_id)
                 .unwrap_or(initial_cleanup);
-            if output
-                .try_push_state(
-                    request_id,
-                    GenerationOutputState::CleanupPending {
-                        outcome: terminal.outcome,
-                        failure: retry.failure,
-                        retry,
-                    },
-                )
-                .is_err()
-            {
-                return idle();
+            match output.try_push_state(
+                request_id,
+                GenerationOutputState::CleanupPending {
+                    outcome: terminal.outcome,
+                    failure: retry.failure,
+                    retry,
+                },
+            ) {
+                Ok(()) => {}
+                Err(OutputPushError::ConsumerBusy | OutputPushError::CapacityExhausted(_)) => {
+                    return idle();
+                }
+                Err(OutputPushError::Poisoned) => return output_poisoned(),
             }
             terminal.cleanup_published = true;
             return progressed();
@@ -700,18 +717,19 @@ fn publish_terminal<L: ModelLoader>(
 
         if let Some(retry) = runtime.request_cleanup_state(request_id) {
             if retry.exhausted() && !terminal.exhaustion_published {
-                if output
-                    .try_push_state(
-                        request_id,
-                        GenerationOutputState::CleanupExhausted {
-                            outcome: terminal.outcome,
-                            failure: retry.failure,
-                            retry,
-                        },
-                    )
-                    .is_err()
-                {
-                    return idle();
+                match output.try_push_state(
+                    request_id,
+                    GenerationOutputState::CleanupExhausted {
+                        outcome: terminal.outcome,
+                        failure: retry.failure,
+                        retry,
+                    },
+                ) {
+                    Ok(()) => {}
+                    Err(OutputPushError::ConsumerBusy | OutputPushError::CapacityExhausted(_)) => {
+                        return idle();
+                    }
+                    Err(OutputPushError::Poisoned) => return output_poisoned(),
                 }
                 terminal.exhaustion_published = true;
                 return progressed();
@@ -720,18 +738,20 @@ fn publish_terminal<L: ModelLoader>(
         }
     }
 
-    if output
-        .try_push_state(
-            request_id,
-            GenerationOutputState::Released(terminal.outcome),
-        )
-        .is_err()
-    {
-        return idle();
+    match output.try_push_state(
+        request_id,
+        GenerationOutputState::Released(terminal.outcome),
+    ) {
+        Ok(()) => {}
+        Err(OutputPushError::ConsumerBusy | OutputPushError::CapacityExhausted(_)) => {
+            return idle();
+        }
+        Err(OutputPushError::Poisoned) => return output_poisoned(),
     }
     SchedulerAdvance {
         progressed: true,
         completed: Some(request_id),
+        output_poisoned: false,
     }
 }
 
@@ -783,18 +803,6 @@ const fn cleanup_state_from_error(error: RuntimeError) -> Option<CleanupRetrySta
         }
         _ => None,
     }
-}
-
-const fn output_yield(error: OutputPushError) -> YieldReason {
-    let capacity = match error {
-        OutputPushError::CapacityExhausted(capacity) => capacity,
-        OutputPushError::ConsumerBusy
-        | OutputPushError::Poisoned
-        | OutputPushError::InvalidRecordKind => {
-            CapacityExhausted::new(CapacityResource::OutputRecords, 1, 0)
-        }
-    };
-    YieldReason::OutputBackpressure(capacity)
 }
 
 fn generation_workspace_footprint(
@@ -901,6 +909,7 @@ const fn progressed() -> SchedulerAdvance {
     SchedulerAdvance {
         progressed: true,
         completed: None,
+        output_poisoned: false,
     }
 }
 
@@ -908,6 +917,15 @@ const fn idle() -> SchedulerAdvance {
     SchedulerAdvance {
         progressed: false,
         completed: None,
+        output_poisoned: false,
+    }
+}
+
+const fn output_poisoned() -> SchedulerAdvance {
+    SchedulerAdvance {
+        progressed: false,
+        completed: None,
+        output_poisoned: true,
     }
 }
 

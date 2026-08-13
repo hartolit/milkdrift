@@ -206,6 +206,12 @@ release evidence and removes the owner exactly once.
 Workspace bytes remain reserved until the `Released` output record is published
 and scheduler storage is dropped.
 
+E0 publishes through `host-runtime`'s typed token-output wrapper. The wrapper and
+E1's typed text output share one private bounded storage/concurrency core, while
+their cursor, range, record, and batch types remain semantically distinct.
+Capacity and consumer-busy results retain pending output for retry; a poisoned
+output mutex is terminal and routes the hosted worker through bounded shutdown.
+
 A scheduled request progresses through:
 
 ```text

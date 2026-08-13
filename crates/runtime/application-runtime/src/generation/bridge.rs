@@ -4,7 +4,7 @@ use std::num::NonZeroUsize;
 use domain_contracts::{CancellationReason, GenerationUsage, RequestId, TokenId};
 use hf_tokenizer::HfOwnedStreamingDecoder;
 use host_runtime::{
-    OutputPullError, OutputPushError, TextOutputConsumer, TextOutputInitializationError,
+    OutputInitializationError, OutputPullError, OutputPushError, TextOutputConsumer,
     TextOutputProducer, TokenOutputBatch, TokenOutputRecordKind, text_output_accumulator,
 };
 use inference_runtime::{
@@ -518,7 +518,7 @@ impl ApplicationRuntime {
         {
             Ok(()) => Ok(true),
             Err(OutputPushError::ConsumerBusy | OutputPushError::CapacityExhausted(_)) => Ok(false),
-            Err(OutputPushError::InvalidRecordKind | OutputPushError::Poisoned) => Err(()),
+            Err(OutputPushError::Poisoned) => Err(()),
         }
     }
 
@@ -544,7 +544,7 @@ impl ApplicationRuntime {
                 Ok(())
             }
             Err(OutputPushError::ConsumerBusy | OutputPushError::CapacityExhausted(_)) => Ok(()),
-            Err(OutputPushError::InvalidRecordKind | OutputPushError::Poisoned) => Err(()),
+            Err(OutputPushError::Poisoned) => Err(()),
         }
     }
 
@@ -639,7 +639,7 @@ fn nonzero_capacity(
     NonZeroUsize::new(value).ok_or(ApplicationError::InvalidConfiguration(field))
 }
 
-fn text_output_initialization_failure(error: TextOutputInitializationError) -> ApplicationError {
+fn text_output_initialization_failure(error: OutputInitializationError) -> ApplicationError {
     ApplicationFailure::from_debug(
         ApplicationFailureKind::Worker,
         "decoded output initialization failed",
