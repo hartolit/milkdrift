@@ -230,6 +230,10 @@ pub trait ModelLoader {
     ///
     /// Returns [`FailedLoad`] when validation, allocation, conversion,
     /// synchronization, cancellation, or backend materialization fails.
+    #[expect(
+        clippy::result_large_err,
+        reason = "the failure guard must retain the concrete sole cleanup owner inline; boxing here would impose allocation and change the portable ownership contract"
+    )]
     fn load_prepared(
         &mut self,
         prepared: Self::Prepared,

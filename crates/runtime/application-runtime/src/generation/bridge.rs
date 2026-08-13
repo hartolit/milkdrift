@@ -39,10 +39,11 @@ struct GenerationSession {
     cancellation_requested: bool,
 }
 
-#[derive(Clone, Copy)]
 enum PendingOutput {
     Token(TokenId),
-    State(GenerationOutputState),
+    /// State records are cold request-boundary transitions. Indirection keeps the
+    /// per-token queue slot compact without allocating on token decode paths.
+    State(Box<GenerationOutputState>),
 }
 
 impl GenerationBridge {
@@ -333,18 +334,19 @@ impl ApplicationRuntime {
             {
                 break;
             }
-            let Some(item) = self.generation.pending.front().copied() else {
+            let Some(item) = self.generation.pending.pop_front() else {
                 break;
             };
-            let progressed = match item {
-                PendingOutput::Token(token) => self.process_pending_token(token),
+            let progressed = match &item {
+                PendingOutput::Token(token) => self.process_pending_token(*token),
                 PendingOutput::State(state) => self.process_pending_state(state),
             };
             match progressed {
-                Ok(true) => {
-                    let _removed = self.generation.pending.pop_front();
+                Ok(true) => {}
+                Ok(false) => {
+                    self.generation.pending.push_front(item);
+                    break;
                 }
-                Ok(false) => break,
                 Err(()) => {
                     self.fail_local_generation("generation output translation failed");
                     break;
@@ -384,7 +386,7 @@ impl ApplicationRuntime {
         Ok(true)
     }
 
-    fn process_pending_state(&mut self, state: GenerationOutputState) -> Result<bool, ()> {
+    fn process_pending_state(&mut self, state: &GenerationOutputState) -> Result<bool, ()> {
         let request_id = self
             .generation
             .session
@@ -392,7 +394,7 @@ impl ApplicationRuntime {
             .map(|session| session.request_id)
             .ok_or(())?;
         let output_state = match state {
-            GenerationOutputState::Yielded(reason) => ApplicationOutputState::Yielded(reason),
+            GenerationOutputState::Yielded(reason) => ApplicationOutputState::Yielded(*reason),
             GenerationOutputState::Terminal(outcome) => {
                 let effective = self.effective_generation_outcome(outcome);
                 let kind = application_terminal_kind(&effective);
@@ -460,7 +462,7 @@ impl ApplicationRuntime {
 
     fn effective_generation_outcome(
         &self,
-        outcome: GenerationOutcome,
+        outcome: &GenerationOutcome,
     ) -> GenerationTerminalOutcome {
         self.generation
             .session
@@ -603,7 +605,7 @@ fn append_token_batch(
                 }
             }
             TokenOutputRecordKind::State(state) => {
-                pending.push_back(PendingOutput::State(state));
+                pending.push_back(PendingOutput::State(Box::new(state)));
             }
         }
     }
@@ -617,9 +619,9 @@ const fn application_terminal_kind(outcome: &GenerationTerminalOutcome) -> Gener
     }
 }
 
-fn normalize_outcome(outcome: GenerationOutcome) -> GenerationTerminalOutcome {
+fn normalize_outcome(outcome: &GenerationOutcome) -> GenerationTerminalOutcome {
     match outcome {
-        GenerationOutcome::Finished(reason) => GenerationTerminalOutcome::Finished(reason),
+        GenerationOutcome::Finished(reason) => GenerationTerminalOutcome::Finished(*reason),
         GenerationOutcome::Failed(error) => {
             GenerationTerminalOutcome::Failed(ApplicationFailure::from_debug(
                 ApplicationFailureKind::Inference,

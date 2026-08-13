@@ -349,7 +349,7 @@ fn controlled_mixed_dtype_receipt_allows_bf16_declaration_with_f32_execution() -
                 .union(ScalarTypeSet::from_scalar(ScalarType::F32));
         receipt.execution_scalar_type = ScalarType::F32;
 
-        let event = runtime.process_model_loaded(ticket, Ok(receipt));
+        let event = runtime.process_model_loaded(ticket, &Ok(receipt));
         let Some(ApplicationEvent::ModelLoaded { model }) = event else {
             return Err(format!(
                 "controlled scalar evidence was rejected: {event:?}"
@@ -377,7 +377,7 @@ fn execution_scalar_is_taken_from_the_verified_receipt_not_declaration_or_device
         // The received scalar is an E0-verified fact at this boundary. Controlling it here proves
         // E1 does not reproduce Candle's declaration- or device-aware scalar-selection policy.
         receipt.execution_scalar_type = ScalarType::F16;
-        let event = runtime.process_model_loaded(ticket, Ok(receipt));
+        let event = runtime.process_model_loaded(ticket, &Ok(receipt));
         let Some(ApplicationEvent::ModelLoaded { model }) = event else {
             return Err(format!(
                 "supported execution scalar was rejected: {event:?}"
@@ -409,7 +409,7 @@ fn observed_scalar_extras_are_lower_evidence_not_e1_compatibility_policy() -> Te
                 .union(ScalarTypeSet::from_scalar(ScalarType::U8))
                 .union(ScalarTypeSet::from_scalar(ScalarType::Other(7)));
 
-        let event = runtime.process_model_loaded(ticket, Ok(receipt));
+        let event = runtime.process_model_loaded(ticket, &Ok(receipt));
         let Some(ApplicationEvent::ModelLoaded { model }) = event else {
             return Err(format!(
                 "E1 rejected lower-accepted unused scalar extras: {event:?}"
@@ -533,13 +533,13 @@ fn stale_non_ownership_load_failure_does_not_consume_the_active_transaction() ->
         assert_eq!(
             runtime.process_model_loaded(
                 stale_ticket,
-                Err(RuntimeError::Load(LoadError::UnsupportedFormat)),
+                &Err(RuntimeError::Load(LoadError::UnsupportedFormat)),
             ),
             None
         );
         assert!(runtime.pending_load.is_some());
 
-        let event = runtime.process_model_loaded(ticket, Ok(receipt));
+        let event = runtime.process_model_loaded(ticket, &Ok(receipt));
         assert!(matches!(event, Some(ApplicationEvent::ModelLoaded { .. })));
         runtime.unload_model().map_err(application_error)?;
         let _unloaded = wait_for_event(runtime, |event| {
@@ -558,7 +558,7 @@ fn wrong_ticket_load_receipt_is_quarantined_and_invalidates_the_transaction() ->
         let (ticket, receipt) = receive_successful_load_receipt(runtime)?;
         let stale_ticket = inference_runtime::CommandTicket::new(ticket.get().saturating_add(1));
 
-        let event = runtime.process_model_loaded(stale_ticket, Ok(receipt));
+        let event = runtime.process_model_loaded(stale_ticket, &Ok(receipt));
         let Some(ApplicationEvent::ModelCompatibilityFailed { failure }) = event else {
             return Err(format!(
                 "wrong-ticket receipt was not quarantined: {event:?}"
@@ -606,7 +606,7 @@ fn load_receipt_without_a_pending_transaction_is_quarantined_from_idle() -> Test
         runtime.state.set_idle();
 
         let event =
-            runtime.process_model_loaded(inference_runtime::CommandTicket::new(991), Ok(receipt));
+            runtime.process_model_loaded(inference_runtime::CommandTicket::new(991), &Ok(receipt));
         let Some(ApplicationEvent::ModelCompatibilityFailed { failure }) = event else {
             return Err(format!(
                 "uncorrelated receipt was not quarantined: {event:?}"
@@ -650,12 +650,17 @@ fn wrong_ticket_retained_cleanup_result_is_not_dropped() -> TestResult {
         let lower = retained_load_cleanup(receipt.handle, receipt.reserved_footprint, 1);
 
         let event =
-            runtime.process_model_loaded(stale_ticket, Err(RuntimeError::CleanupFailed(lower)));
-        let Some(ApplicationEvent::ModelCleanupPending { cleanup }) = event else {
+            runtime.process_model_loaded(stale_ticket, &Err(RuntimeError::CleanupFailed(lower)));
+        let Some(ApplicationEvent::ModelCleanupPending { .. }) = event else {
             return Err(format!(
                 "wrong-ticket retained cleanup was not quarantined: {event:?}"
             ));
         };
+        let cleanup = runtime
+            .state()
+            .retained_model()
+            .cloned()
+            .ok_or_else(|| "cleanup event omitted durable retained state".to_owned())?;
         assert_eq!(
             cleanup.primary_failure().kind,
             ApplicationFailureKind::IncompatibleReceipt
@@ -690,13 +695,18 @@ fn exhausted_retained_cleanup_without_a_pending_transaction_is_not_dropped() -> 
 
         let event = runtime.process_model_loaded(
             inference_runtime::CommandTicket::new(992),
-            Err(RuntimeError::CleanupRetryExhausted(lower)),
+            &Err(RuntimeError::CleanupRetryExhausted(lower)),
         );
-        let Some(ApplicationEvent::ModelCleanupPending { cleanup }) = event else {
+        let Some(ApplicationEvent::ModelCleanupPending { .. }) = event else {
             return Err(format!(
                 "uncorrelated exhausted cleanup was not quarantined: {event:?}"
             ));
         };
+        let cleanup = runtime
+            .state()
+            .retained_model()
+            .cloned()
+            .ok_or_else(|| "cleanup event omitted durable retained state".to_owned())?;
         assert_eq!(
             cleanup.primary_failure().kind,
             ApplicationFailureKind::IncompatibleReceipt
@@ -785,7 +795,7 @@ fn model_load_failures_are_normalized_into_stable_application_categories() -> Te
         ];
 
         for (error, expected_kind) in cases {
-            let failure = crate::runtime::model::model_load_failure(error);
+            let failure = crate::runtime::model::model_load_failure(&error);
             assert_eq!(failure.kind, expected_kind);
         }
         Ok(())

@@ -68,7 +68,7 @@ E0 reserves the accepted loading peak before materialization and commits only ve
 
 Release requires correlated explicit cleanup/unload/shutdown evidence. Zero exact bytes, a bounded snapshot omission, endpoint disconnection, or worker/join-handle absence does not prove release. Cleanup rotates fairly with bounded attempts and reports terminal process-lifetime retention when native ownership cannot be released.
 
-E1 exposes retained state as `ApplicationRetainedModel`: resource, `Exact`/`Unverified`/`Unknown` ownership, cleanup disposition, primary failure, and optional cleanup failure. `ModelCleanupPending { cleanup }` never coexists with a normal `LoadedModel`; selection/load/generation remain locked until explicit release evidence.
+E1 exposes retained state as `ApplicationRetainedModel`: resource, `Exact`/`Unverified`/`Unknown` ownership, cleanup disposition, primary failure, and optional cleanup failure. One private checked coordinator owns every cleanup origin/action. `ModelCleanupPending { resource, disposition }` is a compact notification over the durable state, which never coexists with a normal `LoadedModel`; selection/load/generation remain locked until explicit release evidence.
 
 ## Repository and verification infrastructure
 

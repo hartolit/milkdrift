@@ -60,7 +60,10 @@ pub(super) fn load_model(
                         "exact Candle model load failed: {failure}"
                     )));
                 }
-                ApplicationEvent::ModelCleanupPending { cleanup } => {
+                ApplicationEvent::ModelCleanupPending { .. } => {
+                    let cleanup = runtime.state().retained_model().ok_or_else(|| {
+                        BenchmarkError::new("cleanup event omitted durable retained state")
+                    })?;
                     return Err(BenchmarkError::new(format!(
                         "exact Candle model load retained E0 cleanup ownership: disposition={:?}, primary_failure={}, cleanup_failure={:?}",
                         cleanup.cleanup(),
@@ -151,7 +154,10 @@ pub(super) fn unload_model(
                         "RejectIfBusy model unload failed: {failure}"
                     )));
                 }
-                ApplicationEvent::ModelCleanupPending { cleanup } => {
+                ApplicationEvent::ModelCleanupPending { .. } => {
+                    let cleanup = runtime.state().retained_model().ok_or_else(|| {
+                        BenchmarkError::new("cleanup event omitted durable retained state")
+                    })?;
                     return Err(BenchmarkError::new(format!(
                         "model cleanup retained E0 ownership during unload: disposition={:?}, primary_failure={}, cleanup_failure={:?}",
                         cleanup.cleanup(),

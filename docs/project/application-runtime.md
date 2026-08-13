@@ -187,11 +187,23 @@ ApplicationRetainedModel
 `WorkerDisconnected`, and `RetainedUntilProcessExit`. Primary operation failure is
 preserved separately from cleanup or coordination failure.
 
-`ApplicationEvent::ModelCleanupPending { cleanup }` carries the complete current
-state. An explicit lower model-owner release outside an in-flight unload emits
-`ModelCleanupReleased { resource }`. A sequence or model cleanup released while an
-unload remains correlated stays pending until `ModelUnloaded`; E1 adopts any
-successor cleanup owner for the same model without losing the unload ticket.
+Detailed retained evidence lives durably in `ApplicationState::retained_model()`.
+`ApplicationEvent::ModelCleanupPending { resource, disposition }` is a compact
+transition notification that tells a host when to read that state; it does not copy
+the primary failure, cleanup failure, or unverified footprint through every event.
+An explicit lower model-owner release outside an in-flight unload emits
+`ModelCleanupReleased { resource }`. A sequence cleanup released while an unload
+remains correlated stays pending until `ModelUnloaded`; E1 adopts a successor
+cleanup resource for the same model without losing the unload correlation.
+
+Privately, `ApplicationRuntime` owns exactly one model-cleanup coordinator. The
+coordinator records one origin (failed materialization, incompatible complete
+model, ordinary unload, unconfirmed disconnect, or terminal shutdown), optional
+lower resource identity, durable public evidence, lower attempts, and one checked
+active action. Actions bind submitted tickets to either incompatible-model unload
+or retained-owner inspection. E1 submission attempts are separate from lower
+cleanup attempts; explicit E1 retry resets only the former. A lower-exhausted,
+disconnected, or process-retained action has no transition back to coordination.
 
 The following are not release evidence:
 

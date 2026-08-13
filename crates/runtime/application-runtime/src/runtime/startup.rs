@@ -279,8 +279,7 @@ impl ApplicationRuntime {
             context_diagnostics: None,
             next_ticket: INITIAL_COMMAND_TICKET,
             shutdown_control: crate::shutdown::ShutdownControl::default(),
-            incompatible_model_cleanup: None,
-            retained_model_cleanup: None,
+            model_cleanup: None,
             #[cfg(test)]
             forced_inference_busy_submissions: 0,
             #[cfg(test)]

@@ -17,7 +17,7 @@ use host_runtime::{BoundedReceiver, BoundedSender, HostThread};
 use redb_storage::RedbStorage;
 
 use self::model::ModelLoadTransaction;
-use self::retained_cleanup::{IncompatibleModelCleanup, RetainedModelCleanup};
+use self::retained_cleanup::ModelCleanupCoordinator;
 use crate::conversation::ConversationState;
 use crate::generation::GenerationBridge;
 use crate::hub_worker::{HubCommand, HubEvent};
@@ -50,8 +50,7 @@ pub struct ApplicationRuntime {
     pub(crate) context_diagnostics: Option<ContextDiagnostics>,
     next_ticket: u64,
     pub(crate) shutdown_control: crate::shutdown::ShutdownControl,
-    incompatible_model_cleanup: Option<IncompatibleModelCleanup>,
-    retained_model_cleanup: Option<RetainedModelCleanup>,
+    model_cleanup: Option<ModelCleanupCoordinator>,
     #[cfg(test)]
     forced_inference_busy_submissions: usize,
     #[cfg(test)]

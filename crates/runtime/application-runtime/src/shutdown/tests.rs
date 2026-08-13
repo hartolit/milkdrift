@@ -253,7 +253,7 @@ fn endpoint_disconnection_does_not_independently_prove_clean_shutdown() -> TestR
     let (runtime, thread) = test_runtime(false)?;
     let first = shutdown_runtime_worker(&runtime, CommandTicket::new(1), TEST_TIMEOUT, TEST_POLL)
         .map_err(debug_error)?;
-    assert!(matches!(first, RuntimeShutdown::Finished(Ok(_))));
+    assert!(matches!(first, RuntimeShutdown::Succeeded(_)));
     thread.join().map_err(debug_error)?;
 
     let second = shutdown_runtime_worker(&runtime, CommandTicket::new(2), TEST_TIMEOUT, TEST_POLL)
@@ -323,7 +323,7 @@ fn shutdown_cancels_active_request_and_unloads_model() -> TestResult {
     let outcome =
         shutdown_runtime_worker(&runtime, CommandTicket::new(12), TEST_TIMEOUT, TEST_POLL)
             .map_err(debug_error)?;
-    let RuntimeShutdown::Finished(Ok(receipt)) = outcome else {
+    let RuntimeShutdown::Succeeded(receipt) = outcome else {
         return Err(format!("unexpected active-request shutdown: {outcome:?}"));
     };
     assert_eq!(receipt.cancelled_requests, 1);
@@ -340,12 +340,15 @@ fn failed_cleanup_shutdown_retains_runtime_until_process_exit() -> TestResult {
     let outcome =
         shutdown_runtime_worker(&runtime, CommandTicket::new(21), TEST_TIMEOUT, TEST_POLL)
             .map_err(debug_error)?;
-    let RuntimeShutdown::Finished(Err(RuntimeError::TerminalCleanupRetention {
+    let RuntimeShutdown::Failed(ref error) = outcome else {
+        return Err(format!("unexpected failed-cleanup shutdown: {outcome:?}"));
+    };
+    let RuntimeError::TerminalCleanupRetention {
         first: state,
         summary,
-    })) = outcome
+    } = error.as_ref()
     else {
-        return Err(format!("unexpected failed-cleanup shutdown: {outcome:?}"));
+        return Err(format!("unexpected failed-cleanup error: {error:?}"));
     };
     assert_eq!(
         state.resource,

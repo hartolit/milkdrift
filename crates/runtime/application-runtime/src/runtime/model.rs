@@ -347,7 +347,7 @@ impl ApplicationRuntime {
     pub(super) fn process_model_loaded(
         &mut self,
         ticket: CommandTicket,
-        result: Result<inference_runtime::LoadReceipt, RuntimeError>,
+        result: &Result<inference_runtime::LoadReceipt, RuntimeError>,
     ) -> Option<ApplicationEvent> {
         let correlation_mismatch = match self.pending_load.as_ref() {
             None => Some(LoadReceiptMismatch::MissingTransaction),
@@ -363,11 +363,11 @@ impl ApplicationRuntime {
                 .process_uncorrelated_model_load(result, LoadReceiptMismatch::MissingTransaction);
         };
         let receipt = match result {
-            Ok(receipt) => receipt,
+            Ok(receipt) => *receipt,
             Err(
                 RuntimeError::CleanupFailed(cleanup) | RuntimeError::CleanupRetryExhausted(cleanup),
             ) => {
-                self.begin_runtime_retention(cleanup, None);
+                self.begin_runtime_retention(*cleanup, None);
                 return Some(self.current_cleanup_event());
             }
             Err(error) => {
@@ -380,7 +380,7 @@ impl ApplicationRuntime {
 
         match self.validate_load_receipt(&transaction, &receipt) {
             Ok(validated) => {
-                self.retained_model_cleanup = None;
+                self.model_cleanup = None;
                 self.state.clear_retained_model();
                 self.state.set_loaded(validated.loaded.clone());
                 Some(ApplicationEvent::ModelLoaded {
@@ -397,7 +397,7 @@ impl ApplicationRuntime {
 
     fn process_uncorrelated_model_load(
         &mut self,
-        result: Result<inference_runtime::LoadReceipt, RuntimeError>,
+        result: &Result<inference_runtime::LoadReceipt, RuntimeError>,
         mismatch: LoadReceiptMismatch,
     ) -> Option<ApplicationEvent> {
         match result {
@@ -413,7 +413,10 @@ impl ApplicationRuntime {
                 RuntimeError::CleanupFailed(cleanup) | RuntimeError::CleanupRetryExhausted(cleanup),
             ) => {
                 self.pending_load = None;
-                self.begin_runtime_retention(cleanup, Some(incompatible_receipt_failure(mismatch)));
+                self.begin_runtime_retention(
+                    *cleanup,
+                    Some(incompatible_receipt_failure(mismatch)),
+                );
                 Some(self.current_cleanup_event())
             }
             Err(_) => None,
@@ -607,7 +610,7 @@ fn incompatible_receipt_failure(mismatch: LoadReceiptMismatch) -> ApplicationFai
     )
 }
 
-pub(super) fn model_load_failure(error: RuntimeError) -> ApplicationFailure {
+pub(super) fn model_load_failure(error: &RuntimeError) -> ApplicationFailure {
     let kind = model_load_failure_kind(error);
     let context = match kind {
         ApplicationFailureKind::UnsupportedArtifact => "model artifact or layout is unsupported",
@@ -617,9 +620,9 @@ pub(super) fn model_load_failure(error: RuntimeError) -> ApplicationFailure {
     ApplicationFailure::from_debug(kind, context, error)
 }
 
-const fn model_load_failure_kind(error: RuntimeError) -> ApplicationFailureKind {
+const fn model_load_failure_kind(error: &RuntimeError) -> ApplicationFailureKind {
     match error {
-        RuntimeError::Load(error) => load_error_failure_kind(error),
+        RuntimeError::Load(error) => load_error_failure_kind(*error),
         RuntimeError::InsufficientMemory { .. } => ApplicationFailureKind::MemoryAdmission,
         RuntimeError::CleanupFailed(_) | RuntimeError::CleanupRetryExhausted(_) => {
             ApplicationFailureKind::RetainedCleanup

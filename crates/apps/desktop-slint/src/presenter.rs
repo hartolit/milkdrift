@@ -75,7 +75,7 @@ impl Presenter {
                         };
                         refresh_conversation |=
                             callbacks::event_requires_conversation_snapshot(&event);
-                        callbacks::apply_event(&window, event);
+                        callbacks::apply_event(&window, runtime_ref.state(), event);
                     }
 
                     let presentation = presentation.borrow();

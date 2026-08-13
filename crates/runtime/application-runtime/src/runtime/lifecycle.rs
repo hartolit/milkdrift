@@ -57,10 +57,7 @@ impl ApplicationRuntime {
                 }
             }
         }
-        if let Some(event) = self.retry_incompatible_model_cleanup() {
-            return Some(event);
-        }
-        if let Some(event) = self.retry_retained_model_cleanup_inspection() {
+        if let Some(event) = self.progress_model_cleanup_coordination() {
             return Some(event);
         }
         self.pump_generation_event()
@@ -132,10 +129,10 @@ impl ApplicationRuntime {
     fn process_runtime_event(&mut self, event: &RuntimeEvent) -> Option<ApplicationEvent> {
         match event {
             RuntimeEvent::ModelLoaded { ticket, result } => {
-                self.process_model_loaded(*ticket, *result)
+                self.process_model_loaded(*ticket, result)
             }
             RuntimeEvent::ModelUnload { ticket, result } => {
-                self.process_model_unload(*ticket, *result)
+                self.process_model_unload(*ticket, result)
             }
             RuntimeEvent::GenerationAdmitted { .. }
             | RuntimeEvent::GenerationCancellationRequested { .. } => {

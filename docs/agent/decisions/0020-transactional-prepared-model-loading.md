@@ -170,7 +170,7 @@ E1 receives lower descriptor/receipt facts but does not reproduce Candle policy.
 - Public E1 `LoadedModel` exposes the E0-verified execution scalar and actual execution device, but no declaration, observed set, required primary, or per-tensor inventory.
 - E1 checks declaration agreement across artifact/admission/descriptor evidence, a nonempty complete observed set, receipt identity/capabilities/device, and final reserved footprint. Integer or `Other` bits from unused tensors are truthful evidence rather than an E1 compatibility policy.
 - E1 does not infer required primary, choose per-tensor conversion, compare declaration with execution, or fall back.
-- Retained lower model ownership is reported as `ModelCleanupPending { cleanup: ApplicationRetainedModel }`, preserving resource, ownership certainty, cleanup disposition, and independent primary/cleanup failures; ordinary owner-free failure remains `ModelLoadFailed`.
+- Retained lower model ownership is durable in `ApplicationState` as `ApplicationRetainedModel`, preserving resource, ownership certainty, cleanup disposition, and independent primary/cleanup failures; `ModelCleanupPending { resource, disposition }` is the compact transition notification, and ordinary owner-free failure remains `ModelLoadFailed`.
 - Slint may display the optional declaration in a resolved summary and execution scalar/device in a loaded summary. It gains no tensor table, conversion control, or backend responsibility.
 
 This preserves ADR-0013: Candle remains the sole local engine, E0 remains generic/backend-neutral at portable contracts, E1 remains non-generic/private concrete composition, and token-sensitive work remains statically dispatched.

@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use application_runtime::{
     ApplicationError, ApplicationEvent, ApplicationFailure, ApplicationRetainedModel,
-    ApplicationRuntime, GenerationSettings, ResolvedModel,
+    ApplicationRuntime, ApplicationState, GenerationSettings, ResolvedModel,
 };
 use slint::ComponentHandle;
 
@@ -481,7 +481,7 @@ pub(super) const fn event_requires_conversation_snapshot(event: &ApplicationEven
     )
 }
 
-pub(super) fn apply_event(window: &AppWindow, event: ApplicationEvent) {
+pub(super) fn apply_event(window: &AppWindow, state: &ApplicationState, event: ApplicationEvent) {
     match event {
         ApplicationEvent::ModelResolved {
             model,
@@ -497,8 +497,8 @@ pub(super) fn apply_event(window: &AppWindow, event: ApplicationEvent) {
         ApplicationEvent::ModelLoadFailed { failure } => {
             window.set_status_text(format!("Model load failed: {failure}").into());
         }
-        ApplicationEvent::ModelCleanupPending { cleanup } => {
-            apply_model_cleanup_pending(window, &cleanup);
+        ApplicationEvent::ModelCleanupPending { .. } => {
+            apply_model_cleanup_transition(window, state);
         }
         ApplicationEvent::ModelCleanupReleased { resource } => {
             window.set_status_text(
@@ -591,6 +591,14 @@ fn apply_model_cleanup_pending(window: &AppWindow, cleanup: &ApplicationRetained
         message.push_str(&failure.to_string());
     }
     window.set_status_text(message.into());
+}
+
+fn apply_model_cleanup_transition(window: &AppWindow, state: &ApplicationState) {
+    if let Some(cleanup) = state.retained_model() {
+        apply_model_cleanup_pending(window, cleanup);
+    } else {
+        window.set_status_text("Model cleanup state changed without retained evidence.".into());
+    }
 }
 
 fn apply_model_resolved(

@@ -57,7 +57,8 @@
 //!     match runtime.poll_event() {
 //!         Some(ApplicationEvent::ModelLoaded { .. }) => break,
 //!         Some(ApplicationEvent::ModelLoadFailed { failure }) => return Err(failure.into()),
-//!         Some(ApplicationEvent::ModelCleanupPending { cleanup }) => {
+//!         Some(ApplicationEvent::ModelCleanupPending { .. }) => {
+//!             let cleanup = runtime.state().retained_model().ok_or("missing retained state")?;
 //!             return Err(cleanup.primary_failure().clone().into());
 //!         }
 //!         _ => thread::sleep(Duration::from_millis(1)),
@@ -104,11 +105,6 @@
 //! ```
 
 #![forbid(unsafe_code)]
-#![expect(
-    clippy::large_enum_variant,
-    clippy::large_types_passed_by_value,
-    reason = "E1 forwards E0's bounded Copy cleanup evidence without introducing boxing; representation changes remain a later application concern"
-)]
 
 mod chat;
 mod configuration;

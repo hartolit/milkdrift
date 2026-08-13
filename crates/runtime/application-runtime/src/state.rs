@@ -574,10 +574,6 @@ impl ApplicationState {
         self.activity = ApplicationActivity::Unloading;
     }
 
-    pub(crate) const fn begin_retained_cleanup(&mut self) {
-        self.activity = ApplicationActivity::RetainedCleanup;
-    }
-
     pub(crate) const fn begin_shutdown(&mut self) {
         self.activity = ApplicationActivity::ShuttingDown;
     }
@@ -607,10 +603,6 @@ impl ApplicationState {
         if self.activity != ApplicationActivity::ShuttingDown {
             self.activity = ApplicationActivity::RetainedCleanup;
         }
-    }
-
-    pub(crate) fn retained_model_mut(&mut self) -> Option<&mut ApplicationRetainedModel> {
-        self.retained_model.as_mut()
     }
 
     pub(crate) fn clear_retained_model(&mut self) {

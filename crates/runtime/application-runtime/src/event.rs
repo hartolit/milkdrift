@@ -3,7 +3,7 @@
 use domain_contracts::{ModelHandle, RequestId};
 
 use crate::{
-    ApplicationFailure, ApplicationRetainedModel, ApplicationRetainedModelResource,
+    ApplicationFailure, ApplicationModelCleanupDisposition, ApplicationRetainedModelResource,
     GenerationTerminal, LoadedModel, ResolvedModel,
 };
 
@@ -34,8 +34,10 @@ pub enum ApplicationEvent {
     },
     /// A model operation retains lower-owned resources pending explicit cleanup.
     ModelCleanupPending {
-        /// Complete current retained ownership and cleanup disposition.
-        cleanup: ApplicationRetainedModel,
+        /// Stable resource identity whose ownership remains retained.
+        resource: ApplicationRetainedModelResource,
+        /// Cleanup transition observed when this event was emitted.
+        disposition: ApplicationModelCleanupDisposition,
     },
     /// A previously retained model owner was explicitly released.
     ModelCleanupReleased {

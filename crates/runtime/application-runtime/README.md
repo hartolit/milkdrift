@@ -114,11 +114,14 @@ No normal `LoadedModel` is published until every check succeeds.
 - separate primary and cleanup/coordination `ApplicationFailure` values.
 
 Entering retained state clears the normal loaded model and locks selection,
-resolution, and loading. `ModelCleanupPending { cleanup }` carries the complete
-public retained state. An explicit lower model-owner release outside an in-flight
-unload emits `ModelCleanupReleased { resource }`. Sequence or model cleanup released
-while an unload remains correlated stays pending until the terminal `ModelUnloaded`
-receipt, and successor cleanup owners for the same model are adopted without losing
+resolution, and loading. Complete evidence lives in
+`ApplicationState::retained_model()`. `ModelCleanupPending { resource,
+disposition }` is a compact transition notification so hosts can reread that
+durable state without copying failures and unverified footprint evidence through
+each event. An explicit lower model-owner release outside an in-flight unload emits
+`ModelCleanupReleased { resource }`. Sequence cleanup released while an unload
+remains correlated stays pending until the terminal `ModelUnloaded` receipt, and a
+successor cleanup resource for the same model is adopted without losing
 correlation.
 
 Worker disconnect, worker-handle absence, an omitted owner in a snapshot, or zero

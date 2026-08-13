@@ -68,6 +68,10 @@ where
     cancelled_requests_during_unload: u32,
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "E0 keeps its concrete sole cleanup owner inline so quarantine insertion cannot fail after native ownership has already been acquired"
+)]
 enum PendingModelOwner<M, P>
 where
     M: LoadedModel,

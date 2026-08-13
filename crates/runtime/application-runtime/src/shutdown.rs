@@ -28,13 +28,13 @@ pub enum ShutdownStatus {
     TerminalFailure,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum InferenceTerminalFailure {
-    Runtime(RuntimeError),
+    Runtime(ApplicationFailure),
     EndpointDisconnected,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum InferenceShutdownState {
     Running,
     Awaiting(CommandTicket),
@@ -83,16 +83,17 @@ impl ShutdownControl {
         }
     }
 
-    fn record_inference_failure(&mut self, error: RuntimeError) {
+    fn record_inference_failure(&mut self, error: &RuntimeError) {
         if !matches!(self.inference, InferenceShutdownState::TerminalFailure(_)) {
-            self.inference =
-                InferenceShutdownState::TerminalFailure(InferenceTerminalFailure::Runtime(error));
+            self.inference = InferenceShutdownState::TerminalFailure(
+                InferenceTerminalFailure::Runtime(normalize_inference_shutdown_failure(error)),
+            );
             self.status = ShutdownStatus::TerminalFailure;
         }
     }
 
-    const fn terminal_failure(&self) -> Option<InferenceTerminalFailure> {
-        match self.inference {
+    const fn terminal_failure(&self) -> Option<&InferenceTerminalFailure> {
+        match &self.inference {
             InferenceShutdownState::TerminalFailure(failure) => Some(failure),
             InferenceShutdownState::Running
             | InferenceShutdownState::Awaiting(_)
@@ -119,9 +120,13 @@ pub fn shutdown(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationError
     record_first_error(&mut first_error, join_hub_worker(runtime).err());
 
     let workers_stopped = workers_confirmed_stopped(runtime);
-    if let Some(failure) = runtime.shutdown_control.terminal_failure() {
+    if let Some(error) = runtime
+        .shutdown_control
+        .terminal_failure()
+        .map(terminal_inference_error)
+    {
         runtime.shutdown_control.status = ShutdownStatus::TerminalFailure;
-        return Err(terminal_inference_error(failure));
+        return Err(error);
     }
     match first_error {
         None if workers_stopped && runtime.shutdown_control.inference_cleanly_stopped() => {
@@ -175,7 +180,7 @@ fn shutdown_runtime(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationE
         runtime.configuration.timing.runtime_shutdown_timeout,
         crate::ApplicationConfigurationField::RuntimeShutdownTimeout,
     )?;
-    let ticket = match runtime.shutdown_control.inference {
+    let ticket = match &runtime.shutdown_control.inference {
         InferenceShutdownState::Running => {
             if !runtime.local.thread_is_present() {
                 runtime.shutdown_control.record_inference_disconnect();
@@ -199,7 +204,7 @@ fn shutdown_runtime(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationE
                 }
             }
         }
-        InferenceShutdownState::Awaiting(ticket) => ticket,
+        InferenceShutdownState::Awaiting(ticket) => *ticket,
         InferenceShutdownState::CleanlyStopped => return Ok(()),
         InferenceShutdownState::TerminalFailure(failure) => {
             return Err(terminal_inference_error(failure));
@@ -217,27 +222,27 @@ fn shutdown_runtime(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationE
         .shutdown_control
         .forced_runtime_shutdown_failure
         .take()
-        .map_or(outcome, |error| RuntimeShutdown::Finished(Err(error)));
+        .map_or(outcome, |error| RuntimeShutdown::Failed(Box::new(error)));
     match outcome {
         RuntimeShutdown::Disconnected => {
             runtime.shutdown_control.record_inference_disconnect();
             runtime.mark_model_worker_disconnected();
             Err(ApplicationError::RuntimeDisconnected)
         }
-        RuntimeShutdown::Finished(Ok(_)) => {
+        RuntimeShutdown::Succeeded(_) => {
             runtime.shutdown_control.inference = InferenceShutdownState::CleanlyStopped;
             runtime.confirm_runtime_shutdown_released();
             Ok(())
         }
-        RuntimeShutdown::Finished(Err(error)) => {
-            match error {
+        RuntimeShutdown::Failed(error) => {
+            match error.as_ref() {
                 RuntimeError::TerminalCleanupRetention { first, summary } => {
-                    runtime.mark_terminal_process_retention(first, summary);
+                    runtime.mark_terminal_process_retention(*first, *summary);
                 }
                 other => runtime.mark_terminal_worker_failure(other),
             }
-            runtime.shutdown_control.record_inference_failure(error);
-            Err(inference_shutdown_error(error))
+            runtime.shutdown_control.record_inference_failure(&error);
+            Err(inference_shutdown_error(&error))
         }
     }
 }
@@ -248,10 +253,13 @@ enum RuntimeShutdownRequest {
     Submitted,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum RuntimeShutdown {
     Disconnected,
-    Finished(Result<ShutdownReceipt, RuntimeError>),
+    Succeeded(ShutdownReceipt),
+    /// Shutdown is a cold path; boxing keeps every polled outcome compact while
+    /// retaining the complete lower diagnostic for terminal ownership handling.
+    Failed(Box<RuntimeError>),
 }
 
 fn shutdown_runtime_worker<S>(
@@ -310,7 +318,12 @@ fn await_runtime_shutdown_until<S>(
             Ok(RuntimeEvent::Shutdown {
                 ticket: event_ticket,
                 result,
-            }) if event_ticket == ticket => return Ok(RuntimeShutdown::Finished(result)),
+            }) if event_ticket == ticket => {
+                return Ok(match result {
+                    Ok(receipt) => RuntimeShutdown::Succeeded(receipt),
+                    Err(error) => RuntimeShutdown::Failed(Box::new(error)),
+                });
+            }
             Ok(_) | Err(inference_runtime::RuntimeReceiveError::Timeout) => {}
             Err(inference_runtime::RuntimeReceiveError::Disconnected) => {
                 return Ok(RuntimeShutdown::Disconnected);
@@ -322,24 +335,28 @@ fn await_runtime_shutdown_until<S>(
 fn normalize_runtime_shutdown(outcome: RuntimeShutdown) -> Result<(), ApplicationError> {
     match outcome {
         RuntimeShutdown::Disconnected => Err(ApplicationError::RuntimeDisconnected),
-        RuntimeShutdown::Finished(result) => result.map(|_| ()).map_err(inference_shutdown_error),
+        RuntimeShutdown::Succeeded(_) => Ok(()),
+        RuntimeShutdown::Failed(error) => Err(inference_shutdown_error(&error)),
     }
 }
 
-fn terminal_inference_error(failure: InferenceTerminalFailure) -> ApplicationError {
+fn terminal_inference_error(failure: &InferenceTerminalFailure) -> ApplicationError {
     match failure {
-        InferenceTerminalFailure::Runtime(error) => inference_shutdown_error(error),
+        InferenceTerminalFailure::Runtime(failure) => failure.clone().into(),
         InferenceTerminalFailure::EndpointDisconnected => ApplicationError::RuntimeDisconnected,
     }
 }
 
-fn inference_shutdown_error(error: RuntimeError) -> ApplicationError {
+fn normalize_inference_shutdown_failure(error: &RuntimeError) -> ApplicationFailure {
     ApplicationFailure::from_debug(
         ApplicationFailureKind::Inference,
         "inference shutdown failed",
         error,
     )
-    .into()
+}
+
+fn inference_shutdown_error(error: &RuntimeError) -> ApplicationError {
+    normalize_inference_shutdown_failure(error).into()
 }
 
 fn join_runtime_worker(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationError> {

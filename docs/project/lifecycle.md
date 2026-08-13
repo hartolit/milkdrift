@@ -95,3 +95,12 @@ join handle. A join timeout is retryable and can later complete cleanly when E0
 shutdown succeeded. A terminal E0 cleanup failure remains an error after the
 worker has exited and after its handle is joined; a repeated application shutdown
 must not convert it into success.
+
+E1 represents application cleanup through one private coordinator rather than
+parallel incompatible-unload and retained-inspection trackers. Its checked action
+contains the command identity and ticket together, retains lower cleanup counts
+separately from bounded E1 submission counts, and rejects mismatched tickets or
+resources. Public detailed evidence remains in `ApplicationState`; cleanup events
+carry only resource identity and the observed disposition transition. Clearing
+that state requires a correlated unload/shutdown success or an explicit released
+lower cleanup record, and happens once with the coordinator removal.

@@ -1,10 +1,11 @@
 # Current execution context
 
-**Status date:** 2026-08-11
+**Status date:** 2026-08-13
 
 ```text
 Phase 12 and the first four pristine-state remediation areas remain implemented.
 A post-closure foundation repair is implemented in the current working tree but has not yet been validated with Rust tooling.
+The E1 cleanup-coordination repair is implemented and its required focused local validation passes in an isolated target directory.
 No workflow/workspace product program has been ratified or activated.
 Historical Phase 12 and predecessor-tree results do not validate this repaired tree.
 ```
@@ -34,6 +35,12 @@ This package does not implement workflow/workspace features. The next product
 program remains inactive until the repaired foundation receives an exact-tree
 greenlight.
 
+The E1 repair replaces the overlapping incompatible-unload and retained-inspection
+trackers with one private checked coordinator, keeps lower and E1 retry counts
+independent, stores complete public cleanup evidence in `ApplicationState`, and
+uses compact cleanup transition events. It changes no durable persistence schema
+and moves no cleanup policy into Slint or E0.
+
 ## Current implementation boundary
 
 The local product remains the unquantized Llama Safetensors path through Candle,
@@ -52,9 +59,11 @@ Current component and support truth is owned by
 
 ## Validation and evidence truth
 
-- No compilation, formatting, Clippy, test, cross-target, benchmark, or CUDA
-  result is currently recorded for this repair. Validation begins only after the
-  exact patch is applied to the reviewed base.
+- The required formatting, package checks/tests, strict Clippy, rustdoc,
+  architecture, hygiene, and diff checks pass locally in an isolated target. The
+  E0 fault-injection boundary target also passes. These are source-tree results,
+  not canonical, portable, CUDA, remote, external-model, or performance evidence;
+  the package completion record names the resulting commit and tree.
 - Phase 12 self-hosted CUDA
   [run 31281013243](https://github.com/hartolit/milkdrift/actions/runs/31281013243)
   succeeded on closure commit `181a069ce81525e9c144fe8de051ced8e3c0b9d7` only.

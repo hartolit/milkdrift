@@ -84,9 +84,9 @@ Slint silently substitutes CPU.
 
 ## Retained cleanup presentation
 
-`ModelCleanupPending { cleanup }` carries a complete
-`ApplicationRetainedModel`, not an `exhausted` boolean plus one failure. Slint
-formats:
+`ModelCleanupPending { resource, disposition }` is a compact transition event.
+Slint rereads the complete `ApplicationRetainedModel` from `ApplicationState`
+and formats:
 
 - the retained resource;
 - `Exact`, `Unverified`, or `Unknown` ownership;

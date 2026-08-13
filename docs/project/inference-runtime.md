@@ -203,8 +203,9 @@ Output records preserve request identity and ordered state:
 - `CleanupExhausted { original outcome, failure report, retry state }`; and
 - `Released(original outcome)`.
 
-These are E0 token-output records, not the older E1 model-cleanup event shape. E1's
-current model event is `ModelCleanupPending { cleanup: ApplicationRetainedModel }`.
+These are E0 token-output records, not E1 model-cleanup events. E1 stores complete
+retained evidence in `ApplicationState` and publishes the compact transition event
+`ModelCleanupPending { resource, disposition }`.
 
 ## Cancellation, unload, and shutdown
 

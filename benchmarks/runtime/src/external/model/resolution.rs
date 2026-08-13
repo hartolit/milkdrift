@@ -52,7 +52,10 @@ pub(super) fn resolve_model(
                         "exact Hub resolution failed for {MODEL_REPOSITORY}@{MODEL_REVISION}: {failure}"
                     )));
                 }
-                ApplicationEvent::ModelCleanupPending { cleanup } => {
+                ApplicationEvent::ModelCleanupPending { .. } => {
+                    let cleanup = runtime.state().retained_model().ok_or_else(|| {
+                        BenchmarkError::new("cleanup event omitted durable retained state")
+                    })?;
                     return Err(BenchmarkError::new(format!(
                         "model cleanup retained E0 ownership during immutable resolution: disposition={:?}, primary_failure={}, cleanup_failure={:?}",
                         cleanup.cleanup(),

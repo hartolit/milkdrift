@@ -1,183 +1,161 @@
-//! Retained model ownership, cleanup coordination, and disconnect truth.
+//! Retained model cleanup command coordination and public-state publication.
+
+mod coordinator;
+mod evidence;
 
 use domain_contracts::{MemoryFootprint, ModelHandle};
 use inference_runtime::{
-    CleanupFailureReport, CleanupResource, CleanupRetryState, CommandTicket, ConservativeFootprint,
-    RetainedModelSnapshot, RetainedOwnership, RuntimeCommand, RuntimeError, RuntimeSnapshot,
-    UnloadStatus,
+    CleanupResource, CleanupRetryState, CommandTicket, RetainedModelSnapshot, RuntimeCommand,
+    RuntimeError, RuntimeSnapshot, UnloadStatus,
 };
+
+pub(super) use coordinator::{
+    CleanupCommand, ModelCleanupAction, ModelCleanupCoordinator, ModelCleanupOrigin,
+};
+use evidence::{application_cleanup_resource, application_primary_failure};
 
 use crate::{
-    ApplicationActivity, ApplicationConservativeFootprint, ApplicationError, ApplicationEvent,
-    ApplicationFailure, ApplicationFailureKind, ApplicationModelCleanupDisposition,
-    ApplicationRetainedModel, ApplicationRetainedModelResource, ApplicationRetainedOwnership,
-    ApplicationRuntime,
+    ApplicationActivity, ApplicationError, ApplicationEvent, ApplicationFailure,
+    ApplicationFailureKind, ApplicationModelCleanupDisposition, ApplicationRetainedModelResource,
+    ApplicationRetainedOwnership, ApplicationRuntime,
 };
 
-pub(super) const MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS: u8 = 3;
-const MAXIMUM_LOAD_CLEANUP_INSPECTION_SUBMISSION_ATTEMPTS: u8 = 3;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct IncompatibleModelCleanup {
-    pub(super) handle: ModelHandle,
-    pub(super) compatibility_failure: ApplicationFailure,
-    pub(super) unload: IncompatibleModelUnload,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum IncompatibleModelUnload {
-    PendingSubmission {
-        attempts: u8,
-        last_failure: Option<ApplicationFailure>,
-    },
-    Submitted {
-        ticket: CommandTicket,
-        attempts: u8,
-        last_failure: Option<ApplicationFailure>,
-    },
-    RetryExhausted {
-        attempts: u8,
-        last_failure: ApplicationFailure,
-    },
-    WorkerDisconnected,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct RetainedModelCleanup {
-    pub(super) resource: CleanupResource,
-    pub(super) inspection: RetainedModelInspection,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RetainedModelInspection {
-    PendingSubmission { attempts: u8 },
-    Submitted { ticket: CommandTicket },
-    CoordinationRetryAvailable { attempts: u8 },
-    LowerExhausted,
-    WorkerDisconnected,
-}
+pub(super) const MAXIMUM_CLEANUP_COORDINATION_SUBMISSION_ATTEMPTS: u8 = 3;
 
 impl ApplicationRuntime {
-    /// Re-enables bounded E1 coordination after submission or inspection exhaustion.
+    /// Re-enables a fresh bounded E1 coordination round.
     ///
-    /// This never resets E0's cleanup-attempt policy. Lower exhaustion, worker
-    /// disconnection, and process-lifetime retention remain non-retryable.
+    /// This transition is accepted only from `CoordinationRetryAvailable`. It can
+    /// never reopen lower exhaustion, disconnection, or process-lifetime retention.
     ///
     /// # Errors
     ///
-    /// Returns an error when no retained model exists or its current disposition
-    /// does not permit another E1 coordination round.
+    /// Returns an error when no retained owner exists or its current action is not retryable.
     pub fn retry_model_cleanup(&mut self) -> Result<(), ApplicationError> {
-        if self.state.retained_model().is_none() {
-            return Err(ApplicationError::NoRetainedModelCleanup);
-        }
-        if !self.state.can_retry_model_cleanup() {
-            return Err(ApplicationError::ModelCleanupNotRetryable);
-        }
-
-        let mut retry_enabled = false;
-        if let Some(cleanup) = self.incompatible_model_cleanup.as_mut()
-            && matches!(
-                cleanup.unload,
-                IncompatibleModelUnload::RetryExhausted { .. }
-            )
-        {
-            cleanup.unload = IncompatibleModelUnload::PendingSubmission {
-                attempts: 0,
-                last_failure: None,
-            };
-            retry_enabled = true;
-        }
-        if let Some(cleanup) = self.retained_model_cleanup.as_mut()
-            && matches!(
-                cleanup.inspection,
-                RetainedModelInspection::CoordinationRetryAvailable { .. }
-            )
-        {
-            cleanup.inspection = RetainedModelInspection::PendingSubmission { attempts: 0 };
-            retry_enabled = true;
-        }
-        if !retry_enabled {
-            return Err(ApplicationError::ModelCleanupNotRetryable);
-        }
-
-        if let Some(retained) = self.state.retained_model_mut() {
-            retained.set_cleanup(ApplicationModelCleanupDisposition::Pending, None);
-        }
-        self.state.begin_retained_cleanup();
+        let coordinator = self
+            .model_cleanup
+            .as_mut()
+            .ok_or(ApplicationError::NoRetainedModelCleanup)?;
+        coordinator
+            .retry_coordination()
+            .map_err(|_| ApplicationError::ModelCleanupNotRetryable)?;
+        self.publish_model_cleanup();
         Ok(())
     }
 
-    pub(super) fn retry_retained_model_cleanup_inspection(&mut self) -> Option<ApplicationEvent> {
-        let (resource, attempts) = self
-            .retained_model_cleanup
-            .and_then(|cleanup| match cleanup.inspection {
-                RetainedModelInspection::PendingSubmission { attempts } => {
-                    Some((cleanup.resource, attempts))
-                }
-                RetainedModelInspection::Submitted { .. }
-                | RetainedModelInspection::CoordinationRetryAvailable { .. }
-                | RetainedModelInspection::LowerExhausted
-                | RetainedModelInspection::WorkerDisconnected => None,
-            })?;
+    /// Advances at most one pending E1 cleanup-coordination action.
+    pub(super) fn progress_model_cleanup_coordination(&mut self) -> Option<ApplicationEvent> {
+        if matches!(
+            self.model_cleanup
+                .as_ref()
+                .map(ModelCleanupCoordinator::action),
+            Some(ModelCleanupAction::WaitingForLowerRetry { .. })
+        ) && self
+            .model_cleanup
+            .as_mut()
+            .and_then(|coordinator| coordinator.begin_retained_owner_inspection().err())
+            .is_some()
+        {
+            return Some(self.record_internal_transition_failure(
+                "retained cleanup could not enter owner inspection",
+            ));
+        }
+
+        let (command, attempts) = self
+            .model_cleanup
+            .as_ref()
+            .and_then(ModelCleanupCoordinator::pending_command)?;
         let attempt = attempts.saturating_add(1);
-        let ticket = match self.next_ticket() {
-            Ok(ticket) => ticket,
-            Err(error) => {
-                return Some(self.record_cleanup_coordination_failure(resource, attempt, &error));
+        let submission = match command {
+            CleanupCommand::UnloadIncompatibleModel { handle } => {
+                self.submit_model_unload(handle, crate::ModelUnloadBehavior::Drain)
+            }
+            CleanupCommand::InspectRetainedOwner { .. } => {
+                let ticket = match self.next_ticket() {
+                    Ok(ticket) => ticket,
+                    Err(error) => {
+                        return Some(self.record_coordination_failure(command, attempt, &error));
+                    }
+                };
+                self.submit_inference(RuntimeCommand::Snapshot { ticket })
+                    .map(|()| ticket)
             }
         };
-        match self.submit_inference(RuntimeCommand::Snapshot { ticket }) {
-            Ok(()) => {
-                self.retained_model_cleanup = Some(RetainedModelCleanup {
-                    resource,
-                    inspection: RetainedModelInspection::Submitted { ticket },
+        match submission {
+            Ok(submitted_ticket) => {
+                let transition = self.model_cleanup.as_mut().map(|coordinator| {
+                    coordinator.record_submitted(command, submitted_ticket, attempt)
                 });
+                if !matches!(transition, Some(Ok(()))) {
+                    return Some(self.record_internal_transition_failure(
+                        "cleanup command submission did not match the active coordinator action",
+                    ));
+                }
+                self.publish_model_cleanup();
                 None
             }
-            Err(ApplicationError::RuntimeBusy)
-                if attempt < MAXIMUM_LOAD_CLEANUP_INSPECTION_SUBMISSION_ATTEMPTS =>
-            {
-                self.retained_model_cleanup = Some(RetainedModelCleanup {
-                    resource,
-                    inspection: RetainedModelInspection::PendingSubmission { attempts: attempt },
-                });
-                None
+            Err(ApplicationError::RuntimeBusy) => {
+                if attempt >= MAXIMUM_CLEANUP_COORDINATION_SUBMISSION_ATTEMPTS {
+                    Some(self.record_coordination_failure(
+                        command,
+                        attempt,
+                        &ApplicationError::RuntimeBusy,
+                    ))
+                } else {
+                    let failure = coordination_failure(command, &ApplicationError::RuntimeBusy);
+                    let transition = self.model_cleanup.as_mut().map(|coordinator| {
+                        coordinator.record_pending_submission_failure(
+                            command,
+                            attempt,
+                            MAXIMUM_CLEANUP_COORDINATION_SUBMISSION_ATTEMPTS,
+                            failure,
+                        )
+                    });
+                    if !matches!(transition, Some(Ok(()))) {
+                        return Some(self.record_internal_transition_failure(
+                            "busy cleanup submission did not match the active action",
+                        ));
+                    }
+                    self.publish_model_cleanup();
+                    None
+                }
             }
-            Err(ApplicationError::RuntimeDisconnected) => self
-                .state
-                .retained_model()
-                .cloned()
-                .map(|cleanup| ApplicationEvent::ModelCleanupPending { cleanup })
-                .or(Some(ApplicationEvent::RuntimeDisconnected)),
-            Err(error) => Some(self.record_cleanup_coordination_failure(resource, attempt, &error)),
+            Err(ApplicationError::RuntimeDisconnected) => Some(self.current_cleanup_event()),
+            Err(error) => Some(self.record_coordination_failure(command, attempt, &error)),
         }
     }
 
-    fn record_cleanup_coordination_failure(
+    fn record_coordination_failure(
         &mut self,
-        resource: CleanupResource,
-        attempts: u8,
+        command: CleanupCommand,
+        attempt: u8,
         error: &ApplicationError,
     ) -> ApplicationEvent {
-        self.retained_model_cleanup = Some(RetainedModelCleanup {
-            resource,
-            inspection: RetainedModelInspection::CoordinationRetryAvailable { attempts },
+        let failure = coordination_failure(command, error);
+        let transition = self.model_cleanup.as_mut().map(|coordinator| {
+            coordinator.record_pending_submission_failure(
+                command,
+                attempt,
+                MAXIMUM_CLEANUP_COORDINATION_SUBMISSION_ATTEMPTS,
+                failure,
+            )
         });
-        let failure = ApplicationFailure::new(
-            ApplicationFailureKind::RetainedCleanup,
-            format!("retained cleanup inspection could not be submitted: {error}"),
-        );
-        if let Some(retained) = self.state.retained_model_mut() {
-            retained.set_cleanup(
-                ApplicationModelCleanupDisposition::CoordinationRetryAvailable {
-                    attempts,
-                    maximum_attempts: MAXIMUM_LOAD_CLEANUP_INSPECTION_SUBMISSION_ATTEMPTS,
-                },
-                Some(failure),
+        if !matches!(transition, Some(Ok(()))) {
+            return self.record_internal_transition_failure(
+                "cleanup coordination failure did not match the active action",
             );
         }
-        self.state.begin_retained_cleanup();
+        self.publish_model_cleanup();
+        self.current_cleanup_event()
+    }
+
+    fn record_internal_transition_failure(&mut self, message: &'static str) -> ApplicationEvent {
+        let failure = ApplicationFailure::new(ApplicationFailureKind::RetainedCleanup, message);
+        if let Some(coordinator) = self.model_cleanup.as_mut() {
+            let resource = coordinator.retained().resource();
+            coordinator.record_unknown_evidence(resource, failure);
+        }
+        self.publish_model_cleanup();
         self.current_cleanup_event()
     }
 
@@ -187,79 +165,89 @@ impl ApplicationRuntime {
         snapshot: &RuntimeSnapshot,
         retained_models: &[RetainedModelSnapshot],
     ) -> Option<ApplicationEvent> {
-        let resource = match self.retained_model_cleanup {
-            Some(RetainedModelCleanup {
-                resource,
-                inspection: RetainedModelInspection::Submitted { ticket: expected },
-            }) if expected == ticket => resource,
-            _ => return None,
+        let (command, _) = self
+            .model_cleanup
+            .as_ref()?
+            .submitted_command(ticket)
+            .ok()?;
+        let CleanupCommand::InspectRetainedOwner { resource } = command else {
+            return None;
         };
 
-        let resource_handle = cleanup_resource_handle(resource);
-        let correlated_handle = self
-            .model_unload_correlation_exists(resource_handle)
-            .then_some(resource_handle);
-        let belongs_to_correlated_unload = |candidate| {
-            correlated_handle
-                .is_some_and(|handle| cleanup_resource_belongs_to_model(candidate, handle))
-        };
-        let matching_last_cleanup = snapshot.last_cleanup.filter(|cleanup| {
-            cleanup.resource == resource || belongs_to_correlated_unload(cleanup.resource)
-        });
-        let matching_live_cleanup = retained_models
+        let matching_live = retained_models
             .iter()
             .map(|retained| retained.cleanup)
-            .find(|cleanup| {
-                cleanup.resource == resource || belongs_to_correlated_unload(cleanup.resource)
-            });
-
-        if let Some(state) = matching_live_cleanup {
-            if matching_last_cleanup.is_some_and(|cleanup| {
-                cleanup.resource == state.resource && cleanup.ownership.is_released()
-            }) {
-                self.begin_snapshot_release_contradiction(state);
-                return Some(self.current_cleanup_event());
-            }
-            let was_exhausted = self.retained_cleanup_was_lower_exhausted();
-            self.begin_runtime_retention(state, None);
-            if state.exhausted() && !was_exhausted {
-                return Some(self.current_cleanup_event());
-            }
-            return None;
+            .filter(|cleanup| {
+                self.model_cleanup
+                    .as_ref()
+                    .is_some_and(|coordinator| coordinator.accepts_resource(cleanup.resource))
+            })
+            .collect::<Vec<_>>();
+        if matching_live.len() > 1 {
+            return Some(self.record_multiple_live_owners());
         }
 
-        if let Some(cleanup) = matching_last_cleanup {
+        let matching_last = snapshot.last_cleanup.filter(|cleanup| {
+            self.model_cleanup
+                .as_ref()
+                .is_some_and(|coordinator| coordinator.accepts_resource(cleanup.resource))
+        });
+        if let Some(live) = matching_live.first().copied() {
+            if matching_last
+                .is_some_and(|last| last.resource == live.resource && last.ownership.is_released())
+            {
+                let failure = ApplicationFailure::new(
+                    ApplicationFailureKind::RetainedCleanup,
+                    "runtime snapshot simultaneously reported explicit release and a live retained owner for the same cleanup resource",
+                );
+                if let Some(coordinator) = self.model_cleanup.as_mut() {
+                    coordinator.record_unknown_evidence(
+                        application_cleanup_resource(live.resource),
+                        failure,
+                    );
+                    let _ = coordinator.continue_correlated_inspection(live.resource);
+                }
+                self.publish_model_cleanup();
+                return Some(self.current_cleanup_event());
+            }
+            let was_exhausted = self.cleanup_is_lower_exhausted();
+            self.observe_lower_cleanup(live, None);
+            return (live.exhausted() && !was_exhausted).then(|| self.current_cleanup_event());
+        }
+
+        if let Some(cleanup) = matching_last {
             if cleanup.ownership.is_released() {
-                if correlated_handle.is_some() {
-                    self.retained_model_cleanup = Some(RetainedModelCleanup {
-                        resource: cleanup.resource,
-                        inspection: RetainedModelInspection::PendingSubmission { attempts: 0 },
-                    });
-                    if let Some(retained) = self.state.retained_model_mut() {
-                        retained.set_cleanup(ApplicationModelCleanupDisposition::Pending, None);
+                if self
+                    .model_cleanup
+                    .as_ref()
+                    .and_then(|coordinator| coordinator.verify_release(cleanup).ok())
+                    .is_none()
+                {
+                    return Some(self.record_internal_transition_failure(
+                        "explicit cleanup release did not match the active coordinator resource",
+                    ));
+                }
+                if matches!(cleanup.resource, CleanupResource::Sequence { .. })
+                    && self.correlated_unload_exists()
+                {
+                    if let Some(coordinator) = self.model_cleanup.as_mut() {
+                        let _ = coordinator.continue_correlated_inspection(cleanup.resource);
                     }
-                    self.state.begin_retained_cleanup();
+                    self.publish_model_cleanup();
                     return Some(self.current_cleanup_event());
                 }
                 return Some(self.release_retained_model(resource));
             }
-            let was_exhausted = self.retained_cleanup_was_lower_exhausted();
-            self.begin_runtime_retention(cleanup, None);
-            if cleanup.exhausted() && !was_exhausted {
-                return Some(self.current_cleanup_event());
-            }
-            return None;
+            let was_exhausted = self.cleanup_is_lower_exhausted();
+            self.observe_lower_cleanup(cleanup, None);
+            return (cleanup.exhausted() && !was_exhausted).then(|| self.current_cleanup_event());
         }
 
-        if correlated_handle.is_some() {
-            self.retained_model_cleanup = Some(RetainedModelCleanup {
-                resource,
-                inspection: RetainedModelInspection::PendingSubmission { attempts: 0 },
-            });
-            if let Some(retained) = self.state.retained_model_mut() {
-                retained.set_cleanup(ApplicationModelCleanupDisposition::Pending, None);
+        if self.correlated_unload_exists() {
+            if let Some(coordinator) = self.model_cleanup.as_mut() {
+                let _ = coordinator.continue_correlated_inspection(resource);
             }
-            self.state.begin_retained_cleanup();
+            self.publish_model_cleanup();
             return None;
         }
 
@@ -267,62 +255,55 @@ impl ApplicationRuntime {
             ApplicationFailureKind::RetainedCleanup,
             "retained cleanup inspection did not contain the expected owner or an explicit release record",
         );
-        self.retained_model_cleanup = Some(RetainedModelCleanup {
-            resource,
-            inspection: RetainedModelInspection::CoordinationRetryAvailable {
-                attempts: MAXIMUM_LOAD_CLEANUP_INSPECTION_SUBMISSION_ATTEMPTS,
-            },
-        });
-        if let Some(retained) = self.state.retained_model_mut() {
-            retained.set_cleanup(
-                ApplicationModelCleanupDisposition::CoordinationRetryAvailable {
-                    attempts: MAXIMUM_LOAD_CLEANUP_INSPECTION_SUBMISSION_ATTEMPTS,
-                    maximum_attempts: MAXIMUM_LOAD_CLEANUP_INSPECTION_SUBMISSION_ATTEMPTS,
-                },
-                Some(failure),
+        if let Some(coordinator) = self.model_cleanup.as_mut() {
+            let _ = coordinator.record_inspection_uncertainty(
+                MAXIMUM_CLEANUP_COORDINATION_SUBMISSION_ATTEMPTS,
+                MAXIMUM_CLEANUP_COORDINATION_SUBMISSION_ATTEMPTS,
+                failure,
             );
         }
-        self.state.begin_retained_cleanup();
+        self.publish_model_cleanup();
         Some(self.current_cleanup_event())
     }
 
-    fn retained_cleanup_was_lower_exhausted(&self) -> bool {
-        self.state.retained_model().is_some_and(|retained| {
-            matches!(
-                retained.cleanup(),
-                ApplicationModelCleanupDisposition::LowerExhausted { .. }
-            )
-        })
+    fn record_multiple_live_owners(&mut self) -> ApplicationEvent {
+        let failure = ApplicationFailure::new(
+            ApplicationFailureKind::RetainedCleanup,
+            "runtime snapshot reported more than one cleanup resource for the active E1 owner",
+        );
+        if let Some(coordinator) = self.model_cleanup.as_mut() {
+            coordinator.record_unknown_evidence(coordinator.retained().resource(), failure.clone());
+            let _ = coordinator.record_inspection_uncertainty(
+                MAXIMUM_CLEANUP_COORDINATION_SUBMISSION_ATTEMPTS,
+                MAXIMUM_CLEANUP_COORDINATION_SUBMISSION_ATTEMPTS,
+                failure,
+            );
+        }
+        self.publish_model_cleanup();
+        self.current_cleanup_event()
     }
 
-    fn begin_snapshot_release_contradiction(&mut self, cleanup: CleanupRetryState) {
-        let primary_failure = self
-            .retained_primary_failure(cleanup.resource)
-            .unwrap_or_else(|| application_primary_failure(cleanup.failure));
-        let (resource, _) = self.retained_model_evidence(cleanup);
-        self.retained_model_cleanup = Some(RetainedModelCleanup {
-            resource: cleanup.resource,
-            inspection: RetainedModelInspection::PendingSubmission { attempts: 0 },
-        });
-        self.state.set_retained_model(ApplicationRetainedModel::new(
-            resource,
-            ApplicationRetainedOwnership::Unknown,
-            ApplicationModelCleanupDisposition::Pending,
-            primary_failure,
-            Some(ApplicationFailure::new(
-                ApplicationFailureKind::RetainedCleanup,
-                "runtime snapshot simultaneously reported explicit release and a live retained owner for the same cleanup resource",
-            )),
-        ));
-    }
-
-    fn model_unload_correlation_exists(&self, handle: ModelHandle) -> bool {
-        self.pending_unload
-            .is_some_and(|transaction| transaction.handle == handle)
-            || self
-                .incompatible_model_cleanup
+    fn cleanup_is_lower_exhausted(&self) -> bool {
+        matches!(
+            self.model_cleanup
                 .as_ref()
-                .is_some_and(|cleanup| cleanup.handle == handle)
+                .map(ModelCleanupCoordinator::action),
+            Some(ModelCleanupAction::LowerExhausted { .. })
+        )
+    }
+
+    fn correlated_unload_exists(&self) -> bool {
+        let Some(coordinator) = self.model_cleanup.as_ref() else {
+            return false;
+        };
+        let expected = coordinator.origin().expected_handle();
+        self.pending_unload
+            .is_some_and(|transaction| Some(transaction.handle) == expected)
+            || matches!(
+                coordinator.origin(),
+                ModelCleanupOrigin::IncompatibleCompletedModel { .. }
+                    | ModelCleanupOrigin::OrdinaryLoadedModelUnload { .. }
+            )
     }
 
     pub(super) fn begin_runtime_retention(
@@ -330,103 +311,88 @@ impl ApplicationRuntime {
         cleanup: CleanupRetryState,
         primary_override: Option<ApplicationFailure>,
     ) {
-        let primary_failure = primary_override
-            .or_else(|| self.retained_primary_failure(cleanup.resource))
-            .unwrap_or_else(|| application_primary_failure(cleanup.failure));
-        let (public_resource, public_ownership) = self.retained_model_evidence(cleanup);
+        let sequence_evidence = self.sequence_model_evidence(cleanup.resource);
         if cleanup.ownership.is_released() {
-            self.retained_model_cleanup = Some(RetainedModelCleanup {
-                resource: cleanup.resource,
-                inspection: RetainedModelInspection::PendingSubmission { attempts: 0 },
-            });
-            self.state.set_retained_model(ApplicationRetainedModel::new(
-                public_resource,
-                ApplicationRetainedOwnership::Unknown,
-                ApplicationModelCleanupDisposition::Pending,
-                primary_failure,
-                Some(ApplicationFailure::from_debug(
-                    ApplicationFailureKind::RetainedCleanup,
-                    "lower cleanup failure contradicted its released-ownership claim",
-                    cleanup.failure,
-                )),
+            let primary = primary_override
+                .or_else(|| {
+                    self.model_cleanup
+                        .as_ref()
+                        .map(|coordinator| coordinator.retained().primary_failure().clone())
+                })
+                .unwrap_or_else(|| application_primary_failure(cleanup.failure));
+            let failure = ApplicationFailure::from_debug(
+                ApplicationFailureKind::RetainedCleanup,
+                "lower cleanup failure contradicted its released-ownership claim",
+                cleanup.failure,
+            );
+            self.model_cleanup = Some(ModelCleanupCoordinator::contradictory_lower(
+                cleanup, primary, failure,
             ));
+            self.publish_model_cleanup();
             return;
         }
-        let retained = ApplicationRetainedModel::new(
-            public_resource,
-            public_ownership,
-            application_cleanup_disposition(cleanup),
-            primary_failure,
-            Some(application_cleanup_failure(cleanup.failure)),
-        );
-        let inspection = if cleanup.exhausted() {
-            RetainedModelInspection::LowerExhausted
+
+        let transition = if let Some(coordinator) = self.model_cleanup.as_mut() {
+            coordinator.observe_lower(cleanup, primary_override)
         } else {
-            RetainedModelInspection::PendingSubmission { attempts: 0 }
+            match ModelCleanupCoordinator::from_lower(cleanup, primary_override) {
+                Ok(coordinator) => {
+                    self.model_cleanup = Some(coordinator);
+                    Ok(())
+                }
+                Err(error) => Err(error),
+            }
         };
-        self.retained_model_cleanup = Some(RetainedModelCleanup {
-            resource: cleanup.resource,
-            inspection,
-        });
-        self.state.set_retained_model(retained);
+        if transition.is_err() {
+            let _event = self.record_internal_transition_failure(
+                "lower cleanup resource did not match the active E1 cleanup coordinator",
+            );
+        } else {
+            if let Some((resource, ownership)) = sequence_evidence
+                && let Some(coordinator) = self.model_cleanup.as_mut()
+            {
+                coordinator.replace_public_evidence(resource, ownership);
+            }
+            self.publish_model_cleanup();
+        }
     }
 
-    fn retained_model_evidence(
+    fn sequence_model_evidence(
         &self,
-        cleanup: CleanupRetryState,
-    ) -> (
+        resource: CleanupResource,
+    ) -> Option<(
         ApplicationRetainedModelResource,
         ApplicationRetainedOwnership,
-    ) {
-        let CleanupResource::Sequence { handle, .. } = cleanup.resource else {
-            return (
-                application_cleanup_resource(cleanup.resource),
-                application_retained_ownership(cleanup.ownership),
-            );
+    )> {
+        let CleanupResource::Sequence { handle, .. } = resource else {
+            return None;
         };
         if let Some(loaded) = self
             .state
             .loaded()
             .filter(|loaded| loaded.handle() == handle)
         {
-            return (
+            return Some((
                 ApplicationRetainedModelResource::LoadedModel { handle },
                 ApplicationRetainedOwnership::Exact(loaded.reserved_footprint()),
-            );
+            ));
         }
-        if let Some(retained) = self.state.retained_model().filter(|retained| {
-            retained.resource() == ApplicationRetainedModelResource::LoadedModel { handle }
-        }) {
-            return (retained.resource(), retained.ownership());
-        }
-        (
-            ApplicationRetainedModelResource::UnconfirmedModel,
-            ApplicationRetainedOwnership::Unknown,
-        )
+        self.model_cleanup.as_ref().and_then(|coordinator| {
+            (coordinator.origin().expected_handle() == Some(handle)).then(|| {
+                (
+                    coordinator.retained().resource(),
+                    coordinator.retained().ownership(),
+                )
+            })
+        })
     }
 
-    fn retained_primary_failure(&self, resource: CleanupResource) -> Option<ApplicationFailure> {
-        if let CleanupResource::IncompatibleModel { handle } = resource
-            && let Some(cleanup) = self
-                .incompatible_model_cleanup
-                .as_ref()
-                .filter(|cleanup| cleanup.handle == handle)
-        {
-            return Some(cleanup.compatibility_failure.clone());
-        }
-        let public_resource = application_cleanup_resource(resource);
-        self.state
-            .retained_model()
-            .filter(|retained| {
-                retained.resource() == public_resource
-                    || matches!(
-                        resource,
-                        CleanupResource::Sequence { handle, .. }
-                            if retained.resource()
-                                == ApplicationRetainedModelResource::LoadedModel { handle }
-                    )
-            })
-            .map(|retained| retained.primary_failure().clone())
+    fn observe_lower_cleanup(
+        &mut self,
+        cleanup: CleanupRetryState,
+        primary_override: Option<ApplicationFailure>,
+    ) {
+        self.begin_runtime_retention(cleanup, primary_override);
     }
 
     pub(super) fn reject_incompatible_model(
@@ -435,138 +401,38 @@ impl ApplicationRuntime {
         reserved_footprint: MemoryFootprint,
         failure: ApplicationFailure,
     ) -> ApplicationEvent {
-        self.incompatible_model_cleanup = Some(IncompatibleModelCleanup {
+        self.model_cleanup = Some(ModelCleanupCoordinator::incompatible_model(
             handle,
-            compatibility_failure: failure.clone(),
-            unload: IncompatibleModelUnload::PendingSubmission {
-                attempts: 0,
-                last_failure: None,
-            },
-        });
-        self.state.set_retained_model(ApplicationRetainedModel::new(
-            ApplicationRetainedModelResource::LoadedModel { handle },
-            ApplicationRetainedOwnership::Exact(reserved_footprint.into()),
-            ApplicationModelCleanupDisposition::Pending,
+            reserved_footprint,
             failure.clone(),
-            None,
         ));
-
-        match self.try_submit_incompatible_model_unload() {
-            Ok(()) => ApplicationEvent::ModelCompatibilityFailed { failure },
-            Err(_) => self.current_cleanup_event(),
-        }
-    }
-
-    pub(super) fn retry_incompatible_model_cleanup(&mut self) -> Option<ApplicationEvent> {
-        if !matches!(
-            self.incompatible_model_cleanup
-                .as_ref()
-                .map(|cleanup| &cleanup.unload),
-            Some(IncompatibleModelUnload::PendingSubmission { .. })
-        ) {
-            return None;
-        }
-        match self.try_submit_incompatible_model_unload() {
-            Ok(()) => None,
-            Err(_) => Some(self.current_cleanup_event()),
-        }
-    }
-
-    fn try_submit_incompatible_model_unload(&mut self) -> Result<(), ApplicationError> {
-        let Some((handle, attempts)) =
-            self.incompatible_model_cleanup
-                .as_ref()
-                .and_then(|cleanup| match &cleanup.unload {
-                    IncompatibleModelUnload::PendingSubmission { attempts, .. } => {
-                        Some((cleanup.handle, *attempts))
-                    }
-                    IncompatibleModelUnload::Submitted { .. }
-                    | IncompatibleModelUnload::RetryExhausted { .. }
-                    | IncompatibleModelUnload::WorkerDisconnected => None,
-                })
-        else {
-            return Ok(());
-        };
-        let attempt = attempts.saturating_add(1);
-
-        match self.submit_model_unload(handle, crate::ModelUnloadBehavior::Drain) {
-            Ok(ticket) => {
-                if let Some(cleanup) = self.incompatible_model_cleanup.as_mut() {
-                    cleanup.unload = IncompatibleModelUnload::Submitted {
-                        ticket,
-                        attempts: attempt,
-                        last_failure: None,
-                    };
-                }
-                if let Some(retained) = self.state.retained_model_mut() {
-                    retained.set_cleanup(ApplicationModelCleanupDisposition::Pending, None);
-                }
-                self.state.begin_retained_cleanup();
-                Ok(())
-            }
-            Err(error) => {
-                let failure = ApplicationFailure::new(
-                    ApplicationFailureKind::RetainedCleanup,
-                    format!("automatic retained-model unload submission failed: {error}"),
-                );
-                if let Some(cleanup) = self.incompatible_model_cleanup.as_mut() {
-                    cleanup.unload = if matches!(error, ApplicationError::RuntimeDisconnected) {
-                        IncompatibleModelUnload::WorkerDisconnected
-                    } else if attempt >= MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS {
-                        IncompatibleModelUnload::RetryExhausted {
-                            attempts: attempt,
-                            last_failure: failure.clone(),
-                        }
-                    } else {
-                        IncompatibleModelUnload::PendingSubmission {
-                            attempts: attempt,
-                            last_failure: Some(failure.clone()),
-                        }
-                    };
-                }
-                if !matches!(error, ApplicationError::RuntimeDisconnected) {
-                    let disposition = if attempt >= MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS
-                    {
-                        ApplicationModelCleanupDisposition::CoordinationRetryAvailable {
-                            attempts: attempt,
-                            maximum_attempts: MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS,
-                        }
-                    } else {
-                        ApplicationModelCleanupDisposition::Pending
-                    };
-                    if let Some(retained) = self.state.retained_model_mut() {
-                        retained.set_cleanup(disposition, Some(failure));
-                    }
-                    self.state.begin_retained_cleanup();
-                }
-                Err(error)
-            }
+        self.publish_model_cleanup();
+        match self.progress_model_cleanup_coordination() {
+            None => ApplicationEvent::ModelCompatibilityFailed { failure },
+            Some(event) => event,
         }
     }
 
     pub(super) fn process_model_unload(
         &mut self,
         ticket: CommandTicket,
-        result: Result<inference_runtime::UnloadReceipt, RuntimeError>,
+        result: &Result<inference_runtime::UnloadReceipt, RuntimeError>,
     ) -> Option<ApplicationEvent> {
-        let incompatible_ticket = self
-            .incompatible_model_cleanup
+        let cleanup_command = self
+            .model_cleanup
             .as_ref()
-            .and_then(|cleanup| match &cleanup.unload {
-                IncompatibleModelUnload::Submitted { ticket, .. } => Some(*ticket),
-                IncompatibleModelUnload::PendingSubmission { .. }
-                | IncompatibleModelUnload::RetryExhausted { .. }
-                | IncompatibleModelUnload::WorkerDisconnected => None,
-            });
-        if incompatible_ticket == Some(ticket) {
-            return Some(self.process_incompatible_model_unload(ticket, result));
+            .and_then(|coordinator| coordinator.submitted_command(ticket).ok());
+        if matches!(
+            cleanup_command,
+            Some((CleanupCommand::UnloadIncompatibleModel { .. }, _))
+        ) {
+            return Some(self.process_cleanup_model_unload(ticket, result));
         }
 
         let transaction = self.pending_unload?;
         if transaction.ticket != ticket {
             return None;
         }
-
         match result {
             Ok(receipt) if receipt.handle != transaction.handle => {
                 Some(self.begin_unload_contract_uncertainty(
@@ -580,7 +446,7 @@ impl ApplicationRuntime {
                 }),
                 UnloadStatus::AlreadyAbsent | UnloadStatus::Unloaded => {
                     self.pending_unload = None;
-                    self.retained_model_cleanup = None;
+                    self.model_cleanup = None;
                     self.state.clear_retained_model();
                     self.state.clear_loaded();
                     Some(ApplicationEvent::ModelUnloaded {
@@ -592,7 +458,7 @@ impl ApplicationRuntime {
             Err(
                 RuntimeError::CleanupFailed(cleanup) | RuntimeError::CleanupRetryExhausted(cleanup),
             ) if cleanup_resource_belongs_to_model(cleanup.resource, transaction.handle) => {
-                self.begin_runtime_retention(cleanup, None);
+                self.begin_runtime_retention(*cleanup, None);
                 Some(self.current_cleanup_event())
             }
             Err(RuntimeError::CleanupFailed(_) | RuntimeError::CleanupRetryExhausted(_)) => {
@@ -622,60 +488,39 @@ impl ApplicationRuntime {
     ) -> ApplicationEvent {
         self.pending_unload = None;
         let failure = ApplicationFailure::new(ApplicationFailureKind::IncompatibleReceipt, message);
-        self.incompatible_model_cleanup = Some(IncompatibleModelCleanup {
-            handle,
-            compatibility_failure: failure.clone(),
-            unload: IncompatibleModelUnload::PendingSubmission {
-                attempts: 0,
-                last_failure: None,
-            },
-        });
-        self.state.set_retained_model(ApplicationRetainedModel::new(
-            ApplicationRetainedModelResource::LoadedModel { handle },
-            ApplicationRetainedOwnership::Unknown,
-            ApplicationModelCleanupDisposition::Pending,
-            failure,
-            None,
-        ));
-        let _submission = self.try_submit_incompatible_model_unload();
-        self.current_cleanup_event()
+        self.model_cleanup = Some(ModelCleanupCoordinator::unload_uncertainty(handle, failure));
+        self.publish_model_cleanup();
+        self.progress_model_cleanup_coordination()
+            .unwrap_or_else(|| self.current_cleanup_event())
     }
 
-    fn process_incompatible_model_unload(
+    fn process_cleanup_model_unload(
         &mut self,
         ticket: CommandTicket,
-        result: Result<inference_runtime::UnloadReceipt, RuntimeError>,
+        result: &Result<inference_runtime::UnloadReceipt, RuntimeError>,
     ) -> ApplicationEvent {
-        let Some((expected_handle, attempts)) =
-            self.incompatible_model_cleanup
-                .as_ref()
-                .and_then(|cleanup| match cleanup.unload {
-                    IncompatibleModelUnload::Submitted {
-                        ticket: expected_ticket,
-                        attempts,
-                        ..
-                    } if expected_ticket == ticket => Some((cleanup.handle, attempts)),
-                    _ => None,
-                })
+        let Some((CleanupCommand::UnloadIncompatibleModel { handle }, attempts)) = self
+            .model_cleanup
+            .as_ref()
+            .and_then(|coordinator| coordinator.submitted_command(ticket).ok())
         else {
             return self.current_cleanup_event();
         };
         match result {
-            Ok(receipt) if expected_handle != receipt.handle => self
-                .record_incompatible_command_failure(
-                    attempts,
-                    ApplicationFailure::new(
-                        ApplicationFailureKind::RetainedCleanup,
-                        "automatic retained-model unload returned a different model identity",
-                    ),
+            Ok(receipt) if receipt.handle != handle => self.record_cleanup_command_failure(
+                CleanupCommand::UnloadIncompatibleModel { handle },
+                attempts,
+                ApplicationFailure::new(
+                    ApplicationFailureKind::RetainedCleanup,
+                    "automatic retained-model unload returned a different model identity",
                 ),
+            ),
             Ok(receipt) => match receipt.status {
                 UnloadStatus::Draining => ApplicationEvent::ModelDraining {
                     handle: receipt.handle,
                 },
                 UnloadStatus::AlreadyAbsent | UnloadStatus::Unloaded => {
-                    self.release_incompatible_model_cleanup();
-                    self.retained_model_cleanup = None;
+                    self.model_cleanup = None;
                     self.state.clear_retained_model();
                     self.state.clear_loaded();
                     ApplicationEvent::ModelUnloaded {
@@ -686,36 +531,30 @@ impl ApplicationRuntime {
             },
             Err(
                 RuntimeError::CleanupFailed(cleanup) | RuntimeError::CleanupRetryExhausted(cleanup),
-            ) if cleanup_resource_belongs_to_model(cleanup.resource, expected_handle) => {
-                let primary = self
-                    .incompatible_model_cleanup
-                    .as_ref()
-                    .map(|cleanup| cleanup.compatibility_failure.clone());
-                self.begin_runtime_retention(cleanup, primary);
-                if let Some(incompatible) = self.incompatible_model_cleanup.as_mut() {
-                    incompatible.unload = IncompatibleModelUnload::Submitted {
-                        ticket,
-                        attempts,
-                        last_failure: self
-                            .state
-                            .retained_model()
-                            .and_then(ApplicationRetainedModel::cleanup_failure)
-                            .cloned(),
-                    };
-                }
+            ) if self
+                .model_cleanup
+                .as_ref()
+                .is_some_and(|coordinator| coordinator.accepts_resource(cleanup.resource)) =>
+            {
+                self.begin_runtime_retention(*cleanup, None);
                 self.current_cleanup_event()
             }
             Err(RuntimeError::CleanupFailed(_) | RuntimeError::CleanupRetryExhausted(_)) => {
-                self.retain_expected_model_after_cleanup_mismatch(expected_handle);
-                self.record_incompatible_command_failure(
+                let mismatch = ApplicationFailure::new(
+                    ApplicationFailureKind::RetainedCleanup,
+                    "automatic retained-model unload cleanup state returned a different resource identity",
+                );
+                if let Some(coordinator) = self.model_cleanup.as_mut() {
+                    coordinator.record_expected_model_uncertainty(handle, mismatch.clone());
+                }
+                self.record_cleanup_command_failure(
+                    CleanupCommand::UnloadIncompatibleModel { handle },
                     attempts,
-                    ApplicationFailure::new(
-                        ApplicationFailureKind::RetainedCleanup,
-                        "automatic retained-model unload cleanup state returned a different resource identity",
-                    ),
+                    mismatch,
                 )
             }
-            Err(error) => self.record_incompatible_command_failure(
+            Err(error) => self.record_cleanup_command_failure(
+                CleanupCommand::UnloadIncompatibleModel { handle },
                 attempts,
                 ApplicationFailure::from_debug(
                     ApplicationFailureKind::RetainedCleanup,
@@ -726,105 +565,46 @@ impl ApplicationRuntime {
         }
     }
 
-    fn retain_expected_model_after_cleanup_mismatch(&mut self, expected_handle: ModelHandle) {
-        let Some(primary_failure) = self
-            .incompatible_model_cleanup
-            .as_ref()
-            .map(|cleanup| cleanup.compatibility_failure.clone())
-        else {
-            return;
-        };
-        let (resource, ownership) = self
-            .state
-            .retained_model()
-            .filter(|retained| {
-                matches!(
-                    retained.resource(),
-                    ApplicationRetainedModelResource::LoadedModel { handle }
-                        | ApplicationRetainedModelResource::IncompatibleModel { handle }
-                        if handle == expected_handle
-                )
-            })
-            .map_or(
-                (
-                    ApplicationRetainedModelResource::LoadedModel {
-                        handle: expected_handle,
-                    },
-                    ApplicationRetainedOwnership::Unknown,
-                ),
-                |retained| {
-                    let ownership = match retained.ownership() {
-                        ownership @ ApplicationRetainedOwnership::Unverified { .. } => ownership,
-                        ApplicationRetainedOwnership::Exact(_)
-                        | ApplicationRetainedOwnership::Unknown => {
-                            ApplicationRetainedOwnership::Unknown
-                        }
-                    };
-                    (retained.resource(), ownership)
-                },
-            );
-        self.retained_model_cleanup = None;
-        self.state.set_retained_model(ApplicationRetainedModel::new(
-            resource,
-            ownership,
-            ApplicationModelCleanupDisposition::Pending,
-            primary_failure,
-            None,
-        ));
-    }
-
-    fn record_incompatible_command_failure(
+    fn record_cleanup_command_failure(
         &mut self,
+        command: CleanupCommand,
         attempts: u8,
         failure: ApplicationFailure,
     ) -> ApplicationEvent {
-        if let Some(cleanup) = self.incompatible_model_cleanup.as_mut() {
-            cleanup.unload = if attempts >= MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS {
-                IncompatibleModelUnload::RetryExhausted {
-                    attempts,
-                    last_failure: failure.clone(),
-                }
-            } else {
-                IncompatibleModelUnload::PendingSubmission {
-                    attempts,
-                    last_failure: Some(failure.clone()),
-                }
-            };
-        }
-        let disposition = if attempts >= MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS {
-            ApplicationModelCleanupDisposition::CoordinationRetryAvailable {
+        let transition = self.model_cleanup.as_mut().map(|coordinator| {
+            coordinator.record_pending_submission_failure(
+                command,
                 attempts,
-                maximum_attempts: MAXIMUM_INCOMPATIBLE_UNLOAD_SUBMISSION_ATTEMPTS,
-            }
-        } else {
-            ApplicationModelCleanupDisposition::Pending
-        };
-        if let Some(retained) = self.state.retained_model_mut() {
-            retained.set_cleanup(disposition, Some(failure));
+                MAXIMUM_CLEANUP_COORDINATION_SUBMISSION_ATTEMPTS,
+                failure,
+            )
+        });
+        if !matches!(transition, Some(Ok(()))) {
+            return self.record_internal_transition_failure(
+                "cleanup command result did not match its submitted operation",
+            );
         }
-        self.state.begin_retained_cleanup();
+        self.publish_model_cleanup();
         self.current_cleanup_event()
     }
 
     pub(crate) fn mark_model_worker_disconnected(&mut self) {
-        let disconnect_failure = ApplicationFailure::new(
+        let failure = ApplicationFailure::new(
             ApplicationFailureKind::Worker,
             "inference worker disconnected without proving model ownership release",
         );
-        if let Some(retained) = self.state.retained_model_mut() {
-            retained.set_cleanup(
-                ApplicationModelCleanupDisposition::WorkerDisconnected,
-                Some(disconnect_failure),
-            );
+        if let Some(coordinator) = self.model_cleanup.as_mut() {
+            coordinator.mark_disconnected(failure);
         } else if let Some(loaded) = self.state.loaded().cloned() {
-            self.state.set_retained_model(ApplicationRetainedModel::new(
+            self.model_cleanup = Some(ModelCleanupCoordinator::disconnected(
+                ModelCleanupOrigin::UnconfirmedModelAfterDisconnection {
+                    handle: Some(loaded.handle()),
+                },
                 ApplicationRetainedModelResource::LoadedModel {
                     handle: loaded.handle(),
                 },
                 ApplicationRetainedOwnership::Exact(loaded.reserved_footprint()),
-                ApplicationModelCleanupDisposition::WorkerDisconnected,
-                disconnect_failure.clone(),
-                None,
+                failure,
             ));
         } else if self.pending_load.is_some()
             || matches!(
@@ -832,25 +612,19 @@ impl ApplicationRuntime {
                 ApplicationActivity::Loading | ApplicationActivity::Unloading
             )
         {
-            self.state.set_retained_model(ApplicationRetainedModel::new(
+            self.model_cleanup = Some(ModelCleanupCoordinator::disconnected(
+                ModelCleanupOrigin::UnconfirmedLoadAfterDisconnection,
                 ApplicationRetainedModelResource::UnconfirmedLoad,
                 ApplicationRetainedOwnership::Unknown,
-                ApplicationModelCleanupDisposition::WorkerDisconnected,
-                disconnect_failure,
-                None,
+                failure,
             ));
         }
         self.pending_load = None;
         self.pending_unload = None;
-        if let Some(cleanup) = self.incompatible_model_cleanup.as_mut() {
-            cleanup.unload = IncompatibleModelUnload::WorkerDisconnected;
-        }
-        if let Some(cleanup) = self.retained_model_cleanup.as_mut() {
-            cleanup.inspection = RetainedModelInspection::WorkerDisconnected;
-        }
+        self.publish_model_cleanup();
     }
 
-    pub(crate) fn mark_terminal_worker_failure(&mut self, error: RuntimeError) {
+    pub(crate) fn mark_terminal_worker_failure(&mut self, error: &RuntimeError) {
         let had_model_evidence = self.state.loaded().is_some()
             || self.state.retained_model().is_some()
             || self.pending_load.is_some()
@@ -858,7 +632,7 @@ impl ApplicationRuntime {
         if let RuntimeError::CleanupFailed(cleanup) | RuntimeError::CleanupRetryExhausted(cleanup) =
             error
         {
-            self.begin_runtime_retention(cleanup, None);
+            self.begin_runtime_retention(*cleanup, None);
         }
         self.pending_load = None;
         self.pending_unload = None;
@@ -869,20 +643,12 @@ impl ApplicationRuntime {
             "terminal inference shutdown did not prove model release",
             error,
         );
-        if let Some(retained) = self.state.retained_model_mut() {
-            retained.set_cleanup(
-                ApplicationModelCleanupDisposition::RetainedUntilProcessExit,
-                Some(failure),
-            );
+        if let Some(coordinator) = self.model_cleanup.as_mut() {
+            coordinator.mark_retained_until_process_exit(Some(failure));
         } else if had_model_evidence {
-            self.state.set_retained_model(ApplicationRetainedModel::new(
-                ApplicationRetainedModelResource::UnconfirmedModel,
-                ApplicationRetainedOwnership::Unknown,
-                ApplicationModelCleanupDisposition::RetainedUntilProcessExit,
-                failure,
-                None,
-            ));
+            self.model_cleanup = Some(ModelCleanupCoordinator::terminal_unknown(failure));
         }
+        self.publish_model_cleanup();
     }
 
     pub(crate) fn mark_terminal_process_retention(
@@ -901,111 +667,139 @@ impl ApplicationRuntime {
         if model_owners == 0 {
             return;
         }
-        if let Some(retained) = self.state.retained_model_mut() {
-            retained.set_cleanup(
-                ApplicationModelCleanupDisposition::RetainedUntilProcessExit,
-                None,
-            );
-            return;
-        }
-        let mut retained = if is_model_resource(first.resource) {
-            application_retained_model(first, None)
+        if let Some(coordinator) = self.model_cleanup.as_mut() {
+            coordinator.mark_retained_until_process_exit(None);
+        } else if is_model_resource(first.resource) {
+            self.model_cleanup = ModelCleanupCoordinator::from_lower(first, None).ok();
+            if let Some(coordinator) = self.model_cleanup.as_mut() {
+                coordinator.mark_retained_until_process_exit(None);
+            }
         } else {
-            ApplicationRetainedModel::new(
-                ApplicationRetainedModelResource::UnconfirmedModel,
-                ApplicationRetainedOwnership::Unknown,
-                ApplicationModelCleanupDisposition::RetainedUntilProcessExit,
+            self.model_cleanup = Some(ModelCleanupCoordinator::terminal_unknown(
                 ApplicationFailure::new(
                     ApplicationFailureKind::RetainedCleanup,
                     "terminal shutdown retained model ownership until process exit",
                 ),
-                None,
-            )
-        };
-        retained.set_cleanup(
-            ApplicationModelCleanupDisposition::RetainedUntilProcessExit,
-            None,
-        );
-        self.state.set_retained_model(retained);
+            ));
+        }
+        self.publish_model_cleanup();
     }
 
     fn release_retained_model(&mut self, resource: CleanupResource) -> ApplicationEvent {
-        let public_resource = self.state.retained_model().map_or_else(
+        let public_resource = self.model_cleanup.as_ref().map_or_else(
             || application_cleanup_resource(resource),
-            ApplicationRetainedModel::resource,
+            |coordinator| coordinator.retained().resource(),
         );
-        self.retained_model_cleanup = None;
-        self.release_incompatible_model_cleanup();
+        self.model_cleanup = None;
         self.state.clear_retained_model();
         ApplicationEvent::ModelCleanupReleased {
             resource: public_resource,
         }
     }
 
-    pub(super) fn current_cleanup_event(&self) -> ApplicationEvent {
-        let cleanup = self.state.retained_model().cloned().unwrap_or_else(|| {
-            ApplicationRetainedModel::new(
-                ApplicationRetainedModelResource::UnconfirmedModel,
-                ApplicationRetainedOwnership::Unknown,
-                ApplicationModelCleanupDisposition::WorkerDisconnected,
-                ApplicationFailure::new(
-                    ApplicationFailureKind::RetainedCleanup,
-                    "model ownership remains unresolved",
-                ),
-                None,
-            )
-        });
-        ApplicationEvent::ModelCleanupPending { cleanup }
+    fn publish_model_cleanup(&mut self) {
+        if let Some(coordinator) = self.model_cleanup.as_ref() {
+            self.state
+                .set_retained_model(coordinator.retained().clone());
+        }
     }
 
-    pub(crate) fn release_incompatible_model_cleanup(&mut self) {
-        self.incompatible_model_cleanup = None;
+    pub(super) fn current_cleanup_event(&self) -> ApplicationEvent {
+        let (resource, disposition) = self.model_cleanup.as_ref().map_or(
+            (
+                ApplicationRetainedModelResource::UnconfirmedModel,
+                ApplicationModelCleanupDisposition::WorkerDisconnected,
+            ),
+            |coordinator| {
+                (
+                    coordinator.retained().resource(),
+                    coordinator.retained().cleanup(),
+                )
+            },
+        );
+        ApplicationEvent::ModelCleanupPending {
+            resource,
+            disposition,
+        }
     }
 
     pub(crate) fn confirm_runtime_shutdown_released(&mut self) {
         self.pending_load = None;
         self.pending_unload = None;
-        self.retained_model_cleanup = None;
-        self.release_incompatible_model_cleanup();
+        self.model_cleanup = None;
         self.generation.confirm_runtime_shutdown();
         self.state.confirm_runtime_shutdown_released();
     }
-}
 
-fn application_retained_model(
-    cleanup: CleanupRetryState,
-    primary_override: Option<ApplicationFailure>,
-) -> ApplicationRetainedModel {
-    let primary_failure =
-        primary_override.unwrap_or_else(|| application_primary_failure(cleanup.failure));
-    ApplicationRetainedModel::new(
-        application_cleanup_resource(cleanup.resource),
-        application_retained_ownership(cleanup.ownership),
-        application_cleanup_disposition(cleanup),
-        primary_failure,
-        Some(application_cleanup_failure(cleanup.failure)),
-    )
-}
-
-const fn cleanup_resource_handle(resource: CleanupResource) -> ModelHandle {
-    match resource {
-        CleanupResource::Model { handle }
-        | CleanupResource::IncompatibleModel { handle }
-        | CleanupResource::FailedLoad { handle }
-        | CleanupResource::Sequence { handle, .. } => handle,
+    #[cfg(test)]
+    pub(super) fn install_submitted_cleanup_inspection(
+        &mut self,
+        resource: CleanupResource,
+        ticket: CommandTicket,
+    ) {
+        if let Some(coordinator) = self.model_cleanup.as_mut() {
+            if matches!(
+                coordinator.action(),
+                ModelCleanupAction::WaitingForLowerRetry { .. }
+            ) {
+                let _ = coordinator.begin_retained_owner_inspection();
+            }
+            let attempts = coordinator
+                .pending_command()
+                .map_or(1, |(_, attempts)| attempts.saturating_add(1));
+            let _ = coordinator.record_submitted(
+                CleanupCommand::InspectRetainedOwner { resource },
+                ticket,
+                attempts,
+            );
+        }
+        self.publish_model_cleanup();
     }
+
+    #[cfg(test)]
+    pub(super) fn install_submitted_incompatible_cleanup(
+        &mut self,
+        handle: ModelHandle,
+        ownership: ApplicationRetainedOwnership,
+        primary_failure: ApplicationFailure,
+        ticket: CommandTicket,
+        attempts: u8,
+    ) {
+        self.model_cleanup = Some(ModelCleanupCoordinator::submitted_incompatible_for_test(
+            handle,
+            ownership,
+            primary_failure,
+            ticket,
+            attempts,
+        ));
+        self.publish_model_cleanup();
+    }
+}
+
+fn coordination_failure(command: CleanupCommand, error: &ApplicationError) -> ApplicationFailure {
+    let context = match command {
+        CleanupCommand::UnloadIncompatibleModel { .. } => {
+            "automatic retained-model unload could not be submitted"
+        }
+        CleanupCommand::InspectRetainedOwner { .. } => {
+            "retained cleanup inspection could not be submitted"
+        }
+    };
+    ApplicationFailure::new(
+        ApplicationFailureKind::RetainedCleanup,
+        format!("{context}: {error}"),
+    )
 }
 
 fn cleanup_resource_belongs_to_model(
     resource: CleanupResource,
     expected_handle: ModelHandle,
 ) -> bool {
-    match resource {
-        CleanupResource::Model { handle } | CleanupResource::Sequence { handle, .. } => {
-            handle == expected_handle
-        }
-        CleanupResource::IncompatibleModel { .. } | CleanupResource::FailedLoad { .. } => false,
-    }
+    matches!(
+        resource,
+        CleanupResource::Model { handle } | CleanupResource::Sequence { handle, .. }
+            if handle == expected_handle
+    )
 }
 
 const fn is_model_resource(resource: CleanupResource) -> bool {
@@ -1014,85 +808,5 @@ const fn is_model_resource(resource: CleanupResource) -> bool {
         CleanupResource::Model { .. }
             | CleanupResource::IncompatibleModel { .. }
             | CleanupResource::FailedLoad { .. }
-    )
-}
-
-const fn application_cleanup_resource(
-    resource: CleanupResource,
-) -> ApplicationRetainedModelResource {
-    match resource {
-        CleanupResource::Model { handle } => {
-            ApplicationRetainedModelResource::LoadedModel { handle }
-        }
-        CleanupResource::IncompatibleModel { handle } => {
-            ApplicationRetainedModelResource::IncompatibleModel { handle }
-        }
-        CleanupResource::FailedLoad { handle } => {
-            ApplicationRetainedModelResource::FailedLoad { handle }
-        }
-        CleanupResource::Sequence { .. } => ApplicationRetainedModelResource::UnconfirmedModel,
-    }
-}
-
-const fn application_cleanup_disposition(
-    cleanup: CleanupRetryState,
-) -> ApplicationModelCleanupDisposition {
-    if cleanup.exhausted() {
-        ApplicationModelCleanupDisposition::LowerExhausted {
-            attempts: cleanup.attempts,
-            maximum_attempts: cleanup.maximum_attempts,
-        }
-    } else {
-        ApplicationModelCleanupDisposition::LowerRetryable {
-            attempts: cleanup.attempts,
-            maximum_attempts: cleanup.maximum_attempts,
-        }
-    }
-}
-
-fn application_retained_ownership(ownership: RetainedOwnership) -> ApplicationRetainedOwnership {
-    match ownership {
-        RetainedOwnership::Released => ApplicationRetainedOwnership::Unknown,
-        RetainedOwnership::Exact(footprint) => {
-            ApplicationRetainedOwnership::Exact(footprint.into())
-        }
-        RetainedOwnership::Unverified {
-            accepted_loading_peak,
-            reported_footprint,
-            conservative_footprint,
-        } => ApplicationRetainedOwnership::Unverified {
-            accepted_loading_peak: accepted_loading_peak.into(),
-            reported_footprint: reported_footprint.into(),
-            conservative_footprint: match conservative_footprint {
-                ConservativeFootprint::Known(footprint) => {
-                    ApplicationConservativeFootprint::Known(footprint.into())
-                }
-                ConservativeFootprint::Overflow => ApplicationConservativeFootprint::Overflow,
-            },
-        },
-    }
-}
-
-fn application_primary_failure(report: CleanupFailureReport) -> ApplicationFailure {
-    let kind = match report.primary_failure {
-        inference_runtime::FailureClass::Load => ApplicationFailureKind::ModelLoad,
-        inference_runtime::FailureClass::Capacity => ApplicationFailureKind::MemoryAdmission,
-        inference_runtime::FailureClass::BackendContract => {
-            ApplicationFailureKind::IncompatibleReceipt
-        }
-        _ => ApplicationFailureKind::Inference,
-    };
-    ApplicationFailure::from_debug(
-        kind,
-        "model operation failed before retained cleanup",
-        (report.primary_operation, report.primary_detail),
-    )
-}
-
-fn application_cleanup_failure(report: CleanupFailureReport) -> ApplicationFailure {
-    ApplicationFailure::from_debug(
-        ApplicationFailureKind::RetainedCleanup,
-        "explicit lower cleanup failed",
-        (report.cleanup_operation, report.cleanup_detail),
     )
 }
