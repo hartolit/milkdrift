@@ -598,7 +598,7 @@ The runner administrator maintains `/var/tmp/milkdrift-cargo-home` as a dependen
 
 The job validates the exact RTX 5070 Ti / CUDA ordinal 0 / compute capability 12.0 / Toolkit 12.8+ / build-cap-120 matrix. It compiles metadata/policy, the exact CUDA check/Clippy graph, and all dedicated suites in `${RUNNER_TEMP}/milkdrift-cuda-check-target`, reports its size, and removes it before release execution. It then runs the complete adapter, E0, fault-cleanup, and E1 suite boundaries in `${RUNNER_TEMP}/milkdrift-cuda-hardware-target`, reports target/Cargo-home/filesystem use, and always cleans both targets. No shell registry contains test function names.
 
-The job does not run TinyLlama, network resolution, Criterion, elapsed-time thresholds, Slint interaction, or arbitrary models. Toolkit 12.8+ preflight does not broaden product support beyond an actually observed row. Historical Phase 12 run `31281013243` succeeded before this suite redesign; the redesigned current-tree workflow requires its own post-push run.
+The job does not run TinyLlama, network resolution, Criterion, elapsed-time thresholds, Slint interaction, or arbitrary models. Toolkit 12.8+ preflight does not broaden product support beyond an actually observed row. Historical Phase 12 run `31281013243` succeeded before this suite redesign; redesigned run `31696186329` passed on exact commit `6df699c`, and later trees require their own post-push run.
 
 ## Controlled CPU and CUDA external product evidence
 

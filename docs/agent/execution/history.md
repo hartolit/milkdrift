@@ -666,7 +666,21 @@ passed every required job. CUDA run
 proved the new locked synchronization boundary, metadata/policy, and the complete
 CUDA compile graph. Strict Clippy then found four E0 CUDA helpers compiled into
 the ordinary generation target but used only by the dedicated harness-free
-hardware target. The focused follow-up scopes them to the existing package-local
-`cuda-hardware-tests` feature instead of suppressing warnings or duplicating
-support code. CUDA Clippy and hardware execution remain unaccepted until the
-exact follow-up tree runs.
+hardware target. The first focused follow-up scoped those four functions to the
+package-local `cuda-hardware-tests` feature. It became commit
+`6df699c3b2bb1b7ffa59f7bcf86c69d9e0654813`, tree
+`c3a870cca7b7569e648787ca68c42e513d56f48d`. Quality run
+[31696186308](https://github.com/hartolit/milkdrift/actions/runs/31696186308)
+and CUDA run
+[31696186329](https://github.com/hartolit/milkdrift/actions/runs/31696186329)
+both passed. CUDA executed six adapter, one E0, two E1, and 47 deterministic
+fault cases on RTX 5070 Ti ordinal 0, compute capability 12.0, Toolkit 13.3.73,
+and build cap 120. The check/hardware targets were 13 GiB/1.8 GiB, with at least
+235 GiB free; cleanup passed.
+
+A subsequent local audit removed the parallel CPU/CUDA runtime, load, snapshot,
+and mixed-lifecycle implementations. One device-parameterized fixture path now
+sits behind a single hardware entry point, reducing the support module by 100
+lines without adding files or lint allowances. Its 93 E0 tests, strict Clippy,
+tooling policy, architecture/hygiene, rustdoc, formatting, and offline links pass
+locally. That cleanup still requires exact remote Quality and CUDA evidence.

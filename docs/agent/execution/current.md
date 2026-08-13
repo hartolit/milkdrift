@@ -11,8 +11,8 @@ Its focused host, WASM, embedded, architecture, hygiene, and documentation gates
 The CI resource-topology repair is implemented: the local composite and hosted native components share one metadata-owned plan, and hosted profiles now use separate standard-runner targets with centralized cleanup.
 No workflow/workspace product program has been ratified or activated.
 Exact-tree local CPU, component, composite, portable, policy, and link acceptance passes on commit b1f7e90b1ba67f1cf968d773052b5062ef8cbbb9, tree fcb3ee6fa00243734abd74b64218aa0db2e340c1.
-Cache-lifecycle repair commit db8015c685ce166ed7f2376a02b40f08a48d7339, tree b165bf214506b6832e75ddbfad1b890b58fe693f, passes exact-tree hosted Quality.
-Its CUDA run proves locked cache synchronization, policy, and the complete compile graph, then fails strict Clippy because hardware-only E0 support was exposed under the broader cuda feature; the local repair scopes those helpers to cuda-hardware-tests.
+Feature-boundary repair commit 6df699c3b2bb1b7ffa59f7bcf86c69d9e0654813, tree c3a870cca7b7569e648787ca68c42e513d56f48d, passes exact-tree hosted Quality and RTX 5070 Ti CUDA acceptance.
+A local architectural follow-up replaces the parallel CPU/CUDA fixture lifecycle with one device-parameterized path and keeps one cuda-hardware-tests entry point; that smaller tree still requires exact remote execution.
 ```
 
 ## Current maintenance scope
@@ -101,16 +101,17 @@ Current component and support truth is owned by
   CI topology. It is infrastructure history, not evidence for this repair.
 - The predecessor pristine-state tree has local native/portable evidence recorded
   in implementation status; that evidence also predates this repair.
-- Cache-lifecycle repair commit `db8015c685ce166ed7f2376a02b40f08a48d7339`
-  passes every required job in Quality run
-  [31695345591](https://github.com/hartolit/milkdrift/actions/runs/31695345591).
-  CUDA run
-  [31695345510](https://github.com/hartolit/milkdrift/actions/runs/31695345510)
-  passed exact preflight, locked cache synchronization, metadata/policy, and the
-  metadata-owned CUDA compile graph. Strict Clippy then rejected four E0
-  hardware-only helpers compiled but unused in `native_backend_generation`.
-  Their package-local feature ownership is repaired locally; exact-tree CUDA
-  Clippy and hardware execution remain required.
+- Feature-boundary repair commit
+  `6df699c3b2bb1b7ffa59f7bcf86c69d9e0654813` passes every required job in
+  Quality run
+  [31696186308](https://github.com/hartolit/milkdrift/actions/runs/31696186308)
+  and CUDA run
+  [31696186329](https://github.com/hartolit/milkdrift/actions/runs/31696186329).
+  CUDA completed every required compile, strict-Clippy, adapter/E0/E1 hardware,
+  deterministic fault, observation, and cleanup boundary on the exact accepted
+  RTX row; implementation status and history own the environment and disk facts.
+- The subsequent fixture-support deduplication passes every locally available
+  gate but still requires its own exact remote run.
 - External mixed-checkpoint evidence remains absent. Historical reports retain
   their original schema and exact commit attribution.
 
@@ -153,17 +154,17 @@ KiB (check), 7,681,172 KiB (tests), 2,027,432 KiB (Clippy), 2,041,140 KiB
 `tokenization` plus `libm`. Pinned cargo-deny 0.20.2 passed advisories, bans,
 licenses, and sources; pinned Lychee 0.24.2 checked 256 links with 0 errors.
 
-No source, test, workflow, or documentation defect was exposed before evidence
-recording. Current self-hosted RTX CUDA acceptance and a reviewed external mixed
-checkpoint remain pending. This local result does not authorize AMD support or
-the workflow/workspace product program.
+The exact `6df699c` tree has hosted Quality and self-hosted RTX CUDA acceptance.
+The subsequent fixture-support cleanup and a reviewed external mixed checkpoint
+remain pending evidence. This result does not authorize AMD support or the
+workflow/workspace product program.
 
 ## Handoff and acceptance order
 
-1. Push only when requested and observe both workflows on the exact cache-lifecycle
-   repair commit.
-2. Require the supported NVIDIA host to run the exact CUDA check/Clippy graph and
-   all dedicated adapter/E0/fault/E1 hardware suites.
+1. Push only when requested and observe both workflows on the exact fixture-support
+   cleanup commit.
+2. Require the supported NVIDIA host to repeat the exact CUDA check/Clippy graph
+   and all dedicated adapter/E0/fault/E1 hardware suites.
 3. Record only results from the exact repaired commit/tree. Update current
    evidence and history after those results exist, not before.
 4. Refuse AMD or workflow/workspace activation while any correctness, ownership,

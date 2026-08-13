@@ -26,6 +26,11 @@ use sampling::SamplingConfig;
 
 const CANDLE_BACKEND: BackendId = BackendId::new(41);
 const MODEL: ModelId = ModelId::new(7);
+const CPU_EXECUTION_DEVICE: ExecutionDevice =
+    ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu);
+#[cfg(feature = "cuda-hardware-tests")]
+const CUDA_EXECUTION_DEVICE: ExecutionDevice =
+    ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda);
 const VOCABULARY_SIZE: u32 = 16;
 const CONTEXT_LENGTH: u32 = 16;
 const EXPECTED_GREEDY_TOKEN: TokenId = TokenId::new(2);
@@ -82,12 +87,12 @@ type CandleRuntime = HostedRuntime<CandleLlamaSource>;
 
 pub(crate) fn candle_fixture_covers_generation_sampling_eos_and_lifecycle() -> TestResult {
     let source = candle_fixture_source()?;
-    let execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu);
+    let execution_device = CPU_EXECUTION_DEVICE;
     let plan = prepare_plan(&source, execution_device)?;
     assert_homogeneous_f32_plan(&plan, execution_device);
 
-    let (hosted, thread) = hosted_runtime(16, 64)?;
-    let loaded = load_model(&hosted, source)?;
+    let (hosted, thread) = hosted_runtime(execution_device, 16, 64)?;
+    let loaded = load_model(&hosted, source, execution_device)?;
     assert_receipt_matches_plan(&loaded, &plan);
     let handle = loaded.handle;
 
@@ -164,14 +169,25 @@ pub(crate) fn candle_fixture_covers_generation_sampling_eos_and_lifecycle() -> T
 }
 
 pub(crate) fn mixed_f16_f32_fixture_covers_e0_generation_accounting_and_lifecycle() -> TestResult {
+    mixed_f16_f32_fixture_covers_generation_accounting_and_lifecycle(CPU_EXECUTION_DEVICE)
+}
+
+#[cfg(feature = "cuda-hardware-tests")]
+pub(crate) fn candle_mixed_cuda_fixture_covers_e0_generation_accounting_and_lifecycle() -> TestResult
+{
+    mixed_f16_f32_fixture_covers_generation_accounting_and_lifecycle(CUDA_EXECUTION_DEVICE)
+}
+
+fn mixed_f16_f32_fixture_covers_generation_accounting_and_lifecycle(
+    execution_device: ExecutionDevice,
+) -> TestResult {
     let converted = ConvertedFixture::create(DType::F16, true)?;
     let source = mixed_fixture_source(&converted)?;
-    let execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu);
     let plan = prepare_plan(&source, execution_device)?;
     assert_mixed_f16_plan(&plan, execution_device)?;
 
-    let (hosted, thread) = hosted_runtime(16, 64)?;
-    let loaded = load_model(&hosted, source)?;
+    let (hosted, thread) = hosted_runtime(execution_device, 16, 64)?;
+    let loaded = load_model(&hosted, source, execution_device)?;
     assert_receipt_matches_plan(&loaded, &plan);
     let handle = loaded.handle;
 
@@ -193,12 +209,12 @@ pub(crate) fn mixed_f16_f32_fixture_covers_e0_generation_accounting_and_lifecycl
 
 pub(crate) fn candle_fixture_covers_output_backpressure_and_cancellation() -> TestResult {
     let source = candle_fixture_source()?;
-    let execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu);
+    let execution_device = CPU_EXECUTION_DEVICE;
     let plan = prepare_plan(&source, execution_device)?;
     assert_homogeneous_f32_plan(&plan, execution_device);
 
-    let (hosted, thread) = hosted_runtime(1, 64)?;
-    let loaded = load_model(&hosted, source)?;
+    let (hosted, thread) = hosted_runtime(execution_device, 1, 64)?;
+    let loaded = load_model(&hosted, source, execution_device)?;
     assert_receipt_matches_plan(&loaded, &plan);
     let handle = loaded.handle;
 
@@ -232,36 +248,6 @@ pub(crate) fn candle_fixture_covers_output_backpressure_and_cancellation() -> Te
         FinishReason::Cancelled(CancellationReason::UserRequested),
     );
     assert_released_snapshot(&hosted, &loaded, CommandTicket::new(41))?;
-
-    unload_model(&hosted, handle)?;
-    shutdown(hosted, thread)
-}
-
-#[cfg(feature = "cuda-hardware-tests")]
-pub(crate) fn candle_mixed_cuda_fixture_covers_e0_generation_accounting_and_lifecycle() -> TestResult
-{
-    let converted = ConvertedFixture::create(DType::F16, true)?;
-    let source = mixed_fixture_source(&converted)?;
-    let execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda);
-    let plan = prepare_plan(&source, execution_device)?;
-    assert_mixed_f16_plan(&plan, execution_device)?;
-
-    let (hosted, thread) = hosted_cuda_runtime()?;
-    let loaded = load_cuda_model(&hosted, source)?;
-    assert_receipt_matches_plan(&loaded, &plan);
-    let handle = loaded.handle;
-
-    let request = generation_request(50, 150, 3, SamplingConfig::greedy(), 31, Box::new([]))?;
-    submit_generation(&hosted, handle, CommandTicket::new(50), &request)?;
-    let output = collect_until_released(
-        &hosted,
-        request.request_id,
-        OUTPUT_TIMEOUT,
-        CollectedOutput::default(),
-    )?;
-    assert_eq!(output.tokens, vec![EXPECTED_GREEDY_TOKEN; 3]);
-    assert_finished(&output, FinishReason::TokenLimit);
-    assert_cuda_released_snapshot(&hosted, &loaded)?;
 
     unload_model(&hosted, handle)?;
     shutdown(hosted, thread)
@@ -392,6 +378,7 @@ fn assert_receipt_matches_plan(loaded: &LoadReceipt, plan: &LoadPlan) {
 }
 
 fn hosted_runtime(
+    execution_device: ExecutionDevice,
     token_capacity: usize,
     record_capacity: usize,
 ) -> TestResult<(CandleRuntime, RuntimeThread)> {
@@ -406,43 +393,36 @@ fn hosted_runtime(
         RuntimeLimits::new(
             NonZeroU32::MIN,
             NonZeroU32::MIN,
-            MemoryBudget {
-                host_bytes: u64::MAX,
-                device_bytes: 0,
-            },
+            runtime_memory_budget(execution_device)?,
         ),
         configuration,
     )
     .map_err(|error| error.to_string())
 }
 
-#[cfg(feature = "cuda-hardware-tests")]
-fn hosted_cuda_runtime() -> TestResult<(CandleRuntime, RuntimeThread)> {
-    let configuration =
-        HostedRuntimeConfiguration::new(nonzero_usize(8)?, nonzero_usize(8)?, NonZeroU64::MIN)
-            .with_token_output_capacity(nonzero_usize(16)?, nonzero_usize(64)?);
-    start_hosted_runtime(
-        CandleLlamaLoader::new(CANDLE_BACKEND),
-        RuntimeLimits::new(
-            NonZeroU32::MIN,
-            NonZeroU32::MIN,
-            MemoryBudget {
-                host_bytes: u64::MAX,
-                device_bytes: u64::MAX,
-            },
-        ),
-        configuration,
-    )
-    .map_err(|error| error.to_string())
+fn runtime_memory_budget(execution_device: ExecutionDevice) -> TestResult<MemoryBudget> {
+    let device_bytes = match execution_device.kind {
+        DeviceKind::Cpu => 0,
+        DeviceKind::Cuda => u64::MAX,
+        _ => return Err("native fixture selected an unsupported execution device".to_owned()),
+    };
+    Ok(MemoryBudget {
+        host_bytes: u64::MAX,
+        device_bytes,
+    })
 }
 
-fn load_model(hosted: &CandleRuntime, source: CandleLlamaSource) -> TestResult<LoadReceipt> {
+fn load_model(
+    hosted: &CandleRuntime,
+    source: CandleLlamaSource,
+    execution_device: ExecutionDevice,
+) -> TestResult<LoadReceipt> {
     hosted
         .try_submit(RuntimeCommand::LoadModel {
             ticket: LOAD_TICKET,
             model_id: MODEL,
             source,
-            execution_device: ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu),
+            execution_device,
         })
         .map_err(|error| format!("load command rejected: {error:?}"))?;
     match hosted
@@ -458,34 +438,6 @@ fn load_model(hosted: &CandleRuntime, source: CandleLlamaSource) -> TestResult<L
         } => Err(format!("model load failed: {error:?}")),
         event => Err(format!(
             "unexpected load event for ticket {:?}",
-            event.ticket()
-        )),
-    }
-}
-
-#[cfg(feature = "cuda-hardware-tests")]
-fn load_cuda_model(hosted: &CandleRuntime, source: CandleLlamaSource) -> TestResult<LoadReceipt> {
-    hosted
-        .try_submit(RuntimeCommand::LoadModel {
-            ticket: LOAD_TICKET,
-            model_id: MODEL,
-            source,
-            execution_device: ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda),
-        })
-        .map_err(|error| format!("CUDA load command rejected: {error:?}"))?;
-    match hosted
-        .receive_timeout(EVENT_TIMEOUT)
-        .map_err(|error| format!("CUDA load event failed: {error:?}"))?
-    {
-        RuntimeEvent::ModelLoaded {
-            ticket,
-            result: Ok(receipt),
-        } if ticket == LOAD_TICKET => Ok(receipt),
-        RuntimeEvent::ModelLoaded {
-            result: Err(error), ..
-        } => Err(format!("CUDA model load failed: {error:?}")),
-        event => Err(format!(
-            "unexpected CUDA load event for ticket {:?}",
             event.ticket()
         )),
     }
@@ -793,58 +745,6 @@ fn assert_released_snapshot(
         }
         event => Err(format!(
             "unexpected released snapshot event for ticket {:?}",
-            event.ticket()
-        )),
-    }
-}
-
-#[cfg(feature = "cuda-hardware-tests")]
-fn assert_cuda_released_snapshot(hosted: &CandleRuntime, loaded: &LoadReceipt) -> TestResult {
-    let ticket = CommandTicket::new(51);
-    hosted
-        .try_submit(RuntimeCommand::Snapshot { ticket })
-        .map_err(|error| format!("CUDA snapshot command rejected: {error:?}"))?;
-    match hosted
-        .receive_timeout(EVENT_TIMEOUT)
-        .map_err(|error| format!("CUDA snapshot event failed: {error:?}"))?
-    {
-        RuntimeEvent::Snapshot {
-            ticket: event_ticket,
-            runtime,
-            models,
-            retained_models,
-        } if event_ticket == ticket => {
-            assert_eq!(runtime.loaded_models, 1);
-            assert_eq!(runtime.active_requests, 0);
-            assert_eq!(runtime.reserved_footprint, loaded.reserved_footprint);
-            assert!(runtime.unverified_ownership.is_none());
-            assert!(!runtime.admission_blocked);
-            assert_eq!(runtime.generation_workspaces, 0);
-            assert_eq!(
-                runtime.reserved_generation_workspace,
-                MemoryFootprint::default()
-            );
-            assert_eq!(runtime.pending_cleanup_models, 0);
-            assert_eq!(runtime.pending_cleanup_sequences, 0);
-            assert_eq!(runtime.exhausted_cleanup_models, 0);
-            assert_eq!(runtime.exhausted_cleanup_sequences, 0);
-            assert!(runtime.maintenance_error.is_none());
-            assert!(retained_models.is_empty());
-            assert_eq!(models.len(), 1);
-            let model = models.first().ok_or("CUDA model snapshot missing")?;
-            assert_eq!(model.handle, loaded.handle);
-            assert_eq!(model.execution_device, loaded.execution_device);
-            assert_eq!(model.execution_scalar_type, loaded.execution_scalar_type);
-            assert_eq!(model.descriptor, loaded.descriptor);
-            assert_eq!(model.reserved_footprint, loaded.reserved_footprint);
-            assert_eq!(model.active_requests, 0);
-            assert_eq!(model.pending_cleanup_sequences, 0);
-            assert_eq!(model.exhausted_cleanup_sequences, 0);
-            assert!(!model.degraded);
-            Ok(())
-        }
-        event => Err(format!(
-            "unexpected CUDA snapshot event for ticket {:?}",
             event.ticket()
         )),
     }
