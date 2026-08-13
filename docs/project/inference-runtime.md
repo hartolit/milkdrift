@@ -135,7 +135,7 @@ and sequence identity. `RetainedOwnership` distinguishes:
 
 - `Released`, produced only by explicit successful cleanup;
 - `Exact(footprint)` for a trustworthy named ownership phase; and
-- `Unverified { accepted_loading_peak, reported_footprint,
+- `Unverified { accepted_footprint, reported_footprint,
   conservative_footprint }` for any retained owner that contradicts its accepted
   contract, including a complete model or failed-materialization owner.
 
@@ -178,10 +178,33 @@ scheduler quantum, and required bounded output capacity. It carries no tokenizer
 text, path, display, workflow, frontend, or provider DTO.
 
 Before sequence creation E0 checks model/identity/lifecycle, context and prefill
-limits, sampling, output capacity, and memory. It reserves the backend sequence
-plan plus caller-owned logits, sampling, token-history, stop, and terminal-state
-workspaces. Workspace bytes remain reserved until the `Released` output record is
-published and scheduler storage is dropped.
+limits, sampling, output capacity, and memory. It validates that the proposed
+`SequenceReservation` has checked persistent/transient components and an exact
+checked total, admits that complete backend total, and only then calls native
+sequence creation. Caller-owned logits, sampling, token-history, stop, output,
+and terminal-state workspaces are admitted independently; they are never hidden
+inside the backend plan. Aggregate model + sequence + workspace capacity rejects
+before registry or backend mutation.
+
+The created sequence must report the accepted identity, token capacity, and
+complete immutable `SequencePlan`. E0 repeats identity/capacity/plan checks after
+successful prefill and decode and reads the plan on both sides of destruction.
+The backend total remains in exact aggregate and model-slot accounting until one
+successful destruction, including while terminal output awaits release and while
+a conforming cleanup owner is quarantined for retry.
+
+If creation or a later operation contradicts identity, capacity, or plan, E0
+reports a backend-contract violation and explicitly destroys the unpublished or
+terminal sequence. If destruction also fails, E0 retains the sole owner as
+`RetainedOwnership::Unverified { accepted_footprint, reported_footprint,
+conservative_footprint }`, removes any
+formerly exact sequence amount once, degrades the model, and blocks new
+admission. Matching numeric reports do not turn an identity/capacity
+contradiction into exact physical ownership. Successful destruction is still
+release evidence and removes the owner exactly once.
+
+Workspace bytes remain reserved until the `Released` output record is published
+and scheduler storage is dropped.
 
 A scheduled request progresses through:
 

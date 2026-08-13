@@ -11,7 +11,7 @@ use domain_contracts::{
     ModelHandle, ModelId, ModelLoader, ModelMetadata, PrefillBufferRequirements, PrefillInput,
     PrefillOutcome, PreparedDecodeBuffers, PreparedLoad, PreparedPrefillBuffers,
     QuantizationFormat, RequestId, ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceError,
-    SequenceId, SequencePlan, SequenceState, SynchronizationError,
+    SequenceId, SequencePlan, SequenceReservation, SequenceState, SynchronizationError,
 };
 use host_runtime::spawn_named;
 use inference_runtime::{
@@ -57,6 +57,7 @@ struct TestSequence {
     id: SequenceId,
     state: SequenceState,
     capacity: usize,
+    plan: SequencePlan,
 }
 
 impl BackendSequence for TestSequence {
@@ -74,6 +75,10 @@ impl BackendSequence for TestSequence {
 
     fn token_capacity(&self) -> usize {
         self.capacity
+    }
+
+    fn reported_plan(&self) -> SequencePlan {
+        self.plan
     }
 }
 
@@ -171,7 +176,7 @@ impl LoadedModel for TestModel {
     ) -> Result<SequencePlan, ModelError> {
         Ok(SequencePlan {
             configuration: *configuration,
-            expected_footprint: MemoryFootprint::default(),
+            reservation: SequenceReservation::default(),
             logits_capacity: self.descriptor.metadata.vocabulary_size as usize,
         })
     }
@@ -181,12 +186,14 @@ impl LoadedModel for TestModel {
         sequence_id: SequenceId,
         configuration: &SequenceConfiguration,
     ) -> Result<Self::Sequence, ModelError> {
+        let plan = self.plan_sequence(configuration)?;
         let capacity = usize::try_from(configuration.maximum_tokens.get())
             .map_err(|_| ModelError::Backend(backend_failure()))?;
         Ok(TestSequence {
             id: sequence_id,
             state: SequenceState::Empty,
             capacity,
+            plan,
         })
     }
 

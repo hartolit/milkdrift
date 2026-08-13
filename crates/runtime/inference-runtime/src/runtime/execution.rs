@@ -74,6 +74,7 @@ where
                         || position != current_position
                         || request.sequence.id() != request.sequence_id
                         || request.sequence.token_capacity() != request.token_capacity
+                        || request.sequence.reported_plan() != request.accepted_plan
                         || request.sequence.state() != SequenceState::Ready
                         || expected_logits != Some(logits_written)
                         || logits_written > logits.len()
@@ -175,6 +176,7 @@ where
                         || position != current_position
                         || request.sequence.id() != request.sequence_id
                         || request.sequence.token_capacity() != request.token_capacity
+                        || request.sequence.reported_plan() != request.accepted_plan
                         || request.sequence.state() != SequenceState::Ready
                         || expected_logits != Some(logits_written)
                         || logits_written > logits.len()

@@ -26,15 +26,15 @@ const CUDA_0: ExecutionDevice = ExecutionDevice::new(DeviceId::new(0), DeviceKin
 const VOCABULARY_SIZE: usize = 16;
 const F32_EXECUTION_WEIGHT_BYTES: u64 = 3_680;
 const F32_CACHE_BYTES_PER_TOKEN: u64 = 64;
-const F32_CPU_SEQUENCE_HOST_WORKING_BYTES: u64 = 13_924;
-const F32_CUDA_SEQUENCE_HOST_WORKING_BYTES: u64 = 228;
-const F32_CUDA_SEQUENCE_DEVICE_WORKING_BYTES: u64 = 13_764;
+const F32_CPU_SEQUENCE_HOST_WORKING_BYTES: u64 = 7_556;
+const F32_CUDA_SEQUENCE_HOST_WORKING_BYTES: u64 = 160;
+const F32_CUDA_SEQUENCE_DEVICE_WORKING_BYTES: u64 = 7_396;
 const F32_CPU_LOADING_WORKING_BYTES: u64 = 65_763;
 const F32_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 66_563;
 const HALF_EXECUTION_WEIGHT_BYTES: u64 = 1_840;
 const HALF_CACHE_BYTES_PER_TOKEN: u64 = 32;
-const HALF_CUDA_SEQUENCE_HOST_WORKING_BYTES: u64 = 228;
-const HALF_CUDA_SEQUENCE_DEVICE_WORKING_BYTES: u64 = 10_964;
+const HALF_CUDA_SEQUENCE_HOST_WORKING_BYTES: u64 = 160;
+const HALF_CUDA_SEQUENCE_DEVICE_WORKING_BYTES: u64 = 6_884;
 const HALF_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 66_049;
 
 type TestResult<T = ()> = Result<T, String>;
@@ -438,7 +438,7 @@ fn execute_fixture(
         reported_footprint,
         loading_peak_footprint: plan.loading_peak_footprint,
         sequence_cache_bytes_per_token,
-        sequence_footprint: sequence_plan.expected_footprint,
+        sequence_footprint: sequence_plan.reservation.total_footprint,
         prefill_logits,
         decode_logits,
     })

@@ -7,8 +7,8 @@ use domain_contracts::{
     DecodeBufferRequirements, DecodeInput, DecodeOutcome, ExecutionDevice, LoadedModel,
     MemoryFootprint, ModelDescriptor, ModelError, ModelHandle, PrefillBufferRequirements,
     PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers, ScalarType,
-    SequenceConfiguration, SequenceError, SequenceId, SequencePlan, SequenceState,
-    SynchronizationError,
+    SequenceConfiguration, SequenceError, SequenceId, SequencePlan, SequenceReservation,
+    SequenceState, SynchronizationError,
 };
 
 use crate::failure::{
@@ -78,10 +78,10 @@ impl CandleLlamaModel {
         self.execution_scalar_type
     }
 
-    fn sequence_footprint(
+    fn sequence_reservation(
         &self,
         configuration: SequenceConfiguration,
-    ) -> Result<MemoryFootprint, ModelError> {
+    ) -> Result<SequenceReservation, ModelError> {
         sequence_reservation::calculate(
             self.backend,
             &self.config,
@@ -188,7 +188,7 @@ impl LoadedModel for CandleLlamaModel {
 
         Ok(SequencePlan {
             configuration: *configuration,
-            expected_footprint: self.sequence_footprint(*configuration)?,
+            reservation: self.sequence_reservation(*configuration)?,
             logits_capacity: self.vocabulary_size,
         })
     }
@@ -222,7 +222,7 @@ impl LoadedModel for CandleLlamaModel {
             maximum_prefill,
             cache,
             token_staging,
-            expected_footprint: plan.expected_footprint,
+            plan,
         })
     }
 
@@ -370,21 +370,34 @@ pub struct CandleLlamaSequence {
     maximum_prefill: usize,
     cache: Cache,
     token_staging: Vec<u32>,
-    expected_footprint: MemoryFootprint,
+    plan: SequencePlan,
 }
 
 impl CandleLlamaSequence {
-    /// Returns the exact arithmetic reservation for the reviewed sequence
-    /// logical-payload upper bound.
+    /// Returns the retained source-reviewed sequence reservation.
     #[must_use]
-    pub const fn expected_footprint(&self) -> MemoryFootprint {
-        self.expected_footprint
+    pub const fn reservation(&self) -> SequenceReservation {
+        self.plan.reservation
     }
 
     /// Returns the maximum prompt tokens accepted by one prefill call.
     #[must_use]
     pub const fn maximum_prefill_batch(&self) -> usize {
         self.maximum_prefill
+    }
+
+    /// Returns the actual fixed token-staging allocation capacity.
+    #[must_use]
+    pub fn token_staging_capacity(&self) -> usize {
+        self.token_staging.capacity()
+    }
+
+    /// Returns the logical byte extent of the fixed `u32` token staging buffer.
+    #[must_use]
+    pub fn token_staging_logical_bytes(&self) -> usize {
+        self.token_staging
+            .capacity()
+            .saturating_mul(std::mem::size_of::<u32>())
     }
 }
 
@@ -403,6 +416,10 @@ impl BackendSequence for CandleLlamaSequence {
 
     fn token_capacity(&self) -> usize {
         self.token_capacity
+    }
+
+    fn reported_plan(&self) -> SequencePlan {
+        self.plan
     }
 }
 
@@ -525,8 +542,15 @@ fn model_candle_failure(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::num::NonZeroU32;
+
+    use candle_core::{DType, Device, Tensor};
+    use candle_nn::VarBuilder;
+    use candle_transformers::models::llama::{Cache, Config, Llama};
     use domain_contracts::{
-        BackendFailureKind, BackendId, CapacityResource, SequenceError, SequenceState,
+        BackendFailureKind, BackendId, CapacityResource, DeviceKind, SequenceConfiguration,
+        SequenceError, SequenceState,
     };
 
     use super::{
@@ -575,5 +599,193 @@ mod tests {
             Ok(7)
         );
         assert_eq!(successful_state, SequenceState::Ready);
+    }
+
+    #[test]
+    fn pinned_candle_cache_state_matches_planned_non_gqa_and_gqa_layouts() -> Result<(), String> {
+        for (attention_heads, kv_heads, rope_shape, kv_shape, cache_bytes_per_token) in [
+            (
+                2,
+                2,
+                "Tensor[dims 16, 2; f32]",
+                "Tensor[dims 1, 2, 2, 4; f32]",
+                64,
+            ),
+            (
+                4,
+                2,
+                "Tensor[dims 16, 1; f32]",
+                "Tensor[dims 1, 2, 2, 2; f32]",
+                32,
+            ),
+        ] {
+            let config = conformance_config(attention_heads, kv_heads);
+            let reservation = crate::sequence_reservation::calculate(
+                BACKEND,
+                &config,
+                DType::F32,
+                DeviceKind::Cpu,
+                SequenceConfiguration::new(
+                    NonZeroU32::new(16).unwrap_or(NonZeroU32::MIN),
+                    NonZeroU32::new(8).unwrap_or(NonZeroU32::MIN),
+                ),
+                cache_bytes_per_token,
+            )
+            .map_err(|error| format!("calculate sequence reservation: {error:?}"))?;
+            assert!(reservation.is_consistent());
+
+            let model = conformance_model(&config, DType::F32)?;
+            let mut cache = Cache::new(true, DType::F32, &config, &Device::Cpu)
+                .map_err(|error| error.to_string())?;
+            let created = format!("{cache:?}");
+            assert_eq!(
+                created.matches(rope_shape).count(),
+                2,
+                "created cache: {created}"
+            );
+            assert!(created.contains("kvs: [None]"));
+            assert!(created.contains("masks: {}"));
+
+            let input = Tensor::from_slice(&[1_u32, 2], (1, 2), &Device::Cpu)
+                .map_err(|error| error.to_string())?;
+            let logits = model
+                .forward(&input, 0, &mut cache)
+                .map_err(|error| error.to_string())?;
+            assert_eq!(logits.dims(), &[1, 16]);
+            assert_eq!(logits.dtype(), DType::F32);
+
+            let populated = format!("{cache:?}");
+            assert_eq!(
+                populated.matches(kv_shape).count(),
+                2,
+                "populated cache: {populated}"
+            );
+            assert!(populated.contains("(2, 2): Tensor[dims 2, 2; u8]"));
+            let observed_cache_bytes = match (attention_heads, kv_heads) {
+                (2, 2) => 2 * 2 * 2 * 4 * 4,
+                (4, 2) => 2 * 2 * 2 * 2 * 4,
+                _ => return Err("unexpected conformance dimensions".to_owned()),
+            };
+            assert_eq!(observed_cache_bytes / 2, cache_bytes_per_token);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn pinned_cache_creation_retains_reviewed_execution_dtype() -> Result<(), String> {
+        let config = conformance_config(2, 2);
+        for (dtype, marker) in [
+            (DType::F32, "Tensor[dims 16, 2; f32]"),
+            (DType::F16, "Tensor[dims 16, 2; f16]"),
+            (DType::BF16, "Tensor[dims 16, 2; bf16]"),
+        ] {
+            let cache = Cache::new(true, dtype, &config, &Device::Cpu)
+                .map_err(|error| error.to_string())?;
+            assert_eq!(format!("{cache:?}").matches(marker).count(), 2);
+        }
+        Ok(())
+    }
+
+    fn conformance_config(attention_heads: usize, kv_heads: usize) -> Config {
+        Config {
+            hidden_size: 8,
+            intermediate_size: 16,
+            vocab_size: 16,
+            num_hidden_layers: 1,
+            num_attention_heads: attention_heads,
+            num_key_value_heads: kv_heads,
+            use_flash_attn: false,
+            rms_norm_eps: 1e-5,
+            rope_theta: 10_000.0,
+            bos_token_id: None,
+            eos_token_id: None,
+            rope_scaling: None,
+            max_position_embeddings: 16,
+            tie_word_embeddings: false,
+        }
+    }
+
+    fn conformance_model(config: &Config, dtype: DType) -> Result<Llama, String> {
+        let mut tensors = HashMap::new();
+        insert_zeros(
+            &mut tensors,
+            "model.embed_tokens.weight",
+            (config.vocab_size, config.hidden_size),
+            dtype,
+        )?;
+        insert_zeros(
+            &mut tensors,
+            "lm_head.weight",
+            (config.vocab_size, config.hidden_size),
+            dtype,
+        )?;
+        insert_ones(&mut tensors, "model.norm.weight", config.hidden_size, dtype)?;
+        let head_dimension = config.hidden_size / config.num_attention_heads;
+        let kv_width = head_dimension * config.num_key_value_heads;
+        for (projection, output) in [
+            ("q_proj", config.hidden_size),
+            ("k_proj", kv_width),
+            ("v_proj", kv_width),
+            ("o_proj", config.hidden_size),
+        ] {
+            insert_zeros(
+                &mut tensors,
+                &format!("model.layers.0.self_attn.{projection}.weight"),
+                (output, config.hidden_size),
+                dtype,
+            )?;
+        }
+        for normalization in ["input_layernorm", "post_attention_layernorm"] {
+            insert_ones(
+                &mut tensors,
+                &format!("model.layers.0.{normalization}.weight"),
+                config.hidden_size,
+                dtype,
+            )?;
+        }
+        for projection in ["gate_proj", "up_proj"] {
+            insert_zeros(
+                &mut tensors,
+                &format!("model.layers.0.mlp.{projection}.weight"),
+                (config.intermediate_size, config.hidden_size),
+                dtype,
+            )?;
+        }
+        insert_zeros(
+            &mut tensors,
+            "model.layers.0.mlp.down_proj.weight",
+            (config.hidden_size, config.intermediate_size),
+            dtype,
+        )?;
+
+        Llama::load(
+            VarBuilder::from_tensors(tensors, dtype, &Device::Cpu),
+            config,
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    fn insert_zeros<S: Into<candle_core::Shape>>(
+        tensors: &mut HashMap<String, Tensor>,
+        name: &str,
+        shape: S,
+        dtype: DType,
+    ) -> Result<(), String> {
+        let tensor =
+            Tensor::zeros(shape, dtype, &Device::Cpu).map_err(|error| error.to_string())?;
+        tensors.insert(name.to_owned(), tensor);
+        Ok(())
+    }
+
+    fn insert_ones(
+        tensors: &mut HashMap<String, Tensor>,
+        name: &str,
+        length: usize,
+        dtype: DType,
+    ) -> Result<(), String> {
+        let tensor =
+            Tensor::ones(length, dtype, &Device::Cpu).map_err(|error| error.to_string())?;
+        tensors.insert(name.to_owned(), tensor);
+        Ok(())
     }
 }

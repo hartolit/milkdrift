@@ -182,6 +182,22 @@ where
                 .map(|slot| slot.pending_sequences.len())
                 .sum(),
         );
+        for pending in self
+            .models
+            .values()
+            .flat_map(|slot| slot.pending_sequences.values())
+        {
+            if let RetainedOwnership::Unverified {
+                conservative_footprint,
+                ..
+            } = pending.ownership
+            {
+                summary.unverified_conservative_footprint = add_conservative_footprint(
+                    summary.unverified_conservative_footprint,
+                    conservative_footprint,
+                );
+            }
+        }
         summary
     }
 

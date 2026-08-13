@@ -13,8 +13,8 @@ use domain_contracts::{
     ModelDescriptor, ModelError, ModelGeneration, ModelHandle, ModelId, ModelLoader, ModelMetadata,
     PrefillBufferRequirements, PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedLoad,
     PreparedPrefillBuffers, QuantizationFormat, RequestId, ScalarType, ScalarTypeSet,
-    SequenceConfiguration, SequenceError, SequenceId, SequencePlan, SequenceState,
-    SynchronizationError, TokenId, UnloadPolicy,
+    SequenceConfiguration, SequenceError, SequenceId, SequencePlan, SequenceReservation,
+    SequenceState, SynchronizationError, TokenId, UnloadPolicy,
 };
 use host_runtime::TokenOutputRecordKind;
 use inference_runtime::{
@@ -232,6 +232,7 @@ struct FakeSequence {
     position: usize,
     capacity: usize,
     generated: usize,
+    plan: SequencePlan,
 }
 
 impl BackendSequence for FakeSequence {
@@ -249,6 +250,10 @@ impl BackendSequence for FakeSequence {
 
     fn token_capacity(&self) -> usize {
         self.capacity
+    }
+
+    fn reported_plan(&self) -> SequencePlan {
+        self.plan
     }
 }
 
@@ -380,7 +385,11 @@ impl LoadedModel for FakeModel {
     ) -> Result<SequencePlan, ModelError> {
         Ok(SequencePlan {
             configuration: *configuration,
-            expected_footprint: sequence_footprint(),
+            reservation: SequenceReservation {
+                persistent_footprint: sequence_footprint(),
+                transient_footprint: MemoryFootprint::default(),
+                total_footprint: sequence_footprint(),
+            },
             logits_capacity: self.source.logits_capacity,
         })
     }
@@ -390,6 +399,7 @@ impl LoadedModel for FakeModel {
         sequence_id: SequenceId,
         configuration: &SequenceConfiguration,
     ) -> Result<Self::Sequence, ModelError> {
+        let plan = self.plan_sequence(configuration)?;
         let mut counters = self
             .counters
             .lock()
@@ -406,6 +416,7 @@ impl LoadedModel for FakeModel {
             position: 0,
             capacity: configuration.maximum_tokens.get() as usize,
             generated: 0,
+            plan,
         })
     }
 
@@ -1402,7 +1413,13 @@ fn ready_results_preserve_sequence_state_identity_and_capacity() -> TestResult {
             ));
             assert_eq!(
                 cleanup.ownership,
-                RetainedOwnership::Exact(sequence_footprint())
+                RetainedOwnership::Unverified {
+                    accepted_footprint: sequence_footprint(),
+                    reported_footprint: sequence_footprint(),
+                    conservative_footprint: inference_runtime::ConservativeFootprint::Known(
+                        sequence_footprint(),
+                    ),
+                }
             );
             assert!(matches!(
                 runtime.poll_cleanup().map_err(debug_error)?,

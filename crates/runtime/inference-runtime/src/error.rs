@@ -192,14 +192,15 @@ pub enum RetainedOwnership {
     Exact(MemoryFootprint),
     /// A retained backend owner contradicted its accepted contract.
     ///
-    /// This can be a complete model or a failed-materialization owner whose
-    /// lifetime-stable plan report changed. Neither the accepted loading peak
-    /// nor the contradictory backend report is promoted to exact ownership.
+    /// This can be a complete model, a failed-materialization owner whose
+    /// lifetime-stable plan report changed, or a retained sequence whose report
+    /// changed. Neither the accepted reservation nor the contradictory backend
+    /// report is promoted to exact ownership.
     /// `conservative_footprint` preserves component-wise conservative evidence
     /// when checked arithmetic can represent it.
     Unverified {
-        /// Exact loading reservation accepted before materialization.
-        accepted_loading_peak: MemoryFootprint,
+        /// Reservation accepted before acquiring the backend owner.
+        accepted_footprint: MemoryFootprint,
         /// Backend's contradictory retained-ownership footprint report.
         reported_footprint: MemoryFootprint,
         /// Checked component-wise conservative reservation evidence.

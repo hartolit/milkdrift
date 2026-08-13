@@ -256,6 +256,14 @@ pub trait BackendSequence {
     /// Backends may materialize cache payload incrementally during execution;
     /// this capacity is a logical plan bound, not proof of eager allocation.
     fn token_capacity(&self) -> usize;
+
+    /// Returns the complete immutable sequence plan retained after creation.
+    ///
+    /// E0 compares this report with the plan admitted before native creation and
+    /// at subsequent operation boundaries. A contradiction is a backend contract
+    /// violation, not evidence that either report describes exact physical
+    /// ownership.
+    fn reported_plan(&self) -> SequencePlan;
 }
 
 /// Loaded backend model exclusively owned by the inference runtime registry.
@@ -307,7 +315,7 @@ pub trait LoadedModel {
     /// Creation establishes the sequence owner and its fixed logical capacities,
     /// but need not eagerly perform every future backend allocation. Execution-time
     /// logical tensor payloads and source transfers must remain covered by
-    /// [`SequencePlan::expected_footprint`]; caller-owned logits buffers remain
+    /// [`SequencePlan::reservation`]; caller-owned logits buffers remain
     /// outside that backend reservation.
     ///
     /// # Errors

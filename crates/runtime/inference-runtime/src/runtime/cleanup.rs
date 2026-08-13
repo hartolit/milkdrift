@@ -1,6 +1,6 @@
 use domain_contracts::{
-    LifecycleAction, LoadedModel, MemoryFootprint, ModelHandle, ModelId, ModelLifecycle,
-    ModelLifecycleState, ModelLoader, RequestId, SequenceId,
+    BackendSequence, LifecycleAction, LoadedModel, MemoryFootprint, ModelHandle, ModelId,
+    ModelLifecycle, ModelLifecycleState, ModelLoader, RequestId, SequenceId, SequencePlan,
 };
 
 use crate::{
@@ -11,6 +11,7 @@ use crate::{
 use super::{
     CleanupClass, InferenceRuntime, PendingSequence,
     memory::{checked_add_footprint, checked_sub_footprint},
+    sequence_report_matches,
 };
 
 #[derive(Clone, Copy)]
@@ -29,6 +30,7 @@ struct RequestRemovalTransition {
     model_id: ModelId,
     handle: ModelHandle,
     sequence_id: SequenceId,
+    accepted_plan: SequencePlan,
     backend_footprint: MemoryFootprint,
     released_slot_footprint: MemoryFootprint,
     retained_slot_footprint: MemoryFootprint,
@@ -40,7 +42,7 @@ struct RequestRemovalTransition {
 }
 
 enum RequestRemovalDisposition {
-    Released,
+    Released { contract_violated: bool },
     Retained(CleanupFailureReport),
 }
 
@@ -189,6 +191,7 @@ where
             {
                 return Err(RuntimeError::BackendContractViolation);
             }
+            let exact_footprint = pending.ownership.exact_footprint();
             (
                 slot.handle,
                 pending.sequence_id,
@@ -196,8 +199,14 @@ where
                     .attempts
                     .checked_add(1)
                     .ok_or(RuntimeError::BackendContractViolation)?,
-                checked_sub_footprint(slot.reserved_footprint, pending.footprint)?,
-                checked_sub_footprint(self.reserved_footprint, pending.footprint)?,
+                match exact_footprint {
+                    Some(footprint) => checked_sub_footprint(slot.reserved_footprint, footprint)?,
+                    None => slot.reserved_footprint,
+                },
+                match exact_footprint {
+                    Some(footprint) => checked_sub_footprint(self.reserved_footprint, footprint)?,
+                    None => self.reserved_footprint,
+                },
                 self.pending_cleanup_sequences
                     .checked_sub(1)
                     .ok_or(RuntimeError::BackendContractViolation)?,
@@ -214,7 +223,9 @@ where
                 .remove(&request_id)
                 .ok_or(RuntimeError::BackendContractViolation)?;
             pending.attempts = next_attempts;
+            pending.reconcile_contract();
             let result = slot.model.destroy_sequence(&mut pending.sequence);
+            pending.reconcile_contract();
             (pending, result)
         };
 
@@ -226,6 +237,10 @@ where
                 .models
                 .get_mut(&model_id)
                 .ok_or(RuntimeError::ModelNotLoaded(model_id))?;
+            if pending.ownership.blocks_admission() {
+                slot.reserved_footprint = next_slot_reserved;
+                self.reserved_footprint = next_reserved;
+            }
             let replaced = slot.pending_sequences.insert(request_id, pending);
             debug_assert!(replaced.is_none(), "cleanup owner was removed for retry");
             self.last_cleanup = Some(state);
@@ -330,9 +345,13 @@ where
         self.sequence_index.remove(&transition.sequence_id);
         self.active_requests = transition.active_requests;
         match disposition {
-            RequestRemovalDisposition::Released => {
+            RequestRemovalDisposition::Released { contract_violated } => {
                 self.reserved_footprint = transition.released_runtime_footprint;
-                Ok(())
+                if contract_violated {
+                    Err(RuntimeError::BackendContractViolation)
+                } else {
+                    Ok(())
+                }
             }
             RequestRemovalDisposition::Retained(report) => {
                 self.pending_request_index
@@ -340,6 +359,15 @@ where
                 self.pending_sequence_index
                     .insert(transition.sequence_id, request_id);
                 self.pending_cleanup_sequences = transition.pending_cleanup_sequences;
+                let ownership = self
+                    .models
+                    .get(&transition.model_id)
+                    .and_then(|slot| slot.pending_sequences.get(&request_id))
+                    .map(|pending| pending.ownership)
+                    .ok_or(RuntimeError::BackendContractViolation)?;
+                if ownership.blocks_admission() {
+                    self.reserved_footprint = transition.released_runtime_footprint;
+                }
                 let state = CleanupRetryState {
                     resource: CleanupResource::Sequence {
                         handle: transition.handle,
@@ -347,7 +375,7 @@ where
                         sequence_id: transition.sequence_id,
                     },
                     failure: report,
-                    ownership: RetainedOwnership::Exact(transition.backend_footprint),
+                    ownership,
                     attempts: 1,
                     maximum_attempts: self.maximum_cleanup_attempts(),
                 };
@@ -381,12 +409,14 @@ where
         }
         let mut lifecycle = slot.lifecycle;
         let lifecycle_action = lifecycle.finish_request()?;
-        let total = checked_add_footprint(request.backend_footprint, request.workspace_footprint)?;
+        let backend_footprint = request.accepted_plan.reservation.total_footprint;
+        let total = checked_add_footprint(backend_footprint, request.workspace_footprint)?;
         Ok(RequestRemovalTransition {
             model_id,
             handle: slot.handle,
             sequence_id: request.sequence_id,
-            backend_footprint: request.backend_footprint,
+            accepted_plan: request.accepted_plan,
+            backend_footprint,
             released_slot_footprint: checked_sub_footprint(slot.reserved_footprint, total)?,
             retained_slot_footprint: checked_sub_footprint(
                 slot.reserved_footprint,
@@ -394,7 +424,7 @@ where
             )?,
             released_runtime_footprint: checked_sub_footprint(
                 self.reserved_footprint,
-                request.backend_footprint,
+                backend_footprint,
             )?,
             active_requests: self
                 .active_requests
@@ -424,7 +454,22 @@ where
             .requests
             .remove(&request_id)
             .ok_or(RuntimeError::RequestNotActive(request_id))?;
+        let report_before_cleanup = request.sequence.reported_plan();
+        let contract_matched_before = sequence_report_matches(
+            &request.sequence,
+            transition.sequence_id,
+            &transition.accepted_plan,
+            report_before_cleanup,
+        );
         let cleanup_result = slot.model.destroy_sequence(&mut request.sequence);
+        let report_after_cleanup = request.sequence.reported_plan();
+        let contract_matches = contract_matched_before
+            && sequence_report_matches(
+                &request.sequence,
+                transition.sequence_id,
+                &transition.accepted_plan,
+                report_after_cleanup,
+            );
         slot.lifecycle = transition.lifecycle;
 
         let Err(cleanup) = cleanup_result else {
@@ -432,7 +477,9 @@ where
             if transition.lifecycle_action == LifecycleAction::ReleaseModel {
                 debug_assert_eq!(slot.lifecycle.state(), ModelLifecycleState::Unloading);
             }
-            return Ok(RequestRemovalDisposition::Released);
+            return Ok(RequestRemovalDisposition::Released {
+                contract_violated: !contract_matches,
+            });
         };
 
         let report = CleanupFailureReport::with_details(
@@ -441,15 +488,38 @@ where
             RuntimeOperation::SequenceDestruction,
             FailureDetail::Sequence(cleanup),
         );
+        let reported_footprint = report_after_cleanup.reservation.total_footprint;
+        let ownership = if contract_matches {
+            RetainedOwnership::Exact(transition.backend_footprint)
+        } else {
+            RetainedOwnership::Unverified {
+                accepted_footprint: transition.backend_footprint,
+                reported_footprint,
+                conservative_footprint: super::memory::conservative_footprint(
+                    transition.backend_footprint,
+                    reported_footprint,
+                ),
+            }
+        };
+        let mut report = report;
+        if !contract_matches {
+            report.primary_failure = crate::FailureClass::BackendContract;
+            report.primary_detail = FailureDetail::Class(crate::FailureClass::BackendContract);
+        }
         let pending = PendingSequence {
             request_id,
             sequence_id: transition.sequence_id,
             sequence: request.sequence,
-            footprint: transition.backend_footprint,
+            accepted_plan: transition.accepted_plan,
+            ownership,
             failure: report,
             attempts: 1,
         };
-        slot.reserved_footprint = transition.retained_slot_footprint;
+        slot.reserved_footprint = if ownership.exact_footprint().is_some() {
+            transition.retained_slot_footprint
+        } else {
+            transition.released_slot_footprint
+        };
         slot.poisoned = true;
         let replaced = slot.pending_sequences.insert(request_id, pending);
         debug_assert!(
@@ -472,7 +542,7 @@ fn sequence_cleanup_state<S: domain_contracts::BackendSequence>(
             sequence_id: pending.sequence_id,
         },
         failure: pending.failure,
-        ownership: RetainedOwnership::Exact(pending.footprint),
+        ownership: pending.ownership,
         attempts: pending.attempts,
         maximum_attempts,
     }

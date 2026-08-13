@@ -53,11 +53,11 @@ pub(super) fn application_retained_ownership(
             ApplicationRetainedOwnership::Exact(footprint.into())
         }
         RetainedOwnership::Unverified {
-            accepted_loading_peak,
+            accepted_footprint,
             reported_footprint,
             conservative_footprint,
         } => ApplicationRetainedOwnership::Unverified {
-            accepted_loading_peak: accepted_loading_peak.into(),
+            accepted_loading_peak: accepted_footprint.into(),
             reported_footprint: reported_footprint.into(),
             conservative_footprint: match conservative_footprint {
                 ConservativeFootprint::Known(footprint) => {

@@ -73,7 +73,7 @@ fn incompatible_cleanup(attempts: u32) -> CleanupRetryState {
             FailureClass::Synchronization,
         ),
         ownership: RetainedOwnership::Unverified {
-            accepted_loading_peak: ACCEPTED_LOADING_PEAK,
+            accepted_footprint: ACCEPTED_LOADING_PEAK,
             reported_footprint: REPORTED_FOOTPRINT,
             conservative_footprint: ConservativeFootprint::Known(REPORTED_FOOTPRINT),
         },

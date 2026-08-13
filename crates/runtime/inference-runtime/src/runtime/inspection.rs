@@ -67,6 +67,22 @@ where
             conservative_footprint =
                 add_conservative_footprint(conservative_footprint, owner_footprint);
         }
+        for pending in self
+            .models
+            .values()
+            .flat_map(|slot| slot.pending_sequences.values())
+        {
+            let RetainedOwnership::Unverified {
+                conservative_footprint: owner_footprint,
+                ..
+            } = pending.ownership
+            else {
+                continue;
+            };
+            owners = owners.saturating_add(1);
+            conservative_footprint =
+                add_conservative_footprint(conservative_footprint, owner_footprint);
+        }
         (owners > 0).then_some(UnverifiedOwnershipSummary {
             owners,
             conservative_footprint,
@@ -242,7 +258,7 @@ where
                 sequence_id: pending.sequence_id,
             },
             failure: pending.failure,
-            ownership: RetainedOwnership::Exact(pending.footprint),
+            ownership: pending.ownership,
             attempts: pending.attempts,
             maximum_attempts: self.maximum_cleanup_attempts(),
         }

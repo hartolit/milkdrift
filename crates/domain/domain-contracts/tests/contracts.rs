@@ -10,8 +10,9 @@ use domain_contracts::{
     FailedLoadOwner, FinishReason, LifecycleAction, LoadConfiguration, LoadError, LoadPlan,
     MemoryBudget, MemoryFootprint, ModelLifecycle, ModelLifecycleState, MonotonicMillis,
     PrefillBufferRequirements, PrefillBuffers, PrefillInput, PrefillOutcome, PreparedDecodeBuffers,
-    PreparedLoad, PreparedPrefillBuffers, ScalarType, ScalarTypeSet, SequenceId, SequenceState,
-    SynchronizationError, TokenId, UnloadPolicy, decode_checked, prefill_checked,
+    PreparedLoad, PreparedPrefillBuffers, ScalarType, ScalarTypeSet, SequenceConfiguration,
+    SequenceId, SequencePlan, SequenceReservation, SequenceState, SynchronizationError, TokenId,
+    UnloadPolicy, decode_checked, prefill_checked,
 };
 
 struct TestSequence {
@@ -19,6 +20,7 @@ struct TestSequence {
     position: usize,
     capacity: usize,
     state: SequenceState,
+    plan: SequencePlan,
 }
 
 impl BackendSequence for TestSequence {
@@ -36,6 +38,10 @@ impl BackendSequence for TestSequence {
 
     fn token_capacity(&self) -> usize {
         self.capacity
+    }
+
+    fn reported_plan(&self) -> SequencePlan {
+        self.plan
     }
 }
 
@@ -105,7 +111,7 @@ impl domain_contracts::LoadedModel for TestModel {
     ) -> Result<domain_contracts::SequencePlan, domain_contracts::ModelError> {
         Ok(domain_contracts::SequencePlan {
             configuration: *configuration,
-            expected_footprint: domain_contracts::MemoryFootprint::default(),
+            reservation: SequenceReservation::default(),
             logits_capacity: self.vocabulary,
         })
     }
@@ -115,11 +121,13 @@ impl domain_contracts::LoadedModel for TestModel {
         sequence_id: SequenceId,
         configuration: &domain_contracts::SequenceConfiguration,
     ) -> Result<Self::Sequence, domain_contracts::ModelError> {
+        let plan = self.plan_sequence(configuration)?;
         Ok(TestSequence {
             id: sequence_id,
             position: 0,
             capacity: configuration.maximum_tokens.get() as usize,
             state: SequenceState::Empty,
+            plan,
         })
     }
 
@@ -546,6 +554,11 @@ fn decode_capacity_exhaustion_finishes_without_backend_entry() {
         position: 2,
         capacity: 8,
         state: SequenceState::Ready,
+        plan: SequencePlan {
+            configuration: SequenceConfiguration::new(NonZeroU32::MIN, NonZeroU32::MIN),
+            reservation: SequenceReservation::default(),
+            logits_capacity: 16,
+        },
     };
     let mut logits = [0.0_f32; 8];
 
@@ -578,6 +591,11 @@ fn prefill_token_capacity_exhaustion_finishes_without_backend_entry() {
         position: 3,
         capacity: 4,
         state: SequenceState::Ready,
+        plan: SequencePlan {
+            configuration: SequenceConfiguration::new(NonZeroU32::MIN, NonZeroU32::MIN),
+            reservation: SequenceReservation::default(),
+            logits_capacity: 4,
+        },
     };
     let tokens = [TokenId::new(1), TokenId::new(2)];
     let mut logits = [0.0_f32; 4];
@@ -601,6 +619,61 @@ fn prefill_token_capacity_exhaustion_finishes_without_backend_entry() {
         )))
     ));
     assert_eq!(sequence.position, 3);
+}
+
+#[test]
+fn sequence_reservation_requires_a_checked_component_sum() {
+    let persistent = MemoryFootprint {
+        host_weight_bytes: 0,
+        device_weight_bytes: 0,
+        host_working_bytes: 3,
+        device_working_bytes: 5,
+    };
+    let transient = MemoryFootprint {
+        host_weight_bytes: 0,
+        device_weight_bytes: 0,
+        host_working_bytes: 7,
+        device_working_bytes: 11,
+    };
+    let reservation = SequenceReservation::checked(persistent, transient).unwrap_or_default();
+    assert_eq!(
+        reservation.total_footprint,
+        MemoryFootprint {
+            host_weight_bytes: 0,
+            device_weight_bytes: 0,
+            host_working_bytes: 10,
+            device_working_bytes: 16,
+        }
+    );
+    assert!(reservation.is_consistent());
+
+    let maximum = MemoryFootprint {
+        host_working_bytes: u64::MAX,
+        ..MemoryFootprint::default()
+    };
+    assert_eq!(
+        SequenceReservation::checked(
+            maximum,
+            MemoryFootprint {
+                host_working_bytes: 1,
+                ..MemoryFootprint::default()
+            }
+        ),
+        None
+    );
+
+    let internally_overflowing = MemoryFootprint {
+        host_weight_bytes: u64::MAX,
+        host_working_bytes: 1,
+        ..MemoryFootprint::default()
+    };
+    let reservation = SequenceReservation {
+        persistent_footprint: internally_overflowing,
+        transient_footprint: MemoryFootprint::default(),
+        total_footprint: internally_overflowing,
+    };
+    assert!(reservation.is_consistent());
+    assert_eq!(reservation.total_footprint.checked_host_bytes(), None);
 }
 
 #[test]

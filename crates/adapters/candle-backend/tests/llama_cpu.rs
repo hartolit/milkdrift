@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use candle_backend::{
-    CandleLlamaLoader, CandleLlamaModel, CandleLlamaPreparedLoad, CandleLlamaSource,
-    CandleShardIdentity, CandleWeightShard,
+    CandleLlamaLoader, CandleLlamaModel, CandleLlamaPreparedLoad, CandleLlamaSequence,
+    CandleLlamaSource, CandleShardIdentity, CandleWeightShard,
 };
 use candle_core::{DType, Device, Tensor};
 use domain_contracts::{
@@ -29,8 +29,12 @@ const VOCABULARY_SIZE: usize = 16;
 const PER_SHARD_HEADER_LIMIT: u64 = 8 * 1024 * 1024;
 const F32_SEQUENCE_CACHE_BYTES_PER_TOKEN: u64 = 64;
 const F16_SEQUENCE_CACHE_BYTES_PER_TOKEN: u64 = 32;
-const F32_SEQUENCE_HOST_WORKING_BYTES: u64 = 13_924;
-const HALF_SEQUENCE_HOST_WORKING_BYTES: u64 = 11_124;
+const F32_SEQUENCE_PERSISTENT_BYTES: u64 = 1_504;
+const F32_SEQUENCE_TRANSIENT_BYTES: u64 = 6_052;
+const F32_SEQUENCE_HOST_WORKING_BYTES: u64 = 7_556;
+const HALF_SEQUENCE_PERSISTENT_BYTES: u64 = 864;
+const HALF_SEQUENCE_TRANSIENT_BYTES: u64 = 6_180;
+const HALF_SEQUENCE_HOST_WORKING_BYTES: u64 = 7_044;
 
 const CPU_F32_FINAL: MemoryFootprint = MemoryFootprint {
     host_weight_bytes: 3_680,
@@ -842,20 +846,7 @@ fn exercise_model(model: &mut CandleLlamaModel) -> TestResult {
         NonZeroU32::new(8).ok_or_else(|| "maximum prefill must be nonzero".to_owned())?,
     );
     let sequence_plan = model.plan_sequence(&configuration).map_err(debug_error)?;
-    let expected_working_bytes = match model.execution_scalar_type() {
-        ScalarType::F32 => F32_SEQUENCE_HOST_WORKING_BYTES,
-        ScalarType::F16 | ScalarType::Bf16 => HALF_SEQUENCE_HOST_WORKING_BYTES,
-        _ => return Err("test model selected a non-floating execution scalar".to_owned()),
-    };
-    assert_eq!(
-        sequence_plan.expected_footprint,
-        MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 0,
-            host_working_bytes: expected_working_bytes,
-            device_working_bytes: 0,
-        }
-    );
+    assert_cpu_sequence_reservation(model, sequence_plan)?;
 
     let mut first = model
         .create_sequence(SequenceId::new(1), &configuration)
@@ -863,83 +854,184 @@ fn exercise_model(model: &mut CandleLlamaModel) -> TestResult {
     let mut second = model
         .create_sequence(SequenceId::new(2), &configuration)
         .map_err(debug_error)?;
-    assert_eq!(first.expected_footprint(), sequence_plan.expected_footprint);
-    assert_eq!(
-        second.expected_footprint(),
-        sequence_plan.expected_footprint
-    );
-    let prompt = [TokenId::new(1), TokenId::new(2)];
-    let mut first_logits = [0.0_f32; VOCABULARY_SIZE];
-    let mut second_logits = [0.0_f32; VOCABULARY_SIZE];
-
-    let first_prefill = prefill_checked(
-        model,
-        &mut first,
-        PrefillInput::new(&prompt, true),
-        PrefillBuffers::new(&mut first_logits),
-        CancellationStatus::Running,
-    )
-    .map_err(debug_error)?;
-    assert_eq!(
-        first_prefill,
-        PrefillOutcome::Ready {
-            consumed_tokens: 2,
-            position: 2,
-            logits_written: VOCABULARY_SIZE,
-        }
-    );
-    assert_eq!(maximum_logit_token(&first_logits)?, TokenId::new(2));
-    assert_eq!(first.state(), SequenceState::Ready);
-
-    let continuation = [TokenId::new(3), TokenId::new(4)];
-    let repeated_prefill = prefill_checked(
-        model,
-        &mut first,
-        PrefillInput::new(&continuation, true),
-        PrefillBuffers::new(&mut first_logits),
-        CancellationStatus::Running,
-    )
-    .map_err(debug_error)?;
-    assert_eq!(
-        repeated_prefill,
-        PrefillOutcome::Ready {
-            consumed_tokens: 2,
-            position: 4,
-            logits_written: VOCABULARY_SIZE,
-        }
-    );
-    assert_eq!(maximum_logit_token(&first_logits)?, TokenId::new(4));
-
-    prefill_checked(
-        model,
-        &mut second,
-        PrefillInput::new(&prompt, true),
-        PrefillBuffers::new(&mut second_logits),
-        CancellationStatus::Running,
-    )
-    .map_err(debug_error)?;
-    let decoded = decode_checked(
-        model,
-        &mut first,
-        DecodeInput::new(TokenId::new(5)),
-        DecodeBuffers::new(&mut first_logits),
-        CancellationStatus::Running,
-    )
-    .map_err(debug_error)?;
-    assert_eq!(
-        decoded,
-        DecodeOutcome::Ready {
-            position: 5,
-            logits_written: VOCABULARY_SIZE,
-        }
-    );
-    assert_eq!(maximum_logit_token(&first_logits)?, TokenId::new(5));
-    assert_eq!(second.position(), 2);
+    assert_eq!(first.reservation(), sequence_plan.reservation);
+    assert_eq!(second.reservation(), sequence_plan.reservation);
+    assert_eq!(first.reported_plan(), sequence_plan);
+    assert_eq!(second.reported_plan(), sequence_plan);
+    assert_eq!(first.token_staging_capacity(), 8);
+    assert_eq!(first.token_staging_logical_bytes(), 32);
+    exercise_repeated_prefill(model, &mut first)?;
+    exercise_maximum_prefill_and_near_capacity_decode(model, &mut second)?;
+    exercise_first_decode(model, &mut first)?;
+    exercise_mask_free_prefill_and_decode(model)?;
 
     model.destroy_sequence(&mut first).map_err(debug_error)?;
     model.destroy_sequence(&mut second).map_err(debug_error)?;
     assert_eq!(first.state(), SequenceState::Finished);
     assert_eq!(second.state(), SequenceState::Finished);
+    Ok(())
+}
+
+fn assert_cpu_sequence_reservation(
+    model: &CandleLlamaModel,
+    plan: domain_contracts::SequencePlan,
+) -> TestResult {
+    let expected = match model.execution_scalar_type() {
+        ScalarType::F32 => (
+            F32_SEQUENCE_PERSISTENT_BYTES,
+            F32_SEQUENCE_TRANSIENT_BYTES,
+            F32_SEQUENCE_HOST_WORKING_BYTES,
+        ),
+        ScalarType::F16 | ScalarType::Bf16 => (
+            HALF_SEQUENCE_PERSISTENT_BYTES,
+            HALF_SEQUENCE_TRANSIENT_BYTES,
+            HALF_SEQUENCE_HOST_WORKING_BYTES,
+        ),
+        _ => return Err("test model selected a non-floating execution scalar".to_owned()),
+    };
+    for (footprint, host_working_bytes) in [
+        (plan.reservation.persistent_footprint, expected.0),
+        (plan.reservation.transient_footprint, expected.1),
+        (plan.reservation.total_footprint, expected.2),
+    ] {
+        assert_eq!(
+            footprint,
+            MemoryFootprint {
+                host_weight_bytes: 0,
+                device_weight_bytes: 0,
+                host_working_bytes,
+                device_working_bytes: 0,
+            }
+        );
+    }
+    Ok(())
+}
+
+fn exercise_repeated_prefill(
+    model: &mut CandleLlamaModel,
+    sequence: &mut CandleLlamaSequence,
+) -> TestResult {
+    let mut logits = [0.0_f32; VOCABULARY_SIZE];
+    for (tokens, expected_position) in [
+        ([TokenId::new(1), TokenId::new(2)], 2),
+        ([TokenId::new(3), TokenId::new(4)], 4),
+    ] {
+        let outcome = prefill_checked(
+            model,
+            sequence,
+            PrefillInput::new(&tokens, true),
+            PrefillBuffers::new(&mut logits),
+            CancellationStatus::Running,
+        )
+        .map_err(debug_error)?;
+        assert_eq!(
+            outcome,
+            PrefillOutcome::Ready {
+                consumed_tokens: 2,
+                position: expected_position,
+                logits_written: VOCABULARY_SIZE,
+            }
+        );
+        assert_eq!(maximum_logit_token(&logits)?, tokens[1]);
+    }
+    assert_eq!(sequence.state(), SequenceState::Ready);
+    Ok(())
+}
+
+fn exercise_maximum_prefill_and_near_capacity_decode(
+    model: &mut CandleLlamaModel,
+    sequence: &mut CandleLlamaSequence,
+) -> TestResult {
+    let mut logits = [0.0_f32; VOCABULARY_SIZE];
+    let prompt = [TokenId::new(6); 8];
+    assert_eq!(
+        prefill_checked(
+            model,
+            sequence,
+            PrefillInput::new(&prompt, true),
+            PrefillBuffers::new(&mut logits),
+            CancellationStatus::Running,
+        )
+        .map_err(debug_error)?,
+        PrefillOutcome::Ready {
+            consumed_tokens: 8,
+            position: 8,
+            logits_written: VOCABULARY_SIZE,
+        }
+    );
+    for expected_position in 9..=16 {
+        assert_eq!(
+            decode_checked(
+                model,
+                sequence,
+                DecodeInput::new(TokenId::new(7)),
+                DecodeBuffers::new(&mut logits),
+                CancellationStatus::Running,
+            )
+            .map_err(debug_error)?,
+            DecodeOutcome::Ready {
+                position: expected_position,
+                logits_written: VOCABULARY_SIZE,
+            }
+        );
+    }
+    Ok(())
+}
+
+fn exercise_first_decode(
+    model: &mut CandleLlamaModel,
+    sequence: &mut CandleLlamaSequence,
+) -> TestResult {
+    let mut logits = [0.0_f32; VOCABULARY_SIZE];
+    assert_eq!(
+        decode_checked(
+            model,
+            sequence,
+            DecodeInput::new(TokenId::new(5)),
+            DecodeBuffers::new(&mut logits),
+            CancellationStatus::Running,
+        )
+        .map_err(debug_error)?,
+        DecodeOutcome::Ready {
+            position: 5,
+            logits_written: VOCABULARY_SIZE,
+        }
+    );
+    assert_eq!(maximum_logit_token(&logits)?, TokenId::new(5));
+    Ok(())
+}
+
+fn exercise_mask_free_prefill_and_decode(model: &mut CandleLlamaModel) -> TestResult {
+    let configuration = SequenceConfiguration::new(
+        NonZeroU32::new(4).ok_or_else(|| "maximum tokens must be nonzero".to_owned())?,
+        NonZeroU32::MIN,
+    );
+    let plan = model.plan_sequence(&configuration).map_err(debug_error)?;
+    let mut sequence = model
+        .create_sequence(SequenceId::new(3), &configuration)
+        .map_err(debug_error)?;
+    assert_eq!(sequence.reported_plan(), plan);
+    assert_eq!(sequence.token_staging_capacity(), 1);
+    assert_eq!(sequence.token_staging_logical_bytes(), 4);
+    prefill_checked(
+        model,
+        &mut sequence,
+        PrefillInput::new(&[TokenId::new(8)], false),
+        PrefillBuffers::new(&mut []),
+        CancellationStatus::Running,
+    )
+    .map_err(debug_error)?;
+    let mut logits = [0.0_f32; VOCABULARY_SIZE];
+    decode_checked(
+        model,
+        &mut sequence,
+        DecodeInput::new(TokenId::new(9)),
+        DecodeBuffers::new(&mut logits),
+        CancellationStatus::Running,
+    )
+    .map_err(debug_error)?;
+    model.destroy_sequence(&mut sequence).map_err(debug_error)?;
+    assert_eq!(sequence.state(), SequenceState::Finished);
     Ok(())
 }
 

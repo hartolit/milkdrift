@@ -12,8 +12,8 @@ use domain_contracts::{
     ModelGeneration, ModelHandle, ModelId, ModelMetadata, PrefillBufferRequirements,
     PrefillBuffers, PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedPrefillBuffers,
     QuantizationFormat, ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceError,
-    SequenceId, SequencePlan, SequenceState, SynchronizationError, TokenId, decode_checked,
-    prefill_checked,
+    SequenceId, SequencePlan, SequenceReservation, SequenceState, SynchronizationError, TokenId,
+    decode_checked, prefill_checked,
 };
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, Stats, StatsAlloc};
 
@@ -30,6 +30,7 @@ struct TestSequence {
     id: SequenceId,
     position: usize,
     state: SequenceState,
+    plan: SequencePlan,
 }
 
 impl BackendSequence for TestSequence {
@@ -47,6 +48,10 @@ impl BackendSequence for TestSequence {
 
     fn token_capacity(&self) -> usize {
         TOKEN_CAPACITY
+    }
+
+    fn reported_plan(&self) -> SequencePlan {
+        self.plan
     }
 }
 
@@ -105,7 +110,7 @@ impl LoadedModel for TestModel {
     ) -> Result<SequencePlan, ModelError> {
         Ok(SequencePlan {
             configuration: *configuration,
-            expected_footprint: MemoryFootprint::default(),
+            reservation: SequenceReservation::default(),
             logits_capacity: VOCABULARY_SIZE,
         })
     }
@@ -113,12 +118,14 @@ impl LoadedModel for TestModel {
     fn create_sequence(
         &mut self,
         sequence_id: SequenceId,
-        _configuration: &SequenceConfiguration,
+        configuration: &SequenceConfiguration,
     ) -> Result<Self::Sequence, ModelError> {
+        let plan = self.plan_sequence(configuration)?;
         Ok(TestSequence {
             id: sequence_id,
             position: 0,
             state: SequenceState::Empty,
+            plan,
         })
     }
 
@@ -205,6 +212,14 @@ fn main() -> ExitCode {
         id: SequenceId::new(1),
         position: 0,
         state: SequenceState::Empty,
+        plan: SequencePlan {
+            configuration: SequenceConfiguration::new(
+                std::num::NonZeroU32::MIN,
+                std::num::NonZeroU32::MIN,
+            ),
+            reservation: SequenceReservation::default(),
+            logits_capacity: VOCABULARY_SIZE,
+        },
     };
 
     let (prefill_result, prefill_allocation_change) =

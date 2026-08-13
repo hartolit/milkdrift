@@ -4,162 +4,160 @@ use candle_core::DType;
 use candle_transformers::models::llama::Config;
 use domain_contracts::{
     BackendFailureKind, BackendId, DeviceKind, MemoryFootprint, ModelError, SequenceConfiguration,
+    SequenceReservation,
 };
 
-use super::{ReservationComponents, ReservationInputs, calculate, maximum_mask_cache_bytes};
+use super::{
+    AttentionPhaseComponents, CreationTransientComponents, ExecutionTransientComponents,
+    PersistentComponents, ReservationComponents, ReservationInputs, calculate,
+    maximum_mask_cache_bytes,
+};
 use crate::failure::CODE_NUMERIC_OVERFLOW;
 
 const BACKEND: BackendId = BackendId::new(77);
 type TestResult<T = ()> = Result<T, String>;
 
 #[test]
-fn fixture_f32_components_and_cpu_cuda_phases_are_exact() -> TestResult {
+fn fixture_f32_components_and_cpu_cuda_reservations_are_source_named() -> TestResult {
     let (inputs, components) = fixture_components(DType::F32, 8, 16)?;
     assert_eq!(inputs.head_dimension, 4);
     assert_eq!(inputs.grouped_kv_width, 8);
     assert_eq!(inputs.half_conversion, 0);
     assert_eq!(inputs.grouped_query_expansion, 0);
-    assert_eq!(inputs.batched_prefill, 1);
+    assert_eq!(inputs.mask_producing_prefill, 1);
     assert_eq!(
         components,
         ReservationComponents {
             cache_bytes_per_token: 64,
-            kv_cache_bytes: 1_024,
-            rope_bytes: 256,
-            mask_cache_bytes: 192,
-            token_staging_bytes: 32,
-            mask_source_bytes: 128,
-            cache_creation_device_bytes: 392,
-            cache_creation_cuda_host_bytes: 64,
-            block_forward_peak_bytes: 11_524,
-            model_forward_peak_bytes: 12_292,
-            cpu_creation_host_bytes: 424,
-            cpu_forward_host_bytes: 13_924,
-            cuda_forward_device_bytes: 13_764,
-            cuda_creation_host_bytes: 96,
-            cuda_forward_host_bytes: 228,
+            persistent: PersistentComponents {
+                token_staging: 32,
+                kv_cache: 1_024,
+                rope: 256,
+                mask_cache: 192,
+            },
+            creation: CreationTransientComponents {
+                cache_device_bytes: 136,
+                cuda_host_source_bytes: 64,
+            },
+            execution: ExecutionTransientComponents {
+                mask_source_bytes: 128,
+                input_tensor_bytes: 32,
+                attention: AttentionPhaseComponents {
+                    qkv_projection: 768,
+                    qk_layout_copy: 512,
+                    qk_rotary_output: 512,
+                    cache_replacement: 1_024,
+                    grouped_query_expansion: 0,
+                    f32_qkv_conversion: 0,
+                    attention_score: 3_072,
+                    masked_fill_scalar: 4,
+                    f32_value_contiguous: 256,
+                    f32_attention_value: 256,
+                    attention_value_cast: 0,
+                    output_projection: 256,
+                    cache_replacement_phase: 2_816,
+                    first_attention_compute_phase: 4_100,
+                    cached_attention_compute_phase: 5_380,
+                    attention_compute_phase: 5_380,
+                    phase: 5_892,
+                },
+                residual_add_phase_bytes: 1_024,
+                mlp_gate_up_phase_bytes: 3_072,
+                mlp_down_projection_phase_bytes: 1_792,
+                mlp_phase_bytes: 3_072,
+                final_block_add_phase_bytes: 1_536,
+                block_peak_bytes: 5_892,
+                embedding_phase_bytes: 256,
+                final_logits_phase_bytes: 608,
+                model_forward_peak_bytes: 5_924,
+                cuda_logits_transfer_bytes: 64,
+            },
         }
     );
     assert_eq!(
-        footprint(components, DeviceKind::Cpu)?,
-        MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 0,
-            host_working_bytes: 13_924,
-            device_working_bytes: 0,
+        reservation(&components, DeviceKind::Cpu)?,
+        SequenceReservation {
+            persistent_footprint: host_working(1_504),
+            transient_footprint: host_working(6_052),
+            total_footprint: host_working(7_556),
         }
     );
     assert_eq!(
-        footprint(components, DeviceKind::Cuda)?,
-        MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 0,
-            host_working_bytes: 228,
-            device_working_bytes: 13_764,
+        reservation(&components, DeviceKind::Cuda)?,
+        SequenceReservation {
+            persistent_footprint: split_working(32, 1_472),
+            transient_footprint: split_working(128, 5_924),
+            total_footprint: split_working(160, 7_396),
         }
     );
     Ok(())
 }
 
 #[test]
-fn fixture_f16_and_bf16_components_and_cpu_cuda_phases_are_exact() -> TestResult {
+fn fixture_f16_and_bf16_components_and_reservations_are_exactly_equal() -> TestResult {
     let (inputs, f16) = fixture_components(DType::F16, 8, 16)?;
     let (_, bf16) = fixture_components(DType::BF16, 8, 16)?;
     assert_eq!(inputs.half_conversion, 1);
     assert_eq!(f16, bf16);
     assert_eq!(
-        f16,
-        ReservationComponents {
-            cache_bytes_per_token: 32,
-            kv_cache_bytes: 512,
-            rope_bytes: 128,
-            mask_cache_bytes: 192,
-            token_staging_bytes: 32,
-            mask_source_bytes: 128,
-            cache_creation_device_bytes: 392,
-            cache_creation_cuda_host_bytes: 64,
-            block_forward_peak_bytes: 9_604,
-            model_forward_peak_bytes: 10_132,
-            cpu_creation_host_bytes: 424,
-            cpu_forward_host_bytes: 11_124,
-            cuda_forward_device_bytes: 10_964,
-            cuda_creation_host_bytes: 96,
-            cuda_forward_host_bytes: 228,
+        f16.persistent,
+        PersistentComponents {
+            token_staging: 32,
+            kv_cache: 512,
+            rope: 128,
+            mask_cache: 192,
+        }
+    );
+    assert_eq!(f16.creation.cache_device_bytes, 264);
+    assert_eq!(f16.execution.attention.phase, 6_020);
+    assert_eq!(f16.execution.block_peak_bytes, 6_020);
+    assert_eq!(f16.execution.model_forward_peak_bytes, 6_052);
+    assert_eq!(
+        reservation(&f16, DeviceKind::Cpu)?,
+        SequenceReservation {
+            persistent_footprint: host_working(864),
+            transient_footprint: host_working(6_180),
+            total_footprint: host_working(7_044),
         }
     );
     assert_eq!(
-        footprint(f16, DeviceKind::Cpu)?,
-        MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 0,
-            host_working_bytes: 11_124,
-            device_working_bytes: 0,
-        }
-    );
-    assert_eq!(
-        footprint(f16, DeviceKind::Cuda)?,
-        MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 0,
-            host_working_bytes: 228,
-            device_working_bytes: 10_964,
+        reservation(&f16, DeviceKind::Cuda)?,
+        SequenceReservation {
+            persistent_footprint: split_working(32, 832),
+            transient_footprint: split_working(128, 6_052),
+            total_footprint: split_working(160, 6_884),
         }
     );
     Ok(())
 }
 
 #[test]
-fn single_token_prefill_elides_mask_and_batched_source_terms() -> TestResult {
+fn single_token_prefill_elides_mask_and_uses_mask_free_attention_phase() -> TestResult {
     let (f32_inputs, f32) = fixture_components(DType::F32, 1, 16)?;
-    assert_eq!(f32_inputs.batched_prefill, 0);
+    assert_eq!(f32_inputs.mask_producing_prefill, 0);
+    assert_eq!(f32.persistent.mask_cache, 0);
+    assert_eq!(f32.execution.mask_source_bytes, 0);
+    assert_eq!(f32.execution.attention.attention_score, 256);
+    assert_eq!(f32.execution.attention.masked_fill_scalar, 0);
+    assert_eq!(f32.execution.model_forward_peak_bytes, 1_316);
     assert_eq!(
-        f32,
-        ReservationComponents {
-            cache_bytes_per_token: 64,
-            kv_cache_bytes: 1_024,
-            rope_bytes: 256,
-            mask_cache_bytes: 0,
-            token_staging_bytes: 4,
-            mask_source_bytes: 0,
-            cache_creation_device_bytes: 392,
-            cache_creation_cuda_host_bytes: 64,
-            block_forward_peak_bytes: 2_656,
-            model_forward_peak_bytes: 2_820,
-            cpu_creation_host_bytes: 396,
-            cpu_forward_host_bytes: 4_104,
-            cuda_forward_device_bytes: 4_100,
-            cuda_creation_host_bytes: 68,
-            cuda_forward_host_bytes: 68,
-        }
+        reservation(&f32, DeviceKind::Cpu)?.total_footprint,
+        host_working(2_600)
     );
 
     let (half_inputs, half) = fixture_components(DType::F16, 1, 16)?;
-    assert_eq!(half_inputs.batched_prefill, 0);
+    assert_eq!(half_inputs.mask_producing_prefill, 0);
+    assert_eq!(half.execution.attention.f32_qkv_conversion, 1_056);
+    assert_eq!(half.execution.model_forward_peak_bytes, 1_524);
     assert_eq!(
-        half,
-        ReservationComponents {
-            cache_bytes_per_token: 32,
-            kv_cache_bytes: 512,
-            rope_bytes: 128,
-            mask_cache_bytes: 0,
-            token_staging_bytes: 4,
-            mask_source_bytes: 0,
-            cache_creation_device_bytes: 392,
-            cache_creation_cuda_host_bytes: 64,
-            block_forward_peak_bytes: 2_864,
-            model_forward_peak_bytes: 3_012,
-            cpu_creation_host_bytes: 396,
-            cpu_forward_host_bytes: 3_656,
-            cuda_forward_device_bytes: 3_652,
-            cuda_creation_host_bytes: 68,
-            cuda_forward_host_bytes: 68,
-        }
+        reservation(&half, DeviceKind::Cpu)?.total_footprint,
+        host_working(2_168)
     );
     Ok(())
 }
 
 #[test]
-fn gqa_and_non_gqa_layer_terms_are_both_exact() -> TestResult {
+fn grouped_and_non_grouped_query_components_are_distinct() -> TestResult {
     let (non_gqa, _) = fixture_components(DType::F32, 8, 16)?;
     assert_eq!(non_gqa.grouped_query_expansion, 0);
 
@@ -179,132 +177,97 @@ fn gqa_and_non_gqa_layer_terms_are_both_exact() -> TestResult {
         max_position_embeddings: 32,
         tie_word_embeddings: false,
     };
-    let configuration = sequence_configuration(7, 3)?;
     let inputs =
-        ReservationInputs::new(BACKEND, &config, DType::F32, configuration).map_err(debug_error)?;
+        ReservationInputs::new(BACKEND, &config, DType::F32, sequence_configuration(7, 3)?)
+            .map_err(debug_error)?;
     let components = inputs.components(BACKEND).map_err(debug_error)?;
-    assert_eq!(inputs.head_dimension, 4);
-    assert_eq!(inputs.grouped_kv_width, 8);
     assert_eq!(inputs.grouped_query_expansion, 1);
+    assert_eq!(components.cache_bytes_per_token, 128);
+    assert_eq!(components.execution.attention.cache_replacement, 448);
+    assert_eq!(components.execution.attention.grouped_query_expansion, 896);
+    assert_eq!(components.execution.attention.f32_value_contiguous, 0);
+    assert_eq!(components.execution.attention.phase, 3_636);
     assert_eq!(
-        components,
-        ReservationComponents {
-            cache_bytes_per_token: 128,
-            kv_cache_bytes: 896,
-            rope_bytes: 512,
-            mask_cache_bytes: 35,
-            token_staging_bytes: 12,
-            mask_source_bytes: 21,
-            cache_creation_device_bytes: 776,
-            cache_creation_cuda_host_bytes: 128,
-            block_forward_peak_bytes: 6_788,
-            model_forward_peak_bytes: 7_349,
-            cpu_creation_host_bytes: 788,
-            cpu_forward_host_bytes: 8_825,
-            cuda_forward_device_bytes: 8_792,
-            cuda_creation_host_bytes: 140,
-            cuda_forward_host_bytes: 121,
+        reservation(&components, DeviceKind::Cpu)?,
+        SequenceReservation {
+            persistent_footprint: host_working(1_455),
+            transient_footprint: host_working(3_669),
+            total_footprint: host_working(5_124),
         }
     );
     Ok(())
 }
 
 #[test]
-fn transformer_depth_scales_persistent_cache_not_block_transient_peak() -> TestResult {
+fn transformer_depth_scales_only_persistent_cache() -> TestResult {
     let mut one_layer = tinyllama_config();
     one_layer.num_hidden_layers = 1;
-    let one_layer_inputs = ReservationInputs::new(
+    let one = ReservationInputs::new(
         BACKEND,
         &one_layer,
         DType::F16,
         sequence_configuration(2_048, 2_048)?,
     )
+    .map_err(debug_error)?
+    .components(BACKEND)
     .map_err(debug_error)?;
-    let one_layer_components = one_layer_inputs.components(BACKEND).map_err(debug_error)?;
-
-    let twenty_two_layer_inputs = ReservationInputs::new(
+    let twenty_two = ReservationInputs::new(
         BACKEND,
         &tinyllama_config(),
         DType::F16,
         sequence_configuration(2_048, 2_048)?,
     )
+    .map_err(debug_error)?
+    .components(BACKEND)
     .map_err(debug_error)?;
-    let twenty_two_layer_components = twenty_two_layer_inputs
-        .components(BACKEND)
-        .map_err(debug_error)?;
 
+    assert_eq!(twenty_two.execution, one.execution);
+    assert_eq!(twenty_two.creation, one.creation);
     assert_eq!(
-        twenty_two_layer_components.block_forward_peak_bytes,
-        one_layer_components.block_forward_peak_bytes
+        twenty_two.cache_bytes_per_token,
+        one.cache_bytes_per_token * 22
     );
-    assert_eq!(
-        twenty_two_layer_components.model_forward_peak_bytes,
-        one_layer_components.model_forward_peak_bytes
-    );
-    assert_eq!(
-        twenty_two_layer_components.cache_bytes_per_token,
-        one_layer_components
-            .cache_bytes_per_token
-            .checked_mul(22)
-            .ok_or_else(|| "cache scaling overflowed".to_owned())?
-    );
-    assert_eq!(
-        twenty_two_layer_components.kv_cache_bytes,
-        one_layer_components
-            .kv_cache_bytes
-            .checked_mul(22)
-            .ok_or_else(|| "KV-cache scaling overflowed".to_owned())?
-    );
+    assert_eq!(twenty_two.persistent.kv_cache, one.persistent.kv_cache * 22);
     Ok(())
 }
 
 #[test]
-fn tinyllama_full_context_reservation_uses_one_block_peak_and_all_layer_cache() -> TestResult {
-    let inputs = ReservationInputs::new(
+fn tinyllama_full_context_reservation_locks_named_phase_totals() -> TestResult {
+    let components = ReservationInputs::new(
         BACKEND,
         &tinyllama_config(),
         DType::F16,
         sequence_configuration(2_048, 2_048)?,
     )
+    .map_err(debug_error)?
+    .components(BACKEND)
     .map_err(debug_error)?;
-    let components = inputs.components(BACKEND).map_err(debug_error)?;
 
+    assert_eq!(components.cache_bytes_per_token, 22_528);
+    assert_eq!(components.persistent.kv_cache, 46_137_344);
+    assert_eq!(components.persistent.rope, 262_144);
+    assert_eq!(components.persistent.mask_cache, 4_194_304);
     assert_eq!(
-        components,
-        ReservationComponents {
-            cache_bytes_per_token: 22_528,
-            kv_cache_bytes: 46_137_344,
-            rope_bytes: 262_144,
-            mask_cache_bytes: 4_194_304,
-            token_staging_bytes: 8_192,
-            mask_source_bytes: 4_194_304,
-            cache_creation_device_bytes: 786_560,
-            cache_creation_cuda_host_bytes: 8_192,
-            block_forward_peak_bytes: 2_438_987_780,
-            model_forward_peak_bytes: 2_460_163_588,
-            cpu_creation_host_bytes: 794_752,
-            cpu_forward_host_bytes: 2_514_959_876,
-            cuda_forward_device_bytes: 2_510_757_380,
-            cuda_creation_host_bytes: 16_384,
-            cuda_forward_host_bytes: 4_330_584,
+        components.execution.attention.attention_score,
+        1_610_612_736
+    );
+    assert_eq!(components.execution.attention.phase, 1_757_413_380);
+    assert_eq!(components.execution.block_peak_bytes, 1_757_413_380);
+    assert_eq!(components.execution.model_forward_peak_bytes, 1_757_421_572);
+    assert_eq!(
+        reservation(&components, DeviceKind::Cpu)?,
+        SequenceReservation {
+            persistent_footprint: host_working(50_601_984),
+            transient_footprint: host_working(1_761_615_876),
+            total_footprint: host_working(1_812_217_860),
         }
     );
     assert_eq!(
-        footprint(components, DeviceKind::Cpu)?,
-        MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 0,
-            host_working_bytes: 2_514_959_876,
-            device_working_bytes: 0,
-        }
-    );
-    assert_eq!(
-        footprint(components, DeviceKind::Cuda)?,
-        MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 0,
-            host_working_bytes: 4_330_584,
-            device_working_bytes: 2_510_757_380,
+        reservation(&components, DeviceKind::Cuda)?,
+        SequenceReservation {
+            persistent_footprint: split_working(8_192, 50_593_792),
+            transient_footprint: split_working(4_194_304, 1_757_421_572),
+            total_footprint: split_working(4_202_496, 1_808_015_364),
         }
     );
     Ok(())
@@ -339,20 +302,11 @@ fn mask_bound_covers_every_small_repeated_prefill_schedule() -> TestResult {
         maximum_mask_cache_bytes(BACKEND, 5, 3).map_err(debug_error)?,
         20
     );
-
-    let maximum = u64::from(u32::MAX);
-    let expected = maximum
-        .checked_mul(maximum)
-        .ok_or_else(|| "u32 maximum square unexpectedly overflowed u64".to_owned())?;
-    assert_eq!(
-        maximum_mask_cache_bytes(BACKEND, maximum, maximum).map_err(debug_error)?,
-        expected
-    );
     Ok(())
 }
 
 #[test]
-fn cache_creation_can_dominate_cpu_cuda_device_and_cuda_host_phases() -> TestResult {
+fn creation_transient_can_dominate_tiny_execution() -> TestResult {
     let config = Config {
         hidden_size: 2,
         intermediate_size: 1,
@@ -369,42 +323,26 @@ fn cache_creation_can_dominate_cpu_cuda_device_and_cuda_host_phases() -> TestRes
         max_position_embeddings: 100,
         tie_word_embeddings: false,
     };
-    let inputs =
+    let components =
         ReservationInputs::new(BACKEND, &config, DType::F16, sequence_configuration(1, 1)?)
+            .map_err(debug_error)?
+            .components(BACKEND)
             .map_err(debug_error)?;
-    let components = inputs.components(BACKEND).map_err(debug_error)?;
+    assert_eq!(components.creation.cache_device_bytes, 804);
+    assert_eq!(components.execution.model_forward_peak_bytes, 88);
     assert_eq!(
-        components,
-        ReservationComponents {
-            cache_bytes_per_token: 8,
-            kv_cache_bytes: 8,
-            rope_bytes: 400,
-            mask_cache_bytes: 0,
-            token_staging_bytes: 4,
-            mask_source_bytes: 0,
-            cache_creation_device_bytes: 1_204,
-            cache_creation_cuda_host_bytes: 400,
-            block_forward_peak_bytes: 128,
-            model_forward_peak_bytes: 150,
-            cpu_creation_host_bytes: 1_208,
-            cpu_forward_host_bytes: 562,
-            cuda_forward_device_bytes: 558,
-            cuda_creation_host_bytes: 404,
-            cuda_forward_host_bytes: 8,
-        }
+        reservation(&components, DeviceKind::Cpu)?.total_footprint,
+        host_working(1_216)
     );
     assert_eq!(
-        footprint(components, DeviceKind::Cpu)?.host_working_bytes,
-        1_208
+        reservation(&components, DeviceKind::Cuda)?.total_footprint,
+        split_working(404, 1_212)
     );
-    let cuda = footprint(components, DeviceKind::Cuda)?;
-    assert_eq!(cuda.device_working_bytes, 1_204);
-    assert_eq!(cuda.host_working_bytes, 404);
     Ok(())
 }
 
 #[test]
-fn invalid_locked_assumptions_and_numeric_overflow_fail_closed() -> TestResult {
+fn invalid_upstream_assumptions_and_numeric_overflow_fail_closed() -> TestResult {
     let mut flash = fixture_config();
     flash.use_flash_attn = true;
     assert_eq!(
@@ -433,19 +371,18 @@ fn invalid_locked_assumptions_and_numeric_overflow_fail_closed() -> TestResult {
         Err(ModelError::Unsupported)
     );
 
-    let mut short_context_many_kv_heads = fixture_config();
-    short_context_many_kv_heads.max_position_embeddings = 1;
-    let reservation = calculate(
-        BACKEND,
-        &short_context_many_kv_heads,
-        DType::F32,
-        DeviceKind::Cpu,
-        sequence_configuration(1, 1)?,
-        64,
-    );
-    assert!(
-        reservation.is_ok(),
-        "KV-head count and context length are independent model dimensions"
+    let mut upstream_cache_narrowing_bug = fixture_config();
+    upstream_cache_narrowing_bug.max_position_embeddings = 1;
+    assert_eq!(
+        calculate(
+            BACKEND,
+            &upstream_cache_narrowing_bug,
+            DType::F32,
+            DeviceKind::Cpu,
+            sequence_configuration(1, 1)?,
+            64,
+        ),
+        Err(ModelError::Unsupported)
     );
 
     assert!(matches!(
@@ -464,8 +401,7 @@ fn invalid_locked_assumptions_and_numeric_overflow_fail_closed() -> TestResult {
 
     let mut overflowing = fixture_config();
     overflowing.max_position_embeddings = u32::MAX as usize;
-    let maximum =
-        NonZeroU32::new(u32::MAX).ok_or_else(|| "u32 maximum must be nonzero".to_owned())?;
+    let maximum = NonZeroU32::new(u32::MAX).ok_or_else(|| "u32 max is zero".to_owned())?;
     let error = calculate(
         BACKEND,
         &overflowing,
@@ -550,11 +486,26 @@ fn sequence_configuration(
     Ok(SequenceConfiguration::new(maximum_tokens, maximum_prefill))
 }
 
-fn footprint(
-    components: ReservationComponents,
+fn reservation(
+    components: &ReservationComponents,
     device_kind: DeviceKind,
-) -> TestResult<MemoryFootprint> {
-    components.footprint(device_kind).map_err(debug_error)
+) -> TestResult<SequenceReservation> {
+    (*components)
+        .reservation(BACKEND, device_kind)
+        .map_err(debug_error)
+}
+
+const fn host_working(bytes: u64) -> MemoryFootprint {
+    split_working(bytes, 0)
+}
+
+const fn split_working(host: u64, device: u64) -> MemoryFootprint {
+    MemoryFootprint {
+        host_weight_bytes: 0,
+        device_weight_bytes: 0,
+        host_working_bytes: host,
+        device_working_bytes: device,
+    }
 }
 
 fn enumerate_schedules(

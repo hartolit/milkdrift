@@ -4,10 +4,10 @@
 
 ```text
 Phase 12 and the first four pristine-state remediation areas remain implemented.
-A post-closure foundation repair is implemented in the current working tree but has not yet been validated with Rust tooling.
+The post-closure Candle sequence-accounting repair passes its required focused Rust validation matrix in an isolated target directory.
 The E1 cleanup-coordination repair is implemented and its required focused local validation passes in an isolated target directory.
 No workflow/workspace product program has been ratified or activated.
-Historical Phase 12 and predecessor-tree results do not validate this repaired tree.
+Canonical, portable, remote, external-model, and current CUDA hardware evidence remain separate and pending.
 ```
 
 ## Current maintenance scope
@@ -78,17 +78,14 @@ Current component and support truth is owned by
 
 ## Handoff and acceptance order
 
-1. Apply the repair to the exact reviewed base and verify a clean diff.
-2. Run the focused portable-contract, Candle, E0, E1, persistence, and benchmark
-   tests in [validation](../../project/validation.md).
-3. Run `cargo fmt --all -- --check`, `cargo xtask architecture`,
-   `cargo xtask hygiene`, and the isolated canonical `cargo xtask verify` gate.
-4. Run both named portable target matrices in isolated targets.
-5. On the supported NVIDIA host, run the exact CUDA check/Clippy graph and all
+1. Run the isolated canonical `cargo xtask verify` gate when complete repository
+   acceptance, beyond this package's focused matrix, is required.
+2. Run both named portable target matrices in isolated targets.
+3. On the supported NVIDIA host, run the exact CUDA check/Clippy graph and all
    dedicated adapter/E0/fault/E1 hardware suites.
-6. Record only results from the exact repaired commit/tree. Update current
+4. Record only results from the exact repaired commit/tree. Update current
    evidence and history after those results exist, not before.
-7. Refuse workflow/workspace activation while any correctness, ownership,
+5. Refuse workflow/workspace activation while any correctness, ownership,
    capacity, portability, or documentation contradiction remains.
 
 Canonical owners:

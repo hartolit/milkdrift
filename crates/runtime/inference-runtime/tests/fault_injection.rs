@@ -18,7 +18,7 @@ use domain_contracts::{
     MonotonicMillis, PrefillBufferRequirements, PrefillInput, PrefillOutcome,
     PreparedDecodeBuffers, PreparedLoad, PreparedPrefillBuffers, QuantizationFormat, RequestId,
     ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceError, SequenceId, SequencePlan,
-    SequenceState, SynchronizationError, UnloadPolicy,
+    SequenceReservation, SequenceState, SynchronizationError, UnloadPolicy,
 };
 use inference_runtime::{
     CleanupPoll, CleanupResource, CleanupRetryPolicy, ConservativeFootprint, FailureClass,
@@ -75,6 +75,15 @@ impl Faults {
     const MUTATE_FAILED_PLAN_ON_CLEANUP_FAILURE: Self = Self(1 << 39);
     const ALTERNATING_PLAN_REPORT: Self = Self(1 << 40);
     const FAIL_MODEL_CLEANUP_TWICE: Self = Self(1 << 41);
+    const UNDERREPORTED_SEQUENCE_REPORT: Self = Self(1 << 42);
+    const OVERREPORTED_SEQUENCE_REPORT: Self = Self(1 << 43);
+    const RECLASSIFIED_SEQUENCE_REPORT: Self = Self(1 << 44);
+    const OVERFLOWING_SEQUENCE_PLAN: Self = Self(1 << 45);
+    const INCONSISTENT_SEQUENCE_PLAN: Self = Self(1 << 46);
+    const MUTATE_SEQUENCE_REPORT_ON_CLEANUP_FAILURE: Self = Self(1 << 47);
+    const MUTATE_SEQUENCE_REPORT_AFTER_PREFILL: Self = Self(1 << 48);
+    const MUTATE_SEQUENCE_ID_ON_CLEANUP_FAILURE: Self = Self(1 << 49);
+    const MUTATE_SEQUENCE_CAPACITY_ON_CLEANUP_FAILURE: Self = Self(1 << 50);
 
     const fn contains(self, fault: Self) -> bool {
         self.0 & fault.0 != 0
@@ -233,6 +242,8 @@ struct FaultSequence {
     state: SequenceState,
     position: usize,
     token_capacity: usize,
+    plan: SequencePlan,
+    faults: Faults,
 }
 
 impl BackendSequence for FaultSequence {
@@ -250,6 +261,10 @@ impl BackendSequence for FaultSequence {
 
     fn token_capacity(&self) -> usize {
         self.token_capacity
+    }
+
+    fn reported_plan(&self) -> SequencePlan {
+        self.plan
     }
 }
 
@@ -513,9 +528,33 @@ impl LoadedModel for FaultModel {
         } else {
             *configuration
         };
+        let reservation = if self.faults.contains(Faults::OVERFLOWING_SEQUENCE_PLAN) {
+            let overflowing = MemoryFootprint {
+                host_weight_bytes: u64::MAX,
+                device_weight_bytes: 0,
+                host_working_bytes: 1,
+                device_working_bytes: 0,
+            };
+            SequenceReservation {
+                persistent_footprint: overflowing,
+                transient_footprint: MemoryFootprint::default(),
+                total_footprint: overflowing,
+            }
+        } else if self.faults.contains(Faults::INCONSISTENT_SEQUENCE_PLAN) {
+            SequenceReservation {
+                persistent_footprint: sequence_persistent_footprint(),
+                transient_footprint: sequence_transient_footprint(),
+                total_footprint: MemoryFootprint {
+                    host_working_bytes: 7,
+                    ..MemoryFootprint::default()
+                },
+            }
+        } else {
+            sequence_reservation()
+        };
         Ok(SequencePlan {
             configuration: accepted,
-            expected_footprint: sequence_footprint(),
+            reservation,
             logits_capacity: self.descriptor.metadata.vocabulary_size as usize,
         })
     }
@@ -525,6 +564,16 @@ impl LoadedModel for FaultModel {
         sequence_id: SequenceId,
         configuration: &SequenceConfiguration,
     ) -> Result<Self::Sequence, ModelError> {
+        let mut plan = self.plan_sequence(configuration)?;
+        if self.faults.contains(Faults::UNDERREPORTED_SEQUENCE_REPORT) {
+            plan.reservation = sequence_report_reservation(4, 0);
+        }
+        if self.faults.contains(Faults::OVERREPORTED_SEQUENCE_REPORT) {
+            plan.reservation = sequence_report_reservation(16, 0);
+        }
+        if self.faults.contains(Faults::RECLASSIFIED_SEQUENCE_REPORT) {
+            plan.reservation = sequence_report_reservation(0, 8);
+        }
         self.counts
             .sequence_creations
             .set(self.counts.sequence_creations.get().saturating_add(1));
@@ -544,6 +593,8 @@ impl LoadedModel for FaultModel {
             state: SequenceState::Empty,
             position: 0,
             token_capacity,
+            plan,
+            faults: self.faults,
         })
     }
 
@@ -574,6 +625,12 @@ impl LoadedModel for FaultModel {
             .checked_add(input.tokens.len())
             .ok_or(SequenceError::InvalidState)?;
         sequence.state = SequenceState::Ready;
+        if sequence
+            .faults
+            .contains(Faults::MUTATE_SEQUENCE_REPORT_AFTER_PREFILL)
+        {
+            sequence.plan.reservation = sequence_report_reservation(16, 0);
+        }
         Ok(PrefillOutcome::Ready {
             consumed_tokens: input.tokens.len(),
             position: sequence.position,
@@ -602,6 +659,24 @@ impl LoadedModel for FaultModel {
         self.counts
             .sequence_destructions
             .set(self.counts.sequence_destructions.get().saturating_add(1));
+        if self
+            .faults
+            .contains(Faults::MUTATE_SEQUENCE_REPORT_ON_CLEANUP_FAILURE)
+        {
+            sequence.plan.reservation = sequence_report_reservation(16, 0);
+        }
+        if self
+            .faults
+            .contains(Faults::MUTATE_SEQUENCE_ID_ON_CLEANUP_FAILURE)
+        {
+            sequence.id = SequenceId::new(999);
+        }
+        if self
+            .faults
+            .contains(Faults::MUTATE_SEQUENCE_CAPACITY_ON_CLEANUP_FAILURE)
+        {
+            sequence.token_capacity = 1;
+        }
         if self.faults.contains(Faults::FAIL_SEQUENCE_DESTRUCTION) {
             return Err(SequenceError::Backend(backend_failure(2)));
         }
@@ -771,7 +846,7 @@ fn wrong_execution_scalar_cleanup_failure_retains_accounting_until_successful_re
                     }
                 && state.ownership
                     == RetainedOwnership::Unverified {
-                        accepted_loading_peak: loading_peak_footprint(),
+                        accepted_footprint: loading_peak_footprint(),
                         reported_footprint: model_footprint(),
                         conservative_footprint: ConservativeFootprint::Known(
                             loading_peak_footprint(),
@@ -938,7 +1013,7 @@ fn incompatible_complete_model_matrix_retains_unverified_evidence_and_unlocks_on
                         ))
         ));
         let expected_ownership = RetainedOwnership::Unverified {
-            accepted_loading_peak: loading_peak_footprint(),
+            accepted_footprint: loading_peak_footprint(),
             reported_footprint,
             conservative_footprint,
         };
@@ -1157,7 +1232,7 @@ fn incompatible_complete_model_matrix_exhausts_to_process_retention() {
                         }
                     && first.ownership
                         == RetainedOwnership::Unverified {
-                            accepted_loading_peak: loading_peak_footprint(),
+                            accepted_footprint: loading_peak_footprint(),
                             reported_footprint,
                             conservative_footprint,
                         }
@@ -1266,10 +1341,10 @@ fn failed_owner_plan_substitution_blocks_admission_until_release() -> TestResult
     assert!(matches!(
         state.ownership,
         RetainedOwnership::Unverified {
-            accepted_loading_peak,
+            accepted_footprint,
             reported_footprint,
             conservative_footprint: ConservativeFootprint::Known(conservative),
-        } if accepted_loading_peak == loading_peak_footprint()
+        } if accepted_footprint == loading_peak_footprint()
             && reported_footprint.host_working_bytes
                 == loading_peak_footprint().host_working_bytes.saturating_add(1)
             && conservative.host_working_bytes
@@ -1312,10 +1387,10 @@ fn failed_owner_plan_mutation_during_cleanup_blocks_admission_until_release() ->
     assert!(matches!(
         state.ownership,
         RetainedOwnership::Unverified {
-            accepted_loading_peak,
+            accepted_footprint,
             reported_footprint,
             conservative_footprint: ConservativeFootprint::Known(conservative),
-        } if accepted_loading_peak == loading_peak_footprint()
+        } if accepted_footprint == loading_peak_footprint()
             && reported_footprint.host_working_bytes
                 == loading_peak_footprint().host_working_bytes.saturating_add(7)
             && conservative.host_working_bytes
@@ -1599,13 +1674,213 @@ fn failed_sequence_rollback_is_reported_without_registry_mutation() -> TestResul
     let snapshot = runtime.snapshot();
     assert_eq!(snapshot.active_requests, 0);
     assert_eq!(snapshot.pending_cleanup_sequences, 1);
-    assert_eq!(snapshot.reserved_footprint, checked_total_footprint());
+    assert_eq!(snapshot.reserved_footprint, model_footprint());
+    assert!(snapshot.admission_blocked);
+    assert!(matches!(
+        runtime.request_cleanup_state(RequestId::new(10)),
+        Some(state)
+            if state.ownership
+                == RetainedOwnership::Unverified {
+                    accepted_footprint: sequence_footprint(),
+                    reported_footprint: sequence_footprint(),
+                    conservative_footprint: ConservativeFootprint::Known(sequence_footprint()),
+                }
+    ));
     assert!(
         runtime
             .model_snapshots()
             .first()
             .is_some_and(|model| model.degraded)
     );
+    Ok(())
+}
+
+#[test]
+fn invalid_sequence_reservations_are_rejected_before_native_creation() -> TestResult {
+    for fault in [
+        Faults::OVERFLOWING_SEQUENCE_PLAN,
+        Faults::INCONSISTENT_SEQUENCE_PLAN,
+    ] {
+        let counts = Rc::new(CleanupCounts::default());
+        let mut runtime = runtime(fault, Rc::clone(&counts));
+        let loaded = load(&mut runtime).map_err(debug_error)?;
+
+        assert_eq!(
+            start(&mut runtime, loaded.handle, 10, 100),
+            Err(RuntimeError::BackendContractViolation)
+        );
+        assert_eq!(counts.sequence_creations.get(), 0);
+        assert_eq!(counts.sequence_destructions.get(), 0);
+        assert_only_model_reserved(&runtime);
+    }
+    Ok(())
+}
+
+#[test]
+fn sequence_report_mismatch_matrix_rolls_back_without_publication() -> TestResult {
+    for fault in [
+        Faults::UNDERREPORTED_SEQUENCE_REPORT,
+        Faults::OVERREPORTED_SEQUENCE_REPORT,
+        Faults::RECLASSIFIED_SEQUENCE_REPORT,
+    ] {
+        let counts = Rc::new(CleanupCounts::default());
+        let mut runtime = runtime(fault, Rc::clone(&counts));
+        let loaded = load(&mut runtime).map_err(debug_error)?;
+
+        assert_eq!(
+            start(&mut runtime, loaded.handle, 10, 100),
+            Err(RuntimeError::BackendContractViolation)
+        );
+        assert_eq!(counts.sequence_creations.get(), 1);
+        assert_eq!(counts.sequence_destructions.get(), 1);
+        assert_only_model_reserved(&runtime);
+    }
+    Ok(())
+}
+
+#[test]
+fn mismatched_sequence_reports_with_failed_cleanup_are_unverified() -> TestResult {
+    for (report_fault, reported_footprint) in [
+        (
+            Faults::UNDERREPORTED_SEQUENCE_REPORT,
+            MemoryFootprint {
+                host_working_bytes: 4,
+                ..MemoryFootprint::default()
+            },
+        ),
+        (
+            Faults::OVERREPORTED_SEQUENCE_REPORT,
+            MemoryFootprint {
+                host_working_bytes: 16,
+                ..MemoryFootprint::default()
+            },
+        ),
+        (
+            Faults::RECLASSIFIED_SEQUENCE_REPORT,
+            MemoryFootprint {
+                device_working_bytes: 8,
+                ..MemoryFootprint::default()
+            },
+        ),
+    ] {
+        let counts = Rc::new(CleanupCounts::default());
+        let faults = report_fault.union(Faults::FAIL_SEQUENCE_DESTRUCTION);
+        let mut runtime = runtime(faults, Rc::clone(&counts));
+        let loaded = load(&mut runtime).map_err(debug_error)?;
+
+        assert!(matches!(
+            start(&mut runtime, loaded.handle, 10, 100),
+            Err(RuntimeError::CleanupFailed(state))
+                if state.failure.primary_failure == FailureClass::BackendContract
+                    && matches!(
+                        state.ownership,
+                        RetainedOwnership::Unverified {
+                            accepted_footprint,
+                            reported_footprint: actual_report,
+                            conservative_footprint: ConservativeFootprint::Known(_),
+                        } if accepted_footprint == sequence_footprint()
+                            && actual_report == reported_footprint
+                    )
+        ));
+        let snapshot = runtime.snapshot();
+        assert_eq!(snapshot.reserved_footprint, model_footprint());
+        assert!(snapshot.admission_blocked);
+        assert_eq!(snapshot.pending_cleanup_sequences, 1);
+        assert_eq!(counts.sequence_creations.get(), 1);
+        assert_eq!(counts.sequence_destructions.get(), 1);
+    }
+    Ok(())
+}
+
+#[test]
+fn sequence_plan_mutation_after_prefill_is_a_contract_violation() -> TestResult {
+    let counts = Rc::new(CleanupCounts::default());
+    let mut runtime = runtime(
+        Faults::MUTATE_SEQUENCE_REPORT_AFTER_PREFILL,
+        Rc::clone(&counts),
+    );
+    let loaded = load(&mut runtime).map_err(debug_error)?;
+    start(&mut runtime, loaded.handle, 10, 100).map_err(debug_error)?;
+
+    let mut no_logits = [];
+    assert_eq!(
+        runtime.prefill(
+            RequestId::new(10),
+            &[domain_contracts::TokenId::new(1)],
+            false,
+            &mut no_logits,
+        ),
+        Err(RuntimeError::BackendContractViolation)
+    );
+    assert_eq!(counts.sequence_destructions.get(), 1);
+    assert_only_model_reserved(&runtime);
+    Ok(())
+}
+
+#[test]
+fn sequence_report_mutation_during_failed_cleanup_extends_unverified_evidence() -> TestResult {
+    let counts = Rc::new(CleanupCounts::default());
+    let faults =
+        Faults::FAIL_SEQUENCE_DESTRUCTION.union(Faults::MUTATE_SEQUENCE_REPORT_ON_CLEANUP_FAILURE);
+    let mut runtime = runtime(faults, Rc::clone(&counts));
+    let loaded = load(&mut runtime).map_err(debug_error)?;
+    start(&mut runtime, loaded.handle, 10, 100).map_err(debug_error)?;
+
+    assert!(matches!(
+        runtime.cancel_request(RequestId::new(10), CancellationReason::UserRequested),
+        Err(RuntimeError::CleanupFailed(state))
+            if state.failure.primary_failure == FailureClass::BackendContract
+                && matches!(
+                    state.ownership,
+                    RetainedOwnership::Unverified {
+                        accepted_footprint,
+                        reported_footprint,
+                        conservative_footprint: ConservativeFootprint::Known(conservative),
+                    } if accepted_footprint == sequence_footprint()
+                        && reported_footprint.host_working_bytes == 16
+                        && conservative.host_working_bytes == 16
+                )
+    ));
+    assert_eq!(runtime.snapshot().reserved_footprint, model_footprint());
+    assert!(runtime.snapshot().admission_blocked);
+    assert!(matches!(
+        runtime.poll_cleanup().map_err(debug_error)?,
+        CleanupPoll::RetryFailed(state)
+            if matches!(state.ownership, RetainedOwnership::Unverified { .. })
+    ));
+    assert_eq!(counts.sequence_destructions.get(), 2);
+    Ok(())
+}
+
+#[test]
+fn sequence_identity_or_capacity_mutation_during_failed_cleanup_is_unverified() -> TestResult {
+    for contradiction in [
+        Faults::MUTATE_SEQUENCE_ID_ON_CLEANUP_FAILURE,
+        Faults::MUTATE_SEQUENCE_CAPACITY_ON_CLEANUP_FAILURE,
+    ] {
+        let counts = Rc::new(CleanupCounts::default());
+        let faults = Faults::FAIL_SEQUENCE_DESTRUCTION.union(contradiction);
+        let mut runtime = runtime(faults, Rc::clone(&counts));
+        let loaded = load(&mut runtime).map_err(debug_error)?;
+        start(&mut runtime, loaded.handle, 10, 100).map_err(debug_error)?;
+
+        assert!(matches!(
+            runtime.cancel_request(RequestId::new(10), CancellationReason::UserRequested),
+            Err(RuntimeError::CleanupFailed(state))
+                if state.failure.primary_failure == FailureClass::BackendContract
+                    && state.ownership
+                        == RetainedOwnership::Unverified {
+                            accepted_footprint: sequence_footprint(),
+                            reported_footprint: sequence_footprint(),
+                            conservative_footprint: ConservativeFootprint::Known(
+                                sequence_footprint(),
+                            ),
+                        }
+        ));
+        assert_eq!(runtime.snapshot().reserved_footprint, model_footprint());
+        assert!(runtime.snapshot().admission_blocked);
+        assert_eq!(counts.sequence_destructions.get(), 1);
+    }
     Ok(())
 }
 
@@ -2258,6 +2533,51 @@ const fn sequence_footprint() -> MemoryFootprint {
         device_weight_bytes: 0,
         host_working_bytes: 8,
         device_working_bytes: 0,
+    }
+}
+
+const fn sequence_persistent_footprint() -> MemoryFootprint {
+    MemoryFootprint {
+        host_weight_bytes: 0,
+        device_weight_bytes: 0,
+        host_working_bytes: 3,
+        device_working_bytes: 0,
+    }
+}
+
+const fn sequence_transient_footprint() -> MemoryFootprint {
+    MemoryFootprint {
+        host_weight_bytes: 0,
+        device_weight_bytes: 0,
+        host_working_bytes: 5,
+        device_working_bytes: 0,
+    }
+}
+
+const fn sequence_reservation() -> SequenceReservation {
+    SequenceReservation {
+        persistent_footprint: sequence_persistent_footprint(),
+        transient_footprint: sequence_transient_footprint(),
+        total_footprint: sequence_footprint(),
+    }
+}
+
+const fn sequence_report_reservation(host_bytes: u64, device_bytes: u64) -> SequenceReservation {
+    let footprint = MemoryFootprint {
+        host_weight_bytes: 0,
+        device_weight_bytes: 0,
+        host_working_bytes: host_bytes,
+        device_working_bytes: device_bytes,
+    };
+    SequenceReservation {
+        persistent_footprint: footprint,
+        transient_footprint: MemoryFootprint {
+            host_weight_bytes: 0,
+            device_weight_bytes: 0,
+            host_working_bytes: 0,
+            device_working_bytes: 0,
+        },
+        total_footprint: footprint,
     }
 }
 

@@ -78,7 +78,7 @@ An unmaterialized `CandleLlamaPreparedLoad` rejected by E0 is ordinary-drop-safe
 
 ## Final and loading-peak formulas
 
-`MemoryFootprint` contains deterministic concrete required-tensor bytes only. The exact sequence-cache bytes-per-token rate is stored separately in `ModelDescriptor` and multiplied by accepted sequence capacity to produce a concrete `SequencePlan` footprint. The fixed 64 KiB verification buffer, parsed config/header/inspection metadata, and required-name/load-map metadata are independently capped by the limits above. Required maps cannot exceed 16,384 entries or 8 MiB aggregate names; one name clone is transient per materialized tensor, and failure-safe model construction temporarily duplicates one map's names/shallow tensor handles under the same bounds. Platform-dependent map bucket overhead, allocator bookkeeping/fragmentation, driver/context allocation, process RSS, and whole-device observations remain outside the tensor footprint.
+`MemoryFootprint` contains deterministic concrete required-tensor bytes only. The exact sequence-cache bytes-per-token rate is stored separately in `ModelDescriptor`; the complete sequence reservation is described below. The fixed 64 KiB verification buffer, parsed config/header/inspection metadata, and required-name/load-map metadata are independently capped by the limits above. Required maps cannot exceed 16,384 entries or 8 MiB aggregate names; one name clone is transient per materialized tensor, and failure-safe model construction temporarily duplicates one map's names/shallow tensor handles under the same bounds. Platform-dependent map bucket overhead, allocator bookkeeping/fragmentation, driver/context allocation, process RSS, and whole-device observations remain outside the tensor footprint.
 
 For each required tensor `i` in materialization order:
 
@@ -123,17 +123,62 @@ The host execution tensor remains live until its transferred device tensor has s
 
 ## Sequence reservation follows simultaneous lifetimes
 
-The adapter's `SequencePlan::expected_footprint` is a checked conservative upper bound for reviewed live logical tensor payload and source-transfer bytes, not a physical allocator measurement and not a sum of mutually exclusive phases. The locked batch-one, non-flash Candle Llama 0.11.0 model separates persistent all-layer KV/cache ownership from one transformer block's transient forward peak and the outer embedding/norm/logit peak.
+`SequencePlan::reservation` is a `SequenceReservation` with three explicit facts:
 
-Candle's model loop replaces the current hidden state while executing blocks sequentially. Consequently:
+- `persistent_footprint` is maximum sequence-owned logical payload retained between backend calls;
+- `transient_footprint` is additional creation or one-call logical-payload/source-transfer headroom; and
+- `total_footprint` is their checked component-wise sum and is the value E0 admits before native creation.
+
+Caller-owned logits, sampling, token history, stop matching, output queues, and terminal records are accounted separately by E0. RSS/VRAM, allocator size classes and fragmentation, pools, CUDA contexts, kernel/library workspaces, stacks, and driver observations are not deterministic logical payload and are not included. The component arithmetic is exact for the documented upper-bound model; it is not an instantaneous allocator measurement.
+
+The model is source-locked to batch one, non-flash Candle 0.11.0. Let `L` be layers, `T` sequence capacity, `M` maximum prefill, `P` configured positions, `H` hidden width, `I` intermediate width, `A` attention heads, `K` KV heads, `D = H/A`, `V` vocabulary, and `w` execution bytes. The persistent terms are:
 
 ```text
-persistent = KV for every layer + rotary cache + retained mask cache
-execution peak = persistent + one block transient peak + outer model peak
-reservation = component-wise max(sequence creation, execution)
+token staging = 4M host bytes
+all-layer K/V = 2LTKDw
+retained rope = PDw
+retained masks <= T(T + M)/2 U8 bytes when M > 1, otherwise 0
 ```
 
-Only the persistent KV term scales with `num_hidden_layers`; multiplying the complete block transient set by layer count would reserve tensors that are never simultaneously live and can reject valid requests by tens of GiB. CPU and CUDA retain separate host/device source-transfer phases, and E0 separately reserves caller-owned logits, sampling, history, stop, and output state. Exact synthetic cases plus a 22-layer TinyLlama full-context regression lock the reviewed formula.
+The mask expression is a checked closed-form bound over every permitted repeated-prefill schedule and every retained `(seq_len, kv_len)` key. Decode is mask-free because `seq_len == 1`.
+
+### Reviewed phase table
+
+| Phase | Pinned Candle operation | Named reservation evidence |
+|---|---|---|
+| Sequence creation | `Cache::new` builds F32 inverse frequency, position, product, cosine, and sine tensors, then retains cosine/sine in execution dtype | retained rope plus creation device/CPU peak `2D + 6PD` bytes; CUDA host source is `max(4D, 4P)` |
+| Input and mask | adapter `u32` staging, `Tensor::from_slice`, `Cache::mask`, and `utils::build_causal_mask` | fixed staging, input tensor, retained U8 masks, and at most `M×T` host mask source |
+| Q/K/V layout | three linear projections, reshape/transpose, Q/K `contiguous`, and rotary output | separately named projection, layout-copy, and rotary-output payloads |
+| Cache replacement | per-layer `Tensor::cat(..., 2)?.contiguous()` for K and V | all-layer final cache in persistent payload plus one current-layer full-pair duplicate bound; this replacement phase ends before attention compute |
+| Grouped-query expansion | `utils::repeat_kv` uses `Tensor::cat` for K and V | two full expanded context tensors only when `A > K` |
+| Non-flash attention | Q/K/V `to_dtype(F32)`, score matmul/divide, optional masked fill, softmax, contiguous V, attention-value matmul, and cast back | maximum of distinct first-prefill and cached-context phases, with named F32 conversions, score buffers, fill scalar, conditional V copy, output, cast, and projection |
+| Transformer block | RMS norms, attention residual, gate/up/SILU/product/down MLP, final residual | maximum of named attention, residual, gate/up/product, down-projection, and final-add phases for one block; mutually exclusive MLP expression/down phases are not summed |
+| Model forward | embedding, sequential block replacement, final RMS norm, last-token narrow/contiguous, LM head, final F32 conversion | input tensor plus maximum of embedding, one-block, and final-logits phases |
+| CUDA logits copy | F32 logits `to_device(Device::Cpu)` before copying into the caller buffer | one host F32 vocabulary tensor, mutually exclusive with creation and mask-source phases |
+
+Candle executes blocks sequentially, so transient block tensors do not scale with `L`; only persistent all-layer cache does. CPU transient host headroom is the maximum of creation extra and `mask source + model-forward peak`. CUDA transient host headroom is the maximum of cache-construction source, mask source, and host logits transfer; CUDA transient device headroom is the maximum of cache-creation extra and model-forward peak. Persistent and transient values are then added, while mutually exclusive transient phases are never summed.
+
+This audit corrected seven production defects in the predecessor formula: CUDA mask-source and logits-transfer host phases had been summed despite being mutually exclusive, cache replacement had been summed with the later attention-compute phase, mutually exclusive MLP expression/down-projection peaks had also been summed, a first-prefill F32 V-contiguous copy had been charged against cached full-context compute (and against GQA output that is already contiguous), a cache-construction scalar source term had been multiplied by layer count, the masked-fill F32 device scalar was omitted, and anonymous tensor coefficients obscured which simultaneous lifetimes they represented. The reviewed adapter also rejects `K > P` before allocation because Candle 0.11.0's cache-trimming branch reads `dims()[1]` as sequence length and then narrows the last dimension.
+
+### Version and conformance gate
+
+Root dependencies are exact `=0.11.0`. The test gate also locks the reviewed crates.io artifacts:
+
+| Package | SHA-256 checksum in `Cargo.lock` |
+|---|---|
+| `candle-core` | `5ecb245093b0f791b89d3420c3df9c6d49c60ab63ba54db896bf8a3baf486706` |
+| `candle-nn` | `eaa10b6ccc365b33210ce404fbf45e60d3e0bdac1004463cf1052e6ee1c1739a` |
+| `candle-transformers` | `3bcbbf7ff00ff6fe2af22b93600195917fe90e90ff48424a140d1a926c44b1c1` |
+
+The reviewed source locations are `candle-transformers/src/models/llama.rs` (`Config`, `Cache`, attention, MLP, block, forward), `candle-transformers/src/utils.rs` (mask and grouped-query expansion), `candle-nn/src/{rotary_emb,ops,layer_norm,linear,embedding}.rs`, and `candle-core/src/tensor.rs` (creation, layout, concatenation, dtype, and device-transfer behavior).
+
+Unit fixtures lock every named persistent/transient component for F32/F16/BF16 arithmetic, CPU/CUDA placement, GQA/non-GQA, mask-free and mask-producing paths, creation-dominated cases, overflow, unsupported paths, and a 22-layer TinyLlama full context. The executable oracle creates actual Candle caches, observes retained rotary dtype/shape, runs real non-GQA and GQA forwards, and checks per-layer K/V and mask shapes against the planned cache rate. Download-free CPU integration exercises homogeneous and mixed source policy, F32/F16 execution, BF16-source-to-F32 CPU policy, length-one and maximum prefill, first and near-capacity decode, stable plan/identity/capacity, and explicit destruction.
+
+Transient private tensors cannot all be observed through Candle's public API. Their evidence is therefore the pinned source-derived named phase fixture, not RSS sampling or a patched registry. CUDA calculations and dedicated suites compile only with the CUDA toolchain; current hardware execution truth remains in [implementation status](implementation-status.md).
+
+## Loader module boundaries
+
+Loader responsibilities are now separated by invariant: `safetensors` owns allocation-bounded raw JSON decoding, `manifest` owns shard I/O/layout/retained inventory, `configuration_policy` owns source-locked numeric Llama rejection, `scalar` owns declaration-to-execution compatibility, `schema` owns required tensor validation, `identity` owns immutable evidence, `prepared` owns sequential selective materialization, and `cleanup` owns failed-materialization sole ownership and retryable release. Tests remain beside the invariant they exercise; no hot-path dynamic dispatch was introduced.
 
 ## Failed materialization ownership
 

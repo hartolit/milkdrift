@@ -197,14 +197,14 @@ All arithmetic is checked. There is no extra headroom for ignored tensors.
 
 ## Sequence reservation follows simultaneous lifetimes
 
-`SequencePlan::expected_footprint` is a checked conservative upper bound over reviewed live logical tensor payload and source-transfer bytes. It is not physical RSS/VRAM and does not sum allocations that cannot be live together. The locked Candle Llama 0.11.0 path separates:
+`SequencePlan::reservation` separates persistent, additional transient, and checked-total host/device footprints. The total is a checked conservative upper bound over reviewed live logical tensor payload and source-transfer bytes. It is not physical RSS/VRAM and does not sum mutually exclusive transient phases. The locked Candle Llama 0.11.0 path separates:
 
 - **persistent per-layer ownership** — KV cache for every transformer block, plus retained rotary and mask caches;
 - **one-block transient peak** — attention, normalization, residual, MLP, conversion, and matmul tensors that can coexist inside one `Block::forward`;
 - **outer model peak** — embedding/current hidden state, one block result, final normalization, selected final-token state, logits, and F32 logit conversion; and
-- **creation/source-transfer phases** — token/mask host staging and device cache construction.
+- **creation/source-transfer phases** — token/mask host staging, device cache construction, and CUDA host-logit transfer.
 
-Candle advances blocks sequentially (`x = block.forward(...)`), so persistent KV ownership scales with `num_hidden_layers`, while the complete block transient peak is admitted once rather than multiplied by layer count. CPU and CUDA take the component-wise maximum of creation and execution phases in their own memory domains. Realistic 22-layer TinyLlama regression arithmetic locks this distinction so transformer depth cannot silently multiply transient activation headroom again. Caller-owned E0 logits/sampling workspaces remain separately admitted.
+Candle advances blocks sequentially (`x = block.forward(...)`), so persistent KV ownership scales with `num_hidden_layers`, while the complete block transient peak is admitted once rather than multiplied by layer count. CPU and CUDA take the component-wise maximum of creation and execution phases in their own memory domains, then add that transient headroom to persistent ownership. Realistic 22-layer TinyLlama regression arithmetic locks this distinction so transformer depth cannot silently multiply transient activation headroom again. Caller-owned E0 logits/sampling workspaces remain separately admitted. Exact package/version/checksum and actual Cache/KV/mask behavior tests gate any Candle upgrade; the full source-derived phase table is in the project Candle-backend documentation.
 
 ## Transactional ownership and cleanup
 

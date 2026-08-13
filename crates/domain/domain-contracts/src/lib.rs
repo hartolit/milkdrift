@@ -37,7 +37,7 @@ pub use model::{
     CapabilitySet, DeviceKind, ExecutionDevice, LoadConfiguration, LoadPlan, MemoryBudget,
     MemoryFootprint, MemoryKind, ModelArchitecture, ModelCapabilities, ModelDescriptor,
     ModelMetadata, QuantizationFormat, ScalarType, ScalarTypeSet, SequenceConfiguration,
-    SequencePlan,
+    SequencePlan, SequenceReservation,
 };
 pub use output::{ByteRange, OutputBatch, OutputCursor, OutputRecord, OutputRecordKind};
 pub use sequence::{

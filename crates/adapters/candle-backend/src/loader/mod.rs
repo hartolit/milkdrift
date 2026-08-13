@@ -1,10 +1,13 @@
 //! Llama source inspection, exact load preparation, and transactional materialization.
 
+mod cleanup;
 mod config;
+mod configuration_policy;
 mod footprint;
 mod identity;
 mod manifest;
 mod prepared;
+mod safetensors;
 mod scalar;
 mod schema;
 
@@ -26,9 +29,10 @@ use crate::failure::{
 use crate::model::{CandleLlamaModel, CandleLlamaModelParameters};
 use crate::source::{CandleConfigurationSource, CandleLlamaSource};
 
+pub use self::cleanup::CandleLlamaFailedPreparation;
 use self::footprint::{calculate, sequence_cache_bytes_per_token, validate_memory_plan};
 use self::manifest::{InspectedShard, InspectionLimits};
-pub use self::prepared::{CandleLlamaFailedPreparation, CandleLlamaPreparedLoad};
+pub use self::prepared::CandleLlamaPreparedLoad;
 use self::scalar::{execution_scalar_type, select_execution_dtype, select_required_primary};
 
 pub(super) const VERIFICATION_BUFFER_BYTES: usize = 64 * 1024;

@@ -172,7 +172,7 @@ pub struct ModelSnapshot {
     pub lifecycle: ModelLifecycleState,
     /// Inspected backend description.
     pub descriptor: ModelDescriptor,
-    /// Exact checked model and active/retained-sequence reservation aggregate.
+    /// Exact accounted model and conforming active/retained-sequence aggregate.
     ///
     /// Sequence contributions are logical-payload reservation bounds, not
     /// instantaneous physical allocation measurements.

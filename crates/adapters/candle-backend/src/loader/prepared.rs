@@ -10,30 +10,25 @@ use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::llama::{Config, Llama};
 use domain_contracts::{
-    BackendFailureKind, BackendId, DeviceKind, FailedLoadOwner, LoadError, LoadPlan, PreparedLoad,
-    SynchronizationError,
+    BackendFailureKind, BackendId, DeviceKind, LoadError, LoadPlan, PreparedLoad,
 };
 use sha2::{Digest, Sha256};
 
 use crate::failure::{
     CODE_DUPLICATE_TENSOR, CODE_HEADER_IDENTITY_MISMATCH, CODE_INSPECTION_ALLOCATION,
     CODE_LOAD_SYNCHRONIZE, CODE_MODEL_LOAD, CODE_MODEL_LOAD_PANIC, CODE_NUMERIC_OVERFLOW,
-    CODE_PARTIAL_LOAD_SYNCHRONIZE, CODE_PAYLOAD_READ, CODE_SOURCE_IDENTITY_LENGTH,
-    CODE_SOURCE_IDENTITY_MISMATCH, CODE_TENSOR_MAP_ALLOCATION, CODE_TENSOR_MATERIALIZE,
-    CODE_TENSOR_TRANSFER, CODE_WEIGHT_METADATA, failure,
+    CODE_PAYLOAD_READ, CODE_SOURCE_IDENTITY_LENGTH, CODE_SOURCE_IDENTITY_MISMATCH,
+    CODE_TENSOR_MAP_ALLOCATION, CODE_TENSOR_MATERIALIZE, CODE_TENSOR_TRANSFER,
+    CODE_WEIGHT_METADATA, failure,
 };
 
+use super::cleanup::CandleLlamaFailedPreparation;
 use super::identity::EstablishedIdentityAuthority;
 use super::manifest::{InspectedShard, SourceTensorDType, TensorShape};
 use super::{
     VERIFICATION_BUFFER_BYTES, VERIFICATION_BUFFER_BYTES_U64, host_memory_failure,
     invalid_model_failure, map_candle_load_error, unsupported_scalar,
 };
-
-#[cfg(test)]
-thread_local! {
-    static TEST_CLEANUP_SYNCHRONIZATION_FAILURES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
 
 /// Exact source-, configuration-, device-, and plan-bound Candle preparation.
 ///
@@ -60,55 +55,6 @@ pub struct CandleLlamaPreparedLoad {
 }
 
 impl CandleLlamaPreparedLoad {
-    pub(super) fn into_failed(self) -> CandleLlamaFailedPreparation {
-        CandleLlamaFailedPreparation {
-            plan: self.plan,
-            prepared: Some(self),
-        }
-    }
-
-    fn cleanup_failed_materialization(&mut self) -> Result<(), SynchronizationError> {
-        if self.cleanup_complete {
-            return Ok(());
-        }
-        #[cfg(test)]
-        if TEST_CLEANUP_SYNCHRONIZATION_FAILURES.with(|remaining| {
-            let value = remaining.get();
-            if value == 0 {
-                false
-            } else {
-                remaining.set(value - 1);
-                true
-            }
-        }) {
-            return Err(SynchronizationError::Backend(failure(
-                self.backend,
-                BackendFailureKind::Synchronization,
-                CODE_PARTIAL_LOAD_SYNCHRONIZE,
-            )));
-        }
-        if let Some(device) = &self.device {
-            device.synchronize().map_err(|_| {
-                SynchronizationError::Backend(failure(
-                    self.backend,
-                    BackendFailureKind::Synchronization,
-                    CODE_PARTIAL_LOAD_SYNCHRONIZE,
-                ))
-            })?;
-        }
-
-        self.constructed_model = None;
-        self.final_tensors.clear();
-        self.pending_device_tensor = None;
-        self.pending_host_tensor = None;
-        self.pending_source_tensor = None;
-        self.shards.clear();
-        self.config = None;
-        self.device = None;
-        self.cleanup_complete = true;
-        Ok(())
-    }
-
     pub(super) fn materialize(&mut self) -> Result<(), LoadError> {
         match catch_unwind(AssertUnwindSafe(|| {
             self.materialize_with_observer(&mut NoopMaterializationObserver)
@@ -625,33 +571,6 @@ impl PreparedLoad for CandleLlamaPreparedLoad {
     }
 }
 
-/// Sole cleanup owner after a Candle Llama materialization failure.
-///
-/// This type is deliberately distinct from [`CandleLlamaPreparedLoad`]: only a
-/// consumed materialization attempt can produce it. Cleanup is retryable and
-/// idempotent, and a failed cleanup retains the complete preparation unchanged.
-#[must_use = "a failed Candle load retains native resources requiring explicit cleanup"]
-#[derive(Debug)]
-pub struct CandleLlamaFailedPreparation {
-    plan: LoadPlan,
-    prepared: Option<CandleLlamaPreparedLoad>,
-}
-
-impl FailedLoadOwner for CandleLlamaFailedPreparation {
-    fn plan(&self) -> &LoadPlan {
-        &self.plan
-    }
-
-    fn cleanup(&mut self) -> Result<(), SynchronizationError> {
-        let Some(prepared) = self.prepared.as_mut() else {
-            return Ok(());
-        };
-        prepared.cleanup_failed_materialization()?;
-        self.prepared = None;
-        Ok(())
-    }
-}
-
 #[derive(Debug)]
 struct RequiredTensorFacts {
     name: String,
@@ -760,12 +679,13 @@ mod tests {
 
     use super::{
         CandleLlamaPreparedLoad, EstablishedIdentityAuthority, HashedRange,
-        MaterializationCheckpoint, MaterializationObserver, TEST_CLEANUP_SYNCHRONIZATION_FAILURES,
+        MaterializationCheckpoint, MaterializationObserver,
     };
     use crate::failure::{
         CODE_HEADER_IDENTITY_MISMATCH, CODE_SOURCE_IDENTITY_LENGTH, CODE_SOURCE_IDENTITY_MISMATCH,
         CODE_TENSOR_MATERIALIZE,
     };
+    use crate::loader::cleanup::TEST_CLEANUP_SYNCHRONIZATION_FAILURES;
     use crate::loader::identity::EstablishedShardIdentity;
     use crate::loader::manifest::{
         InspectedShard, InspectedTensor, SourceTensorDType, TensorShape,

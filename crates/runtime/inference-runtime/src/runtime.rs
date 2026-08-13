@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use domain_contracts::{
     BackendSequence, ExecutionDevice, FailedLoad, FailedLoadOwner, GenerationUsage, LoadPlan,
     LoadedModel, MemoryFootprint, ModelDescriptor, ModelGeneration, ModelHandle, ModelId,
-    ModelLifecycle, ModelLoader, RequestId, ScalarType, SequenceId, SynchronizationError,
+    ModelLifecycle, ModelLoader, RequestId, ScalarType, SequenceId, SequencePlan,
+    SynchronizationError,
 };
 
 use crate::{
@@ -177,7 +178,7 @@ where
             }
         };
         self.ownership = RetainedOwnership::Unverified {
-            accepted_loading_peak: accepted_plan.loading_peak_footprint,
+            accepted_footprint: accepted_plan.loading_peak_footprint,
             reported_footprint: reported_plan.loading_peak_footprint,
             conservative_footprint,
         };
@@ -230,9 +231,68 @@ where
     request_id: RequestId,
     sequence_id: SequenceId,
     sequence: S,
-    footprint: MemoryFootprint,
+    accepted_plan: SequencePlan,
+    ownership: RetainedOwnership,
     failure: CleanupFailureReport,
     attempts: u32,
+}
+
+impl<S> PendingSequence<S>
+where
+    S: BackendSequence,
+{
+    /// Reclassifies a retained sequence whose report no longer matches the
+    /// plan admitted before native creation. The returned footprint was
+    /// previously represented in exact aggregate accounting.
+    fn reconcile_contract(&mut self) -> Option<MemoryFootprint> {
+        let reported_plan = self.sequence.reported_plan();
+        if sequence_report_matches(
+            &self.sequence,
+            self.sequence_id,
+            &self.accepted_plan,
+            reported_plan,
+        ) {
+            return None;
+        }
+
+        let formerly_exact = self.ownership.exact_footprint();
+        let reported_footprint = reported_plan.reservation.total_footprint;
+        let conservative_footprint = match self.ownership {
+            RetainedOwnership::Unverified {
+                conservative_footprint,
+                ..
+            } => memory::extend_conservative_footprint(conservative_footprint, reported_footprint),
+            RetainedOwnership::Exact(_) | RetainedOwnership::Released => {
+                memory::conservative_footprint(
+                    self.accepted_plan.reservation.total_footprint,
+                    reported_footprint,
+                )
+            }
+        };
+        self.ownership = RetainedOwnership::Unverified {
+            accepted_footprint: self.accepted_plan.reservation.total_footprint,
+            reported_footprint,
+            conservative_footprint,
+        };
+        self.failure.primary_failure = FailureClass::BackendContract;
+        self.failure.primary_detail = FailureDetail::Class(FailureClass::BackendContract);
+        formerly_exact
+    }
+}
+
+fn sequence_report_matches<S>(
+    sequence: &S,
+    accepted_id: SequenceId,
+    accepted_plan: &SequencePlan,
+    reported_plan: SequencePlan,
+) -> bool
+where
+    S: BackendSequence,
+{
+    sequence.id() == accepted_id
+        && usize::try_from(accepted_plan.configuration.maximum_tokens.get())
+            .is_ok_and(|capacity| sequence.token_capacity() == capacity)
+        && reported_plan == *accepted_plan
 }
 
 struct RequestSlot<S>
@@ -242,7 +302,7 @@ where
     sequence_id: SequenceId,
     token_capacity: usize,
     sequence: S,
-    backend_footprint: MemoryFootprint,
+    accepted_plan: SequencePlan,
     workspace_footprint: MemoryFootprint,
     usage: GenerationUsage,
 }
@@ -304,13 +364,18 @@ where
     }
 
     fn unverified_owner_count(&self) -> u32 {
-        u32::try_from(
-            self.pending_models
-                .values()
-                .filter(|pending| pending.ownership.blocks_admission())
-                .count(),
-        )
-        .unwrap_or(u32::MAX)
+        let models = self
+            .pending_models
+            .values()
+            .filter(|pending| pending.ownership.blocks_admission())
+            .count();
+        let sequences = self
+            .models
+            .values()
+            .flat_map(|slot| slot.pending_sequences.values())
+            .filter(|pending| pending.ownership.blocks_admission())
+            .count();
+        u32::try_from(models.saturating_add(sequences)).unwrap_or(u32::MAX)
     }
 
     fn reject_if_admission_blocked(&self) -> Result<(), RuntimeError> {

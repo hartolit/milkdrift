@@ -461,18 +461,69 @@ impl SequenceConfiguration {
     }
 }
 
+/// Backend-owned memory reservation for one accepted sequence.
+///
+/// Persistent payload is the maximum sequence-owned logical payload retained
+/// between backend calls. Transient payload is additional logical payload or
+/// source-transfer headroom that may be live during sequence creation or one
+/// permitted backend call. Their checked sum is the aggregate reservation E0
+/// admits before native sequence creation.
+///
+/// Caller-owned logits, sampling, history, stop, output, and terminal-state
+/// buffers are not part of this value. Physical RSS/VRAM, allocator rounding,
+/// fragmentation and pools, accelerator contexts, native library workspaces,
+/// and other non-deterministic observations are also outside this contract.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SequenceReservation {
+    /// Maximum sequence-owned payload retained between backend calls.
+    pub persistent_footprint: MemoryFootprint,
+    /// Maximum additional payload/headroom covered during creation or execution.
+    pub transient_footprint: MemoryFootprint,
+    /// Checked sum of persistent and transient footprints admitted by E0.
+    pub total_footprint: MemoryFootprint,
+}
+
+impl SequenceReservation {
+    /// Constructs a reservation only when its aggregate can be represented.
+    #[must_use]
+    pub const fn checked(
+        persistent_footprint: MemoryFootprint,
+        transient_footprint: MemoryFootprint,
+    ) -> Option<Self> {
+        match persistent_footprint.checked_add(transient_footprint) {
+            Some(total_footprint) => Some(Self {
+                persistent_footprint,
+                transient_footprint,
+                total_footprint,
+            }),
+            None => None,
+        }
+    }
+
+    /// Returns whether the reported aggregate equals the checked component sum.
+    #[must_use]
+    pub fn is_consistent(self) -> bool {
+        match self
+            .persistent_footprint
+            .checked_add(self.transient_footprint)
+        {
+            Some(total) => total == self.total_footprint,
+            None => false,
+        }
+    }
+}
+
 /// Cold-path sequence reservation plan.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SequencePlan {
     /// Accepted sequence configuration.
     pub configuration: SequenceConfiguration,
-    /// Exact arithmetic reservation for the accepted sequence plan.
+    /// Checked backend-owned reservation for the accepted sequence plan.
     ///
-    /// This is a checked conservative hard upper bound for the backend's reviewed
-    /// live logical tensor payload and source-transfer bytes across creation and
-    /// permitted execution schedules. It is not an exact instantaneous live
-    /// allocation, and caller-owned logits workspace is accounted separately.
-    pub expected_footprint: MemoryFootprint,
+    /// Component arithmetic is exact, while each component may deliberately be
+    /// a documented conservative upper bound rather than an instantaneous
+    /// allocation measurement.
+    pub reservation: SequenceReservation,
     /// Required caller-owned logits elements for each decode operation.
     pub logits_capacity: usize,
 }

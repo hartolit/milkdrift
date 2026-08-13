@@ -5,6 +5,7 @@ use domain_contracts::{
     FailedLoad, GenerationUsage, LoadConfiguration, LoadPlan, LoadedModel, MemoryFootprint,
     ModelDescriptor, ModelError, ModelHandle, ModelId, ModelLifecycle, ModelLifecycleState,
     ModelLoader, PreparedLoad, RequestId, ScalarType, SequenceConfiguration, SequenceId,
+    SequencePlan,
 };
 
 use crate::{
@@ -87,8 +88,8 @@ struct SequenceRuntimeTransition {
 struct SequenceAdmission {
     request: SequenceAdmissionRequest,
     transition: SequenceRuntimeTransition,
+    plan: SequencePlan,
     expected_token_capacity: usize,
-    logits_capacity: usize,
     backend_footprint: MemoryFootprint,
     committed_footprint: MemoryFootprint,
     backend_next_reserved: MemoryFootprint,
@@ -98,7 +99,10 @@ struct SequenceAdmission {
 }
 
 enum SequenceSlotDisposition {
-    Retained(CleanupFailureReport),
+    Retained {
+        report: CleanupFailureReport,
+        ownership: RetainedOwnership,
+    },
     Committed,
 }
 
@@ -286,7 +290,7 @@ where
                 FailureDetail::Synchronization(cleanup),
             );
             let ownership = RetainedOwnership::Unverified {
-                accepted_loading_peak: plan.loading_peak_footprint,
+                accepted_footprint: plan.loading_peak_footprint,
                 reported_footprint,
                 conservative_footprint: conservative_footprint(
                     plan.loading_peak_footprint,
@@ -475,14 +479,13 @@ where
         }
 
         let plan = slot.model.plan_sequence(&configuration)?;
-        if !sequence_configuration_is_supported(&slot.descriptor, plan.configuration)
-            || plan.configuration != configuration
+        if validate_sequence_plan(&slot.descriptor, &plan, configuration).is_err()
             || plan.logits_capacity != expected_logits_capacity
         {
             return Err(RuntimeError::BackendContractViolation);
         }
         let committed_footprint =
-            checked_add_footprint(plan.expected_footprint, workspace_footprint)?;
+            checked_add_footprint(plan.reservation.total_footprint, workspace_footprint)?;
         admit_footprint(
             self.reserved_footprint,
             committed_footprint,
@@ -533,8 +536,8 @@ where
             apply_sequence_to_slot(slot, &admission)?
         };
         match disposition {
-            SequenceSlotDisposition::Retained(report) => {
-                Err(self.commit_retained_sequence(&admission, report))
+            SequenceSlotDisposition::Retained { report, ownership } => {
+                Err(self.commit_retained_sequence(&admission, report, ownership))
             }
             SequenceSlotDisposition::Committed => Ok(self.commit_sequence_admission(&admission)),
         }
@@ -575,8 +578,7 @@ where
         }
 
         let plan = slot.model.plan_sequence(&request.configuration)?;
-        if !sequence_configuration_is_supported(&slot.descriptor, plan.configuration)
-            || plan.configuration != request.configuration
+        if validate_sequence_plan(&slot.descriptor, &plan, request.configuration).is_err()
             || request
                 .expected_logits_capacity
                 .is_some_and(|expected| plan.logits_capacity != expected)
@@ -585,18 +587,19 @@ where
         }
         let expected_token_capacity = usize::try_from(plan.configuration.maximum_tokens.get())
             .map_err(|_| RuntimeError::BackendContractViolation)?;
+        let backend_footprint = plan.reservation.total_footprint;
         let committed_footprint =
-            checked_add_footprint(plan.expected_footprint, request.workspace_footprint)?;
+            checked_add_footprint(backend_footprint, request.workspace_footprint)?;
         Ok(SequenceAdmission {
             request,
             transition,
+            plan,
             expected_token_capacity,
-            logits_capacity: plan.logits_capacity,
-            backend_footprint: plan.expected_footprint,
+            backend_footprint,
             committed_footprint,
             backend_next_reserved: admit_footprint(
                 current_reserved,
-                plan.expected_footprint,
+                backend_footprint,
                 self.limits.memory_budget,
             )?,
             committed_next_reserved: admit_footprint(
@@ -606,7 +609,7 @@ where
             )?,
             backend_next_slot_reserved: checked_add_footprint(
                 slot.reserved_footprint,
-                plan.expected_footprint,
+                backend_footprint,
             )?,
             committed_next_slot_reserved: checked_add_footprint(
                 slot.reserved_footprint,
@@ -676,6 +679,7 @@ where
         &mut self,
         admission: &SequenceAdmission,
         report: CleanupFailureReport,
+        ownership: RetainedOwnership,
     ) -> RuntimeError {
         let request = admission.request;
         let previous_model = self
@@ -693,7 +697,9 @@ where
             "pending sequence index was preflighted"
         );
         self.pending_cleanup_sequences = admission.transition.pending_cleanup_sequences;
-        self.reserved_footprint = admission.backend_next_reserved;
+        if ownership.exact_footprint().is_some() {
+            self.reserved_footprint = admission.backend_next_reserved;
+        }
         let state = CleanupRetryState {
             resource: CleanupResource::Sequence {
                 handle: request.handle,
@@ -701,7 +707,7 @@ where
                 sequence_id: request.sequence_id,
             },
             failure: report,
-            ownership: RetainedOwnership::Exact(admission.backend_footprint),
+            ownership,
             attempts: 1,
             maximum_attempts: self.maximum_cleanup_attempts(),
         };
@@ -727,7 +733,7 @@ where
         RequestStartReceipt {
             request_id: request.request_id,
             sequence_id: request.sequence_id,
-            logits_capacity: admission.logits_capacity,
+            logits_capacity: admission.plan.logits_capacity,
             reserved_footprint: admission.committed_footprint,
         }
     }
@@ -744,9 +750,11 @@ where
     let mut sequence = slot
         .model
         .create_sequence(request.sequence_id, &request.configuration)?;
-    let rejection = if sequence.id() != request.sequence_id
+    let reported_plan = sequence.reported_plan();
+    let backend_contradiction = sequence.id() != request.sequence_id
         || sequence.token_capacity() != admission.expected_token_capacity
-    {
+        || reported_plan != admission.plan;
+    let rejection = if backend_contradiction {
         Some(RuntimeError::BackendContractViolation)
     } else {
         slot.lifecycle
@@ -765,21 +773,39 @@ where
             RuntimeOperation::SequenceDestruction,
             FailureDetail::Sequence(cleanup),
         );
+        // Identity, capacity, or plan contradiction makes physical extent
+        // unverified. A runtime lifecycle rejection with a conforming report
+        // still retains the already-admitted exact backend reservation.
+        let ownership = if backend_contradiction {
+            RetainedOwnership::Unverified {
+                accepted_footprint: admission.backend_footprint,
+                reported_footprint: reported_plan.reservation.total_footprint,
+                conservative_footprint: conservative_footprint(
+                    admission.backend_footprint,
+                    reported_plan.reservation.total_footprint,
+                ),
+            }
+        } else {
+            RetainedOwnership::Exact(admission.backend_footprint)
+        };
         let replaced = slot.pending_sequences.insert(
             request.request_id,
             PendingSequence {
                 request_id: request.request_id,
                 sequence_id: request.sequence_id,
                 sequence,
-                footprint: admission.backend_footprint,
+                accepted_plan: admission.plan,
+                ownership,
                 failure: report,
                 attempts: 1,
             },
         );
         debug_assert!(replaced.is_none(), "pending request index was preflighted");
-        slot.reserved_footprint = admission.backend_next_slot_reserved;
+        if ownership.exact_footprint().is_some() {
+            slot.reserved_footprint = admission.backend_next_slot_reserved;
+        }
         slot.poisoned = true;
-        return Ok(SequenceSlotDisposition::Retained(report));
+        return Ok(SequenceSlotDisposition::Retained { report, ownership });
     }
 
     let replaced = slot.requests.insert(
@@ -788,7 +814,7 @@ where
             sequence_id: request.sequence_id,
             token_capacity: admission.expected_token_capacity,
             sequence,
-            backend_footprint: admission.backend_footprint,
+            accepted_plan: admission.plan,
             workspace_footprint: request.workspace_footprint,
             usage: GenerationUsage::default(),
         },
@@ -854,6 +880,51 @@ fn validate_load_plan(
         return Err(RuntimeError::BackendContractViolation);
     }
     Ok(())
+}
+
+fn validate_sequence_plan(
+    descriptor: &ModelDescriptor,
+    plan: &SequencePlan,
+    requested: SequenceConfiguration,
+) -> Result<(), RuntimeError> {
+    if plan.configuration != requested
+        || !sequence_configuration_is_supported(descriptor, plan.configuration)
+        || !plan.reservation.is_consistent()
+        || plan
+            .reservation
+            .persistent_footprint
+            .checked_host_bytes()
+            .is_none()
+        || plan
+            .reservation
+            .persistent_footprint
+            .checked_device_bytes()
+            .is_none()
+        || plan
+            .reservation
+            .transient_footprint
+            .checked_host_bytes()
+            .is_none()
+        || plan
+            .reservation
+            .transient_footprint
+            .checked_device_bytes()
+            .is_none()
+        || plan
+            .reservation
+            .total_footprint
+            .checked_host_bytes()
+            .is_none()
+        || plan
+            .reservation
+            .total_footprint
+            .checked_device_bytes()
+            .is_none()
+    {
+        Err(RuntimeError::BackendContractViolation)
+    } else {
+        Ok(())
+    }
 }
 
 const fn validate_descriptor(descriptor: &ModelDescriptor) -> Result<(), RuntimeError> {

@@ -63,6 +63,14 @@ reclassifies the owner as `RetainedOwnership::Unverified`, removes the formerly
 exact reservation once, preserves monotonic conservative evidence, and blocks new
 admission until release.
 
+A retained sequence follows the same rule for its complete accepted
+`SequencePlan`. E0 verifies identity, capacity, and plan after creation and after
+successful execution, then reads the plan before and after destruction/retry. Any
+contradiction makes failed-cleanup ownership unverified even when an individual
+footprint value still matches. Successful destruction releases the admitted
+sequence total once; caller-owned terminal workspace remains separately accounted
+until its output storage is released.
+
 A complete model that contradicts its accepted handle, descriptor, device, scalar,
 or footprint is likewise `RetainedOwnership::Unverified` if unload fails. E0
 preserves the accepted peak, reported footprint, and checked conservative component

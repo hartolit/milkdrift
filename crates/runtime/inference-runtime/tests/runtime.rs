@@ -14,7 +14,7 @@ use domain_contracts::{
     ModelMetadata, MonotonicMillis, PrefillBufferRequirements, PrefillInput, PrefillOutcome,
     PreparedDecodeBuffers, PreparedLoad, PreparedPrefillBuffers, QuantizationFormat, RequestId,
     ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceError, SequenceId, SequencePlan,
-    SequenceState, SynchronizationError, TokenId, UnloadPolicy,
+    SequenceReservation, SequenceState, SynchronizationError, TokenId, UnloadPolicy,
 };
 use inference_runtime::{
     CleanupPoll, CleanupResource, CommandTicket, FailureDetail, HostedRuntime,
@@ -78,6 +78,7 @@ struct MockSequence {
     state: SequenceState,
     position: usize,
     token_capacity: usize,
+    plan: SequencePlan,
 }
 
 impl BackendSequence for MockSequence {
@@ -95,6 +96,10 @@ impl BackendSequence for MockSequence {
 
     fn token_capacity(&self) -> usize {
         self.token_capacity
+    }
+
+    fn reported_plan(&self) -> SequencePlan {
+        self.plan
     }
 }
 
@@ -189,11 +194,20 @@ impl LoadedModel for MockModel {
         }
         Ok(SequencePlan {
             configuration: *configuration,
-            expected_footprint: MemoryFootprint {
-                host_weight_bytes: 0,
-                device_weight_bytes: 0,
-                host_working_bytes: u64::from(configuration.maximum_tokens.get()),
-                device_working_bytes: 0,
+            reservation: SequenceReservation {
+                persistent_footprint: MemoryFootprint {
+                    host_weight_bytes: 0,
+                    device_weight_bytes: 0,
+                    host_working_bytes: u64::from(configuration.maximum_tokens.get()),
+                    device_working_bytes: 0,
+                },
+                transient_footprint: MemoryFootprint::default(),
+                total_footprint: MemoryFootprint {
+                    host_weight_bytes: 0,
+                    device_weight_bytes: 0,
+                    host_working_bytes: u64::from(configuration.maximum_tokens.get()),
+                    device_working_bytes: 0,
+                },
             },
             logits_capacity: self.descriptor.metadata.vocabulary_size as usize,
         })
@@ -204,6 +218,7 @@ impl LoadedModel for MockModel {
         sequence_id: SequenceId,
         configuration: &SequenceConfiguration,
     ) -> Result<Self::Sequence, ModelError> {
+        let plan = self.plan_sequence(configuration)?;
         let token_capacity = usize::try_from(configuration.maximum_tokens.get())
             .map_err(|_| ModelError::Backend(mock_failure(1)))?;
         Ok(MockSequence {
@@ -211,6 +226,7 @@ impl LoadedModel for MockModel {
             state: SequenceState::Empty,
             position: 0,
             token_capacity,
+            plan,
         })
     }
 

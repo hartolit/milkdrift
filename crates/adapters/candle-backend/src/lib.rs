@@ -15,6 +15,8 @@ mod loader;
 mod model;
 mod sequence_reservation;
 mod source;
+#[cfg(test)]
+mod upstream;
 
 pub use device::{CandleDeviceSummary, CudaComputeCapability};
 pub use loader::{CandleLlamaFailedPreparation, CandleLlamaLoader, CandleLlamaPreparedLoad};

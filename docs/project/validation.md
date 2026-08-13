@@ -70,6 +70,50 @@ The exact amended CUDA metadata/architecture/hygiene/check/test-compilation/Clip
 
 This is local hardware evidence for the amended working tree, not a GitHub self-hosted run, generic NVIDIA support, or external-checkpoint evidence. Re-run after the coherent commit if clean-commit provenance is required.
 
+## Foundation closure 02 local evidence
+
+On 2026-08-13, the Candle sequence-accounting closure passed its required focused
+matrix sequentially with `CARGO_INCREMENTAL=0` in the previously absent isolated
+target `/tmp/milkdrift-foundation-closure-02-target`:
+
+```sh
+cargo fmt --all -- --check
+cargo check --locked -p domain-contracts -p candle-backend -p inference-runtime --all-targets
+cargo test --locked -p domain-contracts
+cargo test --locked -p candle-backend --test llama_cpu
+cargo test --locked -p candle-backend
+cargo test --locked -p inference-runtime --test runtime
+cargo test --locked -p inference-runtime --test generation
+cargo test --locked -p inference-runtime --test fault_injection
+cargo test --locked -p inference-runtime --test native_backend_generation
+cargo clippy --locked -p domain-contracts -p candle-backend -p inference-runtime --all-targets -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps -p domain-contracts -p candle-backend -p inference-runtime
+cargo xtask architecture
+cargo xtask hygiene
+git diff --check
+```
+
+Observed tests were 12 domain contract tests; 40 Candle unit tests; 1 passing
+fixture-consistency test with its explicit source-maintenance generator ignored;
+27 Candle CPU integration tests; and respectively 11, 25, 47, and 3 passing E0
+runtime, generation, fault-injection, and native-backend integration tests. The
+focused all-target check, strict Clippy, warning-denied rustdoc, architecture,
+hygiene, formatting, and whitespace checks also passed.
+
+Because the generic ownership field rename also updates the E1 evidence mapping,
+supplemental locked `application-runtime` all-target check, complete package test,
+and strict all-target Clippy commands passed. The package test observed 89 unit,
+3 state-integration, and 1 doctest pass.
+
+The dedicated CUDA test target is registered behind `cuda-hardware-tests` and
+the architecture policy accepts its feature graph. An exact
+`CUDA_COMPUTE_CAP=120 cargo check --locked -p candle-backend --features
+cuda-hardware-tests --test cuda_hardware` attempt stopped in the `cudarc 0.19.8`
+build script because `nvcc --version` could not execute. `nvcc`, `nvidia-smi`,
+and NVIDIA device nodes are absent on this host, so no Rust CUDA compilation or
+hardware execution is claimed. Prompt 6 owns remote CUDA acceptance. These are
+source-tree results; the completion report records the resulting commit and tree.
+
 ## Canonical repository gate
 
 The ordinary composite gate is:
