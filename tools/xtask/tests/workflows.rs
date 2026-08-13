@@ -216,6 +216,30 @@ fn maintained_workflows_parse_as_yaml() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[test]
+fn cuda_workflow_limits_network_to_locked_cache_synchronization() -> Result<(), Box<dyn Error>> {
+    let cuda = read(".github/workflows/cuda-hardware.yml")?;
+    let sync_name = "      - name: Synchronize locked CUDA dependency cache";
+    let validation_name = "      - name: Validate metadata and architecture policy";
+    assert_eq!(cuda.matches(sync_name).count(), 1);
+    assert_eq!(cuda.matches("CARGO_NET_OFFLINE:").count(), 2);
+    assert_eq!(cuda.matches("CARGO_NET_OFFLINE: \"true\"").count(), 1);
+    assert_eq!(cuda.matches("CARGO_NET_OFFLINE: \"false\"").count(), 1);
+
+    let sync_index = cuda
+        .find(sync_name)
+        .ok_or("missing CUDA cache synchronization")?;
+    let validation_index = cuda
+        .find(validation_name)
+        .ok_or("missing CUDA metadata validation")?;
+    let sync_step = cuda
+        .get(sync_index..validation_index)
+        .ok_or("CUDA cache synchronization must precede metadata validation")?;
+    assert!(sync_step.contains("          CARGO_NET_OFFLINE: \"false\""));
+    assert!(sync_step.contains("        run: cargo fetch --locked"));
+    Ok(())
+}
+
 struct TempEnvironment {
     root: PathBuf,
     workspace: PathBuf,

@@ -103,6 +103,11 @@ jobs:
             exit 1
           fi
 
+      - name: Synchronize locked CUDA dependency cache
+        env:
+          CARGO_NET_OFFLINE: "false"
+        run: cargo fetch --locked
+
       - name: Validate metadata and architecture policy
         run: |
           set -eu

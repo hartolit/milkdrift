@@ -582,7 +582,7 @@ Do not use workspace `--all-features`, parse test listings, or interpret compila
 
 ## Self-hosted CUDA hardware correctness gate
 
-[`.github/workflows/cuda-hardware.yml`](../../.github/workflows/cuda-hardware.yml) is a separate download-free correctness gate for the committed fixture. The maintained repository runner is named `hart-desk-rtx5070ti` and is selected with all registered labels: `self-hosted`, `Linux`, `X64`, and the dedicated `milkdrift-cuda-5070ti` label. If that runner is offline, removed, or under maintenance, restore its exact registration rather than weakening the job to generic `self-hosted` routing.
+[`.github/workflows/cuda-hardware.yml`](../../.github/workflows/cuda-hardware.yml) is a separate lockfile-constrained correctness gate for the committed fixture. The maintained repository runner is named `hart-desk-rtx5070ti` and is selected with all registered labels: `self-hosted`, `Linux`, `X64`, and the dedicated `milkdrift-cuda-5070ti` label. If that runner is offline, removed, or under maintenance, restore its exact registration rather than weakening the job to generic `self-hosted` routing.
 
 The security boundary is deliberate:
 
@@ -591,23 +591,10 @@ The security boundary is deliberate:
 - path-filtered pushes trust code already landed on `main`; anyone able to land matching code on `main` is inside the machine-execution boundary, so repository write and branch controls remain part of runner security;
 - workflow permissions are `contents: read`, checkout credentials are not persisted, and no repository secret or command input is used;
 - one repository-wide concurrency group prevents overlapping Milkdrift GPU jobs;
-- Cargo is offline after checkout; check and release-hardware targets are separately isolated beneath `$RUNNER_TEMP`, root-target creation is rejected, and an `always()` final step removes both without `cargo clean`.
+- after exact host/GPU/toolchain preflight, one dependency-only `cargo fetch --locked` step may synchronize the maintained Cargo cache; the job-wide default remains offline for metadata, policy, compilation, Clippy, and hardware execution;
+- check and release-hardware targets are separately isolated beneath `$RUNNER_TEMP`, root-target creation is rejected, and an `always()` final step removes both without `cargo clean`.
 
-The runner administrator maintains `/var/tmp/milkdrift-cargo-home` as a dependency-only Cargo cache seeded out of band from a trusted locked checkout. Refresh that cache before a trusted dependency update reaches `main`; do not expose credentials in it or relax the workflow's offline setting. The job fails before compilation when the maintained cache is missing/inaccessible, `RUNNER_TEMP` has less than 20 GiB free, or the Cargo-home filesystem has less than 4 GiB free. The 20 GiB threshold is a host-specific operational reserve for this self-hosted machine, not a standard-runner or product requirement: historical run 31281013243 observed its `/dev/mapper/root` filesystem at 1.9 TiB total with 139 GiB free before compilation. The redesigned job records both target sizes and filesystem availability so prompt-6 evidence can reassess that reserve. The runner must be Actions Runner 2.327.1 or newer for pinned checkout v7's Node 24 runtime.
-
-Refresh and verify the cache as the runner service account from the exact clean,
-trusted checkout before dispatching the offline job:
-
-```sh
-CARGO_HOME=/var/tmp/milkdrift-cargo-home cargo fetch --locked
-CARGO_HOME=/var/tmp/milkdrift-cargo-home \
-    CARGO_NET_OFFLINE=true \
-    cargo metadata --locked --format-version 1 --no-deps > /dev/null
-```
-
-`cargo fetch` does not execute package build scripts. The second command is the
-offline completeness check; do not treat a cache that fails it as product
-evidence.
+The runner administrator maintains `/var/tmp/milkdrift-cargo-home` as a dependency-only Cargo cache without credentials. The trusted workflow synchronizes exact `Cargo.lock` packages after preflight; `cargo fetch` does not execute package build scripts, and the immediately following offline metadata step is the completeness check. The job fails before compilation when synchronization or that check fails, the cache is inaccessible, `RUNNER_TEMP` has less than 20 GiB free, or the Cargo-home filesystem has less than 4 GiB free. The 20 GiB threshold is a host-specific operational reserve for this self-hosted machine, not a standard-runner or product requirement: historical run 31281013243 observed its `/dev/mapper/root` filesystem at 1.9 TiB total with 139 GiB free before compilation. The redesigned job records both target sizes and filesystem availability so prompt-6 evidence can reassess that reserve. The runner must be Actions Runner 2.327.1 or newer for pinned checkout v7's Node 24 runtime.
 
 The job validates the exact RTX 5070 Ti / CUDA ordinal 0 / compute capability 12.0 / Toolkit 12.8+ / build-cap-120 matrix. It compiles metadata/policy, the exact CUDA check/Clippy graph, and all dedicated suites in `${RUNNER_TEMP}/milkdrift-cuda-check-target`, reports its size, and removes it before release execution. It then runs the complete adapter, E0, fault-cleanup, and E1 suite boundaries in `${RUNNER_TEMP}/milkdrift-cuda-hardware-target`, reports target/Cargo-home/filesystem use, and always cleans both targets. No shell registry contains test function names.
 

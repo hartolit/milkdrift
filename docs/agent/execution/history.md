@@ -643,5 +643,16 @@ admission-race assumption. All 93 `inference-runtime` tests, its strict
 all-target Clippy gate, 1,000 isolated executions of the repaired concurrent
 test, and a fresh complete `verify-component test` run passed locally. The
 fresh component included the previously unreached workflow/YAML/shell/resource
-self-tests. Exact clean-commit Quality and CUDA reruns remain mandatory after
-the runner service account refreshes and verifies its locked offline cache.
+self-tests. Exact clean-commit Quality and CUDA reruns remained mandatory.
+
+The scheduler repair became commit
+`59fa35cf1d6f72c9f18ffa25d04e25e7c482dd7e`, tree
+`78528de42f0eebcca88c61750196324dfb4d6b13`. Exact-tree Quality run
+[31693672969](https://github.com/hartolit/milkdrift/actions/runs/31693672969)
+passed every required job. CUDA run
+[31693672966](https://github.com/hartolit/milkdrift/actions/runs/31693672966)
+passed exact runner/GPU/toolchain preflight but repeated the same cache miss
+before compilation. The follow-up workflow repair replaces fallible out-of-band
+priming with one trusted `cargo fetch --locked` boundary and retains offline mode
+for all metadata, policy, compilation, Clippy, and hardware execution; no CUDA
+pass is claimed until that exact repaired tree runs.

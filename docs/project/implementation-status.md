@@ -5,10 +5,10 @@
 ```text
 Phase 12 and the artifact-loading, runtime-ownership, and application-boundary amendments are implemented.
 The post-closure foundation repair rejects ambiguous mixed precision, separates failed-load typestate, and corrects sequence reservation to simultaneous lifetimes.
-The exact-tree foundation closure passes its focused CPU, canonical native, portable, dependency-policy, and offline-link matrices locally; hosted Quality and current CUDA hardware acceptance remain separate pending evidence.
+The exact-tree foundation closure passes its focused CPU, canonical native, portable, dependency-policy, and offline-link matrices locally; scheduler repair commit 59fa35c also passes hosted Quality, while current CUDA hardware acceptance remains pending.
 The orchestration-boundary repair makes task-graph generic and allocation-free and moves corrective semantics into validated reference-template data; its focused host, portable, architecture, and hygiene matrix passes locally.
-The CI resource-topology repair gives each hosted verification profile an independently bounded metadata-owned plan; its local component, portability, workflow-policy, and shell/YAML validation passes, while redesigned remote runs remain pending.
-The first exact-candidate remote attempt is rejected: Quality exposed a race-sensitive fairness assertion, and CUDA found the maintained offline dependency cache incomplete before compilation. A focused local scheduler-test repair passes the hosted-parity test component; remote repair-tree acceptance remains pending.
+The CI resource-topology repair gives each hosted verification profile an independently bounded metadata-owned plan; its local component, portability, workflow-policy, and shell/YAML validation passes, and the redesigned hosted Quality topology has passed remotely.
+The scheduler repair's CUDA run repeated the persistent-cache miss before compilation. The workflow now owns one locked dependency synchronization step and keeps metadata, compilation, Clippy, and hardware execution offline; exact-tree remote CUDA acceptance remains pending.
 No later product phase is active, and workflow/workspace direction is not yet a ratified program.
 ```
 
@@ -38,7 +38,7 @@ General workflow definitions/runs, durable context workspaces, plugin execution,
 | Artifact source | Hugging Face revision resolved to an immutable commit. Selected LFS shards carry exact provider SHA-256/length identity; non-LFS and arbitrary local paths use explicit mutable-source fallback semantics. |
 | Format/architecture | Unquantized Safetensors through the current Llama compatibility path. All selected structure is inspected; only required Llama tensors are materialized. |
 | Required scalar layouts | Exactly `{F32}`, `{F16}`, `{F16,F32}`, `{BF16}`, and `{BF16,F32}` under the strict declaration policy below. Understood unused extras may broaden complete observed evidence without changing execution. |
-| CPU | Mandatory in every build and the default selection. The exact-tree local closure passes focused domain/Candle/E0/E1 lifecycle and accounting suites, all six native components, the clean canonical composite, and both portable domain targets. This is local evidence, not remote Quality, CUDA, external-model, leak, or performance evidence. |
+| CPU | Mandatory in every build and the default selection. The exact-tree local closure passes focused domain/Candle/E0/E1 lifecycle and accounting suites, all six native components, the clean canonical composite, and both portable domain targets. Hosted Quality passes on scheduler repair commit `59fa35c`; that result is not CUDA, external-model, leak, or performance evidence. |
 | CUDA | Non-default explicit ordinal 0 with no fallback. Implementation remains scoped to the exact RTX 5070 Ti row; Phase 12 remote hardware evidence applies only to `181a069`, and the artifact-loading amendment has later local hardware evidence. The current package's dedicated graph is registered, but local compilation stops in `cudarc` before Rust compilation because `nvcc` is absent. No current-tree CUDA compile or hardware result is accepted. |
 | Resident models | One selected/resident model in E1. |
 | Completion/chat | Direct completion for every loaded compatible model; built-in chat only for exact TinyLlama profile/revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`. |
@@ -126,7 +126,7 @@ External evidence schema 6 observes the public E1 product path without an indepe
 
 The redesigned command-plan and workflow tests pass locally, including composite/component parity, exact operations, fail-closed unknown roles/components, benchmark and portable ownership, CUDA owner/suite preservation, unique targets, centralized cleanup, immutable action pins, and shell parsing. Fresh local component targets completed at approximately 143 MiB (structure), 1.94 GiB (check), 7.33 GiB (tests), 1.94 GiB (Clippy), 1.95 GiB (rustdoc), and 1.20 GiB (exact benches); each portable leg retained about 149 MiB. Sequential policy-tool compilation sampled below 0.9 GiB. These measurements justify per-leg standard-runner preflights from 1–9 GiB and do not constitute product-performance or GitHub-hosted evidence.
 
-The standard hosted class remains Ubuntu 24.04 with 14 GB total SSD; no larger runner is selected. The separate self-hosted CUDA gate retains its 20 GiB host-specific reserve: historical run 31281013243 observed 139 GiB free on that runner's 1.9 TiB root filesystem. The redesigned Quality and CUDA workflows still require exact-tree remote execution before they can be accepted.
+The standard hosted class remains Ubuntu 24.04 with 14 GB total SSD; no larger runner is selected. The separate self-hosted CUDA gate retains its 20 GiB host-specific reserve: historical run 31281013243 observed 139 GiB free on that runner's 1.9 TiB root filesystem. Redesigned Quality passed on `59fa35c`; the cache-lifecycle repair and current CUDA suites still require exact-tree remote execution.
 
 ## Foundation closure 05 local acceptance
 
@@ -179,15 +179,16 @@ Isolated validation targets and temporary tool installation directories are remo
 - Phase 11 shared Quality [run 30942153370](https://github.com/hartolit/milkdrift/actions/runs/30942153370) and CUDA [run 30942148369](https://github.com/hartolit/milkdrift/actions/runs/30942148369) passed on commit `1a62d2ed6623500e9052b4b8386ebd058984bd89`.
 - Phase 12 CUDA [run 31281013243](https://github.com/hartolit/milkdrift/actions/runs/31281013243) passed on closure commit `181a069ce81525e9c144fe8de051ced8e3c0b9d7`.
 - Phase 12 Quality [run 31281013257](https://github.com/hartolit/milkdrift/actions/runs/31281013257) passed its canonical native work, then the old workspace-wide bench build left roughly 49 MiB free and the later WASM/root-target work failed with `No space left on device`. The linker bus error was consequential. This is infrastructure history, not a Rust/WASM product failure.
-- Those runs do not prove `d4a1e43`, `b43d0f4`, `1f91cba`, the infrastructure-truth tree, or the post-closure foundation repair.
+- Scheduler repair commit `59fa35c` passed every required job in Quality [run 31693672969](https://github.com/hartolit/milkdrift/actions/runs/31693672969). Its CUDA [run 31693672966](https://github.com/hartolit/milkdrift/actions/runs/31693672966) passed exact preflight and then stopped before compilation because `serde_yaml_ng` was absent from the persistent Cargo cache.
+- The Phase 11/12 runs do not prove `d4a1e43`, `b43d0f4`, `1f91cba`, the infrastructure-truth tree, or the post-closure foundation repair; the `59fa35c` result proves only its exact tree and only the Quality workflow.
 
 ## Unsupported behavior and open evidence
 
 - Quantized/GGUF loading, non-Llama architectures, arbitrary required mixtures, required F16+BF16, required unsupported dtypes, Metal, cuDNN, flash attention, NCCL, multi-GPU, generic `gpu`, automatic CPU fallback, and GPU-side sampling are unsupported.
 - CUDA outside an actually observed exact row is unclaimed. The current tree still needs post-push self-hosted execution of all dedicated suites.
 - The exact-tree local focused, canonical, portable, policy, and offline-link
-  matrices pass. Hosted Quality and current CUDA compile/hardware results remain
-  pending.
+  matrices pass. Hosted Quality passes on `59fa35c`; current CUDA
+  compile/hardware results remain pending.
 - No schema-6 external product run or immutable reviewed external mixed-checkpoint evidence exists.
 - Multi-model E1 residency, generalized chat, conversation persistence, general workflows/workspaces/plugins/providers/peers, and browser/remote transport are not implemented.
 - Synthetic fixtures prove deterministic compatibility/lifecycle behavior, not language quality, representative scale, production throughput, or external-checkpoint compatibility.

@@ -11,8 +11,8 @@ Its focused host, WASM, embedded, architecture, hygiene, and documentation gates
 The CI resource-topology repair is implemented: the local composite and hosted native components share one metadata-owned plan, and hosted profiles now use separate standard-runner targets with centralized cleanup.
 No workflow/workspace product program has been ratified or activated.
 Exact-tree local CPU, component, composite, portable, policy, and link acceptance passes on commit b1f7e90b1ba67f1cf968d773052b5062ef8cbbb9, tree fcb3ee6fa00243734abd74b64218aa0db2e340c1.
-The first exact-candidate remote attempt was rejected: Quality exposed a race-sensitive scheduler assertion, and CUDA stopped before compilation on an incomplete offline dependency cache.
-The focused scheduler-test repair now passes the complete hosted-parity test component locally; a clean repair commit, cache refresh, and exact-tree reruns remain pending.
+Scheduler repair commit 59fa35cf1d6f72c9f18ffa25d04e25e7c482dd7e, tree 78528de42f0eebcca88c61750196324dfb4d6b13, passes exact-tree hosted Quality.
+Its CUDA run still stopped before compilation because the persistent dependency cache was incomplete; a narrow workflow repair now synchronizes locked packages before returning every compilation and execution step to offline mode.
 ```
 
 ## Current maintenance scope
@@ -101,13 +101,14 @@ Current component and support truth is owned by
   CI topology. It is infrastructure history, not evidence for this repair.
 - The predecessor pristine-state tree has local native/portable evidence recorded
   in implementation status; that evidence also predates this repair.
-- The redesigned verification plans, workflow policy tests, embedded shell
-  syntax checks, six canonical native components, and both portable targets pass
-  locally from fresh isolated targets. Exact-candidate Quality run 31688874924
-  passed every non-test required job but failed the race-sensitive generation
-  assertion; CUDA run 31688874952 passed exact hardware preflight but found the
-  maintained offline Cargo cache incomplete before compilation. Neither run is
-  accepted. The focused test repair passes locally; exact repair-tree reruns are
+- Scheduler repair commit `59fa35cf1d6f72c9f18ffa25d04e25e7c482dd7e`
+  passes all required jobs in exact-tree Quality run
+  [31693672969](https://github.com/hartolit/milkdrift/actions/runs/31693672969).
+  CUDA run
+  [31693672966](https://github.com/hartolit/milkdrift/actions/runs/31693672966)
+  passed runner/GPU/toolchain preflight, then repeated the missing
+  `serde_yaml_ng` cache failure before compilation. The workflow now owns one
+  locked cache-synchronization boundary; an exact repaired-tree CUDA rerun is
   still required.
 - External mixed-checkpoint evidence remains absent. Historical reports retain
   their original schema and exact commit attribution.
@@ -152,16 +153,16 @@ KiB (check), 7,681,172 KiB (tests), 2,027,432 KiB (Clippy), 2,041,140 KiB
 licenses, and sources; pinned Lychee 0.24.2 checked 256 links with 0 errors.
 
 No source, test, workflow, or documentation defect was exposed before evidence
-recording. GitHub-hosted Quality, current self-hosted RTX CUDA acceptance, and a
-reviewed external mixed checkpoint remain pending. This local result does not
-authorize AMD support or the workflow/workspace product program.
+recording. Current self-hosted RTX CUDA acceptance and a reviewed external mixed
+checkpoint remain pending. This local result does not authorize AMD support or
+the workflow/workspace product program.
 
 ## Handoff and acceptance order
 
-1. Push only when requested and observe the redesigned hosted Quality run on the
-   exact pushed closure commit.
-2. On the supported NVIDIA host, run the exact CUDA check/Clippy graph and all
-   dedicated adapter/E0/fault/E1 hardware suites.
+1. Push only when requested and observe both workflows on the exact cache-lifecycle
+   repair commit.
+2. Require the supported NVIDIA host to run the exact CUDA check/Clippy graph and
+   all dedicated adapter/E0/fault/E1 hardware suites.
 3. Record only results from the exact repaired commit/tree. Update current
    evidence and history after those results exist, not before.
 4. Refuse AMD or workflow/workspace activation while any correctness, ownership,
