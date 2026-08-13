@@ -6,12 +6,13 @@ use std::env;
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode, ExitStatus};
+use std::process::{Command, ExitCode, ExitStatus, Stdio};
 
 use xtask::{
-    CargoCommand, benchmark_command_plan, cuda_clippy_command_plan, cuda_compile_command_plan,
-    cuda_hardware_command_plan, portable_command_plan, validate_repository_hygiene,
-    validate_workspace,
+    CargoCommand, VerificationComponent, VerificationOperation, VerificationPlan,
+    cuda_clippy_command_plan, cuda_compile_command_plan, cuda_hardware_command_plan,
+    native_verification_plan, portable_command_plan, validate_repository_hygiene,
+    validate_workspace, verification_component_plan,
 };
 
 const HELP: &str = "\
@@ -19,12 +20,15 @@ Milkdrift workspace tooling
 
 USAGE:
     cargo xtask <command>
+    cargo xtask verify-component <structure|check|test|clippy|docs|benches|nursery>
     cargo xtask portable <wasm32-unknown-unknown|thumbv7em-none-eabihf>
 
 COMMANDS:
     architecture    Validate workspace roles, layout, dependency DAG, and feature policy
     hygiene         Validate operational surfaces and the selected dependency graph
     verify          Run policy, format, build, test, lint, docs, and exact benchmark gates
+    verify-component
+                    Run one metadata-owned native component; nursery is exploratory
     portable        Check every metadata-owned domain library for one portable target
     cuda-compile    Check CUDA owners and compile CUDA tests and exact hardware suites
     cuda-clippy     Lint CUDA owners and exact hardware suites with warnings denied
@@ -78,6 +82,22 @@ fn execute() -> io::Result<ExitCode> {
                 return Ok(argument_error("verify does not accept arguments"));
             }
             verify()
+        }
+        "verify-component" => {
+            let [component] = remaining.as_slice() else {
+                return Ok(argument_error(
+                    "verify-component requires exactly one component name",
+                ));
+            };
+            let Some(component) = component.to_str() else {
+                return Ok(argument_error("verification component must be valid UTF-8"));
+            };
+            let Some(component) = VerificationComponent::parse(component) else {
+                return Ok(argument_error("unknown verification component"));
+            };
+            let plan = verification_component_plan(&workspace_manifest(), component)
+                .map_err(io::Error::other)?;
+            run_verification_plan(&plan)
         }
         "portable" => {
             let [target] = remaining.as_slice() else {
@@ -137,49 +157,24 @@ fn argument_error(message: &str) -> ExitCode {
 }
 
 fn verify() -> io::Result<bool> {
-    if !validate_architecture()? || !validate_hygiene()? {
-        return Ok(false);
-    }
-
-    let commands = [
-        command(&["fmt", "--all", "--", "--check"]),
-        command(&["check", "--workspace", "--all-targets", "--locked"]),
-        command(&["test", "--workspace", "--locked"]),
-        command(&[
-            "clippy",
-            "--workspace",
-            "--all-targets",
-            "--locked",
-            "--",
-            "-D",
-            "warnings",
-        ]),
-        command(&["doc", "--workspace", "--no-deps", "--locked"]),
-    ];
-    if !run_sequence(&commands)? {
-        return Ok(false);
-    }
-
-    let benchmark_commands =
-        benchmark_command_plan(&workspace_manifest()).map_err(io::Error::other)?;
-    for benchmark in benchmark_commands {
-        if !run_cargo(benchmark.arguments())? {
+    let plans = native_verification_plan(&workspace_manifest()).map_err(io::Error::other)?;
+    for plan in plans {
+        if !run_verification_plan(&plan)? {
             return Ok(false);
         }
     }
     Ok(true)
 }
 
-fn command(arguments: &[&str]) -> Vec<String> {
-    arguments
-        .iter()
-        .map(|argument| (*argument).to_owned())
-        .collect()
-}
-
-fn run_sequence(commands: &[Vec<String>]) -> io::Result<bool> {
-    for arguments in commands {
-        if !run_cargo(arguments)? {
+fn run_verification_plan(plan: &VerificationPlan) -> io::Result<bool> {
+    println!("== verify component: {} ==", plan.component().as_str());
+    for operation in plan.operations() {
+        let success = match operation {
+            VerificationOperation::Architecture => validate_architecture()?,
+            VerificationOperation::Hygiene => validate_hygiene()?,
+            VerificationOperation::Cargo(command) => run_cargo(command.arguments())?,
+        };
+        if !success {
             return Ok(false);
         }
     }
@@ -208,7 +203,12 @@ fn run_cargo(arguments: &[String]) -> io::Result<bool> {
             "workspace manifest has no parent directory",
         ));
     };
-    println!("+ cargo {}", arguments.join(" "));
+    let suppress_stdout = subcommand == "metadata";
+    if suppress_stdout {
+        println!("+ cargo {} > /dev/null", arguments.join(" "));
+    } else {
+        println!("+ cargo {}", arguments.join(" "));
+    }
 
     let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
     let mut process = Command::new(cargo);
@@ -216,6 +216,9 @@ fn run_cargo(arguments: &[String]) -> io::Result<bool> {
         .current_dir(workspace_root)
         .arg(subcommand)
         .args(options);
+    if suppress_stdout {
+        process.stdout(Stdio::null());
+    }
     if subcommand == "doc" {
         process.env("RUSTDOCFLAGS", "-D warnings");
     }

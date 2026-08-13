@@ -21,7 +21,7 @@ Hard harness timeouts stop hangs only. Lifecycle, fixture, identity, output, cle
 | `cuda.fixture-correctness` | Dedicated adapter/E0/E1 CUDA suites; hardware correctness | Download-free fixture; exact self-hosted RTX 5070 Ti matrix | GitHub/local test logs | Product performance or external-model compatibility |
 | `compile.maintained-benches` | Exact registered Cargo bench targets; compile-only | Locked graph; bench profile | `xtask` manifest registry | Runtime correctness or performance |
 
-CI target size/free-space observations are infrastructure evidence and are recorded in [implementation status](implementation-status.md) and [execution history](../agent/execution/history.md), not interpreted as product performance.
+CI target size/free-space observations are infrastructure evidence and are recorded in [implementation status](implementation-status.md) and [execution history](../agent/execution/history.md), not interpreted as product performance. The Quality topology compiles `compile.maintained-benches` in its own fresh target and gives check, tests, Clippy, and rustdoc separate standard-runner filesystems; none of their artifact sizes is a runtime-memory, throughput, or latency measurement. Current local resource observations and the corresponding per-leg preflights are documented in [validation](validation.md#shared-cpu-quality-workflow). Hosted low-water observations remain pending an exact redesigned run.
 
 ## Sampling methodology
 

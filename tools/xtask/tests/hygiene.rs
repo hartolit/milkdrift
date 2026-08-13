@@ -258,7 +258,7 @@ fn tracked_utf8_text_rejects_trailing_whitespace_outside_rust_sources() -> Resul
             violation.rule() == "HYGIENE-TRACKED-WHITESPACE-1"
                 && violation.path() == Some(Path::new("docs/readme.md"))
         })
-        .filter_map(|violation| violation.line())
+        .filter_map(xtask::HygieneViolation::line)
         .collect::<Vec<_>>();
     assert_eq!(lines, vec![2, 3]);
     Ok(())

@@ -16,5 +16,8 @@ cargo_metadata.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 
+[dev-dependencies]
+serde_yaml_ng.workspace = true
+
 [lints]
 workspace = true

@@ -13,120 +13,114 @@ concurrency:
   group: quality-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_INCREMENTAL: "0"
+
 jobs:
-  native:
-    name: Rust and architecture
+  native-components:
+    name: Native ${{ matrix.name }}
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: structure, format, and metadata
+            component: structure
+            target_name: milkdrift-native-structure-target
+            shim_name: milkdrift-native-structure-shims
+            minimum_free_kib: 1048576
+            system_packages: ""
+            use_shims: false
+          - name: workspace check
+            component: check
+            target_name: milkdrift-native-check-target
+            shim_name: milkdrift-native-check-shims
+            minimum_free_kib: 4194304
+            system_packages: build-essential libfontconfig1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
+            use_shims: true
+          - name: workspace tests
+            component: test
+            target_name: milkdrift-native-test-target
+            shim_name: milkdrift-native-test-shims
+            minimum_free_kib: 9437184
+            system_packages: build-essential libfontconfig1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
+            use_shims: true
+          - name: strict Clippy
+            component: clippy
+            target_name: milkdrift-native-clippy-target
+            shim_name: milkdrift-native-clippy-shims
+            minimum_free_kib: 4194304
+            system_packages: build-essential libfontconfig1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
+            use_shims: true
+          - name: warning-denied rustdoc
+            component: docs
+            target_name: milkdrift-native-docs-target
+            shim_name: milkdrift-native-docs-shims
+            minimum_free_kib: 4194304
+            system_packages: build-essential libfontconfig1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
+            use_shims: true
+          - name: maintained benchmark compilation
+            component: benches
+            target_name: milkdrift-native-benches-target
+            shim_name: milkdrift-native-benches-shims
+            minimum_free_kib: 3145728
+            system_packages: build-essential
+            use_shims: true
     env:
-      CARGO_INCREMENTAL: "0"
+      AWS_LC_SYS_CMAKE_BUILDER: "0"
+      AWS_LC_SYS_USE_SYSTEM: "0"
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Preflight native target and disk
+      - name: Prepare isolated component target
+        env:
+          TARGET_NAME: ${{ matrix.target_name }}
+          SHIM_NAME: ${{ matrix.shim_name }}
+          MINIMUM_FREE_KIB: ${{ matrix.minimum_free_kib }}
         run: |
           set -eu
-          cargo_target_dir="${RUNNER_TEMP}/milkdrift-native-quality-target"
-          shim_dir="${RUNNER_TEMP}/milkdrift-forbidden-tool-shims"
+          cargo_target_dir="${RUNNER_TEMP}/${TARGET_NAME}"
+          shim_dir="${RUNNER_TEMP}/${SHIM_NAME}"
           printf 'CARGO_TARGET_DIR=%s\n' "${cargo_target_dir}" >> "${GITHUB_ENV}"
           printf 'MILKDRIFT_SHIM_DIR=%s\n' "${shim_dir}" >> "${GITHUB_ENV}"
-          test ! -e "${GITHUB_WORKSPACE}/target"
+          .github/scripts/ci-resource.sh prepare "${MINIMUM_FREE_KIB}" "${cargo_target_dir}"
 
-          available_kib="$(df -Pk "${RUNNER_TEMP}" | awk 'NR == 2 { print $4 }')"
-          minimum_kib=14680064
-          if test "${available_kib}" -lt "${minimum_kib}"
-          then
-            printf '%s\n' "native quality requires at least 14 GiB free in RUNNER_TEMP" >&2
-            df -h "${RUNNER_TEMP}" >&2
-            exit 1
-          fi
-
-          rm -rf "${cargo_target_dir}" "${shim_dir}"
-          mkdir -p "${cargo_target_dir}" "${shim_dir}"
-          df -h "${RUNNER_TEMP}"
-
-      - name: Install selected native compiler and Slint dependencies
+      - name: Install component system dependencies
+        if: matrix.system_packages != ''
+        env:
+          SYSTEM_PACKAGES: ${{ matrix.system_packages }}
         run: |
           sudo apt-get update
-          # The selected non-FIPS aws-lc path uses its CC builder; build-essential supplies the native compiler.
-          # The remaining development libraries are Slint windowing/font integration packages.
-          sudo apt-get install --yes build-essential libfontconfig1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
+          sudo apt-get install --yes ${SYSTEM_PACKAGES}
 
-      - name: Verify committed lockfile
-        run: cargo metadata --locked --format-version 1 --no-deps > /dev/null
+      - name: Install forbidden-tool shims
+        if: matrix.use_shims
+        run: .github/scripts/ci-resource.sh forbidden-shims "${MILKDRIFT_SHIM_DIR}"
 
-      - name: Run canonical gate with forbidden-tool shims
-        env:
-          AWS_LC_SYS_CMAKE_BUILDER: "0"
-          AWS_LC_SYS_USE_SYSTEM: "0"
+      - name: Record checked-out provenance
         run: |
-          set -eu
-
-          cat > "${MILKDRIFT_SHIM_DIR}/fail" <<'EOF'
-          #!/bin/sh
-          printf '%s\n' "unexpected external tool invocation: $0" >&2
-          exit 86
-          EOF
-          chmod 755 "${MILKDRIFT_SHIM_DIR}/fail"
-
-          for tool in cmake cmake3 clang clang++ python python3 python-config python3-config pip pip3 pipx uv conda poetry pytest maturin hf huggingface-cli
-          do
-            ln -s fail "${MILKDRIFT_SHIM_DIR}/${tool}"
-          done
-
-          export CMAKE="${MILKDRIFT_SHIM_DIR}/cmake"
-          export PYTHON="${MILKDRIFT_SHIM_DIR}/python"
-          export PYTHON3="${MILKDRIFT_SHIM_DIR}/python3"
-          export PATH="${MILKDRIFT_SHIM_DIR}:${PATH}"
-
           git rev-parse HEAD
           git rev-parse 'HEAD^{tree}'
-          cargo xtask verify
+
+      - name: Run metadata-owned native component
+        run: cargo xtask verify-component "${{ matrix.component }}"
 
       - name: Report duplicate dependencies
+        if: matrix.component == 'structure'
         run: cargo tree -d --locked
 
-      - name: Observe native target and disk
-        run: |
-          set -eu
-          du -sh "${CARGO_TARGET_DIR}"
-          df -h "${RUNNER_TEMP}"
-          test ! -e "${GITHUB_WORKSPACE}/target"
-
-      - name: Remove native target and shims
+      - name: Observe and remove component resources
         if: ${{ always() }}
+        env:
+          TARGET_NAME: ${{ matrix.target_name }}
+          SHIM_NAME: ${{ matrix.shim_name }}
         run: |
-          set -u
-          cargo_target_dir="${CARGO_TARGET_DIR:-${RUNNER_TEMP}/milkdrift-native-quality-target}"
-          shim_dir="${MILKDRIFT_SHIM_DIR:-${RUNNER_TEMP}/milkdrift-forbidden-tool-shims}"
-          failed=0
-          if test -e "${GITHUB_WORKSPACE}/target" || test -L "${GITHUB_WORKSPACE}/target"
-          then
-            printf '%s\n' "unexpected root target was created" >&2
-            du -sh "${GITHUB_WORKSPACE}/target" >&2 || true
-            failed=1
-          fi
-          if test -e "${cargo_target_dir}"
-          then
-            du -sh "${cargo_target_dir}" || true
-          fi
-          df -h "${RUNNER_TEMP}" || true
-          if ! rm -rf "${cargo_target_dir}" "${shim_dir}" "${GITHUB_WORKSPACE}/target"
-          then
-            printf '%s\n' "failed to remove native target, shims, or root target" >&2
-            failed=1
-          fi
-          for path in "${cargo_target_dir}" "${shim_dir}" "${GITHUB_WORKSPACE}/target"
-          do
-            if test -e "${path}" || test -L "${path}"
-            then
-              printf '%s\n' "cleanup path still exists: ${path}" >&2
-              failed=1
-            fi
-          done
-          exit "${failed}"
+          cargo_target_dir="${CARGO_TARGET_DIR:-${RUNNER_TEMP}/${TARGET_NAME}}"
+          shim_dir="${MILKDRIFT_SHIM_DIR:-${RUNNER_TEMP}/${SHIM_NAME}}"
+          .github/scripts/ci-resource.sh cleanup "${cargo_target_dir}" "${shim_dir}"
 
   portable:
     name: Portable domain crates (${{ matrix.name }})
@@ -137,37 +131,24 @@ jobs:
         include:
           - name: WebAssembly
             target: wasm32-unknown-unknown
-            target_dir_name: milkdrift-wasm-target
+            target_name: milkdrift-portable-wasm-target
           - name: embedded no_std
             target: thumbv7em-none-eabihf
-            target_dir_name: milkdrift-thumb-target
-    env:
-      CARGO_INCREMENTAL: "0"
+            target_name: milkdrift-portable-thumb-target
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Preflight portable target and disk
+      - name: Prepare isolated portable target
+        env:
+          TARGET_NAME: ${{ matrix.target_name }}
         run: |
           set -eu
-          cargo_target_dir="${RUNNER_TEMP}/${{ matrix.target_dir_name }}"
+          cargo_target_dir="${RUNNER_TEMP}/${TARGET_NAME}"
           printf 'CARGO_TARGET_DIR=%s\n' "${cargo_target_dir}" >> "${GITHUB_ENV}"
-          test ! -e "${GITHUB_WORKSPACE}/target"
-
-          available_kib="$(df -Pk "${RUNNER_TEMP}" | awk 'NR == 2 { print $4 }')"
-          minimum_kib=4194304
-          if test "${available_kib}" -lt "${minimum_kib}"
-          then
-            printf '%s\n' "portable checks require at least 4 GiB free in RUNNER_TEMP" >&2
-            df -h "${RUNNER_TEMP}" >&2
-            exit 1
-          fi
-
-          rm -rf "${cargo_target_dir}"
-          mkdir -p "${cargo_target_dir}"
-          df -h "${RUNNER_TEMP}"
+          .github/scripts/ci-resource.sh prepare 1048576 "${cargo_target_dir}"
 
       - name: Install exact portable target
         run: rustup target add "${{ matrix.target }}"
@@ -175,160 +156,39 @@ jobs:
       - name: Check portable domain crates
         run: cargo xtask portable "${{ matrix.target }}"
 
-      - name: Observe portable target and disk
-        run: |
-          set -eu
-          du -sh "${CARGO_TARGET_DIR}"
-          df -h "${RUNNER_TEMP}"
-          test ! -e "${GITHUB_WORKSPACE}/target"
-
-      - name: Remove portable target
+      - name: Observe and remove portable target
         if: ${{ always() }}
+        env:
+          TARGET_NAME: ${{ matrix.target_name }}
         run: |
-          set -u
-          cargo_target_dir="${CARGO_TARGET_DIR:-${RUNNER_TEMP}/${{ matrix.target_dir_name }}}"
-          failed=0
-          if test -e "${GITHUB_WORKSPACE}/target" || test -L "${GITHUB_WORKSPACE}/target"
-          then
-            printf '%s\n' "unexpected root target was created" >&2
-            du -sh "${GITHUB_WORKSPACE}/target" >&2 || true
-            failed=1
-          fi
-          if test -e "${cargo_target_dir}"
-          then
-            du -sh "${cargo_target_dir}" || true
-          fi
-          df -h "${RUNNER_TEMP}" || true
-          if ! rm -rf "${cargo_target_dir}" "${GITHUB_WORKSPACE}/target"
-          then
-            printf '%s\n' "failed to remove portable target or root target" >&2
-            failed=1
-          fi
-          for path in "${cargo_target_dir}" "${GITHUB_WORKSPACE}/target"
-          do
-            if test -e "${path}" || test -L "${path}"
-            then
-              printf '%s\n' "cleanup path still exists: ${path}" >&2
-              failed=1
-            fi
-          done
-          exit "${failed}"
-
-  nursery:
-    name: Scheduled Clippy nursery
-    if: github.event_name == 'schedule'
-    continue-on-error: true
-    runs-on: ubuntu-24.04
-    env:
-      CARGO_INCREMENTAL: "0"
-      AWS_LC_SYS_CMAKE_BUILDER: "0"
-      AWS_LC_SYS_USE_SYSTEM: "0"
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Preflight nursery target and disk
-        run: |
-          set -eu
-          cargo_target_dir="${RUNNER_TEMP}/milkdrift-nursery-target"
-          printf 'CARGO_TARGET_DIR=%s\n' "${cargo_target_dir}" >> "${GITHUB_ENV}"
-          test ! -e "${GITHUB_WORKSPACE}/target"
-          available_kib="$(df -Pk "${RUNNER_TEMP}" | awk 'NR == 2 { print $4 }')"
-          minimum_kib=12582912
-          if test "${available_kib}" -lt "${minimum_kib}"
-          then
-            printf '%s\n' "scheduled nursery requires at least 12 GiB free in RUNNER_TEMP" >&2
-            df -h "${RUNNER_TEMP}" >&2
-            exit 1
-          fi
-          rm -rf "${cargo_target_dir}"
-          mkdir -p "${cargo_target_dir}"
-          df -h "${RUNNER_TEMP}"
-
-      - name: Install selected native compiler and Slint dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes build-essential libfontconfig1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
-
-      - name: Report exploratory Clippy nursery findings
-        run: cargo clippy --workspace --all-targets --locked -- -W clippy::nursery
-
-      - name: Remove nursery target
-        if: ${{ always() }}
-        run: |
-          set -u
-          cargo_target_dir="${CARGO_TARGET_DIR:-${RUNNER_TEMP}/milkdrift-nursery-target}"
-          failed=0
-          if test -e "${GITHUB_WORKSPACE}/target" || test -L "${GITHUB_WORKSPACE}/target"
-          then
-            printf '%s\n' "unexpected root target was created" >&2
-            du -sh "${GITHUB_WORKSPACE}/target" >&2 || true
-            failed=1
-          fi
-          if test -e "${cargo_target_dir}"
-          then
-            du -sh "${cargo_target_dir}" || true
-          fi
-          df -h "${RUNNER_TEMP}" || true
-          if ! rm -rf "${cargo_target_dir}" "${GITHUB_WORKSPACE}/target"
-          then
-            printf '%s\n' "failed to remove nursery target or root target" >&2
-            failed=1
-          fi
-          for path in "${cargo_target_dir}" "${GITHUB_WORKSPACE}/target"
-          do
-            if test -e "${path}" || test -L "${path}"
-            then
-              printf '%s\n' "cleanup path still exists: ${path}" >&2
-              failed=1
-            fi
-          done
-          exit "${failed}"
+          cargo_target_dir="${CARGO_TARGET_DIR:-${RUNNER_TEMP}/${TARGET_NAME}}"
+          .github/scripts/ci-resource.sh cleanup "${cargo_target_dir}"
 
   policy:
     name: Dependency and documentation policy
     runs-on: ubuntu-24.04
-    env:
-      CARGO_INCREMENTAL: "0"
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Preflight policy target and disk
+      - name: Prepare isolated policy tools
         run: |
           set -eu
           cargo_install_root="${RUNNER_TEMP}/milkdrift-policy-tools"
           cargo_target_dir="${RUNNER_TEMP}/milkdrift-policy-target"
           printf 'CARGO_INSTALL_ROOT=%s\n' "${cargo_install_root}" >> "${GITHUB_ENV}"
           printf 'CARGO_TARGET_DIR=%s\n' "${cargo_target_dir}" >> "${GITHUB_ENV}"
-          test ! -e "${GITHUB_WORKSPACE}/target"
-          available_kib="$(df -Pk "${RUNNER_TEMP}" | awk 'NR == 2 { print $4 }')"
-          minimum_kib=6291456
-          if test "${available_kib}" -lt "${minimum_kib}"
-          then
-            printf '%s\n' "policy tooling requires at least 6 GiB free in RUNNER_TEMP" >&2
-            df -h "${RUNNER_TEMP}" >&2
-            exit 1
-          fi
-          rm -rf "${cargo_target_dir}" "${cargo_install_root}"
-          mkdir -p "${cargo_target_dir}" "${cargo_install_root}"
           printf '%s\n' "${cargo_install_root}/bin" >> "${GITHUB_PATH}"
-          df -h "${RUNNER_TEMP}"
+          .github/scripts/ci-resource.sh prepare 2097152 \
+            "${cargo_target_dir}" "${cargo_install_root}"
 
       - name: Install pinned cargo-deny
         run: cargo install cargo-deny --version 0.20.2 --locked --root "${CARGO_INSTALL_ROOT}"
 
-      - name: Remove cargo-deny build artifacts
-        run: |
-          set -eu
-          du -sh "${CARGO_TARGET_DIR}"
-          rm -rf "${CARGO_TARGET_DIR}"
-          mkdir -p "${CARGO_TARGET_DIR}"
-          df -h "${RUNNER_TEMP}"
+      - name: Reset policy build target between tools
+        run: .github/scripts/ci-resource.sh reset "${CARGO_TARGET_DIR}"
 
       - name: Install pinned Lychee
         run: cargo install lychee --version 0.24.2 --locked --root "${CARGO_INSTALL_ROOT}"
@@ -339,71 +199,74 @@ jobs:
       - name: Check repository-local Markdown links
         run: lychee --config lychee.toml --offline '**/*.md'
 
-      - name: Remove policy targets and tools
+      - name: Observe and remove policy resources
         if: ${{ always() }}
         run: |
-          set -u
-          cargo_install_root="${CARGO_INSTALL_ROOT:-${RUNNER_TEMP}/milkdrift-policy-tools}"
           cargo_target_dir="${CARGO_TARGET_DIR:-${RUNNER_TEMP}/milkdrift-policy-target}"
-          failed=0
-          if test -e "${GITHUB_WORKSPACE}/target" || test -L "${GITHUB_WORKSPACE}/target"
-          then
-            printf '%s\n' "unexpected root target was created" >&2
-            du -sh "${GITHUB_WORKSPACE}/target" >&2 || true
-            failed=1
-          fi
-          if test -e "${cargo_target_dir}"
-          then
-            du -sh "${cargo_target_dir}" || true
-          fi
-          df -h "${RUNNER_TEMP}" || true
-          if ! rm -rf "${cargo_target_dir}" "${cargo_install_root}" "${GITHUB_WORKSPACE}/target"
-          then
-            printf '%s\n' "failed to remove policy targets, tools, or root target" >&2
-            failed=1
-          fi
-          for path in "${cargo_target_dir}" "${cargo_install_root}" "${GITHUB_WORKSPACE}/target"
-          do
-            if test -e "${path}" || test -L "${path}"
-            then
-              printf '%s\n' "cleanup path still exists: ${path}" >&2
-              failed=1
-            fi
-          done
-          exit "${failed}"
+          cargo_install_root="${CARGO_INSTALL_ROOT:-${RUNNER_TEMP}/milkdrift-policy-tools}"
+          .github/scripts/ci-resource.sh cleanup "${cargo_target_dir}" "${cargo_install_root}"
 
-  external-links:
-    name: External Markdown links
+  nursery:
+    name: Scheduled Clippy nursery
     if: github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     env:
-      CARGO_INCREMENTAL: "0"
+      AWS_LC_SYS_CMAKE_BUILDER: "0"
+      AWS_LC_SYS_USE_SYSTEM: "0"
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Preflight link target and disk
+      - name: Prepare isolated nursery target
+        run: |
+          set -eu
+          cargo_target_dir="${RUNNER_TEMP}/milkdrift-nursery-target"
+          shim_dir="${RUNNER_TEMP}/milkdrift-nursery-shims"
+          printf 'CARGO_TARGET_DIR=%s\n' "${cargo_target_dir}" >> "${GITHUB_ENV}"
+          printf 'MILKDRIFT_SHIM_DIR=%s\n' "${shim_dir}" >> "${GITHUB_ENV}"
+          .github/scripts/ci-resource.sh prepare 4194304 "${cargo_target_dir}"
+
+      - name: Install native compiler and Slint dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential libfontconfig1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
+
+      - name: Install forbidden-tool shims
+        run: .github/scripts/ci-resource.sh forbidden-shims "${MILKDRIFT_SHIM_DIR}"
+
+      - name: Report exploratory Clippy nursery findings
+        continue-on-error: true
+        run: cargo xtask verify-component nursery
+
+      - name: Observe and remove nursery resources
+        if: ${{ always() }}
+        run: |
+          cargo_target_dir="${CARGO_TARGET_DIR:-${RUNNER_TEMP}/milkdrift-nursery-target}"
+          shim_dir="${MILKDRIFT_SHIM_DIR:-${RUNNER_TEMP}/milkdrift-nursery-shims}"
+          .github/scripts/ci-resource.sh cleanup "${cargo_target_dir}" "${shim_dir}"
+
+  external-links:
+    name: External Markdown links
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare isolated link checker
         run: |
           set -eu
           cargo_install_root="${RUNNER_TEMP}/milkdrift-link-tools"
           cargo_target_dir="${RUNNER_TEMP}/milkdrift-external-links-target"
           printf 'CARGO_INSTALL_ROOT=%s\n' "${cargo_install_root}" >> "${GITHUB_ENV}"
           printf 'CARGO_TARGET_DIR=%s\n' "${cargo_target_dir}" >> "${GITHUB_ENV}"
-          test ! -e "${GITHUB_WORKSPACE}/target"
-          available_kib="$(df -Pk "${RUNNER_TEMP}" | awk 'NR == 2 { print $4 }')"
-          minimum_kib=4194304
-          if test "${available_kib}" -lt "${minimum_kib}"
-          then
-            printf '%s\n' "external link tooling requires at least 4 GiB free in RUNNER_TEMP" >&2
-            df -h "${RUNNER_TEMP}" >&2
-            exit 1
-          fi
-          rm -rf "${cargo_target_dir}" "${cargo_install_root}"
-          mkdir -p "${cargo_target_dir}" "${cargo_install_root}"
           printf '%s\n' "${cargo_install_root}/bin" >> "${GITHUB_PATH}"
-          df -h "${RUNNER_TEMP}"
+          .github/scripts/ci-resource.sh prepare 2097152 \
+            "${cargo_target_dir}" "${cargo_install_root}"
 
       - name: Install pinned link checker
         run: cargo install lychee --version 0.24.2 --locked --root "${CARGO_INSTALL_ROOT}"
@@ -411,35 +274,9 @@ jobs:
       - name: Check external Markdown links
         run: lychee --config lychee.toml '**/*.md'
 
-      - name: Remove link target and tools
+      - name: Observe and remove link-check resources
         if: ${{ always() }}
         run: |
-          set -u
-          cargo_install_root="${CARGO_INSTALL_ROOT:-${RUNNER_TEMP}/milkdrift-link-tools}"
           cargo_target_dir="${CARGO_TARGET_DIR:-${RUNNER_TEMP}/milkdrift-external-links-target}"
-          failed=0
-          if test -e "${GITHUB_WORKSPACE}/target" || test -L "${GITHUB_WORKSPACE}/target"
-          then
-            printf '%s\n' "unexpected root target was created" >&2
-            du -sh "${GITHUB_WORKSPACE}/target" >&2 || true
-            failed=1
-          fi
-          if test -e "${cargo_target_dir}"
-          then
-            du -sh "${cargo_target_dir}" || true
-          fi
-          df -h "${RUNNER_TEMP}" || true
-          if ! rm -rf "${cargo_target_dir}" "${cargo_install_root}" "${GITHUB_WORKSPACE}/target"
-          then
-            printf '%s\n' "failed to remove link target, tools, or root target" >&2
-            failed=1
-          fi
-          for path in "${cargo_target_dir}" "${cargo_install_root}" "${GITHUB_WORKSPACE}/target"
-          do
-            if test -e "${path}" || test -L "${path}"
-            then
-              printf '%s\n' "cleanup path still exists: ${path}" >&2
-              failed=1
-            fi
-          done
-          exit "${failed}"
+          cargo_install_root="${CARGO_INSTALL_ROOT:-${RUNNER_TEMP}/milkdrift-link-tools}"
+          .github/scripts/ci-resource.sh cleanup "${cargo_target_dir}" "${cargo_install_root}"

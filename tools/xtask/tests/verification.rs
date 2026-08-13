@@ -9,10 +9,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use cargo_metadata::{Metadata, MetadataCommand};
 use xtask::{
-    CargoCommand, cuda_clippy_command_plan, cuda_clippy_command_plan_for_metadata,
-    cuda_compile_command_plan, cuda_compile_command_plan_for_metadata, cuda_hardware_command_plan,
-    cuda_hardware_command_plan_for_metadata, portable_command_plan,
-    portable_command_plan_for_metadata,
+    CargoCommand, VerificationComponent, VerificationOperation, VerificationPlan,
+    cuda_clippy_command_plan, cuda_clippy_command_plan_for_metadata, cuda_compile_command_plan,
+    cuda_compile_command_plan_for_metadata, cuda_hardware_command_plan,
+    cuda_hardware_command_plan_for_metadata, native_verification_plan, portable_command_plan,
+    portable_command_plan_for_metadata, verification_component_plan,
+    verification_component_plan_for_metadata,
 };
 
 static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
@@ -132,6 +134,39 @@ fn command_arguments(commands: &[CargoCommand]) -> Vec<Vec<String>> {
         .collect()
 }
 
+fn cargo_operation_arguments(plan: &VerificationPlan) -> Vec<Vec<String>> {
+    plan.operations()
+        .iter()
+        .filter_map(|operation| match operation {
+            VerificationOperation::Cargo(command) => Some(command.arguments().to_vec()),
+            VerificationOperation::Architecture | VerificationOperation::Hygiene => None,
+        })
+        .collect()
+}
+
+fn package_command(prefix: &[&str], suffix: &[&str]) -> Vec<String> {
+    let packages = [
+        "adapter",
+        "app",
+        "capability",
+        "e0",
+        "e1",
+        "f0",
+        "f1-a",
+        "f1-b",
+        "observer",
+        "platform",
+        "policy-tool",
+    ];
+    let mut arguments = strings(prefix);
+    for package in packages {
+        arguments.push("-p".to_owned());
+        arguments.push(package.to_owned());
+    }
+    arguments.extend(strings(suffix));
+    arguments
+}
+
 fn selected_package(command: &CargoCommand) -> Option<&str> {
     command
         .arguments()
@@ -177,11 +212,152 @@ fn help_exposes_metadata_owned_command_surface() -> Result<(), Box<dyn Error>> {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout)?;
     assert!(stdout.contains("Milkdrift workspace tooling"));
+    assert!(stdout.contains("verify-component <structure|check|test|clippy|docs|benches|nursery>"));
     assert!(stdout.contains("portable <wasm32-unknown-unknown|thumbv7em-none-eabihf>"));
     assert!(stdout.contains("cuda-compile"));
     assert!(stdout.contains("cuda-clippy"));
     assert!(stdout.contains("cuda-hardware"));
     assert!(!stdout.contains("llm-app"));
+    Ok(())
+}
+
+#[test]
+fn canonical_composite_and_hosted_components_share_exact_plans() -> Result<(), Box<dyn Error>> {
+    let fixture = FixtureWorkspace::new("scalable-policy")?;
+    fixture.refresh_lock()?;
+    let metadata = fixture.metadata()?;
+    let composite = native_verification_plan(&fixture.manifest())?;
+
+    assert_eq!(
+        composite
+            .iter()
+            .map(VerificationPlan::component)
+            .collect::<Vec<_>>(),
+        VerificationComponent::CANONICAL
+    );
+    for plan in &composite {
+        assert_eq!(
+            *plan,
+            verification_component_plan(&fixture.manifest(), plan.component())?
+        );
+        assert_eq!(
+            *plan,
+            verification_component_plan_for_metadata(&metadata, plan.component())?
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn native_components_own_one_exact_operation_profile() -> Result<(), Box<dyn Error>> {
+    let fixture = FixtureWorkspace::new("scalable-policy")?;
+    fixture.refresh_lock()?;
+    let metadata = fixture.metadata()?;
+
+    let structure =
+        verification_component_plan_for_metadata(&metadata, VerificationComponent::Structure)?;
+    let expected_policy = [
+        VerificationOperation::Architecture,
+        VerificationOperation::Hygiene,
+    ];
+    assert_eq!(
+        structure.operations().get(..2),
+        Some(expected_policy.as_slice())
+    );
+    assert_eq!(
+        cargo_operation_arguments(&structure),
+        vec![
+            strings(&["fmt", "--all", "--", "--check"]),
+            strings(&["metadata", "--locked", "--format-version", "1", "--no-deps",]),
+        ]
+    );
+
+    let expectations = [
+        (
+            VerificationComponent::Check,
+            vec![package_command(&["check", "--locked"], &["--all-targets"])],
+        ),
+        (
+            VerificationComponent::Test,
+            vec![package_command(&["test", "--locked"], &[])],
+        ),
+        (
+            VerificationComponent::Clippy,
+            vec![package_command(
+                &["clippy", "--locked"],
+                &["--all-targets", "--", "-D", "warnings"],
+            )],
+        ),
+        (
+            VerificationComponent::Docs,
+            vec![package_command(&["doc", "--locked"], &["--no-deps"])],
+        ),
+        (
+            VerificationComponent::Benches,
+            vec![
+                strings(&[
+                    "bench",
+                    "--locked",
+                    "-p",
+                    "f1-a",
+                    "--bench",
+                    "sampling_pipeline",
+                    "--no-run",
+                ]),
+                strings(&[
+                    "bench", "--locked", "-p", "observer", "--bench", "runtime", "--no-run",
+                ]),
+            ],
+        ),
+        (
+            VerificationComponent::Nursery,
+            vec![package_command(
+                &["clippy", "--locked"],
+                &["--all-targets", "--", "-D", "clippy::nursery"],
+            )],
+        ),
+    ];
+    for (component, expected) in expectations {
+        let plan = verification_component_plan_for_metadata(&metadata, component)?;
+        assert_eq!(cargo_operation_arguments(&plan), expected);
+    }
+    Ok(())
+}
+
+#[test]
+fn every_native_component_rejects_unknown_roles() -> Result<(), Box<dyn Error>> {
+    let fixture = FixtureWorkspace::new("scalable-policy")?;
+    fixture.replace(
+        "crates/adapters/adapter/Cargo.toml",
+        "role = \"adapter\"",
+        "role = \"unknown-native-role\"",
+    )?;
+    fixture.refresh_lock()?;
+    let metadata = fixture.metadata()?;
+
+    for component in VerificationComponent::CANONICAL
+        .into_iter()
+        .chain([VerificationComponent::Nursery])
+    {
+        let Err(error) = verification_component_plan_for_metadata(&metadata, component) else {
+            return Err(format!("{} accepted an unknown role", component.as_str()).into());
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("unknown role `unknown-native-role`")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unknown_native_component_name_fails() -> Result<(), Box<dyn Error>> {
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["verify-component", "unknown"])
+        .output()?;
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8(output.stderr)?.contains("unknown verification component"));
     Ok(())
 }
 
@@ -262,6 +438,10 @@ fn portable_plan_rejects_invalid_roles_empty_ownership_and_unknown_targets()
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the exact CUDA command matrices are intentionally visible in one comparison test"
+)]
 fn cuda_plans_are_sorted_exact_and_keep_hardware_targets_separate() -> Result<(), Box<dyn Error>> {
     let fixture = FixtureWorkspace::new("cuda-policy")?;
     fixture.refresh_lock()?;

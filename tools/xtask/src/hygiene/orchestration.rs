@@ -231,28 +231,7 @@ fn validate_hygiene(
         })
         .collect::<BTreeSet<_>>();
 
-    if let Err(issues) = benchmark_inventory(metadata) {
-        for issue in issues {
-            let path = metadata
-                .workspace_packages()
-                .iter()
-                .find(|package| package.name == issue.package)
-                .and_then(|package| {
-                    package
-                        .manifest_path
-                        .as_std_path()
-                        .strip_prefix(root)
-                        .ok()
-                        .map(Path::to_path_buf)
-                });
-            report.push(HygieneViolation::new(
-                path,
-                None,
-                RULE_BENCHMARK_REGISTRY,
-                format!("{}: {}", issue.target, issue.reason),
-            ));
-        }
-    }
+    scan_benchmark_registry(root, metadata, &mut report);
 
     for relative in tracked_paths {
         let absolute = root.join(relative);
@@ -312,6 +291,32 @@ fn validate_hygiene(
 
     scan_selected_graph(metadata, &mut report);
     Ok(report)
+}
+
+fn scan_benchmark_registry(root: &Path, metadata: &Metadata, report: &mut HygieneReport) {
+    let Err(issues) = benchmark_inventory(metadata) else {
+        return;
+    };
+    for issue in issues {
+        let path = metadata
+            .workspace_packages()
+            .iter()
+            .find(|package| package.name == issue.package)
+            .and_then(|package| {
+                package
+                    .manifest_path
+                    .as_std_path()
+                    .strip_prefix(root)
+                    .ok()
+                    .map(Path::to_path_buf)
+            });
+        report.push(HygieneViolation::new(
+            path,
+            None,
+            RULE_BENCHMARK_REGISTRY,
+            format!("{}: {}", issue.target, issue.reason),
+        ));
+    }
 }
 
 fn scan_tracked_text_whitespace(

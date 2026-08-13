@@ -1,22 +1,31 @@
 # Execution documentation
 
-This directory contains the project's execution inputs and chronological closure record. It does not own current architecture, component behavior, product support, or reusable engineering doctrine.
+This directory contains the project's current execution handoff and chronological
+closure record. It does not own current architecture, component behavior,
+product support, or reusable engineering doctrine.
 
-## Execution inputs
+## Current authority
 
 - [Current execution context](current.md) — concise, mutable handoff for either the active phase or an explicitly parked state.
-- [Architecture analysis](analyzer.md) — preserved evidence and findings that motivated the completed program.
 - [Execution plan](execution-plan.md) — the ordered implementation program and phase gates.
 
 `current.md` is derived operational context: it may restate selected facts so an execution agent can start quickly, but it links to canonical project owners and must record either the active phase or that no phase is active.
 
-The analyzer and execution plan are intentionally preserved as source artifacts. They are exempt from opportunistic restyling or consolidation during ordinary documentation cleanup; revise their substance only when the analysis or execution baseline itself changes. Mechanical path corrections after repository moves are permitted.
+These are the only current execution authorities in this directory. Completed
+prompt files are not instructions for a new agent.
 
 ## Historical execution record
 
 - [Execution history](history.md) — consolidated closure evidence for completed phases, including acceptance matrices, recorded validation provenance, and measurements that remain useful historically.
+- [Architecture analysis](analyzer.md) — preserved source evidence and findings that motivated the completed program.
+- [Completed prompt archive](archive/README.md) — completed work-package prompts retained for decision provenance, not active execution.
 
 Closed phases append to `history.md`. Do not add another `PHASE*_COMPLETION_REPORT.md` or `PHASE*_IMPLEMENTATION_REPORT.md` unless a future artifact has a genuinely independent long-lived purpose that cannot be represented as a history section.
+
+Archived prompts may link to the durable outcomes they produced, but agents do
+not need to load the archive unless tracing a historical decision. Mechanical
+path corrections are permitted; otherwise preserve archival text as historical
+evidence.
 
 ## What does not belong here
 

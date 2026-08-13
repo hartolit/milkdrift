@@ -2,7 +2,7 @@
 
 ## Architecture enforcement
 
-`cargo xtask architecture` loads the virtual workspace through locked typed `cargo_metadata`. Every tracked non-fixture Cargo package must be a root workspace member, every member must declare one known `[package.metadata.milkdrift] role`, and that declaration must occupy the compatible direct-child root. Roles are not inferred from names or prefixes; omitted members, unresolved local path targets, missing/unknown roles, and incompatible locations fail closed. Architecture and hygiene remain independently runnable, and `cargo xtask verify` runs both first.
+`cargo xtask architecture` loads the virtual workspace through locked typed `cargo_metadata`. Every tracked non-fixture Cargo package must be a root workspace member, every member must declare one known `[package.metadata.milkdrift] role`, and that declaration must occupy the compatible direct-child root. Roles are not inferred from names or prefixes; omitted members, unresolved local path targets, missing/unknown roles, and incompatible locations fail closed. The verification planner uses that same locked, role-validated workspace inventory to produce exact sorted package selections for check, test, Clippy, and rustdoc. Architecture and hygiene remain independently runnable, and `cargo xtask verify` runs both first.
 
 The generic inward role DAG is canonical in [project architecture](architecture.md). It keeps portable domain code below platform/adapters, E0 below capability/E1, applications above E1, benchmark observers outside production, and tooling isolated. Same-role runtime peers are denied. Normal/build Cargo edges that obey the role DAG are ordinary legal edges and are not copied into another registry.
 
@@ -18,7 +18,8 @@ The current workspace-local development exception is `inference-runtime -> candl
   through `stats_alloc`;
 - platform/adapters/apps may use ordinary implementation dependencies appropriate to their boundary, but sensitive CUDA and every development dependency still require exact review;
 - E0's external development `candle-core` edge supports download-free mixed-fixture conversion only;
-- tooling reviews `cargo_metadata`, `serde_json`, and `toml` for policy parsing; and
+- tooling reviews `cargo_metadata`, `serde_json`, and `toml` for policy parsing,
+  plus development-only `serde_yaml_ng` for maintained-workflow syntax tests; and
 - observer external reviews cover `serde`, `serde_json`, `sha2`, and development-only `criterion`.
 
 A package with role `benchmark-observer` is an outer consumer. Cargo's `normal` label does not place it in production. It cannot use build dependencies/custom-build targets or be depended upon by product, tooling, tests, applications, or another observer. Unknown benchmark manifests fail closed. `runtime-benchmarks` currently observes `application-runtime`, `candle-backend`, `domain-contracts`, `host-runtime`, and `inference-runtime`; those ordinary legal outgoing local edges come from Cargo rather than a duplicate list.
@@ -54,7 +55,7 @@ The root `.gitignore` uses `target/` so Cargo output is ignored at every reposit
 
 There is no filename-, directory-, document-status-, or whole-file bypass for a tracked operational surface. Historical names, execution-history locations, and superseded ADR status do not exempt content. Negative policy examples are accepted only when the parser can identify them as prohibitions rather than instructions. Any future exception must be exact, narrowly reviewed, and covered by tests; a broad path or status exemption is not acceptable.
 
-`cargo xtask architecture` does not implicitly run hygiene. The canonical `cargo xtask verify` command runs architecture and hygiene in sequence before format, workspace check/test/strict Clippy, warning-denied rustdoc, and exact registered benchmark compilation. It never falls back to a workspace-wide release bench build. [ADR-0014](../agent/decisions/0014-rust-cargo-native-operational-tooling.md) owns the rationale and policy boundary.
+`cargo xtask architecture` does not implicitly run hygiene. The canonical `cargo xtask verify` command iterates the same `structure`, `check`, `test`, `clippy`, `docs`, and `benches` plans exposed by `cargo xtask verify-component`. Structure owns architecture, hygiene, format, and locked metadata validation; the remaining plans own their exact Cargo operation. The composite and hosted components therefore cannot maintain independent package registries. Exact registered benchmark compilation never falls back to a workspace-wide release bench build. [ADR-0014](../agent/decisions/0014-rust-cargo-native-operational-tooling.md) owns the rationale and policy boundary.
 
 ## Model fixture and external artifact policy
 
@@ -77,7 +78,10 @@ Third-party dependencies retain their own license terms. In particular, Slint
 remains reviewed under `LicenseRef-Slint-Royalty-free-2.0` and is not
 relicensed by Milkdrift's licenses. Distributed applications must continue to
 satisfy Slint's applicable attribution, licensing, and distribution
-requirements.
+requirements. `webpki-root-certs` packages certificate-root data under the
+Linux Foundation's `CDLA-Permissive-2.0`; that data license is allowed for this
+transitive TLS trust-store input, and redistribution must preserve the license
+text or link required by its terms.
 
 Only the crates.io registry is accepted by default. A Git dependency or alternate registry requires an explicit policy change and review.
 
@@ -97,7 +101,7 @@ libxkbcommon-dev
 
 The selected non-FIPS `aws-lc` path uses its CC builder, so `build-essential` supplies the required native compiler. CI does not install a system CMake executable. The Rust `cmake` crate may remain in `Cargo.lock` as part of an upstream build-dependency set, but the selected build does not require the system executable. The fontconfig/XCB/XKB packages belong to Slint windowing and font integration; `clang` and `libclang-dev` remain absent with the former native engine path.
 
-Required Linux quality CI builds from a fresh `CARGO_TARGET_DIR`, explicitly selects the non-system, non-CMake `aws-lc` path, and places failing shims ahead of the environment for CMake executables and the prohibited Python and Hugging Face command-line families. Those external tools must not be invoked; any attempted invocation fails the job instead of being satisfied by the runner image.
+Each native Linux quality component builds from its own fresh `CARGO_TARGET_DIR`, explicitly selects the non-system, non-CMake `aws-lc` path where native compilation needs it, and places failing shims ahead of compilation for CMake executables and the prohibited Python and Hugging Face command-line families. Structure installs no native packages; exact benchmark compilation installs only `build-essential`; UI/backend compilation adds the documented Slint packages. Those external tools must not be invoked; any attempted invocation fails the job instead of being satisfied by the runner image.
 
 ## Documentation links
 

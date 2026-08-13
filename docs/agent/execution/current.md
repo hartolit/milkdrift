@@ -8,8 +8,9 @@ The post-closure Candle sequence-accounting repair passes its required focused R
 The E1 cleanup-coordination repair is implemented and its required focused local validation passes in an isolated target directory.
 The orchestration-boundary repair is implemented: task-graph is generic and allocation-free, while the corrective flow is validated template data interpreted by one bounded executor.
 Its focused host, WASM, embedded, architecture, hygiene, and documentation gates pass locally in an isolated target directory.
+The CI resource-topology repair is implemented: the local composite and hosted native components share one metadata-owned plan, and hosted profiles now use separate standard-runner targets with centralized cleanup.
 No workflow/workspace product program has been ratified or activated.
-Canonical, portable, remote, external-model, and current CUDA hardware evidence remain separate and pending.
+The new component/portable plans pass local source-tree validation; remote Quality, current CUDA hardware, external-model, and final execution evidence remain separate and pending.
 ```
 
 ## Current maintenance scope
@@ -53,6 +54,13 @@ independent, stores complete public cleanup evidence in `ApplicationState`, and
 uses compact cleanup transition events. It changes no durable persistence schema
 and moves no cleanup policy into Slint or E0.
 
+The verification repair exposes `cargo xtask verify-component` for structure,
+check, test, Clippy, docs, exact maintained benches, and exploratory nursery
+linting. `cargo xtask verify` consumes the same six canonical plans. Quality gives
+each heavy profile a fresh Ubuntu 24.04 runner and unique `RUNNER_TEMP` target;
+portable, policy, nursery, and link work remain separate. These are implemented
+source-tree facts, not an accepted hosted run.
+
 ## Current implementation boundary
 
 The local product remains the unquantized Llama Safetensors path through Candle,
@@ -91,13 +99,18 @@ Current component and support truth is owned by
   CI topology. It is infrastructure history, not evidence for this repair.
 - The predecessor pristine-state tree has local native/portable evidence recorded
   in implementation status; that evidence also predates this repair.
+- The redesigned verification plans, workflow policy tests, embedded shell
+  syntax checks, six canonical native components, and both portable targets pass
+  locally from fresh isolated targets. The scheduled nursery command starts and
+  reports exploratory lints separately; its findings are not a canonical failure.
+  No redesigned GitHub-hosted Quality or current self-hosted CUDA run exists yet.
 - External mixed-checkpoint evidence remains absent. Historical reports retain
   their original schema and exact commit attribution.
 
 ## Handoff and acceptance order
 
 1. Run the isolated canonical `cargo xtask verify` gate when complete repository
-   acceptance, beyond this package's focused matrix, is required.
+   acceptance is required; hosted CI must use the matching typed component plans.
 2. Run both named portable target matrices in isolated targets.
 3. On the supported NVIDIA host, run the exact CUDA check/Clippy graph and all
    dedicated adapter/E0/fault/E1 hardware suites.

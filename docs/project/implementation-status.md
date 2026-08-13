@@ -7,6 +7,7 @@ Phase 12 and the artifact-loading, runtime-ownership, and application-boundary a
 The post-closure foundation repair rejects ambiguous mixed precision, separates failed-load typestate, and corrects sequence reservation to simultaneous lifetimes.
 The sequence-accounting closure passes its required focused local matrix; canonical, portable, remote, and CUDA hardware acceptance remain separate pending evidence.
 The orchestration-boundary repair makes task-graph generic and allocation-free and moves corrective semantics into validated reference-template data; its focused host, portable, architecture, and hygiene matrix passes locally.
+The CI resource-topology repair gives each hosted verification profile an independently bounded metadata-owned plan; its local component, portability, workflow-policy, and shell/YAML validation passes, while redesigned remote runs remain pending.
 No later product phase is active, and workflow/workspace direction is not yet a ratified program.
 ```
 
@@ -114,11 +115,17 @@ runtime-benchmarks / runtime
 sampling           / sampling_pipeline
 ```
 
-`cargo xtask verify` compiles those exact targets only. It never runs `cargo bench --workspace --no-run`.
+`cargo xtask verify` compiles those exact targets only. It never runs `cargo bench --workspace --no-run`. Its six canonical plans are also exposed as `cargo xtask verify-component structure|check|test|clippy|docs|benches`; both entry points consume the same typed metadata-owned operations. The exploratory scheduled plan is `verify-component nursery`.
 
-GitHub Quality now has independent native, WASM, embedded, policy, nursery, and link jobs with named isolated targets, free-space preflight, disk observations, root-target leak checks, and unconditional cleanup. CUDA uses separate check and release-hardware targets and runs whole dedicated harness-free adapter/E0/E1 suites without parsing function names. All first-party checkout steps use immutable v7.0.1 commit `3d3c42e5aac5ba805825da76410c181273ba90b1` with read-only permission and credentials disabled.
+GitHub Quality now has six independent native matrix legs plus separate WASM, embedded, policy, nursery, and link jobs. Every leg owns a unique `RUNNER_TEMP` target, disables incremental compilation, records disk use, rejects checkout-local targets, and unconditionally removes its target/tool/shim resources through the reviewed shared script. Only the nursery lint-report step is non-blocking. CUDA preserves separate check and release-hardware targets and runs whole dedicated harness-free adapter/E0/E1 suites without parsing function names. All first-party checkout steps use immutable v7.0.1 commit `3d3c42e5aac5ba805825da76410c181273ba90b1` with read-only permission and credentials disabled.
 
 External evidence schema 6 observes the public E1 product path without an independent adapter preparation. It retains variable provenance/timing/count/process/whole-device observations and removes shadow planning fields, derivable duplication, invariant prose, and tautological success flags. No schema-6 CPU/CUDA product report is accepted; historical reports retain their original schema and commit attribution.
+
+## CI resource-topology source-tree validation
+
+The redesigned command-plan and workflow tests pass locally, including composite/component parity, exact operations, fail-closed unknown roles/components, benchmark and portable ownership, CUDA owner/suite preservation, unique targets, centralized cleanup, immutable action pins, and shell parsing. Fresh local component targets completed at approximately 143 MiB (structure), 1.94 GiB (check), 7.33 GiB (tests), 1.94 GiB (Clippy), 1.95 GiB (rustdoc), and 1.20 GiB (exact benches); each portable leg retained about 149 MiB. Sequential policy-tool compilation sampled below 0.9 GiB. These measurements justify per-leg standard-runner preflights from 1–9 GiB and do not constitute product-performance or GitHub-hosted evidence.
+
+The standard hosted class remains Ubuntu 24.04 with 14 GB total SSD; no larger runner is selected. The separate self-hosted CUDA gate retains its 20 GiB host-specific reserve: historical run 31281013243 observed 139 GiB free on that runner's 1.9 TiB root filesystem. The redesigned Quality and CUDA workflows still require exact-tree remote execution before they can be accepted.
 
 ## Predecessor-tree local validation
 

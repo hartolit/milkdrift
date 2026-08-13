@@ -7,7 +7,7 @@ use cargo_metadata::Metadata;
 use crate::workspace::{
     CUDA_FEATURE, CudaHardwareTarget, WorkspaceInventoryIssue, benchmark_inventory,
     cuda_feature_package_inventory, cuda_hardware_target_inventory, domain_package_inventory,
-    load_metadata,
+    load_metadata, workspace_package_inventory,
 };
 
 const PORTABLE_TARGETS: [&str; 2] = ["wasm32-unknown-unknown", "thumbv7em-none-eabihf"];
@@ -19,6 +19,15 @@ pub struct CargoCommand {
 }
 
 impl CargoCommand {
+    fn new(arguments: &[&str]) -> Self {
+        Self {
+            arguments: arguments
+                .iter()
+                .map(|argument| (*argument).to_owned())
+                .collect(),
+        }
+    }
+
     fn benchmark(package: &str, target: &str) -> Self {
         Self {
             arguments: [
@@ -70,6 +79,98 @@ impl CargoCommand {
     #[must_use]
     pub fn arguments(&self) -> &[String] {
         &self.arguments
+    }
+}
+
+/// One independently runnable native verification boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerificationComponent {
+    /// Architecture, hygiene, formatting, and locked metadata.
+    Structure,
+    /// Workspace all-target check.
+    Check,
+    /// Workspace tests and doctests.
+    Test,
+    /// Workspace all-target Clippy with warnings denied.
+    Clippy,
+    /// Workspace rustdoc with warnings denied.
+    Docs,
+    /// Exact metadata-registered benchmark compilation.
+    Benches,
+    /// Scheduled exploratory Clippy nursery findings.
+    Nursery,
+}
+
+impl VerificationComponent {
+    /// Components included in the local canonical composite, in execution order.
+    pub const CANONICAL: [Self; 6] = [
+        Self::Structure,
+        Self::Check,
+        Self::Test,
+        Self::Clippy,
+        Self::Docs,
+        Self::Benches,
+    ];
+
+    /// Parses one exact command-line component name.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "structure" => Some(Self::Structure),
+            "check" => Some(Self::Check),
+            "test" => Some(Self::Test),
+            "clippy" => Some(Self::Clippy),
+            "docs" => Some(Self::Docs),
+            "benches" => Some(Self::Benches),
+            "nursery" => Some(Self::Nursery),
+            _ => None,
+        }
+    }
+
+    /// Returns the exact command-line component name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Structure => "structure",
+            Self::Check => "check",
+            Self::Test => "test",
+            Self::Clippy => "clippy",
+            Self::Docs => "docs",
+            Self::Benches => "benches",
+            Self::Nursery => "nursery",
+        }
+    }
+}
+
+/// One policy or Cargo operation in a native verification component.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VerificationOperation {
+    /// Validate the workspace architecture and dependency policy.
+    Architecture,
+    /// Validate repository operational hygiene.
+    Hygiene,
+    /// Execute the exact Cargo command.
+    Cargo(CargoCommand),
+}
+
+/// The ordered operations owned by one independently runnable component.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerificationPlan {
+    component: VerificationComponent,
+    operations: Vec<VerificationOperation>,
+}
+
+impl VerificationPlan {
+    /// The component represented by this plan.
+    #[must_use]
+    pub const fn component(&self) -> VerificationComponent {
+        self.component
+    }
+
+    /// Ordered operations executed by the component.
+    #[must_use]
+    pub fn operations(&self) -> &[VerificationOperation] {
+        &self.operations
     }
 }
 
@@ -142,7 +243,18 @@ pub fn benchmark_command_plan(
 ) -> Result<Vec<CargoCommand>, BenchmarkPlanError> {
     let metadata = load_metadata(manifest_path, true)
         .map_err(|error| CommandPlanError::metadata("benchmark planning", error))?;
-    let inventory = benchmark_inventory(&metadata).map_err(|issues| CommandPlanError {
+    benchmark_command_plan_for_metadata(&metadata)
+}
+
+/// Returns sorted exact maintained-benchmark commands from loaded Cargo metadata.
+///
+/// # Errors
+///
+/// Returns an error if the bidirectional benchmark registry is invalid.
+pub fn benchmark_command_plan_for_metadata(
+    metadata: &Metadata,
+) -> Result<Vec<CargoCommand>, BenchmarkPlanError> {
+    let inventory = benchmark_inventory(metadata).map_err(|issues| CommandPlanError {
         message: issues
             .into_iter()
             .map(|issue| format!("{} / {}: {}", issue.package, issue.target, issue.reason))
@@ -155,6 +267,99 @@ pub fn benchmark_command_plan(
         .into_iter()
         .map(|benchmark| CargoCommand::benchmark(benchmark.package(), benchmark.target()))
         .collect())
+}
+
+/// Loads locked Cargo metadata and plans the complete local canonical native gate.
+///
+/// # Errors
+///
+/// Returns an error if locked metadata, role ownership, or benchmark ownership is invalid.
+pub fn native_verification_plan(
+    manifest_path: &Path,
+) -> Result<Vec<VerificationPlan>, CommandPlanError> {
+    let metadata = load_metadata(manifest_path, true)
+        .map_err(|error| CommandPlanError::metadata("native verification planning", error))?;
+    VerificationComponent::CANONICAL
+        .into_iter()
+        .map(|component| verification_component_plan_for_metadata(&metadata, component))
+        .collect()
+}
+
+/// Loads locked Cargo metadata and plans one independently runnable native component.
+///
+/// # Errors
+///
+/// Returns an error if locked metadata, role ownership, or benchmark ownership is invalid.
+pub fn verification_component_plan(
+    manifest_path: &Path,
+    component: VerificationComponent,
+) -> Result<VerificationPlan, CommandPlanError> {
+    let metadata = load_metadata(manifest_path, true).map_err(|error| {
+        CommandPlanError::metadata(
+            &format!("{} verification planning", component.as_str()),
+            error,
+        )
+    })?;
+    verification_component_plan_for_metadata(&metadata, component)
+}
+
+/// Plans one native component from already loaded locked Cargo metadata.
+///
+/// # Errors
+///
+/// Returns an error if a package role or the benchmark inventory is invalid.
+pub fn verification_component_plan_for_metadata(
+    metadata: &Metadata,
+    component: VerificationComponent,
+) -> Result<VerificationPlan, CommandPlanError> {
+    let packages = workspace_package_inventory(metadata)
+        .map_err(|issues| CommandPlanError::inventory("native workspace ownership", issues))?;
+    let operations =
+        match component {
+            VerificationComponent::Structure => vec![
+                VerificationOperation::Architecture,
+                VerificationOperation::Hygiene,
+                VerificationOperation::Cargo(CargoCommand::new(&["fmt", "--all", "--", "--check"])),
+                VerificationOperation::Cargo(CargoCommand::new(&[
+                    "metadata",
+                    "--locked",
+                    "--format-version",
+                    "1",
+                    "--no-deps",
+                ])),
+            ],
+            VerificationComponent::Check => vec![VerificationOperation::Cargo(
+                CargoCommand::packages(&["check", "--locked"], &packages, &["--all-targets"]),
+            )],
+            VerificationComponent::Test => vec![VerificationOperation::Cargo(
+                CargoCommand::packages(&["test", "--locked"], &packages, &[]),
+            )],
+            VerificationComponent::Clippy => {
+                vec![VerificationOperation::Cargo(CargoCommand::packages(
+                    &["clippy", "--locked"],
+                    &packages,
+                    &["--all-targets", "--", "-D", "warnings"],
+                ))]
+            }
+            VerificationComponent::Docs => vec![VerificationOperation::Cargo(
+                CargoCommand::packages(&["doc", "--locked"], &packages, &["--no-deps"]),
+            )],
+            VerificationComponent::Benches => benchmark_command_plan_for_metadata(metadata)?
+                .into_iter()
+                .map(VerificationOperation::Cargo)
+                .collect(),
+            VerificationComponent::Nursery => {
+                vec![VerificationOperation::Cargo(CargoCommand::packages(
+                    &["clippy", "--locked"],
+                    &packages,
+                    &["--all-targets", "--", "-D", "clippy::nursery"],
+                ))]
+            }
+        };
+    Ok(VerificationPlan {
+        component,
+        operations,
+    })
 }
 
 /// Loads locked Cargo metadata and plans the exact portable domain-library check.

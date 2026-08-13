@@ -63,15 +63,6 @@ jobs:
           test -d "${CARGO_HOME}/registry/src"
           test -w "${CARGO_HOME}"
 
-          runner_available_kib="$(df -Pk "${RUNNER_TEMP}" | awk 'NR == 2 { print $4 }')"
-          runner_minimum_kib=20971520
-          if test "${runner_available_kib}" -lt "${runner_minimum_kib}"
-          then
-            printf '%s\n' "CUDA validation requires at least 20 GiB free in RUNNER_TEMP" >&2
-            df -h "${RUNNER_TEMP}" >&2
-            exit 1
-          fi
-
           cargo_available_kib="$(df -Pk "${CARGO_HOME}" | awk 'NR == 2 { print $4 }')"
           cargo_minimum_kib=4194304
           if test "${cargo_available_kib}" -lt "${cargo_minimum_kib}"
@@ -81,8 +72,8 @@ jobs:
             exit 1
           fi
 
-          rm -rf "${cuda_check_target_dir}" "${cuda_hardware_target_dir}"
-          mkdir -p "${cuda_check_target_dir}"
+          .github/scripts/ci-resource.sh prepare 20971520 \
+            "${cuda_check_target_dir}" "${cuda_hardware_target_dir}"
           du -sh "${CARGO_HOME}"
           df -h "${RUNNER_TEMP}" "${CARGO_HOME}"
 
@@ -132,20 +123,15 @@ jobs:
       - name: Observe and remove CUDA check target
         run: |
           set -eu
-          du -sh "${CUDA_CHECK_TARGET_DIR}"
           du -sh "${CARGO_HOME}"
-          df -h "${RUNNER_TEMP}" "${CARGO_HOME}"
-          test ! -e "${GITHUB_WORKSPACE}/target"
-          rm -rf "${CUDA_CHECK_TARGET_DIR}"
-          test ! -e "${CUDA_CHECK_TARGET_DIR}"
+          df -h "${CARGO_HOME}"
+          .github/scripts/ci-resource.sh cleanup "${CUDA_CHECK_TARGET_DIR}"
 
       - name: Prepare fresh CUDA hardware target
         run: |
           set -eu
           test ! -e "${CUDA_CHECK_TARGET_DIR}"
-          test ! -e "${GITHUB_WORKSPACE}/target"
-          rm -rf "${CUDA_HARDWARE_TARGET_DIR}"
-          mkdir -p "${CUDA_HARDWARE_TARGET_DIR}"
+          .github/scripts/ci-resource.sh prepare 20971520 "${CUDA_HARDWARE_TARGET_DIR}"
           df -h "${RUNNER_TEMP}" "${CARGO_HOME}"
 
       - name: Run metadata-owned CUDA hardware suites
@@ -175,37 +161,9 @@ jobs:
       - name: Remove isolated CUDA targets
         if: ${{ always() }}
         run: |
-          set -u
           cuda_check_target_dir="${CUDA_CHECK_TARGET_DIR:-${RUNNER_TEMP}/milkdrift-cuda-check-target}"
           cuda_hardware_target_dir="${CUDA_HARDWARE_TARGET_DIR:-${RUNNER_TEMP}/milkdrift-cuda-hardware-target}"
-          failed=0
-          if test -e "${GITHUB_WORKSPACE}/target" || test -L "${GITHUB_WORKSPACE}/target"
-          then
-            printf '%s\n' "unexpected root target was created" >&2
-            du -sh "${GITHUB_WORKSPACE}/target" >&2 || true
-            failed=1
-          fi
-          if test -e "${cuda_check_target_dir}"
-          then
-            du -sh "${cuda_check_target_dir}" || true
-          fi
-          if test -e "${cuda_hardware_target_dir}"
-          then
-            du -sh "${cuda_hardware_target_dir}" || true
-          fi
           du -sh "${CARGO_HOME}" || true
-          df -h "${RUNNER_TEMP}" "${CARGO_HOME}" || true
-          if ! rm -rf "${cuda_check_target_dir}" "${cuda_hardware_target_dir}" "${GITHUB_WORKSPACE}/target"
-          then
-            printf '%s\n' "failed to remove isolated CUDA targets or root target" >&2
-            failed=1
-          fi
-          for path in "${cuda_check_target_dir}" "${cuda_hardware_target_dir}" "${GITHUB_WORKSPACE}/target"
-          do
-            if test -e "${path}" || test -L "${path}"
-            then
-              printf '%s\n' "cleanup path still exists: ${path}" >&2
-              failed=1
-            fi
-          done
-          exit "${failed}"
+          df -h "${CARGO_HOME}" || true
+          .github/scripts/ci-resource.sh cleanup \
+            "${cuda_check_target_dir}" "${cuda_hardware_target_dir}"

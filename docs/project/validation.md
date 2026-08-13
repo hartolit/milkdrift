@@ -124,28 +124,72 @@ cargo xtask verify
 
 `tools/xtask` runs architecture and hygiene policy, formatting, every intended workspace target, ordinary tests/doctests, mandatory Clippy, API documentation with warnings denied, and exact maintained benchmark compilation. Package metadata is checked bidirectionally against Cargo bench targets before commands run. It does not execute statistical measurements, a hardware suite, or a network-dependent external model.
 
-Useful direct diagnostics are:
+The composite iterates the same typed plans exposed to hosted CI. Useful direct
+diagnostics are:
 
 ```sh
-cargo fmt --all -- --check
-cargo check --workspace --all-targets --locked
-cargo test --workspace --locked
-cargo clippy --workspace --all-targets --locked -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
-cargo bench --locked -p runtime-benchmarks --bench runtime --no-run
-cargo bench --locked -p sampling --bench sampling_pipeline --no-run
+cargo xtask verify-component structure
+cargo xtask verify-component check
+cargo xtask verify-component test
+cargo xtask verify-component clippy
+cargo xtask verify-component docs
+cargo xtask verify-component benches
 git diff --check
 ```
 
-The mandatory lint profile uses stable selected Clippy policy under `-D warnings`. Nursery remains a separate non-blocking report.
+`structure` runs architecture, hygiene, format, and locked metadata validation.
+The other plans derive the exact sorted workspace package inventory from locked
+Cargo metadata after validating every declared role. `benches` derives only
+`runtime-benchmarks/runtime` and `sampling/sampling_pipeline` from the
+bidirectionally checked benchmark registry. Every component prints the exact
+Cargo command it executes and fails on an unknown role, target, or component.
+The mandatory lint profile uses stable selected Clippy policy under `-D
+warnings`. `verify-component nursery` is a separate exploratory plan.
 
 ## Shared CPU quality workflow
 
 [`.github/workflows/quality.yml`](../../.github/workflows/quality.yml) is the normal shared-CI gate. It runs on every push and pull request, plus a weekly schedule, using GitHub-hosted Ubuntu 24.04 and the mandatory default CPU feature graph. It does not install a CUDA toolkit, require a driver, enable the `cuda` feature, execute CUDA hardware tests, download an external model, or run performance thresholds.
 
-The `Rust and architecture` job prints the commit/tree and runs only the native canonical gate plus duplicate-dependency reporting in `${RUNNER_TEMP}/milkdrift-native-quality-target`. A separate two-leg matrix runs WebAssembly and embedded domain checks in `${RUNNER_TEMP}/milkdrift-wasm-target` and `${RUNNER_TEMP}/milkdrift-thumb-target` without Slint/native packages and without depending on native artifacts. Policy, scheduled nursery, and link work use their own named targets/install roots. The policy job removes `cargo-deny` build artifacts before compiling Lychee so both installer trees never coexist. Jobs run in parallel where no evidence dependency exists.
+The hosted topology is deliberately wider than the local composite. A six-leg
+native matrix gives structure, check, tests, Clippy, rustdoc, and exact benchmark
+compilation a fresh standard runner and a unique target. A separate two-leg
+matrix checks the metadata-owned portable domain packages on WebAssembly and
+embedded targets without native UI/backend dependencies. Policy, scheduled
+nursery, and scheduled external links use their own targets and tool roots. Only
+the nursery lint-report step is non-blocking; checkout, setup, dependency
+installation, shell execution, and cleanup failures remain real job failures.
 
-Every Cargo-building job rejects an unexpected root `target/`, checks a documented free-space floor, prints useful `df`/`du` observations, and removes its target under `if: always()`. The initial operational floors are 14 GiB for native, 12 GiB for nursery, 4 GiB per portable/link leg, and 6 GiB for policy tools; they are fail-early safeguards, not measured product requirements. The first clean hosted redesigned run must record its target size and filesystem low-water mark before those floors are treated as measured CI evidence.
+Every Cargo-building job sets `CARGO_INCREMENTAL=0`, rejects an unexpected root
+`target/`, prints commit/tree provenance where relevant, records `df`/`du`, and
+removes its exact target/tool/shim resources under `if: always()`. The reviewed
+`.github/scripts/ci-resource.sh` validates that cleanup paths are direct children
+of `RUNNER_TEMP`, rejects checkout-local target artifacts, and verifies removal.
+Policy compilation resets its target between cargo-deny and Lychee, so their
+build trees never coexist.
+
+Fresh local observations used to scope the standard-runner floors are
+infrastructure evidence, not product performance or hosted success:
+
+| Leg | Fresh local target/tool observation | Preflight floor |
+|---|---:|---:|
+| structure | 145,932 KiB | 1 GiB |
+| check | 2,030,064 KiB | 4 GiB |
+| tests | 7,686,032 KiB | 9 GiB |
+| Clippy | 2,030,064 KiB | 4 GiB |
+| rustdoc | 2,043,752 KiB | 4 GiB |
+| exact benches | 1,254,908 KiB | 3 GiB |
+| each portable target | 152,324 KiB | 1 GiB |
+| policy/link tool compilation | 882,408 KiB sampled high-water | 2 GiB |
+| nursery | 299,560 KiB before expected findings; bounded by the 2,028,492 KiB full Clippy graph | 4 GiB |
+
+The standard Ubuntu 24.04 image is documented with 14 GB total SSD, so none of
+these checks demands the whole runner or assumes a larger paid runner. Larger
+runners are not selected by this topology. The first exact redesigned hosted run
+must still be inspected because local target size and hosted filesystem
+low-water are different observations. Diagnose an exhausted hosted filesystem as
+CI infrastructure until a source-level product failure is independently shown.
+See GitHub's [hosted-runner specification](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
+and [larger-runner specification](https://docs.github.com/en/actions/reference/runners/larger-runners).
 
 All checkout steps use immutable `actions/checkout` v7.0.1 commit `3d3c42e5aac5ba805825da76410c181273ba90b1` (Node 24) with credentials disabled and read-only repository permission. Self-hosted runners must meet checkout's documented minimum runner version 2.327.1.
 
@@ -435,7 +479,7 @@ The security boundary is deliberate:
 - one repository-wide concurrency group prevents overlapping Milkdrift GPU jobs;
 - Cargo is offline after checkout; check and release-hardware targets are separately isolated beneath `$RUNNER_TEMP`, root-target creation is rejected, and an `always()` final step removes both without `cargo clean`.
 
-The runner administrator maintains `/var/tmp/milkdrift-cargo-home` as a dependency-only Cargo cache seeded out of band from a trusted locked checkout. Refresh that cache before a trusted dependency update reaches `main`; do not expose credentials in it or relax the workflow's offline setting. The job fails before compilation when the maintained cache is missing/inaccessible, `RUNNER_TEMP` has less than 20 GiB free, or the Cargo-home filesystem has less than 4 GiB free. The runner must be Actions Runner 2.327.1 or newer for pinned checkout v7's Node 24 runtime.
+The runner administrator maintains `/var/tmp/milkdrift-cargo-home` as a dependency-only Cargo cache seeded out of band from a trusted locked checkout. Refresh that cache before a trusted dependency update reaches `main`; do not expose credentials in it or relax the workflow's offline setting. The job fails before compilation when the maintained cache is missing/inaccessible, `RUNNER_TEMP` has less than 20 GiB free, or the Cargo-home filesystem has less than 4 GiB free. The 20 GiB threshold is a host-specific operational reserve for this self-hosted machine, not a standard-runner or product requirement: historical run 31281013243 observed its `/dev/mapper/root` filesystem at 1.9 TiB total with 139 GiB free before compilation. The redesigned job records both target sizes and filesystem availability so prompt-6 evidence can reassess that reserve. The runner must be Actions Runner 2.327.1 or newer for pinned checkout v7's Node 24 runtime.
 
 The job validates the exact RTX 5070 Ti / CUDA ordinal 0 / compute capability 12.0 / Toolkit 12.8+ / build-cap-120 matrix. It compiles metadata/policy, the exact CUDA check/Clippy graph, and all dedicated suites in `${RUNNER_TEMP}/milkdrift-cuda-check-target`, reports its size, and removes it before release execution. It then runs the complete adapter, E0, fault-cleanup, and E1 suite boundaries in `${RUNNER_TEMP}/milkdrift-cuda-hardware-target`, reports target/Cargo-home/filesystem use, and always cleans both targets. No shell registry contains test function names.
 

@@ -1,7 +1,7 @@
 # Milkdrift execution plan
 
-**Plan status:** post-closure foundation repair awaiting exact-tree validation; no product phase active
-**Status date:** 2026-08-11
+**Plan status:** post-closure foundation repair and CI topology implemented; exact-tree remote and hardware acceptance remain pending; no product phase active
+**Status date:** 2026-08-13
 
 This document owns execution ordering and activation state. Current support is
 canonical in [implementation status](../../project/implementation-status.md),
@@ -41,6 +41,11 @@ The current repair must be accepted as one coherent boundary in this order:
    by transformer depth.
 5. **Project truth** — reconcile current contracts and procedures while preserving
    every earlier run as historical evidence for its exact commit.
+6. **Verification infrastructure** — keep the local composite gate while giving
+   structure, check, test, Clippy, rustdoc, and exact benchmark compilation
+   independent metadata-owned hosted profiles; keep portable, policy, nursery,
+   link, and CUDA evidence isolated and clean their named resources
+   unconditionally.
 
 The implementation is not a closure result until the exact applied tree passes the
 acceptance sequence below.
@@ -51,14 +56,17 @@ Run sequentially from reviewed, isolated targets:
 
 1. focused `domain-contracts`, Candle, Hub, E0 fault/native, E1, storage, and
    benchmark contract tests;
-2. formatting, architecture, hygiene, workspace check/test, strict Clippy,
-   warning-denied rustdoc, and exact maintained benchmark compilation through
-   `cargo xtask verify`;
+2. formatting, architecture, hygiene, exact workspace-package check/test, strict
+   Clippy, warning-denied rustdoc, and exact maintained benchmark compilation
+   through `cargo xtask verify`; the hosted Quality gate runs the same component
+   plans on fresh standard runners rather than retaining all profiles together;
 3. WASM and embedded portable matrices in independent targets;
 4. locked dependency policy and offline Markdown links;
 5. the exact CUDA feature check/test-compilation/Clippy graph on the NVIDIA host;
 6. complete dedicated adapter, E0, cleanup-fault, and E1 CUDA hardware suites; and
-7. post-validation status/history updates tied to the resulting commit and tree.
+7. post-validation status/history updates tied to the resulting commit and tree,
+   after the redesigned Quality and CUDA workflows have produced their own
+   exact-tree runs.
 
 Any semantic correction made after a passing command invalidates affected evidence
 until that command is rerun. Local, GitHub-hosted, and self-hosted results remain
