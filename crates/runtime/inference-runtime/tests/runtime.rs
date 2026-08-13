@@ -3,7 +3,7 @@
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::rc::Rc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use domain_contracts::{
     BackendFailure, BackendFailureKind, BackendId, BackendSequence, CancellationReason,
@@ -756,6 +756,55 @@ fn reloading_increments_generation_and_rejects_stale_handles() -> Result<(), Str
 }
 
 #[test]
+fn hosted_worker_publishes_shutdown_after_a_full_event_queue_drains() -> Result<(), String> {
+    let hosted_configuration = HostedRuntimeConfiguration::new(
+        non_zero_usize(2)?,
+        non_zero_usize(1)?,
+        NonZeroU64::new(1).ok_or("non-zero poll interval")?,
+    );
+    let (hosted, thread_handle) =
+        start_hosted_runtime(MockLoader, limits(1, 1, 10_000), hosted_configuration)
+            .map_err(|error| error.to_string())?;
+
+    hosted
+        .try_submit(RuntimeCommand::Snapshot {
+            ticket: CommandTicket::new(70),
+        })
+        .map_err(|_| "snapshot command rejected")?;
+    wait_for_queue_state(&hosted, 1, 0)?;
+
+    hosted
+        .try_submit(RuntimeCommand::Shutdown {
+            ticket: CommandTicket::new(71),
+        })
+        .map_err(|_| "shutdown command rejected")?;
+    wait_for_queue_state(&hosted, 1, 0)?;
+    if thread_handle.is_finished() {
+        return Err("worker stopped before publishing its shutdown event".into());
+    }
+
+    match hosted
+        .receive_timeout(Duration::from_secs(2))
+        .map_err(|error| format!("snapshot event failed: {error:?}"))?
+    {
+        RuntimeEvent::Snapshot { ticket, .. } if ticket == CommandTicket::new(70) => {}
+        _ => return Err("unexpected event ahead of shutdown".into()),
+    }
+    match hosted
+        .receive_timeout(Duration::from_secs(2))
+        .map_err(|error| format!("shutdown event failed: {error:?}"))?
+    {
+        RuntimeEvent::Shutdown {
+            ticket,
+            result: Ok(_),
+        } if ticket == CommandTicket::new(71) => {}
+        _ => return Err("missing correlated shutdown event".into()),
+    }
+    thread_handle.join().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[test]
 fn hosted_worker_retries_a_failed_forced_release() -> Result<(), String> {
     let hosted_configuration = HostedRuntimeConfiguration::new(
         non_zero_usize(4)?,
@@ -1151,6 +1200,23 @@ fn sequence_configuration(
 
 fn non_zero_usize(value: usize) -> Result<NonZeroUsize, String> {
     NonZeroUsize::new(value).ok_or_else(|| "non-zero channel capacity".into())
+}
+
+fn wait_for_queue_state(
+    hosted: &HostedRuntime<MockSource>,
+    queued_events: usize,
+    queued_commands: usize,
+) -> Result<(), String> {
+    let deadline = Instant::now()
+        .checked_add(Duration::from_secs(2))
+        .ok_or("queue-state deadline overflow")?;
+    while hosted.queued_events() != queued_events || hosted.queued_commands() != queued_commands {
+        if Instant::now() >= deadline {
+            return Err("hosted queues did not reach the expected state".into());
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    Ok(())
 }
 
 fn receive_load_receipt(hosted: &HostedRuntime<MockSource>) -> Result<LoadReceipt, String> {

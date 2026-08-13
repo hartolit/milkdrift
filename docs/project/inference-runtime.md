@@ -177,6 +177,17 @@ identity, prompt tokens, capacities and limits, sampling/seed, EOS and stop toke
 scheduler quantum, and required bounded output capacity. It carries no tokenizer,
 text, path, display, workflow, frontend, or provider DTO.
 
+Cold admission is represented by one composed transaction. A
+`GenerationAdmissionTransaction` owns the validated request, sampler, every
+preallocated caller workspace, the not-yet-visible scheduled task, and a nested
+`SequenceAdmissionTransaction`. The nested transaction owns the sole backend
+sequence and its prepared lifecycle transition until commit. Validation and exact
+aggregate preflight therefore happen before allocation and native creation;
+runtime indexes, ownership, and accounting commit before scheduler visibility.
+Dropping or explicitly rejecting an uncommitted transaction has one destruction
+path, and a destruction failure moves the same sole sequence owner into retained
+cleanup rather than losing or double-releasing it.
+
 Before sequence creation E0 checks model/identity/lifecycle, context and prefill
 limits, sampling, output capacity, and memory. It validates that the proposed
 `SequenceReservation` has checked persistent/transient components and an exact
@@ -212,12 +223,22 @@ their cursor, range, record, and batch types remain semantically distinct.
 Capacity and consumer-busy results retain pending output for retry; a poisoned
 output mutex is terminal and routes the hosted worker through bounded shutdown.
 
-A scheduled request progresses through:
+A scheduled request progresses through explicit statically dispatched phases:
 
 ```text
 admitted -> prefill -> token publication -> decode
          -> terminal publication -> optional cleanup -> released
 ```
+
+The private `Prefill`, `PendingToken`, `Decode`, and staged terminal-publication
+values carry the data valid for each transition. One scheduler opportunity runs
+at most one backend operation. A busy or full output retains the exact pending
+token and performs no decode; cancellation is observed before the next phase; and
+terminal, cleanup-pending, cleanup-exhausted, and released records advance only
+after the preceding publication succeeds. These transition methods allocate no
+storage and use no dynamic dispatch. Contract-failure evidence is tied to the
+phase that observed it: a short prefill logits result records `Prefill`, while the
+corresponding incremental result records `Decode`.
 
 Each worker loop checks bounded control work, advances at most one request
 opportunity, performs one cleanup-maintenance opportunity, and flushes bounded
@@ -226,6 +247,17 @@ selection point; a newly arriving request cannot retroactively alternate with
 work completed before its admission. A request blocked by full output performs
 no backend step. Generation terminal outcome and backend resource release remain
 separate observable facts.
+
+The hosted loop is one private owned `WorkerState`. It owns the scheduler,
+pending and queued events, unload correlation, maintenance events, terminal stop,
+clock, and poll configuration. Immediate and timeout command receipt both enter
+the same command-application method, so event queueing, unload correlation, and
+terminal-stop handling have one implementation. Each turn accepts at most eight
+commands, publishes at most one pending event, advances one generation request,
+and gives cleanup and unload maintenance one bounded opportunity. A full internal
+or external event queue sleeps for the configured poll interval while preserving
+maintenance polling, preventing an unbounded busy loop without introducing a
+blocking producer.
 
 Output records preserve request identity and ordered state:
 

@@ -283,6 +283,8 @@ impl ApplicationRuntime {
             #[cfg(test)]
             forced_inference_busy_submissions: 0,
             #[cfg(test)]
+            forced_unsent_command_disconnects: 0,
+            #[cfg(test)]
             last_submitted_load_device: None,
         })
     }

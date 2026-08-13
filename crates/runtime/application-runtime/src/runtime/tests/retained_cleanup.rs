@@ -171,7 +171,7 @@ fn failed_load_owner_keeps_primary_cleanup_and_lower_attempts_independent() -> T
         );
         assert_eq!(
             cleanup.ownership(),
-            ApplicationRetainedOwnership::Exact(EXACT_FOOTPRINT.into())
+            ApplicationRetainedOwnership::Exact(EXACT_FOOTPRINT)
         );
         assert_eq!(
             cleanup.cleanup(),
@@ -242,11 +242,9 @@ fn incompatible_lower_owner_preserves_unverified_evidence() -> TestResult {
         assert_eq!(
             retained(runtime)?.ownership(),
             ApplicationRetainedOwnership::Unverified {
-                accepted_loading_peak: ACCEPTED_LOADING_PEAK.into(),
-                reported_footprint: REPORTED_FOOTPRINT.into(),
-                conservative_footprint: ApplicationConservativeFootprint::Known(
-                    REPORTED_FOOTPRINT.into()
-                ),
+                accepted_loading_peak: ACCEPTED_LOADING_PEAK,
+                reported_footprint: REPORTED_FOOTPRINT,
+                conservative_footprint: ApplicationConservativeFootprint::Known(REPORTED_FOOTPRINT),
             }
         );
         assert_eq!(
@@ -331,7 +329,7 @@ fn incompatible_unload_failure_transitions_to_lower_inspection_without_parallel_
         let ticket = CommandTicket::new(79);
         runtime.install_submitted_incompatible_cleanup(
             RETAINED_HANDLE,
-            ApplicationRetainedOwnership::Exact(EXACT_FOOTPRINT.into()),
+            ApplicationRetainedOwnership::Exact(EXACT_FOOTPRINT),
             primary.clone(),
             ticket,
             1,

@@ -17,6 +17,7 @@ use tokenization::Tokenizer;
 
 use crate::hub_worker::{HubCommand, HubEvent};
 use crate::local::{CANDLE_BACKEND_ID, application_device, execution_device};
+use crate::state::{LoadedModelCommit, LoadedModelExecution, LoadedModelLimits};
 use crate::support::{
     application_configuration_declared_scalar_type, application_scalar_type, hub_failure,
     model_resolution_failure, model_source_failure, stored_configuration_declared_scalar_type,
@@ -24,9 +25,8 @@ use crate::support::{
 };
 use crate::{
     ApplicationActivity, ApplicationDevice, ApplicationError, ApplicationEvent, ApplicationFailure,
-    ApplicationFailureKind, ApplicationGenerationMode, ApplicationMemoryFootprint,
-    ApplicationRuntime, ChatCompatibility, ImmutableModelIdentity, LoadedModel, ModelSelection,
-    ResolvedModel,
+    ApplicationFailureKind, ApplicationGenerationMode, ApplicationRuntime, ChatCompatibility,
+    ImmutableModelIdentity, LoadedModel, ModelSelection, ResolvedModel,
 };
 
 const MODEL_ID: ModelId = ModelId::new(1);
@@ -499,18 +499,22 @@ impl ApplicationRuntime {
             ChatCompatibility::Supported => ApplicationGenerationMode::Chat,
             ChatCompatibility::Unsupported => ApplicationGenerationMode::DirectCompletion,
         };
-        let loaded = LoadedModel::new(
-            receipt.handle,
-            resolved.selection().clone(),
-            resolved.identity().clone(),
-            actual_device,
-            execution_scalar_type,
-            descriptor.metadata.vocabulary_size,
-            descriptor.capabilities.maximum_context_tokens,
-            descriptor.capabilities.maximum_prefill_batch,
+        let loaded = LoadedModel::commit(LoadedModelCommit {
+            handle: receipt.handle,
+            selection: resolved.selection().clone(),
+            identity: resolved.identity().clone(),
+            execution: LoadedModelExecution {
+                device: actual_device,
+                scalar_type: execution_scalar_type,
+            },
+            limits: LoadedModelLimits {
+                vocabulary_size: descriptor.metadata.vocabulary_size,
+                maximum_context_tokens: descriptor.capabilities.maximum_context_tokens,
+                maximum_prefill_batch: descriptor.capabilities.maximum_prefill_batch,
+            },
             generation_mode,
-            ApplicationMemoryFootprint::from(receipt.reserved_footprint),
-        );
+            reserved_footprint: receipt.reserved_footprint,
+        });
         Ok(ValidatedLoad { loaded })
     }
 

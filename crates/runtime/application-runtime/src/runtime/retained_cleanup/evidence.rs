@@ -49,19 +49,17 @@ pub(super) fn application_retained_ownership(
 ) -> ApplicationRetainedOwnership {
     match ownership {
         RetainedOwnership::Released => ApplicationRetainedOwnership::Unknown,
-        RetainedOwnership::Exact(footprint) => {
-            ApplicationRetainedOwnership::Exact(footprint.into())
-        }
+        RetainedOwnership::Exact(footprint) => ApplicationRetainedOwnership::Exact(footprint),
         RetainedOwnership::Unverified {
             accepted_footprint,
             reported_footprint,
             conservative_footprint,
         } => ApplicationRetainedOwnership::Unverified {
-            accepted_loading_peak: accepted_footprint.into(),
-            reported_footprint: reported_footprint.into(),
+            accepted_loading_peak: accepted_footprint,
+            reported_footprint,
             conservative_footprint: match conservative_footprint {
                 ConservativeFootprint::Known(footprint) => {
-                    ApplicationConservativeFootprint::Known(footprint.into())
+                    ApplicationConservativeFootprint::Known(footprint)
                 }
                 ConservativeFootprint::Overflow => ApplicationConservativeFootprint::Overflow,
             },

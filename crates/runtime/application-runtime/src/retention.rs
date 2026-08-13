@@ -4,38 +4,11 @@ use domain_contracts::{MemoryFootprint, ModelHandle};
 
 use crate::ApplicationFailure;
 
-/// Concrete byte ownership reported through the application boundary.
-///
-/// These values describe deterministic runtime accounting, not sampled RSS or
-/// whole-device memory use.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ApplicationMemoryFootprint {
-    /// Host bytes retaining model weights.
-    pub host_weight_bytes: u64,
-    /// Device-local bytes retaining model weights.
-    pub device_weight_bytes: u64,
-    /// Host bytes retaining model working storage.
-    pub host_working_bytes: u64,
-    /// Device-local bytes retaining model working storage.
-    pub device_working_bytes: u64,
-}
-
-impl From<MemoryFootprint> for ApplicationMemoryFootprint {
-    fn from(value: MemoryFootprint) -> Self {
-        Self {
-            host_weight_bytes: value.host_weight_bytes,
-            device_weight_bytes: value.device_weight_bytes,
-            host_working_bytes: value.host_working_bytes,
-            device_working_bytes: value.device_working_bytes,
-        }
-    }
-}
-
 /// Checked conservative evidence for ownership whose exact upper bound is not verified.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApplicationConservativeFootprint {
     /// Every component and aggregate total was represented exactly.
-    Known(ApplicationMemoryFootprint),
+    Known(MemoryFootprint),
     /// Checked arithmetic could not represent at least one component or aggregate total.
     Overflow,
 }
@@ -68,13 +41,13 @@ pub enum ApplicationRetainedModelResource {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApplicationRetainedOwnership {
     /// A named lower ownership phase still has an exact byte footprint.
-    Exact(ApplicationMemoryFootprint),
+    Exact(MemoryFootprint),
     /// A contract-violating lower owner has no verified exact upper bound.
     Unverified {
         /// Exact loading reservation accepted before materialization.
-        accepted_loading_peak: ApplicationMemoryFootprint,
+        accepted_loading_peak: MemoryFootprint,
         /// Contradictory footprint reported by the retained lower owner.
-        reported_footprint: ApplicationMemoryFootprint,
+        reported_footprint: MemoryFootprint,
         /// Checked component-wise conservative evidence.
         conservative_footprint: ApplicationConservativeFootprint,
     },

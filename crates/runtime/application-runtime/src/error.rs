@@ -266,7 +266,7 @@ pub enum ApplicationError {
 impl Display for ApplicationError {
     #[expect(
         clippy::too_many_lines,
-        reason = "one exhaustive formatter owns the stable application error vocabulary"
+        reason = "sole production exception: one exhaustive Display match keeps every stable ApplicationError mapping auditable in one place"
     )]
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {

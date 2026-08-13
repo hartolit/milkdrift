@@ -1,5 +1,7 @@
 //! Bounded single-thread host wrapper around the synchronous runtime registry.
 
+mod dispatch;
+
 use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -16,8 +18,11 @@ use host_runtime::{
 use crate::generation::GenerationScheduler;
 use crate::{
     CommandTicket, GenerationOutputState, HostedRuntimeConfiguration, InferenceRuntime,
-    RuntimeCommand, RuntimeEvent, RuntimeLimits, RuntimeReceiveError, RuntimeSubmitError,
+    RuntimeCommand, RuntimeError, RuntimeEvent, RuntimeLimits, RuntimeReceiveError,
+    RuntimeSubmitError, ShutdownReceipt,
 };
+
+const MAXIMUM_COMMANDS_PER_TURN: usize = 8;
 
 /// Client-side bounded command and event endpoints.
 pub struct HostedRuntime<S> {
@@ -117,6 +122,38 @@ enum WorkerStop {
     RetainUntilProcessExit,
 }
 
+#[derive(Clone, Copy)]
+enum WorkerExit {
+    Disconnected,
+    OutputPoisoned,
+    Terminal(WorkerStop),
+}
+
+struct CommandOutcome {
+    event: RuntimeEvent,
+    stop: Option<WorkerStop>,
+}
+
+/// Exclusively owned state for one hosted-runtime worker loop.
+struct WorkerState<'a, L>
+where
+    L: ModelLoader,
+{
+    runtime: InferenceRuntime<L>,
+    scheduler: GenerationScheduler,
+    commands: &'a BoundedReceiver<RuntimeCommand<L::Source>>,
+    events: &'a BoundedSender<RuntimeEvent>,
+    token_output: &'a TokenOutputProducer<GenerationOutputState>,
+    pending_event: Option<RuntimeEvent>,
+    queued_events: VecDeque<RuntimeEvent>,
+    pending_unloads: BTreeMap<ModelId, PendingUnload>,
+    maintenance_events: BTreeMap<ModelId, RuntimeEvent>,
+    stop_after_publication: Option<WorkerStop>,
+    event_backlog_capacity: usize,
+    clock: MonotonicClock,
+    poll_interval: Duration,
+}
+
 /// Join handle for the exclusively owning runtime worker.
 pub struct RuntimeThread {
     thread: HostThread<()>,
@@ -209,13 +246,8 @@ where
     ))
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "the worker loop keeps control, generation, maintenance, and publication ordering \
-              explicit"
-)]
 fn run_worker<L>(
-    mut runtime: InferenceRuntime<L>,
+    runtime: InferenceRuntime<L>,
     commands: &BoundedReceiver<RuntimeCommand<L::Source>>,
     events: &BoundedSender<RuntimeEvent>,
     token_output: &TokenOutputProducer<GenerationOutputState>,
@@ -224,21 +256,98 @@ fn run_worker<L>(
 ) where
     L: ModelLoader,
 {
-    let clock = MonotonicClock::new();
-    let mut scheduler = GenerationScheduler::new();
-    let mut pending_event = None;
-    let mut queued_events = VecDeque::with_capacity(event_backlog_capacity);
-    let mut stop_after_event = None;
-    let mut pending_unloads = BTreeMap::<ModelId, PendingUnload>::new();
-    let mut maintenance_events = BTreeMap::<ModelId, RuntimeEvent>::new();
+    WorkerState::new(
+        runtime,
+        commands,
+        events,
+        token_output,
+        event_backlog_capacity,
+        poll_interval,
+    )
+    .run();
+}
 
-    loop {
-        if let Err(error) = runtime.poll_cleanup() {
-            runtime.record_maintenance_error(error);
+impl<'a, L> WorkerState<'a, L>
+where
+    L: ModelLoader,
+{
+    fn new(
+        runtime: InferenceRuntime<L>,
+        commands: &'a BoundedReceiver<RuntimeCommand<L::Source>>,
+        events: &'a BoundedSender<RuntimeEvent>,
+        token_output: &'a TokenOutputProducer<GenerationOutputState>,
+        event_backlog_capacity: usize,
+        poll_interval: Duration,
+    ) -> Self {
+        Self {
+            runtime,
+            scheduler: GenerationScheduler::new(),
+            commands,
+            events,
+            token_output,
+            pending_event: None,
+            queued_events: VecDeque::with_capacity(event_backlog_capacity),
+            pending_unloads: BTreeMap::new(),
+            maintenance_events: BTreeMap::new(),
+            stop_after_publication: None,
+            event_backlog_capacity,
+            clock: MonotonicClock::new(),
+            poll_interval,
         }
-        if let Some((model_id, event)) =
-            maintenance_event(&mut runtime, clock.now(), &mut pending_unloads)
+    }
+
+    fn run(mut self) {
+        let exit = loop {
+            if let Some(exit) = self.run_one_turn() {
+                break exit;
+            }
+        };
+        self.finish(exit);
+    }
+
+    fn run_one_turn(&mut self) -> Option<WorkerExit> {
+        self.run_maintenance();
+        self.select_next_event();
+        let publication_blocked = match self.publish_one_event() {
+            Ok(blocked) => blocked,
+            Err(exit) => return Some(exit),
+        };
+        if self.stop_after_publication.is_some() {
+            std::thread::sleep(self.poll_interval);
+            return None;
+        }
+
+        let handled_command = match self.process_bounded_commands() {
+            Ok(handled) => handled,
+            Err(exit) => return Some(exit),
+        };
+        let generation_progressed = match self.advance_generation() {
+            Ok(progressed) => progressed,
+            Err(exit) => return Some(exit),
+        };
+        if !handled_command
+            && !generation_progressed
+            && self.queued_events.len() < self.event_backlog_capacity
         {
+            return self.wait_for_one_command();
+        }
+        if publication_blocked
+            || (!handled_command && self.queued_events.len() >= self.event_backlog_capacity)
+        {
+            std::thread::sleep(self.poll_interval);
+        }
+        None
+    }
+
+    fn run_maintenance(&mut self) {
+        if let Err(error) = self.runtime.poll_cleanup() {
+            self.runtime.record_maintenance_error(error);
+        }
+        if let Some((model_id, event)) = maintenance_event(
+            &mut self.runtime,
+            self.clock.now(),
+            &mut self.pending_unloads,
+        ) {
             if matches!(
                 event,
                 RuntimeEvent::ModelUnload {
@@ -246,137 +355,137 @@ fn run_worker<L>(
                     ..
                 } if cancelled_requests > 0
             ) {
-                scheduler.request_model_cancellation(
+                self.scheduler.request_model_cancellation(
                     model_id,
                     domain_contracts::CancellationReason::DrainTimeout,
                 );
             }
-            maintenance_events.insert(model_id, event);
+            self.maintenance_events.insert(model_id, event);
         }
-        collect_naturally_completed_unloads(
-            &runtime,
-            &mut pending_unloads,
-            &mut maintenance_events,
+        collect_one_naturally_completed_unload(
+            &self.runtime,
+            &mut self.pending_unloads,
+            &mut self.maintenance_events,
         );
-        if pending_event.is_none() {
-            pending_event = queued_events
+    }
+
+    fn select_next_event(&mut self) {
+        if self.pending_event.is_none() {
+            self.pending_event = self
+                .queued_events
                 .pop_front()
-                .or_else(|| maintenance_events.pop_first().map(|(_, event)| event));
+                .or_else(|| self.maintenance_events.pop_first().map(|(_, event)| event));
         }
+    }
 
-        if let Some(stop) = stop_after_event
-            && pending_event.is_none()
-            && queued_events.is_empty()
+    fn publish_one_event(&mut self) -> Result<bool, WorkerExit> {
+        if let Some(stop) = self.stop_after_publication
+            && self.pending_event.is_none()
+            && self.queued_events.is_empty()
         {
-            finish_worker(runtime, stop);
-            return;
+            return Err(WorkerExit::Terminal(stop));
         }
 
-        if let Some(event) = pending_event.take() {
-            match events.try_send(event) {
-                Ok(()) => {
-                    if let Some(stop) = stop_after_event {
-                        finish_worker(runtime, stop);
-                        return;
-                    }
-                }
-                Err(TrySendError::Full(event)) => pending_event = Some(event),
-                Err(TrySendError::Disconnected(_)) => {
-                    shutdown_after_disconnect(runtime);
-                    return;
-                }
+        let Some(event) = self.pending_event.take() else {
+            return Ok(false);
+        };
+        match self.events.try_send(event) {
+            Ok(()) => self
+                .stop_after_publication
+                .map_or(Ok(false), |stop| Err(WorkerExit::Terminal(stop))),
+            Err(TrySendError::Full(event)) => {
+                self.pending_event = Some(event);
+                Ok(true)
             }
+            Err(TrySendError::Disconnected(_)) => Err(WorkerExit::Disconnected),
         }
+    }
 
-        if stop_after_event.is_some() {
-            std::thread::sleep(poll_interval);
-            continue;
-        }
-
-        let mut handled_command = false;
-        for _ in 0..8 {
-            if queued_events.len() >= event_backlog_capacity {
+    fn process_bounded_commands(&mut self) -> Result<bool, WorkerExit> {
+        let mut handled = false;
+        for _ in 0..MAXIMUM_COMMANDS_PER_TURN {
+            if self.queued_events.len() >= self.event_backlog_capacity {
                 break;
             }
-            match commands.try_receive() {
+            match self.commands.try_receive() {
                 Ok(command) => {
-                    handled_command = true;
-                    let unload_identity = unload_command_identity(&command);
-                    let (event, stop) = dispatch(
-                        &mut runtime,
-                        &mut scheduler,
-                        token_output,
-                        command,
-                        clock.now(),
-                    );
-                    remember_pending_unload(
-                        unload_identity,
-                        &event,
-                        &runtime,
-                        &mut pending_unloads,
-                    );
-                    if let Some(stop) = stop {
-                        pending_event = Some(event);
-                        queued_events.clear();
-                        maintenance_events.clear();
-                        pending_unloads.clear();
-                        stop_after_event = Some(stop);
+                    handled = true;
+                    self.apply_command(command);
+                    if self.stop_after_publication.is_some() {
                         break;
-                    }
-                    if pending_event.is_none() {
-                        pending_event = Some(event);
-                    } else {
-                        queued_events.push_back(event);
                     }
                 }
                 Err(TryReceiveError::Empty) => break,
                 Err(TryReceiveError::Disconnected) => {
-                    shutdown_after_disconnect(runtime);
-                    return;
+                    return Err(WorkerExit::Disconnected);
                 }
             }
         }
+        Ok(handled)
+    }
 
-        let advance = scheduler.advance(&mut runtime, token_output);
-        if advance.output_poisoned {
-            shutdown_after_output_poison(&mut scheduler, runtime);
-            return;
+    fn apply_command(&mut self, command: RuntimeCommand<L::Source>) {
+        let unload_identity = unload_command_identity(&command);
+        let CommandOutcome { event, stop } = self.dispatch(command);
+        remember_pending_unload(
+            unload_identity,
+            &event,
+            &self.runtime,
+            &mut self.pending_unloads,
+        );
+        if let Some(stop) = stop {
+            self.enter_terminal_stop(event, stop);
+        } else {
+            self.enqueue_event(event);
         }
-        if !handled_command && !advance.progressed && queued_events.len() < event_backlog_capacity {
-            match commands.receive_timeout(poll_interval) {
-                Ok(command) => {
-                    let unload_identity = unload_command_identity(&command);
-                    let (event, stop) = dispatch(
-                        &mut runtime,
-                        &mut scheduler,
-                        token_output,
-                        command,
-                        clock.now(),
-                    );
-                    remember_pending_unload(
-                        unload_identity,
-                        &event,
-                        &runtime,
-                        &mut pending_unloads,
-                    );
-                    if let Some(stop) = stop {
-                        pending_event = Some(event);
-                        queued_events.clear();
-                        maintenance_events.clear();
-                        pending_unloads.clear();
-                        stop_after_event = Some(stop);
-                    } else if pending_event.is_none() {
-                        pending_event = Some(event);
-                    } else {
-                        queued_events.push_back(event);
-                    }
-                }
-                Err(ReceiveTimeoutError::Timeout) => {}
-                Err(ReceiveTimeoutError::Disconnected) => {
-                    shutdown_after_disconnect(runtime);
-                    return;
+    }
+
+    fn enqueue_event(&mut self, event: RuntimeEvent) {
+        if self.pending_event.is_none() {
+            self.pending_event = Some(event);
+        } else {
+            debug_assert!(self.queued_events.len() < self.event_backlog_capacity);
+            self.queued_events.push_back(event);
+        }
+    }
+
+    fn enter_terminal_stop(&mut self, event: RuntimeEvent, stop: WorkerStop) {
+        self.pending_event = Some(event);
+        self.queued_events.clear();
+        self.maintenance_events.clear();
+        self.pending_unloads.clear();
+        self.stop_after_publication = Some(stop);
+    }
+
+    fn advance_generation(&mut self) -> Result<bool, WorkerExit> {
+        let advance = self.scheduler.advance(&mut self.runtime, self.token_output);
+        if advance.output_poisoned {
+            Err(WorkerExit::OutputPoisoned)
+        } else {
+            Ok(advance.progressed)
+        }
+    }
+
+    fn wait_for_one_command(&mut self) -> Option<WorkerExit> {
+        match self.commands.receive_timeout(self.poll_interval) {
+            Ok(command) => {
+                self.apply_command(command);
+                None
+            }
+            Err(ReceiveTimeoutError::Timeout) => None,
+            Err(ReceiveTimeoutError::Disconnected) => Some(WorkerExit::Disconnected),
+        }
+    }
+
+    fn finish(mut self, exit: WorkerExit) {
+        match exit {
+            WorkerExit::Disconnected | WorkerExit::OutputPoisoned => {
+                let result = shutdown_runtime(&mut self.runtime, &mut self.scheduler);
+                if result.is_err() && self.runtime.owns_backend_resources() {
+                    retain_until_process_exit(self.runtime);
                 }
             }
+            WorkerExit::Terminal(stop) => finish_worker(self.runtime, stop),
         }
     }
 }
@@ -400,34 +509,22 @@ where
     std::mem::forget(runtime);
 }
 
-fn shutdown_after_disconnect<L>(mut runtime: InferenceRuntime<L>)
+fn shutdown_runtime<L>(
+    runtime: &mut InferenceRuntime<L>,
+    scheduler: &mut GenerationScheduler,
+) -> Result<ShutdownReceipt, RuntimeError>
 where
     L: ModelLoader,
 {
-    if runtime.shutdown().is_err() && runtime.owns_backend_resources() {
-        // No endpoint remains to observe or retry cleanup, so apply the same
-        // fail-closed process-lifetime retention policy as ticketed shutdown.
-        retain_until_process_exit(runtime);
-    }
-}
-
-fn shutdown_after_output_poison<L>(
-    scheduler: &mut GenerationScheduler,
-    mut runtime: InferenceRuntime<L>,
-) where
-    L: ModelLoader,
-{
     let mut result = runtime.shutdown();
-    if let Err(error) = scheduler.discard_all(&mut runtime) {
+    if let Err(error) = scheduler.discard_all(runtime) {
         if result.is_ok() {
             result = Err(error);
         } else {
             runtime.record_maintenance_error(error);
         }
     }
-    if result.is_err() && runtime.owns_backend_resources() {
-        retain_until_process_exit(runtime);
-    }
+    result
 }
 
 fn maintenance_event<L>(
@@ -467,38 +564,35 @@ where
     }
 }
 
-fn collect_naturally_completed_unloads<L>(
+fn collect_one_naturally_completed_unload<L>(
     runtime: &InferenceRuntime<L>,
     pending_unloads: &mut BTreeMap<ModelId, PendingUnload>,
     events: &mut BTreeMap<ModelId, RuntimeEvent>,
 ) where
     L: ModelLoader,
 {
-    let completed = pending_unloads
-        .iter()
-        .filter_map(|(model_id, pending)| {
-            runtime
-                .model_lifecycle_state(*model_id)
-                .is_none()
-                .then_some((*model_id, *pending))
-                .filter(|_| !runtime.is_model_cleanup_pending(*model_id))
-        })
-        .collect::<Vec<_>>();
-
-    for (model_id, pending) in completed {
-        pending_unloads.remove(&model_id);
-        events.insert(
-            model_id,
-            RuntimeEvent::ModelUnload {
-                ticket: pending.ticket,
-                result: Ok(crate::UnloadReceipt {
-                    handle: pending.handle,
-                    status: crate::UnloadStatus::Unloaded,
-                    cancelled_requests: pending.cancelled_requests,
-                }),
-            },
-        );
-    }
+    let completed = pending_unloads.iter().find_map(|(model_id, pending)| {
+        runtime
+            .model_lifecycle_state(*model_id)
+            .is_none()
+            .then_some((*model_id, *pending))
+            .filter(|_| !runtime.is_model_cleanup_pending(*model_id))
+    });
+    let Some((model_id, pending)) = completed else {
+        return;
+    };
+    pending_unloads.remove(&model_id);
+    events.insert(
+        model_id,
+        RuntimeEvent::ModelUnload {
+            ticket: pending.ticket,
+            result: Ok(crate::UnloadReceipt {
+                handle: pending.handle,
+                status: crate::UnloadStatus::Unloaded,
+                cancelled_requests: pending.cancelled_requests,
+            }),
+        },
+    );
 }
 
 const fn unload_command_identity<S>(
@@ -560,200 +654,4 @@ fn remember_pending_unload<L>(
     } else {
         pending_unloads.remove(&model_id);
     }
-}
-
-#[expect(
-    clippy::too_many_lines,
-    reason = "command dispatch is an exhaustive ownership boundary over all runtime commands"
-)]
-fn dispatch<L>(
-    runtime: &mut InferenceRuntime<L>,
-    scheduler: &mut GenerationScheduler,
-    token_output: &TokenOutputProducer<GenerationOutputState>,
-    command: RuntimeCommand<L::Source>,
-    now: MonotonicMillis,
-) -> (RuntimeEvent, Option<WorkerStop>)
-where
-    L: ModelLoader,
-{
-    match command {
-        RuntimeCommand::LoadModel {
-            ticket,
-            model_id,
-            source,
-            execution_device,
-        } => (
-            RuntimeEvent::ModelLoaded {
-                ticket,
-                result: runtime.load_model(model_id, &source, execution_device),
-            },
-            None,
-        ),
-        RuntimeCommand::StartRequest {
-            ticket,
-            handle,
-            request_id,
-            sequence_id,
-            configuration,
-        } => (
-            RuntimeEvent::RequestStarted {
-                ticket,
-                result: if scheduler.contains(request_id) {
-                    Err(crate::RuntimeError::RequestAlreadyActive(request_id))
-                } else {
-                    runtime.start_request(handle, request_id, sequence_id, configuration)
-                },
-            },
-            None,
-        ),
-        RuntimeCommand::Generate {
-            ticket,
-            handle,
-            request,
-        } => (
-            RuntimeEvent::GenerationAdmitted {
-                ticket,
-                result: scheduler.admit(runtime, token_output, handle, request),
-            },
-            None,
-        ),
-        RuntimeCommand::Prefill {
-            ticket,
-            request_id,
-            tokens,
-            emit_logits,
-            logits,
-        } => dispatch_prefill(runtime, ticket, request_id, &tokens, emit_logits, logits),
-        RuntimeCommand::Decode {
-            ticket,
-            request_id,
-            token,
-            logits,
-        } => dispatch_decode(runtime, ticket, request_id, token, logits),
-        RuntimeCommand::CompleteRequest {
-            ticket,
-            request_id,
-            reason,
-        } => (
-            RuntimeEvent::RequestFinished {
-                ticket,
-                request_id,
-                result: runtime.complete_request(request_id, reason),
-            },
-            None,
-        ),
-        RuntimeCommand::CancelRequest {
-            ticket,
-            request_id,
-            reason,
-        } if scheduler.contains(request_id) => (
-            RuntimeEvent::GenerationCancellationRequested {
-                ticket,
-                request_id,
-                result: scheduler.request_cancellation(request_id, reason),
-            },
-            None,
-        ),
-        RuntimeCommand::CancelRequest {
-            ticket,
-            request_id,
-            reason,
-        } => (
-            RuntimeEvent::RequestFinished {
-                ticket,
-                request_id,
-                result: runtime.cancel_request(request_id, reason),
-            },
-            None,
-        ),
-        RuntimeCommand::UnloadModel {
-            ticket,
-            handle,
-            policy,
-        } => {
-            if matches!(policy, domain_contracts::UnloadPolicy::CancelActive) {
-                scheduler.request_model_cancellation(
-                    handle.id,
-                    domain_contracts::CancellationReason::ModelUnload,
-                );
-            }
-            (
-                RuntimeEvent::ModelUnload {
-                    ticket,
-                    result: runtime.unload_model(handle, policy, now),
-                },
-                None,
-            )
-        }
-        RuntimeCommand::Snapshot { ticket } => (
-            RuntimeEvent::Snapshot {
-                ticket,
-                runtime: runtime.snapshot(),
-                models: runtime.model_snapshots(),
-                retained_models: runtime.retained_model_snapshots(),
-            },
-            None,
-        ),
-        RuntimeCommand::Shutdown { ticket } => {
-            let mut result = runtime.shutdown();
-            if let Err(error) = scheduler.discard_all(runtime) {
-                if result.is_ok() {
-                    result = Err(error);
-                } else {
-                    runtime.record_maintenance_error(error);
-                }
-            }
-            let stop = if result.is_err() && runtime.owns_backend_resources() {
-                WorkerStop::RetainUntilProcessExit
-            } else {
-                WorkerStop::DropRuntime
-            };
-            (RuntimeEvent::Shutdown { ticket, result }, Some(stop))
-        }
-    }
-}
-
-fn dispatch_prefill<L>(
-    runtime: &mut InferenceRuntime<L>,
-    ticket: CommandTicket,
-    request_id: domain_contracts::RequestId,
-    tokens: &[domain_contracts::TokenId],
-    emit_logits: bool,
-    mut logits: Vec<f32>,
-) -> (RuntimeEvent, Option<WorkerStop>)
-where
-    L: ModelLoader,
-{
-    let result = runtime.prefill(request_id, tokens, emit_logits, logits.as_mut_slice());
-    (
-        RuntimeEvent::PrefillCompleted {
-            ticket,
-            request_id,
-            result,
-            logits,
-        },
-        None,
-    )
-}
-
-fn dispatch_decode<L>(
-    runtime: &mut InferenceRuntime<L>,
-    ticket: CommandTicket,
-    request_id: domain_contracts::RequestId,
-    token: domain_contracts::TokenId,
-    mut logits: Vec<f32>,
-) -> (RuntimeEvent, Option<WorkerStop>)
-where
-    L: ModelLoader,
-{
-    let result = runtime.decode(request_id, token, logits.as_mut_slice());
-    (
-        RuntimeEvent::DecodeCompleted {
-            ticket,
-            request_id,
-            result,
-            logits,
-        },
-        None,
-    )
 }

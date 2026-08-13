@@ -107,6 +107,11 @@ impl ApplicationRuntime {
             self.forced_inference_busy_submissions -= 1;
             return Err(ApplicationError::RuntimeBusy);
         }
+        #[cfg(test)]
+        if self.forced_unsent_command_disconnects > 0 {
+            self.forced_unsent_command_disconnects -= 1;
+            return Err(ApplicationError::RuntimeDisconnected);
+        }
 
         match self.local.submit(command) {
             Ok(()) => {

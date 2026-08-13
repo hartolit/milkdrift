@@ -62,6 +62,66 @@ fn candle_runs_e1_direct_completion_scenario() -> TestResult {
 }
 
 #[test]
+fn generation_submission_is_transactional_and_commits_correlated_state() -> TestResult {
+    with_loaded_runtime(default_test_configuration, |runtime, _loaded| {
+        runtime.forced_inference_busy_submissions = 1;
+        assert_eq!(
+            runtime.start_generation("prompt seed", deterministic_settings(1)),
+            Err(ApplicationError::RuntimeBusy)
+        );
+        assert!(runtime.state().active_generation().is_none());
+        assert!(runtime.generation.session_correlation().is_none());
+
+        runtime.forced_unsent_command_disconnects = 1;
+        assert_eq!(
+            runtime.start_generation("prompt seed", deterministic_settings(1)),
+            Err(ApplicationError::RuntimeDisconnected)
+        );
+        assert!(runtime.state().active_generation().is_none());
+        assert!(runtime.generation.session_correlation().is_none());
+
+        let request_id = runtime
+            .start_generation("prompt seed", deterministic_settings(1))
+            .map_err(application_error)?;
+        let (session_request, admission_ticket) = runtime
+            .generation
+            .session_correlation()
+            .ok_or_else(|| "successful submission omitted its generation session".to_owned())?;
+        assert_eq!(session_request, request_id);
+        assert_eq!(admission_ticket.get(), request_id.get());
+        assert_eq!(
+            runtime
+                .state()
+                .active_generation()
+                .map(|summary| summary.request_id),
+            Some(request_id)
+        );
+        let _result = collect_generation(runtime, request_id)?;
+        Ok(())
+    })
+}
+
+#[test]
+fn active_generation_precondition_precedes_additional_prompt_encoding() -> TestResult {
+    with_loaded_runtime(default_test_configuration, |runtime, loaded| {
+        let request_id = runtime
+            .start_generation("prompt seed", deterministic_settings(1))
+            .map_err(application_error)?;
+        let oversized_prompt = "word ".repeat(
+            usize::try_from(loaded.maximum_context_tokens())
+                .unwrap_or(usize::MAX)
+                .saturating_add(1),
+        );
+        assert_eq!(
+            runtime.start_generation(oversized_prompt.as_str(), deterministic_settings(1)),
+            Err(ApplicationError::GenerationAlreadyActive(request_id))
+        );
+        let _result = collect_generation(runtime, request_id)?;
+        Ok(())
+    })
+}
+
+#[test]
 fn compatible_chat_plans_and_submits_the_rendered_prompt_with_profile_eos() -> TestResult {
     with_loaded_chat_runtime(default_test_configuration, |runtime, loaded| {
         assert!(runtime.can_submit_chat_message());
@@ -69,6 +129,14 @@ fn compatible_chat_plans_and_submits_the_rendered_prompt_with_profile_eos() -> T
             .submit_user_message("hello", deterministic_settings(3))
             .map_err(application_error)?;
         assert!(!runtime.can_submit_chat_message());
+        assert_eq!(
+            runtime.generation.session_correlation(),
+            Some((
+                request_id,
+                inference_runtime::CommandTicket::new(request_id.get())
+            ))
+        );
+        assert!(runtime.conversation.has_active_response());
         let diagnostics = runtime
             .context_diagnostics()
             .cloned()
@@ -220,6 +288,72 @@ fn regeneration_preserves_superseded_attempt_and_clear_rejects_active_response()
 }
 
 #[test]
+fn full_chat_submission_does_not_publish_or_supersede_a_provisional_response() -> TestResult {
+    with_loaded_chat_runtime(default_test_configuration, |runtime, _loaded| {
+        let first_request = runtime
+            .submit_user_message("hello", deterministic_settings(1))
+            .map_err(application_error)?;
+        wait_for_generation_started(runtime, first_request)?;
+        let _first = collect_generation(runtime, first_request)?;
+        let records_before = runtime.conversation().to_vec();
+        let diagnostics_before = runtime.context_diagnostics().cloned();
+
+        runtime.forced_inference_busy_submissions = 1;
+        assert_eq!(
+            runtime.regenerate_last_response(deterministic_settings(1)),
+            Err(ApplicationError::RuntimeBusy)
+        );
+        assert_eq!(runtime.conversation(), records_before.as_slice());
+        assert!(runtime.conversation().get(1).is_some_and(|record| {
+            record
+                .response_attempt
+                .as_ref()
+                .is_some_and(|attempt| !attempt.superseded)
+        }));
+        assert!(!runtime.conversation.has_active_response());
+        assert!(runtime.state().active_generation().is_none());
+        assert!(runtime.generation.session_correlation().is_none());
+        assert_eq!(runtime.context_diagnostics(), diagnostics_before.as_ref());
+        Ok(())
+    })
+}
+
+#[test]
+fn unsent_disconnected_chat_submission_retains_user_without_publishing_response() -> TestResult {
+    with_loaded_chat_runtime(default_test_configuration, |runtime, _loaded| {
+        let first_request = runtime
+            .submit_user_message("hello", deterministic_settings(1))
+            .map_err(application_error)?;
+        wait_for_generation_started(runtime, first_request)?;
+        let _first = collect_generation(runtime, first_request)?;
+        let records_before = runtime.conversation().len();
+        let diagnostics_before = runtime.context_diagnostics().cloned();
+
+        runtime.forced_unsent_command_disconnects = 1;
+        assert_eq!(
+            runtime.submit_user_message("committed question", deterministic_settings(1)),
+            Err(ApplicationError::RuntimeDisconnected)
+        );
+        assert_eq!(runtime.conversation().len(), records_before + 1);
+        assert_eq!(
+            runtime.conversation().last().map(|record| record.role),
+            Some(ConversationRole::User)
+        );
+        assert!(runtime.conversation().get(1).is_some_and(|record| {
+            record
+                .response_attempt
+                .as_ref()
+                .is_some_and(|attempt| !attempt.superseded)
+        }));
+        assert!(!runtime.conversation.has_active_response());
+        assert!(runtime.state().active_generation().is_none());
+        assert!(runtime.generation.session_correlation().is_none());
+        assert_eq!(runtime.context_diagnostics(), diagnostics_before.as_ref());
+        Ok(())
+    })
+}
+
+#[test]
 fn unanswered_committed_user_blocks_regeneration_of_the_previous_response() -> TestResult {
     with_loaded_chat_runtime(default_test_configuration, |runtime, loaded| {
         let first_request = runtime
@@ -291,17 +425,29 @@ fn unknown_chat_compatibility_fails_without_guessing_a_template() -> TestResult 
 
 #[test]
 fn invalid_busy_and_eos_admission_are_normalized() -> TestResult {
-    with_loaded_runtime(default_test_configuration, |runtime, _loaded| {
+    with_loaded_runtime(default_test_configuration, |runtime, loaded| {
         let mut invalid = deterministic_settings(1);
         invalid.maximum_new_tokens = 0;
         assert_eq!(
-            runtime.start_generation("prompt seed", invalid),
+            runtime.start_generation("", invalid),
             Err(ApplicationError::InvalidGenerationSettings(
                 GenerationSettingsField::MaximumNewTokens
             ))
         );
         assert_eq!(
             runtime.start_generation("", deterministic_settings(1)),
+            Err(ApplicationError::EmptyPrompt)
+        );
+        let mut empty_with_unencodable_stop = deterministic_settings(1);
+        empty_with_unencodable_stop.stop_sequences.push(
+            "word ".repeat(
+                usize::try_from(loaded.maximum_context_tokens())
+                    .unwrap_or(usize::MAX)
+                    .saturating_add(1),
+            ),
+        );
+        assert_eq!(
+            runtime.start_generation("", empty_with_unencodable_stop),
             Err(ApplicationError::EmptyPrompt)
         );
 

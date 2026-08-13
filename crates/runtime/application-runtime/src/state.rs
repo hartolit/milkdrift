@@ -1,12 +1,11 @@
 //! Frontend-neutral application state exposed by the orchestration engine.
 
-use domain_contracts::{FinishReason, GenerationUsage, ModelHandle, RequestId};
+use domain_contracts::{FinishReason, GenerationUsage, MemoryFootprint, ModelHandle, RequestId};
 
 use crate::{
     ApplicationDevice, ApplicationDeviceDiscoveryFailure, ApplicationDeviceSummary,
-    ApplicationDeviceUnavailableReason, ApplicationFailure, ApplicationMemoryFootprint,
-    ApplicationRetainedModel, ApplicationScalarType, ChatCompatibility, ImmutableModelIdentity,
-    ModelSelection,
+    ApplicationDeviceUnavailableReason, ApplicationFailure, ApplicationRetainedModel,
+    ApplicationScalarType, ChatCompatibility, ImmutableModelIdentity, ModelSelection,
 };
 
 /// Long-running application operation currently in progress.
@@ -128,37 +127,46 @@ pub struct LoadedModel {
     maximum_context_tokens: u32,
     maximum_prefill_batch: u32,
     generation_mode: ApplicationGenerationMode,
-    reserved_footprint: ApplicationMemoryFootprint,
+    reserved_footprint: MemoryFootprint,
+}
+
+/// One complete load publication assembled only after E1 validates the correlated E0 receipt.
+pub(crate) struct LoadedModelCommit {
+    pub(crate) handle: ModelHandle,
+    pub(crate) selection: ModelSelection,
+    pub(crate) identity: ImmutableModelIdentity,
+    pub(crate) execution: LoadedModelExecution,
+    pub(crate) limits: LoadedModelLimits,
+    pub(crate) generation_mode: ApplicationGenerationMode,
+    pub(crate) reserved_footprint: MemoryFootprint,
+}
+
+/// Receipt-derived execution facts kept together during loaded-model publication.
+pub(crate) struct LoadedModelExecution {
+    pub(crate) device: ApplicationDevice,
+    pub(crate) scalar_type: ApplicationScalarType,
+}
+
+/// Receipt-derived generation limits kept together during loaded-model publication.
+pub(crate) struct LoadedModelLimits {
+    pub(crate) vocabulary_size: u32,
+    pub(crate) maximum_context_tokens: u32,
+    pub(crate) maximum_prefill_batch: u32,
 }
 
 impl LoadedModel {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the private constructor commits one complete verified load-receipt summary"
-    )]
-    pub(crate) const fn new(
-        handle: ModelHandle,
-        selection: ModelSelection,
-        identity: ImmutableModelIdentity,
-        device: ApplicationDevice,
-        execution_scalar_type: ApplicationScalarType,
-        vocabulary_size: u32,
-        maximum_context_tokens: u32,
-        maximum_prefill_batch: u32,
-        generation_mode: ApplicationGenerationMode,
-        reserved_footprint: ApplicationMemoryFootprint,
-    ) -> Self {
+    pub(crate) fn commit(validated: LoadedModelCommit) -> Self {
         Self {
-            handle,
-            selection,
-            identity,
-            device,
-            execution_scalar_type,
-            vocabulary_size,
-            maximum_context_tokens,
-            maximum_prefill_batch,
-            generation_mode,
-            reserved_footprint,
+            handle: validated.handle,
+            selection: validated.selection,
+            identity: validated.identity,
+            device: validated.execution.device,
+            execution_scalar_type: validated.execution.scalar_type,
+            vocabulary_size: validated.limits.vocabulary_size,
+            maximum_context_tokens: validated.limits.maximum_context_tokens,
+            maximum_prefill_batch: validated.limits.maximum_prefill_batch,
+            generation_mode: validated.generation_mode,
+            reserved_footprint: validated.reserved_footprint,
         }
     }
 
@@ -216,7 +224,7 @@ impl LoadedModel {
         self.generation_mode
     }
 
-    pub(crate) const fn reserved_footprint(&self) -> ApplicationMemoryFootprint {
+    pub(crate) const fn reserved_footprint(&self) -> MemoryFootprint {
         self.reserved_footprint
     }
 }

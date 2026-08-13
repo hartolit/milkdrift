@@ -39,6 +39,13 @@ struct GenerationSession {
     cancellation_requested: bool,
 }
 
+pub(super) struct GenerationSessionCommit {
+    pub(super) request_id: RequestId,
+    pub(super) admission_ticket: CommandTicket,
+    pub(super) decoder: HfOwnedStreamingDecoder,
+    pub(super) decode_storage: Vec<u8>,
+}
+
 enum PendingOutput {
     Token(TokenId),
     /// State records are cold request-boundary transitions. Indirection keeps the
@@ -80,24 +87,25 @@ impl GenerationBridge {
         })
     }
 
-    pub(super) fn begin_session(
-        &mut self,
-        request_id: RequestId,
-        admission_ticket: CommandTicket,
-        decoder: HfOwnedStreamingDecoder,
-        decode_storage: Vec<u8>,
-    ) {
+    pub(super) fn commit_session(&mut self, prepared: GenerationSessionCommit) {
         self.pending.clear();
         self.pending_event = None;
         self.session = Some(GenerationSession {
-            request_id,
-            admission_ticket,
-            decoder,
-            decode_storage,
+            request_id: prepared.request_id,
+            admission_ticket: prepared.admission_ticket,
+            decoder: prepared.decoder,
+            decode_storage: prepared.decode_storage,
             pending_text_length: 0,
             local_failure: None,
             cancellation_requested: false,
         });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn session_correlation(&self) -> Option<(RequestId, CommandTicket)> {
+        self.session
+            .as_ref()
+            .map(|session| (session.request_id, session.admission_ticket))
     }
 
     pub(crate) fn confirm_runtime_shutdown(&mut self) {

@@ -2,7 +2,9 @@
 
 use domain_contracts::{CancellationReason, FinishReason, RequestId};
 
-use crate::{ApplicationError, ApplicationFailure, GenerationTerminalOutcome};
+use crate::{
+    ApplicationError, ApplicationFailure, ApplicationFailureKind, GenerationTerminalOutcome,
+};
 
 /// Stable identity of one raw conversation record.
 #[repr(transparent)]
@@ -160,6 +162,20 @@ struct ActiveResponse {
     record_id: ConversationRecordId,
 }
 
+/// Preallocated, identity-checked semantic commit for one submitted generation request.
+///
+/// Preparation may reserve storage but does not publish an assistant record or supersede
+/// history. Once the corresponding E0 command is submitted, applying this value is infallible.
+pub(crate) struct ConversationResponseCommit {
+    request_id: RequestId,
+    responding_to: ConversationRecordId,
+    supersede_previous: bool,
+    record_id: ConversationRecordId,
+    next_record_id: u64,
+    attempt_id: ResponseAttemptId,
+    next_attempt_id: u64,
+}
+
 pub struct ConversationState {
     records: Vec<ConversationRecord>,
     active_response: Option<ActiveResponse>,
@@ -226,22 +242,59 @@ impl ConversationState {
         Ok(id)
     }
 
-    pub(crate) fn ensure_response_capacity(&self) -> Result<(), ApplicationError> {
-        self.next_record_id
-            .checked_add(1)
-            .ok_or(ApplicationError::ConversationIdentityExhausted)?;
-        self.next_attempt_id
-            .checked_add(1)
-            .ok_or(ApplicationError::ConversationIdentityExhausted)?;
-        Ok(())
-    }
-
-    pub(crate) fn begin_response(
+    pub(crate) fn prepare_response(
         &mut self,
         request_id: RequestId,
         responding_to: ConversationRecordId,
         supersede_previous: bool,
-    ) -> Result<ResponseAttemptId, ApplicationError> {
+    ) -> Result<ConversationResponseCommit, ApplicationError> {
+        if self.active_response.is_some()
+            || !self
+                .records
+                .iter()
+                .any(|record| record.id == responding_to && record.role == ConversationRole::User)
+        {
+            return Err(ApplicationFailure::new(
+                ApplicationFailureKind::Worker,
+                "conversation response preparation found inconsistent target state",
+            )
+            .into());
+        }
+        self.records
+            .try_reserve(1)
+            .map_err(|error| ApplicationFailure::new(ApplicationFailureKind::Worker, error))?;
+        let next_record_id = self
+            .next_record_id
+            .checked_add(1)
+            .ok_or(ApplicationError::ConversationIdentityExhausted)?;
+        let next_attempt_id = self
+            .next_attempt_id
+            .checked_add(1)
+            .ok_or(ApplicationError::ConversationIdentityExhausted)?;
+        Ok(ConversationResponseCommit {
+            request_id,
+            responding_to,
+            supersede_previous,
+            record_id: ConversationRecordId::new(self.next_record_id),
+            next_record_id,
+            attempt_id: ResponseAttemptId::new(self.next_attempt_id),
+            next_attempt_id,
+        })
+    }
+
+    pub(crate) fn commit_response(&mut self, commit: &ConversationResponseCommit) {
+        let &ConversationResponseCommit {
+            request_id,
+            responding_to,
+            supersede_previous,
+            record_id,
+            next_record_id,
+            attempt_id,
+            next_attempt_id,
+        } = commit;
+        debug_assert!(self.records.len() < self.records.capacity());
+        debug_assert_eq!(self.next_record_id, record_id.get());
+        debug_assert_eq!(self.next_attempt_id, attempt_id.get());
         if supersede_previous {
             for record in &mut self.records {
                 if let Some(attempt) = record.response_attempt.as_mut()
@@ -251,8 +304,8 @@ impl ConversationState {
                 }
             }
         }
-        let record_id = self.next_record_id()?;
-        let attempt_id = self.next_attempt_id()?;
+        self.next_record_id = next_record_id;
+        self.next_attempt_id = next_attempt_id;
         self.records.push(ConversationRecord {
             id: record_id,
             ordinal: record_id.get(),
@@ -272,7 +325,6 @@ impl ConversationState {
             request_id,
             record_id,
         });
-        Ok(attempt_id)
     }
 
     pub(crate) fn append_active_text(&mut self, request_id: RequestId, text: &str) {
@@ -351,14 +403,6 @@ impl ConversationState {
             .ok_or(ApplicationError::ConversationIdentityExhausted)?;
         Ok(ConversationRecordId(value))
     }
-
-    fn next_attempt_id(&mut self) -> Result<ResponseAttemptId, ApplicationError> {
-        let value = self.next_attempt_id;
-        self.next_attempt_id = value
-            .checked_add(1)
-            .ok_or(ApplicationError::ConversationIdentityExhausted)?;
-        Ok(ResponseAttemptId(value))
-    }
 }
 
 #[cfg(test)]
@@ -380,7 +424,8 @@ mod tests {
             ConversationTokenEstimate::Measured(1),
         )?;
         let first_request = RequestId::new(1);
-        conversation.begin_response(first_request, user, false)?;
+        let first = conversation.prepare_response(first_request, user, false)?;
+        conversation.commit_response(&first);
         conversation.append_active_text(first_request, "partial");
         conversation.finish_active(
             first_request,
@@ -391,7 +436,8 @@ mod tests {
         );
 
         let second_request = RequestId::new(2);
-        conversation.begin_response(second_request, user, true)?;
+        let second = conversation.prepare_response(second_request, user, true)?;
+        conversation.commit_response(&second);
         conversation.append_active_text(second_request, "failed partial");
         conversation.finish_active(
             second_request,
@@ -439,7 +485,8 @@ mod tests {
             ConversationTokenEstimate::Measured(1),
         )?;
         let first_request = RequestId::new(1);
-        conversation.begin_response(first_request, first_user, false)?;
+        let first = conversation.prepare_response(first_request, first_user, false)?;
+        conversation.commit_response(&first);
         conversation.finish_active(
             first_request,
             &GenerationTerminalOutcome::Finished(FinishReason::TokenLimit),

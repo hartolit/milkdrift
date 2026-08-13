@@ -1,10 +1,10 @@
 use application_runtime::{
     ApplicationConservativeFootprint, ApplicationDevice, ApplicationEvent, ApplicationFailure,
-    ApplicationFailureKind, ApplicationGenerationMode, ApplicationMemoryFootprint,
-    ApplicationModelCleanupDisposition, ApplicationOutputState, ApplicationRetainedModelResource,
-    ApplicationRetainedOwnership, ApplicationScalarType, ChatCompatibility, ConversationProvenance,
-    ConversationRecord, ConversationRecordId, ConversationRetention, ConversationRole,
-    ConversationTokenEstimate, GenerationTerminalKind, GenerationTerminalOutcome, ResponseAttempt,
+    ApplicationFailureKind, ApplicationGenerationMode, ApplicationModelCleanupDisposition,
+    ApplicationOutputState, ApplicationRetainedModelResource, ApplicationRetainedOwnership,
+    ApplicationScalarType, ChatCompatibility, ConversationProvenance, ConversationRecord,
+    ConversationRecordId, ConversationRetention, ConversationRole, ConversationTokenEstimate,
+    GenerationTerminalKind, GenerationTerminalOutcome, MemoryFootprint, ResponseAttempt,
     ResponseAttemptId, ResponseAttemptState,
 };
 use slint::Model;
@@ -243,7 +243,7 @@ fn released_residency_clears_execution_facts_without_changing_selected_device() 
 fn exact_retained_ownership_replaces_the_unloaded_placeholder() {
     let retained = retained_model_facts_summary(
         ApplicationRetainedModelResource::UnconfirmedModel,
-        ApplicationRetainedOwnership::Exact(ApplicationMemoryFootprint::default()),
+        ApplicationRetainedOwnership::Exact(MemoryFootprint::default()),
         ApplicationModelCleanupDisposition::Pending,
     );
     let residency = model_residency_facts_summary(None, Some(&retained));
@@ -261,8 +261,8 @@ fn unverified_retained_ownership_projects_its_retryable_disposition() {
     let retained = retained_model_facts_summary(
         ApplicationRetainedModelResource::UnconfirmedLoad,
         ApplicationRetainedOwnership::Unverified {
-            accepted_loading_peak: ApplicationMemoryFootprint::default(),
-            reported_footprint: ApplicationMemoryFootprint::default(),
+            accepted_loading_peak: MemoryFootprint::default(),
+            reported_footprint: MemoryFootprint::default(),
             conservative_footprint: ApplicationConservativeFootprint::Overflow,
         },
         ApplicationModelCleanupDisposition::LowerRetryable {

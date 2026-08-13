@@ -109,7 +109,7 @@ impl ModelCleanupCoordinator {
             },
             retained: ApplicationRetainedModel::new(
                 ApplicationRetainedModelResource::LoadedModel { handle },
-                ApplicationRetainedOwnership::Exact(reserved_footprint.into()),
+                ApplicationRetainedOwnership::Exact(reserved_footprint),
                 ApplicationModelCleanupDisposition::Pending,
                 failure,
                 None,

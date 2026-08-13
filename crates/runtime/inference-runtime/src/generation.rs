@@ -1,20 +1,23 @@
 //! Backend-independent generation admission and bounded scheduler state.
 
 use std::collections::BTreeMap;
-use std::mem::size_of;
 use std::num::{NonZeroU32, NonZeroUsize};
 
 use domain_contracts::{
-    CapacityExhausted, CapacityResource, FinishReason, MemoryFootprint, ModelHandle, ModelLoader,
-    RequestId, SequenceConfiguration, SequenceId, TokenId, YieldReason,
+    MemoryFootprint, ModelHandle, ModelLoader, RequestId, SequenceConfiguration, SequenceId,
+    TokenId, YieldReason,
 };
-use host_runtime::{OutputPushError, TokenOutputProducer};
-use sampling::{Sampler, SamplingConfig, SamplingWorkspace};
+use host_runtime::TokenOutputProducer;
+use sampling::{Sampler, SamplingConfig};
 
 use crate::{
-    CleanupFailureReport, CleanupRetryState, FailureClass, InferenceRuntime, RequestStartReceipt,
-    RuntimeError, RuntimeOperation,
+    CleanupFailureReport, CleanupRetryState, InferenceRuntime, RequestStartReceipt, RuntimeError,
 };
+
+use self::transition::GenerationPhase;
+
+mod admission;
+mod transition;
 
 /// One owned token stop pattern validated before generation begins.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,7 +89,7 @@ pub struct GenerationRequest {
 )]
 pub enum GenerationOutcome {
     /// Generation reached a graceful terminal reason.
-    Finished(FinishReason),
+    Finished(domain_contracts::FinishReason),
     /// Generation failed in the backend, sampler, or runtime.
     Failed(RuntimeError),
 }
@@ -125,7 +128,7 @@ pub enum GenerationOutputState {
 pub struct GenerationAdmission {
     /// Backend sequence admission receipt.
     pub request: RequestStartReceipt,
-    /// Scheduler quantum retained by the worker.
+    /// Validated scheduler quantum echoed from the admitted request.
     pub scheduler_quantum: NonZeroU32,
 }
 
@@ -146,7 +149,6 @@ struct GenerationTask {
     maximum_generated_tokens: usize,
     eos_tokens: Box<[TokenId]>,
     stop_sequences: Box<[GenerationStopSequence]>,
-    scheduler_quantum: NonZeroU32,
     sampler: Sampler,
     logits: Vec<f32>,
     sampling_indices: Vec<u32>,
@@ -154,29 +156,8 @@ struct GenerationTask {
     history: Vec<TokenId>,
     generated: Vec<TokenId>,
     phase: GenerationPhase,
-    pending_token: Option<TokenId>,
     cancellation: Option<domain_contracts::CancellationReason>,
     pending_yield: Option<YieldReason>,
-}
-
-#[derive(Clone, Copy)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "terminal publication retains bounded cleanup evidence inline until ordered release"
-)]
-enum GenerationPhase {
-    Prefill,
-    Decode,
-    Terminal(TerminalPublication),
-}
-
-#[derive(Clone, Copy)]
-struct TerminalPublication {
-    outcome: GenerationOutcome,
-    initial_cleanup: Option<CleanupRetryState>,
-    terminal_published: bool,
-    cleanup_published: bool,
-    exhaustion_published: bool,
 }
 
 #[expect(
@@ -241,14 +222,9 @@ impl GenerationScheduler {
                 first_error = Some(error);
             }
         }
-
         first_error.map_or(Ok(()), Err)
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "cold admission keeps validation, allocation, backend creation, rollback, and publication contiguous"
-    )]
     pub(super) fn admit<L: ModelLoader>(
         &mut self,
         runtime: &mut InferenceRuntime<L>,
@@ -256,149 +232,7 @@ impl GenerationScheduler {
         handle: ModelHandle,
         request: GenerationRequest,
     ) -> Result<GenerationAdmission, RuntimeError> {
-        if self.requests.contains_key(&request.request_id) {
-            return Err(RuntimeError::RequestAlreadyActive(request.request_id));
-        }
-        if request.prompt_tokens.is_empty() {
-            return Err(token_capacity(1, 0));
-        }
-        let maximum_prefill_batch = usize::try_from(request.sequence.maximum_prefill_batch.get())
-            .map_err(|_| RuntimeError::BackendContractViolation)?;
-        if request.prompt_tokens.len() > maximum_prefill_batch {
-            return Err(token_capacity(
-                request.prompt_tokens.len(),
-                maximum_prefill_batch,
-            ));
-        }
-        let (token_output_capacity, record_output_capacity) = output.capacities();
-        if request.output_capacity.minimum_tokens.get() > token_output_capacity {
-            return Err(capacity_error(
-                CapacityResource::Tokens,
-                request.output_capacity.minimum_tokens.get(),
-                token_output_capacity,
-            ));
-        }
-        if request.output_capacity.minimum_records.get() > record_output_capacity {
-            return Err(capacity_error(
-                CapacityResource::OutputRecords,
-                request.output_capacity.minimum_records.get(),
-                record_output_capacity,
-            ));
-        }
-        for stop in &request.stop_sequences {
-            if stop.tokens.is_empty() {
-                return Err(token_capacity(1, 0));
-            }
-        }
-
-        let maximum_generated_tokens = usize::try_from(request.maximum_generated_tokens.get())
-            .map_err(|_| RuntimeError::BackendContractViolation)?;
-        let sequence_capacity = usize::try_from(request.sequence.maximum_tokens.get())
-            .map_err(|_| RuntimeError::BackendContractViolation)?;
-        let required_sequence = request
-            .prompt_tokens
-            .len()
-            .checked_add(maximum_generated_tokens)
-            .ok_or(RuntimeError::MemoryArithmeticOverflow)?;
-        if required_sequence > sequence_capacity {
-            return Err(token_capacity(required_sequence, sequence_capacity));
-        }
-
-        let snapshot = runtime.exact_model_snapshot(handle)?;
-        if snapshot.degraded {
-            return Err(RuntimeError::ModelDegraded(handle.id));
-        }
-        let required_operations = domain_contracts::CapabilitySet::PREFILL
-            .union(domain_contracts::CapabilitySet::INCREMENTAL_DECODE);
-        if !snapshot
-            .descriptor
-            .capabilities
-            .operations
-            .contains(required_operations)
-        {
-            return Err(RuntimeError::Model(
-                domain_contracts::ModelError::Unsupported,
-            ));
-        }
-        let vocabulary_size = usize::try_from(snapshot.descriptor.metadata.vocabulary_size)
-            .map_err(|_| RuntimeError::BackendContractViolation)?;
-        let sampler = Sampler::new(request.sampling, request.seed)
-            .map_err(|error| RuntimeError::Sampling(error.into()))?;
-        let workspace_footprint = generation_workspace_footprint(
-            vocabulary_size,
-            required_sequence,
-            maximum_generated_tokens,
-            request.prompt_tokens.len(),
-            request.eos_tokens.len(),
-            &request.stop_sequences,
-        )?;
-        runtime.preflight_generation_resources(
-            handle,
-            request.request_id,
-            request.sequence_id,
-            request.sequence,
-            workspace_footprint,
-            vocabulary_size,
-        )?;
-
-        let mut logits = reserved_f32(vocabulary_size, CapacityResource::Logits)?;
-        logits.resize(vocabulary_size, 0.0);
-        let mut sampling_indices =
-            reserved_u32(vocabulary_size, CapacityResource::SamplingIndices)?;
-        sampling_indices.resize(vocabulary_size, 0);
-        let mut repetition_epochs = reserved_u32(vocabulary_size, CapacityResource::SamplingMask)?;
-        repetition_epochs.resize(vocabulary_size, 0);
-        let mut history = reserved_tokens(required_sequence, CapacityResource::RepetitionHistory)?;
-        history.extend_from_slice(&request.prompt_tokens);
-        let generated = reserved_tokens(maximum_generated_tokens, CapacityResource::Tokens)?;
-
-        let receipt = runtime.start_generation_request(
-            handle,
-            request.request_id,
-            request.sequence_id,
-            request.sequence,
-            workspace_footprint,
-            vocabulary_size,
-        )?;
-        if receipt.logits_capacity != vocabulary_size {
-            let primary = RuntimeError::BackendContractViolation;
-            let cleanup = runtime.fail_request(
-                request.request_id,
-                RuntimeOperation::SequenceAdmission,
-                primary.failure_class(),
-            );
-            runtime.release_generation_workspace(workspace_footprint)?;
-            cleanup?;
-            return Err(primary);
-        }
-
-        let admission = GenerationAdmission {
-            request: receipt,
-            scheduler_quantum: request.scheduler_quantum,
-        };
-        self.requests.insert(
-            request.request_id,
-            GenerationTask {
-                handle,
-                workspace_footprint,
-                prompt_tokens: request.prompt_tokens,
-                maximum_generated_tokens,
-                eos_tokens: request.eos_tokens,
-                stop_sequences: request.stop_sequences,
-                scheduler_quantum: request.scheduler_quantum,
-                sampler,
-                logits,
-                sampling_indices,
-                repetition_epochs,
-                history,
-                generated,
-                phase: GenerationPhase::Prefill,
-                pending_token: None,
-                cancellation: None,
-                pending_yield: None,
-            },
-        );
-        Ok(admission)
+        admission::admit(self, runtime, output, handle, request)
     }
 
     pub(super) fn advance<L: ModelLoader>(
@@ -407,35 +241,35 @@ impl GenerationScheduler {
         output: &TokenOutputProducer<GenerationOutputState>,
     ) -> SchedulerAdvance {
         let Some(request_id) = self.next_request() else {
-            return SchedulerAdvance {
-                progressed: false,
-                completed: None,
-                output_poisoned: false,
-            };
+            return idle_advance();
         };
         self.cursor = Some(request_id);
         let result = {
             let Some(task) = self.requests.get_mut(&request_id) else {
-                return SchedulerAdvance {
-                    progressed: false,
-                    completed: None,
-                    output_poisoned: false,
-                };
+                return idle_advance();
             };
-            advance_task(runtime, output, request_id, task)
+            transition::advance_task(runtime, output, request_id, task)
         };
         if result.completed == Some(request_id) {
-            if let Some(task) = self.requests.remove(&request_id) {
-                let workspace_footprint = task.workspace_footprint;
-                drop(task);
-                if let Err(error) = runtime.release_generation_workspace(workspace_footprint) {
-                    runtime.record_maintenance_error(error);
-                }
-            } else {
-                runtime.record_maintenance_error(RuntimeError::BackendContractViolation);
-            }
+            self.release_completed(runtime, request_id);
         }
         result
+    }
+
+    fn release_completed<L: ModelLoader>(
+        &mut self,
+        runtime: &mut InferenceRuntime<L>,
+        request_id: RequestId,
+    ) {
+        let Some(task) = self.requests.remove(&request_id) else {
+            runtime.record_maintenance_error(RuntimeError::BackendContractViolation);
+            return;
+        };
+        let workspace_footprint = task.workspace_footprint;
+        drop(task);
+        if let Err(error) = runtime.release_generation_workspace(workspace_footprint) {
+            runtime.record_maintenance_error(error);
+        }
     }
 
     fn next_request(&self) -> Option<RequestId> {
@@ -464,468 +298,11 @@ fn next_request_id<T>(
         })
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "the explicit generation state transition is kept contiguous for invariant review"
-)]
-fn advance_task<L: ModelLoader>(
-    runtime: &mut InferenceRuntime<L>,
-    output: &TokenOutputProducer<GenerationOutputState>,
-    request_id: RequestId,
-    task: &mut GenerationTask,
-) -> SchedulerAdvance {
-    if let GenerationPhase::Terminal(mut terminal) = task.phase {
-        let result = publish_terminal(runtime, output, request_id, &mut terminal);
-        task.phase = GenerationPhase::Terminal(terminal);
-        return result;
-    }
-
-    if let Some(reason) = task.cancellation.take() {
-        let finish = FinishReason::Cancelled(reason);
-        let cleanup_error = if runtime.is_request_active(request_id) {
-            runtime.cancel_request(request_id, reason).err()
-        } else {
-            runtime
-                .request_cleanup_state(request_id)
-                .map(RuntimeError::CleanupFailed)
-        };
-        task.phase = terminal_phase(
-            runtime,
-            request_id,
-            GenerationOutcome::Finished(finish),
-            cleanup_error,
-        );
-        return progressed();
-    }
-
-    if let Some(reason) = task.pending_yield {
-        match output.try_push_state(request_id, GenerationOutputState::Yielded(reason)) {
-            Ok(()) => task.pending_yield = None,
-            Err(OutputPushError::ConsumerBusy | OutputPushError::CapacityExhausted(_)) => {
-                return idle();
-            }
-            Err(OutputPushError::Poisoned) => return output_poisoned(),
-        }
-    }
-
-    if let Some(token) = task.pending_token {
-        match output.try_push_token(request_id, token) {
-            Ok(()) => {
-                task.pending_token = None;
-                if let Some(reason) = task.finish_after_token(token) {
-                    let cleanup = runtime.complete_request(request_id, reason).err();
-                    task.phase = terminal_phase(
-                        runtime,
-                        request_id,
-                        GenerationOutcome::Finished(reason),
-                        cleanup,
-                    );
-                } else {
-                    task.phase = GenerationPhase::Decode;
-                }
-                return progressed();
-            }
-            Err(OutputPushError::CapacityExhausted(capacity)) => {
-                task.pending_yield = Some(YieldReason::OutputBackpressure(capacity));
-                return idle();
-            }
-            Err(OutputPushError::ConsumerBusy) => {
-                task.pending_yield = Some(YieldReason::OutputBackpressure(CapacityExhausted::new(
-                    CapacityResource::OutputRecords,
-                    1,
-                    0,
-                )));
-                return idle();
-            }
-            Err(OutputPushError::Poisoned) => return output_poisoned(),
-        }
-    }
-
-    let quantum = task.scheduler_quantum.get();
-    let mut steps = 0_u32;
-    while steps < quantum && task.pending_token.is_none() {
-        if task.cancellation.is_some() {
-            break;
-        }
-        let backend_result = match task.phase {
-            GenerationPhase::Prefill => runtime
-                .prefill(
-                    request_id,
-                    &task.prompt_tokens,
-                    true,
-                    task.logits.as_mut_slice(),
-                )
-                .map(|receipt| match receipt.outcome {
-                    domain_contracts::PrefillOutcome::Ready { logits_written, .. } => {
-                        Ok(logits_written)
-                    }
-                    domain_contracts::PrefillOutcome::Finished(reason) => {
-                        Err(GenerationOutcome::Finished(reason))
-                    }
-                }),
-            GenerationPhase::Decode => {
-                let Some(token) = task.generated.last().copied() else {
-                    task.phase = terminal_phase(
-                        runtime,
-                        request_id,
-                        GenerationOutcome::Failed(RuntimeError::BackendContractViolation),
-                        None,
-                    );
-                    return progressed();
-                };
-                runtime
-                    .decode(request_id, token, task.logits.as_mut_slice())
-                    .map(|receipt| match receipt.outcome {
-                        domain_contracts::DecodeOutcome::Ready { logits_written, .. } => {
-                            Ok(logits_written)
-                        }
-                        domain_contracts::DecodeOutcome::Finished(reason) => {
-                            Err(GenerationOutcome::Finished(reason))
-                        }
-                    })
-            }
-            GenerationPhase::Terminal(_) => return progressed(),
-        };
-
-        let logits_written = match backend_result {
-            Ok(Ok(written)) => written,
-            Ok(Err(outcome)) => {
-                task.phase = terminal_phase(runtime, request_id, outcome, None);
-                return progressed();
-            }
-            Err(error) => {
-                task.phase = terminal_phase_from_runtime_error(runtime, request_id, error);
-                return progressed();
-            }
-        };
-        if logits_written != task.logits.len() {
-            let primary = RuntimeError::BackendContractViolation;
-            let cleanup = runtime
-                .fail_request(
-                    request_id,
-                    RuntimeOperation::Decode,
-                    primary.failure_class(),
-                )
-                .err();
-            task.phase = terminal_phase(
-                runtime,
-                request_id,
-                GenerationOutcome::Failed(primary),
-                cleanup,
-            );
-            return progressed();
-        }
-
-        let sample = task.sampler.sample(
-            task.logits.as_mut_slice(),
-            &task.history,
-            SamplingWorkspace {
-                indices: task.sampling_indices.as_mut_slice(),
-                seen_tokens: task.repetition_epochs.as_mut_slice(),
-            },
-        );
-        let token = match sample {
-            Ok(sample) => sample.token,
-            Err(error) => {
-                let primary = RuntimeError::Sampling(error.into());
-                let cleanup = runtime
-                    .fail_request(
-                        request_id,
-                        RuntimeOperation::Sampling,
-                        FailureClass::Sampling,
-                    )
-                    .err();
-                task.phase = terminal_phase(
-                    runtime,
-                    request_id,
-                    GenerationOutcome::Failed(primary),
-                    cleanup,
-                );
-                return progressed();
-            }
-        };
-        task.generated.push(token);
-        task.history.push(token);
-        task.pending_token = Some(token);
-        steps = steps.saturating_add(1);
-    }
-    progressed()
-}
-
-impl GenerationTask {
-    fn finish_after_token(&self, token: TokenId) -> Option<FinishReason> {
-        if self.eos_tokens.contains(&token) {
-            return Some(FinishReason::EndOfSequence(token));
-        }
-        for stop in &self.stop_sequences {
-            if stop.tokens.len() <= self.generated.len()
-                && self
-                    .generated
-                    .get(self.generated.len().saturating_sub(stop.tokens.len())..)
-                    == Some(stop.tokens.as_ref())
-            {
-                return Some(FinishReason::StopCondition);
-            }
-        }
-        (self.generated.len() >= self.maximum_generated_tokens).then_some(FinishReason::TokenLimit)
-    }
-}
-
-fn publish_terminal<L: ModelLoader>(
-    runtime: &InferenceRuntime<L>,
-    output: &TokenOutputProducer<GenerationOutputState>,
-    request_id: RequestId,
-    terminal: &mut TerminalPublication,
-) -> SchedulerAdvance {
-    if !terminal.terminal_published {
-        match output.try_push_state(
-            request_id,
-            GenerationOutputState::Terminal(terminal.outcome),
-        ) {
-            Ok(()) => {}
-            Err(OutputPushError::ConsumerBusy | OutputPushError::CapacityExhausted(_)) => {
-                return idle();
-            }
-            Err(OutputPushError::Poisoned) => return output_poisoned(),
-        }
-        terminal.terminal_published = true;
-        return progressed();
-    }
-
-    if let Some(initial_cleanup) = terminal.initial_cleanup {
-        if !terminal.cleanup_published {
-            let retry = runtime
-                .request_cleanup_state(request_id)
-                .unwrap_or(initial_cleanup);
-            match output.try_push_state(
-                request_id,
-                GenerationOutputState::CleanupPending {
-                    outcome: terminal.outcome,
-                    failure: retry.failure,
-                    retry,
-                },
-            ) {
-                Ok(()) => {}
-                Err(OutputPushError::ConsumerBusy | OutputPushError::CapacityExhausted(_)) => {
-                    return idle();
-                }
-                Err(OutputPushError::Poisoned) => return output_poisoned(),
-            }
-            terminal.cleanup_published = true;
-            return progressed();
-        }
-
-        if let Some(retry) = runtime.request_cleanup_state(request_id) {
-            if retry.exhausted() && !terminal.exhaustion_published {
-                match output.try_push_state(
-                    request_id,
-                    GenerationOutputState::CleanupExhausted {
-                        outcome: terminal.outcome,
-                        failure: retry.failure,
-                        retry,
-                    },
-                ) {
-                    Ok(()) => {}
-                    Err(OutputPushError::ConsumerBusy | OutputPushError::CapacityExhausted(_)) => {
-                        return idle();
-                    }
-                    Err(OutputPushError::Poisoned) => return output_poisoned(),
-                }
-                terminal.exhaustion_published = true;
-                return progressed();
-            }
-            return idle();
-        }
-    }
-
-    match output.try_push_state(
-        request_id,
-        GenerationOutputState::Released(terminal.outcome),
-    ) {
-        Ok(()) => {}
-        Err(OutputPushError::ConsumerBusy | OutputPushError::CapacityExhausted(_)) => {
-            return idle();
-        }
-        Err(OutputPushError::Poisoned) => return output_poisoned(),
-    }
-    SchedulerAdvance {
-        progressed: true,
-        completed: Some(request_id),
-        output_poisoned: false,
-    }
-}
-
-fn terminal_phase<L: ModelLoader>(
-    runtime: &InferenceRuntime<L>,
-    request_id: RequestId,
-    outcome: GenerationOutcome,
-    cleanup_error: Option<RuntimeError>,
-) -> GenerationPhase {
-    let retained_cleanup = runtime.request_cleanup_state(request_id);
-    let (outcome, initial_cleanup) = match cleanup_error {
-        Some(RuntimeError::CleanupFailed(state)) => (outcome, Some(state)),
-        Some(error @ RuntimeError::CleanupRetryExhausted(_)) => (
-            outcome,
-            retained_cleanup.or_else(|| cleanup_state_from_error(error)),
-        ),
-        Some(error) => (GenerationOutcome::Failed(error), retained_cleanup),
-        None => (outcome, retained_cleanup),
-    };
-    GenerationPhase::Terminal(TerminalPublication {
-        outcome,
-        initial_cleanup,
-        terminal_published: false,
-        cleanup_published: false,
-        exhaustion_published: false,
-    })
-}
-
-fn terminal_phase_from_runtime_error<L: ModelLoader>(
-    runtime: &InferenceRuntime<L>,
-    request_id: RequestId,
-    error: RuntimeError,
-) -> GenerationPhase {
-    GenerationPhase::Terminal(TerminalPublication {
-        outcome: GenerationOutcome::Failed(error),
-        initial_cleanup: runtime
-            .request_cleanup_state(request_id)
-            .or_else(|| cleanup_state_from_error(error)),
-        terminal_published: false,
-        cleanup_published: false,
-        exhaustion_published: false,
-    })
-}
-
-const fn cleanup_state_from_error(error: RuntimeError) -> Option<CleanupRetryState> {
-    match error {
-        RuntimeError::CleanupFailed(state) | RuntimeError::CleanupRetryExhausted(state) => {
-            Some(state)
-        }
-        _ => None,
-    }
-}
-
-fn generation_workspace_footprint(
-    vocabulary_size: usize,
-    history_capacity: usize,
-    generated_capacity: usize,
-    prompt_tokens: usize,
-    eos_tokens: usize,
-    stop_sequences: &[GenerationStopSequence],
-) -> Result<MemoryFootprint, RuntimeError> {
-    let logits = allocation_bytes::<f32>(vocabulary_size)?;
-    let sampling_indices = allocation_bytes::<u32>(vocabulary_size)?;
-    let repetition_epochs = allocation_bytes::<u32>(vocabulary_size)?;
-    let history = allocation_bytes::<TokenId>(history_capacity)?;
-    let generated = allocation_bytes::<TokenId>(generated_capacity)?;
-    let prompt = allocation_bytes::<TokenId>(prompt_tokens)?;
-    let eos = allocation_bytes::<TokenId>(eos_tokens)?;
-    let stop_descriptors = allocation_bytes::<GenerationStopSequence>(stop_sequences.len())?;
-    let stop_tokens =
-        stop_sequences
-            .iter()
-            .try_fold(0_u64, |total, stop| -> Result<u64, RuntimeError> {
-                total
-                    .checked_add(allocation_bytes::<TokenId>(stop.tokens.len())?)
-                    .ok_or(RuntimeError::MemoryArithmeticOverflow)
-            })?;
-    let host_working_bytes = logits
-        .checked_add(sampling_indices)
-        .and_then(|value| value.checked_add(repetition_epochs))
-        .and_then(|value| value.checked_add(history))
-        .and_then(|value| value.checked_add(generated))
-        .and_then(|value| value.checked_add(prompt))
-        .and_then(|value| value.checked_add(eos))
-        .and_then(|value| value.checked_add(stop_descriptors))
-        .and_then(|value| value.checked_add(stop_tokens))
-        .ok_or(RuntimeError::MemoryArithmeticOverflow)?;
-    Ok(MemoryFootprint {
-        host_weight_bytes: 0,
-        device_weight_bytes: 0,
-        host_working_bytes,
-        device_working_bytes: 0,
-    })
-}
-
-fn allocation_bytes<T>(length: usize) -> Result<u64, RuntimeError> {
-    let bytes = length
-        .checked_mul(size_of::<T>())
-        .ok_or(RuntimeError::MemoryArithmeticOverflow)?;
-    u64::try_from(bytes).map_err(|_| RuntimeError::MemoryArithmeticOverflow)
-}
-
-fn reserved_f32(length: usize, resource: CapacityResource) -> Result<Vec<f32>, RuntimeError> {
-    let mut values = Vec::new();
-    values
-        .try_reserve_exact(length)
-        .map_err(|_| allocation_capacity(resource, length))?;
-    Ok(values)
-}
-
-fn reserved_u32(length: usize, resource: CapacityResource) -> Result<Vec<u32>, RuntimeError> {
-    let mut values = Vec::new();
-    values
-        .try_reserve_exact(length)
-        .map_err(|_| allocation_capacity(resource, length))?;
-    Ok(values)
-}
-
-fn reserved_tokens(
-    length: usize,
-    resource: CapacityResource,
-) -> Result<Vec<TokenId>, RuntimeError> {
-    let mut values = Vec::new();
-    values
-        .try_reserve_exact(length)
-        .map_err(|_| allocation_capacity(resource, length))?;
-    Ok(values)
-}
-
-fn allocation_capacity(resource: CapacityResource, required: usize) -> RuntimeError {
-    RuntimeError::CapacityExhausted(CapacityExhausted::new(
-        resource,
-        u64::try_from(required).unwrap_or(u64::MAX),
-        0,
-    ))
-}
-
-fn capacity_error(resource: CapacityResource, required: usize, available: usize) -> RuntimeError {
-    RuntimeError::CapacityExhausted(CapacityExhausted::new(
-        resource,
-        u64::try_from(required).unwrap_or(u64::MAX),
-        u64::try_from(available).unwrap_or(u64::MAX),
-    ))
-}
-
-fn token_capacity(required: usize, available: usize) -> RuntimeError {
-    RuntimeError::CapacityExhausted(CapacityExhausted::new(
-        CapacityResource::Tokens,
-        u64::try_from(required).unwrap_or(u64::MAX),
-        u64::try_from(available).unwrap_or(u64::MAX),
-    ))
-}
-
-const fn progressed() -> SchedulerAdvance {
-    SchedulerAdvance {
-        progressed: true,
-        completed: None,
-        output_poisoned: false,
-    }
-}
-
-const fn idle() -> SchedulerAdvance {
+const fn idle_advance() -> SchedulerAdvance {
     SchedulerAdvance {
         progressed: false,
         completed: None,
         output_poisoned: false,
-    }
-}
-
-const fn output_poisoned() -> SchedulerAdvance {
-    SchedulerAdvance {
-        progressed: false,
-        completed: None,
-        output_poisoned: true,
     }
 }
 

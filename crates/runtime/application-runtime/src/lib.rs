@@ -133,6 +133,7 @@ pub use conversation::{
     ResponseAttemptState,
 };
 
+pub use domain_contracts::MemoryFootprint;
 pub use error::{
     ApplicationConfigurationField, ApplicationError, ApplicationFailure, ApplicationFailureKind,
     ApplicationWorker, GenerationSettingsField,
@@ -144,9 +145,8 @@ pub use generation::{
     GenerationTerminalKind,
 };
 pub use retention::{
-    ApplicationConservativeFootprint, ApplicationMemoryFootprint,
-    ApplicationModelCleanupDisposition, ApplicationRetainedModel, ApplicationRetainedModelResource,
-    ApplicationRetainedOwnership,
+    ApplicationConservativeFootprint, ApplicationModelCleanupDisposition, ApplicationRetainedModel,
+    ApplicationRetainedModelResource, ApplicationRetainedOwnership,
 };
 pub use runtime::ApplicationRuntime;
 

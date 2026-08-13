@@ -54,6 +54,10 @@ pub struct ApplicationRuntime {
     #[cfg(test)]
     forced_inference_busy_submissions: usize,
     #[cfg(test)]
+    /// Injects an unsent-command disconnect result for transaction rollback tests only.
+    /// It deliberately does not simulate the worker-lifecycle side effects tested elsewhere.
+    forced_unsent_command_disconnects: usize,
+    #[cfg(test)]
     last_submitted_load_device: Option<ExecutionDevice>,
 }
 

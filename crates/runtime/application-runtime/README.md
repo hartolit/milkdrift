@@ -96,7 +96,10 @@ For the final footprint, E1 performs checked host and device totals and verifies
 those totals against the startup-fixed budget. It has no CPU-versus-CUDA component
 placement policy and does not reconstruct Candle's loading peak. Public
 `LoadedModel` receives its actual execution scalar and actual execution device only
-from the verified E0 receipt.
+from the verified E0 receipt. Its private construction consumes one validated
+commit grouping identity, execution facts, generation limits, mode, and the
+canonical `domain_contracts::MemoryFootprint`; E1 does not maintain a duplicate
+four-field footprint DTO.
 
 No normal `LoadedModel` is published until every check succeeds.
 
@@ -164,10 +167,19 @@ remains limited to immutable commit
 Unknown chat compatibility fails explicitly while direct completion remains
 available.
 
-Conversation planning keeps completed user/assistant turns atomic, renders them in
-order, exactly tokenizes them, and uses a strictly shrinking bounded correction
-set before E0 admission. High-frequency decoded text crosses E1 through bounded
-borrowed pulls rather than one application event per token.
+Conversation planning is a pure staged preparation over a validated context
+inventory, planned selection, profile-rendered prompt, exact encoded prompt, and
+final diagnostics. It keeps completed user/assistant turns atomic, renders them
+in order, exactly tokenizes them, and uses a strictly shrinking bounded correction
+set before E0 admission.
+
+Direct completion and chat use one application generation-admission transaction.
+It checks lifecycle state before prompt tokenization, prepares all bounded request,
+decoder, and optional conversation-commit state, submits one correlated E0
+command, and only then publishes the E1 session and generation state. Queue-full
+or disconnected submission publishes no assistant attempt; an already committed
+user message remains raw conversation history. High-frequency decoded text crosses
+E1 through bounded borrowed pulls rather than one application event per token.
 
 ## Shutdown
 

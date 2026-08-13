@@ -884,6 +884,84 @@ fn backend_failure_and_cleanup_retry_preserve_both_terminal_states() -> TestResu
 }
 
 #[test]
+fn exhausted_sequence_cleanup_is_published_after_terminal_and_pending() -> TestResult {
+    let mut source = FakeSource::scripted([1; 8], 8);
+    source.destroy_failures = u32::MAX;
+    let (hosted, thread, counters, handle) = hosted(source, 8, 16)?;
+    submit_generation(&hosted, handle, request(190, 1_900, 1, &[], &[]))?;
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut states = Vec::new();
+    while !states
+        .iter()
+        .any(|state| matches!(state, GenerationOutputState::CleanupExhausted { .. }))
+    {
+        hosted
+            .pull_token_output(|batch| {
+                states.extend(
+                    batch
+                        .records
+                        .iter()
+                        .filter_map(|record| {
+                            (record.request_id == RequestId::new(190)).then_some(record.kind)
+                        })
+                        .filter_map(|kind| match kind {
+                            TokenOutputRecordKind::State(state) => Some(state),
+                            TokenOutputRecordKind::Tokens(_) => None,
+                        }),
+                );
+            })
+            .map_err(|error| format!("token pull failed: {error:?}"))?;
+        if Instant::now() >= deadline {
+            return Err(format!("cleanup exhaustion timed out: {states:?}"));
+        }
+        std::thread::yield_now();
+    }
+    let terminal = states
+        .iter()
+        .position(|state| matches!(state, GenerationOutputState::Terminal(_)))
+        .ok_or("missing terminal state")?;
+    let pending = states
+        .iter()
+        .position(|state| matches!(state, GenerationOutputState::CleanupPending { .. }))
+        .ok_or("missing cleanup-pending state")?;
+    let exhausted = states
+        .iter()
+        .position(|state| matches!(state, GenerationOutputState::CleanupExhausted { .. }))
+        .ok_or("missing cleanup-exhausted state")?;
+    assert!(terminal < pending && pending < exhausted);
+    assert!(
+        !states
+            .iter()
+            .any(|state| matches!(state, GenerationOutputState::Released(_)))
+    );
+    assert_eq!(
+        counters
+            .lock()
+            .map_err(|_| "counter mutex poisoned")?
+            .destruction_attempts,
+        3
+    );
+
+    hosted
+        .try_submit(RuntimeCommand::Shutdown {
+            ticket: CommandTicket::new(191),
+        })
+        .map_err(|_| "shutdown command rejected")?;
+    assert!(matches!(
+        hosted
+            .receive_timeout(Duration::from_secs(2))
+            .map_err(|error| format!("shutdown event failed: {error:?}"))?,
+        RuntimeEvent::Shutdown {
+            result: Err(RuntimeError::TerminalCleanupRetention { .. }),
+            ..
+        }
+    ));
+    drop(hosted);
+    thread.join().map_err(|error| error.to_string())
+}
+
+#[test]
 fn concurrent_runnable_requests_complete_without_starvation() -> TestResult {
     let source = FakeSource::scripted([1, 2, 3, 0, 0, 0, 0, 0], 3);
     let (hosted, thread, _, handle) = hosted(source, 32, 64)?;
@@ -1444,16 +1522,24 @@ fn ready_results_preserve_sequence_state_identity_and_capacity() -> TestResult {
 fn short_prefill_logits_fail_before_sampling_and_cleanup_the_sequence() -> TestResult {
     let mut source = FakeSource::scripted([3; 8], 8);
     source.contract_faults = ContractFaults::SHORT_PREFILL_LOGITS;
+    source.destroy_failures = 1;
     let (hosted, thread, counters, handle) = hosted(source, 8, 16)?;
     submit_generation(&hosted, handle, request(93, 903, 4, &[], &[]))?;
 
     let output = collect_until_released(&hosted, RequestId::new(93), Duration::from_secs(2))?;
     assert!(output.tokens.is_empty());
     assert_backend_contract_failure(&output);
+    assert!(output.states.iter().any(|state| matches!(
+        state,
+        GenerationOutputState::CleanupPending { failure, .. }
+            if failure.primary_operation == inference_runtime::RuntimeOperation::Prefill
+                && failure.primary_failure == FailureClass::BackendContract
+    )));
     {
         let counters = counters.lock().map_err(|_| "counter mutex poisoned")?;
         assert_eq!(counters.prefill_calls, 1);
         assert_eq!(counters.decode_calls, 0);
+        assert_eq!(counters.destruction_attempts, 2);
         assert_eq!(counters.successful_destructions, 1);
         drop(counters);
     }
@@ -1464,16 +1550,24 @@ fn short_prefill_logits_fail_before_sampling_and_cleanup_the_sequence() -> TestR
 fn short_decode_logits_fail_before_sampling_and_cleanup_the_sequence() -> TestResult {
     let mut source = FakeSource::scripted([1, 3, 0, 0, 0, 0, 0, 0], 2);
     source.contract_faults = ContractFaults::SHORT_DECODE_LOGITS;
+    source.destroy_failures = 1;
     let (hosted, thread, counters, handle) = hosted(source, 8, 16)?;
     submit_generation(&hosted, handle, request(94, 904, 4, &[], &[]))?;
 
     let output = collect_until_released(&hosted, RequestId::new(94), Duration::from_secs(2))?;
     assert_eq!(output.tokens, vec![TokenId::new(1)]);
     assert_backend_contract_failure(&output);
+    assert!(output.states.iter().any(|state| matches!(
+        state,
+        GenerationOutputState::CleanupPending { failure, .. }
+            if failure.primary_operation == inference_runtime::RuntimeOperation::Decode
+                && failure.primary_failure == FailureClass::BackendContract
+    )));
     {
         let counters = counters.lock().map_err(|_| "counter mutex poisoned")?;
         assert_eq!(counters.prefill_calls, 1);
         assert_eq!(counters.decode_calls, 1);
+        assert_eq!(counters.destruction_attempts, 2);
         assert_eq!(counters.successful_destructions, 1);
         drop(counters);
     }
@@ -1604,6 +1698,47 @@ fn cancellation_queued_with_admission_is_observed_before_prefill() -> TestResult
         assert_eq!(counters.successful_destructions, 1);
         drop(counters);
     }
+    shutdown(hosted, thread)
+}
+
+#[test]
+fn cancellation_arriving_during_prefill_is_observed_before_decode() -> TestResult {
+    let (gate, entered, release) = blocking_gate();
+    let mut source = FakeSource::scripted([1; 8], 8);
+    source.prefill_gate = Some(gate);
+    let (hosted, thread, counters, handle) = hosted(source, 8, 16)?;
+    submit_generation(&hosted, handle, request(184, 1_804, 4, &[], &[]))?;
+    entered
+        .recv_timeout(Duration::from_secs(2))
+        .map_err(|error| format!("prefill gate was not entered: {error:?}"))?;
+    hosted
+        .try_submit(RuntimeCommand::CancelRequest {
+            ticket: CommandTicket::new(184),
+            request_id: RequestId::new(184),
+            reason: domain_contracts::CancellationReason::UserRequested,
+        })
+        .map_err(|_| "cancel command rejected")?;
+    release
+        .send(())
+        .map_err(|_| "prefill gate release failed")?;
+    assert!(matches!(
+        hosted
+            .receive_timeout(Duration::from_secs(2))
+            .map_err(|error| format!("cancel event failed: {error:?}"))?,
+        RuntimeEvent::GenerationCancellationRequested { result: Ok(()), .. }
+    ));
+
+    let output = collect_until_released(&hosted, RequestId::new(184), Duration::from_secs(2))?;
+    assert!(output.tokens.is_empty());
+    assert!(output.states.contains(&GenerationOutputState::Terminal(
+        GenerationOutcome::Finished(FinishReason::Cancelled(
+            domain_contracts::CancellationReason::UserRequested
+        ))
+    )));
+    let counters = counters.lock().map_err(|_| "counter mutex poisoned")?;
+    assert_eq!(counters.prefill_calls, 1);
+    assert_eq!(counters.decode_calls, 0);
+    drop(counters);
     shutdown(hosted, thread)
 }
 

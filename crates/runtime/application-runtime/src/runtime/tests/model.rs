@@ -17,9 +17,8 @@ use super::support::*;
 use crate::runtime::model::{LoadAdmission, LoadReceiptMismatch};
 use crate::{
     ApplicationActivity, ApplicationDevice, ApplicationError, ApplicationEvent,
-    ApplicationFailureKind, ApplicationMemoryFootprint, ApplicationRetainedModelResource,
-    ApplicationRetainedOwnership, ApplicationRuntime, ApplicationScalarType, ModelSelection,
-    ResolvedModel,
+    ApplicationFailureKind, ApplicationRetainedModelResource, ApplicationRetainedOwnership,
+    ApplicationRuntime, ApplicationScalarType, ModelSelection, ResolvedModel,
 };
 
 fn retained_load_cleanup(
@@ -579,9 +578,7 @@ fn wrong_ticket_load_receipt_is_quarantined_and_invalidates_the_transaction() ->
         );
         assert_eq!(
             retained.ownership(),
-            ApplicationRetainedOwnership::Exact(ApplicationMemoryFootprint::from(
-                receipt.reserved_footprint
-            ))
+            ApplicationRetainedOwnership::Exact(receipt.reserved_footprint)
         );
         assert_eq!(retained.primary_failure(), &failure);
         assert_eq!(

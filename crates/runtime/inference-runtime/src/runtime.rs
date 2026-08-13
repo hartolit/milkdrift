@@ -15,6 +15,7 @@ use crate::{
 };
 
 mod admission;
+pub(crate) use admission::SequenceAdmissionTransaction;
 mod cleanup;
 mod execution;
 mod inspection;

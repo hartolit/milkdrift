@@ -104,6 +104,12 @@ configuration declaration or expose observed/required tensor policy. Successful
 unload clears loaded execution facts while preserving independent selection and
 resolution.
 
+Private publication uses one validated load commit containing receipt-derived
+execution facts, limits, identity, mode, and the canonical
+`domain_contracts::MemoryFootprint`. The application boundary does not maintain a
+field-for-field footprint DTO or accept those verified facts as swappable scalar
+constructor arguments.
+
 ## Correlated load transaction
 
 `load_model` is staged rather than treating a lower success as automatic
@@ -177,7 +183,7 @@ ApplicationRetainedModel
 
 `ApplicationRetainedOwnership` distinguishes:
 
-- `Exact(ApplicationMemoryFootprint)` for a verified named ownership phase;
+- `Exact(domain_contracts::MemoryFootprint)` for a verified named ownership phase;
 - `Unverified { accepted_loading_peak, reported_footprint,
   conservative_footprint }` after a complete model contradicts its contract; and
 - `Unknown` when the endpoint disappeared before ownership certainty was observed.
@@ -278,10 +284,24 @@ ID 2. The public compatibility result is only the unit supported/unsupported fac
 the private prompt renderer/profile does not cross the boundary.
 
 Completed historical user/assistant turns remain atomic context-planning units.
-Selected units are rendered in order, exactly tokenized, and corrected with a
-strictly shrinking bounded set before E0 admission. Decoded text uses the typed
-host text-output wrapper and bounded borrowed pulls rather than per-token
-application events; it cannot resolve token-output ranges by construction.
+Chat preparation is pure and staged as a validated context inventory, planned
+selection, profile-rendered prompt, exact encoded prompt, and final preparation
+with diagnostics. Selected units are rendered in order, exactly tokenized, and
+corrected with a strictly shrinking bounded set before E0 admission. No
+conversation record or diagnostics are mutated during preparation.
+
+Direct and chat generation share one E1 admission transaction. It checks
+application state before tokenization, validates settings and prompt/stop bounds,
+allocates correlated request/sequence identities, preallocates decoding and any
+chat-response commit, constructs one E0 command, and submits it before publishing
+the application session and generation state. Queue-full or disconnected
+submission drops the provisional transaction without an active E1 attempt. A
+user message committed before chat preparation remains in raw history by the
+public chat contract; a provisional assistant response is not published and a
+prior response is not superseded unless command submission succeeds. Decoded text
+uses the typed host text-output wrapper and bounded borrowed pulls rather than
+per-token application events; it cannot resolve token-output ranges by
+construction.
 
 ## Thin Slint reference host
 
