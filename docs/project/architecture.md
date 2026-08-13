@@ -1,247 +1,162 @@
 # Milkdrift project architecture
 
-Milkdrift uses the
-**[Layered Workspace](../architecture.md#model-b-layered-workspace)** model.
-Accepted [ADRs](../agent/decisions/README.md) record rationale, and
-[workspace boundaries](workspace.md) owns the exact crate inventory and dependency
-edges.
+Milkdrift applies the reusable
+[Layered Workspace](../architecture.md#model-b-layered-workspace) model. This page
+maps that model to the current repository. Exact members and Cargo edges live in
+[workspace boundaries](workspace.md); decision rationale lives in the
+[ADRs](../agent/decisions/README.md).
 
 Milkdrift remains workflow-first: operator-defined workflows, scoped context,
 explicit authority, and replaceable execution targets are the project center. The
-current Candle/E0/E1/Slint path is a local-inference foundation plus an optional
-reference application-services kit. It does not define the only Milkdrift API,
-workflow plane, or future control surface.
+implemented Candle/E0/E1/Slint stack is a local-inference foundation and optional
+reference application kit, not the final workflow plane or control surface.
 
-## Physical roles
+## Physical layers
 
 ```text
 .cargo/             workspace-local Cargo configuration
-tools/xtask/        architecture, hygiene, and verification tooling
-benchmarks/runtime/ non-production measurement observer
+tools/xtask/        architecture, hygiene, and verification policy
+benchmarks/runtime/ outer measurement observer
 crates/domain/      portable contracts and algorithms
-crates/platform/    process-host execution primitives
-crates/adapters/    vendor, model, filesystem, network, and persistence adapters
-crates/runtime/     stateful capability and resource-owning runtimes
-crates/apps/        process, event-loop, transport, and presentation boundaries
+crates/platform/    process-host primitives
+crates/adapters/    vendor, artifact, filesystem, network, and storage integration
+crates/runtime/     stateful resource and capability owners
+crates/apps/        process, transport, event-loop, and presentation boundaries
 ```
 
-Every tracked non-fixture Cargo package manifest must be a root workspace member, and every member declares its role under `[package.metadata.milkdrift]`; the validator never infers a role from a path prefix or package name. The current vocabulary is `tooling`, `benchmark-observer`, `domain-foundation`, `domain-feature`, `platform`, `adapter`, `runtime-foundation`, `runtime-capability`, `runtime-application`, and `application`. A declaration must also occupy the direct physical root compatible with that role, so omitted members, unknown/missing roles, and misplaced packages fail closed.
+Every tracked non-fixture package is a root workspace member and declares one
+role in `[package.metadata.milkdrift]`. Roles and locations are validated rather
+than inferred from names. The current role vocabulary is `tooling`,
+`benchmark-observer`, `domain-foundation`, `domain-feature`, `platform`, `adapter`,
+`runtime-foundation`, `runtime-capability`, `runtime-application`, and
+`application`.
 
-The logical dependency direction is inward:
+## Dependency direction
 
 ```text
-apps / hosts / transported frontends
-       │
-       ├── may use application-runtime (optional E1 reference services)
-       │             ├── capability engines
-       │             └── inference-runtime (E0 local inference)
-       │
-       └── may use another reviewed workflow or coarse execution boundary
+apps / hosts
+    -> optional application-runtime (E1 reference services)
+        -> capability runtimes and inference-runtime (E0)
+            -> platform, adapters, and domain algorithms
+                -> domain-contracts
 
-E0 / capability engines
-       ↓
-platform / adapters / domain algorithms
-       ↓
-domain-contracts
+benchmark observers -> public product APIs only
+tooling              -> repository metadata only
 ```
 
-E1 may coordinate E0 and independently stateful capability engines. E0 and
-capability engines never depend on E1. A host should not reconstruct E1's state
-machines if it chooses E1, but applications whose semantics differ are not forced
-through it.
+Dependencies point inward. Domain code never imports adapters, runtimes, or apps.
+Adapters do not depend on runtimes. E0 and capability runtimes do not depend on
+E1. Same-role runtime peers are not generally legal. Cargo's actual domain graph
+must be acyclic; reviewed exceptional development or external edges are explicit
+policy records, not a second list of ordinary legal edges.
 
-Packages with role `benchmark-observer` remain outside the production graph. They may observe public product APIs but may not use build dependencies or become a dependency of product, tooling, tests, applications, or another observer. `runtime-benchmarks` is the current observer; the policy can accept another explicitly declared observer without adding a package-name match.
+`benchmark-observer` packages remain outside production. They may observe public
+APIs but cannot become a dependency of product, applications, tooling, tests, or
+another observer.
 
-## Domain tiers
+## Domain and capability ownership
 
-`domain-contracts` is the F0 shared foundation. F1 algorithm crates such as
-`tokenization`, `context-planner`, `sampling`, and `task-graph` depend inward on
-stable domain contracts. Portable domain code does not import runtimes,
-applications, platform implementations, vendor libraries, frontend toolkits, or
-filesystem/network/database implementations.
+`domain-contracts` is the F0 shared foundation. `tokenization`, `context-planner`,
+`sampling`, and `task-graph` are F1 algorithms with honest `no_std` boundaries.
+Vocabulary stays with its narrowest coherent owner; shared foundation is not a
+dumping ground.
 
-`task-graph` owns generic directed-work mechanics only: stable task identity,
-topology/acyclicity, bounded attempt state, deterministic ready discovery,
-cancellation/blocked propagation, and identity-only artifact provenance. Its
-generic node operation metadata is caller-owned and uninterpreted. Model/backend
-policy, token/output limits, artifact kind/role, and corrective operations remain
-above the graph boundary.
+`task-graph` owns generic directed-work mechanics: topology, stable task identity,
+attempt state, deterministic readiness, cancellation/blocking, and identity-only
+artifact provenance. It does not own model policy, corrective stages, artifact
+semantics, or output bounds.
 
-Cargo's actual normal/build graph among F0/F1 packages must remain acyclic. Ordinary legal inward or peer domain edges are not copied into a second exact-edge registry; the validator derives the graph from Cargo metadata and rejects upward facilities, unsupported external dependencies, and cycles. See [portability](portability.md) and [dependency policy](dependency-policy.md).
+`corrective-workflow` is a runtime capability. It owns a bounded data-defined
+corrective schema/executor and its six-stage reference template. It is not the
+general workflow/workspace runtime. A new capability runtime requires an
+independently coherent state, lifecycle, reuse, or deployment boundary.
 
-## E0: local inference ownership
+## E0 local inference ownership
 
-`inference-runtime` is E0, the backend-independent single-owner local inference
-kernel. It exclusively owns:
+`inference-runtime` is E0, the backend-independent single owner of local native
+model and sequence resources. It owns prepared-load admission, exact aggregate
+reservation, model generations, generation workspaces, scheduling, cancellation,
+cleanup quarantine, unload, and terminal shutdown.
 
-- exact prepared-load transactions and aggregate admission;
-- prepared, loaded, incompatible, and cleanup-retained native owners;
-- model generations, backend sequences, and generation workspaces;
-- scheduling, sampling, cancellation boundaries, draining, and unload; and
-- cleanup retry/exhaustion plus terminal process-lifetime retention.
-
-`prepare_load` returns one ordinary-drop-safe,
-source/configuration/device/budget-bound preparation and stable plan. E0 validates
-and reserves the loading peak, consumes that preparation through `load_prepared`,
-verifies the complete model, and replaces the peak with final exact ownership only
-on commit. Failed materialization returns a distinct resource-bearing typestate
-inside the fail-closed `FailedLoad` guard. A failed owner that changes its accepted
-plan, or a contract-violating complete model that cannot unload, becomes unverified
-ownership and blocks new admission.
-
-Public handles carry generation-safe identity, not shared model ownership. Hosted
-providers and peers are not E0 backends merely because they produce text; their
-ownership, cancellation, accounting, and transport semantics require a coarser
-execution boundary.
-
-## Capability engines
-
-A capability engine owns independently stateful reusable behavior with a lifecycle
-separate from the application façade. `corrective-workflow` is the current example:
-it owns bounded data-defined corrective operations, typed model/validator ports,
-workflow artifacts, attempts, retries, validation state, bounded output, release,
-and events without owning the application or local-inference lifecycle. Its
-six-stage reference flow is template data interpreted by the same executor used
-for other legal corrective definitions; it is not the final general workflow
-runtime.
-
-New engines require evidence of a coherent independent state/lifecycle boundary.
-They do not depend on one another by default; a higher coordinator composes them.
+E0 validates a concrete loader's portable plan and loaded receipt without
+reimplementing its artifact policy. Public clients hold generation-safe identity,
+not shared model ownership. Provider and peer endpoints remain above E0 because
+remote work has different ownership, cancellation, accounting, and transport
+semantics.
 
 ## Optional E1 reference services
 
-`application-runtime` is E1 for the current reference application. It owns
-frontend-neutral application selection, immutable Hub resolution, selected-device
-state, persistence, one-resident-model lifecycle, completion, exact compatible
-chat, conversation/context behavior, bounded text output, retained cleanup, events,
-and worker shutdown.
+`application-runtime` is E1 for the current reference application. It coordinates
+selection, immutable Hub resolution, device choice, persistence, one resident
+model, completion, exact compatible chat, context planning, bounded decoded
+output, retained cleanup, events, and worker shutdown.
 
-Its private composition contains one monomorphized
-`HostedRuntime<CandleLlamaSource>`, one inference thread, one bounded Hub worker,
-one `HfTokenizer`, request-local streaming decoders, and redb storage. Static
-Candle execution stays behind the non-generic public façade.
-
-`ModelSelection` contains only repository/revision. Public `ResolvedModel` exposes
-selection, immutable identity, vocabulary, recognized-or-absent declaration, and
-unit chat compatibility. It exposes no engine/source/format helpers. Public
-`LoadedModel` gets actual execution scalar/device only from E0's verified receipt.
-
-Hub declaration states are strict: absent or recognized declarations continue
-through device-independent resolution; malformed, unsupported, or conflicting
-declarations fail with stable Hub/application categories and no raw vendor value.
-At Candle inspection, an absent declaration is sufficient only for a homogeneous
-required tensor set. Mixed required `{F16,F32}` and `{BF16,F32}` layouts require the
-matching recognized producer declaration before any lossy conversion.
-
-E1's load transaction snapshots resolution/admission, submits one ticketed E0
-load, and applies named generic receipt checks for correlation, identity,
-declaration, scalar/device, selected device, budget/footprint, nonempty observed
-evidence, capabilities, composition, limits, and tokenizer vocabulary. It accepts
-nonempty observed sets containing unused `F16`, `BF16`, `I8`, `U8`, or `Other` and
-does not reproduce Candle's required-tensor policy. Its footprint check uses
-checked host/device totals against the fixed budget; it does not impose CPU/CUDA
-component placement.
-
-CPU is mandatory/default. CUDA is an explicit feature-gated selection with no CPU
-fallback. `ApplicationDeviceSummary` publishes structured facts and an optional
-backend-reported `display_name`, not presentation labels.
-
-## Current local composition
+Its concrete local composition is private:
 
 ```text
-apps/desktop-slint
-        ↓ optional reference host
-application-runtime (E1)
-        ├── Hub worker → hf-hub-adapter → immutable artifacts + shard identity
-        ├── hf-tokenizer / request-local decoder
-        ├── redb-storage
-        └── hosted inference worker
-                    ↓
-             inference-runtime (E0)
-                    ↓
-             candle-backend
-                    ↓
-       Safetensors + selected CPU / feature-gated CUDA
+application-runtime
+    ├── Hub worker -> hf-hub-adapter -> immutable artifact identities
+    ├── HfTokenizer and request-local decoder
+    ├── redb-storage
+    └── HostedRuntime<CandleLlamaSource>
+            -> inference-runtime (E0)
+                -> candle-backend
 ```
 
-Engine, artifact source, model format, declaration, observed scalar set, required
-tensor policy, execution scalar, and device are distinct concepts. Candle owns
-Safetensors inspection, required-range conversion, exact loading/final planning,
-materialization, and placement. E0 owns generic plan admission and receipt
-verification. E1 owns only its generic application transaction and projection.
+E1 coordinates application behavior; it must not absorb every domain it calls.
+Tensor compatibility stays in Candle, token scheduling in E0, algorithms in
+domain crates, vendor/storage implementation in adapters, corrective state in its
+capability runtime, and presentation in apps. Reconsider a coarse extraction only
+when a second consumer, deployment, or execution kind reveals an independent
+lifecycle—not for symmetry. Do not expose the composition as a façade with many
+public backend/storage/tokenizer type parameters. This is the accepted boundary
+from [ADR-0008](../agent/decisions/0008-capability-and-execution-boundaries.md) and
+[ADR-0013](../agent/decisions/0013-candle-only-local-execution.md).
 
-The opt-in CUDA feature path is
-`desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda`; default
-builds do not reach CUDA. GGUF, quantized loading, Metal, generic GPU aliases, and
-automatic CPU fallback are not implemented by this composition.
+## Adapter and host boundaries
 
-## Adapters and frontend boundary
+`candle-backend` owns Safetensors structure, required-tensor compatibility,
+source verification, target-specific preparation, materialization, sequence
+resources, and native cleanup. `hf-hub-adapter`, `hf-tokenizer`, and
+`redb-storage` own their external integrations. Vendor types do not cross into
+portable contracts or presentation.
 
-`host-runtime` quarantines bounded channels, named threads, monotonic timing, and
-typed pull-oriented text/token output. One private statically dispatched core owns
-the output locking, fixed storage, monotonic cursors, atomic commit, and allocation
-reuse; text and token ranges remain distinct public types. The platform crate owns
-no model, workflow, conversation, or application state.
+`host-runtime` owns bounded channels, named threads, monotonic time, and typed
+pull-oriented output storage. It owns no model, application, conversation, or
+workflow state.
 
-Adapters own vendor/model/persistence details and do not depend on runtimes. The
-local reference path composes `hf-hub-adapter`, `hf-tokenizer`, `redb-storage`, and
-`candle-backend` behind E1/E0 boundaries.
+`desktop-slint` is a replaceable native host. It owns paths, the event loop,
+callbacks, labels, and presentation. It submits coarse E1 operations and projects
+structured E1 state; it does not reconstruct E0/E1 state machines or import
+adapter internals. A headless, terminal, transported, or workflow host may choose
+the coarse boundary appropriate to its semantics.
 
-`desktop-slint` owns platform paths, the native event loop, callbacks, and
-presentation. It constructs labels from structured facts and projects only
-repository/revision, optional declaration, selected device, actual receipt
-execution, and retained state. The unit chat compatibility fact controls behavior
-without exposing a profile. Each 16 ms frame drains at most 64 events and performs
-one bounded text pull.
-
-A Slint, Tauri, TUI/CLI, headless, transported, or workflow host may choose the
-boundary matching its semantics. Browser and remote targets require explicit
-transport/capability contracts; none is implied by E1.
-
-## Lifecycle and persistence policy
-
-Cleanup failure does not imply release. Public E1 retained state distinguishes
-resource, `Exact`/`Unverified`/`Unknown` ownership, lower retry/exhaustion,
-coordination retry, disconnect, process-lifetime retention, and independent primary
-and cleanup failures. Retained state has no simultaneous normal `LoadedModel` and
-locks selection/load.
-
-Only correlated explicit release, successful unload, or clean E0 shutdown is
-release evidence. Disconnect, worker/join-handle absence, zero exact aggregate
-bytes, or a missing bounded snapshot owner is not. Shutdown command outcomes and
-worker joins are tracked independently from cleanup; terminal retention survives
-worker exit until process reclamation.
-
-`LAS1` settings write version 2 and read exact version 1. `LAM1` model records write
-latest version 3 with declaration presence tag `0` for absent or tag `1` plus code
-`F32`/`F16`/`BF16`; exact versions 1 and 2 remain readable without automatic
-rewrite. Key/name mismatch, corrupt records, and unknown versions are explicit.
-Runtime execution and ownership facts are not persisted. The timestamp field is
-`last_resolved_unix_milliseconds`.
-
-## Generic role DAG and enforcement
-
-`cargo xtask architecture` validates the declared roles and this compact dependency model:
+## Current execution composition
 
 ```text
-application         -> runtime-application
-runtime-application -> runtime-capability, runtime-foundation,
-                       adapter, platform, domain-feature, domain-foundation
-runtime-capability  -> runtime-foundation,
-                       adapter, platform, domain-feature, domain-foundation
-runtime-foundation  -> adapter, platform, domain-feature, domain-foundation
-adapter              -> platform, domain-feature, domain-foundation
-platform             -> domain-feature, domain-foundation
-domain-feature       -> domain-feature, domain-foundation
-domain-foundation    -> domain-foundation
+desktop-slint (optional host)
+    -> application-runtime (E1)
+        -> inference-runtime (E0)
+            -> candle-backend
+                -> Safetensors + CPU or feature-gated CUDA
 ```
 
-Same-role runtime peers are not generally legal. Domain peer/foundation edges participate in the actual Cargo-derived acyclic domain graph. Tooling has no workspace-local edges. Observers are outer-only and build-script-free. The root policy namespace and exact integer `policy-version = 1` are mandatory. Normal/build edges that already obey these invariants need no duplicate record; workspace-local development edges and restricted external edges require exact live exception records with source, target, kind, stable ID, and rationale. Stale, wrong-kind, duplicate, unnecessary, and absolute-denial override records fail.
+The opt-in CUDA chain is
+`desktop-slint/cuda -> application-runtime/cuda -> candle-backend/cuda`. Default
+features do not reach CUDA. GGUF, quantization, Metal, generic GPU aliases, and
+automatic CPU fallback are absent. Exact support and evidence belong only in
+[implementation status](implementation-status.md).
 
-Default features, CUDA aliases, direct dependency feature selection, the exact provider contract, and reviewed forwarding remain separately fail-closed. `cuda-hardware-tests` is a package-local, non-default test alias and cannot be forwarded by another package.
+## Enforcement and future placement
 
-A future workflow runtime declares `runtime-capability` or the lifecycle-appropriate runtime role; a portable workspace or plugin SDK declares a domain role; a provider implementation declares `adapter`; a headless process declares `application`; and a repository utility declares `tooling`. Those packages require no package-name registry change. A new role or a genuinely exceptional edge remains an architecture change.
+`cargo xtask architecture` validates roles, locations, the generic inward DAG,
+actual domain acyclicity, observer/tooling isolation, reviewed exceptions, CUDA
+features, and maintained benchmark registration. `cargo xtask hygiene` validates
+tracked repository policy, including documentation authority. See
+[dependency policy](dependency-policy.md).
 
-`cargo xtask hygiene` enforces repository policy, and `cargo xtask verify` composes the project gates plus exact registered benchmark compilation. Project-authored code denies unsafe code, with narrow generated Slint exceptions documented in [workspace boundaries](workspace.md).
-
-This architecture page does not assert validation of the current tree or broaden historical hardware support. The authoritative support and evidence record remains [implementation status](implementation-status.md).
+A future portable workflow or plugin SDK belongs in a domain role; a stateful
+workflow engine in `runtime-capability`; provider/peer implementations in
+adapters; a headless process in apps; and a control center as another host over
+public schemas. The [execution plan](../agent/execution/execution-plan.md) must
+ratify those packages before implementation.

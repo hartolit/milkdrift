@@ -51,6 +51,12 @@ Repository artifact rules additionally reject:
 - any tracked non-fixture Cargo package manifest that is not a root workspace member;
 - a benchmark member without an explicit compatible observer role, or a Cargo bench target without exact metadata registration and one explicit `harness = false` manifest entry.
 
+Documentation hygiene also requires the current authority-spine files and their
+map entries, forbids the retired analyzer/implementation-plan/free-floating
+application warning paths, and permits only `archive/README.md` under the completed
+prompt archive. Original prompt and analysis bodies remain available through Git
+history rather than tracked active-tree copies.
+
 The root `.gitignore` uses `target/` so Cargo output is ignored at every repository depth. Ordinary local Cargo work may use root `target`; clean acceptance and CI instead set one named isolated `CARGO_TARGET_DIR` per job, verify that root `target` was not created, observe disk use, and remove the isolated directory. Raw Criterion/profiler data and model caches remain under an approved target or outside the repository. Curated conclusions belong in canonical documentation rather than generated result trees.
 
 There is no filename-, directory-, document-status-, or whole-file bypass for a tracked operational surface. Historical names, execution-history locations, and superseded ADR status do not exempt content. Negative policy examples are accepted only when the parser can identify them as prohibitions rather than instructions. Any future exception must be exact, narrowly reviewed, and covered by tests; a broad path or status exemption is not acceptable.

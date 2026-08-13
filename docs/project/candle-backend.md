@@ -21,17 +21,23 @@ Safetensors 0.8 categories are classified completely. F32, F16, BF16, I8, and U8
 
 Modern `dtype` does not silently fall back to legacy `torch_dtype`. Both absent/null means no declaration; one recognized field or two equal recognized fields selects that declaration; any present unsupported value, conflicting recognized pair, duplicate field, wrong type, or malformed JSON fails explicitly. A recognized declaration must be absent or equal the required primary.
 
-## Exact required-layout and execution policy
+## Required-layout and execution policy
 
-| Required set | Required primary | Permitted declaration | CPU execution | Supported CUDA policy |
-|---|---|---|---|---|
-| `{F32}` | F32 | absent or F32 | F32 | F32 |
-| `{F16}` | F16 | absent or F16 | F16 | F16 |
-| `{F16,F32}` | F16 | **F16 required** | F16 | F16 |
-| `{BF16}` | BF16 | absent or BF16 | F32 | BF16 when supported |
-| `{BF16,F32}` | BF16 | **BF16 required** | F32 | BF16 when supported |
+The exact accepted product layouts are listed once in
+[implementation status](implementation-status.md#support-matrix), and
+[ADR-0020](../agent/decisions/0020-transactional-prepared-model-loading.md#accept-only-the-reviewed-required-layouts)
+preserves the decision matrix. Locally, Candle derives one required primary from
+the consumed tensors: F32 and F16 execute as themselves; BF16 executes as F32 on
+CPU and as BF16 only on a selected accelerator that reports support. A mixed
+F16/F32 or BF16/F32 required set is accepted only with the matching producer
+declaration. Final vocabulary logits cross to E0 as caller-owned host F32.
 
-A genuine required F16+BF16 mixture, empty required set, required unsupported dtype, quantized representation, malformed/duplicate tensor layout, missing required tensor, shape mismatch, gap/overlap, bounds failure, or arithmetic overflow is rejected before execution-device initialization. Complete observed extras never alter this matrix. A BF16 CUDA request on a device without reported BF16 support fails during preparation; unsupported devices fail explicitly and there is no CPU fallback. Final vocabulary logits cross to E0 as caller-owned host F32.
+A genuine required F16+BF16 mixture, empty required set, required unsupported
+dtype, quantized representation, malformed/duplicate tensor layout, missing
+required tensor, shape mismatch, gap/overlap, bounds failure, or arithmetic
+overflow is rejected before execution-device initialization. Complete observed
+extras never change that result. Unsupported devices fail explicitly and there is
+no CPU fallback.
 
 ## Bounded inspection and source identity
 

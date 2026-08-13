@@ -48,7 +48,7 @@ Prefer stable domains over chronology. A backend guide remains the backend guide
 | Agent definition | `docs/agent/persona.md` | Reusable collaboration and reasoning guidance for engineering agents |
 | Knowledge | `docs/agent/knowledge/` | Reusable technical principles, evidence, and tradeoffs |
 | Decision | `docs/agent/decisions/` | Project-specific architectural decisions and rationale |
-| Execution | `docs/agent/execution/` | Dense current context, preserved analysis/plan, and chronological closure history |
+| Execution | `docs/agent/execution/` | Compact current context, active/inactive plan, and milestone history |
 | Project reference | `docs/project/` | Current project architecture, status, components, policies, and runbooks |
 
 Do not put project-specific backend names, crate lists, phase state, or product support in reusable definition or knowledge documents.
@@ -118,16 +118,16 @@ Commands should be copy/pasteable. State whether they are canonical gates, focus
 
 ### Current execution context
 
-`docs/agent/execution/current.md` is intentionally denser than an evergreen reference page. Its purpose is to let a new execution agent acquire the immediate working set—or learn that execution is deliberately parked—without reconstructing the program from the entire repository.
+`docs/agent/execution/current.md` is a compact immediate handoff. Its purpose is to
+tell a new execution agent what is active—or that execution is parked—without
+reconstructing the program from the entire repository.
 
 It should contain:
 
 - the reviewed baseline and gate state;
 - the active phase objective, or an explicit statement that no phase is active;
-- the subset of already-implemented behavior the phase depends on;
-- current source touchpoints when they materially reduce rediscovery;
-- phase-specific invariants and non-goals;
-- acceptance criteria;
+- unresolved acceptance steps;
+- environment-specific facts needed for the next agent;
 - links to the canonical documents that own repeated facts.
 
 This is **derived context**. It may deliberately repeat a small amount of current information for operational clarity, but it must not become the only owner of support state, architecture, component behavior, or validation procedure.
@@ -136,16 +136,16 @@ Update it while a phase is active. When the phase closes, move durable evidence 
 
 ### Execution history
 
-Use one chronological history document unless a phase produces a genuinely independent artifact. Each phase entry may contain:
+Use one chronological history document. Each milestone entry contains only:
 
 - date and baseline;
-- outcome at the time;
-- closure matrix or acceptance evidence;
-- measurements that would otherwise be lost;
-- validation provenance;
-- notable limitations at that point.
+- durable outcome;
+- accepted local, hosted, or hardware run identity where useful;
+- important evidence gaps at closure; and
+- links to current behavior and preserved measurements.
 
-Do not create a new standalone `PHASE*_IMPLEMENTATION_REPORT.md` for every closed phase.
+Do not copy command transcripts, full support matrices, or measurements already
+owned by current reference into history.
 
 ### Knowledge note
 
@@ -202,7 +202,8 @@ Do not update unrelated documents merely to repeat the same change summary.
 
 Definition documents such as architecture, rules, and persona may use structures optimized for definitions rather than the project-reference template. Knowledge notes may use whatever structure best explains the topic.
 
-A project may designate large analysis or execution-plan documents as intentionally stable source artifacts. Their local execution index should identify that exception; do not restyle them opportunistically during unrelated documentation cleanup.
+Completed prompt and analysis bodies belong in Git history rather than a tracked
+archive. Retain a small provenance index only when it helps locate durable outcomes.
 
 ## Review checklist
 

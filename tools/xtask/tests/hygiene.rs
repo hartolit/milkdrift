@@ -239,6 +239,114 @@ fn historical_names_and_superseded_adrs_do_not_bypass_scanning() -> Result<(), B
 }
 
 #[test]
+fn documentation_authority_rejects_retired_paths_archives_and_missing_maps()
+-> Result<(), Box<dyn Error>> {
+    let repository = FixtureRepository::new(
+        "documentation-authority-invalid",
+        &[
+            ("Cargo.toml", BASIC_MANIFEST),
+            ("src/lib.rs", BASIC_SOURCE),
+            ("README.md", "# Project\n"),
+            ("docs/README.md", "# Documentation\n"),
+            ("docs/vision.md", "# Vision\n"),
+            ("docs/project/README.md", "# Project docs\n"),
+            ("docs/project/architecture.md", "# Architecture\n"),
+            ("docs/project/implementation-status.md", "# Status\n"),
+            ("docs/project/validation.md", "# Validation\n"),
+            ("docs/project/performance.md", "# Performance\n"),
+            ("docs/project/implementation-plan.md", "# Old plan\n"),
+            (
+                "docs/agent/application-runtime-architecture-warning.md",
+                "# Resolved warning\n",
+            ),
+            ("docs/agent/decisions/README.md", "# Decisions\n"),
+            ("docs/agent/execution/README.md", "# Execution\n"),
+            ("docs/agent/execution/current.md", "# Current\n"),
+            ("docs/agent/execution/execution-plan.md", "# Plan\n"),
+            ("docs/agent/execution/history.md", "# History\n"),
+            ("docs/agent/execution/analyzer.md", "# Old analysis\n"),
+            (
+                "docs/agent/execution/archive/completed-prompt.md",
+                "# Completed prompt\n",
+            ),
+            ("docs/agent/execution/archive/README.md", "# Provenance\n"),
+        ],
+    )?;
+    let report = validate_repository_hygiene(&repository.manifest())?;
+
+    for path in [
+        "docs/agent/application-runtime-architecture-warning.md",
+        "docs/agent/execution/analyzer.md",
+        "docs/project/implementation-plan.md",
+    ] {
+        assert!(report.violations().iter().any(|violation| {
+            violation.rule() == "HYGIENE-DOCUMENTATION-LAYOUT-1"
+                && violation.path() == Some(Path::new(path))
+        }));
+    }
+    assert!(report.violations().iter().any(|violation| {
+        violation.rule() == "HYGIENE-DOCUMENTATION-ARCHIVE-1"
+            && violation.path()
+                == Some(Path::new(
+                    "docs/agent/execution/archive/completed-prompt.md",
+                ))
+    }));
+    assert!(report.violations().iter().any(|violation| {
+        violation.rule() == "HYGIENE-DOCUMENTATION-LAYOUT-1"
+            && violation.path() == Some(Path::new("docs/project/operation.md"))
+    }));
+    assert!(report.violations().iter().any(|violation| {
+        violation.rule() == "HYGIENE-DOCUMENTATION-LAYOUT-1"
+            && violation.path() == Some(Path::new("docs/agent/execution/README.md"))
+            && violation.reason().contains("execution-plan.md")
+    }));
+    Ok(())
+}
+
+#[test]
+fn documentation_authority_accepts_the_current_spine() -> Result<(), Box<dyn Error>> {
+    let repository = FixtureRepository::new(
+        "documentation-authority-valid",
+        &[
+            ("Cargo.toml", BASIC_MANIFEST),
+            ("src/lib.rs", BASIC_SOURCE),
+            ("README.md", "# Project\n"),
+            (
+                "docs/README.md",
+                "[Architecture](project/architecture.md) [Operation](project/operation.md) [Status](project/implementation-status.md)\n",
+            ),
+            ("docs/vision.md", "# Vision\n"),
+            (
+                "docs/project/README.md",
+                "[Operation](operation.md) [Status](implementation-status.md)\n",
+            ),
+            ("docs/project/architecture.md", "# Architecture\n"),
+            ("docs/project/operation.md", "# Operation\n"),
+            ("docs/project/implementation-status.md", "# Status\n"),
+            ("docs/project/validation.md", "# Validation\n"),
+            ("docs/project/performance.md", "# Performance\n"),
+            ("docs/agent/decisions/README.md", "# Decisions\n"),
+            (
+                "docs/agent/execution/README.md",
+                "[Current](current.md) [Plan](execution-plan.md)\n",
+            ),
+            ("docs/agent/execution/current.md", "# Current\n"),
+            ("docs/agent/execution/execution-plan.md", "# Plan\n"),
+            ("docs/agent/execution/history.md", "# History\n"),
+            ("docs/agent/execution/archive/README.md", "# Provenance\n"),
+        ],
+    )?;
+    let report = validate_repository_hygiene(&repository.manifest())?;
+
+    assert!(
+        report.is_valid(),
+        "valid documentation authority violations: {:#?}",
+        report.violations()
+    );
+    Ok(())
+}
+
+#[test]
 fn tracked_utf8_text_rejects_trailing_whitespace_outside_rust_sources() -> Result<(), Box<dyn Error>>
 {
     let repository = FixtureRepository::new(

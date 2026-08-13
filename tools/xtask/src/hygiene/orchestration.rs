@@ -24,6 +24,8 @@ const RULE_WORKSPACE_MEMBER: &str = "HYGIENE-WORKSPACE-MEMBER-1";
 const RULE_BENCHMARK_LAYOUT: &str = "HYGIENE-BENCHMARK-LAYOUT-1";
 const RULE_BENCHMARK_REGISTRY: &str = "HYGIENE-BENCHMARK-REGISTRY-1";
 const RULE_TRACKED_WHITESPACE: &str = "HYGIENE-TRACKED-WHITESPACE-1";
+const RULE_DOCUMENTATION_LAYOUT: &str = "HYGIENE-DOCUMENTATION-LAYOUT-1";
+const RULE_DOCUMENTATION_ARCHIVE: &str = "HYGIENE-DOCUMENTATION-ARCHIVE-1";
 
 /// One actionable repository hygiene policy violation.
 #[derive(Debug, PartialEq, Eq)]
@@ -232,6 +234,7 @@ fn validate_hygiene(
         .collect::<BTreeSet<_>>();
 
     scan_benchmark_registry(root, metadata, &mut report);
+    scan_documentation_layout(root, tracked_paths, &mut report)?;
 
     for relative in tracked_paths {
         let absolute = root.join(relative);
@@ -291,6 +294,122 @@ fn validate_hygiene(
 
     scan_selected_graph(metadata, &mut report);
     Ok(report)
+}
+
+fn scan_documentation_layout(
+    root: &Path,
+    tracked_paths: &[PathBuf],
+    report: &mut HygieneReport,
+) -> Result<(), HygieneError> {
+    let present = tracked_paths
+        .iter()
+        .filter(|path| root.join(path).exists())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+
+    for retired in [
+        "docs/agent/application-runtime-architecture-warning.md",
+        "docs/agent/execution/analyzer.md",
+        "docs/project/implementation-plan.md",
+    ] {
+        let path = Path::new(retired);
+        if present.contains(path) {
+            report.push(HygieneViolation::new(
+                Some(path.to_path_buf()),
+                None,
+                RULE_DOCUMENTATION_LAYOUT,
+                "retired documentation authority must remain in Git history rather than the active tree"
+                    .to_owned(),
+            ));
+        }
+    }
+
+    let archive = Path::new("docs/agent/execution/archive");
+    for path in present.iter().filter(|path| {
+        path.starts_with(archive)
+            && path.extension().and_then(|extension| extension.to_str()) == Some("md")
+            && path.as_path() != archive.join("README.md")
+    }) {
+        report.push(HygieneViolation::new(
+            Some(path.clone()),
+            None,
+            RULE_DOCUMENTATION_ARCHIVE,
+            "completed prompt bodies are prohibited in the active tree; retain only archive/README.md provenance and use Git history for the original text"
+                .to_owned(),
+        ));
+    }
+
+    if !present.contains(Path::new("docs/README.md")) {
+        return Ok(());
+    }
+
+    for required in [
+        "README.md",
+        "docs/vision.md",
+        "docs/project/README.md",
+        "docs/project/architecture.md",
+        "docs/project/operation.md",
+        "docs/project/implementation-status.md",
+        "docs/project/validation.md",
+        "docs/project/performance.md",
+        "docs/agent/decisions/README.md",
+        "docs/agent/execution/README.md",
+        "docs/agent/execution/current.md",
+        "docs/agent/execution/execution-plan.md",
+        "docs/agent/execution/history.md",
+    ] {
+        let path = Path::new(required);
+        if !present.contains(path) {
+            report.push(HygieneViolation::new(
+                Some(path.to_path_buf()),
+                None,
+                RULE_DOCUMENTATION_LAYOUT,
+                "the current documentation authority spine requires this tracked file".to_owned(),
+            ));
+        }
+    }
+
+    for (map, required_links) in [
+        (
+            "docs/README.md",
+            &[
+                "(project/architecture.md)",
+                "(project/operation.md)",
+                "(project/implementation-status.md)",
+            ][..],
+        ),
+        (
+            "docs/project/README.md",
+            &["(operation.md)", "(implementation-status.md)"][..],
+        ),
+        (
+            "docs/agent/execution/README.md",
+            &["(current.md)", "(execution-plan.md)"][..],
+        ),
+    ] {
+        let map_path = Path::new(map);
+        if !present.contains(map_path) {
+            continue;
+        }
+        let content = fs::read_to_string(root.join(map_path)).map_err(|error| {
+            HygieneError::new(format!(
+                "could not read documentation map {}: {error}",
+                map_path.display()
+            ))
+        })?;
+        for required_link in required_links {
+            if !content.contains(required_link) {
+                report.push(HygieneViolation::new(
+                    Some(map_path.to_path_buf()),
+                    None,
+                    RULE_DOCUMENTATION_LAYOUT,
+                    format!("documentation map must index `{required_link}`"),
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn scan_benchmark_registry(root: &Path, metadata: &Metadata, report: &mut HygieneReport) {

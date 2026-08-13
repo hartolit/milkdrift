@@ -1,63 +1,50 @@
 # Milkdrift project documentation
 
-This directory owns current Milkdrift-specific reference material. Reusable engineering doctrine lives one level above; agent-facing decisions, current execution context, plans, and historical closure evidence live under `../agent/`.
+This directory owns current Milkdrift-specific reference. Reusable principles live
+one level above; durable rationale and immediate execution state live under
+`../agent/`.
 
-## Canonical ownership
+## Current authority
 
 | Question | Canonical document |
 |---|---|
-| What architecture does Milkdrift apply now? | [Project architecture](architecture.md) |
-| What crates and dependency edges exist? | [Workspace boundaries](workspace.md) |
-| What works in the current product tree? | [Implementation status](implementation-status.md) |
-| How is the repository validated? | [Validation](validation.md) |
-| How does E0 inference behave? | [Inference runtime](inference-runtime.md) |
-| How does E1 application orchestration behave? | [Application runtime](application-runtime.md) |
-| What does the native frontend own? | [Desktop runtime](desktop-runtime.md) |
-| What are lifecycle and cleanup guarantees? | [Model lifecycle](lifecycle.md) |
-| How does the Candle adapter behave? | [Candle backend](candle-backend.md) |
-| How does corrective workflow execution behave? | [Corrective workflow](orchestration.md) |
-| What performance evidence exists? | [Performance evidence](performance.md) |
-| What dependency and supply-chain policy is enforced? | [Dependency policy](dependency-policy.md) |
-| What portability targets are claimed? | [Portability](portability.md) |
+| What architecture and ownership model apply now? | [Project architecture](architecture.md) |
+| How does a request execute end to end? | [Operation](operation.md) |
+| What works and what evidence supports it? | [Implementation status](implementation-status.md) |
+| How are claims reproduced? | [Validation](validation.md) |
+| What benchmark methods and curated results exist? | [Performance evidence](performance.md) |
+| Which crates and Cargo edges exist? | [Workspace boundaries](workspace.md) |
+| Which dependencies and repository rules are enforced? | [Dependency policy](dependency-policy.md) |
+| Which portable targets are claimed? | [Portability](portability.md) |
 
-A document may restate a small boundary when needed locally, but changing facts should be maintained in the owner above and linked elsewhere.
+[Architecture principles](../architecture.md) are reusable beyond Milkdrift;
+[project architecture](architecture.md) applies them to the actual repository.
+Accepted and superseded rationale is indexed in the
+[ADRs](../agent/decisions/README.md).
 
-## Architecture and state
+## Component guides
 
-- [Project architecture](architecture.md) applies the reusable [architecture principles](../architecture.md) to Milkdrift and records the current F0/F1, E0/capability/E1, execution-target, adapter, and frontend model.
-- [Workspace boundaries](workspace.md) is the concrete crate inventory and dependency graph.
-- [Implementation status](implementation-status.md) is the only product-level support matrix and validation-state page.
-- Accepted and superseded project decisions are indexed in [architecture decisions](../agent/decisions/README.md).
+| Component | Unique detail owned here |
+|---|---|
+| [Candle backend](candle-backend.md) | Safetensors inspection, scalar compatibility, materialization, footprints, sequence reservation, and adapter cleanup |
+| [Inference runtime](inference-runtime.md) | E0 admission, exclusive ownership, scheduling, backpressure, quarantine, unload, and shutdown |
+| [Application runtime](application-runtime.md) | E1 resolution/load correlation, application state, chat/completion, persistence, retained cleanup, and worker coordination |
+| [Desktop runtime](desktop-runtime.md) | Slint projection, event cadence, paths, and presentation boundary |
+| [Corrective orchestration](orchestration.md) | Generic graph versus corrective capability semantics |
+| [Model lifecycle](lifecycle.md) | Cross-component cancellation, cleanup, retention, and reclamation guarantees |
 
-The current local product is Candle with immutable Hugging Face Hub Safetensors and the unquantized Llama path. CPU is mandatory and default. Explicit non-default CUDA ordinal 0 is supported only on the executed Linux x86_64 RTX 5070 Ti matrix named in [implementation status](implementation-status.md), with no automatic CPU fallback and no generic NVIDIA compatibility claim. GGUF, other quantized formats, Metal, and unlisted GPU targets are unsupported.
+Component pages describe behavior only. The sole product support/evidence matrix
+is [implementation status](implementation-status.md); exact procedures and run
+results are not copied into component guides.
 
-## Runtime and frontend
+## Current boundary
 
-- [Inference runtime](inference-runtime.md)
-- [Application runtime](application-runtime.md)
-- [Corrective workflow](orchestration.md)
-- [Desktop runtime](desktop-runtime.md)
-- [Model lifecycle](lifecycle.md)
+The current product is the Candle/E0 path with optional E1 reference services and
+a thin Slint host. CPU is mandatory/default. CUDA is explicit, non-default, and
+has no CPU fallback; exact supported hardware and evidence are named only in the
+status page. General workflows/workspaces/plugins/providers/peers and the control
+center remain future direction.
 
-These guides describe current behavior, ownership, failure semantics, and public boundaries. Roadmap sequencing belongs in the execution plan rather than these guides.
-
-## Local execution adapter
-
-- [Candle backend](candle-backend.md)
-
-The adapter guide owns Candle-specific capabilities, limitations, resource behavior, and compatibility semantics. Product availability belongs in implementation status.
-
-## Engineering and operations
-
-- [Validation](validation.md)
-- [Dependency and repository policy](dependency-policy.md)
-- [Portable feature targets](portability.md)
-- [Performance evidence](performance.md)
-
-Procedures and measurements stay close to the domain that owns them. The status page records whether the current source baseline has satisfied required gates; it does not duplicate every command.
-
-## Historical material
-
-The [recovered implementation plan](implementation-plan.md) is retained as clearly marked historical source material and is not the active roadmap. Completed Phase 8 plan text and [Phase 8 history](../agent/execution/history.md#phase-8--gguf-parity-and-native-composition-evidence) remain factual evidence for the former dual-product tree; [ADR-0013](../agent/decisions/0013-candle-only-local-execution.md) supersedes that composition for current work.
-
-The concise handoff is [current execution context](../agent/execution/current.md), closed execution and maintenance evidence is consolidated in [execution history](../agent/execution/history.md), and the completed program plus inactive future tracks remain in the [execution plan](../agent/execution/execution-plan.md). No product phase is active.
+Immediate execution state is in [current context](../agent/execution/current.md),
+ordered program state in the [execution plan](../agent/execution/execution-plan.md),
+and older exact-tree chronology in [history](../agent/execution/history.md).
