@@ -4,7 +4,9 @@ use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use candle_backend::{CandleLlamaLoader, CandleLlamaSource};
+use candle_backend::{
+    CandleLlamaLoader, CandleLlamaSource, CandleLoadObservation, CandleLoadObservationSnapshot,
+};
 use domain_contracts::{BackendId, MemoryBudget, ModelHandle, ModelId, RequestId, SequenceId};
 use inference_runtime::{
     CommandTicket, HostedRuntime, HostedRuntimeConfiguration, RuntimeCommand, RuntimeEvent,
@@ -51,6 +53,7 @@ pub(super) struct TimedEvent {
 pub struct HostedE0Harness {
     runtime: Option<CandleRuntime>,
     thread: Option<RuntimeThread>,
+    load_observation: CandleLoadObservation,
     loaded_model: Option<ModelHandle>,
     next_ticket: u64,
     next_request: u64,
@@ -78,9 +81,10 @@ impl HostedE0Harness {
                 device_bytes: 0,
             },
         );
+        let (load_observation, load_observation_recorder) = CandleLoadObservation::channel();
         let started = Instant::now();
         let (runtime, thread) = start_hosted_runtime(
-            CandleLlamaLoader::new(CANDLE_BACKEND),
+            CandleLlamaLoader::with_load_observation(CANDLE_BACKEND, load_observation_recorder),
             limits,
             configuration,
         )
@@ -90,6 +94,7 @@ impl HostedE0Harness {
             Self {
                 runtime: Some(runtime),
                 thread: Some(thread),
+                load_observation,
                 loaded_model: None,
                 next_ticket: 1,
                 next_request: 1,
@@ -174,6 +179,10 @@ impl HostedE0Harness {
     pub(super) fn loaded_model(&self) -> BenchmarkResult<ModelHandle> {
         self.loaded_model
             .ok_or_else(|| BenchmarkError::new("hosted E0 fixture model is not loaded"))
+    }
+
+    pub(super) fn load_observation_snapshot(&self) -> CandleLoadObservationSnapshot {
+        self.load_observation.snapshot()
     }
 
     pub(super) fn record_unloaded_model(&mut self, handle: ModelHandle) -> BenchmarkResult {

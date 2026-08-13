@@ -1,14 +1,13 @@
 //! Model resolution, correlated load admission, receipt validation, and persistence.
 
-use candle_backend::{CandleLlamaSource, CandleShardIdentity, CandleWeightShard, SourceError};
+use candle_backend::{
+    CandleExpectedContentIdentity, CandleLlamaSource, CandleWeightShard, SourceError,
+};
 use domain_contracts::{
     BackendFailureKind, CapabilitySet, ExecutionDevice, LoadError, MemoryBudget, MemoryFootprint,
     ModelArchitecture, ModelId, QuantizationFormat, ScalarTypeSet,
 };
-use hf_hub_adapter::{
-    ArtifactContentIdentityAuthority, HubError, HubModelReference,
-    ResolvedSafetensorsLlamaArtifacts,
-};
+use hf_hub_adapter::{HubError, HubModelReference, ResolvedSafetensorsLlamaArtifacts};
 use hf_tokenizer::{HfTokenizer, HfTokenizerLoadError};
 use host_runtime::{TrySendError, TrySendError::Disconnected};
 use inference_runtime::{CommandTicket, RuntimeCommand, RuntimeError};
@@ -575,7 +574,7 @@ fn tokenizer_load_failure(error: &HfTokenizerLoadError) -> ApplicationFailure {
     ApplicationFailure::new(ApplicationFailureKind::Tokenizer, message)
 }
 
-fn candle_weight_shards(
+pub(super) fn candle_weight_shards(
     artifacts: &ResolvedSafetensorsLlamaArtifacts,
 ) -> Result<Vec<CandleWeightShard>, SourceError> {
     let mut shards = Vec::new();
@@ -583,22 +582,13 @@ fn candle_weight_shards(
         .try_reserve_exact(artifacts.weight_shards.len())
         .map_err(|_| SourceError::Allocation)?;
     for shard in &artifacts.weight_shards {
-        let identity = match shard.content_identity.authority {
-            ArtifactContentIdentityAuthority::HuggingFaceLfs
-            | ArtifactContentIdentityAuthority::HuggingFaceGitBlob => {
-                CandleShardIdentity::VerifiedImmutable {
-                    byte_length: shard.content_identity.byte_length,
-                    sha256: shard.content_identity.sha256,
-                }
-            }
-            ArtifactContentIdentityAuthority::ProjectEstablished => {
-                CandleShardIdentity::ProjectEstablished {
-                    byte_length: shard.content_identity.byte_length,
-                    sha256: shard.content_identity.sha256,
-                }
-            }
-        };
-        shards.push(CandleWeightShard::new(shard.path.clone(), identity));
+        shards.push(CandleWeightShard::with_expected_content(
+            shard.path.clone(),
+            CandleExpectedContentIdentity::new(
+                shard.content_identity.byte_length,
+                shard.content_identity.sha256,
+            ),
+        ));
     }
     Ok(shards)
 }

@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use candle_backend::{
-    CandleLlamaLoader, CandleLlamaModel, CandleLlamaPreparedLoad, CandleLlamaSequence,
-    CandleLlamaSource, CandleShardIdentity, CandleWeightShard,
+    CandleExpectedContentIdentity, CandleLlamaLoader, CandleLlamaModel, CandleLlamaPreparedLoad,
+    CandleLlamaSequence, CandleLlamaSource, CandleWeightShard,
 };
 use candle_core::{DType, Device, Tensor};
 use domain_contracts::{
@@ -82,6 +82,9 @@ const CPU_MIXED_BF16_F32_LOADING_PEAK: MemoryFootprint = MemoryFootprint {
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 type TestResult<T = ()> = Result<T, String>;
+
+const SOURCE_IDENTITY_MISMATCH_CODE: u32 = 32;
+const SOURCE_IDENTITY_LENGTH_CODE: u32 = 45;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RequiredProfile {
@@ -423,7 +426,9 @@ fn owned_config_bytes_remain_bound_while_local_paths_stay_late_bound() -> TestRe
     let config_bytes = fs::read(&fixture.config_path).map_err(|error| error.to_string())?;
     let bound_source = CandleLlamaSource::from_config_bytes(
         config_bytes,
-        vec![CandleWeightShard::unverified(fixture.weight_path.clone())],
+        vec![CandleWeightShard::unverified_local(
+            fixture.weight_path.clone(),
+        )],
     )
     .map_err(|error| error.to_string())?;
 
@@ -531,17 +536,14 @@ fn unverified_fallback_detects_truncation_and_extension() -> TestResult {
 }
 
 #[test]
-fn supplied_verified_immutable_identity_succeeds_and_digest_mismatch_rejects() -> TestResult {
-    let verified = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
-    let (byte_length, sha256) = file_identity(&verified.weight_path)?;
-    let source = verified.source_with_shards(
+fn supplied_expected_content_succeeds_and_digest_mismatch_rejects() -> TestResult {
+    let matching = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
+    let (byte_length, sha256) = file_identity(&matching.weight_path)?;
+    let source = matching.source_with_shards(
         ConfigDeclaration::F32,
-        vec![CandleWeightShard::new(
-            verified.weight_path.clone(),
-            CandleShardIdentity::VerifiedImmutable {
-                byte_length,
-                sha256,
-            },
+        vec![CandleWeightShard::with_expected_content(
+            matching.weight_path.clone(),
+            CandleExpectedContentIdentity::new(byte_length, sha256),
         )],
     )?;
     let mut loader = CandleLlamaLoader::new(BACKEND);
@@ -553,45 +555,68 @@ fn supplied_verified_immutable_identity_succeeds_and_digest_mismatch_rejects() -
     sha256[0] ^= 1;
     let source = mismatched.source_with_shards(
         ConfigDeclaration::F32,
-        vec![CandleWeightShard::new(
+        vec![CandleWeightShard::with_expected_content(
             mismatched.weight_path.clone(),
-            CandleShardIdentity::VerifiedImmutable {
-                byte_length,
-                sha256,
-            },
+            CandleExpectedContentIdentity::new(byte_length, sha256),
         )],
     )?;
     let prepared = loader
         .prepare_load(&source, &load_configuration())
         .map_err(debug_error)?;
-    assert_failed_preparation_invalid_model(&mut loader, prepared)
+    assert_failed_preparation_invalid_model_code(
+        &mut loader,
+        prepared,
+        SOURCE_IDENTITY_MISMATCH_CODE,
+    )
 }
 
 #[test]
-fn project_established_mutation_rejects_before_invalid_device_initialization() -> TestResult {
+fn supplied_expected_content_length_mismatch_rejects_explicitly() -> TestResult {
     let fixture = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
     let (byte_length, sha256) = file_identity(&fixture.weight_path)?;
     let source = fixture.source_with_shards(
         ConfigDeclaration::F32,
-        vec![CandleWeightShard::new(
+        vec![CandleWeightShard::with_expected_content(
             fixture.weight_path.clone(),
-            CandleShardIdentity::ProjectEstablished {
-                byte_length,
+            CandleExpectedContentIdentity::new(
+                byte_length
+                    .checked_add(1)
+                    .ok_or_else(|| "fixture length overflow".to_owned())?,
                 sha256,
-            },
+            ),
         )],
     )?;
-    mutate_prepared_file(&fixture.weight_path, PreparedMutation::Payload)?;
-
-    let mut configuration = load_configuration();
-    configuration.execution_device = ExecutionDevice::new(DeviceId::new(1), DeviceKind::Cpu);
     let mut loader = CandleLlamaLoader::new(BACKEND);
+    let error = loader
+        .prepare_load(&source, &load_configuration())
+        .err()
+        .ok_or_else(|| "wrong expected content length was admitted".to_owned())?;
     assert!(matches!(
-        loader.prepare_load(&source, &configuration),
-        Err(LoadError::Backend(failure))
+        error,
+        LoadError::Backend(failure)
             if failure.kind == BackendFailureKind::InvalidModel
+                && failure.code == SOURCE_IDENTITY_LENGTH_CODE
     ));
     Ok(())
+}
+
+#[test]
+fn supplied_expected_content_detects_same_inode_mutation_before_publication() -> TestResult {
+    let fixture = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
+    let (byte_length, sha256) = file_identity(&fixture.weight_path)?;
+    let source = fixture.source_with_shards(
+        ConfigDeclaration::F32,
+        vec![CandleWeightShard::with_expected_content(
+            fixture.weight_path.clone(),
+            CandleExpectedContentIdentity::new(byte_length, sha256),
+        )],
+    )?;
+    let mut loader = CandleLlamaLoader::new(BACKEND);
+    let prepared = loader
+        .prepare_load(&source, &load_configuration())
+        .map_err(debug_error)?;
+    mutate_prepared_file(&fixture.weight_path, PreparedMutation::Payload)?;
+    assert_failed_preparation_invalid_model(&mut loader, prepared)
 }
 
 #[test]
@@ -703,48 +728,36 @@ fn tensor_name_rank_and_metadata_limits_are_rejected() -> TestResult {
 }
 
 #[test]
-fn shard_reorder_sorts_complete_identity_pairs_and_loads() -> TestResult {
+fn shard_reorder_sorts_complete_expected_content_pairs_and_loads() -> TestResult {
     let fixture = TinyLlamaFixture::create_sharded(RequiredProfile::MixedF16F32, false)?;
     let (z_length, z_sha256) = file_identity(&fixture.weight_path)?;
     let (a_length, a_sha256) = file_identity(&fixture.second_weight_path)?;
     let source = fixture.source_with_shards(
         ConfigDeclaration::F16,
         vec![
-            CandleWeightShard::new(
+            CandleWeightShard::with_expected_content(
                 fixture.weight_path.clone(),
-                CandleShardIdentity::VerifiedImmutable {
-                    byte_length: z_length,
-                    sha256: z_sha256,
-                },
+                CandleExpectedContentIdentity::new(z_length, z_sha256),
             ),
-            CandleWeightShard::new(
+            CandleWeightShard::with_expected_content(
                 fixture.second_weight_path.clone(),
-                CandleShardIdentity::ProjectEstablished {
-                    byte_length: a_length,
-                    sha256: a_sha256,
-                },
+                CandleExpectedContentIdentity::new(a_length, a_sha256),
             ),
         ],
     )?;
 
     let [first, second] = source.weight_shards() else {
-        return Err("sharded source did not retain exactly two identity pairs".to_owned());
+        return Err("sharded source did not retain exactly two content expectations".to_owned());
     };
     assert_eq!(first.path(), fixture.second_weight_path);
     assert_eq!(
-        first.identity(),
-        CandleShardIdentity::ProjectEstablished {
-            byte_length: a_length,
-            sha256: a_sha256,
-        }
+        first.expected_content(),
+        Some(CandleExpectedContentIdentity::new(a_length, a_sha256))
     );
     assert_eq!(second.path(), fixture.weight_path);
     assert_eq!(
-        second.identity(),
-        CandleShardIdentity::VerifiedImmutable {
-            byte_length: z_length,
-            sha256: z_sha256,
-        }
+        second.expected_content(),
+        Some(CandleExpectedContentIdentity::new(z_length, z_sha256))
     );
 
     let mut loader = CandleLlamaLoader::new(BACKEND);
@@ -1089,6 +1102,28 @@ fn assert_failed_preparation_invalid_model(
     failed.cleanup().map_err(debug_error)
 }
 
+fn assert_failed_preparation_invalid_model_code(
+    loader: &mut CandleLlamaLoader,
+    prepared: CandleLlamaPreparedLoad,
+    expected_code: u32,
+) -> TestResult {
+    let failed = match loader.load_prepared(prepared) {
+        Err(failed) => failed,
+        Ok(mut model) => {
+            clean_model(&mut model)?;
+            return Err("mismatched expectation unexpectedly loaded".to_owned());
+        }
+    };
+    assert!(matches!(
+        failed.primary(),
+        LoadError::Backend(failure)
+            if failure.kind == BackendFailureKind::InvalidModel && failure.code == expected_code
+    ));
+    let mut failed = failed;
+    failed.cleanup().map_err(debug_error)?;
+    failed.cleanup().map_err(debug_error)
+}
+
 fn assert_unverified_prepared_mutation_rejected(mutation: PreparedMutation) -> TestResult {
     let fixture = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
     let source = fixture.source(ConfigDeclaration::F32)?;
@@ -1096,7 +1131,7 @@ fn assert_unverified_prepared_mutation_rejected(mutation: PreparedMutation) -> T
         source
             .weight_shards()
             .iter()
-            .all(|shard| shard.identity() == CandleShardIdentity::Unverified)
+            .all(|shard| shard.expected_content().is_none())
     );
     let mut loader = CandleLlamaLoader::new(BACKEND);
     let prepared = loader

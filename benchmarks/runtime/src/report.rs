@@ -7,9 +7,10 @@ use serde::Serialize;
 
 use crate::error::{BenchmarkError, BenchmarkResult};
 use crate::fixture::FixtureIdentity;
+use crate::load_observation::CandleLoaderObservationRecord;
 use crate::memory::ProcessMemory;
 
-pub(crate) const SCHEMA_VERSION: u32 = 4;
+pub(crate) const SCHEMA_VERSION: u32 = 5;
 
 #[derive(Serialize)]
 pub(crate) struct BaselineReport {
@@ -119,6 +120,7 @@ pub(crate) struct SyntheticCycle {
 pub(crate) struct SyntheticLoadEvidence {
     pub(crate) prepared: PreparedLoadRecord,
     pub(crate) receipt: E0LoadReceiptRecord,
+    pub(crate) loader: CandleLoaderObservationRecord,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -242,6 +244,7 @@ mod tests {
         E0LoadReceiptRecord, ExecutionDeviceRecord, MemoryFootprintRecord, PreparedLoadRecord,
         SCHEMA_VERSION, SyntheticLoadEvidence, checked_duration_ns,
     };
+    use crate::load_observation::successful_test_record;
 
     const CPU: ExecutionDeviceRecord = ExecutionDeviceRecord { kind: "cpu", id: 0 };
 
@@ -271,7 +274,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_four_serializes_prepared_and_actual_e0_load_facts_separately() -> Result<(), String> {
+    fn schema_five_serializes_actual_loader_and_e0_load_facts_separately() -> Result<(), String> {
         let evidence = SyntheticLoadEvidence {
             prepared: PreparedLoadRecord {
                 configuration_declared_scalar: Some("F32"),
@@ -286,9 +289,10 @@ mod tests {
                 actual_execution_device: CPU,
                 reserved_footprint: footprint(4_000, 0),
             },
+            loader: successful_test_record(),
         };
         let value = serde_json::to_value(evidence).map_err(|error| error.to_string())?;
-        assert_eq!(SCHEMA_VERSION, 4);
+        assert_eq!(SCHEMA_VERSION, 5);
         assert_eq!(
             value_at(&value, &["prepared", "configuration_declared_scalar"])?.as_str(),
             Some("F32")
@@ -329,6 +333,14 @@ mod tests {
             .as_u64(),
             Some(4_000)
         );
+        assert_eq!(
+            value_at(&value, &["loader", "required_bytes_read"])?.as_u64(),
+            Some(4_000)
+        );
+        assert_eq!(
+            value_at(&value, &["loader", "outcome"])?.as_str(),
+            Some("succeeded")
+        );
         assert!(find_key(&value, "scalar_type").is_none());
         Ok(())
     }
@@ -339,7 +351,8 @@ mod tests {
         assert!(readme.contains("**Synthetic schema 1 (historical):**"));
         assert!(readme.contains("**Synthetic schema 2 (historical):**"));
         assert!(readme.contains("**Synthetic schema 3 (historical):**"));
-        assert!(readme.contains("**Synthetic schema 4 (current):**"));
+        assert!(readme.contains("**Synthetic schema 4 (historical):**"));
+        assert!(readme.contains("**Synthetic schema 5 (current):**"));
     }
 
     fn value_at<'a>(value: &'a Value, path: &[&str]) -> Result<&'a Value, String> {

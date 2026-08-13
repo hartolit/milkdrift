@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use candle_backend::{CandleLlamaLoader, CandleLlamaModel, CandleLlamaSource};
+use candle_backend::{
+    CandleLlamaLoader, CandleLlamaModel, CandleLlamaSource, CandleLoadObservation,
+};
 use candle_core::{DType, Device, Tensor};
 use domain_contracts::{
     BackendFailureKind, BackendId, CancellationStatus, DecodeBuffers, DecodeInput, DecodeOutcome,
@@ -30,12 +32,13 @@ const F32_CPU_SEQUENCE_HOST_WORKING_BYTES: u64 = 7_556;
 const F32_CUDA_SEQUENCE_HOST_WORKING_BYTES: u64 = 160;
 const F32_CUDA_SEQUENCE_DEVICE_WORKING_BYTES: u64 = 7_396;
 const F32_CPU_LOADING_WORKING_BYTES: u64 = 65_763;
-const F32_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 66_563;
+const F32_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 76_067;
 const HALF_EXECUTION_WEIGHT_BYTES: u64 = 1_840;
 const HALF_CACHE_BYTES_PER_TOKEN: u64 = 32;
 const HALF_CUDA_SEQUENCE_HOST_WORKING_BYTES: u64 = 160;
 const HALF_CUDA_SEQUENCE_DEVICE_WORKING_BYTES: u64 = 6_884;
-const HALF_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 66_049;
+const HALF_HOMOGENEOUS_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 74_113;
+const HALF_MIXED_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 74_161;
 
 type TestResult<T = ()> = Result<T, String>;
 
@@ -110,6 +113,8 @@ hardware_cases!(
         assert_eq!(result.execution_scalar_type, ScalarType::F32);
         assert_eq!(result.execution_device, CPU);
         assert_exact_f32_cpu_footprints(&result);
+        assert_eq!(result.transfer_batches, 0);
+        assert_eq!(result.loading_device_synchronizations, 0);
         assert!(result.sequence_footprint.host_working_bytes > 0);
         assert_eq!(result.sequence_footprint.device_working_bytes, 0);
         assert_eq!(
@@ -181,6 +186,8 @@ hardware_cases!(
         assert_eq!(cuda.execution_scalar_type, ScalarType::F32);
         assert_eq!(cuda.execution_device, CUDA_0);
         assert_exact_f32_cuda_footprints(&cuda);
+        assert_eq!(cuda.transfer_batches, 1);
+        assert_eq!(cuda.loading_device_synchronizations, 1);
         assert_eq!(
             cuda.sequence_footprint.host_working_bytes,
             F32_CUDA_SEQUENCE_HOST_WORKING_BYTES
@@ -207,7 +214,9 @@ hardware_cases!(
             ScalarTypeSet::from_scalar(ScalarType::Bf16)
         );
         assert_eq!(result.execution_scalar_type, ScalarType::Bf16);
-        assert_exact_half_cuda_footprints(&result);
+        assert_exact_half_cuda_footprints(&result, HALF_HOMOGENEOUS_CUDA_HOST_LOADING_PEAK_BYTES);
+        assert_eq!(result.transfer_batches, 1);
+        assert_eq!(result.loading_device_synchronizations, 1);
         assert_eq!(
             maximum_logit_token(&result.prefill_logits)?,
             TokenId::new(2)
@@ -224,7 +233,9 @@ hardware_cases!(
         assert_eq!(result.observed_scalar_types, mixed_set(ScalarType::F16));
         assert_eq!(result.execution_scalar_type, ScalarType::F16);
         assert_eq!(result.execution_device, CUDA_0);
-        assert_exact_half_cuda_footprints(&result);
+        assert_exact_half_cuda_footprints(&result, HALF_MIXED_CUDA_HOST_LOADING_PEAK_BYTES);
+        assert_eq!(result.transfer_batches, 1);
+        assert_eq!(result.loading_device_synchronizations, 1);
         assert_eq!(maximum_logit_token(&result.decode_logits)?, TokenId::new(3));
         Ok(())
     }
@@ -238,7 +249,9 @@ hardware_cases!(
         assert_eq!(result.observed_scalar_types, mixed_set(ScalarType::Bf16));
         assert_eq!(result.execution_scalar_type, ScalarType::Bf16);
         assert_eq!(result.execution_device, CUDA_0);
-        assert_exact_half_cuda_footprints(&result);
+        assert_exact_half_cuda_footprints(&result, HALF_MIXED_CUDA_HOST_LOADING_PEAK_BYTES);
+        assert_eq!(result.transfer_batches, 1);
+        assert_eq!(result.loading_device_synchronizations, 1);
         assert_eq!(maximum_logit_token(&result.decode_logits)?, TokenId::new(3));
         Ok(())
     }
@@ -312,7 +325,10 @@ fn assert_exact_f32_cuda_footprints(result: &FixtureExecution) {
     );
 }
 
-fn assert_exact_half_cuda_footprints(result: &FixtureExecution) {
+fn assert_exact_half_cuda_footprints(
+    result: &FixtureExecution,
+    expected_host_loading_peak_bytes: u64,
+) {
     assert_eq!(
         result.reported_footprint,
         MemoryFootprint {
@@ -327,7 +343,7 @@ fn assert_exact_half_cuda_footprints(result: &FixtureExecution) {
         MemoryFootprint {
             host_weight_bytes: 0,
             device_weight_bytes: HALF_EXECUTION_WEIGHT_BYTES,
-            host_working_bytes: HALF_CUDA_HOST_LOADING_PEAK_BYTES,
+            host_working_bytes: expected_host_loading_peak_bytes,
             device_working_bytes: 0,
         }
     );
@@ -355,6 +371,8 @@ struct FixtureExecution {
     loading_peak_footprint: MemoryFootprint,
     sequence_cache_bytes_per_token: u64,
     sequence_footprint: MemoryFootprint,
+    transfer_batches: u64,
+    loading_device_synchronizations: u64,
     prefill_logits: Vec<f32>,
     decode_logits: Vec<f32>,
 }
@@ -368,6 +386,7 @@ fn execute_fixture(
         plan,
         declared_scalar_type,
         observed_scalar_types,
+        load_observation,
     } = load_fixture(source, execution_device)?;
     let sequence_configuration = SequenceConfiguration::new(
         NonZeroU32::new(16).ok_or_else(|| "maximum tokens must be nonzero".to_owned())?,
@@ -439,6 +458,8 @@ fn execute_fixture(
         loading_peak_footprint: plan.loading_peak_footprint,
         sequence_cache_bytes_per_token,
         sequence_footprint: sequence_plan.reservation.total_footprint,
+        transfer_batches: load_observation.transfer_batches,
+        loading_device_synchronizations: load_observation.loading_device_synchronizations,
         prefill_logits,
         decode_logits,
     })
@@ -449,13 +470,15 @@ struct LoadedFixture {
     plan: LoadPlan,
     declared_scalar_type: Option<ScalarType>,
     observed_scalar_types: ScalarTypeSet,
+    load_observation: candle_backend::CandleLoadObservationSnapshot,
 }
 
 fn load_fixture(
     source: &CandleLlamaSource,
     execution_device: ExecutionDevice,
 ) -> TestResult<LoadedFixture> {
-    let mut loader = CandleLlamaLoader::new(BACKEND);
+    let (load_observation, load_observation_recorder) = CandleLoadObservation::channel();
+    let mut loader = CandleLlamaLoader::with_load_observation(BACKEND, load_observation_recorder);
     let configuration = LoadConfiguration {
         handle: ModelHandle::new(ModelId::new(1), ModelGeneration::new(1)),
         execution_device,
@@ -484,12 +507,19 @@ fn load_fixture(
     assert_eq!(model.execution_scalar_type(), plan.execution_scalar_type);
     assert_eq!(model.execution_device(), execution_device);
     assert_eq!(model.reported_footprint(), plan.final_footprint);
+    let load_observation = load_observation.snapshot();
+    assert_eq!(load_observation.plan, Some(plan));
+    assert_eq!(
+        load_observation.outcome,
+        candle_backend::CandleLoadObservationOutcome::Succeeded
+    );
 
     Ok(LoadedFixture {
         model,
         plan,
         declared_scalar_type,
         observed_scalar_types,
+        load_observation,
     })
 }
 

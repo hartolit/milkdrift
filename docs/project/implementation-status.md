@@ -9,6 +9,7 @@ The exact-tree foundation closure passes its focused CPU, canonical native, port
 The orchestration-boundary repair makes task-graph generic and allocation-free and moves corrective semantics into validated reference-template data; its focused host, portable, architecture, and hygiene matrix passes locally.
 The CI resource-topology repair gives each hosted verification profile an independently bounded metadata-owned plan; its local component, portability, workflow-policy, and shell/YAML validation passes, and the redesigned hosted Quality topology has passed remotely.
 The remaining fixture-support cleanup removes parallel CPU/CUDA runtime, loading, snapshot, and mixed-lifecycle code behind one device-parameterized path and one cuda-hardware-tests entry point. Its local matrix passes; its exact remote rerun remains pending.
+The artifact/accelerator amendment separates provider provenance from Candle expected-content verification, replaces per-tensor CUDA synchronization with bounded shard-aware transfer batches, and exposes fixed-size benchmark evidence. Its focused default matrix and the six-case local RTX 5070 Ti adapter suite pass; no speedup or external-model result is inferred.
 No later product phase is active, and workflow/workspace direction is not yet a ratified program.
 ```
 
@@ -35,11 +36,11 @@ General workflow definitions/runs, durable context workspaces, plugin execution,
 | Capability | Current implementation and evidence boundary |
 |---|---|
 | Local engine | Candle only. |
-| Artifact source | Hugging Face revision resolved to an immutable commit. Selected LFS shards carry exact provider SHA-256/length identity; non-LFS and arbitrary local paths use explicit mutable-source fallback semantics. |
+| Artifact source | Hugging Face revision resolved to an immutable commit. Provider evidence distinguishes exact LFS identities, verified Git blobs, and project-established local origins. Candle receives only exact expected length/SHA-256 content, or establishes a bounded baseline for an arbitrary unverified local path, and independently verifies every retained shard while materializing it. |
 | Format/architecture | Unquantized Safetensors through the current Llama compatibility path. All selected structure is inspected; only required Llama tensors are materialized. |
 | Required scalar layouts | Exactly `{F32}`, `{F16}`, `{F16,F32}`, `{BF16}`, and `{BF16,F32}` under the strict declaration policy below. Understood unused extras may broaden complete observed evidence without changing execution. |
 | CPU | Mandatory in every build and the default selection. The exact-tree local closure passes focused domain/Candle/E0/E1 lifecycle and accounting suites, all six native components, the clean canonical composite, and both portable domain targets. Hosted Quality passes on feature-boundary repair commit `6df699c`; that result is not external-model, leak, or performance evidence. |
-| CUDA | Non-default explicit ordinal 0 with no fallback. Feature-boundary repair commit `6df699c` passes the exact RTX 5070 Ti ordinal-0, compute-capability-12.0, Toolkit-13.3.73, build-cap-120 gate, including compile, strict Clippy, adapter/E0/fault/E1 execution, and cleanup. This is exact-row evidence only; the subsequent local fixture-support cleanup requires its own remote run. |
+| CUDA | Non-default explicit ordinal 0 with no fallback. Feature-boundary repair commit `6df699c` passes the exact RTX 5070 Ti ordinal-0, compute-capability-12.0, Toolkit-13.3.73, build-cap-120 gate, including compile, strict Clippy, adapter/E0/fault/E1 execution, and cleanup. The current artifact/accelerator source tree also passes all six local adapter hardware cases on that row with one observed loading synchronization for its one fixture transfer batch. These are exact-row correctness results, not representative performance or external-model evidence; later trees still require their own remote runs. |
 | Resident models | One selected/resident model in E1. |
 | Completion/chat | Direct completion for every loaded compatible model; built-in chat only for exact TinyLlama profile/revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`. |
 | Persistence | redb preferences and model catalogue; `LAS1` writes v2/reads v1; `LAM1` writes v3 and reads exact v1/v2 without automatic rewrite. Conversation history remains memory-only. |
@@ -88,14 +89,18 @@ The loader keeps four facts separate:
 
 A genuine required F16+BF16 mixture, required unsupported dtype, empty required set, quantization, malformed structure, or contradictory declaration fails before publication. Mixed required `{F16,F32}` and `{BF16,F32}` layouts require the matching recognized declaration because the set alone does not establish a primary precision; absent declarations remain accepted only for homogeneous required sets. Structurally understood unused integer, boolean, FP8/bit-packed, wider numeric, complex, or other tensors remain observed/identity-checked evidence but are never staged, cast, transferred, retained, or counted in tensor footprints.
 
-Source identity has two paths:
+Source verification has two Candle paths, independent of provider provenance:
 
-- exact Hugging Face LFS SHA-256 plus length at the resolved commit is `VerifiedImmutable` and may skip a pre-admission payload pass;
-- project-established and unverified mutable sources are sequentially hashed from retained open files before admission.
+- a supplied exact length and SHA-256 expectation may skip Candle's local pre-admission baseline pass but never materialization verification;
+- an unverified local source is sequentially hashed from its retained open file to establish a baseline before admission.
+
+The Hub evidence retained above Candle separately identifies Hugging Face LFS, verified Git blob, or project-established origins. E1 converts all exact identities to the same provider-neutral Candle expectation without discarding that evidence.
 
 Materialization re-verifies retained header/payload/EOF identity while hashing ignored ranges through a fixed buffer and allocating only required ranges. Path replacement cannot redirect the retained file.
 
-`MemoryFootprint` contains concrete host/device weight/working bytes only. Sequence-cache bytes per token is a separate planning rate. `LoadPlan::final_footprint` is exact post-load required-tensor ownership; `loading_peak_footprint` is the separate required-only materialization peak. `SequencePlan::reservation` carries persistent logical payload, additional transient headroom, and their checked total. Persistent KV ownership scales across every layer, while Candle's sequential block loop admits only one block's source-derived transient peak plus outer embedding/norm/logit state. Caller generation workspaces remain separate. Parsed metadata, the fixed verification buffer, allocator/driver overhead, contexts/workspaces, process RSS, and whole-device memory remain separate bounded or sampled facts.
+CUDA preparation builds one immutable shard-bounded transfer partition used by both admission and materialization. A batch prefers at most 256 MiB of projected simultaneous tensor staging and admits at most 64 entries; equality fits, every shard ends a batch, and an individually larger valid tensor remains an admitted singleton. Each nonempty batch retains its source, optional cast, and transferred tensors until one synchronization and complete commit. Candle's Llama constructor then creates only shallow handles over already synchronized tensors, so loading has no redundant final synchronization.
+
+`MemoryFootprint` contains concrete host/device weight/working bytes only. Sequence-cache bytes per token is a separate planning rate. `LoadPlan::final_footprint` is exact post-load required-tensor ownership; `loading_peak_footprint` is the separate logical materialization peak. CUDA host working bytes include the actual immutable-plan and batch-owner vector capacities, the fixed 64 KiB verification buffer, and the maximum projected live batch tensor staging. CPU loading retains its prior sequential formula, including that verification buffer. `SequencePlan::reservation` carries persistent logical payload, additional transient headroom, and their checked total. Persistent KV ownership scales across every layer, while Candle's sequential block loop admits only one block's source-derived transient peak plus outer embedding/norm/logit state. Caller generation workspaces remain separate. Parsed Safetensors/config metadata and tensor-map buckets, allocator/driver overhead, contexts/workspaces, process RSS, and whole-device memory remain separately bounded or sampled facts rather than falsely exact tensor-footprint bytes.
 
 ## Retained ownership truth
 

@@ -4,74 +4,68 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 
-/// Whole-shard identity authority supplied with one Safetensors path.
+/// Exact whole-file content identity that Candle must observe while materializing a shard.
 ///
-/// Both identity-bearing variants provide an exact byte length and SHA-256.
-/// They remain distinct so callers and diagnostics do not conflate identity
-/// proven by an immutable artifact source with identity computed from a mutable
-/// path. Candle revalidates project-established identity before admission and
-/// verifies either digest while materializing the retained file.
+/// This value is an expectation supplied by the caller. It deliberately carries
+/// no claim about which provider, repository, or local process established that
+/// expectation. Candle verifies the exact length and SHA-256 before publishing a
+/// model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum CandleShardIdentity {
-    /// Identity obtained from a source whose content-addressing and immutability
-    /// semantics were independently verified.
-    VerifiedImmutable {
-        /// Exact whole-file byte length.
-        byte_length: u64,
-        /// Whole-file SHA-256 digest.
-        sha256: [u8; 32],
-    },
-    /// Identity established by project code by hashing the complete shard,
-    /// without claiming that the original path itself is immutable. Candle
-    /// rehashes the retained file against this identity before device admission.
-    ProjectEstablished {
-        /// Exact whole-file byte length.
-        byte_length: u64,
-        /// Whole-file SHA-256 digest.
-        sha256: [u8; 32],
-    },
-    /// No reusable whole-file identity is available. Candle establishes one
-    /// from its retained open file before device admission.
-    Unverified,
+pub struct CandleExpectedContentIdentity {
+    byte_length: u64,
+    sha256: [u8; 32],
 }
 
-impl CandleShardIdentity {
-    pub(crate) const fn supplied(self) -> Option<(u64, [u8; 32])> {
-        match self {
-            Self::VerifiedImmutable {
-                byte_length,
-                sha256,
-            }
-            | Self::ProjectEstablished {
-                byte_length,
-                sha256,
-            } => Some((byte_length, sha256)),
-            Self::Unverified => None,
+impl CandleExpectedContentIdentity {
+    /// Creates an exact whole-file content expectation.
+    #[must_use]
+    pub const fn new(byte_length: u64, sha256: [u8; 32]) -> Self {
+        Self {
+            byte_length,
+            sha256,
         }
+    }
+
+    /// Returns the expected exact whole-file byte length.
+    #[must_use]
+    pub const fn byte_length(self) -> u64 {
+        self.byte_length
+    }
+
+    /// Returns the expected whole-file SHA-256 digest.
+    #[must_use]
+    pub const fn sha256(self) -> [u8; 32] {
+        self.sha256
     }
 }
 
-/// One Safetensors path paired with its whole-file identity authority.
+/// One Safetensors path paired with an optional exact content expectation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CandleWeightShard {
     path: PathBuf,
-    identity: CandleShardIdentity,
+    expected_content: Option<CandleExpectedContentIdentity>,
 }
 
 impl CandleWeightShard {
-    /// Pairs a local Safetensors path with its identity authority.
+    /// Pairs a Safetensors path with the exact content Candle must observe.
     #[must_use]
-    pub fn new(path: impl Into<PathBuf>, identity: CandleShardIdentity) -> Self {
+    pub fn with_expected_content(
+        path: impl Into<PathBuf>,
+        expected_content: CandleExpectedContentIdentity,
+    ) -> Self {
         Self {
             path: path.into(),
-            identity,
+            expected_content: Some(expected_content),
         }
     }
 
-    /// Creates an unverified local shard.
+    /// Creates an unverified local shard whose baseline Candle must establish.
     #[must_use]
-    pub fn unverified(path: impl Into<PathBuf>) -> Self {
-        Self::new(path, CandleShardIdentity::Unverified)
+    pub fn unverified_local(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            expected_content: None,
+        }
     }
 
     /// Returns the local Safetensors path.
@@ -80,10 +74,10 @@ impl CandleWeightShard {
         &self.path
     }
 
-    /// Returns the whole-file identity authority paired with the path.
+    /// Returns the caller-supplied exact content expectation, when available.
     #[must_use]
-    pub const fn identity(&self) -> CandleShardIdentity {
-        self.identity
+    pub const fn expected_content(&self) -> Option<CandleExpectedContentIdentity> {
+        self.expected_content
     }
 }
 
@@ -113,11 +107,11 @@ pub(crate) enum CandleConfigurationSource {
     Bytes(Vec<u8>),
 }
 
-/// Configuration and identity-bearing Safetensors shards for one Llama model.
+/// Configuration and content-bound Safetensors shards for one Llama model.
 ///
 /// The scalar declaration is deliberately not caller supplied. Candle derives
 /// it from the exact bounded `config.json` bytes used for Candle configuration
-/// decoding. Shards are sorted deterministically as complete path/identity
+/// decoding. Shards are sorted deterministically as complete path/expectation
 /// pairs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CandleLlamaSource {
@@ -126,7 +120,7 @@ pub struct CandleLlamaSource {
 }
 
 impl CandleLlamaSource {
-    /// Creates a source from a Hugging Face Llama config and identity-bearing
+    /// Creates a source from a Hugging Face Llama config and content-bound
     /// Safetensors shards.
     ///
     /// # Errors
@@ -143,7 +137,7 @@ impl CandleLlamaSource {
     }
 
     /// Creates a source from owned, already selected configuration bytes and
-    /// identity-bearing Safetensors shards.
+    /// content-bound Safetensors shards.
     ///
     /// The loader parses this exact byte vector and never reopens a configuration
     /// path, allowing callers to preserve a previously verified content binding.
@@ -182,7 +176,11 @@ impl CandleLlamaSource {
         weight_shards
             .try_reserve_exact(weight_paths.len())
             .map_err(|_| SourceError::Allocation)?;
-        weight_shards.extend(weight_paths.into_iter().map(CandleWeightShard::unverified));
+        weight_shards.extend(
+            weight_paths
+                .into_iter()
+                .map(CandleWeightShard::unverified_local),
+        );
         Self::new(config_path, weight_shards)
     }
 
@@ -226,7 +224,7 @@ impl CandleLlamaSource {
         weight_shards.sort_unstable_by(|left, right| {
             left.path
                 .cmp(&right.path)
-                .then_with(|| left.identity.cmp(&right.identity))
+                .then_with(|| left.expected_content.cmp(&right.expected_content))
         });
 
         Ok(Self {
@@ -240,46 +238,34 @@ impl CandleLlamaSource {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{CandleLlamaSource, CandleShardIdentity, CandleWeightShard, SourceError};
+    use super::{CandleExpectedContentIdentity, CandleLlamaSource, CandleWeightShard, SourceError};
 
     #[test]
-    fn source_sorts_complete_path_identity_pairs() -> Result<(), SourceError> {
+    fn source_sorts_complete_path_expectation_pairs() -> Result<(), SourceError> {
         let first_digest = [1_u8; 32];
         let second_digest = [2_u8; 32];
         let source = CandleLlamaSource::new(
             "config.json",
             vec![
-                CandleWeightShard::new(
+                CandleWeightShard::with_expected_content(
                     "z.safetensors",
-                    CandleShardIdentity::VerifiedImmutable {
-                        byte_length: 7,
-                        sha256: second_digest,
-                    },
+                    CandleExpectedContentIdentity::new(7, second_digest),
                 ),
-                CandleWeightShard::new(
+                CandleWeightShard::with_expected_content(
                     "a.safetensors",
-                    CandleShardIdentity::ProjectEstablished {
-                        byte_length: 5,
-                        sha256: first_digest,
-                    },
+                    CandleExpectedContentIdentity::new(5, first_digest),
                 ),
             ],
         )?;
 
         let expected = [
-            CandleWeightShard::new(
+            CandleWeightShard::with_expected_content(
                 "a.safetensors",
-                CandleShardIdentity::ProjectEstablished {
-                    byte_length: 5,
-                    sha256: first_digest,
-                },
+                CandleExpectedContentIdentity::new(5, first_digest),
             ),
-            CandleWeightShard::new(
+            CandleWeightShard::with_expected_content(
                 "z.safetensors",
-                CandleShardIdentity::VerifiedImmutable {
-                    byte_length: 7,
-                    sha256: second_digest,
-                },
+                CandleExpectedContentIdentity::new(7, second_digest),
             ),
         ];
         assert_eq!(source.weight_shards(), expected.as_slice());
@@ -296,8 +282,8 @@ mod tests {
             ],
         )?;
         let expected = [
-            CandleWeightShard::unverified("a.safetensors"),
-            CandleWeightShard::unverified("z.safetensors"),
+            CandleWeightShard::unverified_local("a.safetensors"),
+            CandleWeightShard::unverified_local("z.safetensors"),
         ];
         assert_eq!(source.weight_shards(), expected.as_slice());
         assert_eq!(
@@ -312,7 +298,7 @@ mod tests {
     fn owned_configuration_bytes_are_retained_without_a_path() -> Result<(), SourceError> {
         let source = CandleLlamaSource::from_config_bytes(
             br#"{"model_type":"llama"}"#.to_vec(),
-            vec![CandleWeightShard::unverified("model.safetensors")],
+            vec![CandleWeightShard::unverified_local("model.safetensors")],
         )?;
         assert_eq!(
             source.config_bytes(),

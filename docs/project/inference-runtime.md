@@ -94,6 +94,28 @@ the reservation becomes `R₀ + F`; the receipt's execution scalar/device and fi
 footprint are verified actual-result facts. Candle owns the exact CPU/CUDA loading
 and final formulas.
 
+E0 does not partition tensors, count transfer entries, or choose synchronization
+boundaries. For Candle's current accelerator path, the opaque preparation carries
+one immutable sequential partition: a preferred 256 MiB projected live host
+tensor-staging peak, at most 64 entries, a mandatory boundary at every shard end,
+and an oversized singleton when the first tensor alone exceeds the byte target.
+For that path the reported loading host-working component is exactly
+`M_plan + M_owner + 64 KiB + max_b(W_b)`: `M_plan` is the actual retained heap
+capacity of the `TransferPlan` batch/entry vectors, `M_owner` is the actual retained
+heap capacity of the `TransferBatchOwner` entry vector, and `W_b` is the batch's
+implemented live tensor-staging peak. E0 admits that reported `P` through the same
+generic four-component `MemoryFootprint` contract; it does not reproduce any of
+those formulas.
+
+Normal accelerator materialization synchronizes once per nonempty transfer batch
+before that batch enters final ownership; Candle deliberately holds a shard's final
+batch unsynchronized until exact whole-shard identity succeeds. The locked Candle
+Llama constructor is handle-only over already synchronized tensors, so it
+establishes no second device-work boundary and E0 requires no final load
+synchronization. Cleanup synchronization remains a distinct release operation after
+failure. None of these adapter-private batch, handle, or synchronization facts
+becomes E0 execution policy.
+
 ## Failed-load cleanup and full retry state
 
 `load_prepared` returns either a complete model or
@@ -102,6 +124,13 @@ resource-bearing failed typestate are distinct associated types. The failure
 separates the primary materialization error from the sole cleanup owner. E0 reads
 the failed owner's accepted-plan report, calls explicit cleanup while the accepted
 loading peak remains reserved, then reads the report again.
+
+That sole backend owner may internally contain previously committed weights and a
+populated transfer batch whose source, converted-host, and transferred-device
+tensors must remain reachable. E0 never decomposes or aliases it. A failed cleanup
+synchronization therefore leaves the same complete backend owner and accepted plan
+available for the next bounded retry; only explicit cleanup success is release
+evidence.
 
 If both reports match and cleanup succeeds, E0 restores `R₀`, publishes no model
 or receipt, and returns the original `RuntimeError::Load(primary)`.
@@ -298,6 +327,12 @@ exercise generic lifecycle and failure contracts without adding another product
 engine. External Hub resolution remains above E0. Hosted providers and peers need a
 coarser execution boundary rather than pretending remote text generation has local
 native ownership semantics.
+
+Transfer partitioning remains an adapter implementation detail rather than a new
+CUDA- or NVIDIA-shaped E0 abstraction. AMD execution is not implemented here, and
+adding it would not require E0 to learn host-staging entries, shard batch boundaries,
+or hardware-specific synchronization. A concrete adapter must instead report the
+same portable plan and sole-owner cleanup facts honestly for its own device path.
 
 The package's dedicated harness-free `cuda_hardware` target owns the complete hosted-E0 mixed-fixture generation, accounting, release, unload, and shutdown hardware boundary. The deterministic `fault_injection` target remains separate and runs in full under the CUDA feature graph; neither suite is selected through a workflow list of function names.
 

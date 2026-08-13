@@ -8,6 +8,7 @@
 - **Evidence acceptance:** product-model CUDA evidence and self-hosted hardware CI accepted 2026-08-04
 - **Phase 12 amendment:** [ADR-0020](0020-transactional-prepared-model-loading.md) supersedes this ADR's former homogeneous-source, independent plan/load, E1 loaded-source-scalar, `LAM1` v1-write, and Slint loaded-source-display clauses
 - **Infrastructure amendment:** 2026-08-10 — dedicated harness-free whole-suite hardware targets replace workflow-owned test-name enumeration
+- **Loading amendment:** 2026-08-13 — [ADR-0020](0020-transactional-prepared-model-loading.md) owns bounded accelerator transfer transactions, their exact loading footprint, and sole batch cleanup
 
 ## Context
 
@@ -54,6 +55,7 @@ Nonzero CPU IDs, unsupported kinds, CUDA in a build without the feature, driver 
 - CPU maps F32→F32, F16→F16, and BF16→F32;
 - CUDA policy maps F32→F32, F16→F16, and BF16→BF16 only when the selected device reports support;
 - `prepare_load` returns an ordinary-drop-safe preparation bound to exact source/device state, `load_prepared` consumes it without replanning, and `FailedLoad<FailedPreparation>` preserves the distinct resource-bearing cleanup typestate;
+- accelerator transfers use one immutable shard-bounded partition with a preferred 256 MiB live host tensor-staging peak, at most 64 entries, and an allowed oversized singleton; and
 - final ownership and loading-peak headroom are separate deterministic footprints.
 
 E0 reserves the exact loading peak before materialization. On success it verifies complete descriptor, requested/actual device, planned/actual execution scalar, and final planned/reported footprint, then commits the final reservation. Failed materialization cleanup retains the exact accepted loading peak. A complete model that violates its accepted post-load contract and then fails unload instead retains explicitly unverified accepted/reported/conservative evidence and blocks admission; the accepted peak is not treated as a proven exact upper bound after backend violation. This preserves [ADR-0010](0010-verify-backend-contracts-at-e0.md) and [ADR-0006](0006-explicit-bounded-shutdown.md), with retained-certainty semantics owned by ADR-0020.
@@ -61,6 +63,39 @@ E0 reserves the exact loading peak before materialization. On success it verifie
 ### Sampling and synchronization
 
 Sampling remains in E0 over caller-owned host F32 logits. CUDA logits use Candle's safe device-to-host transfer before sampling. Upstream transfer may allocate a temporary CPU tensor, so Milkdrift does not claim an allocation-free CUDA hot path. Sequence destruction and model unload explicitly synchronize the selected device; dropping CUDA tensors alone is not treated as proof of synchronization.
+
+Load-time synchronization follows the ownership transaction rather than individual
+tensors. The current CUDA path groups transfers into bounded batches while retaining
+each source, optional converted-host, and transferred-device tensor; completes
+endpoint validation and one synchronization per batch before committing its entries
+under tracked ownership; and then releases host staging. No batch crosses a shard.
+A shard's final batch remains unsynchronized until exact whole-shard identity
+succeeds. The first entry of an empty batch may exceed the preferred 256 MiB target
+as a singleton, but neither the 64-entry ceiling nor the admitted loading footprint
+is bypassed.
+
+The accelerator host-working term is the checked sum of actual retained
+`TransferPlan` batch/entry vector capacities, actual `TransferBatchOwner` entry
+capacity, the live 64 KiB verification buffer, and the maximum planned batch
+tensor-staging peak. Transferred-but-uncommitted and committed tensors together are
+bounded by final required execution bytes and remain classified as device weights.
+ADR-0020 owns the complete phase equation and metadata exclusions.
+
+The locked Candle Llama constructor creates only shallow handles over the already
+synchronized weight tensors. It enqueues no separate device work, so normal loading
+has no redundant unconditional final synchronization. Failed-load cleanup retains a
+separate synchronization boundary: failure to synchronize leaves the complete sole
+owner available for retry, and only successful cleanup authorizes release.
+
+### Accelerator-neutral adapter policy
+
+CUDA remains the only implemented accelerator path, and this ADR does not add AMD
+execution. Transfer partitioning, batch ownership, footprint simulation, and
+hardware synchronization stay inside the Candle adapter. No NVIDIA-specific batch
+type or policy enters E0, E1, or a portable workflow contract. Another accelerator
+may reuse the adapter-internal algorithm only when its asynchronous transfer and
+synchronization semantics support the same ownership proof; it must not inherit
+CUDA behavior by assumption.
 
 ### E1 selection and loaded facts
 
@@ -86,7 +121,7 @@ Slint remains a thin presentation adapter with stable Rust-owned identity/index 
 
 ### Deferred targets
 
-Metal remains domain vocabulary only. Metal execution, cuDNN, flash attention, NCCL, multi-GPU, GPU-side sampling, GGUF/quantization, another engine, and automatic CPU fallback remain unsupported.
+Metal remains domain vocabulary only. AMD/ROCm and Metal execution, cuDNN, flash attention, NCCL, multi-GPU, GPU-side sampling, GGUF/quantization, another engine, and automatic CPU fallback remain unsupported.
 
 ## Evidence boundary
 
@@ -106,6 +141,8 @@ A separate Phase 12 local closure-tree run passed the exact CUDA compile chain a
 - **Parse Slint labels as identity:** rejected because display text is not semantic state.
 - **Infer accelerator budget from host RAM or use `u64::MAX`:** rejected because neither is discovered physical CUDA capacity.
 - **Use project-authored unsafe copies:** rejected because safe transfer exists and no Phase 12 requirement justifies widening the unsafe boundary.
+- **Synchronize every transferred tensor:** rejected because it fragments one bounded ownership transaction into tensor-sized synchronization boundaries.
+- **Keep an unconditional final load synchronization:** rejected because locked Llama construction is handle-only and establishes no distinct pending device-work boundary.
 - **Retain the old homogeneous-source and independent plan/load clauses:** rejected and superseded by ADR-0020 because they cannot truthfully own mixed per-tensor loading.
 
 ## Consequences
@@ -114,6 +151,8 @@ A separate Phase 12 local closure-tree run passed the exact CUDA compile chain a
 - CUDA builds remain deliberate and separate from the canonical CPU gate.
 - E0 receipts/snapshots identify the actual verified execution device and execution scalar.
 - Phase 12 final and loading-peak accounting strengthen admission without changing explicit device policy.
+- Normal accelerator loading synchronizes once per nonempty deterministic transfer batch and not after handle-only model construction.
+- Partial batches remain inside the same sole failed-preparation owner used by E0 cleanup and accounting.
 - E1 and Slint preserve explicit selection while exposing only application-relevant resolved and loaded facts.
 - Hardware evidence must identify exact commit/tree, driver, toolkit, GPU, compute capability, ordinal, whole-suite result, fixture/result, synchronization, and post-unload accounting.
 - Historical Phase 11 evidence remains historical; Phase 12 support cannot inherit a hardware run that predates its implementation.

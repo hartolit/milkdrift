@@ -17,7 +17,7 @@ cuda = ["application-runtime/cuda"]
 
 [dependencies]
 application-runtime.workspace = true
-candle-backend.workspace = true
+candle-backend = { workspace = true, features = ["benchmark-observation"] }
 domain-contracts.workspace = true
 host-runtime.workspace = true
 inference-runtime.workspace = true

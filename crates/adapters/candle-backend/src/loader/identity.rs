@@ -6,30 +6,27 @@ use std::io::{Read, Seek, SeekFrom};
 use domain_contracts::{BackendId, LoadError};
 use sha2::{Digest, Sha256};
 
-use crate::failure::{
-    CODE_HEADER_IDENTITY_MISMATCH, CODE_INSPECTION_ALLOCATION, CODE_NUMERIC_OVERFLOW,
-    CODE_PAYLOAD_READ, CODE_SOURCE_IDENTITY_LENGTH, CODE_SOURCE_IDENTITY_MISMATCH,
-};
-use crate::source::CandleShardIdentity;
-
 use super::manifest::InspectedShard;
 use super::{host_memory_failure, invalid_model_failure};
+use crate::failure::{
+    CODE_HEADER_IDENTITY_MISMATCH, CODE_INSPECTION_ALLOCATION, CODE_NUMERIC_OVERFLOW,
+    CODE_PAYLOAD_READ, CODE_SOURCE_IDENTITY_LENGTH,
+};
 
 const VERIFICATION_BUFFER_BYTES: usize = 64 * 1024;
 const VERIFICATION_BUFFER_BYTES_U64: u64 = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum EstablishedIdentityAuthority {
-    VerifiedImmutable,
-    ProjectEstablished,
-    UnverifiedBaseline,
+pub(super) enum ContentIdentityEstablishment {
+    SuppliedExpectation,
+    LocallyEstablishedBaseline,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct EstablishedShardIdentity {
+pub(super) struct EstablishedContentIdentity {
     pub(super) byte_length: u64,
     pub(super) sha256: [u8; 32],
-    pub(super) authority: EstablishedIdentityAuthority,
+    pub(super) establishment: ContentIdentityEstablishment,
 }
 
 pub(super) fn establish_all(
@@ -37,6 +34,24 @@ pub(super) fn establish_all(
     shards: &mut [InspectedShard],
 ) -> Result<(), LoadError> {
     establish_all_with_observer(backend, shards, &mut NoopIdentityObserver)
+}
+
+#[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
+pub(super) fn establish_all_observed(
+    backend: BackendId,
+    shards: &mut [InspectedShard],
+    observation: &crate::CandleLoadObservationRecorder,
+) -> Result<(), LoadError> {
+    struct LoadIdentityObserver<'a>(&'a crate::CandleLoadObservationRecorder);
+
+    impl IdentityObserver for LoadIdentityObserver<'_> {
+        fn baseline_bytes(&mut self, bytes: usize) {
+            self.0
+                .verification_only_bytes_read(u64::try_from(bytes).unwrap_or(u64::MAX));
+        }
+    }
+
+    establish_all_with_observer(backend, shards, &mut LoadIdentityObserver(observation))
 }
 
 fn establish_all_with_observer<O: IdentityObserver>(
@@ -49,43 +64,19 @@ fn establish_all_with_observer<O: IdentityObserver>(
         if current_length != shard.file_length {
             return Err(invalid_model_failure(backend, CODE_SOURCE_IDENTITY_LENGTH));
         }
-        let established = match shard.source_identity {
-            CandleShardIdentity::VerifiedImmutable {
-                byte_length,
-                sha256,
-            } => {
-                validate_expected_length(backend, byte_length, current_length)?;
-                observer.supplied(EstablishedIdentityAuthority::VerifiedImmutable);
-                EstablishedShardIdentity {
-                    byte_length,
-                    sha256,
-                    authority: EstablishedIdentityAuthority::VerifiedImmutable,
+        let established = match shard.source_expected_content {
+            Some(expected) => {
+                validate_expected_length(backend, expected.byte_length(), current_length)?;
+                observer.supplied_expectation();
+                EstablishedContentIdentity {
+                    byte_length: expected.byte_length(),
+                    sha256: expected.sha256(),
+                    establishment: ContentIdentityEstablishment::SuppliedExpectation,
                 }
             }
-            CandleShardIdentity::ProjectEstablished {
-                byte_length,
-                sha256,
-            } => {
-                validate_expected_length(backend, byte_length, current_length)?;
-                observer.supplied(EstablishedIdentityAuthority::ProjectEstablished);
-                let computed_identity = baseline_unverified(backend, shard, observer)?;
-                if computed_identity.byte_length != byte_length
-                    || computed_identity.sha256 != sha256
-                {
-                    return Err(invalid_model_failure(
-                        backend,
-                        CODE_SOURCE_IDENTITY_MISMATCH,
-                    ));
-                }
-                EstablishedShardIdentity {
-                    byte_length,
-                    sha256,
-                    authority: EstablishedIdentityAuthority::ProjectEstablished,
-                }
-            }
-            CandleShardIdentity::Unverified => baseline_unverified(backend, shard, observer)?,
+            None => baseline_unverified(backend, shard, observer)?,
         };
-        shard.established_identity = Some(established);
+        shard.established_content_identity = Some(established);
     }
     Ok(())
 }
@@ -94,7 +85,7 @@ fn baseline_unverified<O: IdentityObserver>(
     backend: BackendId,
     shard: &mut InspectedShard,
     observer: &mut O,
-) -> Result<EstablishedShardIdentity, LoadError> {
+) -> Result<EstablishedContentIdentity, LoadError> {
     shard
         .file
         .seek(SeekFrom::Start(0))
@@ -129,10 +120,10 @@ fn baseline_unverified<O: IdentityObserver>(
         observer,
     )?;
     verify_exact_eof(backend, &mut shard.file, shard.file_length)?;
-    Ok(EstablishedShardIdentity {
+    Ok(EstablishedContentIdentity {
         byte_length: shard.file_length,
         sha256: hasher.finalize().into(),
-        authority: EstablishedIdentityAuthority::UnverifiedBaseline,
+        establishment: ContentIdentityEstablishment::LocallyEstablishedBaseline,
     })
 }
 
@@ -213,7 +204,7 @@ fn validate_expected_length(
 
 trait IdentityObserver {
     fn baseline_bytes(&mut self, _bytes: usize) {}
-    fn supplied(&mut self, _authority: EstablishedIdentityAuthority) {}
+    fn supplied_expectation(&mut self) {}
 }
 
 struct NoopIdentityObserver;
@@ -229,17 +220,16 @@ mod tests {
     use domain_contracts::BackendId;
     use sha2::{Digest, Sha256};
 
-    use super::{EstablishedIdentityAuthority, IdentityObserver, establish_all_with_observer};
+    use super::{ContentIdentityEstablishment, IdentityObserver, establish_all_with_observer};
     use crate::loader::manifest::InspectedShard;
-    use crate::source::CandleShardIdentity;
+    use crate::source::CandleExpectedContentIdentity;
 
     static NEXT_TEMPORARY_FILE: AtomicU64 = AtomicU64::new(0);
 
     #[derive(Default)]
     struct Counters {
         baseline_bytes: usize,
-        verified: usize,
-        project: usize,
+        supplied_expectations: usize,
     }
 
     impl IdentityObserver for Counters {
@@ -247,102 +237,85 @@ mod tests {
             self.baseline_bytes += bytes;
         }
 
-        fn supplied(&mut self, authority: EstablishedIdentityAuthority) {
-            match authority {
-                EstablishedIdentityAuthority::VerifiedImmutable => self.verified += 1,
-                EstablishedIdentityAuthority::ProjectEstablished => self.project += 1,
-                EstablishedIdentityAuthority::UnverifiedBaseline => {}
-            }
+        fn supplied_expectation(&mut self) {
+            self.supplied_expectations += 1;
         }
     }
 
     #[test]
-    fn only_verified_immutable_identity_skips_the_pre_admission_baseline() -> Result<(), String> {
+    fn supplied_expectation_skips_the_local_baseline() -> Result<(), String> {
         let bytes = safetensors_bytes(br"{}", b"payload");
         let whole_sha256: [u8; 32] = Sha256::digest(bytes.as_slice()).into();
         let mut shards = vec![
             inspected_file(
                 bytes.as_slice(),
-                CandleShardIdentity::VerifiedImmutable {
-                    byte_length: u64::try_from(bytes.len()).map_err(|error| error.to_string())?,
-                    sha256: whole_sha256,
-                },
+                Some(CandleExpectedContentIdentity::new(
+                    u64::try_from(bytes.len()).map_err(|error| error.to_string())?,
+                    whole_sha256,
+                )),
             )?,
-            inspected_file(
-                bytes.as_slice(),
-                CandleShardIdentity::ProjectEstablished {
-                    byte_length: u64::try_from(bytes.len()).map_err(|error| error.to_string())?,
-                    sha256: whole_sha256,
-                },
-            )?,
-            inspected_file(bytes.as_slice(), CandleShardIdentity::Unverified)?,
+            inspected_file(bytes.as_slice(), None)?,
         ];
         let mut counters = Counters::default();
         establish_all_with_observer(BackendId::new(1), &mut shards, &mut counters)
             .map_err(|error| format!("establish identities: {error:?}"))?;
 
-        assert_eq!(counters.verified, 1);
-        assert_eq!(counters.project, 1);
-        assert_eq!(counters.baseline_bytes, bytes.len() * 2);
-        let [verified_shard, project_shard, baseline_shard] = shards.as_slice() else {
-            return Err("identity fixture must contain three shards".to_owned());
+        assert_eq!(counters.supplied_expectations, 1);
+        assert_eq!(counters.baseline_bytes, bytes.len());
+        let [supplied_shard, baseline_shard] = shards.as_slice() else {
+            return Err("identity fixture must contain two shards".to_owned());
         };
         assert_eq!(
-            verified_shard
-                .established_identity
-                .ok_or_else(|| "missing verified identity".to_owned())?
-                .authority,
-            EstablishedIdentityAuthority::VerifiedImmutable
-        );
-        assert_eq!(
-            project_shard
-                .established_identity
-                .ok_or_else(|| "missing project identity".to_owned())?
-                .authority,
-            EstablishedIdentityAuthority::ProjectEstablished
+            supplied_shard
+                .established_content_identity
+                .ok_or_else(|| "missing supplied expectation".to_owned())?
+                .establishment,
+            ContentIdentityEstablishment::SuppliedExpectation
         );
         assert_eq!(
             baseline_shard
-                .established_identity
+                .established_content_identity
                 .ok_or_else(|| "missing baseline identity".to_owned())?
                 .sha256,
             whole_sha256
+        );
+        assert_eq!(
+            baseline_shard
+                .established_content_identity
+                .ok_or_else(|| "missing baseline identity".to_owned())?
+                .establishment,
+            ContentIdentityEstablishment::LocallyEstablishedBaseline
         );
         Ok(())
     }
 
     #[test]
-    fn project_established_identity_rejects_changed_bytes_before_admission() -> Result<(), String> {
-        let original = safetensors_bytes(br"{}", b"payload");
-        let original_sha256: [u8; 32] = Sha256::digest(original.as_slice()).into();
-        let mut changed = original.clone();
-        let last = changed
-            .last_mut()
-            .ok_or_else(|| "fixture must not be empty".to_owned())?;
-        *last ^= 1;
+    fn supplied_expected_length_mismatch_is_rejected_explicitly() -> Result<(), String> {
+        let bytes = safetensors_bytes(br"{}", b"payload");
+        let byte_length = u64::try_from(bytes.len()).map_err(|error| error.to_string())?;
         let mut shards = vec![inspected_file(
-            changed.as_slice(),
-            CandleShardIdentity::ProjectEstablished {
-                byte_length: u64::try_from(original.len()).map_err(|error| error.to_string())?,
-                sha256: original_sha256,
-            },
+            bytes.as_slice(),
+            Some(CandleExpectedContentIdentity::new(
+                byte_length
+                    .checked_add(1)
+                    .ok_or_else(|| "fixture length overflow".to_owned())?,
+                Sha256::digest(bytes.as_slice()).into(),
+            )),
         )?];
 
         let error =
             establish_all_with_observer(BackendId::new(1), &mut shards, &mut Counters::default())
                 .err()
-                .ok_or_else(|| {
-                    "changed project-established bytes were admitted unexpectedly".to_owned()
-                })?;
+                .ok_or_else(|| "wrong expected length was admitted unexpectedly".to_owned())?;
         assert!(matches!(
             error,
             domain_contracts::LoadError::Backend(failure)
-                if failure.code == crate::failure::CODE_SOURCE_IDENTITY_MISMATCH
+                if failure.code == crate::failure::CODE_SOURCE_IDENTITY_LENGTH
         ));
         let rejected_shard = shards
             .first()
             .ok_or_else(|| "identity fixture must contain one shard".to_owned())?;
-        assert!(rejected_shard.established_identity.is_none());
+        assert!(rejected_shard.established_content_identity.is_none());
         Ok(())
     }
 
@@ -356,7 +329,7 @@ mod tests {
 
     fn inspected_file(
         bytes: &[u8],
-        source_identity: CandleShardIdentity,
+        source_expected_content: Option<CandleExpectedContentIdentity>,
     ) -> Result<InspectedShard, String> {
         let sequence = NEXT_TEMPORARY_FILE.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
@@ -392,8 +365,8 @@ mod tests {
             file_length: u64::try_from(bytes.len()).map_err(|error| error.to_string())?,
             data_start,
             prefix_header_sha256,
-            source_identity,
-            established_identity: None,
+            source_expected_content,
+            established_content_identity: None,
             tensors: Vec::new(),
         })
     }

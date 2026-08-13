@@ -11,6 +11,8 @@
 
 mod device;
 mod failure;
+#[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
+mod load_observation;
 mod loader;
 mod model;
 mod sequence_reservation;
@@ -19,6 +21,14 @@ mod source;
 mod upstream;
 
 pub use device::{CandleDeviceSummary, CudaComputeCapability};
+#[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
+#[doc(hidden)]
+pub use load_observation::{
+    CandleLoadCleanupOutcome, CandleLoadObservation, CandleLoadObservationOutcome,
+    CandleLoadObservationRecorder, CandleLoadObservationSnapshot,
+};
 pub use loader::{CandleLlamaFailedPreparation, CandleLlamaLoader, CandleLlamaPreparedLoad};
 pub use model::{CandleLlamaModel, CandleLlamaSequence};
-pub use source::{CandleLlamaSource, CandleShardIdentity, CandleWeightShard, SourceError};
+pub use source::{
+    CandleExpectedContentIdentity, CandleLlamaSource, CandleWeightShard, SourceError,
+};

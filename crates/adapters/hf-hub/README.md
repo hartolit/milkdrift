@@ -67,15 +67,17 @@ For every selected shard, the adapter requests exact path metadata at the resolv
 commit through `get_paths_info`. It accepts `BlobLfsInfo::sha256` with the exact
 repository file size as `ArtifactContentIdentityAuthority::HuggingFaceLfs` and
 checks metadata cardinality, SHA-256 encoding, and Hub/LFS/local length agreement.
-Git object IDs, ETags, Xet hashes, cache filenames, symlinks, inodes, and mtimes are
-not digest proof.
+For a non-LFS file, the adapter decodes the exact Git blob object ID reported at
+the resolved commit, streams the downloaded bytes through a bounded buffer,
+verifies Git's `blob <length>\0<content>` SHA-1, derives a whole-file SHA-256, and
+records `ArtifactContentIdentityAuthority::HuggingFaceGitBlob`.
 
-When complete LFS identity is unavailable, the adapter streams the downloaded file
-through a bounded buffer, computes a checked whole-file SHA-256, and marks it
-`ArtifactContentIdentityAuthority::ProjectEstablished`. This is a local baseline,
-not provider verification. Candle rehashes this mutable cache-path evidence before
-device admission and verifies the complete materialization stream before model
-publication.
+ETags, Xet hashes, cache filenames, symlinks, inodes, mtimes, and unverified object
+identifiers are not digest proof. `ProjectEstablished` remains available for exact
+identities computed by project code without provider binding. Provider authority is
+retained as evidence by the Hub/application layer; Candle receives only the exact
+expected length and SHA-256 and verifies the complete materialization stream before
+model publication.
 
 ## Hosting boundary
 

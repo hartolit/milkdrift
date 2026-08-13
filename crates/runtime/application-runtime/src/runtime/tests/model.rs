@@ -6,7 +6,9 @@ use domain_contracts::{
     DeviceKind, ExecutionDevice, LoadError, MemoryBudget, MemoryFootprint, MemoryKind, ModelHandle,
     ModelId, ScalarType, ScalarTypeSet,
 };
-use hf_hub_adapter::ArtifactScalarType;
+use hf_hub_adapter::{
+    ArtifactContentIdentityAuthority, ArtifactScalarType, ResolvedSafetensorsShard,
+};
 use inference_runtime::{
     CleanupFailureReport, CleanupResource, CleanupRetryState, FailureClass, RetainedOwnership,
     RuntimeError, RuntimeOperation,
@@ -14,7 +16,7 @@ use inference_runtime::{
 use redb_storage::{RedbStorage, StoredScalarType};
 
 use super::support::*;
-use crate::runtime::model::{LoadAdmission, LoadReceiptMismatch};
+use crate::runtime::model::{LoadAdmission, LoadReceiptMismatch, candle_weight_shards};
 use crate::{
     ApplicationActivity, ApplicationDevice, ApplicationError, ApplicationEvent,
     ApplicationFailureKind, ApplicationRetainedModelResource, ApplicationRetainedOwnership,
@@ -230,6 +232,60 @@ fn same_size_config_mutation_after_acceptance_is_rejected_before_load_submission
     let database_cleanup = remove_database(&database_path);
     let config_cleanup = remove_test_file(&config_path);
     result.and(database_cleanup).and(config_cleanup)
+}
+
+#[test]
+fn hub_authority_remains_evidence_while_candle_receives_only_expected_content() -> TestResult {
+    let path = candle_fixture_configuration_path()
+        .parent()
+        .ok_or_else(|| "Candle fixture configuration has no parent".to_owned())?
+        .join("model.safetensors");
+    let authorities = [
+        ArtifactContentIdentityAuthority::HuggingFaceLfs,
+        ArtifactContentIdentityAuthority::HuggingFaceGitBlob,
+        ArtifactContentIdentityAuthority::ProjectEstablished,
+    ];
+    let mut artifacts = fixture_artifacts_with_paths(
+        REPOSITORY,
+        COMMIT,
+        tokenizer_fixture_path("tokenizer.json").as_path(),
+        candle_fixture_configuration_path().as_path(),
+        Some(ArtifactScalarType::F32),
+    )?;
+    let expected_content = artifacts
+        .weight_shards
+        .first()
+        .ok_or_else(|| "fixture artifacts have no weight shard".to_owned())?
+        .content_identity;
+    artifacts.weight_shards = authorities
+        .into_iter()
+        .map(|authority| ResolvedSafetensorsShard {
+            path: path.clone(),
+            content_identity: hf_hub_adapter::ArtifactContentIdentity {
+                byte_length: expected_content.byte_length,
+                sha256: expected_content.sha256,
+                authority,
+            },
+        })
+        .collect();
+
+    let candle_shards = candle_weight_shards(&artifacts).map_err(|error| error.to_string())?;
+    assert_eq!(candle_shards.len(), authorities.len());
+    assert!(candle_shards.iter().all(|shard| {
+        shard.expected_content().is_some_and(|expected| {
+            expected.byte_length() == expected_content.byte_length
+                && expected.sha256() == expected_content.sha256
+        })
+    }));
+    assert_eq!(
+        artifacts
+            .weight_shards
+            .iter()
+            .map(|shard| shard.content_identity.authority)
+            .collect::<Vec<_>>(),
+        authorities
+    );
+    Ok(())
 }
 
 #[test]

@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use candle_backend::{CandleLlamaSource, CandleShardIdentity, CandleWeightShard};
+use candle_backend::{CandleExpectedContentIdentity, CandleLlamaSource, CandleWeightShard};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -98,12 +98,9 @@ impl VerifiedFixture {
     pub(crate) fn source(&self) -> BenchmarkResult<CandleLlamaSource> {
         CandleLlamaSource::new(
             self.directory.join("config.json"),
-            vec![CandleWeightShard::new(
+            vec![CandleWeightShard::with_expected_content(
                 self.directory.join("model.safetensors"),
-                CandleShardIdentity::ProjectEstablished {
-                    byte_length: WEIGHTS_BYTES,
-                    sha256: WEIGHTS_SHA256_BYTES,
-                },
+                CandleExpectedContentIdentity::new(WEIGHTS_BYTES, WEIGHTS_SHA256_BYTES),
             )],
         )
         .map_err(|error| BenchmarkError::new(format!("fixture source is invalid: {error}")))

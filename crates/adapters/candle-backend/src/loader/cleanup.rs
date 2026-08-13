@@ -65,6 +65,13 @@ impl CandleLlamaPreparedLoad {
         self.pending_device_tensor = None;
         self.pending_host_tensor = None;
         self.pending_source_tensor = None;
+        if let Some(batch) = self.transfer_batch.as_mut() {
+            batch.clear();
+        }
+        self.transfer_batch = None;
+        self.transfer_plan = None;
+        self.next_transfer_batch_index = 0;
+        self.next_transfer_entry_index = 0;
         self.shards.clear();
         self.config = None;
         self.device = None;
@@ -82,7 +89,25 @@ impl FailedLoadOwner for CandleLlamaFailedPreparation {
         let Some(prepared) = self.prepared.as_mut() else {
             return Ok(());
         };
+        #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
+        if let Some(observation) = &prepared.load_observation {
+            observation.cleanup_started();
+        }
+        #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
+        {
+            if let Err(error) = prepared.cleanup_failed_materialization() {
+                if let Some(observation) = &prepared.load_observation {
+                    observation.cleanup_failed();
+                }
+                return Err(error);
+            }
+        }
+        #[cfg(not(any(feature = "benchmark-observation", feature = "cuda-hardware-tests")))]
         prepared.cleanup_failed_materialization()?;
+        #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
+        if let Some(observation) = &prepared.load_observation {
+            observation.cleanup_succeeded();
+        }
         self.prepared = None;
         Ok(())
     }

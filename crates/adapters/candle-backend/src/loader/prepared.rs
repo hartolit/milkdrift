@@ -7,7 +7,6 @@ use std::io::{Read, Seek, SeekFrom};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use candle_core::{DType, Device, Tensor};
-use candle_nn::VarBuilder;
 use candle_transformers::models::llama::{Config, Llama};
 use domain_contracts::{
     BackendFailureKind, BackendId, DeviceKind, LoadError, LoadPlan, PreparedLoad,
@@ -15,19 +14,21 @@ use domain_contracts::{
 use sha2::{Digest, Sha256};
 
 use crate::failure::{
-    CODE_DUPLICATE_TENSOR, CODE_HEADER_IDENTITY_MISMATCH, CODE_INSPECTION_ALLOCATION,
-    CODE_LOAD_SYNCHRONIZE, CODE_MODEL_LOAD, CODE_MODEL_LOAD_PANIC, CODE_NUMERIC_OVERFLOW,
-    CODE_PAYLOAD_READ, CODE_SOURCE_IDENTITY_LENGTH, CODE_SOURCE_IDENTITY_MISMATCH,
-    CODE_TENSOR_MAP_ALLOCATION, CODE_TENSOR_MATERIALIZE, CODE_TENSOR_TRANSFER,
+    CODE_DUPLICATE_TENSOR, CODE_HEADER_IDENTITY_MISMATCH, CODE_LOAD_SYNCHRONIZE, CODE_MODEL_LOAD,
+    CODE_MODEL_LOAD_PANIC, CODE_NUMERIC_OVERFLOW, CODE_PAYLOAD_READ, CODE_SOURCE_IDENTITY_LENGTH,
+    CODE_SOURCE_IDENTITY_MISMATCH, CODE_TENSOR_MATERIALIZE, CODE_TENSOR_TRANSFER,
     CODE_WEIGHT_METADATA, failure,
 };
 
 use super::cleanup::CandleLlamaFailedPreparation;
-use super::identity::EstablishedIdentityAuthority;
+use super::construction::construct_llama;
+use super::identity::ContentIdentityEstablishment;
 use super::manifest::{InspectedShard, SourceTensorDType, TensorShape};
+use super::payload::{AlignedPayload, source_tensor, verification_buffer};
+use super::transfer_batch::{TransferBatchEntry, TransferBatchOwner};
+use super::transfer_plan::TransferPlan;
 use super::{
-    VERIFICATION_BUFFER_BYTES, VERIFICATION_BUFFER_BYTES_U64, host_memory_failure,
-    invalid_model_failure, map_candle_load_error, unsupported_scalar,
+    VERIFICATION_BUFFER_BYTES_U64, invalid_model_failure, map_candle_load_error, unsupported_scalar,
 };
 
 /// Exact source-, configuration-, device-, and plan-bound Candle preparation.
@@ -50,7 +51,13 @@ pub struct CandleLlamaPreparedLoad {
     pub(super) pending_source_tensor: Option<Tensor>,
     pub(super) pending_host_tensor: Option<Tensor>,
     pub(super) pending_device_tensor: Option<Tensor>,
+    pub(super) transfer_plan: Option<TransferPlan>,
+    pub(super) transfer_batch: Option<TransferBatchOwner>,
+    pub(super) next_transfer_batch_index: usize,
+    pub(super) next_transfer_entry_index: usize,
     pub(super) constructed_model: Option<Llama>,
+    #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
+    pub(super) load_observation: Option<crate::CandleLoadObservationRecorder>,
     pub(super) cleanup_complete: bool,
 }
 
@@ -72,6 +79,7 @@ impl CandleLlamaPreparedLoad {
         for shard_index in 0..self.shards.len() {
             self.materialize_shard(shard_index, observer)?;
         }
+        self.validate_transfer_completion()?;
         self.construct_model(observer)
     }
 
@@ -82,6 +90,12 @@ impl CandleLlamaPreparedLoad {
             || self.pending_source_tensor.is_some()
             || self.pending_host_tensor.is_some()
             || self.pending_device_tensor.is_some()
+            || self.next_transfer_batch_index != 0
+            || self.next_transfer_entry_index != 0
+            || self
+                .transfer_batch
+                .as_ref()
+                .is_some_and(|batch| !batch.is_empty())
         {
             Err(invalid_model_failure(self.backend, CODE_MODEL_LOAD))
         } else {
@@ -97,7 +111,7 @@ impl CandleLlamaPreparedLoad {
         let expected = self
             .shards
             .get(shard_index)
-            .and_then(|shard| shard.established_identity)
+            .and_then(|shard| shard.established_content_identity)
             .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?;
         self.validate_shard_length(shard_index, expected.byte_length)?;
         self.seek_shard_start(shard_index)?;
@@ -173,8 +187,8 @@ impl CandleLlamaPreparedLoad {
                 CODE_SOURCE_IDENTITY_MISMATCH,
             ));
         }
-        observer.whole_shard_verified(expected.authority);
-        Ok(())
+        observer.whole_shard_verified(expected.establishment);
+        self.flush_shard_final_batch(shard_index, observer)
     }
 
     fn validate_shard_length(
@@ -220,11 +234,6 @@ impl CandleLlamaPreparedLoad {
         hasher: &mut Sha256,
         observer: &mut O,
     ) -> Result<(), LoadError> {
-        let file = &mut self
-            .shards
-            .get_mut(shard_index)
-            .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?
-            .file;
         let mut remaining = byte_count;
         while remaining > 0 {
             let chunk_length = usize::try_from(remaining.min(VERIFICATION_BUFFER_BYTES_U64))
@@ -232,10 +241,15 @@ impl CandleLlamaPreparedLoad {
             let chunk = buffer
                 .get_mut(..chunk_length)
                 .ok_or_else(|| invalid_model_failure(self.backend, CODE_PAYLOAD_READ))?;
-            file.read_exact(chunk)
+            self.shards
+                .get_mut(shard_index)
+                .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?
+                .file
+                .read_exact(chunk)
                 .map_err(|_| invalid_model_failure(self.backend, CODE_SOURCE_IDENTITY_LENGTH))?;
             hasher.update(chunk);
             observer.hashed_range(range, chunk_length);
+            self.record_verification_only_bytes(chunk_length);
             remaining = remaining
                 .checked_sub(
                     u64::try_from(chunk_length)
@@ -247,21 +261,19 @@ impl CandleLlamaPreparedLoad {
     }
 
     fn required_tensor_facts(
-        &self,
+        &mut self,
         shard_index: usize,
         tensor_index: usize,
     ) -> Result<RequiredTensorFacts, LoadError> {
         let tensor = self
             .shards
-            .get(shard_index)
-            .and_then(|shard| shard.tensors.get(tensor_index))
+            .get_mut(shard_index)
+            .and_then(|shard| shard.tensors.get_mut(tensor_index))
             .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?;
-        let mut name = String::new();
-        name.try_reserve_exact(tensor.name.len())
-            .map_err(|_| host_memory_failure(self.backend, CODE_TENSOR_MAP_ALLOCATION))?;
-        name.push_str(tensor.name.as_str());
         Ok(RequiredTensorFacts {
-            name,
+            shard_index,
+            tensor_index,
+            name: std::mem::take(&mut tensor.name),
             source_dtype: tensor.source_dtype,
             shape: tensor.shape,
             source_bytes: tensor.source_bytes,
@@ -275,37 +287,9 @@ impl CandleLlamaPreparedLoad {
         hasher: &mut Sha256,
         observer: &mut O,
     ) -> Result<AlignedPayload, LoadError> {
-        let alignment = facts
-            .source_dtype
-            .alignment()
-            .ok_or_else(|| unsupported_scalar(self.backend))?;
-        let alignment_padding = alignment
-            .checked_sub(1)
-            .ok_or_else(|| invalid_model_failure(self.backend, CODE_NUMERIC_OVERFLOW))?;
-        let allocation_bytes = facts
-            .source_bytes
-            .checked_add(alignment_padding)
-            .ok_or_else(|| invalid_model_failure(self.backend, CODE_NUMERIC_OVERFLOW))?;
-        let allocation_length = usize::try_from(allocation_bytes)
-            .map_err(|_| invalid_model_failure(self.backend, CODE_NUMERIC_OVERFLOW))?;
-        let source_length = usize::try_from(facts.source_bytes)
-            .map_err(|_| invalid_model_failure(self.backend, CODE_NUMERIC_OVERFLOW))?;
-        let alignment = usize::try_from(alignment)
-            .map_err(|_| invalid_model_failure(self.backend, CODE_NUMERIC_OVERFLOW))?;
-
-        let mut bytes = Vec::new();
-        bytes
-            .try_reserve_exact(allocation_length)
-            .map_err(|_| host_memory_failure(self.backend, CODE_TENSOR_MATERIALIZE))?;
-        bytes.resize(allocation_length, 0);
-        let start = bytes.as_ptr().align_offset(alignment);
-        let end = start
-            .checked_add(source_length)
-            .filter(|end| *end <= bytes.len())
-            .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_MATERIALIZE))?;
-        let destination = bytes
-            .get_mut(start..end)
-            .ok_or_else(|| invalid_model_failure(self.backend, CODE_PAYLOAD_READ))?;
+        let mut payload =
+            AlignedPayload::allocate(self.backend, facts.source_dtype, facts.source_bytes)?;
+        let destination = payload.as_mut_slice(self.backend)?;
         self.shards
             .get_mut(shard_index)
             .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?
@@ -315,7 +299,8 @@ impl CandleLlamaPreparedLoad {
         let hashed_bytes = destination.len();
         hasher.update(&*destination);
         observer.hashed_range(HashedRange::RequiredTensor, hashed_bytes);
-        Ok(AlignedPayload { bytes, start, end })
+        self.record_required_bytes(hashed_bytes);
+        Ok(payload)
     }
 
     fn materialize_required_tensor<O: MaterializationObserver>(
@@ -331,18 +316,15 @@ impl CandleLlamaPreparedLoad {
             .source_dtype
             .executable_dtype()
             .ok_or_else(|| unsupported_scalar(self.backend))?;
-        let payload_bytes = payload.as_slice(self.backend)?;
-        let source_tensor = Tensor::from_raw_buffer(
-            payload_bytes,
-            source_dtype,
-            facts.shape.as_slice(),
-            &Device::Cpu,
-        )
-        .map_err(|error| {
-            map_candle_load_error(self.backend, &Device::Cpu, &error, CODE_TENSOR_MATERIALIZE)
-        })?;
+        let source_tensor = source_tensor(self.backend, &payload, source_dtype, facts.shape)?;
         self.pending_source_tensor = Some(source_tensor);
-        observer.checkpoint(MaterializationCheckpoint::SourceOwned, self.backend)?;
+        observer.checkpoint(
+            MaterializationCheckpoint::SourceOwned {
+                shard_index: facts.shard_index,
+                tensor_index: facts.tensor_index,
+            },
+            self.backend,
+        )?;
         drop(payload);
         self.validate_pending_source(&facts, source_dtype)?;
         self.cast_if_required(&facts, source_dtype, observer)?;
@@ -373,9 +355,21 @@ impl CandleLlamaPreparedLoad {
         source_dtype: DType,
         observer: &mut O,
     ) -> Result<(), LoadError> {
+        let accelerator =
+            self.plan.accepted_configuration.execution_device.kind == DeviceKind::Cuda;
         if source_dtype == self.execution_dtype {
-            self.pending_host_tensor = self.pending_source_tensor.take();
-            observer.checkpoint(MaterializationCheckpoint::HostOwned, self.backend)?;
+            if accelerator {
+                self.pending_host_tensor = None;
+            } else {
+                self.pending_host_tensor = self.pending_source_tensor.take();
+            }
+            observer.checkpoint(
+                MaterializationCheckpoint::HostOwned {
+                    shard_index: facts.shard_index,
+                    tensor_index: facts.tensor_index,
+                },
+                self.backend,
+            )?;
         } else {
             let converted = self
                 .pending_source_tensor
@@ -391,12 +385,21 @@ impl CandleLlamaPreparedLoad {
                     )
                 })?;
             self.pending_host_tensor = Some(converted);
-            observer.checkpoint(MaterializationCheckpoint::CastOwned, self.backend)?;
-            self.pending_source_tensor = None;
+            observer.checkpoint(
+                MaterializationCheckpoint::CastOwned {
+                    shard_index: facts.shard_index,
+                    tensor_index: facts.tensor_index,
+                },
+                self.backend,
+            )?;
+            if !accelerator {
+                self.pending_source_tensor = None;
+            }
         }
         let host = self
             .pending_host_tensor
             .as_ref()
+            .or(self.pending_source_tensor.as_ref())
             .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_MATERIALIZE))?;
         if host.dtype() != self.execution_dtype || host.dims() != facts.shape.as_slice() {
             return Err(invalid_model_failure(self.backend, CODE_TENSOR_MATERIALIZE));
@@ -410,23 +413,29 @@ impl CandleLlamaPreparedLoad {
         observer: &mut O,
     ) -> Result<(), LoadError> {
         match self.plan.accepted_configuration.execution_device.kind {
-            DeviceKind::Cpu => self.insert_cpu_tensor(facts.name, observer),
-            DeviceKind::Cuda => self.transfer_and_insert(facts, observer),
+            DeviceKind::Cpu => self.insert_cpu_tensor(facts, observer),
+            DeviceKind::Cuda => self.enqueue_transfer(facts, observer),
             _ => Err(LoadError::InvalidConfiguration),
         }
     }
 
     fn insert_cpu_tensor<O: MaterializationObserver>(
         &mut self,
-        name: String,
+        facts: RequiredTensorFacts,
         observer: &mut O,
     ) -> Result<(), LoadError> {
-        observer.checkpoint(MaterializationCheckpoint::BeforeMapInsertion, self.backend)?;
+        observer.checkpoint(
+            MaterializationCheckpoint::BeforeCpuMapInsertion {
+                shard_index: facts.shard_index,
+                tensor_index: facts.tensor_index,
+            },
+            self.backend,
+        )?;
         let tensor = self
             .pending_host_tensor
             .take()
             .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_MATERIALIZE))?;
-        match self.final_tensors.entry(name) {
+        match self.final_tensors.entry(facts.name) {
             Entry::Vacant(entry) => {
                 entry.insert(tensor);
             }
@@ -436,28 +445,56 @@ impl CandleLlamaPreparedLoad {
                 return Err(invalid_model_failure(self.backend, CODE_DUPLICATE_TENSOR));
             }
         }
-        observer.checkpoint(MaterializationCheckpoint::MapOwned, self.backend)
+        observer.checkpoint(
+            MaterializationCheckpoint::CpuMapOwned {
+                shard_index: facts.shard_index,
+                tensor_index: facts.tensor_index,
+            },
+            self.backend,
+        )
     }
 
-    fn transfer_and_insert<O: MaterializationObserver>(
+    fn enqueue_transfer<O: MaterializationObserver>(
         &mut self,
         facts: RequiredTensorFacts,
         observer: &mut O,
     ) -> Result<(), LoadError> {
+        let (batch_index, entry_index, planned_entries, expected) =
+            self.current_transfer_expectation(&facts)?;
+        if entry_index == 0 {
+            self.transfer_batch
+                .as_mut()
+                .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?
+                .begin(self.backend, batch_index, planned_entries)?;
+            self.record_transfer_batch_started();
+        }
         let device = self
             .device
             .clone()
             .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?;
+        let host = self
+            .pending_host_tensor
+            .as_ref()
+            .or(self.pending_source_tensor.as_ref())
+            .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?;
+        let next_batch_bytes = self
+            .transfer_batch
+            .as_ref()
+            .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?
+            .preflight_push(
+                self.backend,
+                expected.retained_host_bytes(),
+                expected.execution_bytes(),
+            )?;
         let transferred = self
             .pending_host_tensor
             .as_ref()
-            .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?
+            .unwrap_or(host)
             .to_device(&device)
             .map_err(|error| {
                 map_candle_load_error(self.backend, &device, &error, CODE_TENSOR_TRANSFER)
             })?;
         self.pending_device_tensor = Some(transferred);
-        observer.checkpoint(MaterializationCheckpoint::TransferOwned, self.backend)?;
         let retained_device = self
             .pending_device_tensor
             .as_ref()
@@ -467,31 +504,285 @@ impl CandleLlamaPreparedLoad {
         {
             return Err(invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER));
         }
-        device.synchronize().map_err(|_| {
-            LoadError::Backend(failure(
-                self.backend,
-                BackendFailureKind::Synchronization,
-                CODE_LOAD_SYNCHRONIZE,
-            ))
-        })?;
-        observer.checkpoint(MaterializationCheckpoint::BeforeMapInsertion, self.backend)?;
-        let tensor = self
-            .pending_device_tensor
-            .take()
+        let transfer_batch = self
+            .transfer_batch
+            .as_mut()
             .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?;
-        match self.final_tensors.entry(facts.name) {
-            Entry::Vacant(entry) => {
-                entry.insert(tensor);
+        let source_tensor = self.pending_source_tensor.take();
+        let converted_host_tensor = self.pending_host_tensor.take();
+        let device_tensor = self.pending_device_tensor.take();
+        let (source_tensor, device_tensor) = match (source_tensor, device_tensor) {
+            (Some(source_tensor), Some(device_tensor)) => (source_tensor, device_tensor),
+            (source_tensor, device_tensor) => {
+                self.pending_source_tensor = source_tensor;
+                self.pending_host_tensor = converted_host_tensor;
+                self.pending_device_tensor = device_tensor;
+                return Err(invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER));
             }
-            Entry::Occupied(entry) => {
-                self.pending_device_tensor = Some(tensor);
-                let _ = entry;
-                return Err(invalid_model_failure(self.backend, CODE_DUPLICATE_TENSOR));
-            }
+        };
+        let entry = TransferBatchEntry::new(
+            facts.shard_index,
+            facts.tensor_index,
+            facts.name,
+            source_tensor,
+            converted_host_tensor,
+            device_tensor,
+            expected.retained_host_bytes(),
+            expected.execution_bytes(),
+        );
+        // Preflight occurred before the asynchronous transfer. The owner is
+        // still present and its maximum Vec capacity was reserved during
+        // preparation, so moving the endpoints into it performs no fallible
+        // work and cannot strand them in a temporary on an error path.
+        transfer_batch.push_preflighted(entry, next_batch_bytes);
+        self.next_transfer_entry_index = self
+            .next_transfer_entry_index
+            .checked_add(1)
+            .ok_or_else(|| invalid_model_failure(self.backend, CODE_NUMERIC_OVERFLOW))?;
+        observer.checkpoint(
+            MaterializationCheckpoint::TransferEnqueued {
+                batch_index,
+                entry_index,
+            },
+            self.backend,
+        )?;
+
+        let is_complete = self.next_transfer_entry_index == planned_entries;
+        let is_last_in_shard = self
+            .transfer_plan
+            .as_ref()
+            .and_then(|plan| plan.batch(batch_index))
+            .is_some_and(super::transfer_plan::TransferBatchPlan::is_last_in_shard);
+        if is_complete && !is_last_in_shard {
+            self.flush_transfer_batch(observer)?;
         }
-        observer.checkpoint(MaterializationCheckpoint::MapOwned, self.backend)?;
-        self.pending_host_tensor = None;
         Ok(())
+    }
+
+    fn current_transfer_expectation(
+        &self,
+        facts: &RequiredTensorFacts,
+    ) -> Result<(usize, usize, usize, super::transfer_plan::TransferEntryPlan), LoadError> {
+        let batch_index = self.next_transfer_batch_index;
+        let entry_index = self.next_transfer_entry_index;
+        let plan = self
+            .transfer_plan
+            .as_ref()
+            .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?;
+        let batch = plan
+            .batch(batch_index)
+            .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?;
+        let expected = plan
+            .entry(batch_index, entry_index)
+            .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?;
+        if expected.coordinate() != (facts.shard_index, facts.tensor_index)
+            || expected.source_bytes() != facts.source_bytes
+            || batch.shard_index() != facts.shard_index
+        {
+            return Err(invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER));
+        }
+        Ok((batch_index, entry_index, batch.entry_count(), expected))
+    }
+
+    fn flush_shard_final_batch<O: MaterializationObserver>(
+        &mut self,
+        shard_index: usize,
+        observer: &mut O,
+    ) -> Result<(), LoadError> {
+        if self.plan.accepted_configuration.execution_device.kind != DeviceKind::Cuda {
+            return Ok(());
+        }
+        let Some(batch) = self
+            .transfer_plan
+            .as_ref()
+            .and_then(|plan| plan.batch(self.next_transfer_batch_index))
+        else {
+            return Ok(());
+        };
+        if batch.shard_index() > shard_index {
+            return Ok(());
+        }
+        if batch.shard_index() != shard_index
+            || !batch.is_last_in_shard()
+            || self.next_transfer_entry_index != batch.entry_count()
+        {
+            return Err(invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER));
+        }
+        self.flush_transfer_batch(observer)
+    }
+
+    fn flush_transfer_batch<O: MaterializationObserver>(
+        &mut self,
+        observer: &mut O,
+    ) -> Result<(), LoadError> {
+        let batch_index = self.next_transfer_batch_index;
+        let entries = self.next_transfer_entry_index;
+        let device = self
+            .device
+            .as_ref()
+            .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?;
+        self.transfer_batch
+            .as_ref()
+            .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?
+            .validate_ready(self.backend, self.execution_dtype)?;
+        observer.checkpoint(
+            MaterializationCheckpoint::BeforeBatchSynchronization {
+                batch_index,
+                entries,
+            },
+            self.backend,
+        )?;
+        self.record_loading_synchronization();
+        observer.synchronize(
+            LoadingSynchronization::TransferBatch { batch_index },
+            self.backend,
+            device,
+        )?;
+        self.transfer_batch
+            .as_mut()
+            .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?
+            .mark_synchronized(self.backend)?;
+        observer.checkpoint(
+            MaterializationCheckpoint::BatchSynchronized {
+                batch_index,
+                entries,
+            },
+            self.backend,
+        )?;
+        observer.checkpoint(
+            MaterializationCheckpoint::BeforeBatchCommit {
+                batch_index,
+                entries,
+            },
+            self.backend,
+        )?;
+        for entry_index in 0..entries {
+            let (shard_index, tensor_index) = self
+                .transfer_batch
+                .as_mut()
+                .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?
+                .commit_next(self.backend, &mut self.final_tensors)?;
+            observer.checkpoint(
+                MaterializationCheckpoint::BatchEntryCommitted {
+                    batch_index,
+                    entry_index,
+                    shard_index,
+                    tensor_index,
+                },
+                self.backend,
+            )?;
+        }
+        observer.checkpoint(
+            MaterializationCheckpoint::BatchCommitted {
+                batch_index,
+                entries,
+            },
+            self.backend,
+        )?;
+        self.transfer_batch
+            .as_mut()
+            .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?
+            .finish(self.backend)?;
+        self.next_transfer_batch_index = self
+            .next_transfer_batch_index
+            .checked_add(1)
+            .ok_or_else(|| invalid_model_failure(self.backend, CODE_NUMERIC_OVERFLOW))?;
+        self.next_transfer_entry_index = 0;
+        Ok(())
+    }
+
+    fn validate_transfer_completion(&self) -> Result<(), LoadError> {
+        match self.plan.accepted_configuration.execution_device.kind {
+            DeviceKind::Cpu => {
+                if self.transfer_plan.is_none() && self.transfer_batch.is_none() {
+                    Ok(())
+                } else {
+                    Err(invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))
+                }
+            }
+            DeviceKind::Cuda => {
+                let plan = self
+                    .transfer_plan
+                    .as_ref()
+                    .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?;
+                let batch = self
+                    .transfer_batch
+                    .as_ref()
+                    .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?;
+                if self.next_transfer_batch_index == plan.len()
+                    && self.next_transfer_entry_index == 0
+                    && batch.is_empty()
+                {
+                    Ok(())
+                } else {
+                    Err(invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))
+                }
+            }
+            _ => Err(LoadError::InvalidConfiguration),
+        }
+    }
+
+    fn record_verification_only_bytes(&self, bytes: usize) {
+        #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
+        if let Some(observation) = &self.load_observation {
+            observation.verification_only_bytes_read(u64::try_from(bytes).unwrap_or(u64::MAX));
+        }
+        #[cfg(not(any(feature = "benchmark-observation", feature = "cuda-hardware-tests")))]
+        let _ = (self, bytes);
+    }
+
+    fn record_required_bytes(&self, bytes: usize) {
+        #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
+        if let Some(observation) = &self.load_observation {
+            observation.required_and_verified_bytes_read(u64::try_from(bytes).unwrap_or(u64::MAX));
+        }
+        #[cfg(not(any(feature = "benchmark-observation", feature = "cuda-hardware-tests")))]
+        let _ = (self, bytes);
+    }
+
+    fn record_transfer_batch_started(&self) {
+        #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
+        if let Some(observation) = &self.load_observation {
+            observation.transfer_batches_started(1);
+        }
+        #[cfg(not(any(feature = "benchmark-observation", feature = "cuda-hardware-tests")))]
+        let _ = self;
+    }
+
+    fn record_loading_synchronization(&self) {
+        #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
+        if let Some(observation) = &self.load_observation {
+            observation.loading_device_synchronizations_started(1);
+        }
+        #[cfg(not(any(feature = "benchmark-observation", feature = "cuda-hardware-tests")))]
+        let _ = self;
+    }
+
+    pub(super) fn record_materialization_started(&self) {
+        #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
+        if let Some(observation) = &self.load_observation {
+            observation.materialization_started();
+        }
+        #[cfg(not(any(feature = "benchmark-observation", feature = "cuda-hardware-tests")))]
+        let _ = self;
+    }
+
+    pub(super) fn record_materialization_failed(&self) {
+        #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
+        if let Some(observation) = &self.load_observation {
+            observation.materialization_failed();
+        }
+        #[cfg(not(any(feature = "benchmark-observation", feature = "cuda-hardware-tests")))]
+        let _ = self;
+    }
+
+    pub(super) fn record_materialization_succeeded(&self) {
+        #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
+        if let Some(observation) = &self.load_observation {
+            observation.materialization_succeeded();
+        }
+        #[cfg(not(any(feature = "benchmark-observation", feature = "cuda-hardware-tests")))]
+        let _ = self;
     }
 
     fn verify_shard_eof(
@@ -541,25 +832,16 @@ impl CandleLlamaPreparedLoad {
             .config
             .as_ref()
             .ok_or_else(|| invalid_model_failure(self.backend, CODE_MODEL_LOAD))?;
-        let builder_tensors = checked_tensor_map_clone(self.backend, &self.final_tensors)?;
-        let variable_builder =
-            VarBuilder::from_tensors(builder_tensors, self.execution_dtype, &device);
-        let loaded = catch_unwind(AssertUnwindSafe(|| Llama::load(variable_builder, config)))
-            .map_err(|_| invalid_model_failure(self.backend, CODE_MODEL_LOAD_PANIC))?
-            .map_err(|error| {
-                map_candle_load_error(self.backend, &device, &error, CODE_MODEL_LOAD)
-            })?;
+        let loaded = construct_llama(
+            self.backend,
+            &self.final_tensors,
+            self.execution_dtype,
+            &device,
+            config,
+        )?;
         self.constructed_model = Some(loaded);
         observer.checkpoint(MaterializationCheckpoint::ModelOwned, self.backend)?;
-        observer.checkpoint(MaterializationCheckpoint::BeforeFinalSync, self.backend)?;
-        device.synchronize().map_err(|_| {
-            LoadError::Backend(failure(
-                self.backend,
-                BackendFailureKind::Synchronization,
-                CODE_LOAD_SYNCHRONIZE,
-            ))
-        })?;
-        observer.checkpoint(MaterializationCheckpoint::FinalSynchronized, self.backend)
+        Ok(())
     }
 }
 
@@ -573,53 +855,12 @@ impl PreparedLoad for CandleLlamaPreparedLoad {
 
 #[derive(Debug)]
 struct RequiredTensorFacts {
+    shard_index: usize,
+    tensor_index: usize,
     name: String,
     source_dtype: SourceTensorDType,
     shape: TensorShape,
     source_bytes: u64,
-}
-
-#[derive(Debug)]
-struct AlignedPayload {
-    bytes: Vec<u8>,
-    start: usize,
-    end: usize,
-}
-
-impl AlignedPayload {
-    fn as_slice(&self, backend: BackendId) -> Result<&[u8], LoadError> {
-        self.bytes
-            .get(self.start..self.end)
-            .ok_or_else(|| invalid_model_failure(backend, CODE_PAYLOAD_READ))
-    }
-}
-
-fn verification_buffer(backend: BackendId) -> Result<Vec<u8>, LoadError> {
-    let mut buffer = Vec::new();
-    buffer
-        .try_reserve_exact(VERIFICATION_BUFFER_BYTES)
-        .map_err(|_| host_memory_failure(backend, CODE_INSPECTION_ALLOCATION))?;
-    buffer.resize(VERIFICATION_BUFFER_BYTES, 0);
-    Ok(buffer)
-}
-
-fn checked_tensor_map_clone(
-    backend: BackendId,
-    tensors: &HashMap<String, Tensor>,
-) -> Result<HashMap<String, Tensor>, LoadError> {
-    let mut cloned = HashMap::new();
-    cloned
-        .try_reserve(tensors.len())
-        .map_err(|_| host_memory_failure(backend, CODE_TENSOR_MAP_ALLOCATION))?;
-    for (name, tensor) in tensors {
-        let mut cloned_name = String::new();
-        cloned_name
-            .try_reserve_exact(name.len())
-            .map_err(|_| host_memory_failure(backend, CODE_TENSOR_MAP_ALLOCATION))?;
-        cloned_name.push_str(name);
-        cloned.insert(cloned_name, tensor.clone());
-    }
-    Ok(cloned)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -631,15 +872,58 @@ enum HashedRange {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MaterializationCheckpoint {
-    SourceOwned,
-    HostOwned,
-    CastOwned,
-    TransferOwned,
-    BeforeMapInsertion,
-    MapOwned,
+    SourceOwned {
+        shard_index: usize,
+        tensor_index: usize,
+    },
+    HostOwned {
+        shard_index: usize,
+        tensor_index: usize,
+    },
+    CastOwned {
+        shard_index: usize,
+        tensor_index: usize,
+    },
+    TransferEnqueued {
+        batch_index: usize,
+        entry_index: usize,
+    },
+    BeforeBatchSynchronization {
+        batch_index: usize,
+        entries: usize,
+    },
+    BatchSynchronized {
+        batch_index: usize,
+        entries: usize,
+    },
+    BeforeBatchCommit {
+        batch_index: usize,
+        entries: usize,
+    },
+    BatchEntryCommitted {
+        batch_index: usize,
+        entry_index: usize,
+        shard_index: usize,
+        tensor_index: usize,
+    },
+    BatchCommitted {
+        batch_index: usize,
+        entries: usize,
+    },
+    BeforeCpuMapInsertion {
+        shard_index: usize,
+        tensor_index: usize,
+    },
+    CpuMapOwned {
+        shard_index: usize,
+        tensor_index: usize,
+    },
     ModelOwned,
-    BeforeFinalSync,
-    FinalSynchronized,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LoadingSynchronization {
+    TransferBatch { batch_index: usize },
 }
 
 trait MaterializationObserver {
@@ -653,7 +937,23 @@ trait MaterializationObserver {
         Ok(())
     }
 
-    fn whole_shard_verified(&mut self, _authority: EstablishedIdentityAuthority) {}
+    fn whole_shard_verified(&mut self, _establishment: ContentIdentityEstablishment) {}
+
+    fn synchronize(
+        &mut self,
+        boundary: LoadingSynchronization,
+        backend: BackendId,
+        device: &Device,
+    ) -> Result<(), LoadError> {
+        let _ = boundary;
+        device.synchronize().map_err(|_| {
+            LoadError::Backend(failure(
+                backend,
+                BackendFailureKind::Synchronization,
+                CODE_LOAD_SYNCHRONIZE,
+            ))
+        })
+    }
 }
 
 struct NoopMaterializationObserver;
@@ -661,569 +961,4 @@ struct NoopMaterializationObserver;
 impl MaterializationObserver for NoopMaterializationObserver {}
 
 #[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-    use std::fs::{self, File, OpenOptions};
-    use std::io::{Seek, SeekFrom, Write};
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    use candle_core::{DType, Device, Tensor};
-    use candle_transformers::models::llama::Config;
-    use domain_contracts::{
-        BackendId, CapabilitySet, DeviceId, DeviceKind, ExecutionDevice, FailedLoadOwner,
-        LoadConfiguration, LoadError, LoadPlan, MemoryBudget, MemoryFootprint, ModelArchitecture,
-        ModelCapabilities, ModelDescriptor, ModelGeneration, ModelHandle, ModelId, ModelMetadata,
-        PreparedLoad, QuantizationFormat, ScalarType, ScalarTypeSet,
-    };
-    use sha2::{Digest, Sha256};
-
-    use super::{
-        CandleLlamaPreparedLoad, EstablishedIdentityAuthority, HashedRange,
-        MaterializationCheckpoint, MaterializationObserver,
-    };
-    use crate::failure::{
-        CODE_HEADER_IDENTITY_MISMATCH, CODE_SOURCE_IDENTITY_LENGTH, CODE_SOURCE_IDENTITY_MISMATCH,
-        CODE_TENSOR_MATERIALIZE,
-    };
-    use crate::loader::cleanup::TEST_CLEANUP_SYNCHRONIZATION_FAILURES;
-    use crate::loader::identity::EstablishedShardIdentity;
-    use crate::loader::manifest::{
-        InspectedShard, InspectedTensor, SourceTensorDType, TensorShape,
-    };
-    use crate::source::CandleShardIdentity;
-
-    static NEXT_TEMPORARY_FILE: AtomicU64 = AtomicU64::new(0);
-
-    #[derive(Default)]
-    struct Events {
-        prefix_header_bytes: usize,
-        ignored_bytes: usize,
-        required_bytes: usize,
-        source_owned_count: usize,
-        cast_owned_count: usize,
-        transfer_owned_count: usize,
-        map_owned_count: usize,
-        verified_authorities: Vec<EstablishedIdentityAuthority>,
-    }
-
-    impl MaterializationObserver for Events {
-        fn hashed_range(&mut self, range: HashedRange, bytes: usize) {
-            match range {
-                HashedRange::PrefixHeader => self.prefix_header_bytes += bytes,
-                HashedRange::IgnoredTensor => self.ignored_bytes += bytes,
-                HashedRange::RequiredTensor => self.required_bytes += bytes,
-            }
-        }
-
-        fn checkpoint(
-            &mut self,
-            checkpoint: MaterializationCheckpoint,
-            _backend: BackendId,
-        ) -> Result<(), LoadError> {
-            match checkpoint {
-                MaterializationCheckpoint::SourceOwned => self.source_owned_count += 1,
-                MaterializationCheckpoint::CastOwned => self.cast_owned_count += 1,
-                MaterializationCheckpoint::TransferOwned => self.transfer_owned_count += 1,
-                MaterializationCheckpoint::MapOwned => self.map_owned_count += 1,
-                _ => {}
-            }
-            Ok(())
-        }
-
-        fn whole_shard_verified(&mut self, authority: EstablishedIdentityAuthority) {
-            self.verified_authorities.push(authority);
-        }
-    }
-
-    struct FailAt(MaterializationCheckpoint);
-
-    impl MaterializationObserver for FailAt {
-        fn checkpoint(
-            &mut self,
-            checkpoint: MaterializationCheckpoint,
-            backend: BackendId,
-        ) -> Result<(), LoadError> {
-            if checkpoint == self.0 {
-                Err(super::invalid_model_failure(
-                    backend,
-                    CODE_TENSOR_MATERIALIZE,
-                ))
-            } else {
-                Ok(())
-            }
-        }
-    }
-
-    #[test]
-    fn ignored_ranges_are_hashed_without_materialization_or_transfer() -> Result<(), String> {
-        let header = br#"{"ignored":{"dtype":"U8","shape":[3],"data_offsets":[0,3]},"required":{"dtype":"F32","shape":[1],"data_offsets":[3,7]}}"#;
-        let payload = [9_u8, 8, 7, 0, 0, 128, 63];
-
-        for (device_kind, expected_transfer_count) in [(DeviceKind::Cpu, 0), (DeviceKind::Cuda, 1)]
-        {
-            let tensors = vec![
-                inspected_tensor("ignored", SourceTensorDType::U8, &[3], 0, 3, false)?,
-                inspected_tensor("required", SourceTensorDType::F32, &[1], 3, 4, true)?,
-            ];
-            let shard = inspected_shard(header, &payload, tensors)?;
-            let mut prepared = test_prepared(vec![shard], DType::F32)?;
-            prepared.plan.accepted_configuration.execution_device =
-                ExecutionDevice::new(DeviceId::new(0), device_kind);
-            let mut events = Events::default();
-            prepared
-                .materialize_shard(0, &mut events)
-                .map_err(|error| format!("materialize shard: {error:?}"))?;
-
-            assert_eq!(events.prefix_header_bytes, 8 + header.len());
-            assert_eq!(events.ignored_bytes, 3);
-            assert_eq!(events.required_bytes, 4);
-            assert_eq!(events.source_owned_count, 1);
-            assert_eq!(events.cast_owned_count, 0);
-            assert_eq!(events.transfer_owned_count, expected_transfer_count);
-            assert_eq!(events.map_owned_count, 1);
-            assert_eq!(
-                events.verified_authorities.as_slice(),
-                &[EstablishedIdentityAuthority::ProjectEstablished]
-            );
-            assert!(prepared.final_tensors.contains_key("required"));
-            assert!(!prepared.final_tensors.contains_key("ignored"));
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn header_payload_and_truncation_mutations_fail_from_retained_files() -> Result<(), String> {
-        let header = br#"{"required":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#;
-        let payload = [0_u8, 0, 128, 63];
-
-        let header_tensor = inspected_tensor("required", SourceTensorDType::F32, &[1], 0, 4, true)?;
-        let header_shard = inspected_shard(header, &payload, vec![header_tensor])?;
-        let mut header_prepared = test_prepared(vec![header_shard], DType::F32)?;
-        {
-            let shard = first_shard_mut(&mut header_prepared)?;
-            shard
-                .file
-                .seek(SeekFrom::Start(8))
-                .map_err(|error| error.to_string())?;
-            shard
-                .file
-                .write_all(b"[")
-                .map_err(|error| error.to_string())?;
-        }
-        let error = required_error(
-            header_prepared.materialize_shard(0, &mut Events::default()),
-            "header mutation must fail before payload processing",
-        )?;
-        assert_eq!(failure_code(error), Some(CODE_HEADER_IDENTITY_MISMATCH));
-        assert!(header_prepared.final_tensors.is_empty());
-
-        let payload_tensor =
-            inspected_tensor("required", SourceTensorDType::F32, &[1], 0, 4, true)?;
-        let payload_shard = inspected_shard(header, &payload, vec![payload_tensor])?;
-        let mut payload_prepared = test_prepared(vec![payload_shard], DType::F32)?;
-        let last_byte = first_shard_mut(&mut payload_prepared)?
-            .file_length
-            .checked_sub(1)
-            .ok_or_else(|| "missing payload byte".to_owned())?;
-        {
-            let shard = first_shard_mut(&mut payload_prepared)?;
-            shard
-                .file
-                .seek(SeekFrom::Start(last_byte))
-                .map_err(|error| error.to_string())?;
-            shard
-                .file
-                .write_all(&[0_u8])
-                .map_err(|error| error.to_string())?;
-        }
-        let error = required_error(
-            payload_prepared.materialize_shard(0, &mut Events::default()),
-            "payload mutation must fail at whole-shard verification",
-        )?;
-        assert_eq!(failure_code(error), Some(CODE_SOURCE_IDENTITY_MISMATCH));
-        assert!(payload_prepared.final_tensors.contains_key("required"));
-
-        let truncated_tensor =
-            inspected_tensor("required", SourceTensorDType::F32, &[1], 0, 4, true)?;
-        let truncated_shard = inspected_shard(header, &payload, vec![truncated_tensor])?;
-        let mut truncated_prepared = test_prepared(vec![truncated_shard], DType::F32)?;
-        let truncated_length = first_shard_mut(&mut truncated_prepared)?
-            .file_length
-            .checked_sub(1)
-            .ok_or_else(|| "cannot truncate empty file".to_owned())?;
-        first_shard_mut(&mut truncated_prepared)?
-            .file
-            .set_len(truncated_length)
-            .map_err(|error| error.to_string())?;
-        let error = required_error(
-            truncated_prepared.materialize_shard(0, &mut Events::default()),
-            "truncation must fail before streaming",
-        )?;
-        assert_eq!(failure_code(error), Some(CODE_SOURCE_IDENTITY_LENGTH));
-        Ok(())
-    }
-
-    #[test]
-    fn source_cast_and_map_faults_retain_real_owners() -> Result<(), String> {
-        for (checkpoint, source_dtype, execution_dtype) in [
-            (
-                MaterializationCheckpoint::SourceOwned,
-                SourceTensorDType::F32,
-                DType::F32,
-            ),
-            (
-                MaterializationCheckpoint::HostOwned,
-                SourceTensorDType::F32,
-                DType::F32,
-            ),
-            (
-                MaterializationCheckpoint::CastOwned,
-                SourceTensorDType::F32,
-                DType::F16,
-            ),
-            (
-                MaterializationCheckpoint::BeforeMapInsertion,
-                SourceTensorDType::F32,
-                DType::F32,
-            ),
-            (
-                MaterializationCheckpoint::MapOwned,
-                SourceTensorDType::F32,
-                DType::F32,
-            ),
-        ] {
-            let header = br#"{"required":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#;
-            let payload = [0_u8, 0, 128, 63];
-            let tensor = inspected_tensor("required", source_dtype, &[1], 0, 4, true)?;
-            let shard = inspected_shard(header, &payload, vec![tensor])?;
-            let mut prepared = test_prepared(vec![shard], execution_dtype)?;
-            let error = required_error(
-                prepared.materialize_shard(0, &mut FailAt(checkpoint)),
-                "injected ownership checkpoint must fail",
-            )?;
-            assert!(matches!(error, LoadError::Backend(_)));
-            match checkpoint {
-                MaterializationCheckpoint::SourceOwned => {
-                    assert!(prepared.pending_source_tensor.is_some());
-                }
-                MaterializationCheckpoint::HostOwned => {
-                    assert!(prepared.pending_source_tensor.is_none());
-                    assert!(prepared.pending_host_tensor.is_some());
-                }
-                MaterializationCheckpoint::CastOwned => {
-                    assert!(prepared.pending_source_tensor.is_some());
-                    assert!(prepared.pending_host_tensor.is_some());
-                }
-                MaterializationCheckpoint::BeforeMapInsertion => {
-                    assert!(prepared.pending_host_tensor.is_some());
-                }
-                MaterializationCheckpoint::MapOwned => {
-                    assert!(prepared.final_tensors.contains_key("required"));
-                }
-                _ => unreachable!(),
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn transfer_fault_retains_both_endpoints_without_cuda_hardware() -> Result<(), String> {
-        let header = br#"{"required":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#;
-        let payload = [0_u8, 0, 128, 63];
-        let tensor = inspected_tensor("required", SourceTensorDType::F32, &[1], 0, 4, true)?;
-        let shard = inspected_shard(header, &payload, vec![tensor])?;
-        let mut prepared = test_prepared(vec![shard], DType::F32)?;
-        prepared.plan.accepted_configuration.execution_device =
-            ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda);
-
-        let error = required_error(
-            prepared.materialize_shard(0, &mut FailAt(MaterializationCheckpoint::TransferOwned)),
-            "simulated transfer ownership checkpoint must fail",
-        )?;
-        assert!(matches!(error, LoadError::Backend(_)));
-        assert!(prepared.pending_host_tensor.is_some());
-        assert!(prepared.pending_device_tensor.is_some());
-        assert!(prepared.final_tensors.is_empty());
-        Ok(())
-    }
-
-    #[test]
-    fn model_construction_and_final_sync_faults_retain_the_owner() -> Result<(), String> {
-        let mut missing = test_prepared(Vec::new(), DType::F32)?;
-        populate_required_model_tensors(&mut missing)?;
-        missing.final_tensors.remove("lm_head.weight");
-        required_error(
-            missing.construct_model(&mut super::NoopMaterializationObserver),
-            "missing native model tensor must fail construction",
-        )?;
-        assert!(missing.constructed_model.is_none());
-        assert!(!missing.final_tensors.is_empty());
-
-        for checkpoint in [
-            MaterializationCheckpoint::ModelOwned,
-            MaterializationCheckpoint::BeforeFinalSync,
-            MaterializationCheckpoint::FinalSynchronized,
-        ] {
-            let mut prepared = test_prepared(Vec::new(), DType::F32)?;
-            populate_required_model_tensors(&mut prepared)?;
-            required_error(
-                prepared.construct_model(&mut FailAt(checkpoint)),
-                "post-construction checkpoint must fail",
-            )?;
-            assert!(prepared.constructed_model.is_some());
-            assert_eq!(prepared.final_tensors.len(), 12);
-            let mut failed = prepared.into_failed();
-            failed
-                .cleanup()
-                .map_err(|error| format!("cleanup constructed model: {error:?}"))?;
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn cleanup_failure_retains_all_handles_and_retry_is_idempotent() -> Result<(), String> {
-        let shard = inspected_shard(br"{}", &[], Vec::new())?;
-        let mut prepared = test_prepared(vec![shard], DType::F32)?;
-        let stable_plan = *prepared.plan();
-        let tensor = Tensor::ones(1, DType::F32, &Device::Cpu)
-            .map_err(|error| format!("create cleanup tensor: {error}"))?;
-        prepared
-            .final_tensors
-            .insert("final".to_owned(), tensor.clone());
-        prepared.pending_source_tensor = Some(tensor.clone());
-        prepared.pending_host_tensor = Some(tensor.clone());
-        prepared.pending_device_tensor = Some(tensor);
-
-        let mut failed = prepared.into_failed();
-        TEST_CLEANUP_SYNCHRONIZATION_FAILURES.with(|remaining| remaining.set(1));
-        assert!(failed.cleanup().is_err());
-        let retained = failed
-            .prepared
-            .as_ref()
-            .ok_or_else(|| "cleanup failure discarded the retained owner".to_owned())?;
-        assert_eq!(retained.final_tensors.len(), 1);
-        assert!(retained.pending_source_tensor.is_some());
-        assert!(retained.pending_host_tensor.is_some());
-        assert!(retained.pending_device_tensor.is_some());
-        assert_eq!(retained.shards.len(), 1);
-        assert!(retained.config.is_some());
-        assert!(retained.device.is_some());
-        assert!(!retained.cleanup_complete);
-        assert_eq!(failed.plan(), &stable_plan);
-
-        failed
-            .cleanup()
-            .map_err(|error| format!("retry cleanup: {error:?}"))?;
-        assert!(failed.prepared.is_none());
-        assert_eq!(failed.plan(), &stable_plan);
-        failed
-            .cleanup()
-            .map_err(|error| format!("idempotent cleanup: {error:?}"))?;
-        drop(failed);
-        Ok(())
-    }
-
-    fn inspected_tensor(
-        name: &str,
-        source_dtype: SourceTensorDType,
-        shape: &[usize],
-        data_start: u64,
-        source_bytes: u64,
-        required: bool,
-    ) -> Result<InspectedTensor, String> {
-        let element_count = shape.iter().try_fold(1_u64, |total, dimension| {
-            total
-                .checked_mul(u64::try_from(*dimension).map_err(|error| error.to_string())?)
-                .ok_or_else(|| "element count overflow".to_owned())
-        })?;
-        Ok(InspectedTensor {
-            name: name.to_owned(),
-            source_dtype,
-            shape: TensorShape::from_slice(shape)
-                .ok_or_else(|| "test shape exceeds fixed rank".to_owned())?,
-            data_start,
-            source_bytes,
-            element_count,
-            required,
-        })
-    }
-
-    fn inspected_shard(
-        header: &[u8],
-        payload: &[u8],
-        tensors: Vec<InspectedTensor>,
-    ) -> Result<InspectedShard, String> {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(
-            &u64::try_from(header.len())
-                .map_err(|error| error.to_string())?
-                .to_le_bytes(),
-        );
-        bytes.extend_from_slice(header);
-        bytes.extend_from_slice(payload);
-        let data_start = 8_u64
-            .checked_add(u64::try_from(header.len()).map_err(|error| error.to_string())?)
-            .ok_or_else(|| "data start overflow".to_owned())?;
-        let prefix_length = usize::try_from(data_start).map_err(|error| error.to_string())?;
-        let prefix_header_sha256: [u8; 32] = Sha256::digest(
-            bytes
-                .get(..prefix_length)
-                .ok_or_else(|| "prefix range missing".to_owned())?,
-        )
-        .into();
-        let whole_sha256: [u8; 32] = Sha256::digest(bytes.as_slice()).into();
-        let sequence = NEXT_TEMPORARY_FILE.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "milkdrift-candle-materialize-{}-{sequence}.safetensors",
-            std::process::id()
-        ));
-        let mut created = File::create(&path).map_err(|error| error.to_string())?;
-        created
-            .write_all(bytes.as_slice())
-            .map_err(|error| error.to_string())?;
-        created.sync_all().map_err(|error| error.to_string())?;
-        drop(created);
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)
-            .map_err(|error| error.to_string())?;
-        fs::remove_file(path).map_err(|error| error.to_string())?;
-        let file_length = u64::try_from(bytes.len()).map_err(|error| error.to_string())?;
-        Ok(InspectedShard {
-            file,
-            file_length,
-            data_start,
-            prefix_header_sha256,
-            source_identity: CandleShardIdentity::ProjectEstablished {
-                byte_length: file_length,
-                sha256: whole_sha256,
-            },
-            established_identity: Some(EstablishedShardIdentity {
-                byte_length: file_length,
-                sha256: whole_sha256,
-                authority: EstablishedIdentityAuthority::ProjectEstablished,
-            }),
-            tensors,
-        })
-    }
-
-    fn populate_required_model_tensors(
-        prepared: &mut CandleLlamaPreparedLoad,
-    ) -> Result<(), String> {
-        for (name, shape) in [
-            ("model.embed_tokens.weight", &[16, 8][..]),
-            ("lm_head.weight", &[16, 8][..]),
-            ("model.norm.weight", &[8][..]),
-            ("model.layers.0.self_attn.q_proj.weight", &[8, 8][..]),
-            ("model.layers.0.self_attn.k_proj.weight", &[8, 8][..]),
-            ("model.layers.0.self_attn.v_proj.weight", &[8, 8][..]),
-            ("model.layers.0.self_attn.o_proj.weight", &[8, 8][..]),
-            ("model.layers.0.input_layernorm.weight", &[8][..]),
-            ("model.layers.0.post_attention_layernorm.weight", &[8][..]),
-            ("model.layers.0.mlp.gate_proj.weight", &[16, 8][..]),
-            ("model.layers.0.mlp.up_proj.weight", &[16, 8][..]),
-            ("model.layers.0.mlp.down_proj.weight", &[8, 16][..]),
-        ] {
-            let tensor = Tensor::ones(shape, DType::F32, &Device::Cpu)
-                .map_err(|error| format!("create required model tensor {name}: {error}"))?;
-            prepared.final_tensors.insert(name.to_owned(), tensor);
-        }
-        Ok(())
-    }
-
-    fn failure_code(error: LoadError) -> Option<u32> {
-        match error {
-            LoadError::Backend(failure) => Some(failure.code),
-            _ => None,
-        }
-    }
-
-    fn required_error<T>(result: Result<T, LoadError>, context: &str) -> Result<LoadError, String> {
-        result.err().ok_or_else(|| context.to_owned())
-    }
-
-    fn first_shard_mut(
-        prepared: &mut CandleLlamaPreparedLoad,
-    ) -> Result<&mut InspectedShard, String> {
-        prepared
-            .shards
-            .first_mut()
-            .ok_or_else(|| "prepared load has no retained shard".to_owned())
-    }
-
-    fn test_prepared(
-        shards: Vec<InspectedShard>,
-        execution_dtype: DType,
-    ) -> Result<CandleLlamaPreparedLoad, String> {
-        let backend = BackendId::new(7);
-        let execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu);
-        let descriptor = ModelDescriptor {
-            backend,
-            metadata: ModelMetadata {
-                architecture: ModelArchitecture::Llama,
-                configuration_declared_scalar_type: Some(ScalarType::F32),
-                observed_tensor_scalar_types: ScalarTypeSet::from_scalar(ScalarType::F32),
-                quantization: QuantizationFormat::None,
-                vocabulary_size: 16,
-                context_length: 16,
-            },
-            capabilities: ModelCapabilities {
-                operations: CapabilitySet::EXPLICIT_SYNCHRONIZATION,
-                maximum_context_tokens: 16,
-                maximum_sequences: 1,
-                maximum_prefill_batch: 16,
-            },
-            estimated_footprint: MemoryFootprint::default(),
-            sequence_cache_bytes_per_token: 0,
-        };
-        let plan = LoadPlan {
-            accepted_configuration: LoadConfiguration {
-                handle: ModelHandle::new(ModelId::new(1), ModelGeneration::new(1)),
-                execution_device,
-                memory_budget: MemoryBudget::default(),
-            },
-            descriptor,
-            execution_scalar_type: ScalarType::F32,
-            final_footprint: MemoryFootprint::default(),
-            loading_peak_footprint: MemoryFootprint::default(),
-        };
-        let mut final_tensors = HashMap::new();
-        final_tensors
-            .try_reserve(16)
-            .map_err(|error| error.to_string())?;
-        Ok(CandleLlamaPreparedLoad {
-            backend,
-            plan,
-            config: Some(test_config()),
-            execution_dtype,
-            device: Some(Device::Cpu),
-            shards,
-            final_tensors,
-            pending_source_tensor: None,
-            pending_host_tensor: None,
-            pending_device_tensor: None,
-            constructed_model: None,
-            cleanup_complete: false,
-        })
-    }
-
-    fn test_config() -> Config {
-        Config {
-            hidden_size: 8,
-            intermediate_size: 16,
-            vocab_size: 16,
-            num_hidden_layers: 1,
-            num_attention_heads: 2,
-            num_key_value_heads: 2,
-            use_flash_attn: false,
-            rms_norm_eps: 1e-5,
-            rope_theta: 10_000.0,
-            bos_token_id: None,
-            eos_token_id: None,
-            rope_scaling: None,
-            max_position_embeddings: 16,
-            tie_word_embeddings: false,
-        }
-    }
-}
+mod tests;

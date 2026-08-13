@@ -12,7 +12,7 @@ use crate::failure::{
     CODE_INSPECTION_ALLOCATION, CODE_NUMERIC_OVERFLOW, CODE_SOURCE_IDENTITY_LENGTH,
     CODE_WEIGHT_METADATA,
 };
-use crate::source::{CandleShardIdentity, CandleWeightShard};
+use crate::source::{CandleExpectedContentIdentity, CandleWeightShard};
 
 use super::safetensors::{InspectionBudget, parse_header, try_reserve_vec};
 use super::{host_memory_failure, invalid_model_failure};
@@ -31,7 +31,7 @@ struct PreopenedShard {
     prefix: [u8; SAFETENSORS_PREFIX_BYTES_USIZE],
     header_length: usize,
     data_start: u64,
-    source_identity: CandleShardIdentity,
+    source_expected_content: Option<CandleExpectedContentIdentity>,
 }
 
 pub(super) fn inspect_weight_shards(
@@ -77,7 +77,7 @@ fn preopen_shards(
             return Err(invalid_model_failure(backend, CODE_WEIGHT_METADATA));
         }
         let file_length = metadata.len();
-        validate_supplied_length(backend, selected_shard.identity(), file_length)?;
+        validate_expected_length(backend, selected_shard.expected_content(), file_length)?;
 
         let mut prefix = [0_u8; SAFETENSORS_PREFIX_BYTES_USIZE];
         file.read_exact(&mut prefix)
@@ -106,21 +106,18 @@ fn preopen_shards(
             prefix,
             header_length,
             data_start,
-            source_identity: selected_shard.identity(),
+            source_expected_content: selected_shard.expected_content(),
         });
     }
     Ok(preopened)
 }
 
-fn validate_supplied_length(
+fn validate_expected_length(
     backend: BackendId,
-    identity: CandleShardIdentity,
+    expected_content: Option<CandleExpectedContentIdentity>,
     file_length: u64,
 ) -> Result<(), LoadError> {
-    if identity
-        .supplied()
-        .is_some_and(|(expected, _)| expected != file_length)
-    {
+    if expected_content.is_some_and(|expected| expected.byte_length() != file_length) {
         Err(invalid_model_failure(backend, CODE_SOURCE_IDENTITY_LENGTH))
     } else {
         Ok(())
@@ -155,8 +152,8 @@ fn parse_preopened_shards(
             file_length: shard.file_length,
             data_start: shard.data_start,
             prefix_header_sha256: prefix_header_hasher.finalize().into(),
-            source_identity: shard.source_identity,
-            established_identity: None,
+            source_expected_content: shard.source_expected_content,
+            established_content_identity: None,
             tensors,
         });
     }

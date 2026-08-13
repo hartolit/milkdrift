@@ -9,6 +9,7 @@ use domain_contracts::{
 use crate::failure::CODE_NUMERIC_OVERFLOW;
 
 use super::manifest::InspectedShard;
+use super::transfer_plan::TransferPlan;
 use super::{VERIFICATION_BUFFER_BYTES_U64, invalid_model_failure, unsupported_scalar};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,6 +23,8 @@ pub(super) fn calculate(
     shards: &[InspectedShard],
     device_kind: DeviceKind,
     execution_dtype: DType,
+    transfer_plan: Option<&TransferPlan>,
+    transfer_owner_metadata_bytes: u64,
 ) -> Result<CalculatedFootprints, LoadError> {
     let execution_width =
         dtype_bytes(execution_dtype).ok_or_else(|| unsupported_scalar(backend))?;
@@ -70,24 +73,7 @@ pub(super) fn calculate(
                     host_peak = host_peak.max(cast_peak);
                 }
             }
-            DeviceKind::Cuda => {
-                let raw_peak = aligned_staging
-                    .checked_add(tensor.source_bytes)
-                    .and_then(|bytes| bytes.checked_add(VERIFICATION_BUFFER_BYTES_U64))
-                    .ok_or_else(|| numeric_error(backend))?;
-                let execution_peak = execution_bytes
-                    .checked_add(VERIFICATION_BUFFER_BYTES_U64)
-                    .ok_or_else(|| numeric_error(backend))?;
-                host_peak = host_peak.max(raw_peak).max(execution_peak);
-                if source_dtype != execution_dtype {
-                    let cast_peak = tensor
-                        .source_bytes
-                        .checked_add(execution_bytes)
-                        .and_then(|bytes| bytes.checked_add(VERIFICATION_BUFFER_BYTES_U64))
-                        .ok_or_else(|| numeric_error(backend))?;
-                    host_peak = host_peak.max(cast_peak);
-                }
-            }
+            DeviceKind::Cuda => {}
             _ => return Err(LoadError::InvalidConfiguration),
         }
         required_execution_bytes = required_execution_bytes
@@ -97,7 +83,18 @@ pub(super) fn calculate(
 
     match device_kind {
         DeviceKind::Cpu => cpu_footprints(backend, required_execution_bytes, host_peak),
-        DeviceKind::Cuda => Ok(cuda_footprints(required_execution_bytes, host_peak)),
+        DeviceKind::Cuda => {
+            let transfer_plan = transfer_plan.ok_or(LoadError::InvalidConfiguration)?;
+            if transfer_plan.total_execution_bytes() != required_execution_bytes {
+                return Err(invalid_model_failure(backend, CODE_NUMERIC_OVERFLOW));
+            }
+            let host_peak = VERIFICATION_BUFFER_BYTES_U64
+                .checked_add(transfer_plan.maximum_host_staging_bytes())
+                .and_then(|bytes| bytes.checked_add(transfer_plan.metadata_bytes()))
+                .and_then(|bytes| bytes.checked_add(transfer_owner_metadata_bytes))
+                .ok_or_else(|| numeric_error(backend))?;
+            Ok(cuda_footprints(required_execution_bytes, host_peak))
+        }
         _ => Err(LoadError::InvalidConfiguration),
     }
 }
@@ -225,14 +222,19 @@ mod tests {
 
     use candle_core::DType;
     use candle_transformers::models::llama::Config;
-    use domain_contracts::{BackendId, DeviceKind, MemoryFootprint};
+    use domain_contracts::{
+        BackendId, DeviceKind, LoadError, MemoryBudget, MemoryFootprint, MemoryKind,
+    };
 
-    use super::{CalculatedFootprints, calculate, sequence_cache_bytes_per_token};
-    use crate::loader::identity::{EstablishedIdentityAuthority, EstablishedShardIdentity};
+    use super::{
+        CalculatedFootprints, calculate, sequence_cache_bytes_per_token, validate_memory_plan,
+    };
+    use crate::loader::identity::{ContentIdentityEstablishment, EstablishedContentIdentity};
     use crate::loader::manifest::{
         InspectedShard, InspectedTensor, SourceTensorDType, TensorShape,
     };
-    use crate::source::CandleShardIdentity;
+    use crate::loader::transfer_batch::TransferBatchOwner;
+    use crate::loader::transfer_plan::{MAXIMUM_BATCH_ENTRIES, TransferPlan};
 
     #[test]
     fn exact_cpu_and_cuda_formulas_use_required_tensors_only() -> Result<(), String> {
@@ -250,6 +252,8 @@ mod tests {
                 std::slice::from_ref(&shard),
                 DeviceKind::Cpu,
                 DType::F16,
+                None,
+                0,
             )
             .map_err(|error| format!("CPU footprint: {error:?}"))?,
             CalculatedFootprints {
@@ -267,12 +271,26 @@ mod tests {
                 },
             }
         );
+        let transfer_plan = TransferPlan::build(backend, std::slice::from_ref(&shard), DType::F16)
+            .map_err(|error| format!("transfer plan: {error:?}"))?;
+        let transfer_owner = TransferBatchOwner::allocate(backend, MAXIMUM_BATCH_ENTRIES)
+            .map_err(|error| format!("transfer owner: {error:?}"))?;
+        let owner_metadata = transfer_owner
+            .metadata_bytes(backend)
+            .map_err(|error| format!("owner metadata: {error:?}"))?;
+        let expected_cuda_host = 65_536_u64
+            .checked_add(transfer_plan.maximum_host_staging_bytes())
+            .and_then(|bytes| bytes.checked_add(transfer_plan.metadata_bytes()))
+            .and_then(|bytes| bytes.checked_add(owner_metadata))
+            .ok_or_else(|| "expected CUDA host footprint overflow".to_owned())?;
         assert_eq!(
             calculate(
                 backend,
                 std::slice::from_ref(&shard),
                 DeviceKind::Cuda,
                 DType::F16,
+                Some(&transfer_plan),
+                owner_metadata,
             )
             .map_err(|error| format!("CUDA footprint: {error:?}"))?,
             CalculatedFootprints {
@@ -285,7 +303,7 @@ mod tests {
                 loading_peak_footprint: MemoryFootprint {
                     host_weight_bytes: 0,
                     device_weight_bytes: 28,
-                    host_working_bytes: 65_577,
+                    host_working_bytes: expected_cuda_host,
                     device_working_bytes: 0,
                 },
             }
@@ -303,6 +321,60 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn loading_budget_and_current_device_availability_are_exact() -> Result<(), String> {
+        let backend = BackendId::new(1);
+        let footprint = MemoryFootprint {
+            host_weight_bytes: 0,
+            device_weight_bytes: 100,
+            host_working_bytes: 50,
+            device_working_bytes: 0,
+        };
+        let exact = MemoryBudget {
+            host_bytes: 50,
+            device_bytes: 100,
+        };
+        validate_memory_plan(backend, footprint, exact, Some(100))
+            .map_err(|error| format!("exact budget rejected: {error:?}"))?;
+
+        for (budget, available, kind, required, observed_available) in [
+            (
+                MemoryBudget {
+                    host_bytes: 49,
+                    device_bytes: 100,
+                },
+                Some(100),
+                MemoryKind::Host,
+                50,
+                49,
+            ),
+            (
+                MemoryBudget {
+                    host_bytes: 50,
+                    device_bytes: 99,
+                },
+                Some(100),
+                MemoryKind::Device,
+                100,
+                99,
+            ),
+            (exact, Some(99), MemoryKind::Device, 100, 99),
+        ] {
+            let error = validate_memory_plan(backend, footprint, budget, available)
+                .err()
+                .ok_or_else(|| "one-byte-low budget unexpectedly passed".to_owned())?;
+            assert_eq!(
+                error,
+                LoadError::InsufficientMemory {
+                    kind,
+                    required_bytes: required,
+                    available_bytes: observed_available,
+                }
+            );
+        }
+        Ok(())
+    }
+
     fn calculation_shard(tensors: Vec<InspectedTensor>) -> Result<InspectedShard, String> {
         let executable = std::env::current_exe().map_err(|error| error.to_string())?;
         let file = File::open(executable).map_err(|error| error.to_string())?;
@@ -311,11 +383,11 @@ mod tests {
             file_length: 0,
             data_start: 0,
             prefix_header_sha256: [0; 32],
-            source_identity: CandleShardIdentity::Unverified,
-            established_identity: Some(EstablishedShardIdentity {
+            source_expected_content: None,
+            established_content_identity: Some(EstablishedContentIdentity {
                 byte_length: 0,
                 sha256: [0; 32],
-                authority: EstablishedIdentityAuthority::UnverifiedBaseline,
+                establishment: ContentIdentityEstablishment::LocallyEstablishedBaseline,
             }),
             tensors,
         })

@@ -3,12 +3,12 @@
 use std::num::NonZeroU32;
 use std::time::Duration;
 
-use candle_backend::{CandleLlamaLoader, CandleLlamaSource};
+use candle_backend::CandleLoadObservationSnapshot;
 use domain_contracts::{
     CapabilitySet, DecodeOutcome, DeviceId, DeviceKind, ExecutionDevice, FinishReason,
-    LoadConfiguration, LoadPlan, MemoryBudget, MemoryFootprint, ModelArchitecture, ModelGeneration,
-    ModelHandle, ModelLoader, PrefillOutcome, PreparedLoad, QuantizationFormat, RequestId,
-    ScalarType, ScalarTypeSet, SequenceConfiguration, TokenId, UnloadPolicy,
+    LoadConfiguration, MemoryBudget, MemoryFootprint, ModelArchitecture, ModelGeneration,
+    ModelHandle, PrefillOutcome, QuantizationFormat, RequestId, ScalarType, ScalarTypeSet,
+    SequenceConfiguration, TokenId, UnloadPolicy,
 };
 use inference_runtime::{LoadReceipt, RuntimeCommand, RuntimeEvent, UnloadStatus};
 
@@ -16,6 +16,7 @@ use super::harness::{CANDLE_BACKEND, FIXTURE_MODEL_ID, HostedE0Harness, TimedEve
 use crate::error::{BenchmarkError, BenchmarkResult};
 use crate::evidence::{e0_load_receipt_record, prepared_load_record};
 use crate::fixture::{CONTEXT_CAPACITY, VOCABULARY_SIZE, VerifiedFixture};
+use crate::load_observation::candle_loader_observation_record;
 use crate::report::SyntheticLoadEvidence;
 
 const CPU_DEVICE: DeviceId = DeviceId::new(0);
@@ -36,7 +37,6 @@ pub(super) fn load_fixture(
     fixture: &VerifiedFixture,
 ) -> BenchmarkResult<LoadedFixture> {
     let source = fixture.source()?;
-    let plan = prepare_fixture_load(&source)?;
     let ticket = harness.ticket()?;
     let command = RuntimeCommand::LoadModel {
         ticket,
@@ -47,7 +47,7 @@ pub(super) fn load_fixture(
     let TimedEvent { event, elapsed } =
         harness.timed_exchange(ticket, command, "fixture model load")?;
     let loaded = loaded_receipt(&event)?;
-    let evidence = validate_loaded_fixture(&loaded, &plan)?;
+    let evidence = validate_loaded_fixture(&loaded, harness.load_observation_snapshot())?;
     harness.record_loaded_model(loaded.handle)?;
     Ok(LoadedFixture {
         receipt: loaded,
@@ -73,38 +73,29 @@ fn loaded_receipt(event: &RuntimeEvent) -> BenchmarkResult<LoadReceipt> {
     }
 }
 
-fn prepare_fixture_load(source: &CandleLlamaSource) -> BenchmarkResult<LoadPlan> {
-    let configuration = LoadConfiguration {
+const fn fixture_load_configuration() -> LoadConfiguration {
+    LoadConfiguration {
         handle: ModelHandle::new(FIXTURE_MODEL_ID, ModelGeneration::new(1)),
         execution_device: ExecutionDevice::new(CPU_DEVICE, DeviceKind::Cpu),
         memory_budget: MemoryBudget {
             host_bytes: u64::MAX,
             device_bytes: 0,
         },
-    };
-    let mut loader = CandleLlamaLoader::new(CANDLE_BACKEND);
-    let prepared = loader
-        .prepare_load(source, &configuration)
-        .map_err(|error| {
-            BenchmarkError::new(format!(
-                "observer prepare_load failed for the deterministic fixture: {error:?}"
-            ))
-        })?;
-    let plan = *prepared.plan();
-    drop(prepared);
-    if plan.accepted_configuration != configuration {
-        return Err(BenchmarkError::new(
-            "fixture prepare_load did not retain its exact observer configuration",
-        ));
     }
-    prepared_load_record(&plan)?;
-    Ok(plan)
 }
 
 fn validate_loaded_fixture(
     loaded: &LoadReceipt,
-    plan: &LoadPlan,
+    observation: CandleLoadObservationSnapshot,
 ) -> BenchmarkResult<SyntheticLoadEvidence> {
+    let plan = observation.plan.ok_or_else(|| {
+        BenchmarkError::new("actual hosted Candle load completed without an observed load plan")
+    })?;
+    if plan.accepted_configuration != fixture_load_configuration() {
+        return Err(BenchmarkError::new(
+            "actual hosted Candle load did not retain the exact fixture configuration",
+        ));
+    }
     let descriptor = loaded.descriptor;
     let required = CapabilitySet::PREFILL.union(CapabilitySet::INCREMENTAL_DECODE);
     if loaded.handle.id != FIXTURE_MODEL_ID
@@ -129,8 +120,9 @@ fn validate_loaded_fixture(
         ));
     }
     Ok(SyntheticLoadEvidence {
-        prepared: prepared_load_record(plan)?,
-        receipt: e0_load_receipt_record(plan, loaded)?,
+        prepared: prepared_load_record(&plan)?,
+        receipt: e0_load_receipt_record(&plan, loaded)?,
+        loader: candle_loader_observation_record(observation, Some(loaded))?,
     })
 }
 
@@ -495,4 +487,127 @@ fn require_logits_length(logits: &[f32], expected: usize, operation: &str) -> Be
 fn usize_from_u32(value: u32) -> BenchmarkResult<usize> {
     usize::try_from(value)
         .map_err(|_| BenchmarkError::new("u32-to-usize capacity conversion failed"))
+}
+
+#[cfg(test)]
+mod tests {
+    use candle_backend::{CandleLoadCleanupOutcome, CandleLoadObservationOutcome};
+    use serde_json::Value;
+
+    use super::{HostedE0Harness, load_fixture};
+    use crate::error::{BenchmarkError, BenchmarkResult};
+    use crate::fixture::VerifiedFixture;
+    use crate::report::SCHEMA_VERSION;
+
+    #[test]
+    fn hosted_fixture_load_produces_actual_schema_five_observation() -> Result<(), String> {
+        let fixture = VerifiedFixture::verify().map_err(|error| error.to_string())?;
+        let (mut harness, _) = HostedE0Harness::start(1, 1).map_err(|error| error.to_string())?;
+        let body = (|| {
+            let loaded = load_fixture(&mut harness, &fixture)?;
+            let snapshot = harness.load_observation_snapshot();
+            let plan = snapshot.plan.ok_or_else(|| {
+                BenchmarkError::new("hosted fixture observation omitted its actual load plan")
+            })?;
+            if snapshot.required_bytes_read != 3_680
+                || snapshot.whole_file_verification_bytes_read != 4_800
+                || snapshot.transfer_batches != 0
+                || snapshot.loading_device_synchronizations != 0
+                || snapshot.outcome != CandleLoadObservationOutcome::Succeeded
+                || snapshot.cleanup_outcome != CandleLoadCleanupOutcome::NotRequired
+                || snapshot.cleanup_attempts != 0
+                || snapshot.cleanup_failures != 0
+                || snapshot.preparation_duration.is_none()
+                || snapshot.materialization_duration.is_none()
+            {
+                return Err(BenchmarkError::new(
+                    "hosted fixture observation did not report the exact successful CPU load facts",
+                ));
+            }
+            if loaded.receipt.handle != plan.accepted_configuration.handle
+                || loaded.receipt.execution_device != plan.accepted_configuration.execution_device
+                || loaded.receipt.execution_scalar_type != plan.execution_scalar_type
+                || loaded.receipt.descriptor != plan.descriptor
+                || loaded.receipt.reserved_footprint != plan.final_footprint
+            {
+                return Err(BenchmarkError::new(
+                    "hosted fixture receipt did not match its observed transaction plan",
+                ));
+            }
+            if SCHEMA_VERSION != 5 {
+                return Err(BenchmarkError::new(
+                    "hosted fixture observation is not attached to synthetic schema 5",
+                ));
+            }
+
+            let evidence = serde_json::to_value(&loaded.evidence).map_err(|error| {
+                BenchmarkError::new(format!("serialize hosted schema-5 load evidence: {error}"))
+            })?;
+            require_json_u64(&evidence, &["loader", "required_bytes_read"], 3_680)?;
+            require_json_u64(
+                &evidence,
+                &["loader", "whole_file_verification_bytes_read"],
+                4_800,
+            )?;
+            require_json_u64(&evidence, &["loader", "transfer_batches"], 0)?;
+            require_json_u64(&evidence, &["loader", "loading_device_synchronizations"], 0)?;
+            require_json_str(&evidence, &["loader", "outcome"], "succeeded")?;
+            require_json_str(&evidence, &["loader", "cleanup_outcome"], "not_required")?;
+            require_equal_paths(
+                &evidence,
+                &["prepared", "exact_final_footprint"],
+                &["loader", "planned_final_footprint"],
+            )?;
+            require_equal_paths(
+                &evidence,
+                &["receipt", "reserved_footprint"],
+                &["loader", "actual_e0_final_ownership"],
+            )?;
+            Ok(())
+        })();
+        harness
+            .finish(body)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    fn value_at<'a>(value: &'a Value, path: &[&str]) -> BenchmarkResult<&'a Value> {
+        let mut current = value;
+        for key in path {
+            current = current.get(*key).ok_or_else(|| {
+                BenchmarkError::new(format!("hosted schema-5 evidence omitted {path:?}"))
+            })?;
+        }
+        Ok(current)
+    }
+
+    fn require_json_u64(value: &Value, path: &[&str], expected: u64) -> BenchmarkResult {
+        if value_at(value, path)?.as_u64() == Some(expected) {
+            Ok(())
+        } else {
+            Err(BenchmarkError::new(format!(
+                "hosted schema-5 evidence carried the wrong value at {path:?}"
+            )))
+        }
+    }
+
+    fn require_json_str(value: &Value, path: &[&str], expected: &str) -> BenchmarkResult {
+        if value_at(value, path)?.as_str() == Some(expected) {
+            Ok(())
+        } else {
+            Err(BenchmarkError::new(format!(
+                "hosted schema-5 evidence carried the wrong value at {path:?}"
+            )))
+        }
+    }
+
+    fn require_equal_paths(value: &Value, left: &[&str], right: &[&str]) -> BenchmarkResult {
+        if value_at(value, left)? == value_at(value, right)? {
+            Ok(())
+        } else {
+            Err(BenchmarkError::new(format!(
+                "hosted schema-5 evidence disagreed between {left:?} and {right:?}"
+            )))
+        }
+    }
 }

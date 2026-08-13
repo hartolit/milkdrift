@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-08
-- **Amended:** 2026-08-10 for artifact loading, retained-ownership certainty, and the application boundary
+- **Amended:** 2026-08-10 for artifact loading, retained-ownership certainty, and the application boundary; 2026-08-13 for honest expected-content input, bounded accelerator transfer batches, exact verifier/staging ownership, and loader organization
 - **Phase:** 12 plus post-audit artifact-loading, runtime-ownership, and application-boundary hardening
 - **Implementation:** `58490fe693fef7a2635956181088664cd90685e8`, `12510695aa29be6a2665dbf3777cccbb8172c2d1`, `d4a1e4324a6793becc56147e4b2e3246189d2693`, `b43d0f47953c5319a41340d9087b7fd8f07b3280`, and `1f91cba691a8099805fa31f576079e79c282c73e`
 - **Amends:** [ADR-0019](0019-explicit-cuda-execution-foundation.md) for scalar/source terminology, load planning/materialization, E1 loaded facts, model-catalogue persistence, and Phase 12 evidence claims
@@ -80,18 +80,30 @@ After materialization begins, failure returns `FailedLoad<FailedPreparation>` co
 
 Candle completes bounded selected-shard/header inspection before device initialization. It sorts complete path/identity pairs, opens and retains every shard, validates all tensor metadata and required Llama shapes, and records exact ranges plus the retained prefix/header digest. It does not scan payloads merely to inspect structure.
 
-There are two identity paths:
+There are two Candle verification paths:
 
-- `VerifiedImmutable` carries exact length and whole-file SHA-256 from a source whose content-addressing and immutability contract is proven. Only this authority skips a pre-admission baseline pass.
-- `ProjectEstablished` and `Unverified` are mutable-source fallbacks. Candle hashes its retained file sequentially before admission; a supplied project digest must match, while an unverified source establishes a fresh baseline.
+- `CandleExpectedContentIdentity` carries only the exact expected length and whole-file SHA-256. It makes no provider-provenance or path-immutability claim and may skip Candle's local pre-admission baseline pass.
+- an unverified local shard carries no reusable expectation, so Candle hashes its retained file sequentially before admission and establishes a fresh baseline.
 
-A Hugging Face LFS SHA-256 paired with exact file size at the resolved commit is the current provider-verified authority. Cache names, symlink targets, ETags, Git object IDs, inode/mtime facts, and provider conventions are not cryptographic proof. When Hub LFS identity is unavailable, the Hub adapter establishes a local whole-file digest, marks it project-established, and Candle revalidates it before admission.
+Provider authority remains a separate Hub/application evidence fact. The Hub adapter accepts an exact LFS SHA-256 plus size at the resolved commit as `HuggingFaceLfs`; for a non-LFS file it verifies the exact Git blob SHA-1 at that commit while streaming the bytes, derives SHA-256, and records `HuggingFaceGitBlob`; project-computed local evidence remains `ProjectEstablished`. Cache names, symlink targets, ETags, unverified object identifiers, inode/mtime facts, and provider conventions alone are not proof. E1 passes only exact length/SHA-256 expectations into Candle, which verifies every materialization stream before publication.
 
-Materialization reads every retained shard sequentially from byte zero. It verifies the retained header before payload processing, hashes ignored ranges through one fixed 64 KiB buffer, stages only required ranges, and compares exact EOF/length and the accepted whole-shard digest before model construction/publication. There are no per-tensor seeks, payload digests, mmap, unsafe code, or whole-model host retention. Deleting or replacing the path cannot redirect the retained file; same-inode mutation, truncation, and extension fail before publication. The parsed configuration, exact load configuration, selected device, inspected shards, and plan remain in the opaque preparation.
+Materialization reads every retained shard sequentially from byte zero. It verifies the retained header before payload processing, hashes ignored ranges through one fixed 64 KiB buffer, stages only required ranges, and compares exact EOF/length and the accepted whole-shard digest before model construction/publication. CPU tensors enter final ownership sequentially. Accelerator transfers enter the bounded transaction described below. There are no per-tensor seeks, payload digests, mmap, unsafe code, or whole-model host retention. Deleting or replacing the path cannot redirect the retained file; same-inode mutation, truncation, and extension fail before publication. The parsed configuration, exact load configuration, selected device, inspected shards, immutable batch partition, and plan remain in the opaque preparation.
 
 ### Bound inspection metadata independently
 
-One private production limit set rejects hostile growth before device initialization: at most 256 shards; 8 MiB per header and 64 MiB aggregate headers; 16,384 tensors; 512 bytes per name and 8 MiB aggregate names; rank 8; dimension extent 1,048,576 and 131,072 aggregate dimensions; 1,024 metadata entries with 256-byte keys, 4 KiB values, and 4 MiB aggregate metadata strings; and 64 MiB final owned inspection inventory. Configuration bytes are capped at 1 MiB. Custom deserializers enforce these limits while traversing JSON, fixed-rank shape storage avoids per-shape vectors, and checked reservations turn allocation failures into deterministic adapter failures. These resources are separately bounded rather than folded into tensor `MemoryFootprint`. Required-name/load-map metadata is also bounded by the tensor/name ceilings: one name clone is transient per required tensor, and failure-safe model construction temporarily duplicates one map's names and shallow tensor handles under the same bounds. Platform-dependent map bucket overhead remains outside exact tensor accounting but cannot exceed the bounded entry count.
+One private production limit set rejects hostile growth before device initialization: at most 256 shards; 8 MiB per header and 64 MiB aggregate headers; 16,384 tensors; 512 bytes per name and 8 MiB aggregate names; rank 8; dimension extent 1,048,576 and 131,072 aggregate dimensions; 1,024 metadata entries with 256-byte keys, 4 KiB values, and 4 MiB aggregate metadata strings; and 64 MiB final owned inspection inventory. Configuration bytes are capped at 1 MiB. Custom deserializers enforce these limits while traversing JSON, fixed-rank shape storage avoids per-shape vectors, and checked reservations turn allocation failures into deterministic adapter failures. Parsed configuration/header/inspection and required-name/load-map metadata remain separately bounded. Accelerator admission additionally counts the actual retained heap capacities of `TransferPlan`'s `TransferBatchPlan`/`TransferEntryPlan` vectors and `TransferBatchOwner`'s `TransferBatchEntry` vector in host working memory. Names move from manifest to batch to final map. Map buckets, additional tensor handles outside the counted plan/owner vector allocations, allocator overhead, fragmentation, and other physical observations remain outside exact logical ownership rather than receiving a fabricated portable byte count.
+
+### Use deterministic bounded accelerator transfer transactions
+
+Preparation constructs one immutable `TransferPlan` which the footprint planner and materializer both consume. It stores flat `TransferEntryPlan` inventory plus `TransferBatchPlan` ranges and is not independently rederived during loading. `PREFERRED_BATCH_HOST_STAGING_BYTES` is 256 MiB and `MAXIMUM_BATCH_ENTRIES` is 64. A nonempty accelerator batch closes before adding a tensor when the candidate would exceed either policy. Every shard end fixes a final batch boundary, so no batch crosses shards. The first tensor in an empty batch is always admitted; if its candidate peak exceeds 256 MiB, it becomes an oversized singleton and remains subject to the accepted model/load budget.
+
+Each private `TransferBatchEntry` owns its manifest position, name, and commit state plus its source tensor, optional converted host tensor, and transferred device tensor. The sole `TransferBatchOwner` records checked byte/count, active-batch, synchronization, and committed-entry accounting. Transfers may be enqueued only after these owners are reachable. Full intermediate batches synchronize as their planned boundary is reached. A shard's final planned batch instead remains unsynchronized until exact EOF, length, and whole-shard SHA-256 succeed, so a late identity failure retains every enqueued endpoint for cleanup rather than committing bytes from the wrong source.
+
+When a planned batch is eligible to close—immediately at an intermediate boundary, or after whole-shard identity for the shard-final boundary—endpoint validation and exactly one synchronization must both complete before commit. The owner then inserts one shallow device handle at a time while retaining the original device and every host endpoint in the batch; explicit per-entry commit state makes a mid-commit failure recoverable. Only after all entries commit does the owner release host staging and reset for the next planned batch.
+
+Any failure consumes the prepared value into the same sole failed-preparation owner. That owner retains all earlier committed tensors, the complete current batch, open shards, configuration, device, accepted plan, and any constructed model. Cleanup synchronizes before release. A cleanup synchronization failure changes none of those ownership facts, so retry is idempotent and cannot double-release a committed or pending tensor.
+
+After all batches commit and all shards verify, the locked Candle Llama constructor creates shallow handles over the existing weight tensors. This construction enqueues no distinct device work. Normal loading therefore has one synchronization per nonempty transfer batch and no unconditional final synchronization; cleanup synchronization is a separate failure-release boundary.
 
 ### Distinguish exact final ownership from the loading peak
 
@@ -103,31 +115,44 @@ For required tensor `i`, let:
 - `E_i` be exact execution bytes;
 - `A_i = S_i + alignment_i - 1` be the aligned staging allocation bound;
 - `P_i` be required execution bytes already retained before tensor `i`;
-- `R = sum(E_i)` be all required Llama execution bytes.
+- `R = sum(E_i)` be all required Llama execution bytes;
+- `V = 64 KiB` be the verification buffer live for the current shard;
+- `M_plan = capacity(TransferPlan.batches) * size_of::<TransferBatchPlan>() + capacity(TransferPlan.entries) * size_of::<TransferEntryPlan>()`;
+- `M_owner = capacity(TransferBatchOwner.entries) * size_of::<TransferBatchEntry>()`;
+- and `M = M_plan + M_owner`, using the actual checked capacities retained by the prepared load.
 
-Unused tensors enter no formula. The CPU final footprint owns `R` host weight bytes. Its host loading peak is:
+Unused tensors enter no formula. CPU creates neither `TransferPlan` nor `TransferBatchOwner`, so it has no `M` term. The CPU final footprint owns `R` host weight bytes. Its host loading peak is:
 
 ```text
 Hcpu = max(
     R,
-    max_i(P_i + A_i + S_i),
-    max_cast_i(P_i + S_i + E_i)
+    V,
+    max_i(V + P_i + A_i + S_i),
+    max_cast_i(V + P_i + S_i + E_i)
 )
 ```
 
 The CPU final footprint records `R` host weight bytes. The CPU loading footprint records `R` host weight bytes and `Hcpu - R` host working bytes.
 
-The CUDA final footprint owns `R` device weight bytes. Its host staging peak is:
+For tensor `i` in accelerator batch `b`, additionally let:
+
+- `Q_i = S_i` when no cast is required, otherwise `Q_i = S_i + E_i`, because the batch retains both source and converted host tensors through synchronization;
+- `C_b,i = sum(Q_j)` for entries `j` already retained in batch `b`; and
+- `W_b` be the exact implemented live host tensor-staging peak for that batch:
 
 ```text
-Hcuda = max(
-    max_i(A_i + S_i),
-    max_i(E_i),
-    max_cast_i(S_i + E_i)
+W_b = max(
+    sum_i(Q_i),
+    max_i(C_b,i + A_i + S_i),
+    max_cast_i(C_b,i + S_i + E_i)
 )
+
+Haccelerator = M + V + max_b(W_b)
 ```
 
-The CUDA final footprint records `R` device weight bytes. The CUDA loading footprint records `Hcuda` host working bytes, `R` device weight bytes, and zero device working bytes. The descriptor separately reports the exact sequence-cache byte rate at execution width. Every operation uses checked arithmetic. The fixed 64 KiB verification buffer and bounded config/header/inspection metadata are governed by separate structural ceilings rather than `MemoryFootprint`; allocator bookkeeping/fragmentation, driver/context allocation, process RSS, and whole-device observations remain outside deterministic tensor accounting.
+`sum_i(Q_i)` is the post-enqueue retained host payload; `C_b,i + A_i + S_i` is the aligned-payload/source construction phase; and the cast term is the simultaneous prior-batch/source/execution phase. `M` and `V` are additive because the plan/owner capacities remain retained throughout materialization and the verifier remains allocated throughout staging and while the shard-final batch waits for identity verification and then synchronizes/commits. The candidate `W_b` is also the quantity compared with the preferred byte target, so the limit is tied to the actual ownership graph rather than added as a generic margin.
+
+The accelerator final footprint records `R` device weight bytes. The accelerator loading footprint records `Haccelerator` host working bytes, `R` device weight bytes, and zero device working bytes. During commit a batch entry and the final map temporarily hold shallow handles to the same storage; model construction adds another shallow handle before the map is released. These aliases do not duplicate payload, and all transferred-but-uncommitted plus committed storage remains within `R`, so it is classified as device weight ownership rather than inventing device working bytes. The descriptor separately reports the exact sequence-cache byte rate at execution width. Every operation uses checked arithmetic. Parsed config/header/inspection and name/map metadata remain governed by their separate structural ceilings; allocator bookkeeping/fragmentation, driver/context allocation, process RSS, and whole-device observations are not represented as exact ownership.
 
 ### Admit the peak at E0 before materialization
 
@@ -162,6 +187,12 @@ The raw adapter failed typestate performs no hidden abandonment. It is encapsula
 
 ADR-0006 remains authoritative for terminal shutdown: if the finite explicit cleanup budget is exhausted while the complete E0 runtime still owns native resources, shutdown returns `TerminalCleanupRetention` with the first exhausted owner and a bounded summary distinguishing failed preparations, verified models, incompatible models, retained sequences, and aggregate unverified evidence. The worker may then use the named `RetainUntilProcessExit` disposition and retain the complete runtime allocation only after publishing that structured terminal failure. A directly owned synchronous runtime also retains unresolved backend-owner maps on implicit drop, because explicit cleanup success is the only ordinary drop authorization. Process termination remains the reclamation boundary. Endpoint disconnection or worker-handle absence never becomes proof of release. This is distinct from ordinary prepared-load retry.
 
+### Keep loading policy adapter-owned and modules cohesive
+
+Transfer partitioning, ownership, synchronization, and footprint simulation are Candle-adapter responsibilities. E0 admits only the portable plan and owns the opaque failed typestate; E1 retains provider provenance and product lifecycle evidence. CUDA is the only implemented accelerator path. This decision adds no AMD execution and no NVIDIA-specific batch type or policy to E0, E1, or portable workflow contracts. Another accelerator may reuse the adapter-private partition only after its transfer/synchronization semantics establish the same lifetime and cleanup proof.
+
+Loader production code is organized by invariant: `config` and `safetensors` own bounded decoding; `manifest` owns inspected source layout; `identity` owns content establishment; `configuration_policy`, `scalar`, and `schema` own supported execution policy; `payload` owns aligned streaming and CPU tensor construction; `transfer_plan` owns `TransferPlan`, `TransferBatchPlan`, and `TransferEntryPlan`; `transfer_batch` owns the sole live `TransferBatchOwner`; `prepared` coordinates materialization; `construction` builds Llama through a borrowed tensor-map backend; `footprint` consumes the same partition/lifetimes; and `cleanup` owns failed release. The large corpora live in `config/tests.rs`, `safetensors/tests.rs`, and `scalar/tests.rs` instead of inline production bodies. This introduces neither another crate nor hot-path dynamic dispatch.
+
 ### Keep E1 and Slint narrow
 
 E1 receives lower descriptor/receipt facts but does not reproduce Candle policy.
@@ -194,6 +225,10 @@ No default feature reaches CUDA. Explicit CUDA failure never falls back to CPU. 
 - **Treat configuration metadata as homogeneous observed truth:** rejected because model configuration does not enumerate tensor headers.
 - **Accept every floating mixture and cast it:** rejected because precision, model compatibility, and memory behavior need an explicit reviewed matrix.
 - **Rely on scope exit after partial CUDA work:** rejected because cleanup/synchronization can fail and must preserve the only owner for retry.
+- **Synchronize each transferred tensor:** rejected because the synchronization boundary would no longer match the bounded multi-entry ownership transaction.
+- **Allow one unbounded transfer batch:** rejected because neither host tensor staging nor batch-entry metadata would have a deterministic bound.
+- **Add a generic batch margin:** rejected because loading admission must simulate the implemented simultaneous source, cast, retained-batch, verification-buffer, and final-weight graph.
+- **Retain an unconditional final load synchronization:** rejected because locked Llama construction is handle-only and establishes no distinct pending device-work boundary.
 - **Expose tensor/shard DTOs through portable contracts or E1:** rejected because no generic consumer needs Safetensors-specific inventory.
 - **Let E1 infer conversions from device or declaration:** rejected because that duplicates adapter policy and can diverge from the accepted preparation.
 - **Persist observed/execution facts for display:** rejected because they are load-time evidence, not durable selection/preferences.
@@ -206,7 +241,9 @@ No default feature reaches CUDA. Explicit CUDA failure never falls back to CPU. 
 - Mixed F16/F32 and BF16/F32 **required** layouts are supported only under the exact reviewed declaration policy; complete observed extras cannot select execution.
 - Structurally understood unused tensors are inspected and identity-bound but never staged, converted, transferred, or retained.
 - CPU behavior remains F32→F32, F16→F16, and BF16→F32; CUDA policy remains explicit and capability-checked.
-- Final and loading footprints contain concrete bytes only; sequence-cache rate is separate, and ignored extras enter neither load footprint.
+- Accelerator transfers use deterministic 256 MiB-preferred, 64-entry, shard-bounded batches with an allowed oversized singleton.
+- Normal loading synchronizes once per nonempty transfer batch and not after handle-only Llama construction.
+- Final and loading footprints contain the implemented tensor and verification-buffer bytes; sequence-cache rate is separate, and ignored extras enter neither load footprint.
 - Failed preparations retain the exact admitted loading peak; verified model unload failures retain exact final ownership.
 - Contract-violating complete models retain explicit unverified evidence, block admission, and are never mislabeled exact.
 - E0 can retry or exhaust a failed partial load or incompatible complete model without publishing it or losing generation-safe identity/accounting state.
