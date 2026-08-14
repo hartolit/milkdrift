@@ -7,7 +7,7 @@ use domain_contracts::{BackendId, LoadError};
 
 use crate::failure::{CODE_INSPECTION_ALLOCATION, CODE_NUMERIC_OVERFLOW};
 
-use super::manifest::InspectedShard;
+use super::manifest::{InspectedShard, InspectedTensor};
 use super::{host_memory_failure, invalid_model_failure, unsupported_scalar};
 
 /// Preferred maximum live tensor staging for one accelerator batch.
@@ -67,7 +67,6 @@ pub(super) struct TransferBatchPlan {
     shard_index: usize,
     entry_start: usize,
     entry_count: usize,
-    host_peak_bytes: u64,
     retained_host_bytes: u64,
     transferred_device_bytes: u64,
     last_in_shard: bool,
@@ -82,17 +81,10 @@ impl TransferBatchPlan {
         self.entry_count
     }
 
-    #[cfg(test)]
-    pub(super) const fn host_peak_bytes(self) -> u64 {
-        self.host_peak_bytes
-    }
-
-    #[cfg(test)]
     pub(super) const fn retained_host_bytes(self) -> u64 {
         self.retained_host_bytes
     }
 
-    #[cfg(test)]
     pub(super) const fn transferred_device_bytes(self) -> u64 {
         self.transferred_device_bytes
     }
@@ -110,6 +102,222 @@ pub(super) struct TransferPlan {
     maximum_host_staging_bytes: u64,
     total_execution_bytes: u64,
     metadata_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PendingTransferBatch {
+    shard_index: usize,
+    entry_start: usize,
+    entry_count: usize,
+    host_peak_bytes: u64,
+    retained_host_bytes: u64,
+    transferred_device_bytes: u64,
+}
+
+impl PendingTransferBatch {
+    const fn new(shard_index: usize, entry_start: usize) -> Self {
+        Self {
+            shard_index,
+            entry_start,
+            entry_count: 0,
+            host_peak_bytes: 0,
+            retained_host_bytes: 0,
+            transferred_device_bytes: 0,
+        }
+    }
+
+    const fn is_empty(self) -> bool {
+        self.entry_count == 0
+    }
+
+    fn should_split_before(
+        self,
+        backend: BackendId,
+        policy: TransferPolicy,
+        entry: TransferEntryPlan,
+    ) -> Result<bool, LoadError> {
+        if self.is_empty() {
+            return Ok(false);
+        }
+        let projected_peak = candidate_peak(
+            backend,
+            self.retained_host_bytes,
+            self.host_peak_bytes,
+            entry,
+        )?;
+        Ok(self.entry_count == policy.maximum_entries
+            || projected_peak > policy.preferred_host_staging_bytes)
+    }
+
+    fn push(&mut self, backend: BackendId, entry: TransferEntryPlan) -> Result<(), LoadError> {
+        self.host_peak_bytes = candidate_peak(
+            backend,
+            self.retained_host_bytes,
+            self.host_peak_bytes,
+            entry,
+        )?;
+        self.retained_host_bytes = self
+            .retained_host_bytes
+            .checked_add(entry.retained_host_bytes)
+            .ok_or_else(|| numeric_error(backend))?;
+        self.transferred_device_bytes = self
+            .transferred_device_bytes
+            .checked_add(entry.execution_bytes)
+            .ok_or_else(|| numeric_error(backend))?;
+        self.entry_count = self
+            .entry_count
+            .checked_add(1)
+            .ok_or_else(|| numeric_error(backend))?;
+        Ok(())
+    }
+
+    const fn finish(self, last_in_shard: bool) -> TransferBatchPlan {
+        TransferBatchPlan {
+            shard_index: self.shard_index,
+            entry_start: self.entry_start,
+            entry_count: self.entry_count,
+            retained_host_bytes: self.retained_host_bytes,
+            transferred_device_bytes: self.transferred_device_bytes,
+            last_in_shard,
+        }
+    }
+}
+
+struct TransferPlanBuilder {
+    backend: BackendId,
+    execution_dtype: DType,
+    execution_width: u64,
+    policy: TransferPolicy,
+    plan: TransferPlan,
+}
+
+impl TransferPlanBuilder {
+    fn new(
+        backend: BackendId,
+        execution_dtype: DType,
+        policy: TransferPolicy,
+    ) -> Result<Self, LoadError> {
+        if policy.maximum_entries == 0 {
+            return Err(numeric_error(backend));
+        }
+        let execution_width =
+            dtype_bytes(execution_dtype).ok_or_else(|| unsupported_scalar(backend))?;
+        Ok(Self {
+            backend,
+            execution_dtype,
+            execution_width,
+            policy,
+            plan: TransferPlan {
+                batches: Vec::new(),
+                entries: Vec::new(),
+                maximum_host_staging_bytes: 0,
+                total_execution_bytes: 0,
+                metadata_bytes: 0,
+            },
+        })
+    }
+
+    fn build(mut self, shards: &[InspectedShard]) -> Result<TransferPlan, LoadError> {
+        for (shard_index, shard) in shards.iter().enumerate() {
+            self.add_shard(shard_index, shard)?;
+        }
+        self.plan.metadata_bytes = self.plan.calculate_metadata_bytes(self.backend)?;
+        Ok(self.plan)
+    }
+
+    fn add_shard(&mut self, shard_index: usize, shard: &InspectedShard) -> Result<(), LoadError> {
+        let mut pending = PendingTransferBatch::new(shard_index, self.plan.entries.len());
+        for (tensor_index, tensor) in shard.tensors.iter().enumerate() {
+            if !tensor.required {
+                continue;
+            }
+            let entry = self.entry_plan(shard_index, tensor_index, tensor)?;
+            if pending.should_split_before(self.backend, self.policy, entry)? {
+                self.finish_batch(pending, false)?;
+                pending = PendingTransferBatch::new(shard_index, self.plan.entries.len());
+            }
+            pending.push(self.backend, entry)?;
+            self.retain_entry(entry)?;
+        }
+        if !pending.is_empty() {
+            self.finish_batch(pending, true)?;
+        }
+        Ok(())
+    }
+
+    fn entry_plan(
+        &self,
+        shard_index: usize,
+        tensor_index: usize,
+        tensor: &InspectedTensor,
+    ) -> Result<TransferEntryPlan, LoadError> {
+        let source_dtype = tensor
+            .source_dtype
+            .executable_dtype()
+            .ok_or_else(|| unsupported_scalar(self.backend))?;
+        let execution_bytes = tensor
+            .element_count
+            .checked_mul(self.execution_width)
+            .ok_or_else(|| numeric_error(self.backend))?;
+        let alignment = tensor
+            .source_dtype
+            .alignment()
+            .ok_or_else(|| unsupported_scalar(self.backend))?;
+        let alignment_padding = alignment
+            .checked_sub(1)
+            .ok_or_else(|| numeric_error(self.backend))?;
+        let aligned_payload_bytes = tensor
+            .source_bytes
+            .checked_add(alignment_padding)
+            .ok_or_else(|| numeric_error(self.backend))?;
+        let retained_host_bytes = if source_dtype == self.execution_dtype {
+            tensor.source_bytes
+        } else {
+            tensor
+                .source_bytes
+                .checked_add(execution_bytes)
+                .ok_or_else(|| numeric_error(self.backend))?
+        };
+        Ok(TransferEntryPlan {
+            shard_index,
+            tensor_index,
+            source_bytes: tensor.source_bytes,
+            execution_bytes,
+            aligned_payload_bytes,
+            retained_host_bytes,
+        })
+    }
+
+    fn retain_entry(&mut self, entry: TransferEntryPlan) -> Result<(), LoadError> {
+        self.plan.total_execution_bytes = self
+            .plan
+            .total_execution_bytes
+            .checked_add(entry.execution_bytes)
+            .ok_or_else(|| numeric_error(self.backend))?;
+        self.plan
+            .entries
+            .try_reserve(1)
+            .map_err(|_| host_memory_failure(self.backend, CODE_INSPECTION_ALLOCATION))?;
+        self.plan.entries.push(entry);
+        Ok(())
+    }
+
+    fn finish_batch(
+        &mut self,
+        pending: PendingTransferBatch,
+        last_in_shard: bool,
+    ) -> Result<(), LoadError> {
+        self.plan
+            .batches
+            .try_reserve(1)
+            .map_err(|_| host_memory_failure(self.backend, CODE_INSPECTION_ALLOCATION))?;
+        self.plan.maximum_host_staging_bytes = self
+            .plan
+            .maximum_host_staging_bytes
+            .max(pending.host_peak_bytes);
+        self.plan.batches.push(pending.finish(last_in_shard));
+        Ok(())
+    }
 }
 
 impl TransferPlan {
@@ -140,163 +348,13 @@ impl TransferPlan {
         )
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one sequential pass owns the deterministic partition state and checked arithmetic"
-    )]
     fn build_with_policy(
         backend: BackendId,
         shards: &[InspectedShard],
         execution_dtype: DType,
         policy: TransferPolicy,
     ) -> Result<Self, LoadError> {
-        if policy.maximum_entries == 0 {
-            return Err(numeric_error(backend));
-        }
-        let execution_width =
-            dtype_bytes(execution_dtype).ok_or_else(|| unsupported_scalar(backend))?;
-        let mut plan = Self {
-            batches: Vec::new(),
-            entries: Vec::new(),
-            maximum_host_staging_bytes: 0,
-            total_execution_bytes: 0,
-            metadata_bytes: 0,
-        };
-
-        for (shard_index, shard) in shards.iter().enumerate() {
-            let mut batch_start = plan.entries.len();
-            let mut batch_count = 0_usize;
-            let mut retained_host_bytes = 0_u64;
-            let mut transferred_device_bytes = 0_u64;
-            let mut host_peak_bytes = 0_u64;
-
-            for (tensor_index, tensor) in shard.tensors.iter().enumerate() {
-                if !tensor.required {
-                    continue;
-                }
-                let source_dtype = tensor
-                    .source_dtype
-                    .executable_dtype()
-                    .ok_or_else(|| unsupported_scalar(backend))?;
-                let execution_bytes = tensor
-                    .element_count
-                    .checked_mul(execution_width)
-                    .ok_or_else(|| numeric_error(backend))?;
-                let aligned_payload_bytes = tensor
-                    .source_bytes
-                    .checked_add(
-                        tensor
-                            .source_dtype
-                            .alignment()
-                            .ok_or_else(|| unsupported_scalar(backend))?
-                            .checked_sub(1)
-                            .ok_or_else(|| numeric_error(backend))?,
-                    )
-                    .ok_or_else(|| numeric_error(backend))?;
-                let retained_for_entry = if source_dtype == execution_dtype {
-                    tensor.source_bytes
-                } else {
-                    tensor
-                        .source_bytes
-                        .checked_add(execution_bytes)
-                        .ok_or_else(|| numeric_error(backend))?
-                };
-                let entry = TransferEntryPlan {
-                    shard_index,
-                    tensor_index,
-                    source_bytes: tensor.source_bytes,
-                    execution_bytes,
-                    aligned_payload_bytes,
-                    retained_host_bytes: retained_for_entry,
-                };
-                let projected_peak =
-                    candidate_peak(backend, retained_host_bytes, host_peak_bytes, entry)?;
-                if batch_count > 0
-                    && (batch_count == policy.maximum_entries
-                        || projected_peak > policy.preferred_host_staging_bytes)
-                {
-                    plan.finish_batch(
-                        backend,
-                        shard_index,
-                        batch_start,
-                        batch_count,
-                        host_peak_bytes,
-                        retained_host_bytes,
-                        transferred_device_bytes,
-                        false,
-                    )?;
-                    batch_start = plan.entries.len();
-                    batch_count = 0;
-                    retained_host_bytes = 0;
-                    transferred_device_bytes = 0;
-                    host_peak_bytes = 0;
-                }
-
-                let entry_peak =
-                    candidate_peak(backend, retained_host_bytes, host_peak_bytes, entry)?;
-                retained_host_bytes = retained_host_bytes
-                    .checked_add(entry.retained_host_bytes)
-                    .ok_or_else(|| numeric_error(backend))?;
-                transferred_device_bytes = transferred_device_bytes
-                    .checked_add(entry.execution_bytes)
-                    .ok_or_else(|| numeric_error(backend))?;
-                host_peak_bytes = entry_peak;
-                batch_count = batch_count
-                    .checked_add(1)
-                    .ok_or_else(|| numeric_error(backend))?;
-                plan.total_execution_bytes = plan
-                    .total_execution_bytes
-                    .checked_add(entry.execution_bytes)
-                    .ok_or_else(|| numeric_error(backend))?;
-                plan.entries
-                    .try_reserve(1)
-                    .map_err(|_| host_memory_failure(backend, CODE_INSPECTION_ALLOCATION))?;
-                plan.entries.push(entry);
-            }
-
-            if batch_count > 0 {
-                plan.finish_batch(
-                    backend,
-                    shard_index,
-                    batch_start,
-                    batch_count,
-                    host_peak_bytes,
-                    retained_host_bytes,
-                    transferred_device_bytes,
-                    true,
-                )?;
-            }
-        }
-        plan.metadata_bytes = plan.calculate_metadata_bytes(backend)?;
-        Ok(plan)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn finish_batch(
-        &mut self,
-        backend: BackendId,
-        shard_index: usize,
-        entry_start: usize,
-        entry_count: usize,
-        host_peak_bytes: u64,
-        retained_host_bytes: u64,
-        transferred_device_bytes: u64,
-        last_in_shard: bool,
-    ) -> Result<(), LoadError> {
-        self.batches
-            .try_reserve(1)
-            .map_err(|_| host_memory_failure(backend, CODE_INSPECTION_ALLOCATION))?;
-        self.batches.push(TransferBatchPlan {
-            shard_index,
-            entry_start,
-            entry_count,
-            host_peak_bytes,
-            retained_host_bytes,
-            transferred_device_bytes,
-            last_in_shard,
-        });
-        self.maximum_host_staging_bytes = self.maximum_host_staging_bytes.max(host_peak_bytes);
-        Ok(())
+        TransferPlanBuilder::new(backend, execution_dtype, policy)?.build(shards)
     }
 
     fn calculate_metadata_bytes(&self, backend: BackendId) -> Result<u64, LoadError> {
@@ -430,7 +488,7 @@ mod tests {
         assert_eq!(plan.len(), 1);
         let batch = plan.batch(0).ok_or_else(|| "missing batch".to_owned())?;
         // First entry raw peak: 9 + 8. Second raw peak: 8 + 19 + 16.
-        assert_eq!(batch.host_peak_bytes(), 43);
+        assert_eq!(plan.maximum_host_staging_bytes(), 43);
         assert_eq!(batch.retained_host_bytes(), 32);
         assert_eq!(batch.transferred_device_bytes(), 16);
         assert!(batch.is_last_in_shard());
@@ -503,10 +561,7 @@ mod tests {
         assert_eq!(plan.len(), 2);
         assert_eq!(plan.batch(0).map(TransferBatchPlan::shard_index), Some(0));
         assert_eq!(plan.batch(1).map(TransferBatchPlan::shard_index), Some(1));
-        assert!(
-            plan.batch(0)
-                .is_some_and(|batch| batch.host_peak_bytes() > 8)
-        );
+        assert!(plan.maximum_host_staging_bytes() > 8);
         Ok(())
     }
 

@@ -203,7 +203,7 @@ resource. Consumers must correlate `CleanupResource` with an explicit released
 
 `RuntimeCommand::Generate` carries token-level facts only: request/sequence
 identity, prompt tokens, capacities and limits, sampling/seed, EOS and stop tokens,
-scheduler quantum, and required bounded output capacity. It carries no tokenizer,
+and required bounded output capacity. It carries no tokenizer,
 text, path, display, workflow, frontend, or provider DTO.
 
 Cold admission is represented by one composed transaction. A
@@ -226,12 +226,13 @@ and terminal-state workspaces are admitted independently; they are never hidden
 inside the backend plan. Aggregate model + sequence + workspace capacity rejects
 before registry or backend mutation.
 
-The created sequence must report the accepted identity, token capacity, and
-complete immutable `SequencePlan`. E0 repeats identity/capacity/plan checks after
-successful prefill and decode and reads the plan on both sides of destruction.
-The backend total remains in exact aggregate and model-slot accounting until one
-successful destruction, including while terminal output awaits release and while
-a conforming cleanup owner is quarantined for retry.
+The freshly created sequence must report the accepted identity, token capacity,
+complete immutable `SequencePlan`, `SequenceState::Empty`, and position zero before
+the admission transaction can commit. E0 repeats identity/capacity/plan checks
+after successful prefill and decode and reads the plan on both sides of
+destruction. The backend total remains in exact aggregate and model-slot
+accounting until one successful destruction, including while terminal output
+awaits release and while a conforming cleanup owner is quarantined for retry.
 
 If creation or a later operation contradicts identity, capacity, or plan, E0
 reports a backend-contract violation and explicitly destroys the unpublished or
@@ -278,15 +279,18 @@ no backend step. Generation terminal outcome and backend resource release remain
 separate observable facts.
 
 The hosted loop is one private owned `WorkerState`. It owns the scheduler,
-pending and queued events, unload correlation, maintenance events, terminal stop,
-clock, and poll configuration. Immediate and timeout command receipt both enter
-the same command-application method, so event queueing, unload correlation, and
-terminal-stop handling have one implementation. Each turn accepts at most eight
-commands, publishes at most one pending event, advances one generation request,
-and gives cleanup and unload maintenance one bounded opportunity. A full internal
-or external event queue sleeps for the configured poll interval while preserving
-maintenance polling, preventing an unbounded busy loop without introducing a
-blocking producer.
+pending and queued events, unload correlation, maintenance events, a dedicated
+terminal event, terminal stop, clock, and poll configuration. Immediate and
+timeout command receipt both enter the same command-application method, so event
+queueing, unload correlation, and terminal-stop handling have one implementation.
+Each ordinary turn accepts at most eight commands, publishes at most one pending
+event, advances one generation request, and gives cleanup and unload maintenance
+one bounded opportunity. A full internal or external event queue sleeps for the
+configured poll interval while preserving maintenance polling, preventing an
+unbounded busy loop without introducing a blocking producer. Once shutdown is
+accepted, no new maintenance or generation work runs; all previously accepted
+command events and already completed maintenance events drain in order before the
+correlated terminal event.
 
 Output records preserve request identity and ordered state:
 

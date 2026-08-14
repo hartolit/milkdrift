@@ -696,12 +696,10 @@ mod tests {
 
     #[test]
     fn external_schema_history_remains_documented_without_a_legacy_parser() {
-        let readme = include_str!("../../README.md");
-        assert!(readme.contains("**External schema 1 (historical):**"));
-        assert!(readme.contains("**External schema 2 (historical):**"));
-        assert!(readme.contains("**External schema 3 (historical):**"));
-        assert!(readme.contains("**External schema 4 (historical):**"));
-        assert!(readme.contains("**External schema 5 (historical):**"));
-        assert!(readme.contains("**External schema 6 (current):**"));
+        let performance = include_str!("../../../../docs/project/performance.md");
+        assert!(performance.contains("### Current external schema-6 contract"));
+        assert!(
+            performance.contains("External schemas 1–5 retain their historical field meanings")
+        );
     }
 }

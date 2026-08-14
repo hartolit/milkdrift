@@ -12,26 +12,55 @@ require_environment() {
     : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
 }
 
-validate_managed_path() {
-    managed_path=$1
-    runner_root=${RUNNER_TEMP%/}
-    case "${managed_path}" in
-        "${runner_root}"/*)
-            relative_path=${managed_path#"${runner_root}"/}
-            ;;
-        *)
-            fail "managed path must be a direct child of RUNNER_TEMP: ${managed_path}"
+canonical_non_root_directory() {
+    directory_label=$1
+    directory_path=$2
+    case "${directory_path}" in
+        /*) ;;
+        *) fail "${directory_label} must be an absolute path: ${directory_path}" ;;
+    esac
+    test -d "${directory_path}" || fail "${directory_label} must be an existing directory: ${directory_path}"
+    canonical_path=$(CDPATH= cd -P "${directory_path}" 2>/dev/null && pwd -P) \
+        || fail "could not resolve ${directory_label}: ${directory_path}"
+    test "${canonical_path}" != "/" || fail "${directory_label} must not resolve to the filesystem root"
+    printf '%s\n' "${canonical_path}"
+}
+
+validate_resource_roots() {
+    case "${runner_root}" in
+        "${workspace_root}"|"${workspace_root}"/*)
+            fail "RUNNER_TEMP must not resolve inside GITHUB_WORKSPACE"
             ;;
     esac
-    case "${relative_path}" in
-        ""|*/*|.|..)
-            fail "managed path must have one non-special child name: ${managed_path}"
+    case "${workspace_root}" in
+        "${runner_root}"|"${runner_root}"/*)
+            fail "GITHUB_WORKSPACE and RUNNER_TEMP must not contain one another"
             ;;
     esac
 }
 
+validate_managed_path() {
+    managed_path=$1
+    case "${managed_path}" in
+        /*) ;;
+        *) fail "managed path must be absolute: ${managed_path}" ;;
+    esac
+    child_name=${managed_path##*/}
+    case "${child_name}" in
+        ""|.|..)
+            fail "managed path must have one non-special child name: ${managed_path}"
+            ;;
+    esac
+    parent_path=${managed_path%/*}
+    test -d "${parent_path}" \
+        || fail "managed path parent must be an existing directory: ${managed_path}"
+    canonical_parent=$(CDPATH= cd -P "${parent_path}" 2>/dev/null && pwd -P) \
+        || fail "could not resolve managed path parent: ${managed_path}"
+    test "${canonical_parent}" = "${runner_root}" \
+        || fail "managed path must be a direct child of RUNNER_TEMP: ${managed_path}"
+}
+
 workspace_targets() {
-    workspace_root=${GITHUB_WORKSPACE%/}
     find "${workspace_root}" \
         -path "${workspace_root}/.git" -prune -o \
         \( -type d -o -type l \) -name target -print
@@ -168,6 +197,9 @@ cleanup() {
 }
 
 require_environment
+workspace_root=$(canonical_non_root_directory GITHUB_WORKSPACE "${GITHUB_WORKSPACE}")
+runner_root=$(canonical_non_root_directory RUNNER_TEMP "${RUNNER_TEMP}")
+validate_resource_roots
 command_name=${1:-}
 test -n "${command_name}" || fail "expected prepare, reset, forbidden-shims, or cleanup"
 shift

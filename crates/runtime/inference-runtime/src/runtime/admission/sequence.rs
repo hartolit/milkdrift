@@ -563,6 +563,8 @@ where
         .create_sequence(request.sequence_id, &request.configuration)?;
     let reported_plan = sequence.reported_plan();
     let backend_contradiction = sequence.id() != request.sequence_id
+        || sequence.state() != domain_contracts::SequenceState::Empty
+        || sequence.position() != 0
         || sequence.token_capacity() != admission.expected_token_capacity
         || reported_plan != admission.plan;
     let mut lifecycle = slot.lifecycle;

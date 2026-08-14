@@ -84,6 +84,8 @@ impl Faults {
     const MUTATE_SEQUENCE_REPORT_AFTER_PREFILL: Self = Self(1 << 48);
     const MUTATE_SEQUENCE_ID_ON_CLEANUP_FAILURE: Self = Self(1 << 49);
     const MUTATE_SEQUENCE_CAPACITY_ON_CLEANUP_FAILURE: Self = Self(1 << 50);
+    const WRONG_INITIAL_SEQUENCE_STATE: Self = Self(1 << 51);
+    const WRONG_INITIAL_SEQUENCE_POSITION: Self = Self(1 << 52);
 
     const fn contains(self, fault: Self) -> bool {
         self.0 & fault.0 != 0
@@ -590,8 +592,15 @@ impl LoadedModel for FaultModel {
         };
         Ok(FaultSequence {
             id,
-            state: SequenceState::Empty,
-            position: 0,
+            state: if self.faults.contains(Faults::WRONG_INITIAL_SEQUENCE_STATE) {
+                SequenceState::Ready
+            } else {
+                SequenceState::Empty
+            },
+            position: usize::from(
+                self.faults
+                    .contains(Faults::WRONG_INITIAL_SEQUENCE_POSITION),
+            ),
             token_capacity,
             plan,
             faults: self.faults,
@@ -1653,6 +1662,16 @@ fn wrong_sequence_identity_is_destroyed_without_registry_mutation() -> TestResul
 #[test]
 fn wrong_sequence_capacity_is_destroyed_without_registry_mutation() -> TestResult {
     assert_sequence_contract_rollback(Faults::WRONG_SEQUENCE_CAPACITY)
+}
+
+#[test]
+fn nonempty_sequence_state_is_destroyed_without_registry_mutation() -> TestResult {
+    assert_sequence_contract_rollback(Faults::WRONG_INITIAL_SEQUENCE_STATE)
+}
+
+#[test]
+fn nonzero_sequence_position_is_destroyed_without_registry_mutation() -> TestResult {
+    assert_sequence_contract_rollback(Faults::WRONG_INITIAL_SEQUENCE_POSITION)
 }
 
 #[test]

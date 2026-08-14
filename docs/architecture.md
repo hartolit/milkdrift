@@ -2,7 +2,7 @@
 
 This document is a reusable architecture blueprint for Rust workspaces and similar modular systems. It teaches how to choose a workspace topology, what each layer is responsible for, and which coupling failures the structure is intended to prevent.
 
-Project-specific crate names, exact dependency edges, temporary constraints, supported backends, and product state belong in the project's applied architecture and ADRs. The architecture selection below is the one intentionally project-specific field in this reusable blueprint: when the blueprint is reused, select the model that fits that project.
+Project-specific crate names, exact dependency edges, temporary constraints, supported backends, product state, and the selected architecture model belong in the project's applied architecture and ADRs. Use the neutral selection criteria below to choose a model, then record that choice only in the applied project document.
 
 ## Core ideology: defeating the monolith
 
@@ -21,12 +21,12 @@ The goal is therefore not maximum crate count. The goal is **cohesive ownership 
 
 ---
 
-## Active architecture selection
+## Architecture model selection
 
-*Mark the architecture model used by the current project with `[x]`. Change only this selection when reusing the blueprint for another project; specialize the concrete graph in that project's architecture document.*
+Compare both models here; do not mark project state in this reusable blueprint.
 
-- [ ] **Model A: Standard Workspace** — focused small-to-medium systems
-- [x] **Model B: Layered Workspace** — large or infrastructure-heavy systems
+- **Model A: Standard Workspace** — focused small-to-medium systems
+- **Model B: Layered Workspace** — large or infrastructure-heavy systems
 
 ### Choosing a model
 

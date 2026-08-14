@@ -7,14 +7,12 @@ use domain_contracts::{BackendId, LoadError};
 use sha2::{Digest, Sha256};
 
 use super::manifest::InspectedShard;
-use super::{host_memory_failure, invalid_model_failure};
+use super::payload::verification_buffer;
+use super::{VERIFICATION_BUFFER_BYTES_U64, invalid_model_failure};
 use crate::failure::{
-    CODE_HEADER_IDENTITY_MISMATCH, CODE_INSPECTION_ALLOCATION, CODE_NUMERIC_OVERFLOW,
-    CODE_PAYLOAD_READ, CODE_SOURCE_IDENTITY_LENGTH,
+    CODE_HEADER_IDENTITY_MISMATCH, CODE_NUMERIC_OVERFLOW, CODE_PAYLOAD_READ,
+    CODE_SOURCE_IDENTITY_LENGTH,
 };
-
-const VERIFICATION_BUFFER_BYTES: usize = 64 * 1024;
-const VERIFICATION_BUFFER_BYTES_U64: u64 = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ContentIdentityEstablishment {
@@ -154,15 +152,6 @@ fn hash_exact<O: IdentityObserver>(
             .ok_or_else(|| invalid_model_failure(backend, CODE_NUMERIC_OVERFLOW))?;
     }
     Ok(())
-}
-
-fn verification_buffer(backend: BackendId) -> Result<Vec<u8>, LoadError> {
-    let mut buffer = Vec::new();
-    buffer
-        .try_reserve_exact(VERIFICATION_BUFFER_BYTES)
-        .map_err(|_| host_memory_failure(backend, CODE_INSPECTION_ALLOCATION))?;
-    buffer.resize(VERIFICATION_BUFFER_BYTES, 0);
-    Ok(buffer)
 }
 
 fn verify_exact_eof(

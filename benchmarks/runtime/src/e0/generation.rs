@@ -57,7 +57,6 @@ pub(super) fn measure_first_token_and_proxy(
     let request = generation_request(harness, FIRST_TOKEN_GENERATION_LIMIT)?;
     let request_id = request.request_id;
     let sequence_id = request.sequence_id;
-    let scheduler_quantum = request.scheduler_quantum;
     let ticket = harness.ticket()?;
     let command = RuntimeCommand::Generate {
         ticket,
@@ -67,13 +66,7 @@ pub(super) fn measure_first_token_and_proxy(
     let started = Instant::now();
     harness.submit(command, "first-token generation")?;
     let admission_event = harness.receive(ticket, "first-token generation admission")?;
-    validate_admission(
-        &admission_event,
-        ticket,
-        request_id,
-        sequence_id,
-        scheduler_quantum,
-    )?;
+    validate_admission(&admission_event, ticket, request_id, sequence_id)?;
     let deadline = Deadline::from_start(started, OPERATION_TIMEOUT, "first-token generation")?;
     let mut output = OutputObservation::default();
     while output.generated_tokens == 0 {
@@ -126,7 +119,6 @@ pub(super) fn measure_backpressure(
     let request = generation_request(harness, BACKPRESSURE_GENERATION_LIMIT)?;
     let request_id = request.request_id;
     let sequence_id = request.sequence_id;
-    let scheduler_quantum = request.scheduler_quantum;
     let ticket = harness.ticket()?;
     harness.submit(
         RuntimeCommand::Generate {
@@ -137,13 +129,7 @@ pub(super) fn measure_backpressure(
         "backpressure generation",
     )?;
     let admission_event = harness.receive(ticket, "backpressure generation admission")?;
-    let admission = validate_admission(
-        &admission_event,
-        ticket,
-        request_id,
-        sequence_id,
-        scheduler_quantum,
-    )?;
+    let admission = validate_admission(&admission_event, ticket, request_id, sequence_id)?;
     let hold_started = Instant::now();
     std::thread::sleep(BACKPRESSURE_HOLD);
     let controlled_hold = hold_started.elapsed();
@@ -228,7 +214,6 @@ fn setup_cancellation_generation(
     let request = generation_request(harness, CANCELLATION_GENERATION_LIMIT)?;
     let request_id = request.request_id;
     let sequence_id = request.sequence_id;
-    let scheduler_quantum = request.scheduler_quantum;
     let ticket = harness.ticket()?;
     harness.submit(
         RuntimeCommand::Generate {
@@ -239,13 +224,7 @@ fn setup_cancellation_generation(
         "cancellation generation",
     )?;
     let admission_event = harness.receive(ticket, "cancellation generation admission")?;
-    validate_admission(
-        &admission_event,
-        ticket,
-        request_id,
-        sequence_id,
-        scheduler_quantum,
-    )?;
+    validate_admission(&admission_event, ticket, request_id, sequence_id)?;
     let started = Instant::now();
     let deadline = Deadline::from_start(
         started,
@@ -367,7 +346,6 @@ fn validate_admission(
     ticket: CommandTicket,
     request_id: RequestId,
     sequence_id: SequenceId,
-    scheduler_quantum: NonZeroU32,
 ) -> BenchmarkResult<GenerationAdmission> {
     match event {
         RuntimeEvent::GenerationAdmitted {
@@ -377,8 +355,7 @@ fn validate_admission(
             && admission.request.request_id == request_id
             && admission.request.sequence_id == sequence_id
             && admission.request.logits_capacity == usize_from_u32(VOCABULARY_SIZE)?
-            && admission.request.reserved_footprint != MemoryFootprint::default()
-            && admission.scheduler_quantum == scheduler_quantum =>
+            && admission.request.reserved_footprint != MemoryFootprint::default() =>
         {
             Ok(*admission)
         }
@@ -388,7 +365,7 @@ fn validate_admission(
             "generation admission failed: {error:?}"
         ))),
         _ => Err(BenchmarkError::new(
-            "generation admission returned unexpected ticket, identity, logits capacity, footprint, or scheduler quantum",
+            "generation admission returned unexpected ticket, identity, logits capacity, or footprint",
         )),
     }
 }
@@ -543,7 +520,6 @@ fn generation_request(
         seed: 17,
         eos_tokens: Box::new([]),
         stop_sequences: Box::new([]),
-        scheduler_quantum: NonZeroU32::MIN,
         output_capacity: GenerationOutputCapacityPolicy::new(NonZeroUsize::MIN, NonZeroUsize::MIN),
     })
 }

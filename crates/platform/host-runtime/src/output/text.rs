@@ -77,10 +77,14 @@ impl<'a, S: Copy> TextOutputBatch<'a, S> {
     /// Resolves an absolute range from this batch to borrowed UTF-8 text.
     #[must_use]
     pub fn text_for(&self, range: TextRange) -> Option<&'a str> {
-        let offset = range.start.get().checked_sub(self.start.get())?;
-        let offset = usize::try_from(offset).ok()?;
-        let end = offset.checked_add(range.length)?;
-        let bytes = self.bytes.get(offset..end)?;
+        let bytes = bounded::payload_for_range(
+            self.bytes,
+            self.start.get(),
+            bounded::Range {
+                start: range.start.get(),
+                length: range.length,
+            },
+        )?;
         std::str::from_utf8(bytes).ok()
     }
 }

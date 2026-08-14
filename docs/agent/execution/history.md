@@ -189,6 +189,25 @@ architecture, component guides, and ADRs. Current context and this ledger were
 compressed, validation was separated from results, and stable hygiene rules now
 prevent the retired layout from returning.
 
-The resulting commit/tree and post-commit validation are reported by the package
-completion response rather than embedded self-referentially here. No product
-support or historical run was broadened by this documentation change.
+This maintenance is commit `acdd2ed066808661f6e0f7336dedf84513016850`, tree
+`56008a2d76b96205bb810597464603cd3a5cafcb`. No product support or historical run
+was broadened by the documentation change.
+
+## Independent source closure candidate
+
+**Date:** 2026-08-14
+**Input:** `acdd2ed066808661f6e0f7336dedf84513016850`, tree
+`56008a2d76b96205bb810597464603cd3a5cafcb`
+
+An independent multi-area audit re-read the continuation guide and package inputs
+against their parent trees. The resulting local candidate enforces the fresh E0
+sequence state/position contract before publication, preserves accepted worker
+and maintenance events ahead of shutdown, canonicalizes destructive CI resource
+roots and covers symlink/root containment, decomposes the accelerator loader
+coordinator, removes the duplicated CUDA package list from validation, and
+restores the reusable/project-specific architecture boundary.
+
+The candidate's exact commit/tree and final local validation are reported by the
+package completion response rather than embedded self-referentially here. No
+hosted Quality or self-hosted CUDA acceptance exists for this candidate, and no
+current product support or older evidence was broadened.

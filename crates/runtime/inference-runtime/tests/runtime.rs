@@ -805,6 +805,151 @@ fn hosted_worker_publishes_shutdown_after_a_full_event_queue_drains() -> Result<
 }
 
 #[test]
+fn hosted_worker_preserves_accepted_events_ahead_of_shutdown() -> Result<(), String> {
+    let hosted_configuration = HostedRuntimeConfiguration::new(
+        non_zero_usize(3)?,
+        non_zero_usize(1)?,
+        NonZeroU64::new(1).ok_or("non-zero poll interval")?,
+    );
+    let (hosted, thread_handle) =
+        start_hosted_runtime(MockLoader, limits(1, 1, 10_000), hosted_configuration)
+            .map_err(|error| error.to_string())?;
+
+    hosted
+        .try_submit(RuntimeCommand::Snapshot {
+            ticket: CommandTicket::new(72),
+        })
+        .map_err(|_| "first snapshot command rejected")?;
+    wait_for_queue_state(&hosted, 1, 0)?;
+
+    hosted
+        .try_submit(RuntimeCommand::Snapshot {
+            ticket: CommandTicket::new(73),
+        })
+        .map_err(|_| "second snapshot command rejected")?;
+    hosted
+        .try_submit(RuntimeCommand::Shutdown {
+            ticket: CommandTicket::new(74),
+        })
+        .map_err(|_| "shutdown command rejected")?;
+    wait_for_queue_state(&hosted, 1, 0)?;
+
+    for expected_ticket in [CommandTicket::new(72), CommandTicket::new(73)] {
+        match hosted
+            .receive_timeout(Duration::from_secs(2))
+            .map_err(|error| format!("snapshot event failed: {error:?}"))?
+        {
+            RuntimeEvent::Snapshot { ticket, .. } if ticket == expected_ticket => {}
+            _ => return Err("accepted snapshot was lost or reordered before shutdown".into()),
+        }
+    }
+    match hosted
+        .receive_timeout(Duration::from_secs(2))
+        .map_err(|error| format!("shutdown event failed: {error:?}"))?
+    {
+        RuntimeEvent::Shutdown {
+            ticket,
+            result: Ok(_),
+        } if ticket == CommandTicket::new(74) => {}
+        _ => return Err("missing correlated shutdown event".into()),
+    }
+    thread_handle.join().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[test]
+fn hosted_worker_preserves_completed_maintenance_ahead_of_shutdown() -> Result<(), String> {
+    let hosted_configuration = HostedRuntimeConfiguration::new(
+        non_zero_usize(4)?,
+        non_zero_usize(1)?,
+        NonZeroU64::new(1).ok_or("non-zero poll interval")?,
+    );
+    let (hosted, thread_handle) =
+        start_hosted_runtime(MockLoader, limits(1, 1, 10_000), hosted_configuration)
+            .map_err(|error| error.to_string())?;
+
+    hosted
+        .try_submit(RuntimeCommand::LoadModel {
+            ticket: CommandTicket::new(75),
+            model_id: ModelId::new(75),
+            source: MockSource {
+                model_bytes: 100,
+                vocabulary_size: 4,
+            },
+            execution_device: cpu_device(),
+        })
+        .map_err(|_| "load command rejected")?;
+    let loaded = receive_load_receipt(&hosted)?;
+    hosted
+        .try_submit(RuntimeCommand::StartRequest {
+            ticket: CommandTicket::new(76),
+            handle: loaded.handle,
+            request_id: RequestId::new(75),
+            sequence_id: SequenceId::new(750),
+            configuration: sequence_configuration(8, 4)?,
+        })
+        .map_err(|_| "start command rejected")?;
+    match hosted
+        .receive_timeout(Duration::from_secs(2))
+        .map_err(|error| format!("start event failed: {error:?}"))?
+    {
+        RuntimeEvent::RequestStarted { result: Ok(_), .. } => {}
+        _ => return Err("unexpected request-start event".into()),
+    }
+
+    let timeout = DrainTimeout::from_millis(2).map_err(debug_error)?;
+    hosted
+        .try_submit(RuntimeCommand::UnloadModel {
+            ticket: CommandTicket::new(77),
+            handle: loaded.handle,
+            policy: UnloadPolicy::Drain { timeout },
+        })
+        .map_err(|_| "unload command rejected")?;
+    wait_for_queue_state(&hosted, 1, 0)?;
+    thread::sleep(Duration::from_millis(20));
+    hosted
+        .try_submit(RuntimeCommand::Shutdown {
+            ticket: CommandTicket::new(78),
+        })
+        .map_err(|_| "shutdown command rejected")?;
+
+    match hosted
+        .receive_timeout(Duration::from_secs(2))
+        .map_err(|error| format!("initial unload event failed: {error:?}"))?
+    {
+        RuntimeEvent::ModelUnload {
+            ticket,
+            result: Ok(receipt),
+        } if ticket == CommandTicket::new(77) && receipt.status == UnloadStatus::Draining => {}
+        _ => return Err("model did not enter draining".into()),
+    }
+    match hosted
+        .receive_timeout(Duration::from_secs(2))
+        .map_err(|error| format!("terminal unload event failed: {error:?}"))?
+    {
+        RuntimeEvent::ModelUnload {
+            ticket,
+            result: Ok(receipt),
+        } if ticket == CommandTicket::new(77)
+            && receipt.status == UnloadStatus::Unloaded
+            && receipt.cancelled_requests == 1 => {}
+        _ => return Err("completed maintenance event was lost before shutdown".into()),
+    }
+    match hosted
+        .receive_timeout(Duration::from_secs(2))
+        .map_err(|error| format!("shutdown event failed: {error:?}"))?
+    {
+        RuntimeEvent::Shutdown {
+            ticket,
+            result: Ok(_),
+        } if ticket == CommandTicket::new(78) => {}
+        _ => return Err("missing correlated shutdown event".into()),
+    }
+    thread_handle.join().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[test]
 fn hosted_worker_retries_a_failed_forced_release() -> Result<(), String> {
     let hosted_configuration = HostedRuntimeConfiguration::new(
         non_zero_usize(4)?,

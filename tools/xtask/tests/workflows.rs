@@ -347,11 +347,20 @@ impl TempEnvironment {
     }
 
     fn run(&self, arguments: &[&str]) -> Result<Output, Box<dyn Error>> {
+        self.run_with_roots(arguments, &self.workspace, &self.runner_temp)
+    }
+
+    fn run_with_roots(
+        &self,
+        arguments: &[&str],
+        workspace: &Path,
+        runner_temp: &Path,
+    ) -> Result<Output, Box<dyn Error>> {
         Ok(
             Command::new(workspace_root().join(".github/scripts/ci-resource.sh"))
                 .args(arguments)
-                .env("GITHUB_WORKSPACE", &self.workspace)
-                .env("RUNNER_TEMP", &self.runner_temp)
+                .env("GITHUB_WORKSPACE", workspace)
+                .env("RUNNER_TEMP", runner_temp)
                 .env("GITHUB_ENV", &self.github_env)
                 .env("GITHUB_PATH", &self.github_path)
                 .output()?,
@@ -409,5 +418,92 @@ fn resource_script_prepares_shims_cleans_and_fails_closed() -> Result<(), Box<dy
         let dangerous = dangerous.to_string_lossy().into_owned();
         assert!(!environment.run(&["cleanup", &dangerous])?.status.success());
     }
+
+    let root_child = format!(
+        "/milkdrift-ci-resource-{}-must-not-exist",
+        std::process::id()
+    );
+    let output = environment.run_with_roots(
+        &["cleanup", &root_child],
+        &environment.workspace,
+        Path::new("/"),
+    )?;
+    assert!(!output.status.success());
+    let dot_root = environment.root.join("..").join("..").join("..").join("..");
+    let output =
+        environment.run_with_roots(&["cleanup", &root_child], &environment.workspace, &dot_root)?;
+    assert!(!output.status.success());
+
+    let runner_inside_workspace = environment.workspace.join("runner-temp");
+    fs::create_dir(&runner_inside_workspace)?;
+    let nested_target = runner_inside_workspace.join("target");
+    let output = environment.run_with_roots(
+        &["cleanup", &nested_target.to_string_lossy()],
+        &environment.workspace,
+        &runner_inside_workspace,
+    )?;
+    assert!(!output.status.success());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn resource_script_resolves_symlinked_roots_without_following_managed_links()
+-> Result<(), Box<dyn Error>> {
+    use std::os::unix::fs::symlink;
+
+    let environment = TempEnvironment::new()?;
+    let safe_runner = environment.root.join("safe-runner");
+    let runner_link = environment.root.join("runner-link");
+    fs::create_dir(&safe_runner)?;
+    symlink(&safe_runner, &runner_link)?;
+
+    let linked_target = runner_link.join("target");
+    let linked_target_text = linked_target.to_string_lossy().into_owned();
+    let output = environment.run_with_roots(
+        &["prepare", "1024", &linked_target_text],
+        &environment.workspace,
+        &runner_link,
+    )?;
+    assert!(output.status.success());
+    assert!(safe_runner.join("target").is_dir());
+    let output = environment.run_with_roots(
+        &["cleanup", &linked_target_text],
+        &environment.workspace,
+        &runner_link,
+    )?;
+    assert!(output.status.success());
+
+    let root_link = environment.root.join("root-link");
+    symlink("/", &root_link)?;
+    let root_link_child = root_link.join("milkdrift-ci-resource-must-not-exist");
+    let output = environment.run_with_roots(
+        &["cleanup", &root_link_child.to_string_lossy()],
+        &environment.workspace,
+        &root_link,
+    )?;
+    assert!(!output.status.success());
+
+    let workspace_link = environment.root.join("workspace-link");
+    symlink(&environment.workspace, &workspace_link)?;
+    fs::create_dir(environment.workspace.join("target"))?;
+    let ordinary_target = environment.runner_temp.join("ordinary-target");
+    let output = environment.run_with_roots(
+        &["prepare", "1024", &ordinary_target.to_string_lossy()],
+        &workspace_link,
+        &environment.runner_temp,
+    )?;
+    assert!(!output.status.success());
+    fs::remove_dir(environment.workspace.join("target"))?;
+
+    let outside = environment.root.join("outside-sentinel");
+    fs::create_dir(&outside)?;
+    fs::write(outside.join("sentinel"), "preserve")?;
+    let managed_link = environment.runner_temp.join("managed-link");
+    symlink(&outside, &managed_link)?;
+    let output = environment.run(&["cleanup", &managed_link.to_string_lossy()])?;
+    assert!(output.status.success());
+    assert!(!managed_link.is_symlink());
+    assert_eq!(fs::read_to_string(outside.join("sentinel"))?, "preserve");
     Ok(())
 }

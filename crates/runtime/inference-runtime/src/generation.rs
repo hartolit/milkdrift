@@ -75,8 +75,6 @@ pub struct GenerationRequest {
     pub eos_tokens: Box<[TokenId]>,
     /// Token suffix patterns that terminate generation after being published.
     pub stop_sequences: Box<[GenerationStopSequence]>,
-    /// Maximum backend steps for one scheduler opportunity.
-    pub scheduler_quantum: NonZeroU32,
     /// Minimum capacity required from the shared pull accumulator.
     pub output_capacity: GenerationOutputCapacityPolicy,
 }
@@ -128,8 +126,6 @@ pub enum GenerationOutputState {
 pub struct GenerationAdmission {
     /// Backend sequence admission receipt.
     pub request: RequestStartReceipt,
-    /// Validated scheduler quantum echoed from the admitted request.
-    pub scheduler_quantum: NonZeroU32,
 }
 
 #[expect(

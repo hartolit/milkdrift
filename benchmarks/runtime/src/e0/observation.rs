@@ -5,10 +5,9 @@ use inference_runtime::{RuntimeCommand, RuntimeEvent, RuntimeSnapshot};
 
 use super::harness::HostedE0Harness;
 use crate::error::{BenchmarkError, BenchmarkResult};
+use crate::evidence::footprint_record;
 use crate::memory::process_memory;
-use crate::report::{
-    MemoryFootprintRecord, ModelAccounting, RuntimeAccounting, SnapshotCheckpoint,
-};
+use crate::report::{ModelAccounting, RuntimeAccounting, SnapshotCheckpoint};
 
 pub(super) struct CapturedSnapshot {
     pub(super) raw: RuntimeSnapshot,
@@ -211,9 +210,9 @@ fn runtime_accounting(snapshot: &RuntimeSnapshot) -> RuntimeAccounting {
     RuntimeAccounting {
         loaded_models: snapshot.loaded_models,
         active_requests: snapshot.active_requests,
-        reserved_footprint: footprint(snapshot.reserved_footprint),
+        reserved_footprint: footprint_record(snapshot.reserved_footprint),
         generation_workspaces: snapshot.generation_workspaces,
-        reserved_generation_workspace: footprint(snapshot.reserved_generation_workspace),
+        reserved_generation_workspace: footprint_record(snapshot.reserved_generation_workspace),
         pending_cleanup_models: snapshot.pending_cleanup_models,
         pending_cleanup_sequences: snapshot.pending_cleanup_sequences,
         exhausted_cleanup_models: snapshot.exhausted_cleanup_models,
@@ -229,7 +228,7 @@ fn model_accounting(snapshot: &inference_runtime::ModelSnapshot) -> ModelAccount
         model_id: snapshot.handle.id.get(),
         generation: snapshot.handle.generation.get(),
         lifecycle: lifecycle_label(snapshot.lifecycle),
-        reserved_footprint: footprint(snapshot.reserved_footprint),
+        reserved_footprint: footprint_record(snapshot.reserved_footprint),
         active_requests: snapshot.active_requests,
         pending_cleanup_sequences: snapshot.pending_cleanup_sequences,
         exhausted_cleanup_sequences: snapshot.exhausted_cleanup_sequences,
@@ -247,14 +246,5 @@ const fn lifecycle_label(state: ModelLifecycleState) -> &'static str {
         ModelLifecycleState::Cancelling { .. } => "cancelling",
         ModelLifecycleState::Unloading => "unloading",
         ModelLifecycleState::Failed { .. } => "failed",
-    }
-}
-
-const fn footprint(value: MemoryFootprint) -> MemoryFootprintRecord {
-    MemoryFootprintRecord {
-        host_weight_bytes: value.host_weight_bytes,
-        device_weight_bytes: value.device_weight_bytes,
-        host_working_bytes: value.host_working_bytes,
-        device_working_bytes: value.device_working_bytes,
     }
 }

@@ -287,7 +287,7 @@ Completed historical user/assistant turns remain atomic context-planning units.
 Chat preparation is pure and staged as a validated context inventory, planned
 selection, profile-rendered prompt, exact encoded prompt, and final preparation
 with diagnostics. Selected units are rendered in order, exactly tokenized, and
-corrected with a strictly shrinking bounded set before E0 admission. No
+corrected with a strictly shrinking bounded set before E0 command submission. No
 conversation record or diagnostics are mutated during preparation.
 
 Direct and chat generation share one E1 admission transaction. It checks

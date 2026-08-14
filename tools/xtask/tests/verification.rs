@@ -11,8 +11,7 @@ use cargo_metadata::{Metadata, MetadataCommand};
 use xtask::{
     CargoCommand, VerificationComponent, VerificationOperation, VerificationPlan,
     cuda_clippy_command_plan, cuda_clippy_command_plan_for_metadata, cuda_compile_command_plan,
-    cuda_compile_command_plan_for_metadata, cuda_hardware_command_plan,
-    cuda_hardware_command_plan_for_metadata, hardware_profile_command_plan_for_metadata,
+    cuda_compile_command_plan_for_metadata, hardware_profile_command_plan_for_metadata,
     native_verification_plan, portable_command_plan, portable_command_plan_for_metadata,
     verification_component_plan, verification_component_plan_for_metadata,
 };
@@ -187,7 +186,7 @@ fn assert_all_cuda_plans_reject(metadata: &Metadata) -> Result<(), Box<dyn Error
     let results = [
         cuda_compile_command_plan_for_metadata(metadata),
         cuda_clippy_command_plan_for_metadata(metadata),
-        cuda_hardware_command_plan_for_metadata(metadata),
+        hardware_profile_command_plan_for_metadata(metadata, "cuda"),
     ];
     for result in results {
         let Err(error) = result else {
@@ -210,7 +209,6 @@ fn help_exposes_metadata_owned_command_surface() -> Result<(), Box<dyn Error>> {
     assert!(stdout.contains("portable <wasm32-unknown-unknown|thumbv7em-none-eabihf>"));
     assert!(stdout.contains("cuda-compile"));
     assert!(stdout.contains("cuda-clippy"));
-    assert!(stdout.contains("cuda-hardware"));
     assert!(stdout.contains("hardware <PROFILE>"));
     assert!(!stdout.contains("llm-app"));
     Ok(())
@@ -608,7 +606,7 @@ fn cuda_plans_are_sorted_exact_and_keep_hardware_targets_separate() -> Result<()
     );
     assert_eq!(clippy, cuda_clippy_command_plan(&fixture.manifest())?);
 
-    let hardware = cuda_hardware_command_plan_for_metadata(&metadata)?;
+    let hardware = hardware_profile_command_plan_for_metadata(&metadata, "cuda")?;
     assert_eq!(
         command_arguments(&hardware),
         vec![
@@ -661,7 +659,6 @@ fn cuda_plans_are_sorted_exact_and_keep_hardware_targets_separate() -> Result<()
             ]),
         ]
     );
-    assert_eq!(hardware, cuda_hardware_command_plan(&fixture.manifest())?);
     assert!(hardware.iter().all(is_hardware_target_command));
     assert_eq!(
         hardware_profile_command_plan_for_metadata(&metadata, "cuda")?,
@@ -705,7 +702,7 @@ fn adding_a_valid_hardware_suite_automatically_enters_every_hardware_plan()
 
     let compile = cuda_compile_command_plan_for_metadata(&metadata)?;
     let clippy = cuda_clippy_command_plan_for_metadata(&metadata)?;
-    let hardware = cuda_hardware_command_plan_for_metadata(&metadata)?;
+    let hardware = hardware_profile_command_plan_for_metadata(&metadata, "cuda")?;
     for plan in [&compile, &clippy, &hardware] {
         let packages = plan
             .iter()

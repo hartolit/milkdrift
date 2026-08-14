@@ -1,7 +1,7 @@
 # Milkdrift execution plan
 
-**Plan status:** continuation packages 01–05 implemented; source closure and
-post-push exact-tree acceptance remain inactive
+**Plan status:** continuation packages 01–05 implemented; package 06 source-closure
+candidate assembled locally; post-push exact-tree acceptance remains inactive
 **Status date:** 2026-08-14
 
 This document owns ordered program activation only. Current support is in
@@ -29,8 +29,8 @@ No later product capability is implied by these closures.
 | 2 | Runtime/application state-machine structure | Complete in `aa7363d` |
 | 3 | Artifact/accelerator transfer pipeline | Complete in `716ae9a` |
 | 4 | Verification and evidence infrastructure | Complete in `ee5078d` |
-| 5 | Documentation authority and context reduction | Complete; resulting commit reported externally |
-| 6 | Independent source closure | Inactive; next ordered package |
+| 5 | Documentation authority and context reduction | Complete in `acdd2ed` |
+| 6 | Independent source closure | Local candidate assembled; exact commit/tree and final validation reported externally |
 | 7 | Exact-tree hosted/CUDA acceptance | Inactive until the operator pushes the source-closure candidate |
 
 Packages run sequentially and consume the actual previous result. Historical run

@@ -148,6 +148,7 @@ where
     queued_events: VecDeque<RuntimeEvent>,
     pending_unloads: BTreeMap<ModelId, PendingUnload>,
     maintenance_events: BTreeMap<ModelId, RuntimeEvent>,
+    terminal_event: Option<RuntimeEvent>,
     stop_after_publication: Option<WorkerStop>,
     event_backlog_capacity: usize,
     clock: MonotonicClock,
@@ -289,6 +290,7 @@ where
             queued_events: VecDeque::with_capacity(event_backlog_capacity),
             pending_unloads: BTreeMap::new(),
             maintenance_events: BTreeMap::new(),
+            terminal_event: None,
             stop_after_publication: None,
             event_backlog_capacity,
             clock: MonotonicClock::new(),
@@ -306,14 +308,18 @@ where
     }
 
     fn run_one_turn(&mut self) -> Option<WorkerExit> {
-        self.run_maintenance();
+        if self.stop_after_publication.is_none() {
+            self.run_maintenance();
+        }
         self.select_next_event();
         let publication_blocked = match self.publish_one_event() {
             Ok(blocked) => blocked,
             Err(exit) => return Some(exit),
         };
         if self.stop_after_publication.is_some() {
-            std::thread::sleep(self.poll_interval);
+            if publication_blocked {
+                std::thread::sleep(self.poll_interval);
+            }
             return None;
         }
 
@@ -374,7 +380,8 @@ where
             self.pending_event = self
                 .queued_events
                 .pop_front()
-                .or_else(|| self.maintenance_events.pop_first().map(|(_, event)| event));
+                .or_else(|| self.maintenance_events.pop_first().map(|(_, event)| event))
+                .or_else(|| self.terminal_event.take());
         }
     }
 
@@ -382,6 +389,8 @@ where
         if let Some(stop) = self.stop_after_publication
             && self.pending_event.is_none()
             && self.queued_events.is_empty()
+            && self.maintenance_events.is_empty()
+            && self.terminal_event.is_none()
         {
             return Err(WorkerExit::Terminal(stop));
         }
@@ -390,9 +399,7 @@ where
             return Ok(false);
         };
         match self.events.try_send(event) {
-            Ok(()) => self
-                .stop_after_publication
-                .map_or(Ok(false), |stop| Err(WorkerExit::Terminal(stop))),
+            Ok(()) => Ok(false),
             Err(TrySendError::Full(event)) => {
                 self.pending_event = Some(event);
                 Ok(true)
@@ -450,9 +457,8 @@ where
     }
 
     fn enter_terminal_stop(&mut self, event: RuntimeEvent, stop: WorkerStop) {
-        self.pending_event = Some(event);
-        self.queued_events.clear();
-        self.maintenance_events.clear();
+        debug_assert!(self.terminal_event.is_none());
+        self.terminal_event = Some(event);
         self.pending_unloads.clear();
         self.stop_after_publication = Some(stop);
     }

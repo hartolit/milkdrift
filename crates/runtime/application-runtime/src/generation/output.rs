@@ -1,5 +1,5 @@
 use domain_contracts::{FinishReason, RequestId, YieldReason};
-use host_runtime::{TextOutputBatch, TextOutputRecordKind};
+use host_runtime::{TextOutputBatch, TextOutputCursor, TextOutputRecordKind, TextRange};
 
 /// Compact state payload published beside decoded text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,10 +106,9 @@ impl<'a> ApplicationOutputBatch<'a> {
         let ApplicationOutputRecordKind::Text(range) = record.kind else {
             return None;
         };
-        let offset = range.start.checked_sub(self.start())?;
-        let offset = usize::try_from(offset).ok()?;
-        let end = offset.checked_add(range.length)?;
-        let bytes: &'a [u8] = self.inner.bytes.get(offset..end)?;
-        std::str::from_utf8(bytes).ok()
+        self.inner.text_for(TextRange::new(
+            TextOutputCursor::new(range.start),
+            range.length,
+        ))
     }
 }

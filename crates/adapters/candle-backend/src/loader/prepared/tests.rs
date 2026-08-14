@@ -13,18 +13,21 @@ use domain_contracts::{
 };
 use sha2::{Digest, Sha256};
 
-use super::{
-    CandleLlamaPreparedLoad, ContentIdentityEstablishment, HashedRange, LoadingSynchronization,
-    MaterializationCheckpoint, MaterializationObserver,
-};
+use super::CandleLlamaPreparedLoad;
 use crate::failure::{
     CODE_HEADER_IDENTITY_MISMATCH, CODE_LOAD_SYNCHRONIZE, CODE_SOURCE_IDENTITY_LENGTH,
-    CODE_SOURCE_IDENTITY_MISMATCH, CODE_TENSOR_MATERIALIZE, failure,
+    CODE_SOURCE_IDENTITY_MISMATCH, CODE_TENSOR_MATERIALIZE, CODE_TENSOR_TRANSFER, failure,
 };
 use crate::loader::cleanup::TEST_CLEANUP_SYNCHRONIZATION_FAILURES;
-use crate::loader::identity::EstablishedContentIdentity;
+use crate::loader::identity::{ContentIdentityEstablishment, EstablishedContentIdentity};
 use crate::loader::manifest::{InspectedShard, InspectedTensor, SourceTensorDType, TensorShape};
-use crate::loader::transfer_batch::TransferBatchOwner;
+use crate::loader::observer::{
+    HashedRange, LoadingSynchronization, MaterializationCheckpoint, MaterializationObserver,
+    NoopMaterializationObserver,
+};
+use crate::loader::transfer_batch::{
+    TransferBatchEndpoints, TransferBatchEntry, TransferBatchOwner,
+};
 use crate::loader::transfer_plan::{MAXIMUM_BATCH_ENTRIES, TransferPlan};
 use crate::source::CandleExpectedContentIdentity;
 
@@ -376,6 +379,57 @@ fn planned_multi_entry_batch_uses_one_synchronization_and_commits_all_entries() 
 }
 
 #[test]
+fn planned_and_owned_batch_accounting_must_match_before_synchronization() -> Result<(), String> {
+    let mut prepared = test_prepared(vec![required_f32_shard(1)?], DType::F32)?;
+    configure_test_device(&mut prepared, DeviceKind::Cuda)?;
+    let source = Tensor::ones(1, DType::F32, &Device::Cpu)
+        .map_err(|error| format!("create accounting source: {error}"))?;
+    let backend = prepared.backend;
+    let owner = prepared
+        .transfer_batch
+        .as_mut()
+        .ok_or_else(|| "missing transfer owner".to_owned())?;
+    owner
+        .begin(backend, 0, 1)
+        .map_err(|error| format!("begin transfer owner: {error:?}"))?;
+    let next_bytes = owner
+        .preflight_push(backend, 5, 4)
+        .map_err(|error| format!("preflight mismatched entry: {error:?}"))?;
+    owner.push_preflighted(
+        TransferBatchEntry::new(
+            (0, 0),
+            "required.0".to_owned(),
+            TransferBatchEndpoints {
+                source: source.clone(),
+                converted_host: None,
+                device: source,
+            },
+            5,
+            4,
+        ),
+        next_bytes,
+    );
+    prepared.next_transfer_entry_index = 1;
+
+    let mut events = Events::default();
+    let error = required_error(
+        prepared.flush_transfer_batch(&mut events),
+        "plan/owner byte-accounting drift must fail before synchronization",
+    )?;
+    assert_eq!(failure_code(error), Some(CODE_TENSOR_TRANSFER));
+    assert_eq!(events.batch_synchronizations, 0);
+    let retained = prepared
+        .transfer_batch
+        .as_ref()
+        .ok_or_else(|| "mismatch discarded transfer owner".to_owned())?;
+    assert_eq!(retained.len(), 1);
+    assert_eq!(retained.retained_host_bytes(), 5);
+    assert_eq!(retained.transferred_device_bytes(), 4);
+    assert!(!retained.synchronized());
+    Ok(())
+}
+
+#[test]
 fn batch_fault_boundaries_retain_every_endpoint_and_commit_alias() -> Result<(), String> {
     for checkpoint in [
         MaterializationCheckpoint::BeforeBatchSynchronization {
@@ -547,7 +601,7 @@ fn model_construction_is_handle_only_and_fault_retains_the_owner() -> Result<(),
     populate_required_model_tensors(&mut missing)?;
     missing.final_tensors.remove("lm_head.weight");
     required_error(
-        missing.construct_model(&mut super::NoopMaterializationObserver),
+        missing.construct_model(&mut NoopMaterializationObserver),
         "missing native model tensor must fail construction",
     )?;
     assert!(missing.constructed_model.is_none());

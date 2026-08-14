@@ -258,12 +258,8 @@ mod tests {
 
     #[test]
     fn synthetic_schema_history_remains_documented_without_a_legacy_parser() {
-        let readme = include_str!("../README.md");
-        assert!(readme.contains("**Synthetic schema 1 (historical):**"));
-        assert!(readme.contains("**Synthetic schema 2 (historical):**"));
-        assert!(readme.contains("**Synthetic schema 3 (historical):**"));
-        assert!(readme.contains("**Synthetic schema 4 (historical):**"));
-        assert!(readme.contains("**Synthetic schema 5 (historical):**"));
-        assert!(readme.contains("**Synthetic schema 6 (current):**"));
+        let performance = include_str!("../../../docs/project/performance.md");
+        assert!(performance.contains("### Current synthetic schema 6 contract"));
+        assert!(performance.contains("Synthetic schemas 1–5 retain their historical meanings"));
     }
 }

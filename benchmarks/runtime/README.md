@@ -97,7 +97,8 @@ as documented in the performance guide.
 ## Artifact policy
 
 Reports are serialize-only; the package has no legacy report parser. Historical
-schemas retain their recorded meaning through curated documentation rather than
-migration code. Generated JSON, Criterion output, model caches, temporary redb
-state, and compiler artifacts remain under root `target/` or outside the
-repository and are never committed.
+schemas retain their recorded meaning through the curated
+[performance guide](../../docs/project/performance.md) rather than migration
+code. Generated JSON, Criterion output, model caches, temporary redb state, and
+compiler artifacts remain under root `target/` or outside the repository and are
+never committed.

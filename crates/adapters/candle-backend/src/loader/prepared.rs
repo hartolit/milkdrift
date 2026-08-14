@@ -1,35 +1,29 @@
-//! Sequential selective materialization and retryable partial-load cleanup.
+//! Transactional tensor materialization and batch-commit coordination.
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-
-use std::io::{Read, Seek, SeekFrom};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use candle_core::{DType, Device, Tensor};
 use candle_transformers::models::llama::{Config, Llama};
-use domain_contracts::{
-    BackendFailureKind, BackendId, DeviceKind, LoadError, LoadPlan, PreparedLoad,
-};
-use sha2::{Digest, Sha256};
+use domain_contracts::{BackendId, DeviceKind, LoadError, LoadPlan, PreparedLoad};
 
 use crate::failure::{
-    CODE_DUPLICATE_TENSOR, CODE_HEADER_IDENTITY_MISMATCH, CODE_LOAD_SYNCHRONIZE, CODE_MODEL_LOAD,
-    CODE_MODEL_LOAD_PANIC, CODE_NUMERIC_OVERFLOW, CODE_PAYLOAD_READ, CODE_SOURCE_IDENTITY_LENGTH,
-    CODE_SOURCE_IDENTITY_MISMATCH, CODE_TENSOR_MATERIALIZE, CODE_TENSOR_TRANSFER,
-    CODE_WEIGHT_METADATA, failure,
+    CODE_DUPLICATE_TENSOR, CODE_MODEL_LOAD, CODE_MODEL_LOAD_PANIC, CODE_NUMERIC_OVERFLOW,
+    CODE_TENSOR_MATERIALIZE, CODE_TENSOR_TRANSFER,
 };
 
 use super::cleanup::CandleLlamaFailedPreparation;
 use super::construction::construct_llama;
-use super::identity::ContentIdentityEstablishment;
 use super::manifest::{InspectedShard, SourceTensorDType, TensorShape};
-use super::payload::{AlignedPayload, source_tensor, verification_buffer};
-use super::transfer_batch::{TransferBatchEntry, TransferBatchOwner};
-use super::transfer_plan::TransferPlan;
-use super::{
-    VERIFICATION_BUFFER_BYTES_U64, invalid_model_failure, map_candle_load_error, unsupported_scalar,
+use super::observer::{
+    LoadingSynchronization, MaterializationCheckpoint, MaterializationObserver,
+    NoopMaterializationObserver,
 };
+use super::payload::{AlignedPayload, source_tensor};
+use super::transfer_batch::{TransferBatchEndpoints, TransferBatchEntry, TransferBatchOwner};
+use super::transfer_plan::TransferPlan;
+use super::{invalid_model_failure, map_candle_load_error, unsupported_scalar};
 
 /// Exact source-, configuration-, device-, and plan-bound Candle preparation.
 ///
@@ -59,6 +53,16 @@ pub struct CandleLlamaPreparedLoad {
     #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
     pub(super) load_observation: Option<crate::CandleLoadObservationRecorder>,
     pub(super) cleanup_complete: bool,
+}
+
+#[derive(Debug)]
+pub(super) struct RequiredTensorFacts {
+    pub(super) shard_index: usize,
+    pub(super) tensor_index: usize,
+    pub(super) name: String,
+    pub(super) source_dtype: SourceTensorDType,
+    pub(super) shape: TensorShape,
+    pub(super) source_bytes: u64,
 }
 
 impl CandleLlamaPreparedLoad {
@@ -103,207 +107,7 @@ impl CandleLlamaPreparedLoad {
         }
     }
 
-    fn materialize_shard<O: MaterializationObserver>(
-        &mut self,
-        shard_index: usize,
-        observer: &mut O,
-    ) -> Result<(), LoadError> {
-        let expected = self
-            .shards
-            .get(shard_index)
-            .and_then(|shard| shard.established_content_identity)
-            .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?;
-        self.validate_shard_length(shard_index, expected.byte_length)?;
-        self.seek_shard_start(shard_index)?;
-
-        let mut hasher = Sha256::new();
-        let mut verification_buffer = verification_buffer(self.backend)?;
-        let header_bytes = self
-            .shards
-            .get(shard_index)
-            .map(|shard| shard.data_start)
-            .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?;
-        self.read_ignored_range(
-            shard_index,
-            header_bytes,
-            HashedRange::PrefixHeader,
-            verification_buffer.as_mut_slice(),
-            &mut hasher,
-            observer,
-        )?;
-        let observed_header: [u8; 32] = hasher.clone().finalize().into();
-        let expected_header = self
-            .shards
-            .get(shard_index)
-            .map(|shard| shard.prefix_header_sha256)
-            .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?;
-        if observed_header != expected_header {
-            return Err(invalid_model_failure(
-                self.backend,
-                CODE_HEADER_IDENTITY_MISMATCH,
-            ));
-        }
-
-        let tensor_count = self
-            .shards
-            .get(shard_index)
-            .map(|shard| shard.tensors.len())
-            .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?;
-        for tensor_index in 0..tensor_count {
-            let required = self
-                .shards
-                .get(shard_index)
-                .and_then(|shard| shard.tensors.get(tensor_index))
-                .map(|tensor| tensor.required)
-                .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?;
-            if required {
-                let facts = self.required_tensor_facts(shard_index, tensor_index)?;
-                let payload =
-                    self.read_required_payload(shard_index, &facts, &mut hasher, observer)?;
-                self.materialize_required_tensor(facts, payload, observer)?;
-            } else {
-                let source_bytes = self
-                    .shards
-                    .get(shard_index)
-                    .and_then(|shard| shard.tensors.get(tensor_index))
-                    .map(|tensor| tensor.source_bytes)
-                    .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?;
-                self.read_ignored_range(
-                    shard_index,
-                    source_bytes,
-                    HashedRange::IgnoredTensor,
-                    verification_buffer.as_mut_slice(),
-                    &mut hasher,
-                    observer,
-                )?;
-            }
-        }
-
-        self.verify_shard_eof(shard_index, expected.byte_length)?;
-        let observed_sha256: [u8; 32] = hasher.finalize().into();
-        if observed_sha256 != expected.sha256 {
-            return Err(invalid_model_failure(
-                self.backend,
-                CODE_SOURCE_IDENTITY_MISMATCH,
-            ));
-        }
-        observer.whole_shard_verified(expected.establishment);
-        self.flush_shard_final_batch(shard_index, observer)
-    }
-
-    fn validate_shard_length(
-        &self,
-        shard_index: usize,
-        expected_length: u64,
-    ) -> Result<(), LoadError> {
-        let shard = self
-            .shards
-            .get(shard_index)
-            .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?;
-        let current_length = shard
-            .file
-            .metadata()
-            .map_err(|_| invalid_model_failure(self.backend, CODE_SOURCE_IDENTITY_LENGTH))?
-            .len();
-        if current_length != shard.file_length || current_length != expected_length {
-            Err(invalid_model_failure(
-                self.backend,
-                CODE_SOURCE_IDENTITY_LENGTH,
-            ))
-        } else {
-            Ok(())
-        }
-    }
-
-    fn seek_shard_start(&mut self, shard_index: usize) -> Result<(), LoadError> {
-        self.shards
-            .get_mut(shard_index)
-            .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?
-            .file
-            .seek(SeekFrom::Start(0))
-            .map(|_| ())
-            .map_err(|_| invalid_model_failure(self.backend, CODE_PAYLOAD_READ))
-    }
-
-    fn read_ignored_range<O: MaterializationObserver>(
-        &mut self,
-        shard_index: usize,
-        byte_count: u64,
-        range: HashedRange,
-        buffer: &mut [u8],
-        hasher: &mut Sha256,
-        observer: &mut O,
-    ) -> Result<(), LoadError> {
-        let mut remaining = byte_count;
-        while remaining > 0 {
-            let chunk_length = usize::try_from(remaining.min(VERIFICATION_BUFFER_BYTES_U64))
-                .map_err(|_| invalid_model_failure(self.backend, CODE_NUMERIC_OVERFLOW))?;
-            let chunk = buffer
-                .get_mut(..chunk_length)
-                .ok_or_else(|| invalid_model_failure(self.backend, CODE_PAYLOAD_READ))?;
-            self.shards
-                .get_mut(shard_index)
-                .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?
-                .file
-                .read_exact(chunk)
-                .map_err(|_| invalid_model_failure(self.backend, CODE_SOURCE_IDENTITY_LENGTH))?;
-            hasher.update(chunk);
-            observer.hashed_range(range, chunk_length);
-            self.record_verification_only_bytes(chunk_length);
-            remaining = remaining
-                .checked_sub(
-                    u64::try_from(chunk_length)
-                        .map_err(|_| invalid_model_failure(self.backend, CODE_NUMERIC_OVERFLOW))?,
-                )
-                .ok_or_else(|| invalid_model_failure(self.backend, CODE_NUMERIC_OVERFLOW))?;
-        }
-        Ok(())
-    }
-
-    fn required_tensor_facts(
-        &mut self,
-        shard_index: usize,
-        tensor_index: usize,
-    ) -> Result<RequiredTensorFacts, LoadError> {
-        let tensor = self
-            .shards
-            .get_mut(shard_index)
-            .and_then(|shard| shard.tensors.get_mut(tensor_index))
-            .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?;
-        Ok(RequiredTensorFacts {
-            shard_index,
-            tensor_index,
-            name: std::mem::take(&mut tensor.name),
-            source_dtype: tensor.source_dtype,
-            shape: tensor.shape,
-            source_bytes: tensor.source_bytes,
-        })
-    }
-
-    fn read_required_payload<O: MaterializationObserver>(
-        &mut self,
-        shard_index: usize,
-        facts: &RequiredTensorFacts,
-        hasher: &mut Sha256,
-        observer: &mut O,
-    ) -> Result<AlignedPayload, LoadError> {
-        let mut payload =
-            AlignedPayload::allocate(self.backend, facts.source_dtype, facts.source_bytes)?;
-        let destination = payload.as_mut_slice(self.backend)?;
-        self.shards
-            .get_mut(shard_index)
-            .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?
-            .file
-            .read_exact(destination)
-            .map_err(|_| invalid_model_failure(self.backend, CODE_SOURCE_IDENTITY_LENGTH))?;
-        let hashed_bytes = destination.len();
-        hasher.update(&*destination);
-        observer.hashed_range(HashedRange::RequiredTensor, hashed_bytes);
-        self.record_required_bytes(hashed_bytes);
-        Ok(payload)
-    }
-
-    fn materialize_required_tensor<O: MaterializationObserver>(
+    pub(super) fn materialize_required_tensor<O: MaterializationObserver>(
         &mut self,
         facts: RequiredTensorFacts,
         payload: AlignedPayload,
@@ -521,12 +325,13 @@ impl CandleLlamaPreparedLoad {
             }
         };
         let entry = TransferBatchEntry::new(
-            facts.shard_index,
-            facts.tensor_index,
+            (facts.shard_index, facts.tensor_index),
             facts.name,
-            source_tensor,
-            converted_host_tensor,
-            device_tensor,
+            TransferBatchEndpoints {
+                source: source_tensor,
+                converted_host: converted_host_tensor,
+                device: device_tensor,
+            },
             expected.retained_host_bytes(),
             expected.execution_bytes(),
         );
@@ -584,7 +389,7 @@ impl CandleLlamaPreparedLoad {
         Ok((batch_index, entry_index, batch.entry_count(), expected))
     }
 
-    fn flush_shard_final_batch<O: MaterializationObserver>(
+    pub(super) fn flush_shard_final_batch<O: MaterializationObserver>(
         &mut self,
         shard_index: usize,
         observer: &mut O,
@@ -617,14 +422,26 @@ impl CandleLlamaPreparedLoad {
     ) -> Result<(), LoadError> {
         let batch_index = self.next_transfer_batch_index;
         let entries = self.next_transfer_entry_index;
+        let planned_batch = self
+            .transfer_plan
+            .as_ref()
+            .and_then(|plan| plan.batch(batch_index))
+            .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?;
         let device = self
             .device
             .as_ref()
             .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?;
-        self.transfer_batch
+        let transfer_batch = self
+            .transfer_batch
             .as_ref()
-            .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?
-            .validate_ready(self.backend, self.execution_dtype)?;
+            .ok_or_else(|| invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER))?;
+        transfer_batch.validate_ready(self.backend, self.execution_dtype)?;
+        if planned_batch.entry_count() != entries
+            || planned_batch.retained_host_bytes() != transfer_batch.retained_host_bytes()
+            || planned_batch.transferred_device_bytes() != transfer_batch.transferred_device_bytes()
+        {
+            return Err(invalid_model_failure(self.backend, CODE_TENSOR_TRANSFER));
+        }
         observer.checkpoint(
             MaterializationCheckpoint::BeforeBatchSynchronization {
                 batch_index,
@@ -722,104 +539,6 @@ impl CandleLlamaPreparedLoad {
         }
     }
 
-    fn record_verification_only_bytes(&self, bytes: usize) {
-        #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
-        if let Some(observation) = &self.load_observation {
-            observation.verification_only_bytes_read(u64::try_from(bytes).unwrap_or(u64::MAX));
-        }
-        #[cfg(not(any(feature = "benchmark-observation", feature = "cuda-hardware-tests")))]
-        let _ = (self, bytes);
-    }
-
-    fn record_required_bytes(&self, bytes: usize) {
-        #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
-        if let Some(observation) = &self.load_observation {
-            observation.required_and_verified_bytes_read(u64::try_from(bytes).unwrap_or(u64::MAX));
-        }
-        #[cfg(not(any(feature = "benchmark-observation", feature = "cuda-hardware-tests")))]
-        let _ = (self, bytes);
-    }
-
-    fn record_transfer_batch_started(&self) {
-        #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
-        if let Some(observation) = &self.load_observation {
-            observation.transfer_batches_started(1);
-        }
-        #[cfg(not(any(feature = "benchmark-observation", feature = "cuda-hardware-tests")))]
-        let _ = self;
-    }
-
-    fn record_loading_synchronization(&self) {
-        #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
-        if let Some(observation) = &self.load_observation {
-            observation.loading_device_synchronizations_started(1);
-        }
-        #[cfg(not(any(feature = "benchmark-observation", feature = "cuda-hardware-tests")))]
-        let _ = self;
-    }
-
-    pub(super) fn record_materialization_started(&self) {
-        #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
-        if let Some(observation) = &self.load_observation {
-            observation.materialization_started();
-        }
-        #[cfg(not(any(feature = "benchmark-observation", feature = "cuda-hardware-tests")))]
-        let _ = self;
-    }
-
-    pub(super) fn record_materialization_failed(&self) {
-        #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
-        if let Some(observation) = &self.load_observation {
-            observation.materialization_failed();
-        }
-        #[cfg(not(any(feature = "benchmark-observation", feature = "cuda-hardware-tests")))]
-        let _ = self;
-    }
-
-    pub(super) fn record_materialization_succeeded(&self) {
-        #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
-        if let Some(observation) = &self.load_observation {
-            observation.materialization_succeeded();
-        }
-        #[cfg(not(any(feature = "benchmark-observation", feature = "cuda-hardware-tests")))]
-        let _ = self;
-    }
-
-    fn verify_shard_eof(
-        &mut self,
-        shard_index: usize,
-        expected_length: u64,
-    ) -> Result<(), LoadError> {
-        let shard = self
-            .shards
-            .get_mut(shard_index)
-            .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?;
-        let mut trailing = [0_u8; 1];
-        if shard
-            .file
-            .read(&mut trailing)
-            .map_err(|_| invalid_model_failure(self.backend, CODE_PAYLOAD_READ))?
-            != 0
-        {
-            return Err(invalid_model_failure(
-                self.backend,
-                CODE_SOURCE_IDENTITY_LENGTH,
-            ));
-        }
-        let final_length = shard
-            .file
-            .metadata()
-            .map_err(|_| invalid_model_failure(self.backend, CODE_SOURCE_IDENTITY_LENGTH))?
-            .len();
-        if final_length != shard.file_length || final_length != expected_length {
-            return Err(invalid_model_failure(
-                self.backend,
-                CODE_SOURCE_IDENTITY_LENGTH,
-            ));
-        }
-        Ok(())
-    }
-
     fn construct_model<O: MaterializationObserver>(
         &mut self,
         observer: &mut O,
@@ -852,113 +571,6 @@ impl PreparedLoad for CandleLlamaPreparedLoad {
         &self.plan
     }
 }
-
-#[derive(Debug)]
-struct RequiredTensorFacts {
-    shard_index: usize,
-    tensor_index: usize,
-    name: String,
-    source_dtype: SourceTensorDType,
-    shape: TensorShape,
-    source_bytes: u64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum HashedRange {
-    PrefixHeader,
-    IgnoredTensor,
-    RequiredTensor,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MaterializationCheckpoint {
-    SourceOwned {
-        shard_index: usize,
-        tensor_index: usize,
-    },
-    HostOwned {
-        shard_index: usize,
-        tensor_index: usize,
-    },
-    CastOwned {
-        shard_index: usize,
-        tensor_index: usize,
-    },
-    TransferEnqueued {
-        batch_index: usize,
-        entry_index: usize,
-    },
-    BeforeBatchSynchronization {
-        batch_index: usize,
-        entries: usize,
-    },
-    BatchSynchronized {
-        batch_index: usize,
-        entries: usize,
-    },
-    BeforeBatchCommit {
-        batch_index: usize,
-        entries: usize,
-    },
-    BatchEntryCommitted {
-        batch_index: usize,
-        entry_index: usize,
-        shard_index: usize,
-        tensor_index: usize,
-    },
-    BatchCommitted {
-        batch_index: usize,
-        entries: usize,
-    },
-    BeforeCpuMapInsertion {
-        shard_index: usize,
-        tensor_index: usize,
-    },
-    CpuMapOwned {
-        shard_index: usize,
-        tensor_index: usize,
-    },
-    ModelOwned,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum LoadingSynchronization {
-    TransferBatch { batch_index: usize },
-}
-
-trait MaterializationObserver {
-    fn hashed_range(&mut self, _range: HashedRange, _bytes: usize) {}
-
-    fn checkpoint(
-        &mut self,
-        _checkpoint: MaterializationCheckpoint,
-        _backend: BackendId,
-    ) -> Result<(), LoadError> {
-        Ok(())
-    }
-
-    fn whole_shard_verified(&mut self, _establishment: ContentIdentityEstablishment) {}
-
-    fn synchronize(
-        &mut self,
-        boundary: LoadingSynchronization,
-        backend: BackendId,
-        device: &Device,
-    ) -> Result<(), LoadError> {
-        let _ = boundary;
-        device.synchronize().map_err(|_| {
-            LoadError::Backend(failure(
-                backend,
-                BackendFailureKind::Synchronization,
-                CODE_LOAD_SYNCHRONIZE,
-            ))
-        })
-    }
-}
-
-struct NoopMaterializationObserver;
-
-impl MaterializationObserver for NoopMaterializationObserver {}
 
 #[cfg(test)]
 mod tests;

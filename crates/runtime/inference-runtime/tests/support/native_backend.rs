@@ -475,7 +475,6 @@ fn submit_generation(
 ) -> TestResult {
     let request_id = request.request_id;
     let sequence_id = request.sequence_id;
-    let scheduler_quantum = request.scheduler_quantum;
     hosted
         .try_submit(RuntimeCommand::Generate {
             ticket,
@@ -494,7 +493,6 @@ fn submit_generation(
             assert_eq!(admission.request.request_id, request_id);
             assert_eq!(admission.request.sequence_id, sequence_id);
             assert_eq!(admission.request.logits_capacity, VOCABULARY_SIZE as usize);
-            assert_eq!(admission.scheduler_quantum, scheduler_quantum);
             Ok(())
         }
         RuntimeEvent::GenerationAdmitted {
@@ -556,7 +554,6 @@ fn generation_request(
         seed,
         eos_tokens,
         stop_sequences: Box::new([]),
-        scheduler_quantum: NonZeroU32::MIN,
         output_capacity: GenerationOutputCapacityPolicy::new(NonZeroUsize::MIN, NonZeroUsize::MIN),
     })
 }

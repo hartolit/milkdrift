@@ -77,10 +77,14 @@ impl<'a, S: Copy> TokenOutputBatch<'a, S> {
     /// Resolves an absolute range from this batch to its borrowed token slice.
     #[must_use]
     pub fn tokens_for(&self, range: TokenRange) -> Option<&'a [TokenId]> {
-        let offset = range.start.get().checked_sub(self.start.get())?;
-        let offset = usize::try_from(offset).ok()?;
-        let end = offset.checked_add(range.length)?;
-        self.tokens.get(offset..end)
+        bounded::payload_for_range(
+            self.tokens,
+            self.start.get(),
+            bounded::Range {
+                start: range.start.get(),
+                length: range.length,
+            },
+        )
     }
 }
 

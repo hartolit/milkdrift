@@ -10,9 +10,9 @@ use std::process::{Command, ExitCode, ExitStatus, Stdio};
 
 use xtask::{
     CargoCommand, VerificationComponent, VerificationOperation, VerificationPlan,
-    cuda_clippy_command_plan, cuda_compile_command_plan, cuda_hardware_command_plan,
-    hardware_profile_command_plan, native_verification_plan, portable_command_plan,
-    validate_repository_hygiene, validate_workspace, verification_component_plan,
+    cuda_clippy_command_plan, cuda_compile_command_plan, hardware_profile_command_plan,
+    native_verification_plan, portable_command_plan, validate_repository_hygiene,
+    validate_workspace, verification_component_plan,
 };
 
 const HELP: &str = "\
@@ -34,7 +34,6 @@ COMMANDS:
     cuda-compile    Check CUDA owners and compile CUDA tests and exact hardware suites
     cuda-clippy     Lint CUDA owners and exact hardware suites with warnings denied
     hardware        Run every Cargo-metadata suite in a declared hardware profile
-    cuda-hardware   Compatibility alias for `hardware cuda`
     help            Print this message
 
 Canonical matrices are derived from locked Cargo metadata; ordinary Cargo operations remain direct.
@@ -118,14 +117,6 @@ fn execute() -> io::Result<ExitCode> {
             }
             let commands =
                 cuda_clippy_command_plan(&workspace_manifest()).map_err(io::Error::other)?;
-            run_cargo_plan(&commands)
-        }
-        "cuda-hardware" => {
-            if !remaining.is_empty() {
-                return Ok(argument_error("cuda-hardware does not accept arguments"));
-            }
-            let commands =
-                cuda_hardware_command_plan(&workspace_manifest()).map_err(io::Error::other)?;
             run_cargo_plan(&commands)
         }
         "hardware" => {

@@ -65,13 +65,20 @@ and [lifecycle](lifecycle.md).
   bounded cleanup.
 - Sequence reservation separates all-layer persistent state from one block's
   simultaneous transient peak and outer model state.
+- E0 publishes a newly created sequence only after its exact identity, capacity,
+  immutable plan, `Empty` state, and zero position match the admitted contract.
 - E1 has one cleanup coordinator and exposes durable exact, unverified, or unknown
   retained state without treating disconnect or zero exact bytes as release.
 - Token and text output keep distinct typed public APIs over one private bounded
   storage implementation. Runtime and application state machines are split by
-  transition responsibility rather than driven by frontends.
+  transition responsibility rather than driven by frontends. Accepted command and
+  maintenance events remain ordered ahead of the correlated shutdown event even
+  while the public event queue is full.
 - Verification plans, maintained benchmarks, and CUDA hardware suites are declared
-  in package metadata and consumed by both local tooling and CI.
+  in package metadata and consumed by both local tooling and CI. Destructive CI
+  resource helpers resolve physical roots, reject root/checkout containment, and
+  accept only children whose physical parent is the validated runner temporary
+  directory.
 
 ## Accepted evidence
 
@@ -86,14 +93,18 @@ Evidence applies only to the named tree and scope.
 | Later local accelerator loading | `716ae9a23ea12fc81374e4d576d3a3a61f2ae8e9`, tree `131f457dd32b6e31886769980637cda49f72fd8a`: the focused default matrix and six local RTX adapter cases passed for bounded transfer batching and verified artifact loading. | Correctness evidence for that exact accelerator tree; no speedup or external-model result is inferred. |
 | External product performance | Historical controlled CPU/CUDA evidence is tied to Commit E `411945e0fd53363f98609db21a43d757c4d9b506`, tree `7099dcb5c9879190543d3afa5fde399a84d799df`. | Curated measurements remain valid only for that environment/workload; no schema-6 current-tree product report is accepted. |
 
-The documentation-authority package changes documentation and hygiene policy. Its
-resulting commit and post-commit checks are reported externally because a tracked
-document cannot name the commit that contains itself.
+Documentation-authority commit `acdd2ed066808661f6e0f7336dedf84513016850`, tree
+`56008a2d76b96205bb810597464603cd3a5cafcb`, changed documentation and stable
+hygiene policy without broadening support. The independent source-closure
+candidate changes E0 contract enforcement, CI resource containment, regression
+coverage, and active documentation. Its resulting commit/tree and final local
+checks are reported externally because a tracked document cannot name the commit
+that contains itself.
 
 ## Open evidence and unsupported claims
 
-- Hosted Quality and self-hosted CUDA have not run on the current documentation/
-  tooling tree. Earlier runs are not promoted to current-tree evidence.
+- Hosted Quality and self-hosted CUDA have not run on the source-closure candidate.
+  Earlier runs are not promoted to current-tree evidence.
 - No immutable, license-reviewed external mixed-layout checkpoint and no external
   schema-6 CPU/CUDA product report is accepted. Deterministic project fixtures own
   current mixed-layout correctness.

@@ -41,7 +41,6 @@ where
     L: ModelLoader,
 {
     request_id: RequestId,
-    scheduler_quantum: std::num::NonZeroU32,
     task: GenerationTask,
     sequence: crate::runtime::SequenceAdmissionTransaction<'runtime, L>,
 }
@@ -232,7 +231,6 @@ where
             sampler,
         )?;
         let request_id = request.request_id;
-        let scheduler_quantum = request.scheduler_quantum;
         let sequence = runtime.prepare_generation_request(
             handle,
             request_id,
@@ -243,7 +241,6 @@ where
         )?;
         Ok(Self {
             request_id,
-            scheduler_quantum,
             task: GenerationTask {
                 handle,
                 workspace_footprint,
@@ -268,7 +265,6 @@ where
     fn commit(self, scheduler: &mut GenerationScheduler) -> GenerationAdmission {
         let Self {
             request_id,
-            scheduler_quantum,
             task,
             sequence,
         } = self;
@@ -280,10 +276,7 @@ where
         // infallible after every recoverable admission step has completed.
         let replaced = scheduler.requests.insert(request_id, task);
         debug_assert!(replaced.is_none(), "scheduler request was preflighted");
-        GenerationAdmission {
-            request: receipt,
-            scheduler_quantum,
-        }
+        GenerationAdmission { request: receipt }
     }
 }
 

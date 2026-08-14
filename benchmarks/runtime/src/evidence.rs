@@ -36,6 +36,15 @@ pub(crate) fn e0_load_receipt_record(
     plan: &LoadPlan,
     receipt: &LoadReceipt,
 ) -> BenchmarkResult<E0LoadReceiptRecord> {
+    validate_load_receipt(plan, receipt)?;
+    Ok(E0LoadReceiptRecord {
+        actual_execution_scalar: scalar_type_label(receipt.execution_scalar_type),
+        actual_execution_device: execution_device_record(receipt.execution_device)?,
+        reserved_footprint: footprint_record(receipt.reserved_footprint),
+    })
+}
+
+pub(crate) fn validate_load_receipt(plan: &LoadPlan, receipt: &LoadReceipt) -> BenchmarkResult {
     if receipt.handle != plan.accepted_configuration.handle
         || receipt.execution_device != plan.accepted_configuration.execution_device
         || receipt.execution_scalar_type != plan.execution_scalar_type
@@ -46,11 +55,7 @@ pub(crate) fn e0_load_receipt_record(
             "E0 load receipt did not match the exact observer preparation and final ownership plan",
         ));
     }
-    Ok(E0LoadReceiptRecord {
-        actual_execution_scalar: scalar_type_label(receipt.execution_scalar_type),
-        actual_execution_device: execution_device_record(receipt.execution_device)?,
-        reserved_footprint: footprint_record(receipt.reserved_footprint),
-    })
+    Ok(())
 }
 
 pub(crate) fn validate_prepared_load_plan(plan: &LoadPlan) -> BenchmarkResult {

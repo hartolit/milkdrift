@@ -36,7 +36,7 @@ pub enum ChatCompatibility {
     Unsupported,
 }
 
-/// Diagnostics from the most recent successfully admitted chat context plan.
+/// Diagnostics from the most recent successfully submitted chat context plan.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContextDiagnostics {
     /// Raw conversation records selected for rendering, in conversation order.
@@ -107,7 +107,7 @@ impl ApplicationRuntime {
         self.conversation.records()
     }
 
-    /// Returns diagnostics from the most recently admitted chat request.
+    /// Returns diagnostics from the most recently submitted chat request.
     #[must_use]
     pub const fn context_diagnostics(&self) -> Option<&ContextDiagnostics> {
         self.context_diagnostics.as_ref()
@@ -152,13 +152,14 @@ impl ApplicationRuntime {
 
     /// Commits one user message and starts a compatible assistant response attempt.
     ///
-    /// The user record remains committed if subsequent planning or request admission
-    /// fails. No assistant attempt is created until E0 accepts the complete command.
+    /// The user record remains committed if subsequent planning or command submission
+    /// fails. No assistant attempt is created until the complete lower command is
+    /// successfully enqueued; E0 reports semantic admission asynchronously afterward.
     ///
     /// # Errors
     ///
     /// Returns an error when chat compatibility, lifecycle state, content, context
-    /// capacity, exact tokenization, or bounded E0 admission prevents the request.
+    /// capacity, exact tokenization, or bounded E0 command submission prevents the request.
     pub fn submit_user_message(
         &mut self,
         content: &str,

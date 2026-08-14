@@ -21,8 +21,6 @@ use super::bridge::GenerationSessionCommit;
 use super::settings::{GenerationSeed, GenerationSettings};
 
 const FIRST_STOP_SEQUENCE_CODE: u32 = 1;
-const INTERNAL_SCHEDULER_QUANTUM: NonZeroU32 = NonZeroU32::MIN;
-
 enum GenerationApplicationProposal {
     Direct,
     Chat {
@@ -282,7 +280,6 @@ impl GenerationAdmissionTransaction {
             seed: identity.seed,
             eos_tokens: settings.eos_tokens,
             stop_sequences: settings.stop_sequences,
-            scheduler_quantum: INTERNAL_SCHEDULER_QUANTUM,
             output_capacity: GenerationOutputCapacityPolicy::default(),
         };
         Ok(Self {
@@ -360,7 +357,7 @@ impl ApplicationRuntime {
     /// # Errors
     ///
     /// Returns an error when lifecycle state, settings, prompt capacity, tokenizer
-    /// state, or bounded runtime command capacity prevents admission.
+    /// state, or bounded runtime command capacity prevents submission.
     pub fn start_generation(
         &mut self,
         input: &str,

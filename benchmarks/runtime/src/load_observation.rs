@@ -5,11 +5,13 @@ use std::time::Duration;
 use candle_backend::{
     CandleLoadCleanupOutcome, CandleLoadObservationOutcome, CandleLoadObservationSnapshot,
 };
-use domain_contracts::{DeviceKind, LoadPlan};
+use domain_contracts::DeviceKind;
 use inference_runtime::LoadReceipt;
 use serde::Serialize;
 
 use crate::error::{BenchmarkError, BenchmarkResult};
+use crate::evidence::validate_load_receipt;
+use crate::report::checked_duration_ns;
 
 /// Serializable correctness and timing facts from one actual hosted load.
 ///
@@ -53,7 +55,7 @@ pub(crate) fn candle_loader_observation_record(
     let plan = snapshot.plan.as_ref().ok_or_else(|| {
         BenchmarkError::new("successful Candle load observation omitted its plan")
     })?;
-    validate_receipt(plan, receipt)?;
+    validate_load_receipt(plan, receipt)?;
     validate_successful_loading_counts(snapshot)?;
 
     Ok(CandleLoaderObservationRecord {
@@ -112,36 +114,18 @@ fn validate_successful_loading_counts(snapshot: CandleLoadObservationSnapshot) -
     }
 }
 
-fn validate_receipt(plan: &LoadPlan, receipt: &LoadReceipt) -> BenchmarkResult {
-    if receipt.handle != plan.accepted_configuration.handle
-        || receipt.execution_device != plan.accepted_configuration.execution_device
-        || receipt.execution_scalar_type != plan.execution_scalar_type
-        || receipt.descriptor != plan.descriptor
-        || receipt.reserved_footprint != plan.final_footprint
-    {
-        return Err(BenchmarkError::new(
-            "actual E0 final ownership did not match the observed Candle load plan",
-        ));
-    }
-    Ok(())
-}
-
 fn required_duration_ns(duration: Option<Duration>, label: &'static str) -> BenchmarkResult<u64> {
     duration
         .ok_or_else(|| BenchmarkError::new(format!("{label} duration was not observed")))
-        .and_then(|duration| {
-            u64::try_from(duration.as_nanos()).map_err(|_| {
-                BenchmarkError::new(format!(
-                    "{label} duration exceeded the u64 nanosecond range"
-                ))
-            })
-        })
+        .and_then(|duration| checked_duration_ns(duration, label))
 }
 
 #[cfg(test)]
 mod tests {
     use super::candle_loader_observation_record;
-    use candle_backend::CandleLoadObservation;
+    use candle_backend::{
+        CandleLoadCleanupOutcome, CandleLoadObservationOutcome, CandleLoadObservationSnapshot,
+    };
     use domain_contracts::{
         BackendId, CapabilitySet, DeviceId, DeviceKind, ExecutionDevice, LoadConfiguration,
         LoadPlan, MemoryBudget, MemoryFootprint, ModelArchitecture, ModelCapabilities,
@@ -154,15 +138,8 @@ mod tests {
     fn successful_record_rejects_impossible_device_batch_and_sync_counts() -> Result<(), String> {
         let cuda_plan = fixture_plan();
         let cuda_receipt = fixture_receipt(cuda_plan);
-        let (cuda_observation, cuda_recorder) = CandleLoadObservation::channel();
-        cuda_recorder.preparation_started();
-        cuda_recorder.preparation_succeeded(&cuda_plan);
-        cuda_recorder.materialization_started();
-        cuda_recorder.transfer_batches_started(2);
-        cuda_recorder.loading_device_synchronizations_started(3);
-        cuda_recorder.materialization_succeeded();
         let cuda_error =
-            candle_loader_observation_record(cuda_observation.snapshot(), &cuda_receipt)
+            candle_loader_observation_record(successful_snapshot(cuda_plan, 2, 3), &cuda_receipt)
                 .err()
                 .ok_or_else(|| {
                     "mismatched CUDA batch/sync counts unexpectedly serialized".to_owned()
@@ -171,18 +148,31 @@ mod tests {
 
         let cpu_plan = cpu_fixture_plan();
         let cpu_receipt = fixture_receipt(cpu_plan);
-        let (cpu_observation, cpu_recorder) = CandleLoadObservation::channel();
-        cpu_recorder.preparation_started();
-        cpu_recorder.preparation_succeeded(&cpu_plan);
-        cpu_recorder.materialization_started();
-        cpu_recorder.transfer_batches_started(1);
-        cpu_recorder.loading_device_synchronizations_started(1);
-        cpu_recorder.materialization_succeeded();
-        let cpu_error = candle_loader_observation_record(cpu_observation.snapshot(), &cpu_receipt)
-            .err()
-            .ok_or_else(|| "nonzero CPU batch/sync counts unexpectedly serialized".to_owned())?;
+        let cpu_error =
+            candle_loader_observation_record(successful_snapshot(cpu_plan, 1, 1), &cpu_receipt)
+                .err()
+                .ok_or_else(|| {
+                    "nonzero CPU batch/sync counts unexpectedly serialized".to_owned()
+                })?;
         assert!(cpu_error.to_string().contains("impossible transfer-batch"));
         Ok(())
+    }
+
+    fn successful_snapshot(
+        plan: LoadPlan,
+        transfer_batches: u64,
+        loading_device_synchronizations: u64,
+    ) -> CandleLoadObservationSnapshot {
+        CandleLoadObservationSnapshot {
+            preparation_duration: Some(std::time::Duration::from_nanos(1)),
+            materialization_duration: Some(std::time::Duration::from_nanos(1)),
+            transfer_batches,
+            loading_device_synchronizations,
+            plan: Some(plan),
+            outcome: CandleLoadObservationOutcome::Succeeded,
+            cleanup_outcome: CandleLoadCleanupOutcome::NotRequired,
+            ..CandleLoadObservationSnapshot::default()
+        }
     }
 
     fn fixture_plan() -> LoadPlan {

@@ -307,37 +307,7 @@ fn scan_documentation_layout(
         .cloned()
         .collect::<BTreeSet<_>>();
 
-    for retired in [
-        "docs/agent/application-runtime-architecture-warning.md",
-        "docs/agent/execution/analyzer.md",
-        "docs/project/implementation-plan.md",
-    ] {
-        let path = Path::new(retired);
-        if present.contains(path) {
-            report.push(HygieneViolation::new(
-                Some(path.to_path_buf()),
-                None,
-                RULE_DOCUMENTATION_LAYOUT,
-                "retired documentation authority must remain in Git history rather than the active tree"
-                    .to_owned(),
-            ));
-        }
-    }
-
-    let archive = Path::new("docs/agent/execution/archive");
-    for path in present.iter().filter(|path| {
-        path.starts_with(archive)
-            && path.extension().and_then(|extension| extension.to_str()) == Some("md")
-            && path.as_path() != archive.join("README.md")
-    }) {
-        report.push(HygieneViolation::new(
-            Some(path.clone()),
-            None,
-            RULE_DOCUMENTATION_ARCHIVE,
-            "completed prompt bodies are prohibited in the active tree; retain only archive/README.md provenance and use Git history for the original text"
-                .to_owned(),
-        ));
-    }
+    scan_retired_documentation(&present, report);
 
     if !present.contains(Path::new("docs/README.md")) {
         return Ok(());
@@ -410,6 +380,40 @@ fn scan_documentation_layout(
     }
 
     Ok(())
+}
+
+fn scan_retired_documentation(present: &BTreeSet<PathBuf>, report: &mut HygieneReport) {
+    for retired in [
+        "docs/agent/application-runtime-architecture-warning.md",
+        "docs/agent/execution/analyzer.md",
+        "docs/project/implementation-plan.md",
+    ] {
+        let path = Path::new(retired);
+        if present.contains(path) {
+            report.push(HygieneViolation::new(
+                Some(path.to_path_buf()),
+                None,
+                RULE_DOCUMENTATION_LAYOUT,
+                "retired documentation authority must remain in Git history rather than the active tree"
+                    .to_owned(),
+            ));
+        }
+    }
+
+    let archive = Path::new("docs/agent/execution/archive");
+    for path in present.iter().filter(|path| {
+        path.starts_with(archive)
+            && path.extension().and_then(|extension| extension.to_str()) == Some("md")
+            && path.as_path() != archive.join("README.md")
+    }) {
+        report.push(HygieneViolation::new(
+            Some(path.clone()),
+            None,
+            RULE_DOCUMENTATION_ARCHIVE,
+            "completed prompt bodies are prohibited in the active tree; retain only archive/README.md provenance and use Git history for the original text"
+                .to_owned(),
+        ));
+    }
 }
 
 fn scan_benchmark_registry(root: &Path, metadata: &Metadata, report: &mut HygieneReport) {

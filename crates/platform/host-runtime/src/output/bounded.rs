@@ -20,6 +20,13 @@ pub(super) struct Range {
     pub(super) length: usize,
 }
 
+pub(super) fn payload_for_range<P>(payload: &[P], batch_start: u64, range: Range) -> Option<&[P]> {
+    let offset = range.start.checked_sub(batch_start)?;
+    let offset = usize::try_from(offset).ok()?;
+    let end = offset.checked_add(range.length)?;
+    payload.get(offset..end)
+}
+
 pub(super) struct Batch<'a, P, R> {
     pub(super) start: u64,
     pub(super) end: u64,

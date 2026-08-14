@@ -31,28 +31,28 @@ pub(super) struct TransferBatchEntry {
     committed: bool,
 }
 
+/// The three tensor endpoints retained by one asynchronous transfer entry.
+pub(super) struct TransferBatchEndpoints {
+    pub(super) source: Tensor,
+    pub(super) converted_host: Option<Tensor>,
+    pub(super) device: Tensor,
+}
+
 impl TransferBatchEntry {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the constructor makes every independently owned endpoint and exact byte fact explicit"
-    )]
     pub(super) fn new(
-        shard_index: usize,
-        tensor_index: usize,
+        coordinate: (usize, usize),
         name: String,
-        source_tensor: Tensor,
-        converted_host_tensor: Option<Tensor>,
-        device_tensor: Tensor,
+        endpoints: TransferBatchEndpoints,
         retained_host_bytes: u64,
         device_bytes: u64,
     ) -> Self {
         Self {
-            shard_index,
-            tensor_index,
+            shard_index: coordinate.0,
+            tensor_index: coordinate.1,
             name: Some(name),
-            source_tensor,
-            converted_host_tensor,
-            device_tensor,
+            source_tensor: endpoints.source,
+            converted_host_tensor: endpoints.converted_host,
+            device_tensor: endpoints.device,
             retained_host_bytes,
             device_bytes,
             committed: false,
@@ -299,12 +299,10 @@ impl TransferBatchOwner {
         self.entries.is_empty()
     }
 
-    #[cfg(test)]
     pub(super) const fn retained_host_bytes(&self) -> u64 {
         self.retained_host_bytes
     }
 
-    #[cfg(test)]
     pub(super) const fn transferred_device_bytes(&self) -> u64 {
         self.transferred_device_bytes
     }

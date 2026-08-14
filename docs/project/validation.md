@@ -25,8 +25,9 @@ git rev-parse 'HEAD^{tree}'
 - Run heavy Cargo processes sequentially with `CARGO_INCREMENTAL=0`.
 - Do not run `cargo clean`. Do not reuse a target when clean-target evidence is
   required.
-- Keep generated artifacts under root `target/`, one explicitly named isolated
-  `CARGO_TARGET_DIR`, or outside the repository. Never create package-local targets.
+- Keep ordinary local artifacts under root `target/`, or place validation artifacts
+  in one explicitly named isolated `CARGO_TARGET_DIR` outside the repository. Never
+  create package-local targets.
 - A documentation-only change does not rerun product evidence retroactively; it
   still requires its own documentation and policy gates.
 
@@ -198,28 +199,20 @@ nvcc --version
 export CUDA_COMPUTE_CAP=120
 ```
 
-The exact compile graph is:
+The metadata-owned compile and strict-lint graph is:
 
 ```sh
 cargo metadata --locked --format-version 1 --no-deps > /dev/null
 cargo xtask architecture
 cargo xtask hygiene
-
-cargo check --locked \
-  -p candle-backend -p inference-runtime -p application-runtime \
-  -p desktop-slint -p runtime-benchmarks \
-  --all-targets --features cuda
-
-cargo test --locked \
-  -p candle-backend -p inference-runtime -p application-runtime \
-  -p runtime-benchmarks \
-  --features cuda --no-run
-
-cargo clippy --locked \
-  -p candle-backend -p inference-runtime -p application-runtime \
-  -p desktop-slint -p runtime-benchmarks \
-  --all-targets --features cuda -- -D warnings
+cargo xtask cuda-compile
+cargo xtask cuda-clippy
 ```
+
+The two CUDA planners derive every exact `cuda` feature owner and registered
+hardware suite from locked Cargo metadata. They include the ordinary all-target
+graph, no-run test compilation, each harness-free hardware target, and the serial
+fault-injection target without maintaining another package or target list here.
 
 Do not use workspace `--all-features`. Compilation proves feature/API
 compatibility only. Hardware execution additionally requires:

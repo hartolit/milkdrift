@@ -177,7 +177,7 @@ pub struct CandleLoadObservationRecorder {
 
 impl CandleLoadObservationRecorder {
     /// Marks the start of source inspection and plan preparation.
-    pub fn preparation_started(&self) {
+    pub(crate) fn preparation_started(&self) {
         let mut state = lock(&self.shared);
         if !state.require_outcome(CandleLoadObservationOutcome::NotStarted) {
             return;
@@ -187,7 +187,7 @@ impl CandleLoadObservationRecorder {
     }
 
     /// Finishes preparation and retains the exact plan from that attempt.
-    pub fn preparation_succeeded(&self, plan: &LoadPlan) {
+    pub(crate) fn preparation_succeeded(&self, plan: &LoadPlan) {
         let mut state = lock(&self.shared);
         if !state.require_outcome(CandleLoadObservationOutcome::Preparing) {
             return;
@@ -202,7 +202,7 @@ impl CandleLoadObservationRecorder {
     }
 
     /// Finishes a preparation attempt that returned failure.
-    pub fn preparation_failed(&self) {
+    pub(crate) fn preparation_failed(&self) {
         let mut state = lock(&self.shared);
         if !state.require_outcome(CandleLoadObservationOutcome::Preparing) {
             return;
@@ -216,7 +216,7 @@ impl CandleLoadObservationRecorder {
     }
 
     /// Marks the start of tensor materialization and model construction.
-    pub fn materialization_started(&self) {
+    pub(crate) fn materialization_started(&self) {
         let mut state = lock(&self.shared);
         if !state.require_outcome(CandleLoadObservationOutcome::Prepared) {
             return;
@@ -226,7 +226,7 @@ impl CandleLoadObservationRecorder {
     }
 
     /// Finishes a successful materialization attempt.
-    pub fn materialization_succeeded(&self) {
+    pub(crate) fn materialization_succeeded(&self) {
         let mut state = lock(&self.shared);
         if !state.require_outcome(CandleLoadObservationOutcome::Materializing) {
             return;
@@ -240,7 +240,7 @@ impl CandleLoadObservationRecorder {
     }
 
     /// Finishes a failed materialization attempt and marks cleanup pending.
-    pub fn materialization_failed(&self) {
+    pub(crate) fn materialization_failed(&self) {
         let mut state = lock(&self.shared);
         if !state.require_outcome(CandleLoadObservationOutcome::Materializing) {
             return;
@@ -255,7 +255,7 @@ impl CandleLoadObservationRecorder {
     }
 
     /// Adds bytes read for both required materialization and whole-file hashing.
-    pub fn required_and_verified_bytes_read(&self, bytes: u64) {
+    pub(crate) fn required_and_verified_bytes_read(&self, bytes: u64) {
         let mut state = lock(&self.shared);
         if !state.require_outcome(CandleLoadObservationOutcome::Materializing) {
             return;
@@ -275,7 +275,7 @@ impl CandleLoadObservationRecorder {
     ///
     /// This includes headers, ignored tensor ranges, and any pre-materialization
     /// local identity baseline.
-    pub fn verification_only_bytes_read(&self, bytes: u64) {
+    pub(crate) fn verification_only_bytes_read(&self, bytes: u64) {
         let mut state = lock(&self.shared);
         if !matches!(
             state.snapshot.outcome,
@@ -293,7 +293,7 @@ impl CandleLoadObservationRecorder {
     }
 
     /// Adds transfer batches started during accelerator materialization.
-    pub fn transfer_batches_started(&self, count: u64) {
+    pub(crate) fn transfer_batches_started(&self, count: u64) {
         let mut state = lock(&self.shared);
         if !state.require_outcome(CandleLoadObservationOutcome::Materializing) {
             return;
@@ -304,7 +304,7 @@ impl CandleLoadObservationRecorder {
     }
 
     /// Adds device synchronization calls started during materialization.
-    pub fn loading_device_synchronizations_started(&self, count: u64) {
+    pub(crate) fn loading_device_synchronizations_started(&self, count: u64) {
         let mut state = lock(&self.shared);
         if !state.require_outcome(CandleLoadObservationOutcome::Materializing) {
             return;
@@ -316,7 +316,7 @@ impl CandleLoadObservationRecorder {
     }
 
     /// Marks the start of one explicit failed-owner cleanup call.
-    pub fn cleanup_started(&self) {
+    pub(crate) fn cleanup_started(&self) {
         let mut state = lock(&self.shared);
         if state.snapshot.outcome != CandleLoadObservationOutcome::MaterializationFailed
             || !matches!(
@@ -334,7 +334,7 @@ impl CandleLoadObservationRecorder {
     }
 
     /// Marks successful explicit cleanup of the failed owner.
-    pub fn cleanup_succeeded(&self) {
+    pub(crate) fn cleanup_succeeded(&self) {
         let mut state = lock(&self.shared);
         if state.snapshot.outcome != CandleLoadObservationOutcome::MaterializationFailed
             || state.snapshot.cleanup_outcome != CandleLoadCleanupOutcome::Pending
@@ -347,7 +347,7 @@ impl CandleLoadObservationRecorder {
     }
 
     /// Marks a retryable explicit cleanup failure.
-    pub fn cleanup_failed(&self) {
+    pub(crate) fn cleanup_failed(&self) {
         let mut state = lock(&self.shared);
         if state.snapshot.outcome != CandleLoadObservationOutcome::MaterializationFailed
             || state.snapshot.cleanup_outcome != CandleLoadCleanupOutcome::Pending

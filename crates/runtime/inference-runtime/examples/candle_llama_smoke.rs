@@ -311,7 +311,6 @@ fn generation_request(
         seed: 17,
         eos_tokens: Box::new([]),
         stop_sequences: Box::new([]),
-        scheduler_quantum: NonZeroU32::MIN,
         output_capacity: GenerationOutputCapacityPolicy::default(),
     }
 }

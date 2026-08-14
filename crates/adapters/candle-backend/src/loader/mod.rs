@@ -7,11 +7,13 @@ mod construction;
 mod footprint;
 mod identity;
 mod manifest;
+mod observer;
 mod payload;
 mod prepared;
 mod safetensors;
 mod scalar;
 mod schema;
+mod shard_stream;
 mod transfer_batch;
 mod transfer_plan;
 

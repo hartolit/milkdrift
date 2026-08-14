@@ -2353,7 +2353,6 @@ fn request(
         seed: 17,
         eos_tokens: eos_tokens.to_vec().into_boxed_slice(),
         stop_sequences: stops.to_vec().into_boxed_slice(),
-        scheduler_quantum: NonZeroU32::MIN,
         output_capacity: GenerationOutputCapacityPolicy::default(),
     }
 }
