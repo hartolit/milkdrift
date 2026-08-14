@@ -80,7 +80,7 @@ const HOMOGENEOUS_F32_DESCRIPTOR: ModelDescriptor = ModelDescriptor {
 };
 const MIXED_EXECUTION_WEIGHT_BYTES: u64 = 1_840;
 const MIXED_CACHE_BYTES_PER_TOKEN: u64 = 32;
-const MIXED_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 66_049;
+const MIXED_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 74_129;
 
 pub(crate) type TestResult<T = ()> = Result<T, String>;
 type CandleRuntime = HostedRuntime<CandleLlamaSource>;
