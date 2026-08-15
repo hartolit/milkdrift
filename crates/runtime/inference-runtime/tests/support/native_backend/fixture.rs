@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    CandleLlamaSource, DType, Device, HashMap, Path, PathBuf, SystemTime, Tensor, TestResult,
+    UNIX_EPOCH, fs,
+};
 
 pub(crate) fn candle_fixture_source() -> TestResult<CandleLlamaSource> {
     let directory = candle_fixture_directory();
