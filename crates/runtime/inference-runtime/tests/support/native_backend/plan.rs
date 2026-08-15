@@ -53,7 +53,7 @@ pub(crate) const HOMOGENEOUS_F32_DESCRIPTOR: ModelDescriptor = ModelDescriptor {
 };
 pub(crate) const MIXED_EXECUTION_WEIGHT_BYTES: u64 = 1_840;
 pub(crate) const MIXED_CACHE_BYTES_PER_TOKEN: u64 = 32;
-pub(crate) const MIXED_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 74_129;
+pub(crate) const MIXED_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 75_665;
 
 pub(crate) fn prepare_plan(
     source: &CandleLlamaSource,
