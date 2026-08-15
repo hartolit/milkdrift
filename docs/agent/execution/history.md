@@ -193,21 +193,26 @@ This maintenance is commit `acdd2ed066808661f6e0f7336dedf84513016850`, tree
 `56008a2d76b96205bb810597464603cd3a5cafcb`. No product support or historical run
 was broadened by the documentation change.
 
-## Independent source closure candidate
+## Independent source closure and exact-tree acceptance
 
 **Date:** 2026-08-14
 **Input:** `acdd2ed066808661f6e0f7336dedf84513016850`, tree
 `56008a2d76b96205bb810597464603cd3a5cafcb`
 
 An independent multi-area audit re-read the continuation guide and package inputs
-against their parent trees. The resulting local candidate enforces the fresh E0
-sequence state/position contract before publication, preserves accepted worker
-and maintenance events ahead of shutdown, canonicalizes destructive CI resource
-roots and covers symlink/root containment, decomposes the accelerator loader
-coordinator, removes the duplicated CUDA package list from validation, and
-restores the reusable/project-specific architecture boundary.
+against their parent trees. Source closure and its final CUDA-fixture repairs
+culminated in `3ac08a14a89f9d8ab4b50520e6336ee7f583aba4`, tree
+`23143bc78392c24f4c9c0345e168d7d56a92816f`. The durable result enforces fresh E0
+sequence state/position before publication, preserves accepted worker and
+maintenance events ahead of shutdown, physically contains destructive CI
+resources, decomposes accelerator loading coordination, and restores the
+reusable/project-specific architecture boundary.
 
-The candidate's exact commit/tree and final local validation are reported by the
-package completion response rather than embedded self-referentially here. No
-hosted Quality or self-hosted CUDA acceptance exists for this candidate, and no
-current product support or older evidence was broadened.
+Exact-tree [Quality run 31835967580](https://github.com/hartolit/milkdrift/actions/runs/31835967580)
+passed every required hosted job. Exact-tree
+[CUDA run 31835967556](https://github.com/hartolit/milkdrift/actions/runs/31835967556)
+passed compile, strict Clippy, six adapter cases, one E0 case, 49 deterministic
+fault cases, two E1 cases, and cleanup on the labelled RTX 5070 Ti runner. This
+closed continuation packages 01–07 without activating a successor product phase
+or establishing AMD, external mixed-checkpoint, or current external schema-6
+product evidence.

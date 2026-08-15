@@ -1,6 +1,6 @@
 # Current implementation status
 
-**Status date:** 2026-08-14
+**Status date:** 2026-08-15
 
 Milkdrift's implemented product is the local-inference foundation and optional E1
 reference application kit. No later product phase is active. The next direction is
@@ -84,27 +84,30 @@ and [lifecycle](lifecycle.md).
 
 Evidence applies only to the named tree and scope.
 
+Continuation source commit
+`3ac08a14a89f9d8ab4b50520e6336ee7f583aba4`, tree
+`23143bc78392c24f4c9c0345e168d7d56a92816f`, is the accepted source boundary
+for packages 01–07.
+
 | Evidence class | Exact baseline and accepted result | Current-tree consequence |
 |---|---|---|
-| Latest full local repository acceptance | `ee5078dd6bb6126afd12f25785a4e5effb38761b`, tree `50ad9901583252b474ccf48c79fa16558cd6e3e0`: focused benchmark/tooling tests, canonical composite, both portable plans, dependency policy, and offline links passed locally with isolated targets. | This is the latest complete locally accepted incoming baseline. It includes the verification/evidence consolidation but no current-tree CUDA execution. |
+| Documented full local repository acceptance | `ee5078dd6bb6126afd12f25785a4e5effb38761b`, tree `50ad9901583252b474ccf48c79fa16558cd6e3e0`: focused benchmark/tooling tests, canonical composite, both portable plans, dependency policy, and offline links passed locally with isolated targets. | This was the complete local incoming baseline for the continuation closure; exact later-tree acceptance is recorded in the hosted rows below. |
 | Foundation local closure | `b1f7e90b1ba67f1cf968d773052b5062ef8cbbb9`, tree `fcb3ee6fa00243734abd74b64218aa0db2e340c1`: complete download-free CPU, native component, composite, portable, policy, and offline-link matrix passed. | Deterministic CPU lifecycle/accounting foundation accepted for that tree. |
-| Latest accepted hosted Quality | [run 31696186308](https://github.com/hartolit/milkdrift/actions/runs/31696186308) passed every required job on `6df699c3b2bb1b7ffa59f7bcf86c69d9e0654813`, tree `c3a870cca7b7569e648787ca68c42e513d56f48d`. | Proves only that older exact tree. Later source/tooling changes still require their own remote run. |
-| Latest accepted self-hosted CUDA | [run 31696186329](https://github.com/hartolit/milkdrift/actions/runs/31696186329) passed compile, strict Clippy, adapter/E0/E1 hardware, 47 deterministic fault cases, and cleanup on the exact RTX row for `6df699c`. | Establishes the supported hardware row, not later-tree CUDA acceptance or generic NVIDIA support. |
+| Latest accepted hosted Quality | [run 31835967580](https://github.com/hartolit/milkdrift/actions/runs/31835967580) passed every required native, portable, policy, link, documentation, benchmark-compilation, and resource-cleanup job on `3ac08a1`, tree `23143bc`. | Accepts packages 01–07 on the exact continuation source boundary. Later source, test, manifest, workflow, fixture, or script changes require new exact-tree evidence. |
+| Latest accepted self-hosted CUDA | [run 31835967556](https://github.com/hartolit/milkdrift/actions/runs/31835967556) passed compile, strict Clippy, six Candle adapter cases, one E0 lifecycle case, 49 serial fault-injection cases, two E1 cases, and unconditional cleanup on `3ac08a1`. | Establishes exact-tree execution on the supported RTX row, not generic NVIDIA or AMD support. |
 | Later local accelerator loading | `716ae9a23ea12fc81374e4d576d3a3a61f2ae8e9`, tree `131f457dd32b6e31886769980637cda49f72fd8a`: the focused default matrix and six local RTX adapter cases passed for bounded transfer batching and verified artifact loading. | Correctness evidence for that exact accelerator tree; no speedup or external-model result is inferred. |
 | External product performance | Historical controlled CPU/CUDA evidence is tied to Commit E `411945e0fd53363f98609db21a43d757c4d9b506`, tree `7099dcb5c9879190543d3afa5fde399a84d799df`. | Curated measurements remain valid only for that environment/workload; no schema-6 current-tree product report is accepted. |
 
 Documentation-authority commit `acdd2ed066808661f6e0f7336dedf84513016850`, tree
 `56008a2d76b96205bb810597464603cd3a5cafcb`, changed documentation and stable
-hygiene policy without broadening support. The independent source-closure
-candidate changes E0 contract enforcement, CI resource containment, regression
-coverage, and active documentation. Its resulting commit/tree and final local
-checks are reported externally because a tracked document cannot name the commit
-that contains itself.
+hygiene policy without broadening support. The accepted continuation boundary
+adds the independently reviewed source closure and its exact-tree hosted/CUDA
+acceptance without activating a successor product phase.
 
 ## Open evidence and unsupported claims
 
-- Hosted Quality and self-hosted CUDA have not run on the source-closure candidate.
-  Earlier runs are not promoted to current-tree evidence.
+- Any later source/test candidate must obtain its own hosted Quality and
+  self-hosted CUDA evidence; the accepted runs above are not transferable.
 - No immutable, license-reviewed external mixed-layout checkpoint and no external
   schema-6 CPU/CUDA product report is accepted. Deterministic project fixtures own
   current mixed-layout correctness.

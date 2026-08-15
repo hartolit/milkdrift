@@ -1,36 +1,28 @@
 # Current execution context
 
-**Status date:** 2026-08-14
-**State:** independent source-closure candidate assembled; no product phase active
+**Status date:** 2026-08-15
+**State:** continuation packages 01–07 closed; no product phase active
 
 ## Immediate boundary
 
-The incoming baseline is documentation-authority commit
-`acdd2ed066808661f6e0f7336dedf84513016850`, tree
-`56008a2d76b96205bb810597464603cd3a5cafcb`. Continuation packages 01–05 are
-implemented there.
+The accepted continuation source boundary is
+`3ac08a14a89f9d8ab4b50520e6336ee7f583aba4`, tree
+`23143bc78392c24f4c9c0345e168d7d56a92816f`. Packages 01–07 are closed there by
+[Quality run 31835967580](https://github.com/hartolit/milkdrift/actions/runs/31835967580)
+and [CUDA run 31835967556](https://github.com/hartolit/milkdrift/actions/runs/31835967556).
 
-Package 06 independently re-audited the combined source and assembled a local
-closure candidate. It tightens fresh E0 sequence admission, preserves every
-accepted worker event through terminal shutdown, physically contains CI resource
-cleanup across symlinked roots, decomposes accelerator loading coordination, and
-reconciles active documentation with the metadata-owned verification graph. The
-candidate's resulting commit/tree and final local validation belong in the
-completion response because tracked content cannot name the commit that contains
-itself.
-
-Post-push exact-tree acceptance is not active until the operator pushes this
-candidate. Workflow/workspace/authority remains an unratified product direction.
+The repository is parked at that accepted local CPU/CUDA foundation. No source or
+test maintenance candidate supersedes it, and workflow/workspace/authority
+remains an unratified product direction.
 
 ## Unresolved acceptance
 
-- The source-closure candidate has no exact hosted Quality or self-hosted CUDA
-  result; accepted older run IDs remain scoped in
-  [implementation status](../../project/implementation-status.md).
 - No reviewed external mixed-layout checkpoint or current schema-6 external
   product run exists.
-- Final continuation acceptance requires the operator to push the source-closure
-  candidate before the exact-tree acceptance package can run.
+- Deterministic project fixtures remain the current mixed-layout correctness
+  evidence. AMD support is absent.
+- Any later source/test candidate requires new exact-tree hosted Quality and CUDA
+  acceptance before it replaces the boundary above.
 
 ## Canonical owners
 
