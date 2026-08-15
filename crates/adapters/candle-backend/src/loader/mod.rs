@@ -7,6 +7,7 @@ mod construction;
 mod footprint;
 mod identity;
 mod manifest;
+mod math;
 mod observer;
 mod payload;
 mod prepared;
@@ -39,6 +40,7 @@ use crate::source::{CandleConfigurationSource, CandleLlamaSource};
 pub use self::cleanup::CandleLlamaFailedPreparation;
 use self::footprint::{calculate, sequence_cache_bytes_per_token, validate_memory_plan};
 use self::manifest::{InspectedShard, InspectionLimits};
+use self::math::numeric_overflow;
 #[cfg(feature = "cuda-hardware-tests")]
 pub use self::prepared::CandleHardwareLoadFault;
 pub use self::prepared::CandleLlamaPreparedLoad;
@@ -166,9 +168,9 @@ impl CandleLlamaLoader {
             sequence_cache_bytes_per_token(backend, &parsed_config.config, cpu_execution_dtype)?;
 
         let context_length = u32::try_from(parsed_config.config.max_position_embeddings)
-            .map_err(|_| numeric_error(backend))?;
-        let vocabulary_size =
-            u32::try_from(parsed_config.config.vocab_size).map_err(|_| numeric_error(backend))?;
+            .map_err(|_| numeric_overflow(backend))?;
+        let vocabulary_size = u32::try_from(parsed_config.config.vocab_size)
+            .map_err(|_| numeric_overflow(backend))?;
         let operations = CapabilitySet::PREFILL
             .union(CapabilitySet::INCREMENTAL_DECODE)
             .union(CapabilitySet::MULTIPLE_SEQUENCES)
@@ -445,10 +447,6 @@ pub(super) const fn host_memory_failure(backend: BackendId, code: u32) -> LoadEr
         code,
         default_load_stage(code),
     )
-}
-
-fn numeric_error(backend: BackendId) -> LoadError {
-    invalid_model_failure(backend, crate::failure::CODE_NUMERIC_OVERFLOW)
 }
 
 pub(super) fn map_candle_load_error(

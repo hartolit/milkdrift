@@ -46,6 +46,12 @@ enum RequestRemovalDisposition {
     Retained(CleanupFailureReport),
 }
 
+pub(super) enum ModelRequestDrain {
+    Empty,
+    Released,
+    Retained,
+}
+
 impl<L> InferenceRuntime<L>
 where
     L: ModelLoader,
@@ -232,7 +238,7 @@ where
         if let Err(error) = cleanup_result {
             pending.failure.cleanup_failure = FailureDetail::Sequence(error).class();
             pending.failure.cleanup_detail = FailureDetail::Sequence(error);
-            let state = sequence_cleanup_state(handle, &pending, maximum_attempts);
+            let state = pending.cleanup_state(handle, maximum_attempts);
             let slot = self
                 .models
                 .get_mut(&model_id)
@@ -251,7 +257,7 @@ where
             });
         }
 
-        let state = sequence_cleanup_state(handle, &pending, maximum_attempts).released();
+        let state = pending.cleanup_state(handle, maximum_attempts).released();
         let slot = self
             .models
             .get_mut(&model_id)
@@ -314,7 +320,7 @@ where
                 // and admission stays blocked until explicit cleanup succeeds.
                 self.reserved_footprint = reserved_after_release;
             }
-            let state = model_cleanup_state(&pending, maximum_attempts);
+            let state = pending.cleanup_state(maximum_attempts);
             let replaced = self.pending_models.insert(model_id, pending);
             debug_assert!(replaced.is_none(), "cleanup owner was removed for retry");
             self.last_cleanup = Some(state);
@@ -325,7 +331,7 @@ where
             });
         }
 
-        let state = model_cleanup_state(&pending, maximum_attempts).released();
+        let state = pending.cleanup_state(maximum_attempts).released();
         self.reserved_footprint = reserved_after_release;
         self.last_cleanup = Some(state);
         Ok(CleanupPoll::Released(state))
@@ -382,6 +388,34 @@ where
                 self.last_cleanup = Some(state);
                 Err(cleanup_retention_error(state))
             }
+        }
+    }
+
+    /// Applies at most one request-removal operation for a model.
+    ///
+    /// Ordinary unload and shutdown own distinct primary failures and retry
+    /// behavior; this helper shares only deterministic selection and the
+    /// cleanup-retention classification produced by `remove_request`.
+    pub(super) fn drain_one_model_request(
+        &mut self,
+        model_id: ModelId,
+        primary_operation: RuntimeOperation,
+        primary_detail: FailureDetail,
+    ) -> Result<ModelRequestDrain, RuntimeError> {
+        let request_id = self.models.get(&model_id).and_then(|slot| {
+            slot.requests
+                .first_key_value()
+                .map(|(request_id, _)| *request_id)
+        });
+        let Some(request_id) = request_id else {
+            return Ok(ModelRequestDrain::Empty);
+        };
+        match self.remove_request(request_id, primary_operation, primary_detail) {
+            Ok(()) => Ok(ModelRequestDrain::Released),
+            Err(RuntimeError::CleanupFailed(_) | RuntimeError::CleanupRetryExhausted(_)) => {
+                Ok(ModelRequestDrain::Retained)
+            }
+            Err(error) => Err(error),
         }
     }
 
@@ -527,41 +561,6 @@ where
             "active request identity was prevalidated"
         );
         Ok(RequestRemovalDisposition::Retained(report))
-    }
-}
-
-fn sequence_cleanup_state<S: domain_contracts::BackendSequence>(
-    handle: domain_contracts::ModelHandle,
-    pending: &PendingSequence<S>,
-    maximum_attempts: u32,
-) -> CleanupRetryState {
-    CleanupRetryState {
-        resource: CleanupResource::Sequence {
-            handle,
-            request_id: pending.request_id,
-            sequence_id: pending.sequence_id,
-        },
-        failure: pending.failure,
-        ownership: pending.ownership,
-        attempts: pending.attempts,
-        maximum_attempts,
-    }
-}
-
-fn model_cleanup_state<M, P>(
-    pending: &super::PendingModel<M, P>,
-    maximum_attempts: u32,
-) -> CleanupRetryState
-where
-    M: LoadedModel,
-    P: domain_contracts::FailedLoadOwner,
-{
-    CleanupRetryState {
-        resource: pending.owner.cleanup_resource(pending.handle),
-        failure: pending.failure,
-        ownership: pending.ownership,
-        attempts: pending.attempts,
-        maximum_attempts,
     }
 }
 

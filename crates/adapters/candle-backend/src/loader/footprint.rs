@@ -6,11 +6,10 @@ use domain_contracts::{
     BackendId, DeviceKind, LoadError, MemoryBudget, MemoryFootprint, MemoryKind,
 };
 
-use crate::failure::CODE_NUMERIC_OVERFLOW;
-
 use super::manifest::InspectedShard;
+use super::math::{execution_dtype_bytes, numeric_overflow};
 use super::transfer_plan::TransferPlan;
-use super::{VERIFICATION_BUFFER_BYTES_U64, invalid_model_failure, unsupported_scalar};
+use super::{VERIFICATION_BUFFER_BYTES_U64, unsupported_scalar};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct CalculatedFootprints {
@@ -27,7 +26,7 @@ pub(super) fn calculate(
     transfer_owner_metadata_bytes: u64,
 ) -> Result<CalculatedFootprints, LoadError> {
     let execution_width =
-        dtype_bytes(execution_dtype).ok_or_else(|| unsupported_scalar(backend))?;
+        execution_dtype_bytes(execution_dtype).ok_or_else(|| unsupported_scalar(backend))?;
     let mut required_execution_bytes = 0_u64;
     let mut host_peak = VERIFICATION_BUFFER_BYTES_U64;
 
@@ -39,18 +38,18 @@ pub(super) fn calculate(
         let execution_bytes = tensor
             .element_count
             .checked_mul(execution_width)
-            .ok_or_else(|| numeric_error(backend))?;
+            .ok_or_else(|| numeric_overflow(backend))?;
         let alignment = tensor
             .source_dtype
             .alignment()
             .ok_or_else(|| unsupported_scalar(backend))?;
         let alignment_padding = alignment
             .checked_sub(1)
-            .ok_or_else(|| numeric_error(backend))?;
+            .ok_or_else(|| numeric_overflow(backend))?;
         let aligned_staging = tensor
             .source_bytes
             .checked_add(alignment_padding)
-            .ok_or_else(|| numeric_error(backend))?;
+            .ok_or_else(|| numeric_overflow(backend))?;
         let source_dtype = tensor
             .source_dtype
             .executable_dtype()
@@ -62,14 +61,14 @@ pub(super) fn calculate(
                     .checked_add(aligned_staging)
                     .and_then(|bytes| bytes.checked_add(tensor.source_bytes))
                     .and_then(|bytes| bytes.checked_add(VERIFICATION_BUFFER_BYTES_U64))
-                    .ok_or_else(|| numeric_error(backend))?;
+                    .ok_or_else(|| numeric_overflow(backend))?;
                 host_peak = host_peak.max(raw_peak);
                 if source_dtype != execution_dtype {
                     let cast_peak = required_execution_bytes
                         .checked_add(tensor.source_bytes)
                         .and_then(|bytes| bytes.checked_add(execution_bytes))
                         .and_then(|bytes| bytes.checked_add(VERIFICATION_BUFFER_BYTES_U64))
-                        .ok_or_else(|| numeric_error(backend))?;
+                        .ok_or_else(|| numeric_overflow(backend))?;
                     host_peak = host_peak.max(cast_peak);
                 }
             }
@@ -78,7 +77,7 @@ pub(super) fn calculate(
         }
         required_execution_bytes = required_execution_bytes
             .checked_add(execution_bytes)
-            .ok_or_else(|| numeric_error(backend))?;
+            .ok_or_else(|| numeric_overflow(backend))?;
     }
 
     match device_kind {
@@ -86,13 +85,13 @@ pub(super) fn calculate(
         DeviceKind::Cuda => {
             let transfer_plan = transfer_plan.ok_or(LoadError::InvalidConfiguration)?;
             if transfer_plan.total_execution_bytes() != required_execution_bytes {
-                return Err(invalid_model_failure(backend, CODE_NUMERIC_OVERFLOW));
+                return Err(numeric_overflow(backend));
             }
             let host_peak = VERIFICATION_BUFFER_BYTES_U64
                 .checked_add(transfer_plan.maximum_host_staging_bytes())
                 .and_then(|bytes| bytes.checked_add(transfer_plan.metadata_bytes()))
                 .and_then(|bytes| bytes.checked_add(transfer_owner_metadata_bytes))
-                .ok_or_else(|| numeric_error(backend))?;
+                .ok_or_else(|| numeric_overflow(backend))?;
             Ok(cuda_footprints(required_execution_bytes, host_peak))
         }
         _ => Err(LoadError::InvalidConfiguration),
@@ -107,7 +106,7 @@ fn cpu_footprints(
     let host_peak = host_peak.max(required_execution_bytes);
     let host_working_bytes = host_peak
         .checked_sub(required_execution_bytes)
-        .ok_or_else(|| numeric_error(backend))?;
+        .ok_or_else(|| numeric_overflow(backend))?;
     Ok(CalculatedFootprints {
         final_footprint: MemoryFootprint {
             host_weight_bytes: required_execution_bytes,
@@ -149,7 +148,7 @@ pub(super) fn validate_memory_plan(
 ) -> Result<(), LoadError> {
     let required_host = footprint
         .checked_host_bytes()
-        .ok_or_else(|| numeric_error(backend))?;
+        .ok_or_else(|| numeric_overflow(backend))?;
     if required_host > budget.host_bytes {
         return Err(LoadError::InsufficientMemory {
             kind: MemoryKind::Host,
@@ -159,7 +158,7 @@ pub(super) fn validate_memory_plan(
     }
     let required_device = footprint
         .checked_device_bytes()
-        .ok_or_else(|| numeric_error(backend))?;
+        .ok_or_else(|| numeric_overflow(backend))?;
     if required_device > budget.device_bytes {
         return Err(LoadError::InsufficientMemory {
             kind: MemoryKind::Device,
@@ -184,11 +183,12 @@ pub(super) fn sequence_cache_bytes_per_token(
     config: &Config,
     execution_dtype: DType,
 ) -> Result<u64, LoadError> {
-    let scalar_bytes = dtype_bytes(execution_dtype).ok_or_else(|| unsupported_scalar(backend))?;
+    let scalar_bytes =
+        execution_dtype_bytes(execution_dtype).ok_or_else(|| unsupported_scalar(backend))?;
     let head_dimension = config
         .hidden_size
         .checked_div(config.num_attention_heads)
-        .ok_or_else(|| numeric_error(backend))?;
+        .ok_or_else(|| numeric_overflow(backend))?;
     let factors = [
         u64::try_from(config.num_hidden_layers),
         Ok(2_u64),
@@ -197,23 +197,11 @@ pub(super) fn sequence_cache_bytes_per_token(
         Ok(scalar_bytes),
     ];
     factors.into_iter().try_fold(1_u64, |total, factor| {
-        let factor = factor.map_err(|_| numeric_error(backend))?;
+        let factor = factor.map_err(|_| numeric_overflow(backend))?;
         total
             .checked_mul(factor)
-            .ok_or_else(|| numeric_error(backend))
+            .ok_or_else(|| numeric_overflow(backend))
     })
-}
-
-const fn dtype_bytes(dtype: DType) -> Option<u64> {
-    match dtype {
-        DType::F32 => Some(4),
-        DType::F16 | DType::BF16 => Some(2),
-        _ => None,
-    }
-}
-
-const fn numeric_error(backend: BackendId) -> LoadError {
-    invalid_model_failure(backend, CODE_NUMERIC_OVERFLOW)
 }
 
 #[cfg(test)]

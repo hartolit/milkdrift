@@ -144,6 +144,16 @@ where
     M: LoadedModel,
     P: FailedLoadOwner,
 {
+    const fn cleanup_state(&self, maximum_attempts: u32) -> CleanupRetryState {
+        CleanupRetryState {
+            resource: self.owner.cleanup_resource(self.handle),
+            failure: self.failure,
+            ownership: self.ownership,
+            attempts: self.attempts,
+            maximum_attempts,
+        }
+    }
+
     /// Reclassifies a failed preparation whose report no longer matches the
     /// accepted transaction. The returned footprint was previously counted as
     /// exact and must be removed from aggregate exact accounting once.
@@ -242,6 +252,20 @@ impl<S> PendingSequence<S>
 where
     S: BackendSequence,
 {
+    const fn cleanup_state(&self, handle: ModelHandle, maximum_attempts: u32) -> CleanupRetryState {
+        CleanupRetryState {
+            resource: CleanupResource::Sequence {
+                handle,
+                request_id: self.request_id,
+                sequence_id: self.sequence_id,
+            },
+            failure: self.failure,
+            ownership: self.ownership,
+            attempts: self.attempts,
+            maximum_attempts,
+        }
+    }
+
     /// Reclassifies a retained sequence whose report no longer matches the
     /// plan admitted before native creation. The returned footprint was
     /// previously represented in exact aggregate accounting.
@@ -417,17 +441,13 @@ where
         &mut self,
         handle: ModelHandle,
     ) -> Result<&mut ModelSlot<L::Model>, RuntimeError> {
-        let slot = self
-            .models
+        // `exact_model` is the sole handle-resolution and stale-generation
+        // decision. The second lookup only converts the verified slot borrow to
+        // mutable access; exclusive runtime ownership prevents intervening change.
+        self.exact_model(handle)?;
+        self.models
             .get_mut(&handle.id)
-            .ok_or(RuntimeError::ModelNotLoaded(handle.id))?;
-        if slot.handle != handle {
-            return Err(RuntimeError::StaleModelHandle {
-                provided: handle,
-                current: slot.handle,
-            });
-        }
-        Ok(slot)
+            .ok_or(RuntimeError::BackendContractViolation)
     }
 
     fn request_model_id(&self, request_id: RequestId) -> Result<ModelId, RuntimeError> {

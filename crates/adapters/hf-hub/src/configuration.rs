@@ -3,6 +3,12 @@ use std::fmt::{self, Formatter};
 use serde::Deserialize;
 use serde::de::{self, Deserializer, IgnoredAny, MapAccess, Visitor};
 
+// This visitor intentionally remains at the Hub boundary: it validates remote
+// declaration evidence before artifacts reach the execution adapter. Candle has
+// an independent bounded source parser, and both suites exercise the shared
+// ScalarType outcomes for absent/null, modern/legacy, unsupported, malformed,
+// duplicate, and conflicting declarations.
+
 use crate::{ArtifactScalarType, HubError};
 
 /// One MiB accommodates realistic Llama configuration files with ample extension headroom.

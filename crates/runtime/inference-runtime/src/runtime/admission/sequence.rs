@@ -181,16 +181,7 @@ where
             )));
         }
 
-        let slot = self
-            .models
-            .get(&handle.id)
-            .ok_or(RuntimeError::ModelNotLoaded(handle.id))?;
-        if slot.handle != handle {
-            return Err(RuntimeError::StaleModelHandle {
-                provided: handle,
-                current: slot.handle,
-            });
-        }
+        let slot = self.exact_model(handle)?;
         if slot.poisoned {
             return Err(RuntimeError::ModelDegraded(handle.id));
         }

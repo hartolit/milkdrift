@@ -1,6 +1,6 @@
 //! Download-free Candle real-fixture coverage for ordinary E0 generation and lifecycle.
 
-#[path = "support/native_backend.rs"]
+#[path = "support/native_backend/mod.rs"]
 mod native_backend;
 
 use native_backend::TestResult;

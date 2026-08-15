@@ -5,10 +5,11 @@ use std::mem::size_of;
 use candle_core::DType;
 use domain_contracts::{BackendId, LoadError};
 
-use crate::failure::{CODE_INSPECTION_ALLOCATION, CODE_NUMERIC_OVERFLOW};
+use crate::failure::CODE_INSPECTION_ALLOCATION;
 
 use super::manifest::{InspectedShard, InspectedTensor};
-use super::{host_memory_failure, invalid_model_failure, unsupported_scalar};
+use super::math::{execution_dtype_bytes, numeric_overflow};
+use super::{host_memory_failure, unsupported_scalar};
 
 /// Preferred maximum live tensor staging for one accelerator batch.
 pub(super) const PREFERRED_BATCH_HOST_STAGING_BYTES: u64 = 256 * 1024 * 1024;
@@ -159,15 +160,15 @@ impl PendingTransferBatch {
         self.retained_host_bytes = self
             .retained_host_bytes
             .checked_add(entry.retained_host_bytes)
-            .ok_or_else(|| numeric_error(backend))?;
+            .ok_or_else(|| numeric_overflow(backend))?;
         self.transferred_device_bytes = self
             .transferred_device_bytes
             .checked_add(entry.execution_bytes)
-            .ok_or_else(|| numeric_error(backend))?;
+            .ok_or_else(|| numeric_overflow(backend))?;
         self.entry_count = self
             .entry_count
             .checked_add(1)
-            .ok_or_else(|| numeric_error(backend))?;
+            .ok_or_else(|| numeric_overflow(backend))?;
         Ok(())
     }
 
@@ -198,10 +199,10 @@ impl TransferPlanBuilder {
         policy: TransferPolicy,
     ) -> Result<Self, LoadError> {
         if policy.maximum_entries == 0 {
-            return Err(numeric_error(backend));
+            return Err(numeric_overflow(backend));
         }
         let execution_width =
-            dtype_bytes(execution_dtype).ok_or_else(|| unsupported_scalar(backend))?;
+            execution_dtype_bytes(execution_dtype).ok_or_else(|| unsupported_scalar(backend))?;
         Ok(Self {
             backend,
             execution_dtype,
@@ -258,25 +259,25 @@ impl TransferPlanBuilder {
         let execution_bytes = tensor
             .element_count
             .checked_mul(self.execution_width)
-            .ok_or_else(|| numeric_error(self.backend))?;
+            .ok_or_else(|| numeric_overflow(self.backend))?;
         let alignment = tensor
             .source_dtype
             .alignment()
             .ok_or_else(|| unsupported_scalar(self.backend))?;
         let alignment_padding = alignment
             .checked_sub(1)
-            .ok_or_else(|| numeric_error(self.backend))?;
+            .ok_or_else(|| numeric_overflow(self.backend))?;
         let aligned_payload_bytes = tensor
             .source_bytes
             .checked_add(alignment_padding)
-            .ok_or_else(|| numeric_error(self.backend))?;
+            .ok_or_else(|| numeric_overflow(self.backend))?;
         let retained_host_bytes = if source_dtype == self.execution_dtype {
             tensor.source_bytes
         } else {
             tensor
                 .source_bytes
                 .checked_add(execution_bytes)
-                .ok_or_else(|| numeric_error(self.backend))?
+                .ok_or_else(|| numeric_overflow(self.backend))?
         };
         Ok(TransferEntryPlan {
             shard_index,
@@ -293,7 +294,7 @@ impl TransferPlanBuilder {
             .plan
             .total_execution_bytes
             .checked_add(entry.execution_bytes)
-            .ok_or_else(|| numeric_error(self.backend))?;
+            .ok_or_else(|| numeric_overflow(self.backend))?;
         self.plan
             .entries
             .try_reserve(1)
@@ -363,7 +364,7 @@ impl TransferPlan {
                 backend,
                 self.entries.capacity(),
             )?)
-            .ok_or_else(|| numeric_error(backend))
+            .ok_or_else(|| numeric_overflow(backend))
     }
 
     pub(super) fn batch(&self, index: usize) -> Option<TransferBatchPlan> {
@@ -415,15 +416,15 @@ fn candidate_peak(
     let raw_peak = retained_prefix
         .checked_add(entry.aligned_payload_bytes)
         .and_then(|bytes| bytes.checked_add(entry.source_bytes))
-        .ok_or_else(|| numeric_error(backend))?;
+        .ok_or_else(|| numeric_overflow(backend))?;
     let retained_peak = retained_prefix
         .checked_add(entry.retained_host_bytes)
-        .ok_or_else(|| numeric_error(backend))?;
+        .ok_or_else(|| numeric_overflow(backend))?;
     let cast_peak = if entry.requires_cast() {
         retained_prefix
             .checked_add(entry.source_bytes)
             .and_then(|bytes| bytes.checked_add(entry.execution_bytes))
-            .ok_or_else(|| numeric_error(backend))?
+            .ok_or_else(|| numeric_overflow(backend))?
     } else {
         0
     };
@@ -441,19 +442,7 @@ fn capacity_bytes<T>(backend: BackendId, capacity: usize) -> Result<u64, LoadErr
                 .ok()
                 .and_then(|width| count.checked_mul(width))
         })
-        .ok_or_else(|| numeric_error(backend))
-}
-
-const fn dtype_bytes(dtype: DType) -> Option<u64> {
-    match dtype {
-        DType::F32 => Some(4),
-        DType::F16 | DType::BF16 => Some(2),
-        _ => None,
-    }
-}
-
-const fn numeric_error(backend: BackendId) -> LoadError {
-    invalid_model_failure(backend, CODE_NUMERIC_OVERFLOW)
+        .ok_or_else(|| numeric_overflow(backend))
 }
 
 #[cfg(test)]

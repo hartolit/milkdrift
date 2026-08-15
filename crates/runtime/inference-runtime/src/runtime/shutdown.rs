@@ -9,6 +9,7 @@ use crate::{
 
 use super::{
     InferenceRuntime, PendingModelOwner,
+    cleanup::ModelRequestDrain,
     memory::{add_conservative_footprint, saturating_u32},
 };
 
@@ -204,24 +205,15 @@ where
     fn cancel_all_requests_for_shutdown(&mut self, model_id: ModelId) -> Result<u32, RuntimeError> {
         let mut cancelled = 0_u32;
         loop {
-            let request_id = self.models.get(&model_id).and_then(|slot| {
-                slot.requests
-                    .first_key_value()
-                    .map(|(request_id, _)| *request_id)
-            });
-            let Some(request_id) = request_id else {
-                break;
-            };
-            match self.remove_request(
-                request_id,
+            match self.drain_one_model_request(
+                model_id,
                 RuntimeOperation::Shutdown,
                 FailureDetail::Class(FailureClass::Shutdown),
-            ) {
-                Ok(())
-                | Err(RuntimeError::CleanupFailed(_) | RuntimeError::CleanupRetryExhausted(_)) => {
+            )? {
+                ModelRequestDrain::Empty => break,
+                ModelRequestDrain::Released | ModelRequestDrain::Retained => {
                     cancelled = cancelled.saturating_add(1);
                 }
-                Err(error) => return Err(error),
             }
         }
         Ok(cancelled)

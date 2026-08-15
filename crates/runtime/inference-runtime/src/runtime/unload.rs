@@ -4,12 +4,13 @@ use domain_contracts::{
 };
 
 use crate::{
-    CleanupFailureReport, CleanupRetryState, FailureClass, FailureDetail, RetainedOwnership,
-    RuntimeError, RuntimeOperation, UnloadReceipt, UnloadStatus,
+    CleanupFailureReport, FailureClass, FailureDetail, RetainedOwnership, RuntimeError,
+    RuntimeOperation, UnloadReceipt, UnloadStatus,
 };
 
 use super::{
-    InferenceRuntime, PendingModel, PendingModelOwner, cleanup::cleanup_retention_error,
+    InferenceRuntime, PendingModel, PendingModelOwner,
+    cleanup::{ModelRequestDrain, cleanup_retention_error},
     memory::checked_sub_footprint,
 };
 
@@ -189,20 +190,13 @@ where
             .map(|slot| slot.cancelled_requests_during_unload)
             .ok_or(RuntimeError::ModelNotLoaded(model_id))?;
         loop {
-            let request_id = self.models.get(&model_id).and_then(|slot| {
-                slot.requests
-                    .first_key_value()
-                    .map(|(request_id, _)| *request_id)
-            });
-            let Some(request_id) = request_id else {
-                break;
-            };
-            match self.remove_request(
-                request_id,
+            match self.drain_one_model_request(
+                model_id,
                 RuntimeOperation::Cancellation,
                 FailureDetail::Class(FailureClass::Cancellation),
-            ) {
-                Ok(()) => {
+            )? {
+                ModelRequestDrain::Empty => break,
+                ModelRequestDrain::Released => {
                     cancelled = cancelled.saturating_add(1);
                     if let Some(slot) = self.models.get_mut(&model_id) {
                         slot.cancelled_requests_during_unload = cancelled;
@@ -210,17 +204,16 @@ where
                         break;
                     }
                 }
-                Err(
-                    error @ (RuntimeError::CleanupFailed(_)
-                    | RuntimeError::CleanupRetryExhausted(_)),
-                ) => {
+                ModelRequestDrain::Retained => {
                     cancelled = cancelled.saturating_add(1);
                     if let Some(slot) = self.models.get_mut(&model_id) {
                         slot.cancelled_requests_during_unload = cancelled;
                     }
-                    return Err(error);
+                    let state = self
+                        .last_cleanup
+                        .ok_or(RuntimeError::BackendContractViolation)?;
+                    return Err(cleanup_retention_error(state));
                 }
-                Err(error) => return Err(error),
             }
         }
         Ok(cancelled)
@@ -281,13 +274,7 @@ where
                 attempts: 1,
                 cancelled_requests: slot.cancelled_requests_during_unload,
             };
-            let state = CleanupRetryState {
-                resource: pending.owner.cleanup_resource(handle),
-                failure: report,
-                ownership,
-                attempts: 1,
-                maximum_attempts: self.maximum_cleanup_attempts(),
-            };
+            let state = pending.cleanup_state(self.maximum_cleanup_attempts());
             let replaced = self.pending_models.insert(model_id, pending);
             debug_assert!(replaced.is_none(), "model release was prevalidated");
             self.last_cleanup = Some(state);

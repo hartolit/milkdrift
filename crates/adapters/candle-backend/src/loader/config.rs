@@ -8,6 +8,11 @@ use std::path::Path;
 use candle_transformers::models::llama::{Config, LlamaConfig};
 use domain_contracts::{BackendFailureKind, BackendId, LoadError, LoadFailureStage, ScalarType};
 use serde::de::{self, IgnoredAny, MapAccess, SeqAccess, Visitor};
+
+// This bounded visitor intentionally remains at the local Candle source
+// boundary. Hub resolves remote evidence independently; their test corpora
+// assert the same project-owned ScalarType semantics without introducing an E1
+// parser or coupling either source authority to the other adapter.
 use serde::{Deserialize, Deserializer};
 
 use crate::failure::{

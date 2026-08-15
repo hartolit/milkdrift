@@ -8,7 +8,7 @@ use std::process::ExitCode;
     dead_code,
     reason = "the harness-free CUDA target reuses one case from broader shared integration support"
 )]
-#[path = "support/native_backend.rs"]
+#[path = "support/native_backend/mod.rs"]
 mod native_backend;
 
 use native_backend::TestResult;

@@ -1,15 +1,15 @@
 use domain_contracts::{
-    FailedLoad, LoadedModel, ModelHandle, ModelId, ModelLifecycleState, ModelLoader, RequestId,
+    FailedLoad, ModelHandle, ModelId, ModelLifecycleState, ModelLoader, RequestId,
 };
 
 use crate::{
-    CleanupFailureReport, CleanupResource, CleanupRetryState, ConservativeFootprint, ModelSnapshot,
+    CleanupFailureReport, CleanupRetryState, ConservativeFootprint, ModelSnapshot,
     RetainedModelSnapshot, RetainedOwnership, RuntimeError, RuntimeSnapshot,
     UnverifiedOwnershipSummary,
 };
 
 use super::{
-    InferenceRuntime, PendingModel, PendingSequence,
+    InferenceRuntime, PendingModel,
     memory::{add_conservative_footprint, saturating_u32},
 };
 
@@ -153,7 +153,7 @@ where
             .pending_sequences
             .get(&request_id)?;
         let handle = self.models.get(&model_id)?.handle;
-        Some(self.sequence_cleanup_state(handle, pending))
+        Some(pending.cleanup_state(handle, self.maximum_cleanup_attempts()))
     }
 
     /// Returns the retained two-failure report for one quarantined request.
@@ -218,16 +218,7 @@ where
         &self,
         handle: ModelHandle,
     ) -> Result<ModelSnapshot, RuntimeError> {
-        let slot = self
-            .models
-            .get(&handle.id)
-            .ok_or(RuntimeError::ModelNotLoaded(handle.id))?;
-        if slot.handle != handle {
-            return Err(RuntimeError::StaleModelHandle {
-                provided: handle,
-                current: slot.handle,
-            });
-        }
+        let slot = self.exact_model(handle)?;
         Ok(ModelSnapshot {
             handle: slot.handle,
             execution_device: slot.execution_device,
@@ -246,41 +237,17 @@ where
             degraded: slot.poisoned,
         })
     }
-    const fn sequence_cleanup_state(
-        &self,
-        handle: ModelHandle,
-        pending: &PendingSequence<<L::Model as LoadedModel>::Sequence>,
-    ) -> CleanupRetryState {
-        CleanupRetryState {
-            resource: CleanupResource::Sequence {
-                handle,
-                request_id: pending.request_id,
-                sequence_id: pending.sequence_id,
-            },
-            failure: pending.failure,
-            ownership: pending.ownership,
-            attempts: pending.attempts,
-            maximum_attempts: self.maximum_cleanup_attempts(),
-        }
-    }
-
     const fn model_cleanup_retry_state(
         &self,
         pending: &PendingModel<L::Model, FailedLoad<L::FailedPreparation>>,
     ) -> CleanupRetryState {
-        CleanupRetryState {
-            resource: pending.owner.cleanup_resource(pending.handle),
-            failure: pending.failure,
-            ownership: pending.ownership,
-            attempts: pending.attempts,
-            maximum_attempts: self.maximum_cleanup_attempts(),
-        }
+        pending.cleanup_state(self.maximum_cleanup_attempts())
     }
 
     pub(super) fn first_pending_cleanup_state(&self) -> Option<CleanupRetryState> {
         for slot in self.models.values() {
             if let Some((_, pending)) = slot.pending_sequences.first_key_value() {
-                return Some(self.sequence_cleanup_state(slot.handle, pending));
+                return Some(pending.cleanup_state(slot.handle, self.maximum_cleanup_attempts()));
             }
         }
         self.pending_models
