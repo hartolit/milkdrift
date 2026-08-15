@@ -113,11 +113,14 @@ classes.
 
 ## Roadmap
 
-The local-execution foundation is in maintenance and exact-tree acceptance. The
+The local-execution foundation is in final maintenance and source closure. The
 next product direction is workflow/workspace/authority, but it is not yet a
-ratified implementation phase. A future program must first define versioned
-workflow, artifact, workspace, authority, capability, budget, and execution-target
-contracts plus a minimal headless workflow host.
+ratified implementation phase. Exact support and historical evidence live in
+[implementation status](docs/project/implementation-status.md); the external rule
+for accepting an exact commit lives in [validation](docs/project/validation.md).
+A future product program must first define versioned workflow, artifact,
+workspace, authority, capability, budget, and execution-target contracts plus a
+minimal headless workflow host.
 
 Later tracks include durable context and provenance, capability-scoped plugins,
 provider and trusted-peer targets, a replaceable control center, and research into

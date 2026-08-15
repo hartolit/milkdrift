@@ -216,3 +216,25 @@ fault cases, two E1 cases, and cleanup on the labelled RTX 5070 Ti runner. This
 closed continuation packages 01–07 without activating a successor product phase
 or establishing AMD, external mixed-checkpoint, or current external schema-6
 product evidence.
+
+## Final-foundation maintenance before independent closure
+
+**Date:** 2026-08-15
+
+The initial five-package continuation (`0a6cfd1`, `aa7363d`, `716ae9a`,
+`ee5078d`, and `acdd2ed`) established bounded output, cohesive runtime/application
+state, verified accelerator loading, consolidated evidence infrastructure, and the
+documentation authority spine. The corrective source chain (`1890769`, `68b364b`,
+and `3ac08a1`) then closed audit findings and CUDA fixture truth.
+
+Exact commit `3ac08a14a89f9d8ab4b50520e6336ee7f583aba4`, tree
+`23143bc78392c24f4c9c0345e168d7d56a92816f`, subsequently passed Quality run
+31835967580 and self-hosted CUDA run 31835967556 on the maintained RTX 5070 Ti
+row. Those results are accepted historical baseline evidence for that tree only.
+
+The final-foundation maintenance program then completed bounded portable load
+diagnostics in `b4c3c04`, context-local production/test structure and dependency
+alignment in `0ad2531`, and the evidence-authority reconciliation recorded by this
+entry. Independent final source closure remains the next source package. Exact
+post-closure acceptance is evaluated externally after push and is not committed as
+mutable current-state truth.

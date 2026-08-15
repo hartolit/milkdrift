@@ -1,5 +1,6 @@
 //! Rust-owned repository hygiene validation.
 
+mod documentation;
 mod invocation;
 mod manifest;
 mod orchestration;

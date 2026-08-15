@@ -7,7 +7,8 @@ measurements.
 ## Current execution authority
 
 - [Current context](current.md) records an active package or explicit parked state,
-  immediate tree boundary, unresolved acceptance, and environment-specific handoff.
+  the immediate source handoff, genuine external evidence gaps, and relevant
+  environment constraints.
 - [Execution plan](execution-plan.md) records the ordered active/inactive program.
 
 These are the only live execution authorities. Current project facts remain in

@@ -82,6 +82,90 @@ edition = \"2024\"
 
 const BASIC_SOURCE: &str = "pub fn fixture() {}\n";
 
+const VALID_STATUS: &str = "\
+# Status
+
+Current-checkout remote acceptance is determined externally by validation.
+
+## Accepted historical evidence
+
+| Evidence | Historical result |
+|---|---|
+| Hosted | [Run 123](https://github.com/example/project/actions/runs/123) succeeded for exact commit `1111111111111111111111111111111111111111`, tree `2222222222222222222222222222222222222222`. |
+";
+
+const VALID_CURRENT: &str = "\
+# Current
+
+Source maintenance is complete. Exact current-commit remote acceptance is an external property.
+";
+
+const VALID_PLAN: &str = "\
+# Plan
+
+| Order | Source package | State |
+|---:|---|---|
+| 1 | Evidence authority | Complete |
+
+Remote acceptance is an external condition, not a source package.
+";
+
+const VALID_VALIDATION: &str = "\
+# Validation
+
+Resolve `git rev-parse HEAD`, then inspect workflow runs whose `head_sha` equals that SHA. If the current tree has no matching remote run, evidence could not be obtained; source validation has not failed.
+";
+
+const VALID_HISTORY: &str = "\
+# History
+
+The prior candidate was waiting for a push. Its hosted run later failed, and the following exact tree replaced it.
+";
+
+fn documentation_repository(
+    name: &str,
+    overrides: &[(&str, &str)],
+) -> Result<FixtureRepository, Box<dyn Error>> {
+    let mut files = vec![
+        ("Cargo.toml", BASIC_MANIFEST),
+        ("src/lib.rs", BASIC_SOURCE),
+        ("README.md", "# Project\n"),
+        (
+            "docs/README.md",
+            "[Architecture](project/architecture.md) [Operation](project/operation.md) [Status](project/implementation-status.md)\n",
+        ),
+        ("docs/vision.md", "# Vision\n"),
+        (
+            "docs/project/README.md",
+            "[Operation](operation.md) [Status](implementation-status.md)\n",
+        ),
+        ("docs/project/architecture.md", "# Architecture\n"),
+        ("docs/project/operation.md", "# Operation\n"),
+        ("docs/project/implementation-status.md", VALID_STATUS),
+        ("docs/project/validation.md", VALID_VALIDATION),
+        ("docs/project/performance.md", "# Performance\n"),
+        ("docs/agent/decisions/README.md", "# Decisions\n"),
+        (
+            "docs/agent/execution/README.md",
+            "[Current](current.md) [Plan](execution-plan.md)\n",
+        ),
+        ("docs/agent/execution/current.md", VALID_CURRENT),
+        ("docs/agent/execution/execution-plan.md", VALID_PLAN),
+        ("docs/agent/execution/history.md", VALID_HISTORY),
+        ("docs/agent/execution/archive/README.md", "# Provenance\n"),
+    ];
+
+    for (path, content) in overrides {
+        if let Some(entry) = files.iter_mut().find(|entry| entry.0 == *path) {
+            entry.1 = content;
+        } else {
+            files.push((path, content));
+        }
+    }
+
+    FixtureRepository::new(name, &files)
+}
+
 #[test]
 fn tracked_python_artifacts_and_maintained_invocations_fail() -> Result<(), Box<dyn Error>> {
     let repository = FixtureRepository::new(
@@ -305,37 +389,7 @@ fn documentation_authority_rejects_retired_paths_archives_and_missing_maps()
 
 #[test]
 fn documentation_authority_accepts_the_current_spine() -> Result<(), Box<dyn Error>> {
-    let repository = FixtureRepository::new(
-        "documentation-authority-valid",
-        &[
-            ("Cargo.toml", BASIC_MANIFEST),
-            ("src/lib.rs", BASIC_SOURCE),
-            ("README.md", "# Project\n"),
-            (
-                "docs/README.md",
-                "[Architecture](project/architecture.md) [Operation](project/operation.md) [Status](project/implementation-status.md)\n",
-            ),
-            ("docs/vision.md", "# Vision\n"),
-            (
-                "docs/project/README.md",
-                "[Operation](operation.md) [Status](implementation-status.md)\n",
-            ),
-            ("docs/project/architecture.md", "# Architecture\n"),
-            ("docs/project/operation.md", "# Operation\n"),
-            ("docs/project/implementation-status.md", "# Status\n"),
-            ("docs/project/validation.md", "# Validation\n"),
-            ("docs/project/performance.md", "# Performance\n"),
-            ("docs/agent/decisions/README.md", "# Decisions\n"),
-            (
-                "docs/agent/execution/README.md",
-                "[Current](current.md) [Plan](execution-plan.md)\n",
-            ),
-            ("docs/agent/execution/current.md", "# Current\n"),
-            ("docs/agent/execution/execution-plan.md", "# Plan\n"),
-            ("docs/agent/execution/history.md", "# History\n"),
-            ("docs/agent/execution/archive/README.md", "# Provenance\n"),
-        ],
-    )?;
+    let repository = documentation_repository("documentation-authority-valid", &[])?;
     let report = validate_repository_hygiene(&repository.manifest())?;
 
     assert!(
@@ -343,6 +397,145 @@ fn documentation_authority_accepts_the_current_spine() -> Result<(), Box<dyn Err
         "valid documentation authority violations: {:#?}",
         report.violations()
     );
+    Ok(())
+}
+
+#[test]
+fn actual_repository_satisfies_documentation_authority() -> Result<(), Box<dyn Error>> {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("Cargo.toml");
+    let report = validate_repository_hygiene(&manifest)?;
+
+    let violations = report
+        .violations()
+        .iter()
+        .filter(|violation| violation.rule().starts_with("HYGIENE-DOCUMENTATION-"))
+        .collect::<Vec<_>>();
+    assert!(
+        violations.is_empty(),
+        "actual documentation authority violations: {violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn completed_current_state_rejects_pending_remote_claims() -> Result<(), Box<dyn Error>> {
+    let repository = documentation_repository(
+        "documentation-current-pending",
+        &[(
+            "docs/agent/execution/current.md",
+            "# Current\n\nSource work is complete, but the current tree has not run remotely.\n",
+        )],
+    )?;
+    let report = validate_repository_hygiene(&repository.manifest())?;
+
+    assert!(report.violations().iter().any(|violation| {
+        violation.rule() == "HYGIENE-DOCUMENTATION-AUTHORITY-1"
+            && violation.path() == Some(Path::new("docs/agent/execution/current.md"))
+            && violation.reason().contains("pending, unrun")
+    }));
+    Ok(())
+}
+
+#[test]
+fn current_state_rejects_mutable_head_run_success() -> Result<(), Box<dyn Error>> {
+    let repository = documentation_repository(
+        "documentation-current-success",
+        &[(
+            "docs/project/implementation-status.md",
+            "# Status\n\nThe current HEAD passed run 123 in hosted CI.\n",
+        )],
+    )?;
+    let report = validate_repository_hygiene(&repository.manifest())?;
+
+    assert!(report.violations().iter().any(|violation| {
+        violation.rule() == "HYGIENE-DOCUMENTATION-AUTHORITY-1"
+            && violation.path() == Some(Path::new("docs/project/implementation-status.md"))
+            && violation.reason().contains("mutable claim")
+    }));
+    Ok(())
+}
+
+#[test]
+fn accepted_historical_run_rows_require_exact_commit_and_tree() -> Result<(), Box<dyn Error>> {
+    let repository = documentation_repository(
+        "documentation-historical-run-identity",
+        &[(
+            "docs/project/implementation-status.md",
+            "# Status\n\n## Accepted historical evidence\n\n| Evidence | Result |\n|---|---|\n| Hosted | [Run 123](https://github.com/example/project/actions/runs/123) passed on an older tree. |\n",
+        )],
+    )?;
+    let report = validate_repository_hygiene(&repository.manifest())?;
+
+    assert!(report.violations().iter().any(|violation| {
+        violation.rule() == "HYGIENE-DOCUMENTATION-AUTHORITY-1"
+            && violation.path() == Some(Path::new("docs/project/implementation-status.md"))
+            && violation.reason().contains("exact full commit and tree")
+    }));
+    Ok(())
+}
+
+#[test]
+fn exact_historical_runs_and_external_validation_language_are_allowed() -> Result<(), Box<dyn Error>>
+{
+    let repository = documentation_repository("documentation-external-model-valid", &[])?;
+    let report = validate_repository_hygiene(&repository.manifest())?;
+
+    assert!(
+        report.is_valid(),
+        "historical/external authority violations: {:#?}",
+        report.violations()
+    );
+    Ok(())
+}
+
+#[test]
+fn historical_pending_and_failed_chronology_is_allowed() -> Result<(), Box<dyn Error>> {
+    let repository = documentation_repository(
+        "documentation-history-valid",
+        &[(
+            "docs/agent/execution/history.md",
+            "# History\n\nThe prior current tree had not run remotely and was waiting to be pushed. Its hosted run then failed.\n",
+        )],
+    )?;
+    let report = validate_repository_hygiene(&repository.manifest())?;
+
+    assert!(
+        report.is_valid(),
+        "historical chronology violations: {:#?}",
+        report.violations()
+    );
+    Ok(())
+}
+
+#[test]
+fn duplicate_current_run_ledgers_and_remote_plan_packages_fail() -> Result<(), Box<dyn Error>> {
+    let repository = documentation_repository(
+        "documentation-duplicate-authority",
+        &[
+            (
+                "docs/project/candle-backend.md",
+                "# Candle\n\n## Accepted evidence\n\n| Run | Result |\n|---|---|\n| [Run 123](https://github.com/example/project/actions/runs/123) | Passed |\n",
+            ),
+            (
+                "docs/agent/execution/execution-plan.md",
+                "# Plan\n\n| Order | Package | State |\n|---:|---|---|\n| 5 | Post-push hosted/CUDA acceptance | Pending |\n",
+            ),
+        ],
+    )?;
+    let report = validate_repository_hygiene(&repository.manifest())?;
+
+    assert!(report.violations().iter().any(|violation| {
+        violation.rule() == "HYGIENE-DOCUMENTATION-AUTHORITY-1"
+            && violation.path() == Some(Path::new("docs/project/candle-backend.md"))
+            && violation.reason().contains("duplicate")
+    }));
+    assert!(report.violations().iter().any(|violation| {
+        violation.rule() == "HYGIENE-DOCUMENTATION-AUTHORITY-1"
+            && violation.path() == Some(Path::new("docs/agent/execution/execution-plan.md"))
+            && violation.reason().contains("not a tracked package row")
+    }));
     Ok(())
 }
 

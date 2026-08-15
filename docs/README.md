@@ -60,6 +60,7 @@ or reconstruct current behavior from historical runs.
 
 Every changing fact has one owner. Other pages state only the local consequence
 and link to that owner. Current behavior belongs in project reference; support and
-accepted run state belong in implementation status; procedures belong in
-validation; measured results belong in performance; rationale belongs in ADRs;
-chronology belongs in history.
+accepted historical run evidence belongs in implementation status; procedures
+belong in validation; measured results belong in performance; rationale belongs
+in ADRs; chronology belongs in history. Exact current-checkout remote acceptance
+is evaluated externally rather than predicted by a tracked page.

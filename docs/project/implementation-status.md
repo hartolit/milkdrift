@@ -69,6 +69,10 @@ and [lifecycle](lifecycle.md).
   immutable plan, `Empty` state, and zero position match the admitted contract.
 - E1 has one cleanup coordinator and exposes durable exact, unverified, or unknown
   retained state without treating disconnect or zero exact bytes as release.
+- Backend load failures preserve one bounded portable lifecycle stage and, when a
+  single tensor is authoritative, a checked ordinal/fingerprint coordinate through
+  E0 cleanup and E1 presentation. Paths, tensor names, vendor errors, adapter
+  inventory, and cleanup failures do not replace the primary diagnostic.
 - Token and text output keep distinct typed public APIs over one private bounded
   storage implementation. Runtime and application state machines are split by
   transition responsibility rather than driven by frontends. Accepted command and
@@ -80,34 +84,31 @@ and [lifecycle](lifecycle.md).
   accept only children whose physical parent is the validated runner temporary
   directory.
 
-## Accepted evidence
+## Accepted historical evidence
 
-Evidence applies only to the named tree and scope.
+Evidence applies only to the named historical commit, tree, command, and scope.
+Tracked documentation makes no post-push CI assertion about the checked-out
+commit. Current-checkout remote acceptance is determined externally by the
+exact-SHA procedure in [validation](validation.md#exact-current-checkout-remote-acceptance).
 
-Continuation source commit
-`3ac08a14a89f9d8ab4b50520e6336ee7f583aba4`, tree
-`23143bc78392c24f4c9c0345e168d7d56a92816f`, is the accepted source boundary
-for packages 01–07.
-
-| Evidence class | Exact baseline and accepted result | Current-tree consequence |
+| Evidence class | Exact historical baseline and accepted result | Scope |
 |---|---|---|
-| Documented full local repository acceptance | `ee5078dd6bb6126afd12f25785a4e5effb38761b`, tree `50ad9901583252b474ccf48c79fa16558cd6e3e0`: focused benchmark/tooling tests, canonical composite, both portable plans, dependency policy, and offline links passed locally with isolated targets. | This was the complete local incoming baseline for the continuation closure; exact later-tree acceptance is recorded in the hosted rows below. |
-| Foundation local closure | `b1f7e90b1ba67f1cf968d773052b5062ef8cbbb9`, tree `fcb3ee6fa00243734abd74b64218aa0db2e340c1`: complete download-free CPU, native component, composite, portable, policy, and offline-link matrix passed. | Deterministic CPU lifecycle/accounting foundation accepted for that tree. |
-| Latest accepted hosted Quality | [run 31835967580](https://github.com/hartolit/milkdrift/actions/runs/31835967580) passed every required native, portable, policy, link, documentation, benchmark-compilation, and resource-cleanup job on `3ac08a1`, tree `23143bc`. | Accepts packages 01–07 on the exact continuation source boundary. Later source, test, manifest, workflow, fixture, or script changes require new exact-tree evidence. |
-| Latest accepted self-hosted CUDA | [run 31835967556](https://github.com/hartolit/milkdrift/actions/runs/31835967556) passed compile, strict Clippy, six Candle adapter cases, one E0 lifecycle case, 49 serial fault-injection cases, two E1 cases, and unconditional cleanup on `3ac08a1`. | Establishes exact-tree execution on the supported RTX row, not generic NVIDIA or AMD support. |
-| Later local accelerator loading | `716ae9a23ea12fc81374e4d576d3a3a61f2ae8e9`, tree `131f457dd32b6e31886769980637cda49f72fd8a`: the focused default matrix and six local RTX adapter cases passed for bounded transfer batching and verified artifact loading. | Correctness evidence for that exact accelerator tree; no speedup or external-model result is inferred. |
-| External product performance | Historical controlled CPU/CUDA evidence is tied to Commit E `411945e0fd53363f98609db21a43d757c4d9b506`, tree `7099dcb5c9879190543d3afa5fde399a84d799df`. | Curated measurements remain valid only for that environment/workload; no schema-6 current-tree product report is accepted. |
+| Documented full local repository acceptance | Commit `ee5078dd6bb6126afd12f25785a4e5effb38761b`, tree `50ad9901583252b474ccf48c79fa16558cd6e3e0`: focused benchmark/tooling tests, canonical composite, both portable plans, dependency policy, and offline links passed locally with isolated targets. | Complete local incoming baseline for the continuation closure. |
+| Foundation local closure | Commit `b1f7e90b1ba67f1cf968d773052b5062ef8cbbb9`, tree `fcb3ee6fa00243734abd74b64218aa0db2e340c1`: the complete download-free CPU, native-component, composite, portable, policy, and offline-link matrix passed. | Deterministic CPU lifecycle/accounting evidence for that exact tree. |
+| Hosted Quality baseline | [Run 31835967580](https://github.com/hartolit/milkdrift/actions/runs/31835967580) passed every required hosted job for exact commit `3ac08a14a89f9d8ab4b50520e6336ee7f583aba4`, tree `23143bc78392c24f4c9c0345e168d7d56a92816f`. | Historical acceptance of continuation packages 01–07 on that tree only. |
+| Self-hosted CUDA baseline | [Run 31835967556](https://github.com/hartolit/milkdrift/actions/runs/31835967556) passed compile, strict Clippy, six Candle adapter cases, one E0 lifecycle case, 49 serial fault-injection cases, two E1 cases, and cleanup for exact commit `3ac08a14a89f9d8ab4b50520e6336ee7f583aba4`, tree `23143bc78392c24f4c9c0345e168d7d56a92816f`. | Historical execution on the maintained RTX 5070 Ti row; not generic NVIDIA or AMD support. |
+| Local accelerator loading | Commit `716ae9a23ea12fc81374e4d576d3a3a61f2ae8e9`, tree `131f457dd32b6e31886769980637cda49f72fd8a`: the focused default matrix and six local RTX adapter cases passed for bounded transfer batching and verified artifact loading. | Correctness evidence for that exact accelerator tree; no speedup or external-model result is inferred. |
+| External product performance | Commit `411945e0fd53363f98609db21a43d757c4d9b506`, tree `7099dcb5c9879190543d3afa5fde399a84d799df`: controlled CPU/CUDA product evidence was recorded under its historical schema and environment. | Curated measurements remain scoped to that environment/workload; no external schema-6 product report is accepted. |
 
 Documentation-authority commit `acdd2ed066808661f6e0f7336dedf84513016850`, tree
 `56008a2d76b96205bb810597464603cd3a5cafcb`, changed documentation and stable
-hygiene policy without broadening support. The accepted continuation boundary
-adds the independently reviewed source closure and its exact-tree hosted/CUDA
-acceptance without activating a successor product phase.
+hygiene policy without broadening support. The later `3ac08a14...` baseline adds
+independently reviewed source closure and exact-tree hosted/CUDA historical
+evidence without activating a successor product phase. Subsequent maintenance
+commits do not inherit those runs.
 
 ## Open evidence and unsupported claims
 
-- Any later source/test candidate must obtain its own hosted Quality and
-  self-hosted CUDA evidence; the accepted runs above are not transferable.
 - No immutable, license-reviewed external mixed-layout checkpoint and no external
   schema-6 CPU/CUDA product report is accepted. Deterministic project fixtures own
   current mixed-layout correctness.

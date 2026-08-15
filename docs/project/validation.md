@@ -169,6 +169,98 @@ cargo tree -e features --locked
 
 Duplicate versions are review inputs, not automatic failures.
 
+## Exact current-checkout remote acceptance
+
+Remote acceptance is an external property of one commit, not a status prediction
+stored in that commit. It is intentionally absent from the offline
+`cargo xtask verify` gate. The procedure requires network access, an authenticated
+GitHub CLI with repository Actions read access, and `jq`:
+
+```sh
+gh auth status
+repository="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+test -z "$(git status --short --untracked-files=all)"
+head_sha="$(git rev-parse HEAD)"
+head_tree="$(git rev-parse 'HEAD^{tree}')"
+
+quality_runs="$(gh api \
+  "/repos/${repository}/actions/workflows/quality.yml/runs?head_sha=${head_sha}&event=push&status=completed&per_page=100")"
+quality_run_id="$(jq -er --arg sha "${head_sha}" '
+  [.workflow_runs[] |
+    select(.head_sha == $sha and
+           .path == ".github/workflows/quality.yml" and
+           .event == "push" and
+           .status == "completed" and
+           .conclusion == "success")][0].id
+' <<<"${quality_runs}")"
+quality_jobs="$(gh api \
+  "/repos/${repository}/actions/runs/${quality_run_id}/jobs?filter=latest&per_page=100")"
+
+while IFS= read -r required_job
+do
+  jq -e --arg name "${required_job}" '
+    [.jobs[] | select(.name == $name)] |
+    length == 1 and all(.status == "completed" and .conclusion == "success")
+  ' <<<"${quality_jobs}" > /dev/null
+done <<'QUALITY_JOBS'
+Native structure, format, and metadata
+Native workspace check
+Native workspace tests
+Native strict Clippy
+Native warning-denied rustdoc
+Native maintained benchmark compilation
+Portable domain crates (WebAssembly)
+Portable domain crates (embedded no_std)
+Dependency and documentation policy
+QUALITY_JOBS
+jq --argjson id "${quality_run_id}" '
+  .workflow_runs[] | select(.id == $id) |
+  {id, head_sha, path, event, status, conclusion, html_url}
+' <<<"${quality_runs}"
+jq -r '.jobs[] | [.name, .status, .conclusion] | @tsv' <<<"${quality_jobs}"
+
+cuda_runs="$(gh api \
+  "/repos/${repository}/actions/workflows/cuda-hardware.yml/runs?head_sha=${head_sha}&status=completed&per_page=100")"
+cuda_run_id="$(jq -er --arg sha "${head_sha}" '
+  [.workflow_runs[] |
+    select(.head_sha == $sha and
+           .head_branch == "main" and
+           .path == ".github/workflows/cuda-hardware.yml" and
+           (.event == "push" or .event == "workflow_dispatch") and
+           .status == "completed" and
+           .conclusion == "success")][0].id
+' <<<"${cuda_runs}")"
+cuda_jobs="$(gh api \
+  "/repos/${repository}/actions/runs/${cuda_run_id}/jobs?filter=latest&per_page=100")"
+jq -e '
+  [.jobs[] | select(.name == "RTX 5070 Ti correctness")] |
+  length == 1 and all(.status == "completed" and .conclusion == "success")
+' <<<"${cuda_jobs}" > /dev/null
+jq --argjson id "${cuda_run_id}" '
+  .workflow_runs[] | select(.id == $id) |
+  {id, head_sha, head_branch, path, event, status, conclusion, html_url}
+' <<<"${cuda_runs}"
+jq -r '.jobs[] | [.name, .status, .conclusion] | @tsv' <<<"${cuda_jobs}"
+printf 'accepted commit %s, tree %s\n' "${head_sha}" "${head_tree}"
+```
+
+The workflow-file API endpoints establish workflow identity; display titles and
+the repository's globally latest run do not. Inspect the selected run objects and
+record their `head_sha`, `path`, `event`, `status`, `conclusion`, job conclusions,
+and URLs in external completion output or a platform-bound release/attestation.
+For a Quality push, only the explicitly schedule-only `Scheduled Clippy nursery`
+and `External Markdown links` jobs may be skipped; every job listed above must
+succeed. Current CUDA acceptance additionally requires the maintained CUDA job to
+succeed for the same `head_sha`. A signed release attestation is an alternative
+only when it is cryptographically or platform-bound to that exact commit and names
+the required gates.
+
+Missing network access, authentication, permission, or a matching completed run
+means remote evidence could not be obtained; it is not a source failure. Never
+substitute an older green run. After any fix, recompute `HEAD` and restart the
+procedure for the new SHA. Do not commit a status file solely to announce the
+result.
+
 ## Shared hosted Quality
 
 `.github/workflows/quality.yml` runs untrusted pull requests and pushes on

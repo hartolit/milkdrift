@@ -11,6 +11,7 @@ use cargo_metadata::{Metadata, MetadataCommand};
 
 use crate::workspace::{Role, benchmark_inventory, package_role, role_location_is_compatible};
 
+use super::documentation::scan_documentation_authority;
 use super::invocation::{is_potential_operational_surface, scan_operational_invocations};
 use super::manifest::{is_cargo_manifest, scan_manifest, scan_selected_graph};
 
@@ -120,7 +121,7 @@ pub struct HygieneError {
 }
 
 impl HygieneError {
-    fn new(message: impl Into<String>) -> Self {
+    pub(super) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }
@@ -308,6 +309,7 @@ fn scan_documentation_layout(
         .collect::<BTreeSet<_>>();
 
     scan_retired_documentation(&present, report);
+    scan_documentation_authority(root, &present, report)?;
 
     if !present.contains(Path::new("docs/README.md")) {
         return Ok(());

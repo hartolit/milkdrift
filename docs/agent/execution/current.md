@@ -1,35 +1,36 @@
 # Current execution context
 
 **Status date:** 2026-08-15
-**State:** continuation packages 01–07 closed; no product phase active
+**State:** final-foundation maintenance packages 01–03 complete; independent final source closure next
 
-## Immediate boundary
+## Immediate handoff
 
-The accepted continuation source boundary is
-`3ac08a14a89f9d8ab4b50520e6336ee7f583aba4`, tree
-`23143bc78392c24f4c9c0345e168d7d56a92816f`. Packages 01–07 are closed there by
-[Quality run 31835967580](https://github.com/hartolit/milkdrift/actions/runs/31835967580)
-and [CUDA run 31835967556](https://github.com/hartolit/milkdrift/actions/runs/31835967556).
+The post-Phase-12 local-execution foundation now includes bounded load diagnostics,
+context-local ownership/test refactoring, dependency alignment, and a
+non-self-referential evidence authority model. Independent final source closure is
+the next active maintenance package. No product successor is active;
+workflow/workspace/authority remains unratified direction.
 
-The repository is parked at that accepted local CPU/CUDA foundation. No source or
-test maintenance candidate supersedes it, and workflow/workspace/authority
-remains an unratified product direction.
+Exact current-commit remote acceptance is an external property evaluated after
+final source closure and push. Tracked execution state neither predicts that
+result nor stores a run ID to make itself current. Use the exact-SHA procedure in
+[validation](../../project/validation.md#exact-current-checkout-remote-acceptance).
 
-## Unresolved acceptance
+## External evidence gaps
 
-- No reviewed external mixed-layout checkpoint or current schema-6 external
-  product run exists.
-- Deterministic project fixtures remain the current mixed-layout correctness
-  evidence. AMD support is absent.
-- Any later source/test candidate requires new exact-tree hosted Quality and CUDA
-  acceptance before it replaces the boundary above.
+- No reviewed immutable, license-reviewed external mixed-layout checkpoint exists;
+  deterministic project fixtures remain the mixed-layout correctness evidence.
+- No external schema-6 CPU/CUDA product report exists. Historical controlled
+  measurements retain only their documented commit, schema, environment, and
+  workload scope.
+- AMD execution remains unsupported, not an unexecuted supported row.
 
 ## Canonical owners
 
 - [Project architecture](../../project/architecture.md)
 - [End-to-end operation](../../project/operation.md)
-- [Implementation status and evidence](../../project/implementation-status.md)
-- [Validation procedure](../../project/validation.md)
+- [Implementation status and historical evidence](../../project/implementation-status.md)
+- [Validation and external acceptance procedure](../../project/validation.md)
 - [Performance evidence](../../project/performance.md)
 - [Execution plan](execution-plan.md)
 - [Milestone history](history.md)
