@@ -150,9 +150,10 @@ impl CandleLlamaPreparedLoad {
         observer: &mut O,
     ) -> Result<(), LoadError> {
         if self.final_tensors.contains_key(facts.name.as_str()) {
-            return Err(with_stage(
+            return Err(with_tensor(
                 invalid_model_failure(self.backend, CODE_DUPLICATE_TENSOR),
                 LoadFailureStage::RetainedPlacement,
+                facts.location,
             ));
         }
         let source_dtype = facts.source_dtype.executable_dtype().ok_or_else(|| {
@@ -337,9 +338,10 @@ impl CandleLlamaPreparedLoad {
             Entry::Occupied(entry) => {
                 self.pending_host_tensor = Some(tensor);
                 let _ = entry;
-                return Err(with_stage(
+                return Err(with_tensor(
                     invalid_model_failure(self.backend, CODE_DUPLICATE_TENSOR),
                     LoadFailureStage::RetainedPlacement,
+                    facts.location,
                 ));
             }
         }
@@ -504,10 +506,16 @@ impl CandleLlamaPreparedLoad {
         // preparation, so moving the endpoints into it performs no fallible
         // work and cannot strand them in a temporary on an error path.
         transfer_batch.push_preflighted(entry, next_batch_bytes);
-        self.next_transfer_entry_index = self
-            .next_transfer_entry_index
-            .checked_add(1)
-            .ok_or_else(|| invalid_model_failure(self.backend, CODE_NUMERIC_OVERFLOW))?;
+        self.next_transfer_entry_index =
+            self.next_transfer_entry_index
+                .checked_add(1)
+                .ok_or_else(|| {
+                    with_tensor(
+                        invalid_model_failure(self.backend, CODE_NUMERIC_OVERFLOW),
+                        LoadFailureStage::DeviceTransfer,
+                        facts.location,
+                    )
+                })?;
         observer
             .checkpoint(
                 MaterializationCheckpoint::TransferEnqueued {

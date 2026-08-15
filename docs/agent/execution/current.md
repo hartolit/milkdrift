@@ -1,19 +1,20 @@
 # Current execution context
 
 **Status date:** 2026-08-15
-**State:** final-foundation maintenance packages 01–03 complete; independent final source closure next
+**State:** independent final source review complete; exact-tree acceptance next
 
 ## Immediate handoff
 
-The post-Phase-12 local-execution foundation now includes bounded load diagnostics,
-context-local ownership/test refactoring, dependency alignment, and a
-non-self-referential evidence authority model. Independent final source closure is
-the next active maintenance package. No product successor is active;
+The final-foundation source chain now includes bounded load diagnostics,
+context-local ownership/test refactoring, dependency alignment, a
+non-self-referential evidence authority model, and independent whole-tree review.
+The next action is to push the exact source-closure commit and execute the
+external exact-tree acceptance package. No product successor is active;
 workflow/workspace/authority remains unratified direction.
 
 Exact current-commit remote acceptance is an external property evaluated after
-final source closure and push. Tracked execution state neither predicts that
-result nor stores a run ID to make itself current. Use the exact-SHA procedure in
+push. Tracked execution state neither predicts that result nor stores a run ID to
+make itself current. Use the exact-SHA procedure in
 [validation](../../project/validation.md#exact-current-checkout-remote-acceptance).
 
 ## External evidence gaps

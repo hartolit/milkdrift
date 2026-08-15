@@ -224,7 +224,11 @@ impl TransferBatchOwner {
                 || device.dtype() != execution_dtype
                 || host.dims() != device.dims()
             {
-                return Err(invalid_model_failure(backend, CODE_TENSOR_TRANSFER));
+                return Err(with_tensor(
+                    invalid_model_failure(backend, CODE_TENSOR_TRANSFER),
+                    LoadFailureStage::DeviceTransfer,
+                    entry.location(),
+                ));
             }
         }
         Ok(())
@@ -267,9 +271,10 @@ impl TransferBatchOwner {
             )
         })?;
         if final_tensors.contains_key(name.as_str()) {
-            return Err(super::with_stage(
+            return Err(with_tensor(
                 invalid_model_failure(backend, CODE_DUPLICATE_TENSOR),
                 LoadFailureStage::RetainedPlacement,
+                entry.location(),
             ));
         }
         let name = entry.name.take().ok_or_else(|| {
@@ -281,10 +286,13 @@ impl TransferBatchOwner {
         })?;
         final_tensors.insert(name, entry.device_tensor.clone());
         entry.committed = true;
-        self.committed_entries = self
-            .committed_entries
-            .checked_add(1)
-            .ok_or_else(|| numeric_error(backend))?;
+        self.committed_entries = self.committed_entries.checked_add(1).ok_or_else(|| {
+            with_tensor(
+                numeric_error(backend),
+                LoadFailureStage::RetainedPlacement,
+                entry.location(),
+            )
+        })?;
         let (shard, tensor) = entry.coordinate();
         Ok((shard, tensor, entry.location()))
     }

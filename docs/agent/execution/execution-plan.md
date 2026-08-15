@@ -1,6 +1,6 @@
 # Milkdrift execution plan
 
-**Plan status:** final-foundation maintenance packages 01–03 complete; independent final source closure next
+**Plan status:** independent final source review complete; exact-tree acceptance next
 **Status date:** 2026-08-15
 
 This document owns ordered program activation only. Current support and accepted
@@ -26,11 +26,11 @@ No later product capability is implied by these closures.
 |---:|---|---|
 | 1 | Bounded load diagnostics | Complete in `b4c3c04` |
 | 2 | Context locality, deduplication, and dependency audit | Complete in `0ad2531` |
-| 3 | Evidence authority and project truth | Complete in this source package |
-| 4 | Independent final source closure | Next |
+| 3 | Evidence authority and project truth | Complete in `8466ae9` |
+| 4 | Independent final source closure | Source review complete; exact-SHA acceptance external |
 
-Exact current-commit remote acceptance is evaluated externally after package 4 is
-closed and pushed. It is an acceptance condition, not a tracked implementation
+Exact current-commit remote acceptance is evaluated externally after the closure
+commit is pushed. It is an acceptance condition, not a tracked implementation
 package, and it does not change product source. Any source fix creates a new SHA
 and restarts that external evaluation.
 

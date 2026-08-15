@@ -125,6 +125,58 @@ fn planned_and_owned_batch_accounting_must_match_before_synchronization() -> Res
 }
 
 #[test]
+fn duplicate_accelerator_commit_reports_the_current_tensor() -> Result<(), String> {
+    let backend = BackendId::new(7);
+    let location = TensorFailureLocation::new(
+        2,
+        3,
+        tensor_name_fingerprint("required"),
+        Some(ScalarType::F32),
+    );
+    let source = Tensor::ones(1, DType::F32, &Device::Cpu)
+        .map_err(|error| format!("create source tensor: {error}"))?;
+    let mut owner = TransferBatchOwner::allocate(backend, 1)
+        .map_err(|error| format!("allocate transfer owner: {error:?}"))?;
+    owner
+        .begin(backend, 0, 1)
+        .map_err(|error| format!("begin transfer owner: {error:?}"))?;
+    let next_bytes = owner
+        .preflight_push(backend, 4, 4)
+        .map_err(|error| format!("preflight transfer entry: {error:?}"))?;
+    owner.push_preflighted(
+        TransferBatchEntry::new(
+            (2, 3),
+            "required".to_owned(),
+            location,
+            TransferBatchEndpoints {
+                source: source.clone(),
+                converted_host: None,
+                device: source.clone(),
+            },
+            4,
+            4,
+        ),
+        next_bytes,
+    );
+    owner
+        .validate_ready(backend, DType::F32)
+        .map_err(|error| format!("validate transfer owner: {error:?}"))?;
+    owner
+        .mark_synchronized(backend)
+        .map_err(|error| format!("synchronize transfer owner: {error:?}"))?;
+    let mut final_tensors = HashMap::from([("required".to_owned(), source)]);
+
+    let error = required_error(
+        owner.commit_next(backend, &mut final_tensors),
+        "duplicate accelerator placement must fail",
+    )?;
+    assert_tensor_context(error, LoadFailureStage::RetainedPlacement, location);
+    assert_eq!(owner.committed_entries(), 0);
+    assert_eq!(final_tensors.len(), 1);
+    Ok(())
+}
+
+#[test]
 fn batch_fault_boundaries_retain_every_endpoint_and_commit_alias() -> Result<(), String> {
     for checkpoint in [
         MaterializationCheckpoint::BeforeBatchSynchronization {

@@ -5,8 +5,8 @@ use domain_contracts::{
 };
 
 use crate::{
-    CleanupFailureReport, CleanupResource, CleanupRetryState, FailureDetail, RequestStartReceipt,
-    RetainedOwnership, RuntimeError, RuntimeOperation,
+    CleanupFailureReport, FailureDetail, RequestStartReceipt, RetainedOwnership, RuntimeError,
+    RuntimeOperation,
 };
 
 use super::super::{
@@ -448,20 +448,19 @@ where
             "pending sequence index was preflighted"
         );
         self.pending_cleanup_sequences = admission.transition.pending_cleanup_sequences;
-        if ownership.exact_footprint().is_some() {
+        let state = self
+            .models
+            .get(&request.handle.id)
+            .and_then(|slot| slot.pending_sequences.get(&request.request_id))
+            .unwrap_or_else(|| {
+                unreachable!("a retained sequence transaction publishes its cleanup owner")
+            })
+            .cleanup_state(request.handle, self.maximum_cleanup_attempts());
+        debug_assert_eq!(state.failure, report);
+        debug_assert_eq!(state.ownership, ownership);
+        if state.ownership.exact_footprint().is_some() {
             self.reserved_footprint = admission.backend_next_reserved;
         }
-        let state = CleanupRetryState {
-            resource: CleanupResource::Sequence {
-                handle: request.handle,
-                request_id: request.request_id,
-                sequence_id: request.sequence_id,
-            },
-            failure: report,
-            ownership,
-            attempts: 1,
-            maximum_attempts: self.maximum_cleanup_attempts(),
-        };
         self.last_cleanup = Some(state);
         cleanup_retention_error(state)
     }

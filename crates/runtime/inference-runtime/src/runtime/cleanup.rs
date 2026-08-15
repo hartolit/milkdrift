@@ -4,8 +4,8 @@ use domain_contracts::{
 };
 
 use crate::{
-    CleanupFailureReport, CleanupPoll, CleanupResource, CleanupRetryState, FailureDetail,
-    RetainedOwnership, RuntimeError, RuntimeOperation,
+    CleanupFailureReport, CleanupPoll, CleanupRetryState, FailureDetail, RetainedOwnership,
+    RuntimeError, RuntimeOperation,
 };
 
 use super::{
@@ -365,26 +365,18 @@ where
                 self.pending_sequence_index
                     .insert(transition.sequence_id, request_id);
                 self.pending_cleanup_sequences = transition.pending_cleanup_sequences;
-                let ownership = self
+                let state = self
                     .models
                     .get(&transition.model_id)
                     .and_then(|slot| slot.pending_sequences.get(&request_id))
-                    .map(|pending| pending.ownership)
+                    .map(|pending| {
+                        pending.cleanup_state(transition.handle, self.maximum_cleanup_attempts())
+                    })
                     .ok_or(RuntimeError::BackendContractViolation)?;
-                if ownership.blocks_admission() {
+                debug_assert_eq!(state.failure, report);
+                if state.ownership.blocks_admission() {
                     self.reserved_footprint = transition.released_runtime_footprint;
                 }
-                let state = CleanupRetryState {
-                    resource: CleanupResource::Sequence {
-                        handle: transition.handle,
-                        request_id,
-                        sequence_id: transition.sequence_id,
-                    },
-                    failure: report,
-                    ownership,
-                    attempts: 1,
-                    maximum_attempts: self.maximum_cleanup_attempts(),
-                };
                 self.last_cleanup = Some(state);
                 Err(cleanup_retention_error(state))
             }
