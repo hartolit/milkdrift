@@ -10,15 +10,16 @@ use std::num::NonZeroU32;
 use std::rc::Rc;
 
 use domain_contracts::{
-    BackendFailure, BackendFailureKind, BackendId, BackendSequence, CancellationReason,
-    CapabilitySet, DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind,
-    ExecutionDevice, FailedLoad, FailedLoadOwner, LoadConfiguration, LoadError, LoadPlan,
-    LoadedModel, MemoryBudget, MemoryFootprint, MemoryKind, ModelArchitecture, ModelCapabilities,
-    ModelDescriptor, ModelError, ModelGeneration, ModelHandle, ModelId, ModelLoader, ModelMetadata,
-    MonotonicMillis, PrefillBufferRequirements, PrefillInput, PrefillOutcome,
-    PreparedDecodeBuffers, PreparedLoad, PreparedPrefillBuffers, QuantizationFormat, RequestId,
-    ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceError, SequenceId, SequencePlan,
-    SequenceReservation, SequenceState, SynchronizationError, UnloadPolicy,
+    BackendFailure, BackendFailureKind, BackendId, BackendLoadFailure, BackendSequence,
+    CancellationReason, CapabilitySet, DecodeBufferRequirements, DecodeInput, DecodeOutcome,
+    DeviceId, DeviceKind, ExecutionDevice, FailedLoad, FailedLoadOwner, LoadConfiguration,
+    LoadError, LoadFailureStage, LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint, MemoryKind,
+    ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError, ModelGeneration,
+    ModelHandle, ModelId, ModelLoader, ModelMetadata, MonotonicMillis, PrefillBufferRequirements,
+    PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedLoad, PreparedPrefillBuffers,
+    QuantizationFormat, RequestId, ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceError,
+    SequenceId, SequencePlan, SequenceReservation, SequenceState, SynchronizationError,
+    TensorFailureLocation, UnloadPolicy,
 };
 use inference_runtime::{
     CleanupPoll, CleanupResource, CleanupRetryPolicy, ConservativeFootprint, FailureClass,
@@ -27,6 +28,16 @@ use inference_runtime::{
 };
 
 const BACKEND_ID: BackendId = BackendId::new(92);
+const FAILED_LOAD_LOCATION: TensorFailureLocation =
+    TensorFailureLocation::new(2, 7, 0x0123_4567_89ab_cdef, Some(ScalarType::F16));
+
+const fn failed_load_error() -> LoadError {
+    LoadError::Backend(BackendLoadFailure::at_tensor(
+        backend_failure(5),
+        LoadFailureStage::DeviceTransfer,
+        FAILED_LOAD_LOCATION,
+    ))
+}
 
 type TestResult = Result<(), String>;
 
@@ -381,7 +392,7 @@ impl ModelLoader for FaultLoader {
         })
     }
 
-    #[expect(
+    #[allow(
         clippy::too_many_lines,
         reason = "the deterministic malicious loader keeps all complete-model report mutations in one exhaustive fixture boundary"
     )]
@@ -401,10 +412,7 @@ impl ModelLoader for FaultLoader {
                     .get()
                     .saturating_add(loading_peak_host_bytes()),
             );
-            return Err(FailedLoad::new(
-                LoadError::Backend(backend_failure(5)),
-                prepared,
-            ));
+            return Err(FailedLoad::new(failed_load_error(), prepared));
         }
 
         let source = prepared.source;
@@ -847,6 +855,8 @@ fn wrong_execution_scalar_cleanup_failure_retains_accounting_until_successful_re
         Err(RuntimeError::CleanupFailed(state))
             if state.failure.primary_operation == RuntimeOperation::ModelAdmission
                 && state.failure.primary_failure == FailureClass::BackendContract
+                && state.failure.primary_detail
+                    == FailureDetail::Class(FailureClass::BackendContract)
                 && state.failure.cleanup_operation == RuntimeOperation::ModelUnload
                 && state.failure.cleanup_failure == FailureClass::Synchronization
                 && state.resource
@@ -1501,7 +1511,13 @@ fn failed_load_immediate_cleanup_returns_exact_primary_and_restores_accounting()
 
     assert!(matches!(
         load(&mut runtime),
-        Err(RuntimeError::Load(LoadError::Backend(failure))) if failure.code == 5
+        Err(RuntimeError::Load(LoadError::Backend(failure)))
+            if failure.failure.code == 5
+                && failure.context
+                    == Some(domain_contracts::LoadFailureContext::tensor(
+                        LoadFailureStage::DeviceTransfer,
+                        FAILED_LOAD_LOCATION,
+                    ))
     ));
     assert_eq!(counts.preparations.get(), 1);
     assert_eq!(counts.model_loads.get(), 1);
@@ -1524,6 +1540,7 @@ fn failed_load_cleanup_failure_retains_owner_and_full_loading_peak() {
                 && state.failure.primary_failure == FailureClass::Load
                 && state.failure.cleanup_operation == RuntimeOperation::FailedLoadCleanup
                 && state.failure.cleanup_failure == FailureClass::Synchronization
+                && state.failure.primary_detail == FailureDetail::Load(failed_load_error())
                 && state.resource
                     == CleanupResource::FailedLoad {
                         handle: expected_handle(1),
@@ -1577,6 +1594,7 @@ fn failed_load_cleanup_retry_releases_owner_and_accounting_once() -> TestResult 
                         handle: expected_handle(1),
                     })
                 && state.ownership == RetainedOwnership::Released
+                && state.failure.primary_detail == FailureDetail::Load(failed_load_error())
                 && !state.exhausted()
     ));
     assert_eq!(
@@ -1633,7 +1651,7 @@ fn failed_load_cleanup_exhaustion_survives_shutdown_accounted_and_owned() {
                 && state.failure.primary_operation == RuntimeOperation::ModelLoad
                 && state.failure.primary_failure == FailureClass::Load
                 && state.failure.primary_detail
-                    == FailureDetail::Load(LoadError::Backend(backend_failure(5)))
+                    == FailureDetail::Load(failed_load_error())
                 && state.failure.cleanup_operation == RuntimeOperation::FailedLoadCleanup
                 && summary.failed_preparations == 1
                 && summary.verified_models == 0

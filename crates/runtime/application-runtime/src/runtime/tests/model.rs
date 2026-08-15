@@ -2,9 +2,10 @@ use std::fs;
 use std::path::Path;
 
 use domain_contracts::{
-    BackendFailure, BackendFailureKind, BackendId, CapacityExhausted, CapacityResource, DeviceId,
-    DeviceKind, ExecutionDevice, LoadError, MemoryBudget, MemoryFootprint, MemoryKind, ModelHandle,
-    ModelId, ScalarType, ScalarTypeSet,
+    BackendFailure, BackendFailureKind, BackendId, BackendLoadFailure, CapacityExhausted,
+    CapacityResource, DeviceId, DeviceKind, ExecutionDevice, LoadError, LoadFailureStage,
+    MemoryBudget, MemoryFootprint, MemoryKind, ModelHandle, ModelId, ScalarType, ScalarTypeSet,
+    TensorFailureLocation,
 };
 use hf_hub_adapter::{
     ArtifactContentIdentityAuthority, ArtifactScalarType, ResolvedSafetensorsShard,
@@ -822,10 +823,8 @@ fn model_load_failures_are_normalized_into_stable_application_categories() -> Te
                 ApplicationFailureKind::UnsupportedArtifact,
             ),
             (
-                inference_runtime::RuntimeError::Load(LoadError::Backend(BackendFailure::new(
-                    BackendId::new(1),
-                    BackendFailureKind::Unsupported,
-                    22,
+                inference_runtime::RuntimeError::Load(LoadError::Backend(BackendLoadFailure::new(
+                    BackendFailure::new(BackendId::new(1), BackendFailureKind::Unsupported, 22),
                 ))),
                 ApplicationFailureKind::UnsupportedArtifact,
             ),
@@ -838,19 +837,34 @@ fn model_load_failures_are_normalized_into_stable_application_categories() -> Te
                 ApplicationFailureKind::MemoryAdmission,
             ),
             (
-                inference_runtime::RuntimeError::Load(LoadError::Backend(BackendFailure::new(
-                    BackendId::new(1),
-                    BackendFailureKind::DeviceExecution,
-                    29,
+                inference_runtime::RuntimeError::Load(LoadError::Backend(BackendLoadFailure::new(
+                    BackendFailure::new(BackendId::new(1), BackendFailureKind::DeviceExecution, 29),
                 ))),
                 ApplicationFailureKind::ModelLoad,
             ),
         ];
 
         for (error, expected_kind) in cases {
+            let expected_diagnostic = match error {
+                RuntimeError::Load(LoadError::Backend(diagnostic)) => Some(diagnostic),
+                _ => None,
+            };
             let failure = crate::runtime::model::model_load_failure(&error);
             assert_eq!(failure.kind, expected_kind);
+            assert_eq!(failure.load_diagnostic(), expected_diagnostic);
         }
+
+        let diagnostic = BackendLoadFailure::at_tensor(
+            BackendFailure::new(BackendId::new(1), BackendFailureKind::DeviceExecution, 29),
+            LoadFailureStage::DeviceTransfer,
+            TensorFailureLocation::new(1, 4, 0x0123_4567_89ab_cdef, Some(ScalarType::F16)),
+        );
+        let failure = crate::runtime::model::model_load_failure(&RuntimeError::Load(
+            LoadError::Backend(diagnostic),
+        ));
+        assert_eq!(failure.kind, ApplicationFailureKind::ModelLoad);
+        assert_eq!(failure.load_diagnostic(), Some(diagnostic));
+        assert!(!failure.message.contains("tensor.secret.name"));
         Ok(())
     })
 }

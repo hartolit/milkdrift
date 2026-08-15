@@ -4,13 +4,13 @@ use std::collections::HashMap;
 use std::mem::size_of;
 
 use candle_core::{DType, Tensor};
-use domain_contracts::{BackendId, LoadError};
+use domain_contracts::{BackendId, LoadError, LoadFailureStage, TensorFailureLocation};
 
 use crate::failure::{
     CODE_DUPLICATE_TENSOR, CODE_NUMERIC_OVERFLOW, CODE_TENSOR_MAP_ALLOCATION, CODE_TENSOR_TRANSFER,
 };
 
-use super::{host_memory_failure, invalid_model_failure};
+use super::{host_memory_failure, invalid_model_failure, with_tensor};
 
 /// Every host and device endpoint whose asynchronous transfer is not yet
 /// transactionally committed.
@@ -22,6 +22,7 @@ use super::{host_memory_failure, invalid_model_failure};
 pub(super) struct TransferBatchEntry {
     shard_index: usize,
     tensor_index: usize,
+    location: TensorFailureLocation,
     name: Option<String>,
     source_tensor: Tensor,
     converted_host_tensor: Option<Tensor>,
@@ -42,6 +43,7 @@ impl TransferBatchEntry {
     pub(super) fn new(
         coordinate: (usize, usize),
         name: String,
+        location: TensorFailureLocation,
         endpoints: TransferBatchEndpoints,
         retained_host_bytes: u64,
         device_bytes: u64,
@@ -49,6 +51,7 @@ impl TransferBatchEntry {
         Self {
             shard_index: coordinate.0,
             tensor_index: coordinate.1,
+            location,
             name: Some(name),
             source_tensor: endpoints.source,
             converted_host_tensor: endpoints.converted_host,
@@ -61,6 +64,10 @@ impl TransferBatchEntry {
 
     pub(super) const fn coordinate(&self) -> (usize, usize) {
         (self.shard_index, self.tensor_index)
+    }
+
+    pub(super) const fn location(&self) -> TensorFailureLocation {
+        self.location
     }
 
     pub(super) fn host_execution_tensor(&self) -> &Tensor {
@@ -237,7 +244,7 @@ impl TransferBatchOwner {
         &mut self,
         backend: BackendId,
         final_tensors: &mut HashMap<String, Tensor>,
-    ) -> Result<(usize, usize), LoadError> {
+    ) -> Result<(usize, usize, TensorFailureLocation), LoadError> {
         if !self.synchronized || self.committed_entries >= self.entries.len() {
             return Err(invalid_model_failure(backend, CODE_TENSOR_TRANSFER));
         }
@@ -246,26 +253,40 @@ impl TransferBatchOwner {
             .get_mut(self.committed_entries)
             .ok_or_else(|| invalid_model_failure(backend, CODE_TENSOR_TRANSFER))?;
         if entry.committed {
-            return Err(invalid_model_failure(backend, CODE_TENSOR_TRANSFER));
+            return Err(with_tensor(
+                invalid_model_failure(backend, CODE_TENSOR_TRANSFER),
+                LoadFailureStage::RetainedPlacement,
+                entry.location(),
+            ));
         }
-        let name = entry
-            .name
-            .as_ref()
-            .ok_or_else(|| invalid_model_failure(backend, CODE_TENSOR_TRANSFER))?;
+        let name = entry.name.as_ref().ok_or_else(|| {
+            with_tensor(
+                invalid_model_failure(backend, CODE_TENSOR_TRANSFER),
+                LoadFailureStage::RetainedPlacement,
+                entry.location(),
+            )
+        })?;
         if final_tensors.contains_key(name.as_str()) {
-            return Err(invalid_model_failure(backend, CODE_DUPLICATE_TENSOR));
+            return Err(super::with_stage(
+                invalid_model_failure(backend, CODE_DUPLICATE_TENSOR),
+                LoadFailureStage::RetainedPlacement,
+            ));
         }
-        let name = entry
-            .name
-            .take()
-            .ok_or_else(|| invalid_model_failure(backend, CODE_TENSOR_TRANSFER))?;
+        let name = entry.name.take().ok_or_else(|| {
+            with_tensor(
+                invalid_model_failure(backend, CODE_TENSOR_TRANSFER),
+                LoadFailureStage::RetainedPlacement,
+                entry.location(),
+            )
+        })?;
         final_tensors.insert(name, entry.device_tensor.clone());
         entry.committed = true;
         self.committed_entries = self
             .committed_entries
             .checked_add(1)
             .ok_or_else(|| numeric_error(backend))?;
-        Ok(entry.coordinate())
+        let (shard, tensor) = entry.coordinate();
+        Ok((shard, tensor, entry.location()))
     }
 
     pub(super) fn finish(&mut self, backend: BackendId) -> Result<(), LoadError> {

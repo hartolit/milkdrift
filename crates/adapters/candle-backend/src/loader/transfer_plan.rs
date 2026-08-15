@@ -572,7 +572,7 @@ mod tests {
             .err()
             .ok_or_else(|| "overflow unexpectedly planned".to_owned())?;
         assert!(
-            matches!(error, domain_contracts::LoadError::Backend(failure) if failure.code == CODE_NUMERIC_OVERFLOW)
+            matches!(error, domain_contracts::LoadError::Backend(failure) if failure.failure.code == CODE_NUMERIC_OVERFLOW)
         );
         Ok(())
     }

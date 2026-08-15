@@ -15,10 +15,10 @@ use candle_core::{DType, Device, Tensor};
 use domain_contracts::{
     BackendFailureKind, BackendId, BackendSequence, CancellationStatus, CapacityResource,
     DecodeBuffers, DecodeInput, DecodeOutcome, DeviceId, DeviceKind, ExecutionDevice,
-    LoadConfiguration, LoadError, LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint,
-    ModelGeneration, ModelHandle, ModelId, ModelLoader, PrefillBuffers, PrefillInput,
-    PrefillOutcome, PreparedLoad, ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceId,
-    SequenceState, TokenId, decode_checked, prefill_checked,
+    LoadConfiguration, LoadError, LoadFailureStage, LoadPlan, LoadedModel, MemoryBudget,
+    MemoryFootprint, ModelGeneration, ModelHandle, ModelId, ModelLoader, PrefillBuffers,
+    PrefillInput, PrefillOutcome, PreparedLoad, ScalarType, ScalarTypeSet, SequenceConfiguration,
+    SequenceId, SequenceState, TensorFailureLocation, TokenId, decode_checked, prefill_checked,
 };
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use sha2::{Digest, Sha256};
@@ -85,6 +85,9 @@ type TestResult<T = ()> = Result<T, String>;
 
 const SOURCE_IDENTITY_MISMATCH_CODE: u32 = 32;
 const SOURCE_IDENTITY_LENGTH_CODE: u32 = 45;
+const REQUIRED_TENSOR_CODE: u32 = 26;
+const UNSUPPORTED_SCALAR_CODE: u32 = 21;
+const MODEL_NORM_NAME_HASH: u64 = 0xd6d6_e5af_d116_04e4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RequiredProfile {
@@ -95,12 +98,13 @@ enum RequiredProfile {
     MixedBf16F32,
     MixedF16Bf16,
     UnsupportedU8,
+    InvalidNormShape,
 }
 
 impl RequiredProfile {
     fn dtype_for(self, name: &str) -> DType {
         match self {
-            Self::F32 => DType::F32,
+            Self::F32 | Self::InvalidNormShape => DType::F32,
             Self::F16 => DType::F16,
             Self::Bf16 => DType::BF16,
             Self::MixedF16F32 => {
@@ -449,7 +453,18 @@ fn unsupported_and_conflicting_config_declarations_are_rejected() -> TestResult 
     let loader = CandleLlamaLoader::new(BACKEND);
     for declaration in [ConfigDeclaration::Unsupported, ConfigDeclaration::Conflict] {
         let source = fixture.source(declaration)?;
-        assert_unsupported(loader.inspect(&source));
+        let error = loader
+            .inspect(&source)
+            .err()
+            .ok_or_else(|| "unsupported configuration was admitted".to_owned())?;
+        let LoadError::Backend(failure) = error else {
+            return Err(format!("unexpected configuration failure: {error:?}"));
+        };
+        let context = failure
+            .context
+            .ok_or_else(|| "configuration failure lost its stage".to_owned())?;
+        assert_eq!(context.stage, LoadFailureStage::CompatibilityValidation);
+        assert_eq!(context.tensor, None);
     }
     Ok(())
 }
@@ -475,9 +490,36 @@ fn required_unsupported_dtype_rejects_before_device_initialization() -> TestResu
     let mut configuration = load_configuration();
     configuration.execution_device = ExecutionDevice::new(DeviceId::new(1), DeviceKind::Cpu);
 
-    assert_unsupported(loader.inspect(&source));
-    assert_unsupported(loader.prepare_load(&source, &configuration));
+    let expected = TensorFailureLocation::new(0, 11, MODEL_NORM_NAME_HASH, Some(ScalarType::U8));
+    assert_exact_tensor_load_failure(
+        loader.inspect(&source),
+        BackendFailureKind::Unsupported,
+        UNSUPPORTED_SCALAR_CODE,
+        LoadFailureStage::ScalarConversion,
+        expected,
+    )?;
+    assert_exact_tensor_load_failure(
+        loader.prepare_load(&source, &configuration),
+        BackendFailureKind::Unsupported,
+        UNSUPPORTED_SCALAR_CODE,
+        LoadFailureStage::ScalarConversion,
+        expected,
+    )?;
     Ok(())
+}
+
+#[test]
+fn incompatible_existing_required_shape_has_exact_tensor_context() -> TestResult {
+    let fixture = TinyLlamaFixture::create(RequiredProfile::InvalidNormShape, &[])?;
+    let source = fixture.source(ConfigDeclaration::F32)?;
+    let loader = CandleLlamaLoader::new(BACKEND);
+    assert_exact_tensor_load_failure(
+        loader.inspect(&source),
+        BackendFailureKind::InvalidModel,
+        REQUIRED_TENSOR_CODE,
+        LoadFailureStage::CompatibilityValidation,
+        TensorFailureLocation::new(0, 11, MODEL_NORM_NAME_HASH, Some(ScalarType::F32)),
+    )
 }
 
 #[test]
@@ -594,8 +636,8 @@ fn supplied_expected_content_length_mismatch_rejects_explicitly() -> TestResult 
     assert!(matches!(
         error,
         LoadError::Backend(failure)
-            if failure.kind == BackendFailureKind::InvalidModel
-                && failure.code == SOURCE_IDENTITY_LENGTH_CODE
+            if failure.failure.kind == BackendFailureKind::InvalidModel
+                && failure.failure.code == SOURCE_IDENTITY_LENGTH_CODE
     ));
     Ok(())
 }
@@ -784,7 +826,7 @@ fn rejects_invalid_cpu_identity_and_unsupported_devices() -> TestResult {
         assert!(matches!(
             loader.prepare_load(&source, &configuration),
             Err(LoadError::Backend(failure))
-                if failure.kind == BackendFailureKind::Unsupported
+                if failure.failure.kind == BackendFailureKind::Unsupported
         ));
     }
     Ok(())
@@ -803,7 +845,7 @@ fn cuda_request_fails_explicitly_when_support_is_not_compiled() -> TestResult {
     assert!(matches!(
         loader.prepare_load(&source, &configuration),
         Err(LoadError::Backend(failure))
-            if failure.kind == BackendFailureKind::Unsupported
+            if failure.failure.kind == BackendFailureKind::Unsupported
     ));
     Ok(())
 }
@@ -1095,7 +1137,7 @@ fn assert_failed_preparation_invalid_model(
     };
     assert!(matches!(
         failed.primary(),
-        LoadError::Backend(failure) if failure.kind == BackendFailureKind::InvalidModel
+        LoadError::Backend(failure) if failure.failure.kind == BackendFailureKind::InvalidModel
     ));
     let mut failed = failed;
     failed.cleanup().map_err(debug_error)?;
@@ -1117,7 +1159,8 @@ fn assert_failed_preparation_invalid_model_code(
     assert!(matches!(
         failed.primary(),
         LoadError::Backend(failure)
-            if failure.kind == BackendFailureKind::InvalidModel && failure.code == expected_code
+            if failure.failure.kind == BackendFailureKind::InvalidModel
+                && failure.failure.code == expected_code
     ));
     let mut failed = failed;
     failed.cleanup().map_err(debug_error)?;
@@ -1377,7 +1420,18 @@ fn create_weight_tensors(profile: RequiredProfile) -> TestResult<HashMap<String,
     let mut tensors = HashMap::new();
     insert_token_matrix(&mut tensors, "model.embed_tokens.weight", profile, &device)?;
     insert_token_matrix(&mut tensors, "lm_head.weight", profile, &device)?;
-    insert_vector(&mut tensors, "model.norm.weight", 8, profile, &device)?;
+    let norm_length = if profile == RequiredProfile::InvalidNormShape {
+        7
+    } else {
+        8
+    };
+    insert_vector(
+        &mut tensors,
+        "model.norm.weight",
+        norm_length,
+        profile,
+        &device,
+    )?;
     for projection in ["q_proj", "k_proj", "v_proj", "o_proj"] {
         insert_matrix(
             &mut tensors,
@@ -1612,7 +1666,7 @@ fn assert_invalid_model<T>(result: Result<T, LoadError>) {
     let matches_kind = matches!(
         &result,
         Err(LoadError::Backend(failure))
-            if failure.kind == BackendFailureKind::InvalidModel
+            if failure.failure.kind == BackendFailureKind::InvalidModel
     );
     drop(result);
     assert!(matches_kind);
@@ -1622,10 +1676,33 @@ fn assert_unsupported<T>(result: Result<T, LoadError>) {
     let matches_kind = matches!(
         &result,
         Err(LoadError::Backend(failure))
-            if failure.kind == BackendFailureKind::Unsupported
+            if failure.failure.kind == BackendFailureKind::Unsupported
     );
     drop(result);
     assert!(matches_kind);
+}
+
+fn assert_exact_tensor_load_failure<T>(
+    result: Result<T, LoadError>,
+    expected_kind: BackendFailureKind,
+    expected_code: u32,
+    expected_stage: LoadFailureStage,
+    expected_location: TensorFailureLocation,
+) -> TestResult {
+    let error = result
+        .err()
+        .ok_or_else(|| "tensor failure case unexpectedly succeeded".to_owned())?;
+    let LoadError::Backend(failure) = error else {
+        return Err(format!("unexpected tensor failure: {error:?}"));
+    };
+    assert_eq!(failure.failure.kind, expected_kind);
+    assert_eq!(failure.failure.code, expected_code);
+    let context = failure
+        .context
+        .ok_or_else(|| "tensor failure lost bounded context".to_owned())?;
+    assert_eq!(context.stage, expected_stage);
+    assert_eq!(context.tensor, Some(expected_location));
+    Ok(())
 }
 
 fn maximum_logit_token(logits: &[f32]) -> TestResult<TokenId> {

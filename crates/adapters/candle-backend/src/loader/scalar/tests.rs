@@ -40,7 +40,7 @@ fn required_scalar_matrix_ignores_complete_observed_extras() {
         );
         assert!(matches!(
             select_required_primary(BACKEND, required, None),
-            Err(LoadError::Backend(failure)) if failure.code == CODE_UNSUPPORTED_SCALAR
+            Err(LoadError::Backend(failure)) if failure.failure.code == CODE_UNSUPPORTED_SCALAR
         ));
     }
 }
@@ -56,7 +56,7 @@ fn empty_other_and_f16_bf16_required_sets_reject() {
     ] {
         assert!(matches!(
             select_required_primary(BACKEND, required, None),
-            Err(LoadError::Backend(failure)) if failure.code == CODE_UNSUPPORTED_SCALAR
+            Err(LoadError::Backend(failure)) if failure.failure.code == CODE_UNSUPPORTED_SCALAR
         ));
     }
 }
@@ -70,6 +70,6 @@ fn declaration_must_match_required_primary() {
     );
     assert!(matches!(
         select_required_primary(BACKEND, f32, Some(ScalarType::F16)),
-        Err(LoadError::Backend(failure)) if failure.code == CODE_UNSUPPORTED_SCALAR
+        Err(LoadError::Backend(failure)) if failure.failure.code == CODE_UNSUPPORTED_SCALAR
     ));
 }

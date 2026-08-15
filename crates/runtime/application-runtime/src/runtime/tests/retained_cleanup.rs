@@ -1,10 +1,12 @@
 use domain_contracts::{
+    BackendFailure, BackendFailureKind, BackendId, BackendLoadFailure, LoadError, LoadFailureStage,
     MemoryFootprint, ModelGeneration, ModelHandle, ModelId, RequestId, ScalarType, SequenceId,
+    TensorFailureLocation,
 };
 use inference_runtime::{
     CleanupFailureReport, CleanupResource, CleanupRetryState, CommandTicket, ConservativeFootprint,
-    FailureClass, RetainedModelSnapshot, RetainedOwnership, RuntimeError, RuntimeOperation,
-    RuntimeSnapshot, UnloadReceipt, UnloadStatus,
+    FailureClass, FailureDetail, RetainedModelSnapshot, RetainedOwnership, RuntimeError,
+    RuntimeOperation, RuntimeSnapshot, UnloadReceipt, UnloadStatus,
 };
 
 use super::support::*;
@@ -39,6 +41,11 @@ const REPORTED_FOOTPRINT: MemoryFootprint = MemoryFootprint {
     host_working_bytes: 67,
     device_working_bytes: 71,
 };
+const RETAINED_LOAD_DIAGNOSTIC: BackendLoadFailure = BackendLoadFailure::at_tensor(
+    BackendFailure::new(BackendId::new(1), BackendFailureKind::DeviceExecution, 29),
+    LoadFailureStage::DeviceTransfer,
+    TensorFailureLocation::new(1, 4, 0x0123_4567_89ab_cdef, Some(ScalarType::F16)),
+);
 
 fn failed_load_cleanup(
     ownership: RetainedOwnership,
@@ -49,11 +56,11 @@ fn failed_load_cleanup(
         resource: CleanupResource::FailedLoad {
             handle: RETAINED_HANDLE,
         },
-        failure: CleanupFailureReport::new(
+        failure: CleanupFailureReport::with_details(
             RuntimeOperation::ModelLoad,
-            FailureClass::Load,
+            FailureDetail::Load(LoadError::Backend(RETAINED_LOAD_DIAGNOSTIC)),
             RuntimeOperation::FailedLoadCleanup,
-            FailureClass::Synchronization,
+            FailureDetail::Class(FailureClass::Synchronization),
         ),
         ownership,
         attempts,
@@ -185,11 +192,22 @@ fn failed_load_owner_keeps_primary_cleanup_and_lower_attempts_independent() -> T
             ApplicationFailureKind::ModelLoad
         );
         assert_eq!(
+            cleanup.primary_failure().load_diagnostic(),
+            Some(RETAINED_LOAD_DIAGNOSTIC)
+        );
+        assert_eq!(
             cleanup
                 .cleanup_failure()
                 .ok_or_else(|| "cleanup failure was not retained".to_owned())?
                 .kind,
             ApplicationFailureKind::RetainedCleanup
+        );
+        assert_eq!(
+            cleanup
+                .cleanup_failure()
+                .ok_or_else(|| "cleanup failure was not retained".to_owned())?
+                .load_diagnostic(),
+            None
         );
         assert!(!runtime.state().can_select_device());
         assert!(!runtime.state().can_load(&selection));
@@ -720,9 +738,13 @@ fn terminal_retention_survives_worker_join_and_cannot_be_retried() -> TestResult
 #[test]
 fn public_cleanup_event_is_compact_and_detailed_evidence_stays_in_state() {
     assert!(std::mem::size_of::<ApplicationEvent>() <= 192);
-    assert!(std::mem::size_of::<ApplicationError>() <= 64);
-    assert!(std::mem::size_of::<ApplicationRetainedModel>() <= 256);
-    assert!(std::mem::size_of::<ApplicationState>() <= 768);
+    // The failure variant owns presentation text plus one bounded 48-byte
+    // backend-load diagnostic; keep the resulting enum at its measured ceiling.
+    assert!(std::mem::size_of::<ApplicationError>() <= 80);
+    // Retained state keeps primary and cleanup failures independently; its
+    // public owner and enclosing state retain tight measured ceilings.
+    assert!(std::mem::size_of::<ApplicationRetainedModel>() <= 304);
+    assert!(std::mem::size_of::<ApplicationState>() <= 784);
 }
 
 const fn application_resource(resource: CleanupResource) -> ApplicationRetainedModelResource {

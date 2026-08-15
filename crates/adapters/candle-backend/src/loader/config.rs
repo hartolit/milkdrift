@@ -6,14 +6,14 @@ use std::io::Read;
 use std::path::Path;
 
 use candle_transformers::models::llama::{Config, LlamaConfig};
-use domain_contracts::{BackendFailureKind, BackendId, LoadError, ScalarType};
+use domain_contracts::{BackendFailureKind, BackendId, LoadError, LoadFailureStage, ScalarType};
 use serde::de::{self, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
 use crate::failure::{
     CODE_ARCHITECTURE, CODE_CONFIG_ALLOCATION, CODE_CONFIG_DECODE, CODE_CONFIG_LIMIT,
     CODE_CONFIG_READ, CODE_DECLARATION_CONFLICT, CODE_DECLARATION_MALFORMED,
-    CODE_DECLARATION_UNSUPPORTED, CODE_NUMERIC_OVERFLOW, failure,
+    CODE_DECLARATION_UNSUPPORTED, CODE_NUMERIC_OVERFLOW, load_failure,
 };
 
 use super::configuration_policy::validate_numeric_config;
@@ -189,11 +189,12 @@ impl ConfigurationFacts {
         if matches!(self.dtype, ScalarDeclaration::Unsupported)
             || matches!(self.torch_dtype, ScalarDeclaration::Unsupported)
         {
-            return Err(LoadError::Backend(failure(
+            return Err(load_failure(
                 backend,
                 BackendFailureKind::Unsupported,
                 CODE_DECLARATION_UNSUPPORTED,
-            )));
+                LoadFailureStage::CompatibilityValidation,
+            ));
         }
 
         match (self.dtype, self.torch_dtype) {
@@ -206,11 +207,12 @@ impl ConfigurationFacts {
                 Ok(Some(modern))
             }
             (ScalarDeclaration::Recognized(_), ScalarDeclaration::Recognized(_)) => {
-                Err(LoadError::Backend(failure(
+                Err(load_failure(
                     backend,
                     BackendFailureKind::Unsupported,
                     CODE_DECLARATION_CONFLICT,
-                )))
+                    LoadFailureStage::CompatibilityValidation,
+                ))
             }
             _ => Err(invalid_model_failure(backend, CODE_DECLARATION_MALFORMED)),
         }
@@ -225,11 +227,12 @@ impl ConfigurationFacts {
         if model_is_llama && architectures_are_llama {
             Ok(())
         } else {
-            Err(LoadError::Backend(failure(
+            Err(load_failure(
                 backend,
                 BackendFailureKind::Unsupported,
                 CODE_ARCHITECTURE,
-            )))
+                LoadFailureStage::CompatibilityValidation,
+            ))
         }
     }
 }

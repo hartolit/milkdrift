@@ -17,7 +17,7 @@ const BACKEND: BackendId = BackendId::new(9);
 
 fn backend_code(error: LoadError) -> Option<(BackendFailureKind, u32)> {
     match error {
-        LoadError::Backend(failure) => Some((failure.kind, failure.code)),
+        LoadError::Backend(failure) => Some((failure.failure.kind, failure.failure.code)),
         _ => None,
     }
 }
@@ -175,8 +175,8 @@ fn numeric_config_rejects_locked_cache_hazards() {
     assert!(matches!(
         validate_numeric_config(BACKEND, &config),
         Err(LoadError::Backend(failure))
-            if failure.kind == BackendFailureKind::InvalidModel
-                && failure.code == crate::failure::CODE_NUMERIC_OVERFLOW
+            if failure.failure.kind == BackendFailureKind::InvalidModel
+                && failure.failure.code == crate::failure::CODE_NUMERIC_OVERFLOW
     ));
 }
 

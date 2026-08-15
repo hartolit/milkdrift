@@ -200,6 +200,7 @@ impl ApplicationRuntime {
             outcome: GenerationTerminalOutcome::Failed(ApplicationFailure {
                 kind: ApplicationFailureKind::Inference,
                 message: "inference runtime disconnected during generation".to_owned(),
+                load_diagnostic: None,
             }),
             usage: active.usage,
         };
@@ -238,6 +239,7 @@ impl ApplicationRuntime {
                                 message:
                                     "generation admission returned a mismatched request identity"
                                         .to_owned(),
+                                load_diagnostic: None,
                             },
                         ),
                     ),
@@ -565,6 +567,7 @@ impl ApplicationRuntime {
                 session.local_failure = Some(ApplicationFailure {
                     kind: ApplicationFailureKind::Tokenizer,
                     message: context.to_owned(),
+                    load_diagnostic: None,
                 });
             }
             session.pending_text_length = 0;

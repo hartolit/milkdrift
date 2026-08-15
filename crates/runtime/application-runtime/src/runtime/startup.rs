@@ -196,6 +196,10 @@ impl ApplicationRuntime {
         .map_err(StartupFailure::into_primary)
     }
 
+    #[expect(
+        clippy::result_large_err,
+        reason = "cold-path startup failure retains the primary application error and sole rollback owner without boxing away ownership"
+    )]
     pub(super) fn start_transaction<F>(
         configuration: ApplicationRuntimeConfiguration,
         start_hub: F,
@@ -211,6 +215,10 @@ impl ApplicationRuntime {
         )
     }
 
+    #[expect(
+        clippy::result_large_err,
+        reason = "cold-path startup failure retains the primary application error and sole rollback owner without boxing away ownership"
+    )]
     pub(super) fn start_transaction_with_rollback<F>(
         configuration: ApplicationRuntimeConfiguration,
         start_hub: F,

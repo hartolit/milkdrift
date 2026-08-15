@@ -10,15 +10,17 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use candle_backend::{
-    CandleLlamaLoader, CandleLlamaModel, CandleLlamaSource, CandleLoadObservation,
+    CandleHardwareLoadFault, CandleLlamaLoader, CandleLlamaModel, CandleLlamaSource,
+    CandleLoadCleanupOutcome, CandleLoadObservation, CandleLoadObservationOutcome,
 };
 use candle_core::{DType, Device, Tensor};
 use domain_contracts::{
     BackendFailureKind, BackendId, CancellationStatus, DecodeBuffers, DecodeInput, DecodeOutcome,
-    DeviceId, DeviceKind, ExecutionDevice, LoadConfiguration, LoadPlan, LoadedModel, MemoryBudget,
-    MemoryFootprint, ModelGeneration, ModelHandle, ModelId, ModelLoader, PrefillBuffers,
-    PrefillInput, PrefillOutcome, PreparedLoad, ScalarType, ScalarTypeSet, SequenceConfiguration,
-    SequenceId, TokenId, decode_checked, prefill_checked,
+    DeviceId, DeviceKind, ExecutionDevice, LoadConfiguration, LoadError, LoadFailureStage,
+    LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint, ModelGeneration, ModelHandle, ModelId,
+    ModelLoader, PrefillBuffers, PrefillInput, PrefillOutcome, PreparedLoad, ScalarType,
+    ScalarTypeSet, SequenceConfiguration, SequenceId, TensorFailureLocation, TokenId,
+    decode_checked, prefill_checked,
 };
 use serde_json::{Value as JsonValue, json};
 
@@ -176,7 +178,7 @@ hardware_cases!(
                 DeviceKind::Cuda,
             )),
             Err(domain_contracts::LoadError::Backend(failure))
-                if failure.kind == BackendFailureKind::DeviceInitialization
+                if failure.failure.kind == BackendFailureKind::DeviceInitialization
         ));
 
         let source = fixture_source()?;
@@ -200,6 +202,70 @@ hardware_cases!(
         assert_logits_close(&cpu.decode_logits, &cuda.decode_logits, 1.0e-3)?;
         assert_eq!(maximum_logit_token(&cuda.prefill_logits)?, TokenId::new(2));
         assert_eq!(maximum_logit_token(&cuda.decode_logits)?, TokenId::new(3));
+        Ok(())
+    }
+
+    fn cuda_transfer_failure_retains_exact_context_and_cleans_up() -> TestResult {
+        let source = fixture_source()?;
+        let (observation, recorder) = CandleLoadObservation::channel();
+        let mut loader = CandleLlamaLoader::with_load_observation(BACKEND, recorder)
+            .with_hardware_load_fault(CandleHardwareLoadFault::AfterDeviceTransfer {
+                shard_ordinal: 0,
+                tensor_ordinal: 0,
+            });
+        let configuration = LoadConfiguration {
+            handle: ModelHandle::new(ModelId::new(2), ModelGeneration::new(1)),
+            execution_device: CUDA_0,
+            memory_budget: MemoryBudget {
+                host_bytes: u64::MAX,
+                device_bytes: u64::MAX,
+            },
+        };
+        let prepared = loader
+            .prepare_load(&source, &configuration)
+            .map_err(|error| format!("prepare transfer fault: {error:?}"))?;
+        let mut failed = loader
+            .load_prepared(prepared)
+            .err()
+            .ok_or_else(|| "injected CUDA transfer fault unexpectedly loaded".to_owned())?;
+        let LoadError::Backend(primary) = failed.primary() else {
+            return Err(format!(
+                "unexpected transfer failure: {:?}",
+                failed.primary()
+            ));
+        };
+        assert_eq!(primary.failure.kind, BackendFailureKind::DeviceExecution);
+        assert_eq!(primary.failure.code, 29);
+        let context = primary
+            .context
+            .ok_or_else(|| "CUDA transfer failure omitted context".to_owned())?;
+        assert_eq!(context.stage, LoadFailureStage::DeviceTransfer);
+        assert_eq!(
+            context.tensor,
+            Some(TensorFailureLocation::new(
+                0,
+                0,
+                0xab67_eb51_5e1b_6f0d,
+                Some(ScalarType::F32),
+            ))
+        );
+
+        failed
+            .cleanup()
+            .map_err(|error| format!("cleanup transfer fault: {error:?}"))?;
+        assert!(failed.cleanup_complete());
+        let snapshot = observation.snapshot();
+        assert_eq!(
+            snapshot.outcome,
+            CandleLoadObservationOutcome::MaterializationFailed
+        );
+        assert_eq!(
+            snapshot.cleanup_outcome,
+            CandleLoadCleanupOutcome::Succeeded
+        );
+        assert_eq!(snapshot.cleanup_attempts, 1);
+        assert_eq!(snapshot.cleanup_failures, 0);
+        assert_eq!(snapshot.transfer_batches, 1);
         Ok(())
     }
 

@@ -117,7 +117,7 @@ fn discovery_failure(device: ApplicationDevice, error: LoadError) -> DeviceProbe
         LoadError::InvalidConfiguration => {
             ApplicationDeviceDiscoveryFailureKind::InvalidConfiguration
         }
-        LoadError::Backend(failure) => match failure.kind {
+        LoadError::Backend(failure) => match failure.failure.kind {
             BackendFailureKind::Unsupported => ApplicationDeviceDiscoveryFailureKind::Unsupported,
             BackendFailureKind::DeviceInitialization => {
                 ApplicationDeviceDiscoveryFailureKind::Initialization

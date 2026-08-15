@@ -21,7 +21,7 @@ static NEXT_TEMPORARY_FILE: AtomicU64 = AtomicU64::new(0);
 
 fn backend_code(error: LoadError) -> Option<(BackendFailureKind, u32)> {
     match error {
-        LoadError::Backend(failure) => Some((failure.kind, failure.code)),
+        LoadError::Backend(failure) => Some((failure.failure.kind, failure.failure.code)),
         _ => None,
     }
 }

@@ -612,6 +612,16 @@ pub(super) fn model_load_failure(error: &RuntimeError) -> ApplicationFailure {
         _ => "model preparation or materialization failed",
     };
     ApplicationFailure::from_debug(kind, context, error)
+        .with_load_diagnostic(runtime_load_diagnostic(error))
+}
+
+const fn runtime_load_diagnostic(
+    error: &RuntimeError,
+) -> Option<domain_contracts::BackendLoadFailure> {
+    match error {
+        RuntimeError::Load(LoadError::Backend(failure)) => Some(*failure),
+        _ => None,
+    }
 }
 
 const fn model_load_failure_kind(error: &RuntimeError) -> ApplicationFailureKind {
@@ -632,7 +642,7 @@ const fn load_error_failure_kind(error: LoadError) -> ApplicationFailureKind {
         | LoadError::UnsupportedFormat
         | LoadError::CapacityExhausted(_) => ApplicationFailureKind::UnsupportedArtifact,
         LoadError::InsufficientMemory { .. } => ApplicationFailureKind::MemoryAdmission,
-        LoadError::Backend(failure) => match failure.kind {
+        LoadError::Backend(failure) => match failure.failure.kind {
             BackendFailureKind::InvalidModel | BackendFailureKind::Unsupported => {
                 ApplicationFailureKind::UnsupportedArtifact
             }

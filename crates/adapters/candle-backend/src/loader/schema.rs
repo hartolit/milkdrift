@@ -3,14 +3,15 @@
 use std::fmt::Write;
 
 use candle_transformers::models::llama::Config;
-use domain_contracts::{BackendId, LoadError, ScalarTypeSet};
+use domain_contracts::{BackendFailureKind, BackendId, LoadError, LoadFailureStage, ScalarTypeSet};
 
 use crate::failure::{
     CODE_DUPLICATE_TENSOR, CODE_INSPECTION_ALLOCATION, CODE_NUMERIC_OVERFLOW, CODE_REQUIRED_TENSOR,
+    CODE_UNSUPPORTED_SCALAR, tensor_failure_location, tensor_load_failure,
 };
 
 use super::manifest::InspectedShard;
-use super::{host_memory_failure, invalid_model_failure, unsupported_scalar};
+use super::{host_memory_failure, invalid_model_failure};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct RequiredSchema {
@@ -256,11 +257,30 @@ fn mark_required(
         .get_mut(location.shard)
         .and_then(|shard| shard.tensors.get_mut(location.tensor))
         .ok_or_else(|| invalid_model_failure(backend, CODE_REQUIRED_TENSOR))?;
+    let failure_location = tensor_failure_location(
+        location.shard,
+        location.tensor,
+        tensor.name.as_str(),
+        Some(tensor.source_dtype.scalar_type()),
+    )
+    .ok_or_else(|| invalid_model_failure(backend, CODE_NUMERIC_OVERFLOW))?;
     if tensor.shape.as_slice() != expected_shape {
-        return Err(invalid_model_failure(backend, CODE_REQUIRED_TENSOR));
+        return Err(tensor_load_failure(
+            backend,
+            BackendFailureKind::InvalidModel,
+            CODE_REQUIRED_TENSOR,
+            LoadFailureStage::CompatibilityValidation,
+            failure_location,
+        ));
     }
     if tensor.source_dtype.executable_dtype().is_none() {
-        return Err(unsupported_scalar(backend));
+        return Err(tensor_load_failure(
+            backend,
+            BackendFailureKind::Unsupported,
+            CODE_UNSUPPORTED_SCALAR,
+            LoadFailureStage::ScalarConversion,
+            failure_location,
+        ));
     }
     tensor.required = true;
     scalar_types.insert(tensor.source_dtype.scalar_type());

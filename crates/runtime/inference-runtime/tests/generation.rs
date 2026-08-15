@@ -6,15 +6,15 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use domain_contracts::{
-    BackendFailure, BackendFailureKind, BackendId, BackendSequence, CapabilitySet,
-    DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind, DrainTimeout,
-    ExecutionDevice, FailedLoad, FailedLoadOwner, FinishReason, LoadConfiguration, LoadError,
-    LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint, ModelArchitecture, ModelCapabilities,
-    ModelDescriptor, ModelError, ModelGeneration, ModelHandle, ModelId, ModelLoader, ModelMetadata,
-    PrefillBufferRequirements, PrefillInput, PrefillOutcome, PreparedDecodeBuffers, PreparedLoad,
-    PreparedPrefillBuffers, QuantizationFormat, RequestId, ScalarType, ScalarTypeSet,
-    SequenceConfiguration, SequenceError, SequenceId, SequencePlan, SequenceReservation,
-    SequenceState, SynchronizationError, TokenId, UnloadPolicy,
+    BackendFailure, BackendFailureKind, BackendId, BackendLoadFailure, BackendSequence,
+    CapabilitySet, DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind,
+    DrainTimeout, ExecutionDevice, FailedLoad, FailedLoadOwner, FinishReason, LoadConfiguration,
+    LoadError, LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint, ModelArchitecture,
+    ModelCapabilities, ModelDescriptor, ModelError, ModelGeneration, ModelHandle, ModelId,
+    ModelLoader, ModelMetadata, PrefillBufferRequirements, PrefillInput, PrefillOutcome,
+    PreparedDecodeBuffers, PreparedLoad, PreparedPrefillBuffers, QuantizationFormat, RequestId,
+    ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceError, SequenceId, SequencePlan,
+    SequenceReservation, SequenceState, SynchronizationError, TokenId, UnloadPolicy,
 };
 use host_runtime::TokenOutputRecordKind;
 use inference_runtime::{
@@ -300,7 +300,7 @@ impl ModelLoader for FakeLoader {
                 let mut counters = self
                     .counters
                     .lock()
-                    .map_err(|_| LoadError::Backend(failure(18)))?;
+                    .map_err(|_| LoadError::Backend(BackendLoadFailure::new(failure(18))))?;
                 counters.loads = counters.loads.saturating_add(1);
                 counters.retained_memory_bytes = counters
                     .retained_memory_bytes
@@ -311,24 +311,27 @@ impl ModelLoader for FakeLoader {
                 return Err(FailedLoad::new(primary, prepared));
             }
             prepared.partial_resources_retained = true;
-            return Err(FailedLoad::new(LoadError::Backend(failure(19)), prepared));
+            return Err(FailedLoad::new(
+                LoadError::Backend(BackendLoadFailure::new(failure(19))),
+                prepared,
+            ));
         }
 
         let load_attempt = (|| {
             if let Some(gate) = &prepared.source.load_gate {
                 gate.entered
                     .send(())
-                    .map_err(|_| LoadError::Backend(failure(13)))?;
+                    .map_err(|_| LoadError::Backend(BackendLoadFailure::new(failure(13))))?;
                 gate.release
                     .lock()
-                    .map_err(|_| LoadError::Backend(failure(14)))?
+                    .map_err(|_| LoadError::Backend(BackendLoadFailure::new(failure(14))))?
                     .recv_timeout(Duration::from_secs(2))
-                    .map_err(|_| LoadError::Backend(failure(15)))?;
+                    .map_err(|_| LoadError::Backend(BackendLoadFailure::new(failure(15))))?;
             }
             let mut counters = self
                 .counters
                 .lock()
-                .map_err(|_| LoadError::Backend(failure(1)))?;
+                .map_err(|_| LoadError::Backend(BackendLoadFailure::new(failure(1))))?;
             counters.loads = counters.loads.saturating_add(1);
             counters.retained_memory_bytes = counters
                 .retained_memory_bytes

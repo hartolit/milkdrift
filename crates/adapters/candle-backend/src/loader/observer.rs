@@ -1,9 +1,9 @@
 //! Private materialization checkpoints and bounded load evidence recording.
 
 use candle_core::Device;
-use domain_contracts::{BackendFailureKind, BackendId, LoadError};
+use domain_contracts::{BackendFailureKind, BackendId, LoadError, LoadFailureStage};
 
-use crate::failure::{CODE_LOAD_SYNCHRONIZE, failure};
+use crate::failure::{CODE_LOAD_SYNCHRONIZE, load_failure};
 
 use super::identity::ContentIdentityEstablishment;
 use super::prepared::CandleLlamaPreparedLoad;
@@ -92,18 +92,42 @@ pub(super) trait MaterializationObserver {
     ) -> Result<(), LoadError> {
         let _ = boundary;
         device.synchronize().map_err(|_| {
-            LoadError::Backend(failure(
+            load_failure(
                 backend,
                 BackendFailureKind::Synchronization,
                 CODE_LOAD_SYNCHRONIZE,
-            ))
+                LoadFailureStage::LoadSynchronization,
+            )
         })
     }
 }
 
 pub(super) struct NoopMaterializationObserver;
 
-impl MaterializationObserver for NoopMaterializationObserver {}
+#[cfg(test)]
+thread_local! {
+    pub(super) static TEST_MATERIALIZATION_CHECKPOINT_FAILURE: std::cell::Cell<Option<MaterializationCheckpoint>> = const { std::cell::Cell::new(None) };
+}
+
+impl MaterializationObserver for NoopMaterializationObserver {
+    #[cfg(test)]
+    fn checkpoint(
+        &mut self,
+        checkpoint: MaterializationCheckpoint,
+        backend: BackendId,
+    ) -> Result<(), LoadError> {
+        if TEST_MATERIALIZATION_CHECKPOINT_FAILURE
+            .with(|selected| selected.get() == Some(checkpoint))
+        {
+            Err(super::invalid_model_failure(
+                backend,
+                crate::failure::CODE_TENSOR_MATERIALIZE,
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
 
 impl CandleLlamaPreparedLoad {
     pub(super) fn record_verification_only_bytes(&self, bytes: usize) {

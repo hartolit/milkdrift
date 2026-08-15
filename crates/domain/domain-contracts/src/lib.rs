@@ -18,7 +18,8 @@ pub use backend::{
 };
 pub use capacity::{CapacityExhausted, CapacityResource};
 pub use error::{
-    BackendFailure, BackendFailureKind, LoadError, ModelError, SequenceError, SynchronizationError,
+    BackendFailure, BackendFailureKind, BackendLoadFailure, LoadError, LoadFailureContext,
+    LoadFailureStage, ModelError, SequenceError, SynchronizationError, TensorFailureLocation,
 };
 pub use generation::{
     CancellationReason, CancellationStatus, DecodeOutcome, FinishReason, GenerationControl,

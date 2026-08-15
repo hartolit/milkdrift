@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::fmt::{self, Debug, Display, Formatter};
 
-use domain_contracts::RequestId;
+use domain_contracts::{BackendLoadFailure, RequestId};
 
 use crate::{
     ApplicationActivity, ApplicationDevice, ApplicationDeviceUnavailableReason, GenerationPhase,
@@ -51,6 +51,11 @@ pub struct ApplicationFailure {
     pub kind: ApplicationFailureKind,
     /// Human-readable cold-path diagnostic.
     pub message: String,
+    /// Portable bounded backend-load provenance, when this is a lower load failure.
+    ///
+    /// This is independent of presentation text and never contains tensor names,
+    /// paths, vendor errors, or adapter-owned types.
+    pub load_diagnostic: Option<BackendLoadFailure>,
 }
 
 impl ApplicationFailure {
@@ -60,6 +65,7 @@ impl ApplicationFailure {
         Self {
             kind,
             message: source.to_string(),
+            load_diagnostic: None,
         }
     }
 
@@ -69,7 +75,21 @@ impl ApplicationFailure {
         Self {
             kind,
             message: format!("{context}: {source:?}"),
+            load_diagnostic: None,
         }
+    }
+
+    /// Attaches one structured lower backend-load diagnostic.
+    #[must_use]
+    pub fn with_load_diagnostic(mut self, diagnostic: Option<BackendLoadFailure>) -> Self {
+        self.load_diagnostic = diagnostic;
+        self
+    }
+
+    /// Returns structured lower backend-load provenance, when available.
+    #[must_use]
+    pub const fn load_diagnostic(&self) -> Option<BackendLoadFailure> {
+        self.load_diagnostic
     }
 }
 

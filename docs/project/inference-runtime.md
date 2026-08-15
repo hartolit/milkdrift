@@ -171,6 +171,19 @@ and sequence identity. `RetainedOwnership` distinguishes:
 `CleanupFailureReport` preserves primary and cleanup operations, classes, and
 bounded details independently. Cleanup failure never replaces the primary outcome.
 
+For a backend `LoadError`, `FailureDetail::Load` preserves the complete fixed-size
+value, including its stable backend/kind/code and optional bounded load stage and
+tensor coordinate. That exact primary detail survives the immediate cleanup
+attempt, retained cleanup state, retry, exhaustion, snapshots, and terminal
+retention. Cleanup synchronization remains the independent cleanup operation and
+detail; it cannot overwrite or erase the primary load context.
+
+E0 never invents tensor provenance. Generic preparation, admission, or post-load
+contract contradictions are represented as
+`FailureDetail::Class(FailureClass::BackendContract)`, even when their cleanup
+also fails. Only a backend-supplied `LoadError::Backend` can carry a
+`TensorFailureLocation` through E0.
+
 ## Incompatible complete models
 
 After materialization, E0 verifies the complete model in order:

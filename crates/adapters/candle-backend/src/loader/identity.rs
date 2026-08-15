@@ -299,7 +299,7 @@ mod tests {
         assert!(matches!(
             error,
             domain_contracts::LoadError::Backend(failure)
-                if failure.code == crate::failure::CODE_SOURCE_IDENTITY_LENGTH
+                if failure.failure.code == crate::failure::CODE_SOURCE_IDENTITY_LENGTH
         ));
         let rejected_shard = shards
             .first()

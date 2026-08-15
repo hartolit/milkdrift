@@ -1,13 +1,15 @@
 //! Explicit Candle execution-device construction and discovery.
 
 use candle_core::Device;
-use domain_contracts::{BackendFailureKind, BackendId, DeviceKind, ExecutionDevice, LoadError};
+use domain_contracts::{
+    BackendFailureKind, BackendId, DeviceKind, ExecutionDevice, LoadError, LoadFailureStage,
+};
 
 #[cfg(not(feature = "cuda"))]
 use crate::failure::CODE_CUDA_NOT_COMPILED;
 #[cfg(feature = "cuda")]
 use crate::failure::{CODE_CUDA_DISCOVERY, CODE_CUDA_INITIALIZATION};
-use crate::failure::{CODE_UNSUPPORTED_DEVICE, failure};
+use crate::failure::{CODE_UNSUPPORTED_DEVICE, load_failure};
 
 /// CUDA compute capability reported by the selected driver device.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,11 +75,12 @@ pub(crate) fn prepare_execution_device(
         }
         DeviceKind::Cpu => Err(LoadError::InvalidConfiguration),
         DeviceKind::Cuda => prepare_cuda_device(backend, execution_device),
-        _ => Err(LoadError::Backend(failure(
+        _ => Err(load_failure(
             backend,
             BackendFailureKind::Unsupported,
             CODE_UNSUPPORTED_DEVICE,
-        ))),
+            LoadFailureStage::ConfigurationInspection,
+        )),
     }
 }
 
@@ -95,18 +98,20 @@ fn prepare_cuda_device(
     // Construct Candle's complete CUDA device first so discovery proves that the
     // exact backend path, including its BLAS and RNG dependencies, can initialize.
     let device = Device::new_cuda(ordinal).map_err(|_| {
-        LoadError::Backend(failure(
+        load_failure(
             backend,
             BackendFailureKind::DeviceInitialization,
             CODE_CUDA_INITIALIZATION,
-        ))
+            LoadFailureStage::ConfigurationInspection,
+        )
     })?;
     let context = CudaContext::new(ordinal).map_err(|_| {
-        LoadError::Backend(failure(
+        load_failure(
             backend,
             BackendFailureKind::DeviceInitialization,
             CODE_CUDA_INITIALIZATION,
-        ))
+            LoadFailureStage::ConfigurationInspection,
+        )
     })?;
     let display_name = context.name().map_err(|_| cuda_discovery_error(backend))?;
     let (major, minor) = context
@@ -139,18 +144,20 @@ fn prepare_cuda_device(
     backend: BackendId,
     _execution_device: ExecutionDevice,
 ) -> Result<PreparedExecutionDevice, LoadError> {
-    Err(LoadError::Backend(failure(
+    Err(load_failure(
         backend,
         BackendFailureKind::Unsupported,
         CODE_CUDA_NOT_COMPILED,
-    )))
+        LoadFailureStage::ConfigurationInspection,
+    ))
 }
 
 #[cfg(feature = "cuda")]
 const fn cuda_discovery_error(backend: BackendId) -> LoadError {
-    LoadError::Backend(failure(
+    load_failure(
         backend,
         BackendFailureKind::DeviceInitialization,
         CODE_CUDA_DISCOVERY,
-    ))
+        LoadFailureStage::ConfigurationInspection,
+    )
 }

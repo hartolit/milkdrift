@@ -1,6 +1,9 @@
 //! Stable conversion from Candle failures into allocation-free domain errors.
 
-use domain_contracts::{BackendFailure, BackendFailureKind, BackendId};
+use domain_contracts::{
+    BackendFailure, BackendFailureKind, BackendId, BackendLoadFailure, LoadError, LoadFailureStage,
+    ScalarType, TensorFailureLocation,
+};
 
 pub const CODE_CONFIG_READ: u32 = 1;
 pub const CODE_CONFIG_DECODE: u32 = 2;
@@ -79,6 +82,63 @@ pub const fn failure(backend: BackendId, kind: BackendFailureKind, code: u32) ->
     BackendFailure::new(backend, kind, code)
 }
 
+pub const fn load_failure(
+    backend: BackendId,
+    kind: BackendFailureKind,
+    code: u32,
+    stage: LoadFailureStage,
+) -> LoadError {
+    LoadError::Backend(BackendLoadFailure::at_stage(
+        failure(backend, kind, code),
+        stage,
+    ))
+}
+
+pub const fn tensor_load_failure(
+    backend: BackendId,
+    kind: BackendFailureKind,
+    code: u32,
+    stage: LoadFailureStage,
+    location: TensorFailureLocation,
+) -> LoadError {
+    LoadError::Backend(BackendLoadFailure::at_tensor(
+        failure(backend, kind, code),
+        stage,
+        location,
+    ))
+}
+
+/// Computes the 64-bit FNV-1a fingerprint of the exact UTF-8 tensor-name bytes.
+///
+/// The fixed offset basis, prime, byte iteration, and wrapping arithmetic make
+/// this stable across processes, platforms, Rust versions, and map seeds. The
+/// result is diagnostic correlation only, not authentication or source identity.
+pub fn tensor_name_fingerprint(name: &str) -> u64 {
+    const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    let mut hash = OFFSET_BASIS;
+    for byte in name.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
+}
+
+pub fn tensor_failure_location(
+    shard_ordinal: usize,
+    tensor_ordinal: usize,
+    name: &str,
+    observed_scalar: Option<ScalarType>,
+) -> Option<TensorFailureLocation> {
+    Some(TensorFailureLocation::new(
+        u16::try_from(shard_ordinal).ok()?,
+        u32::try_from(tensor_ordinal).ok()?,
+        tensor_name_fingerprint(name),
+        observed_scalar,
+    ))
+}
+
 #[cfg(feature = "cuda")]
 pub fn candle_cuda_failure_kind(error: &candle_core::Error) -> Option<BackendFailureKind> {
     use cudarc::driver::{DriverError, sys::CUresult};
@@ -108,4 +168,19 @@ pub fn candle_cuda_failure_kind(error: &candle_core::Error) -> Option<BackendFai
 #[cfg(not(feature = "cuda"))]
 pub const fn candle_cuda_failure_kind(_error: &candle_core::Error) -> Option<BackendFailureKind> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tensor_name_fingerprint;
+
+    #[test]
+    fn tensor_name_fingerprint_has_exact_utf8_vectors() {
+        assert_eq!(tensor_name_fingerprint(""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(
+            tensor_name_fingerprint("model.embed_tokens.weight"),
+            0xa88f_d795_d5c6_d156
+        );
+        assert_eq!(tensor_name_fingerprint("ténsor.β"), 0x63f6_9e75_76b4_d249);
+    }
 }

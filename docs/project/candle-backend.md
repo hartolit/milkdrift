@@ -86,6 +86,51 @@ There are no per-tensor seeks, payload digests, mmap, unsafe code, or whole-mode
 
 An unmaterialized `CandleLlamaPreparedLoad` rejected by E0 is ordinary-drop-safe. After materialization starts, every failure returns `FailedLoad<CandleLlamaFailedPreparation>` and requires explicit cleanup through `FailedLoadOwner`.
 
+## Bounded portable load diagnostics
+
+Backend load failures keep their stable backend/kind/code identity and may add one
+fixed-size `LoadFailureContext`. The context contains a portable load stage and,
+only when one responsible accepted tensor is known, a `TensorFailureLocation`.
+It carries no tensor name, shard path, offset, digest, native error, or vendor
+type. `BackendLoadFailure`, `LoadFailureContext`, and
+`TensorFailureLocation` are allocation-free `Copy` values owned by
+`domain-contracts`.
+
+Candle assigns coordinates from the already accepted deterministic inventory:
+
+- `shard_ordinal` is the zero-based order of the complete path/identity pairs
+  sorted by `CandleLlamaSource`;
+- `tensor_ordinal` is the zero-based order within that shard after layout
+  validation sorts by payload start, then source byte length, then tensor name;
+- both conversions are checked against the portable `u16`/`u32` representation,
+  and the production shard/tensor ceilings fit those representations; and
+- `observed_scalar`, when present, comes from the single canonical
+  `SourceTensorDType::scalar_type` classification used for complete observed
+  evidence.
+
+`tensor_name_hash` is 64-bit FNV-1a over the exact UTF-8 tensor-name bytes in
+forward byte order, using offset basis `0xcbf29ce484222325`, prime
+`0x100000001b3`, XOR-before-multiply, and wrapping `u64` multiplication. It is
+stable correlation evidence only: it is neither authentication nor a reversible
+name or source identity.
+
+Exact tensor context is attached at the ownership point for a required tensor's
+unsupported scalar, wrong shape, concrete payload read, aligned host allocation,
+host tensor construction, scalar conversion, device transfer, and retained-map
+or accelerator-batch placement failure. Configuration/declaration inspection,
+missing or duplicate tensors, global layout/identity/capacity checks, device
+selection, model construction, and batch-wide load synchronization intentionally
+carry stage-only context because naming one tensor would fabricate precision.
+Structurally understood unused tensors remain accepted evidence and cannot acquire
+a required-tensor failure coordinate merely because their scalar is not
+executable.
+
+Partial-load cleanup synchronization remains a distinct
+`SynchronizationError` and cleanup operation. The primary `LoadError`, including
+its exact optional tensor context, stays unchanged in `FailedLoad` through cleanup
+failure and retry; cleanup never substitutes its own stage or code into the
+primary diagnostic.
+
 ## Final and loading-peak formulas
 
 `MemoryFootprint` contains deterministic concrete required-tensor bytes, aligned payload allocation bounds, the fixed 64 KiB verification buffer that is live during shard materialization, and the actual retained heap capacities of the accelerator plan/owner vectors. The exact sequence-cache bytes-per-token rate is stored separately in `ModelDescriptor`; the complete sequence reservation is described below. Parsed config/header/inspection metadata and required-name/load-map metadata are independently capped by the limits above. Required maps cannot exceed 16,384 entries or 8 MiB aggregate names, and entry names move from the bounded manifest through the batch into the final map rather than acquiring another string allocation. Map buckets, additional tensor handles outside the counted plan/owner vector allocations, allocator bookkeeping/fragmentation, driver/context allocation, process RSS, and whole-device observations remain outside the logical tensor footprint.

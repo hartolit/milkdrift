@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-08
-- **Amended:** 2026-08-10 for artifact loading, retained-ownership certainty, and the application boundary; 2026-08-13 for honest expected-content input, bounded accelerator transfer batches, exact verifier/staging ownership, and loader organization
+- **Amended:** 2026-08-10 for artifact loading, retained-ownership certainty, and the application boundary; 2026-08-13 for honest expected-content input, bounded accelerator transfer batches, exact verifier/staging ownership, and loader organization; 2026-08-15 for bounded portable load diagnostics
 - **Phase:** 12 plus post-audit artifact-loading, runtime-ownership, and application-boundary hardening
 - **Implementation:** `58490fe693fef7a2635956181088664cd90685e8`, `12510695aa29be6a2665dbf3777cccbb8172c2d1`, `d4a1e4324a6793becc56147e4b2e3246189d2693`, `b43d0f47953c5319a41340d9087b7fd8f07b3280`, and `1f91cba691a8099805fa31f576079e79c282c73e`
 - **Amends:** [ADR-0019](0019-explicit-cuda-execution-foundation.md) for scalar/source terminology, load planning/materialization, E1 loaded facts, model-catalogue persistence, and Phase 12 evidence claims
@@ -104,6 +104,39 @@ When a planned batch is eligible to close—immediately at an intermediate bound
 Any failure consumes the prepared value into the same sole failed-preparation owner. That owner retains all earlier committed tensors, the complete current batch, open shards, configuration, device, accepted plan, and any constructed model. Cleanup synchronizes before release. A cleanup synchronization failure changes none of those ownership facts, so retry is idempotent and cannot double-release a committed or pending tensor.
 
 After all batches commit and all shards verify, the locked Candle Llama constructor creates shallow handles over the existing weight tensors. This construction enqueues no distinct device work. Normal loading therefore has one synchronization per nonempty transfer batch and no unconditional final synchronization; cleanup synchronization is a separate failure-release boundary.
+
+### Preserve bounded load provenance without leaking adapter inventory
+
+`LoadError::Backend` carries a `BackendLoadFailure`: the existing stable
+backend/kind/code identity plus optional fixed-size `LoadFailureContext`. Context
+contains one portable lifecycle stage and, only when truthful, one
+`TensorFailureLocation` made of checked shard/tensor ordinals, a stable name
+fingerprint, and the project-owned observed scalar classification. These values
+are allocation-free, `Copy`, `no_std` domain contracts. They contain no tensor
+name, path, offset, digest, native error, vendor type, or serialization DTO.
+
+Candle owns one documented deterministic ordinal/fingerprint algorithm and uses
+the same source-scalar classification as complete observed evidence. The canonical
+coordinate order, exact fingerprint constants/byte procedure, and per-stage
+population rules live in
+[Candle backend](../../project/candle-backend.md#bounded-portable-load-diagnostics),
+not in portable contracts or E0/E1. The fingerprint remains diagnostic
+correlation, not authentication or source identity.
+
+One exact coordinate is attached for required-tensor scalar/shape rejection,
+concrete payload read, host materialization, scalar conversion, device transfer,
+and retained placement failures. Configuration, missing/duplicate tensor,
+global layout/identity/capacity, construction, and batch synchronization failures
+remain stage-only when no single tensor is authoritative. E0 preserves an exact
+backend load detail through immediate cleanup, retained retry, exhaustion, and
+terminal evidence, but generic E0 contract contradictions remain class-only and
+never acquire a fabricated tensor coordinate. E1 exposes the same optional
+portable diagnostic separately from presentation text and does not persist it.
+
+Cleanup is an independent operation and identity. A partial-load cleanup
+synchronization failure cannot replace, reclassify, or erase the primary load
+diagnostic; the sole failed owner retains both the primary detail and cleanup
+state for retry.
 
 ### Distinguish exact final ownership from the loading peak
 
@@ -245,6 +278,7 @@ No default feature reaches CUDA. Explicit CUDA failure never falls back to CPU. 
 - Normal loading synchronizes once per nonempty transfer batch and not after handle-only Llama construction.
 - Final and loading footprints contain the implemented tensor and verification-buffer bytes; sequence-cache rate is separate, and ignored extras enter neither load footprint.
 - Failed preparations retain the exact admitted loading peak; verified model unload failures retain exact final ownership.
+- Backend load failures may preserve bounded stage and exact tensor correlation through E0/E1 without exporting adapter inventory; cleanup identity remains separate.
 - Contract-violating complete models retain explicit unverified evidence, block admission, and are never mislabeled exact.
 - E0 can retry or exhaust a failed partial load or incompatible complete model without publishing it or losing generation-safe identity/accounting state.
 - Cleanup polling is bounded and fair across owner classes and identities; terminal retention remains structured through process exit.

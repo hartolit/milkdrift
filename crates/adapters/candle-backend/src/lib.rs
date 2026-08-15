@@ -27,6 +27,9 @@ pub use load_observation::{
     CandleLoadCleanupOutcome, CandleLoadObservation, CandleLoadObservationOutcome,
     CandleLoadObservationRecorder, CandleLoadObservationSnapshot,
 };
+#[cfg(feature = "cuda-hardware-tests")]
+#[doc(hidden)]
+pub use loader::CandleHardwareLoadFault;
 pub use loader::{CandleLlamaFailedPreparation, CandleLlamaLoader, CandleLlamaPreparedLoad};
 pub use model::{CandleLlamaModel, CandleLlamaSequence};
 pub use source::{

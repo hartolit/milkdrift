@@ -23,14 +23,15 @@ use candle_core::Device;
 use candle_transformers::models::llama::Config;
 use domain_contracts::{
     BackendFailureKind, BackendId, CapabilitySet, DeviceKind, ExecutionDevice, FailedLoad,
-    LoadConfiguration, LoadError, LoadPlan, ModelArchitecture, ModelCapabilities, ModelDescriptor,
-    ModelLoader, ModelMetadata, QuantizationFormat, ScalarType,
+    LoadConfiguration, LoadError, LoadFailureContext, LoadFailureStage, LoadPlan,
+    ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelLoader, ModelMetadata,
+    QuantizationFormat, ScalarType, TensorFailureLocation,
 };
 
 use crate::device::{CandleDeviceSummary, prepare_execution_device};
 use crate::failure::{
     CODE_MODEL_LOAD, CODE_TENSOR_MAP_ALLOCATION, CODE_UNSUPPORTED_SCALAR, candle_cuda_failure_kind,
-    failure,
+    load_failure,
 };
 use crate::model::{CandleLlamaModel, CandleLlamaModelParameters};
 use crate::source::{CandleConfigurationSource, CandleLlamaSource};
@@ -38,6 +39,8 @@ use crate::source::{CandleConfigurationSource, CandleLlamaSource};
 pub use self::cleanup::CandleLlamaFailedPreparation;
 use self::footprint::{calculate, sequence_cache_bytes_per_token, validate_memory_plan};
 use self::manifest::{InspectedShard, InspectionLimits};
+#[cfg(feature = "cuda-hardware-tests")]
+pub use self::prepared::CandleHardwareLoadFault;
 pub use self::prepared::CandleLlamaPreparedLoad;
 use self::scalar::{execution_scalar_type, select_execution_dtype, select_required_primary};
 use self::transfer_batch::TransferBatchOwner;
@@ -56,6 +59,8 @@ pub struct CandleLlamaLoader {
     backend: BackendId,
     #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
     load_observation: Option<crate::CandleLoadObservationRecorder>,
+    #[cfg(feature = "cuda-hardware-tests")]
+    hardware_load_fault: Option<CandleHardwareLoadFault>,
 }
 
 impl CandleLlamaLoader {
@@ -66,6 +71,8 @@ impl CandleLlamaLoader {
             backend,
             #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
             load_observation: None,
+            #[cfg(feature = "cuda-hardware-tests")]
+            hardware_load_fault: None,
         }
     }
 
@@ -80,7 +87,18 @@ impl CandleLlamaLoader {
         Self {
             backend,
             load_observation: Some(observation),
+            #[cfg(feature = "cuda-hardware-tests")]
+            hardware_load_fault: None,
         }
+    }
+
+    /// Installs one deterministic non-production CUDA hardware-suite fault.
+    #[cfg(feature = "cuda-hardware-tests")]
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn with_hardware_load_fault(mut self, fault: CandleHardwareLoadFault) -> Self {
+        self.hardware_load_fault = Some(fault);
+        self
     }
 
     /// Returns this adapter's backend identifier.
@@ -288,6 +306,8 @@ impl ModelLoader for CandleLlamaLoader {
                 constructed_model: None,
                 #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
                 load_observation: load_observation.clone(),
+                #[cfg(feature = "cuda-hardware-tests")]
+                hardware_load_fault: self.hardware_load_fault,
                 cleanup_complete: false,
             })
         })();
@@ -401,19 +421,30 @@ struct InspectedSource {
 }
 
 pub(super) const fn unsupported_scalar(backend: BackendId) -> LoadError {
-    LoadError::Backend(failure(
+    load_failure(
         backend,
         BackendFailureKind::Unsupported,
         CODE_UNSUPPORTED_SCALAR,
-    ))
+        LoadFailureStage::CompatibilityValidation,
+    )
 }
 
 pub(super) const fn invalid_model_failure(backend: BackendId, code: u32) -> LoadError {
-    LoadError::Backend(failure(backend, BackendFailureKind::InvalidModel, code))
+    load_failure(
+        backend,
+        BackendFailureKind::InvalidModel,
+        code,
+        default_load_stage(code),
+    )
 }
 
 pub(super) const fn host_memory_failure(backend: BackendId, code: u32) -> LoadError {
-    LoadError::Backend(failure(backend, BackendFailureKind::HostMemory, code))
+    load_failure(
+        backend,
+        BackendFailureKind::HostMemory,
+        code,
+        default_load_stage(code),
+    )
 }
 
 fn numeric_error(backend: BackendId) -> LoadError {
@@ -431,5 +462,77 @@ pub(super) fn map_candle_load_error(
     } else {
         BackendFailureKind::InvalidModel
     };
-    LoadError::Backend(failure(backend, kind, code))
+    load_failure(backend, kind, code, default_load_stage(code))
+}
+
+pub(super) const fn with_stage(error: LoadError, stage: LoadFailureStage) -> LoadError {
+    match error {
+        LoadError::Backend(failure) => {
+            LoadError::Backend(failure.with_context(LoadFailureContext::stage(stage)))
+        }
+        other => other,
+    }
+}
+
+pub(super) const fn with_tensor(
+    error: LoadError,
+    stage: LoadFailureStage,
+    location: TensorFailureLocation,
+) -> LoadError {
+    match error {
+        LoadError::Backend(failure) => {
+            LoadError::Backend(failure.with_context(LoadFailureContext::tensor(stage, location)))
+        }
+        other => other,
+    }
+}
+
+#[expect(
+    clippy::match_same_arms,
+    reason = "explicit compatibility codes remain auditable while unknown codes fail closed to the same portable stage"
+)]
+const fn default_load_stage(code: u32) -> LoadFailureStage {
+    use crate::failure::{
+        CODE_ARCHITECTURE, CODE_CONFIG_ALLOCATION, CODE_CONFIG_DECODE, CODE_CONFIG_LIMIT,
+        CODE_CONFIG_READ, CODE_DECLARATION_CONFLICT, CODE_DECLARATION_MALFORMED,
+        CODE_DECLARATION_UNSUPPORTED, CODE_DUPLICATE_TENSOR, CODE_HEADER_ALLOCATION,
+        CODE_HEADER_BOUNDS, CODE_HEADER_DECODE, CODE_HEADER_IDENTITY_MISMATCH, CODE_HEADER_LIMIT,
+        CODE_INSPECTION_ALLOCATION, CODE_INSPECTION_INVENTORY_LIMIT, CODE_METADATA_LIMIT,
+        CODE_MODEL_LOAD, CODE_MODEL_LOAD_PANIC, CODE_PAYLOAD_READ, CODE_REQUIRED_TENSOR,
+        CODE_SOURCE_IDENTITY_LENGTH, CODE_SOURCE_IDENTITY_MISMATCH, CODE_TENSOR_LIMIT,
+        CODE_TENSOR_MAP_ALLOCATION, CODE_TENSOR_MATERIALIZE, CODE_TENSOR_TRANSFER,
+        CODE_WEIGHT_METADATA,
+    };
+
+    match code {
+        CODE_CONFIG_READ
+        | CODE_CONFIG_DECODE
+        | CODE_CONFIG_ALLOCATION
+        | CODE_CONFIG_LIMIT
+        | CODE_DECLARATION_MALFORMED => LoadFailureStage::ConfigurationInspection,
+        CODE_DECLARATION_UNSUPPORTED | CODE_DECLARATION_CONFLICT | CODE_ARCHITECTURE => {
+            LoadFailureStage::CompatibilityValidation
+        }
+        CODE_WEIGHT_METADATA
+        | CODE_HEADER_BOUNDS
+        | CODE_HEADER_DECODE
+        | CODE_HEADER_ALLOCATION
+        | CODE_HEADER_LIMIT
+        | CODE_TENSOR_LIMIT
+        | CODE_METADATA_LIMIT
+        | CODE_INSPECTION_INVENTORY_LIMIT
+        | CODE_INSPECTION_ALLOCATION => LoadFailureStage::ArtifactDecoding,
+        CODE_DUPLICATE_TENSOR | CODE_REQUIRED_TENSOR | CODE_UNSUPPORTED_SCALAR => {
+            LoadFailureStage::CompatibilityValidation
+        }
+        CODE_PAYLOAD_READ
+        | CODE_HEADER_IDENTITY_MISMATCH
+        | CODE_SOURCE_IDENTITY_LENGTH
+        | CODE_SOURCE_IDENTITY_MISMATCH => LoadFailureStage::PayloadRead,
+        CODE_TENSOR_MATERIALIZE => LoadFailureStage::HostMaterialization,
+        CODE_TENSOR_TRANSFER => LoadFailureStage::DeviceTransfer,
+        CODE_TENSOR_MAP_ALLOCATION => LoadFailureStage::RetainedPlacement,
+        CODE_MODEL_LOAD | CODE_MODEL_LOAD_PANIC => LoadFailureStage::ModelConstruction,
+        _ => LoadFailureStage::CompatibilityValidation,
+    }
 }

@@ -5,15 +5,52 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use domain_contracts::{
-    BackendSequence, CancellationReason, CancellationStatus, CapacityResource,
-    DecodeBufferRequirements, DecodeBuffers, DecodeInput, DecodeOutcome, DrainTimeout, FailedLoad,
-    FailedLoadOwner, FinishReason, LifecycleAction, LoadConfiguration, LoadError, LoadPlan,
-    MemoryBudget, MemoryFootprint, ModelLifecycle, ModelLifecycleState, MonotonicMillis,
-    PrefillBufferRequirements, PrefillBuffers, PrefillInput, PrefillOutcome, PreparedDecodeBuffers,
-    PreparedLoad, PreparedPrefillBuffers, ScalarType, ScalarTypeSet, SequenceConfiguration,
-    SequenceId, SequencePlan, SequenceReservation, SequenceState, SynchronizationError, TokenId,
-    UnloadPolicy, decode_checked, prefill_checked,
+    BackendFailure, BackendFailureKind, BackendId, BackendLoadFailure, BackendSequence,
+    CancellationReason, CancellationStatus, CapacityResource, DecodeBufferRequirements,
+    DecodeBuffers, DecodeInput, DecodeOutcome, DrainTimeout, FailedLoad, FailedLoadOwner,
+    FinishReason, LifecycleAction, LoadConfiguration, LoadError, LoadFailureContext,
+    LoadFailureStage, LoadPlan, MemoryBudget, MemoryFootprint, ModelLifecycle, ModelLifecycleState,
+    MonotonicMillis, PrefillBufferRequirements, PrefillBuffers, PrefillInput, PrefillOutcome,
+    PreparedDecodeBuffers, PreparedLoad, PreparedPrefillBuffers, ScalarType, ScalarTypeSet,
+    SequenceConfiguration, SequenceId, SequencePlan, SequenceReservation, SequenceState,
+    SynchronizationError, TensorFailureLocation, TokenId, UnloadPolicy, decode_checked,
+    prefill_checked,
 };
+
+#[test]
+fn backend_load_failure_is_bounded_copyable_and_structurally_distinct() {
+    fn assert_copy_and_eq<T: Copy + Eq>() {}
+
+    assert_copy_and_eq::<BackendLoadFailure>();
+    assert_copy_and_eq::<LoadFailureContext>();
+    assert_copy_and_eq::<TensorFailureLocation>();
+    assert!(!core::mem::needs_drop::<BackendLoadFailure>());
+    assert!(core::mem::size_of::<BackendLoadFailure>() <= 48);
+
+    let generic = BackendFailure::new(BackendId::new(7), BackendFailureKind::DeviceExecution, 29);
+    let location = TensorFailureLocation::new(3, 17, 0x0123_4567_89ab_cdef, Some(ScalarType::Bf16));
+    let absent = BackendLoadFailure::new(generic);
+    let stage_only = BackendLoadFailure::at_stage(generic, LoadFailureStage::DeviceTransfer);
+    let tensor = BackendLoadFailure::at_tensor(generic, LoadFailureStage::DeviceTransfer, location);
+
+    assert_ne!(absent, stage_only);
+    assert_ne!(stage_only, tensor);
+    assert_eq!(tensor.failure(), generic);
+    assert_eq!(tensor.backend(), BackendId::new(7));
+    assert_eq!(tensor.kind(), BackendFailureKind::DeviceExecution);
+    assert_eq!(tensor.code(), 29);
+    assert_eq!(
+        tensor.context(),
+        Some(LoadFailureContext::tensor(
+            LoadFailureStage::DeviceTransfer,
+            location,
+        ))
+    );
+    assert_eq!(
+        stage_only.context(),
+        Some(LoadFailureContext::stage(LoadFailureStage::DeviceTransfer))
+    );
+}
 
 struct TestSequence {
     id: SequenceId,

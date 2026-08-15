@@ -63,6 +63,11 @@ impl InspectionLimits {
     };
 }
 
+// Zero-based diagnostic ordinals are constructed only after these production
+// admission bounds have accepted the selected shards and tensor inventory.
+const _: () = assert!(InspectionLimits::PRODUCTION.shards <= (u16::MAX as usize) + 1);
+const _: () = assert!(InspectionLimits::PRODUCTION.tensors <= (u32::MAX as usize) + 1);
+
 #[cfg(test)]
 thread_local! {
     static TEST_INSPECTION_ALLOCATION_FAILURES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

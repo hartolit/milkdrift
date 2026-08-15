@@ -165,6 +165,24 @@ The public execution scalar/device come only from the receipt.
 No normal `LoadedModel` is published until all stages pass. A lower retained-load
 failure or a complete receipt rejected by E1 enters retained cleanup instead.
 
+## Structured load diagnostics
+
+Every `ApplicationFailure` has an optional `load_diagnostic()` accessor returning
+the portable fixed-size `domain_contracts::BackendLoadFailure`. Immediate model
+materialization failures copy the exact lower diagnostic independently of the
+human-readable message. The value can identify the stable backend/kind/code,
+portable load stage, and an optional deterministic tensor coordinate and observed
+scalar. It cannot contain a tensor name, path, source identity, vendor diagnostic,
+or adapter-owned type.
+
+When lower cleanup fails, the retained model's `primary_failure` preserves the
+same load diagnostic through application state and retry. Its independent
+`cleanup_failure` has no inherited load diagnostic: cleanup identity must not be
+mistaken for the primary materialization location. Receipt incompatibility and
+other E1-created contract failures likewise do not fabricate tensor context.
+These diagnostics are runtime evidence only and are not persisted in model
+catalogue or settings records.
+
 ## Public retained ownership
 
 Retained model state is first-class public application state:

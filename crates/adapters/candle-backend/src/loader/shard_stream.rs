@@ -2,18 +2,24 @@
 
 use std::io::{Read, Seek, SeekFrom};
 
-use domain_contracts::LoadError;
+use domain_contracts::{LoadError, LoadFailureStage};
 use sha2::{Digest, Sha256};
 
 use crate::failure::{
     CODE_HEADER_IDENTITY_MISMATCH, CODE_NUMERIC_OVERFLOW, CODE_PAYLOAD_READ,
     CODE_SOURCE_IDENTITY_LENGTH, CODE_SOURCE_IDENTITY_MISMATCH, CODE_WEIGHT_METADATA,
+    tensor_failure_location,
 };
 
 use super::observer::{HashedRange, MaterializationObserver};
 use super::payload::{AlignedPayload, verification_buffer};
 use super::prepared::{CandleLlamaPreparedLoad, RequiredTensorFacts};
-use super::{VERIFICATION_BUFFER_BYTES_U64, invalid_model_failure};
+use super::{VERIFICATION_BUFFER_BYTES_U64, invalid_model_failure, with_tensor};
+
+#[cfg(test)]
+thread_local! {
+    pub(super) static TEST_REQUIRED_PAYLOAD_READ_FAILURES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 impl CandleLlamaPreparedLoad {
     pub(super) fn materialize_shard<O: MaterializationObserver>(
@@ -219,6 +225,13 @@ impl CandleLlamaPreparedLoad {
             .get_mut(shard_index)
             .and_then(|shard| shard.tensors.get_mut(tensor_index))
             .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?;
+        let location = tensor_failure_location(
+            shard_index,
+            tensor_index,
+            tensor.name.as_str(),
+            Some(tensor.source_dtype.scalar_type()),
+        )
+        .ok_or_else(|| invalid_model_failure(self.backend, CODE_NUMERIC_OVERFLOW))?;
         Ok(RequiredTensorFacts {
             shard_index,
             tensor_index,
@@ -226,6 +239,7 @@ impl CandleLlamaPreparedLoad {
             source_dtype: tensor.source_dtype,
             shape: tensor.shape,
             source_bytes: tensor.source_bytes,
+            location,
         })
     }
 
@@ -237,14 +251,41 @@ impl CandleLlamaPreparedLoad {
         observer: &mut O,
     ) -> Result<AlignedPayload, LoadError> {
         let mut payload =
-            AlignedPayload::allocate(self.backend, facts.source_dtype, facts.source_bytes)?;
-        let destination = payload.as_mut_slice(self.backend)?;
+            AlignedPayload::allocate(self.backend, facts.source_dtype, facts.source_bytes)
+                .map_err(|error| {
+                    with_tensor(error, LoadFailureStage::HostMaterialization, facts.location)
+                })?;
+        let destination = payload
+            .as_mut_slice(self.backend)
+            .map_err(|error| with_tensor(error, LoadFailureStage::PayloadRead, facts.location))?;
+        #[cfg(test)]
+        if TEST_REQUIRED_PAYLOAD_READ_FAILURES.with(|remaining| {
+            let value = remaining.get();
+            if value == 0 {
+                false
+            } else {
+                remaining.set(value - 1);
+                true
+            }
+        }) {
+            return Err(with_tensor(
+                invalid_model_failure(self.backend, CODE_PAYLOAD_READ),
+                LoadFailureStage::PayloadRead,
+                facts.location,
+            ));
+        }
         self.shards
             .get_mut(shard_index)
             .ok_or_else(|| invalid_model_failure(self.backend, CODE_WEIGHT_METADATA))?
             .file
             .read_exact(destination)
-            .map_err(|_| invalid_model_failure(self.backend, CODE_SOURCE_IDENTITY_LENGTH))?;
+            .map_err(|_| {
+                with_tensor(
+                    invalid_model_failure(self.backend, CODE_PAYLOAD_READ),
+                    LoadFailureStage::PayloadRead,
+                    facts.location,
+                )
+            })?;
         let hashed_bytes = destination.len();
         hasher.update(&*destination);
         observer.hashed_range(HashedRange::RequiredTensor, hashed_bytes);

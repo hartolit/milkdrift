@@ -6,25 +6,29 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use candle_core::{DType, Device, Tensor};
 use candle_transformers::models::llama::Config;
 use domain_contracts::{
-    BackendFailureKind, BackendId, CapabilitySet, DeviceId, DeviceKind, ExecutionDevice,
-    FailedLoadOwner, LoadConfiguration, LoadError, LoadPlan, MemoryBudget, MemoryFootprint,
-    ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelGeneration, ModelHandle, ModelId,
+    BackendFailureKind, BackendId, BackendLoadFailure, CapabilitySet, DeviceId, DeviceKind,
+    ExecutionDevice, FailedLoadOwner, LoadConfiguration, LoadError, LoadFailureContext,
+    LoadFailureStage, LoadPlan, MemoryBudget, MemoryFootprint, ModelArchitecture,
+    ModelCapabilities, ModelDescriptor, ModelGeneration, ModelHandle, ModelId, ModelLoader,
     ModelMetadata, PreparedLoad, QuantizationFormat, ScalarType, ScalarTypeSet,
+    TensorFailureLocation,
 };
 use sha2::{Digest, Sha256};
 
 use super::CandleLlamaPreparedLoad;
 use crate::failure::{
     CODE_HEADER_IDENTITY_MISMATCH, CODE_LOAD_SYNCHRONIZE, CODE_SOURCE_IDENTITY_LENGTH,
-    CODE_SOURCE_IDENTITY_MISMATCH, CODE_TENSOR_MATERIALIZE, CODE_TENSOR_TRANSFER, failure,
+    CODE_SOURCE_IDENTITY_MISMATCH, CODE_TENSOR_MAP_ALLOCATION, CODE_TENSOR_MATERIALIZE,
+    CODE_TENSOR_TRANSFER, failure, tensor_name_fingerprint,
 };
 use crate::loader::cleanup::TEST_CLEANUP_SYNCHRONIZATION_FAILURES;
 use crate::loader::identity::{ContentIdentityEstablishment, EstablishedContentIdentity};
 use crate::loader::manifest::{InspectedShard, InspectedTensor, SourceTensorDType, TensorShape};
 use crate::loader::observer::{
     HashedRange, LoadingSynchronization, MaterializationCheckpoint, MaterializationObserver,
-    NoopMaterializationObserver,
+    NoopMaterializationObserver, TEST_MATERIALIZATION_CHECKPOINT_FAILURE,
 };
+use crate::loader::shard_stream::TEST_REQUIRED_PAYLOAD_READ_FAILURES;
 use crate::loader::transfer_batch::{
     TransferBatchEndpoints, TransferBatchEntry, TransferBatchOwner,
 };
@@ -99,10 +103,16 @@ impl MaterializationObserver for FailAt {
         backend: BackendId,
     ) -> Result<(), LoadError> {
         if checkpoint == self.0 {
-            Err(super::invalid_model_failure(
-                backend,
-                CODE_TENSOR_MATERIALIZE,
-            ))
+            let code = match checkpoint {
+                MaterializationCheckpoint::BeforeCpuMapInsertion { .. }
+                | MaterializationCheckpoint::CpuMapOwned { .. }
+                | MaterializationCheckpoint::BatchEntryCommitted { .. } => {
+                    CODE_TENSOR_MAP_ALLOCATION
+                }
+                MaterializationCheckpoint::TransferEnqueued { .. } => CODE_TENSOR_TRANSFER,
+                _ => CODE_TENSOR_MATERIALIZE,
+            };
+            Err(super::invalid_model_failure(backend, code))
         } else {
             Ok(())
         }
@@ -120,11 +130,11 @@ impl MaterializationObserver for FailSynchronizationAt {
     ) -> Result<(), LoadError> {
         let LoadingSynchronization::TransferBatch { batch_index } = boundary;
         if batch_index == self.0 {
-            Err(LoadError::Backend(failure(
+            Err(LoadError::Backend(BackendLoadFailure::new(failure(
                 backend,
                 BackendFailureKind::Synchronization,
                 CODE_LOAD_SYNCHRONIZE,
-            )))
+            ))))
         } else {
             Ok(())
         }
@@ -238,6 +248,31 @@ fn header_payload_and_truncation_mutations_fail_from_retained_files() -> Result<
 }
 
 #[test]
+fn concrete_required_payload_read_failure_has_exact_tensor_context() -> Result<(), String> {
+    let header = br#"{"required":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#;
+    let payload = [0_u8, 0, 128, 63];
+    let tensor = inspected_tensor("required", SourceTensorDType::F32, &[1], 0, 4, true)?;
+    let shard = inspected_shard(header, &payload, vec![tensor])?;
+    let mut prepared = test_prepared(vec![shard], DType::F32)?;
+    TEST_REQUIRED_PAYLOAD_READ_FAILURES.with(|remaining| remaining.set(1));
+    let error = required_error(
+        prepared.materialize_shard(0, &mut Events::default()),
+        "injected required payload read must fail",
+    )?;
+    assert_tensor_context(
+        error,
+        LoadFailureStage::PayloadRead,
+        TensorFailureLocation::new(
+            0,
+            0,
+            tensor_name_fingerprint("required"),
+            Some(ScalarType::F32),
+        ),
+    );
+    Ok(())
+}
+
+#[test]
 fn source_cast_and_map_faults_retain_real_owners() -> Result<(), String> {
     for (checkpoint, source_dtype, execution_dtype) in [
         (
@@ -290,7 +325,22 @@ fn source_cast_and_map_faults_retain_real_owners() -> Result<(), String> {
             prepared.materialize_shard(0, &mut FailAt(checkpoint)),
             "injected ownership checkpoint must fail",
         )?;
-        assert!(matches!(error, LoadError::Backend(_)));
+        let expected_stage = match checkpoint {
+            MaterializationCheckpoint::CastOwned { .. } => LoadFailureStage::ScalarConversion,
+            MaterializationCheckpoint::BeforeCpuMapInsertion { .. }
+            | MaterializationCheckpoint::CpuMapOwned { .. } => LoadFailureStage::RetainedPlacement,
+            _ => LoadFailureStage::HostMaterialization,
+        };
+        assert_tensor_context(
+            error,
+            expected_stage,
+            TensorFailureLocation::new(
+                0,
+                0,
+                tensor_name_fingerprint("required"),
+                Some(ScalarType::F32),
+            ),
+        );
         match checkpoint {
             MaterializationCheckpoint::SourceOwned { .. } => {
                 assert!(prepared.pending_source_tensor.is_some());
@@ -334,7 +384,16 @@ fn transfer_fault_retains_both_endpoints_without_cuda_hardware() -> Result<(), S
         ),
         "simulated transfer ownership checkpoint must fail",
     )?;
-    assert!(matches!(error, LoadError::Backend(_)));
+    assert_tensor_context(
+        error,
+        LoadFailureStage::DeviceTransfer,
+        TensorFailureLocation::new(
+            0,
+            0,
+            tensor_name_fingerprint("required"),
+            Some(ScalarType::F32),
+        ),
+    );
     assert!(prepared.pending_host_tensor.is_none());
     assert!(prepared.pending_device_tensor.is_none());
     assert_eq!(
@@ -399,6 +458,7 @@ fn planned_and_owned_batch_accounting_must_match_before_synchronization() -> Res
         TransferBatchEntry::new(
             (0, 0),
             "required.0".to_owned(),
+            TensorFailureLocation::new(0, 0, 0, Some(ScalarType::F32)),
             TransferBatchEndpoints {
                 source: source.clone(),
                 converted_host: None,
@@ -531,7 +591,16 @@ fn later_batch_failure_keeps_earlier_commits_and_current_source() -> Result<(), 
         ),
         "later batch source checkpoint must fail",
     )?;
-    assert!(matches!(error, LoadError::Backend(_)));
+    assert_tensor_context(
+        error,
+        LoadFailureStage::HostMaterialization,
+        TensorFailureLocation::new(
+            0,
+            2,
+            tensor_name_fingerprint("required.2"),
+            Some(ScalarType::F32),
+        ),
+    );
     assert_eq!(prepared.final_tensors.len(), 2);
     assert!(prepared.pending_source_tensor.is_some());
     assert!(
@@ -704,6 +773,64 @@ fn cleanup_failure_retains_all_handles_and_retry_is_idempotent() -> Result<(), S
     Ok(())
 }
 
+#[test]
+fn public_prepared_load_preserves_primary_tensor_context_across_cleanup_retry() -> Result<(), String>
+{
+    let header = br#"{"required":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#;
+    let payload = [0_u8, 0, 128, 63];
+    let tensor = inspected_tensor("required", SourceTensorDType::F32, &[1], 0, 4, true)?;
+    let shard = inspected_shard(header, &payload, vec![tensor])?;
+    let prepared = test_prepared(vec![shard], DType::F32)?;
+    let expected = TensorFailureLocation::new(
+        0,
+        0,
+        tensor_name_fingerprint("required"),
+        Some(ScalarType::F32),
+    );
+    TEST_MATERIALIZATION_CHECKPOINT_FAILURE.with(|selected| {
+        selected.set(Some(MaterializationCheckpoint::SourceOwned {
+            shard_index: 0,
+            tensor_index: 0,
+        }));
+    });
+    let mut loader = crate::CandleLlamaLoader::new(prepared.backend);
+    let mut failed = loader
+        .load_prepared(prepared)
+        .err()
+        .ok_or_else(|| "injected public prepared load unexpectedly succeeded".to_owned())?;
+    TEST_MATERIALIZATION_CHECKPOINT_FAILURE.with(|selected| selected.set(None));
+    assert_tensor_context(
+        failed.primary(),
+        LoadFailureStage::HostMaterialization,
+        expected,
+    );
+
+    TEST_CLEANUP_SYNCHRONIZATION_FAILURES.with(|remaining| remaining.set(1));
+    let cleanup_error = failed
+        .cleanup()
+        .err()
+        .ok_or_else(|| "injected cleanup unexpectedly succeeded".to_owned())?;
+    assert!(matches!(
+        cleanup_error,
+        domain_contracts::SynchronizationError::Backend(failure)
+            if failure.code == crate::failure::CODE_PARTIAL_LOAD_SYNCHRONIZE
+    ));
+    assert_tensor_context(
+        failed.primary(),
+        LoadFailureStage::HostMaterialization,
+        expected,
+    );
+    failed
+        .cleanup()
+        .map_err(|error| format!("retry cleanup: {error:?}"))?;
+    assert_tensor_context(
+        failed.primary(),
+        LoadFailureStage::HostMaterialization,
+        expected,
+    );
+    Ok(())
+}
+
 fn required_f32_shard(count: usize) -> Result<InspectedShard, String> {
     let scalar = [0_u8, 0, 128, 63];
     let mut payload = Vec::new();
@@ -835,9 +962,22 @@ fn populate_required_model_tensors(prepared: &mut CandleLlamaPreparedLoad) -> Re
 
 fn failure_code(error: LoadError) -> Option<u32> {
     match error {
-        LoadError::Backend(failure) => Some(failure.code),
+        LoadError::Backend(failure) => Some(failure.failure.code),
         _ => None,
     }
+}
+
+fn assert_tensor_context(
+    error: LoadError,
+    expected_stage: LoadFailureStage,
+    expected_location: TensorFailureLocation,
+) {
+    assert!(matches!(
+        error,
+        LoadError::Backend(failure)
+            if failure.context
+                == Some(LoadFailureContext::tensor(expected_stage, expected_location))
+    ));
 }
 
 fn required_error<T>(result: Result<T, LoadError>, context: &str) -> Result<LoadError, String> {
@@ -909,6 +1049,8 @@ fn test_prepared(
         constructed_model: None,
         #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
         load_observation: None,
+        #[cfg(feature = "cuda-hardware-tests")]
+        hardware_load_fault: None,
         cleanup_complete: false,
     })
 }

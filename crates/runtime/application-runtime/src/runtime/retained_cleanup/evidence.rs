@@ -1,7 +1,7 @@
 //! Translation from lower cleanup evidence into the stable application contract.
 
 use inference_runtime::{
-    CleanupFailureReport, CleanupResource, CleanupRetryState, ConservativeFootprint,
+    CleanupFailureReport, CleanupResource, CleanupRetryState, ConservativeFootprint, FailureDetail,
     RetainedOwnership,
 };
 
@@ -81,6 +81,10 @@ pub(super) fn application_primary_failure(report: CleanupFailureReport) -> Appli
         "model operation failed before retained cleanup",
         (report.primary_operation, report.primary_detail),
     )
+    .with_load_diagnostic(match report.primary_detail {
+        FailureDetail::Load(domain_contracts::LoadError::Backend(failure)) => Some(failure),
+        _ => None,
+    })
 }
 
 pub(super) fn application_cleanup_failure(report: CleanupFailureReport) -> ApplicationFailure {
