@@ -1,10 +1,11 @@
 use super::{
-    CANDLE_BACKEND, CandleLlamaLoader, CandleLlamaSource, CandleRuntime, CommandTicket, DeviceKind,
-    EVENT_TIMEOUT, ExecutionDevice, HOMOGENEOUS_F32_DESCRIPTOR, HOMOGENEOUS_F32_FINAL_FOOTPRINT,
-    HOMOGENEOUS_F32_LOADING_PEAK_FOOTPRINT, HostedRuntimeConfiguration, LoadConfiguration,
-    LoadPlan, LoadReceipt, MODEL, MemoryBudget, ModelGeneration, ModelHandle, NonZeroU32,
-    NonZeroU64, RuntimeCommand, RuntimeEvent, RuntimeLimits, RuntimeThread, ScalarType,
-    ScalarTypeSet, TestResult, nonzero_usize, start_hosted_runtime,
+    ByteCount, CANDLE_BACKEND, CandleLlamaLoader, CandleLlamaSource, CandleRuntime, CommandTicket,
+    DeviceKind, EVENT_TIMEOUT, ExecutionDevice, HOMOGENEOUS_F32_DESCRIPTOR,
+    HOMOGENEOUS_F32_FINAL_FOOTPRINT, HOMOGENEOUS_F32_LOADING_PEAK_FOOTPRINT,
+    HostedRuntimeConfiguration, LoadConfiguration, LoadPlan, LoadReceipt, MODEL, MemoryBudget,
+    ModelGeneration, ModelHandle, NonZeroU32, NonZeroU64, RuntimeCommand, RuntimeEvent,
+    RuntimeLimits, RuntimeThread, ScalarType, ScalarTypeSet, TestResult, nonzero_usize,
+    start_hosted_runtime,
 };
 
 pub(crate) const LOAD_TICKET: CommandTicket = CommandTicket::new(1);
@@ -37,10 +38,7 @@ pub(crate) fn runtime_memory_budget(execution_device: ExecutionDevice) -> TestRe
         DeviceKind::Cuda => u64::MAX,
         _ => return Err("native fixture selected an unsupported execution device".to_owned()),
     };
-    Ok(MemoryBudget {
-        host_bytes: u64::MAX,
-        device_bytes,
-    })
+    Ok(MemoryBudget::UNLIMITED.with_device_bytes(ByteCount::from_u64(device_bytes)))
 }
 
 pub(crate) fn load_model(
@@ -85,10 +83,7 @@ pub(crate) fn assert_homogeneous_f32_plan(plan: &LoadPlan, execution_device: Exe
             accepted_configuration: LoadConfiguration {
                 handle: ModelHandle::new(MODEL, ModelGeneration::new(1)),
                 execution_device,
-                memory_budget: MemoryBudget {
-                    host_bytes: u64::MAX,
-                    device_bytes: u64::MAX,
-                },
+                memory_budget: MemoryBudget::UNLIMITED,
             },
             descriptor: HOMOGENEOUS_F32_DESCRIPTOR,
             execution_scalar_type: ScalarType::F32,

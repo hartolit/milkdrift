@@ -2,10 +2,10 @@ use std::fs;
 use std::path::Path;
 
 use domain_contracts::{
-    BackendFailure, BackendFailureKind, BackendId, BackendLoadFailure, CapacityExhausted,
-    CapacityResource, DeviceId, DeviceKind, ExecutionDevice, LoadError, LoadFailureStage,
-    MemoryBudget, MemoryFootprint, MemoryKind, ModelHandle, ModelId, ScalarType, ScalarTypeSet,
-    TensorFailureLocation,
+    BackendFailure, BackendFailureKind, BackendId, BackendLoadFailure, ByteCount,
+    CapacityExhausted, CapacityResource, DeviceId, DeviceKind, ExecutionDevice, LoadError,
+    LoadFailureStage, MemoryBudget, MemoryFootprint, MemoryKind, ModelHandle, ModelId, ScalarType,
+    ScalarTypeSet, TensorFailureLocation,
 };
 use hf_hub_adapter::{
     ArtifactContentIdentityAuthority, ArtifactScalarType, ResolvedSafetensorsShard,
@@ -544,8 +544,10 @@ fn load_receipt_validation_classifies_each_independent_transaction_fact() -> Tes
         );
 
         let mut mismatched = receipt;
-        mismatched.reserved_footprint.host_weight_bytes = u64::MAX;
-        mismatched.reserved_footprint.host_working_bytes = 1;
+        mismatched.reserved_footprint = mismatched
+            .reserved_footprint
+            .with_host_weight_bytes(ByteCount::MAX)
+            .with_host_working_bytes(ByteCount::from_u64(1));
         assert_eq!(
             runtime
                 .validate_load_receipt(transaction, &mismatched)
@@ -563,7 +565,12 @@ fn load_receipt_validation_classifies_each_independent_transaction_fact() -> Tes
         );
 
         let original_budget = runtime.memory_budget;
-        runtime.memory_budget.host_bytes = original_budget.host_bytes.saturating_sub(1);
+        runtime.memory_budget = original_budget.with_host_bytes(
+            original_budget
+                .host_bytes()
+                .checked_sub(ByteCount::from_u64(1))
+                .unwrap_or(ByteCount::ZERO),
+        );
         let transaction = runtime
             .pending_load
             .as_ref()
@@ -831,8 +838,8 @@ fn model_load_failures_are_normalized_into_stable_application_categories() -> Te
             (
                 inference_runtime::RuntimeError::Load(LoadError::InsufficientMemory {
                     kind: MemoryKind::Host,
-                    required_bytes: 2,
-                    available_bytes: 1,
+                    required_bytes: ByteCount::from_u64(2),
+                    available_bytes: ByteCount::from_u64(1),
                 }),
                 ApplicationFailureKind::MemoryAdmission,
             ),
@@ -874,46 +881,35 @@ fn load_footprint_validation_checks_only_arithmetic_and_budget() {
     let admission = LoadAdmission {
         selected_device: ApplicationDevice::Cpu,
         execution_device: ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu),
-        memory_budget: MemoryBudget {
-            host_bytes: 100,
-            device_bytes: 100,
-        },
+        memory_budget: MemoryBudget::ZERO
+            .with_host_bytes(ByteCount::from_u64(100))
+            .with_device_bytes(ByteCount::from_u64(100)),
     };
 
-    let mixed_domains = MemoryFootprint {
-        host_weight_bytes: 40,
-        device_weight_bytes: 40,
-        host_working_bytes: 10,
-        device_working_bytes: 10,
-    };
+    let mixed_domains = MemoryFootprint::ZERO
+        .with_host_weight_bytes(ByteCount::from_u64(40))
+        .with_device_weight_bytes(ByteCount::from_u64(40))
+        .with_host_working_bytes(ByteCount::from_u64(10))
+        .with_device_working_bytes(ByteCount::from_u64(10));
     assert!(ApplicationRuntime::load_footprint_matches(
         &admission,
         mixed_domains
     ));
 
-    let host_over_budget = MemoryFootprint {
-        host_weight_bytes: 91,
-        host_working_bytes: 10,
-        ..MemoryFootprint::default()
-    };
+    let host_over_budget = MemoryFootprint::host_weights(ByteCount::from_u64(91))
+        .with_host_working_bytes(ByteCount::from_u64(10));
     assert!(!ApplicationRuntime::load_footprint_matches(
         &admission,
         host_over_budget
     ));
-    let device_over_budget = MemoryFootprint {
-        device_weight_bytes: 91,
-        device_working_bytes: 10,
-        ..MemoryFootprint::default()
-    };
+    let device_over_budget = MemoryFootprint::device_weights(ByteCount::from_u64(91))
+        .with_device_working_bytes(ByteCount::from_u64(10));
     assert!(!ApplicationRuntime::load_footprint_matches(
         &admission,
         device_over_budget
     ));
-    let overflowing = MemoryFootprint {
-        host_weight_bytes: u64::MAX,
-        host_working_bytes: 1,
-        ..MemoryFootprint::default()
-    };
+    let overflowing = MemoryFootprint::host_weights(ByteCount::MAX)
+        .with_host_working_bytes(ByteCount::from_u64(1));
     assert!(!ApplicationRuntime::load_footprint_matches(
         &admission,
         overflowing

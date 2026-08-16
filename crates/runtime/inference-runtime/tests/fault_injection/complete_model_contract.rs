@@ -258,10 +258,9 @@ fn incompatible_complete_model_matrix_retains_unverified_evidence_and_unlocks_on
             3,
             2,
             2,
-            MemoryBudget {
-                host_bytes: 10_000,
-                device_bytes: 10_000,
-            },
+            MemoryBudget::ZERO
+                .with_host_bytes(ByteCount::from_u64(10_000))
+                .with_device_bytes(ByteCount::from_u64(10_000)),
         );
         let faults = report_fault
             .union(Faults::FAIL_MODEL_CLEANUP_ONCE)
@@ -405,10 +404,9 @@ fn unverified_owner_blocks_new_resources_but_existing_healthy_work_progresses() 
         3,
         2,
         3,
-        MemoryBudget {
-            host_bytes: 10_000,
-            device_bytes: 10_000,
-        },
+        MemoryBudget::ZERO
+            .with_host_bytes(ByteCount::from_u64(10_000))
+            .with_device_bytes(ByteCount::from_u64(10_000)),
     );
     let healthy = load_model_id(&mut runtime, 1, DEFAULT_SOURCE).map_err(debug_error)?;
     start(&mut runtime, healthy.handle, 10, 100).map_err(debug_error)?;

@@ -5,7 +5,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use domain_contracts::{
-    BackendFailure, BackendFailureKind, BackendId, BackendLoadFailure, BackendSequence,
+    BackendFailure, BackendFailureKind, BackendId, BackendLoadFailure, BackendSequence, ByteCount,
     CancellationReason, CancellationStatus, CapacityResource, DecodeBufferRequirements,
     DecodeBuffers, DecodeInput, DecodeOutcome, DrainTimeout, FailedLoad, FailedLoadOwner,
     FinishReason, LifecycleAction, LoadConfiguration, LoadError, LoadFailureContext,
@@ -16,6 +16,50 @@ use domain_contracts::{
     SynchronizationError, TensorFailureLocation, TokenId, UnloadPolicy, decode_checked,
     prefill_checked,
 };
+
+const fn bytes(value: u64) -> ByteCount {
+    ByteCount::from_u64(value)
+}
+
+const fn footprint(
+    host_weights: u64,
+    device_weights: u64,
+    host_working: u64,
+    device_working: u64,
+) -> MemoryFootprint {
+    MemoryFootprint::ZERO
+        .with_host_weight_bytes(bytes(host_weights))
+        .with_device_weight_bytes(bytes(device_weights))
+        .with_host_working_bytes(bytes(host_working))
+        .with_device_working_bytes(bytes(device_working))
+}
+
+#[test]
+fn byte_count_uses_explicit_checked_portable_arithmetic() {
+    let eleven = bytes(11);
+    let thirteen = bytes(13);
+
+    assert_eq!(eleven.checked_add(thirteen), Some(bytes(24)));
+    assert_eq!(thirteen.checked_sub(eleven), Some(bytes(2)));
+    assert_eq!(eleven.checked_mul_count(3), Some(bytes(33)));
+    assert_eq!(eleven.component_max(thirteen), thirteen);
+    assert!(thirteen.contains(eleven));
+    assert_eq!(ByteCount::MAX.checked_add(bytes(1)), None);
+    assert_eq!(ByteCount::ZERO.checked_sub(bytes(1)), None);
+    assert_eq!(ByteCount::MAX.checked_mul_count(2), None);
+    assert_eq!(bytes(41).as_u64(), 41);
+}
+
+#[test]
+fn byte_count_platform_capacity_conversion_is_checked() {
+    assert_eq!(bytes(41).checked_to_usize(), Some(41));
+
+    #[cfg(target_pointer_width = "32")]
+    assert_eq!(ByteCount::MAX.checked_to_usize(), None);
+
+    #[cfg(target_pointer_width = "64")]
+    assert_eq!(ByteCount::MAX.checked_to_usize(), Some(usize::MAX));
+}
 
 #[test]
 fn backend_load_failure_is_bounded_copyable_and_structurally_distinct() {
@@ -116,13 +160,7 @@ impl domain_contracts::LoadedModel for TestModel {
                 maximum_sequences: 1,
                 maximum_prefill_batch: 8,
             },
-            estimated_footprint: domain_contracts::MemoryFootprint {
-                host_weight_bytes: 0,
-                device_weight_bytes: 0,
-                host_working_bytes: 0,
-                device_working_bytes: 0,
-            },
-            sequence_cache_bytes_per_token: 0,
+            estimated_footprint: domain_contracts::MemoryFootprint::ZERO,
         };
         &DESCRIPTOR
     }
@@ -304,10 +342,9 @@ fn test_load_plan() -> LoadPlan {
         accepted_configuration: LoadConfiguration {
             handle: domain_contracts::LoadedModel::handle(&model),
             execution_device: domain_contracts::LoadedModel::execution_device(&model),
-            memory_budget: MemoryBudget {
-                host_bytes: 1,
-                device_bytes: 1,
-            },
+            memory_budget: MemoryBudget::ZERO
+                .with_host_bytes(bytes(1))
+                .with_device_bytes(bytes(1)),
         },
         descriptor: *domain_contracts::LoadedModel::descriptor(&model),
         execution_scalar_type: ScalarType::F32,
@@ -353,51 +390,21 @@ fn scalar_type_set_tracks_all_portable_categories() {
 
 #[test]
 fn memory_footprint_checked_totals_detect_overflow() {
-    let footprint = MemoryFootprint {
-        host_weight_bytes: 11,
-        device_weight_bytes: 13,
-        host_working_bytes: 17,
-        device_working_bytes: 19,
-    };
-    assert_eq!(footprint.checked_host_bytes(), Some(28));
-    assert_eq!(footprint.checked_device_bytes(), Some(32));
+    let exact = footprint(11, 13, 17, 19);
+    assert_eq!(exact.checked_host_bytes(), Some(bytes(28)));
+    assert_eq!(exact.checked_device_bytes(), Some(bytes(32)));
 
-    let overflowing = MemoryFootprint {
-        host_weight_bytes: u64::MAX,
-        device_weight_bytes: u64::MAX - 1,
-        host_working_bytes: 1,
-        device_working_bytes: 2,
-    };
+    let overflowing = footprint(u64::MAX, u64::MAX - 1, 1, 2);
     assert_eq!(overflowing.checked_host_bytes(), None);
     assert_eq!(overflowing.checked_device_bytes(), None);
 }
 
 #[test]
 fn memory_footprint_checked_component_arithmetic_is_exact() {
-    let left = MemoryFootprint {
-        host_weight_bytes: 11,
-        device_weight_bytes: 13,
-        host_working_bytes: 17,
-        device_working_bytes: 19,
-    };
-    let right = MemoryFootprint {
-        host_weight_bytes: 23,
-        device_weight_bytes: 7,
-        host_working_bytes: 5,
-        device_working_bytes: 29,
-    };
-    let sum = MemoryFootprint {
-        host_weight_bytes: 34,
-        device_weight_bytes: 20,
-        host_working_bytes: 22,
-        device_working_bytes: 48,
-    };
-    let maximum = MemoryFootprint {
-        host_weight_bytes: 23,
-        device_weight_bytes: 13,
-        host_working_bytes: 17,
-        device_working_bytes: 29,
-    };
+    let left = footprint(11, 13, 17, 19);
+    let right = footprint(23, 7, 5, 29);
+    let sum = footprint(34, 20, 22, 48);
+    let maximum = footprint(23, 13, 17, 29);
 
     assert_eq!(left.checked_add(right), Some(sum));
     assert_eq!(sum.checked_sub(left), Some(right));
@@ -417,44 +424,20 @@ fn memory_footprint_component_arithmetic_detects_every_overflow_and_underflow() 
     let zero = MemoryFootprint::default();
     let overflow_cases = [
         (
-            MemoryFootprint {
-                host_weight_bytes: u64::MAX,
-                ..zero
-            },
-            MemoryFootprint {
-                host_weight_bytes: 1,
-                ..zero
-            },
+            MemoryFootprint::host_weights(ByteCount::MAX),
+            MemoryFootprint::host_weights(bytes(1)),
         ),
         (
-            MemoryFootprint {
-                device_weight_bytes: u64::MAX,
-                ..zero
-            },
-            MemoryFootprint {
-                device_weight_bytes: 1,
-                ..zero
-            },
+            MemoryFootprint::device_weights(ByteCount::MAX),
+            MemoryFootprint::device_weights(bytes(1)),
         ),
         (
-            MemoryFootprint {
-                host_working_bytes: u64::MAX,
-                ..zero
-            },
-            MemoryFootprint {
-                host_working_bytes: 1,
-                ..zero
-            },
+            MemoryFootprint::host_working(ByteCount::MAX),
+            MemoryFootprint::host_working(bytes(1)),
         ),
         (
-            MemoryFootprint {
-                device_working_bytes: u64::MAX,
-                ..zero
-            },
-            MemoryFootprint {
-                device_working_bytes: 1,
-                ..zero
-            },
+            MemoryFootprint::device_working(ByteCount::MAX),
+            MemoryFootprint::device_working(bytes(1)),
         ),
     ];
     for (left, right) in overflow_cases {
@@ -462,22 +445,10 @@ fn memory_footprint_component_arithmetic_detects_every_overflow_and_underflow() 
     }
 
     let underflow_cases = [
-        MemoryFootprint {
-            host_weight_bytes: 1,
-            ..zero
-        },
-        MemoryFootprint {
-            device_weight_bytes: 1,
-            ..zero
-        },
-        MemoryFootprint {
-            host_working_bytes: 1,
-            ..zero
-        },
-        MemoryFootprint {
-            device_working_bytes: 1,
-            ..zero
-        },
+        MemoryFootprint::host_weights(bytes(1)),
+        MemoryFootprint::device_weights(bytes(1)),
+        MemoryFootprint::host_working(bytes(1)),
+        MemoryFootprint::device_working(bytes(1)),
     ];
     for required in underflow_cases {
         assert_eq!(zero.checked_sub(required), None);
@@ -660,57 +631,24 @@ fn prefill_token_capacity_exhaustion_finishes_without_backend_entry() {
 
 #[test]
 fn sequence_reservation_requires_a_checked_component_sum() {
-    let persistent = MemoryFootprint {
-        host_weight_bytes: 0,
-        device_weight_bytes: 0,
-        host_working_bytes: 3,
-        device_working_bytes: 5,
-    };
-    let transient = MemoryFootprint {
-        host_weight_bytes: 0,
-        device_weight_bytes: 0,
-        host_working_bytes: 7,
-        device_working_bytes: 11,
-    };
+    let persistent = footprint(0, 0, 3, 5);
+    let transient = footprint(0, 0, 7, 11);
     let reservation = SequenceReservation::checked(persistent, transient).unwrap_or_default();
-    assert_eq!(
-        reservation.total_footprint,
-        MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 0,
-            host_working_bytes: 10,
-            device_working_bytes: 16,
-        }
-    );
-    assert!(reservation.is_consistent());
+    assert_eq!(reservation.total_footprint(), footprint(0, 0, 10, 16));
+    assert_eq!(reservation.persistent_footprint(), persistent);
+    assert_eq!(reservation.transient_footprint(), transient);
 
-    let maximum = MemoryFootprint {
-        host_working_bytes: u64::MAX,
-        ..MemoryFootprint::default()
-    };
+    let maximum = MemoryFootprint::host_working(ByteCount::MAX);
     assert_eq!(
-        SequenceReservation::checked(
-            maximum,
-            MemoryFootprint {
-                host_working_bytes: 1,
-                ..MemoryFootprint::default()
-            }
-        ),
+        SequenceReservation::checked(maximum, MemoryFootprint::host_working(bytes(1))),
         None
     );
 
-    let internally_overflowing = MemoryFootprint {
-        host_weight_bytes: u64::MAX,
-        host_working_bytes: 1,
-        ..MemoryFootprint::default()
-    };
-    let reservation = SequenceReservation {
-        persistent_footprint: internally_overflowing,
-        transient_footprint: MemoryFootprint::default(),
-        total_footprint: internally_overflowing,
-    };
-    assert!(reservation.is_consistent());
-    assert_eq!(reservation.total_footprint.checked_host_bytes(), None);
+    let internally_overflowing = footprint(u64::MAX, 0, 1, 0);
+    assert_eq!(
+        SequenceReservation::checked(internally_overflowing, MemoryFootprint::ZERO),
+        None
+    );
 }
 
 #[test]

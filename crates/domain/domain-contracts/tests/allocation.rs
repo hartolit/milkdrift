@@ -81,13 +81,7 @@ impl LoadedModel for TestModel {
                 maximum_sequences: 1,
                 maximum_prefill_batch: METADATA_CONTEXT_LENGTH,
             },
-            estimated_footprint: MemoryFootprint {
-                host_weight_bytes: 0,
-                device_weight_bytes: 0,
-                host_working_bytes: 0,
-                device_working_bytes: 0,
-            },
-            sequence_cache_bytes_per_token: 0,
+            estimated_footprint: MemoryFootprint::ZERO,
         };
         &DESCRIPTOR
     }

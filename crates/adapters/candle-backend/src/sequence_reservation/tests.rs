@@ -7,126 +7,53 @@ use domain_contracts::{
     SequenceReservation,
 };
 
-use super::{
-    AttentionPhaseComponents, CreationTransientComponents, ExecutionTransientComponents,
-    PersistentComponents, ReservationComponents, ReservationInputs, calculate,
-    maximum_mask_cache_bytes,
-};
+use super::{LlamaMemoryGeometry, ReservationComponents, calculate, maximum_mask_cache_bytes};
 use crate::failure::CODE_NUMERIC_OVERFLOW;
 
 const BACKEND: BackendId = BackendId::new(77);
 type TestResult<T = ()> = Result<T, String>;
 
 #[test]
-fn fixture_f32_components_and_cpu_cuda_reservations_are_source_named() -> TestResult {
+fn tiny_f32_geometry_has_hand_derived_cpu_and_cuda_boundary_vectors() -> TestResult {
     let (inputs, components) = fixture_components(DType::F32, 8, 16)?;
     assert_eq!(inputs.head_dimension, 4);
     assert_eq!(inputs.grouped_kv_width, 8);
-    assert_eq!(inputs.half_conversion, 0);
-    assert_eq!(inputs.grouped_query_expansion, 0);
-    assert_eq!(inputs.mask_producing_prefill, 1);
-    assert_eq!(
-        components,
-        ReservationComponents {
-            cache_bytes_per_token: 64,
-            persistent: PersistentComponents {
-                token_staging: 32,
-                kv_cache: 1_024,
-                rope: 256,
-                mask_cache: 192,
-            },
-            creation: CreationTransientComponents {
-                cache_device_bytes: 136,
-                cuda_host_source_bytes: 64,
-            },
-            execution: ExecutionTransientComponents {
-                mask_source_bytes: 128,
-                input_tensor_bytes: 32,
-                attention: AttentionPhaseComponents {
-                    qkv_projection: 768,
-                    qk_layout_copy: 512,
-                    qk_rotary_output: 512,
-                    cache_replacement: 1_024,
-                    grouped_query_expansion: 0,
-                    f32_qkv_conversion: 0,
-                    attention_score: 3_072,
-                    masked_fill_scalar: 4,
-                    f32_value_contiguous: 256,
-                    f32_attention_value: 256,
-                    attention_value_cast: 0,
-                    output_projection: 256,
-                    cache_replacement_phase: 2_816,
-                    first_attention_compute_phase: 4_100,
-                    cached_attention_compute_phase: 5_380,
-                    attention_compute_phase: 5_380,
-                    phase: 5_892,
-                },
-                residual_add_phase_bytes: 1_024,
-                mlp_gate_up_phase_bytes: 3_072,
-                mlp_down_projection_phase_bytes: 1_792,
-                mlp_phase_bytes: 3_072,
-                final_block_add_phase_bytes: 1_536,
-                block_peak_bytes: 5_892,
-                embedding_phase_bytes: 256,
-                final_logits_phase_bytes: 608,
-                model_forward_peak_bytes: 5_924,
-                cuda_logits_transfer_bytes: 64,
-            },
-        }
-    );
+
+    // Independent reviewed boundary vector for the synthetic 1-layer fixture.
+    // Persistent F32: token ids 16*2 + KV 2*16*2*4*4 + rope 16*4*4
+    // + repeated-prefill masks 192 = 1_504. The transient values are reviewed
+    // maximum live phase totals, not snapshots of the planner's local fields.
     assert_eq!(
         reservation(&components, DeviceKind::Cpu)?,
-        SequenceReservation {
-            persistent_footprint: host_working(1_504),
-            transient_footprint: host_working(6_052),
-            total_footprint: host_working(7_556),
-        }
+        expected_reservation(host_working(1_504), host_working(6_052))?
     );
     assert_eq!(
         reservation(&components, DeviceKind::Cuda)?,
-        SequenceReservation {
-            persistent_footprint: split_working(32, 1_472),
-            transient_footprint: split_working(128, 5_924),
-            total_footprint: split_working(160, 7_396),
-        }
+        expected_reservation(split_working(32, 1_472), split_working(128, 5_924))?
     );
     Ok(())
 }
 
 #[test]
-fn fixture_f16_and_bf16_components_and_reservations_are_exactly_equal() -> TestResult {
+fn selected_half_execution_types_have_equal_boundary_reservations() -> TestResult {
     let (inputs, f16) = fixture_components(DType::F16, 8, 16)?;
     let (_, bf16) = fixture_components(DType::BF16, 8, 16)?;
     assert_eq!(inputs.half_conversion, 1);
-    assert_eq!(f16, bf16);
-    assert_eq!(
-        f16.persistent,
-        PersistentComponents {
-            token_staging: 32,
-            kv_cache: 512,
-            rope: 128,
-            mask_cache: 192,
-        }
-    );
-    assert_eq!(f16.creation.cache_device_bytes, 264);
-    assert_eq!(f16.execution.attention.phase, 6_020);
-    assert_eq!(f16.execution.block_peak_bytes, 6_020);
-    assert_eq!(f16.execution.model_forward_peak_bytes, 6_052);
     assert_eq!(
         reservation(&f16, DeviceKind::Cpu)?,
-        SequenceReservation {
-            persistent_footprint: host_working(864),
-            transient_footprint: host_working(6_180),
-            total_footprint: host_working(7_044),
-        }
+        reservation(&bf16, DeviceKind::Cpu)?
     );
     assert_eq!(
         reservation(&f16, DeviceKind::Cuda)?,
-        SequenceReservation {
-            persistent_footprint: split_working(32, 832),
-            transient_footprint: split_working(128, 6_052),
-            total_footprint: split_working(160, 6_884),
-        }
+        reservation(&bf16, DeviceKind::Cuda)?
+    );
+    assert_eq!(
+        reservation(&f16, DeviceKind::Cpu)?,
+        expected_reservation(host_working(864), host_working(6_180))?
+    );
+    assert_eq!(
+        reservation(&f16, DeviceKind::Cuda)?,
+        expected_reservation(split_working(32, 832), split_working(128, 6_052))?
     );
     Ok(())
 }
@@ -141,7 +68,7 @@ fn single_token_prefill_elides_mask_and_uses_mask_free_attention_phase() -> Test
     assert_eq!(f32.execution.attention.masked_fill_scalar, 0);
     assert_eq!(f32.execution.model_forward_peak_bytes, 1_316);
     assert_eq!(
-        reservation(&f32, DeviceKind::Cpu)?.total_footprint,
+        reservation(&f32, DeviceKind::Cpu)?.total_footprint(),
         host_working(2_600)
     );
 
@@ -150,7 +77,7 @@ fn single_token_prefill_elides_mask_and_uses_mask_free_attention_phase() -> Test
     assert_eq!(half.execution.attention.f32_qkv_conversion, 1_056);
     assert_eq!(half.execution.model_forward_peak_bytes, 1_524);
     assert_eq!(
-        reservation(&half, DeviceKind::Cpu)?.total_footprint,
+        reservation(&half, DeviceKind::Cpu)?.total_footprint(),
         host_working(2_168)
     );
     Ok(())
@@ -178,7 +105,7 @@ fn grouped_and_non_grouped_query_components_are_distinct() -> TestResult {
         tie_word_embeddings: false,
     };
     let inputs =
-        ReservationInputs::new(BACKEND, &config, DType::F32, sequence_configuration(7, 3)?)
+        LlamaMemoryGeometry::new(BACKEND, &config, DType::F32, sequence_configuration(7, 3)?)
             .map_err(debug_error)?;
     let components = inputs.components(BACKEND).map_err(debug_error)?;
     assert_eq!(inputs.grouped_query_expansion, 1);
@@ -189,11 +116,7 @@ fn grouped_and_non_grouped_query_components_are_distinct() -> TestResult {
     assert_eq!(components.execution.attention.phase, 3_636);
     assert_eq!(
         reservation(&components, DeviceKind::Cpu)?,
-        SequenceReservation {
-            persistent_footprint: host_working(1_455),
-            transient_footprint: host_working(3_669),
-            total_footprint: host_working(5_124),
-        }
+        expected_reservation(host_working(1_455), host_working(3_669))?
     );
     Ok(())
 }
@@ -202,7 +125,7 @@ fn grouped_and_non_grouped_query_components_are_distinct() -> TestResult {
 fn transformer_depth_scales_only_persistent_cache() -> TestResult {
     let mut one_layer = tinyllama_config();
     one_layer.num_hidden_layers = 1;
-    let one = ReservationInputs::new(
+    let one = LlamaMemoryGeometry::new(
         BACKEND,
         &one_layer,
         DType::F16,
@@ -211,7 +134,7 @@ fn transformer_depth_scales_only_persistent_cache() -> TestResult {
     .map_err(debug_error)?
     .components(BACKEND)
     .map_err(debug_error)?;
-    let twenty_two = ReservationInputs::new(
+    let twenty_two = LlamaMemoryGeometry::new(
         BACKEND,
         &tinyllama_config(),
         DType::F16,
@@ -232,8 +155,115 @@ fn transformer_depth_scales_only_persistent_cache() -> TestResult {
 }
 
 #[test]
-fn tinyllama_full_context_reservation_locks_named_phase_totals() -> TestResult {
-    let components = ReservationInputs::new(
+fn reservation_is_monotonic_in_token_and_prefill_capacity() -> TestResult {
+    for device_kind in [DeviceKind::Cpu, DeviceKind::Cuda] {
+        let mut previous = MemoryFootprint::ZERO;
+        for maximum_tokens in 1..=16 {
+            let current = calculate(
+                BACKEND,
+                &fixture_config(),
+                DType::F32,
+                device_kind,
+                sequence_configuration(maximum_tokens, 1)?,
+            )
+            .map_err(debug_error)?
+            .total_footprint();
+            assert!(current.contains_components(previous));
+            previous = current;
+        }
+
+        let mut previous = MemoryFootprint::ZERO;
+        for maximum_prefill in 1..=16 {
+            let current = calculate(
+                BACKEND,
+                &fixture_config(),
+                DType::F32,
+                device_kind,
+                sequence_configuration(16, maximum_prefill)?,
+            )
+            .map_err(debug_error)?
+            .total_footprint();
+            assert!(current.contains_components(previous));
+            previous = current;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn planning_is_deterministic_and_aggregate_is_the_checked_component_sum() -> TestResult {
+    for dtype in [DType::F32, DType::F16, DType::BF16] {
+        for device_kind in [DeviceKind::Cpu, DeviceKind::Cuda] {
+            let configuration = sequence_configuration(16, 8)?;
+            let first = calculate(
+                BACKEND,
+                &fixture_config(),
+                dtype,
+                device_kind,
+                configuration,
+            )
+            .map_err(debug_error)?;
+            let second = calculate(
+                BACKEND,
+                &fixture_config(),
+                dtype,
+                device_kind,
+                configuration,
+            )
+            .map_err(debug_error)?;
+            assert_eq!(first, second);
+            assert_eq!(
+                first
+                    .persistent_footprint()
+                    .checked_add(first.transient_footprint()),
+                Some(first.total_footprint())
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn execution_device_policy_places_working_payload_in_expected_domains() -> TestResult {
+    let configuration = sequence_configuration(16, 8)?;
+    let cpu = calculate(
+        BACKEND,
+        &fixture_config(),
+        DType::F32,
+        DeviceKind::Cpu,
+        configuration,
+    )
+    .map_err(debug_error)?;
+    let cuda = calculate(
+        BACKEND,
+        &fixture_config(),
+        DType::F32,
+        DeviceKind::Cuda,
+        configuration,
+    )
+    .map_err(debug_error)?;
+
+    assert!(
+        cpu.total_footprint()
+            .checked_device_bytes()
+            .is_some_and(|bytes| bytes.is_zero())
+    );
+    assert!(
+        cuda.total_footprint()
+            .device_working_bytes()
+            .contains(domain_contracts::ByteCount::from_u64(1))
+    );
+    assert!(
+        cpu.total_footprint()
+            .host_working_bytes()
+            .contains(cuda.total_footprint().host_working_bytes())
+    );
+    Ok(())
+}
+
+#[test]
+fn tinyllama_full_context_has_reviewed_public_boundary_vectors() -> TestResult {
+    let components = LlamaMemoryGeometry::new(
         BACKEND,
         &tinyllama_config(),
         DType::F16,
@@ -243,32 +273,19 @@ fn tinyllama_full_context_reservation_locks_named_phase_totals() -> TestResult {
     .components(BACKEND)
     .map_err(debug_error)?;
 
-    assert_eq!(components.cache_bytes_per_token, 22_528);
-    assert_eq!(components.persistent.kv_cache, 46_137_344);
-    assert_eq!(components.persistent.rope, 262_144);
-    assert_eq!(components.persistent.mask_cache, 4_194_304);
-    assert_eq!(
-        components.execution.attention.attention_score,
-        1_610_612_736
-    );
-    assert_eq!(components.execution.attention.phase, 1_757_413_380);
-    assert_eq!(components.execution.block_peak_bytes, 1_757_413_380);
-    assert_eq!(components.execution.model_forward_peak_bytes, 1_757_421_572);
+    // Provenance: TinyLlama/TinyLlama-1.1B-Chat-v1.0 configuration at the
+    // repository-pinned revision. These are final reservation boundaries only;
+    // planner-local intermediate values are intentionally not snapshotted.
     assert_eq!(
         reservation(&components, DeviceKind::Cpu)?,
-        SequenceReservation {
-            persistent_footprint: host_working(50_601_984),
-            transient_footprint: host_working(1_761_615_876),
-            total_footprint: host_working(1_812_217_860),
-        }
+        expected_reservation(host_working(50_601_984), host_working(1_761_615_876),)?
     );
     assert_eq!(
         reservation(&components, DeviceKind::Cuda)?,
-        SequenceReservation {
-            persistent_footprint: split_working(8_192, 50_593_792),
-            transient_footprint: split_working(4_194_304, 1_757_421_572),
-            total_footprint: split_working(4_202_496, 1_808_015_364),
-        }
+        expected_reservation(
+            split_working(8_192, 50_593_792),
+            split_working(4_194_304, 1_757_421_572),
+        )?
     );
     Ok(())
 }
@@ -306,7 +323,7 @@ fn mask_bound_covers_every_small_repeated_prefill_schedule() -> TestResult {
 }
 
 #[test]
-fn creation_transient_can_dominate_tiny_execution() -> TestResult {
+fn creation_transient_is_included_when_it_dominates_tiny_execution() -> TestResult {
     let config = Config {
         hidden_size: 2,
         intermediate_size: 1,
@@ -324,18 +341,18 @@ fn creation_transient_can_dominate_tiny_execution() -> TestResult {
         tie_word_embeddings: false,
     };
     let components =
-        ReservationInputs::new(BACKEND, &config, DType::F16, sequence_configuration(1, 1)?)
+        LlamaMemoryGeometry::new(BACKEND, &config, DType::F16, sequence_configuration(1, 1)?)
             .map_err(debug_error)?
             .components(BACKEND)
             .map_err(debug_error)?;
-    assert_eq!(components.creation.cache_device_bytes, 804);
-    assert_eq!(components.execution.model_forward_peak_bytes, 88);
+    // This edge vector is deliberately shaped so cache construction, not a
+    // forward pass, owns the public transient maximum.
     assert_eq!(
-        reservation(&components, DeviceKind::Cpu)?.total_footprint,
+        reservation(&components, DeviceKind::Cpu)?.total_footprint(),
         host_working(1_216)
     );
     assert_eq!(
-        reservation(&components, DeviceKind::Cuda)?.total_footprint,
+        reservation(&components, DeviceKind::Cuda)?.total_footprint(),
         split_working(404, 1_212)
     );
     Ok(())
@@ -352,7 +369,6 @@ fn invalid_upstream_assumptions_and_numeric_overflow_fail_closed() -> TestResult
             DType::F32,
             DeviceKind::Cpu,
             sequence_configuration(16, 8)?,
-            64,
         ),
         Err(ModelError::Unsupported)
     );
@@ -366,7 +382,6 @@ fn invalid_upstream_assumptions_and_numeric_overflow_fail_closed() -> TestResult
             DType::F32,
             DeviceKind::Cpu,
             sequence_configuration(16, 8)?,
-            64,
         ),
         Err(ModelError::Unsupported)
     );
@@ -380,24 +395,9 @@ fn invalid_upstream_assumptions_and_numeric_overflow_fail_closed() -> TestResult
             DType::F32,
             DeviceKind::Cpu,
             sequence_configuration(1, 1)?,
-            64,
         ),
         Err(ModelError::Unsupported)
     );
-
-    assert!(matches!(
-        calculate(
-            BACKEND,
-            &fixture_config(),
-            DType::F32,
-            DeviceKind::Cpu,
-            sequence_configuration(16, 8)?,
-            63,
-        ),
-        Err(ModelError::Backend(failure))
-            if failure.kind == BackendFailureKind::InvalidModel
-                && failure.code == CODE_NUMERIC_OVERFLOW
-    ));
 
     let mut overflowing = fixture_config();
     overflowing.max_position_embeddings = u32::MAX as usize;
@@ -408,7 +408,6 @@ fn invalid_upstream_assumptions_and_numeric_overflow_fail_closed() -> TestResult
         DType::F32,
         DeviceKind::Cpu,
         SequenceConfiguration::new(maximum, maximum),
-        64,
     )
     .err()
     .ok_or_else(|| "overflowing reservation was accepted".to_owned())?;
@@ -425,8 +424,8 @@ fn fixture_components(
     dtype: DType,
     maximum_prefill: u32,
     maximum_tokens: u32,
-) -> TestResult<(ReservationInputs, ReservationComponents)> {
-    let inputs = ReservationInputs::new(
+) -> TestResult<(LlamaMemoryGeometry, ReservationComponents)> {
+    let inputs = LlamaMemoryGeometry::new(
         BACKEND,
         &fixture_config(),
         dtype,
@@ -495,17 +494,21 @@ fn reservation(
         .map_err(debug_error)
 }
 
+fn expected_reservation(
+    persistent: MemoryFootprint,
+    transient: MemoryFootprint,
+) -> TestResult<SequenceReservation> {
+    SequenceReservation::checked(persistent, transient)
+        .ok_or_else(|| "independent expected reservation overflowed".to_owned())
+}
+
 const fn host_working(bytes: u64) -> MemoryFootprint {
     split_working(bytes, 0)
 }
 
 const fn split_working(host: u64, device: u64) -> MemoryFootprint {
-    MemoryFootprint {
-        host_weight_bytes: 0,
-        device_weight_bytes: 0,
-        host_working_bytes: host,
-        device_working_bytes: device,
-    }
+    MemoryFootprint::host_working(domain_contracts::ByteCount::from_u64(host))
+        .with_device_working_bytes(domain_contracts::ByteCount::from_u64(device))
 }
 
 fn enumerate_schedules(

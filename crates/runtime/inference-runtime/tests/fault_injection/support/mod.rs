@@ -3,7 +3,7 @@ pub(crate) use std::num::NonZeroU32;
 pub(crate) use std::rc::Rc;
 
 pub(crate) use domain_contracts::{
-    BackendFailure, BackendFailureKind, BackendId, BackendLoadFailure, BackendSequence,
+    BackendFailure, BackendFailureKind, BackendId, BackendLoadFailure, BackendSequence, ByteCount,
     CancellationReason, CapabilitySet, DecodeBufferRequirements, DecodeInput, DecodeOutcome,
     DeviceId, DeviceKind, ExecutionDevice, FailedLoad, FailedLoadOwner, LoadConfiguration,
     LoadError, LoadFailureStage, LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint, MemoryKind,

@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 use candle_backend::{
     CandleLlamaLoader, CandleLlamaSource, CandleLoadObservation, CandleLoadObservationSnapshot,
 };
-use domain_contracts::{BackendId, MemoryBudget, ModelHandle, ModelId, RequestId, SequenceId};
+use domain_contracts::{
+    BackendId, ByteCount, MemoryBudget, ModelHandle, ModelId, RequestId, SequenceId,
+};
 use inference_runtime::{
     CommandTicket, HostedRuntime, HostedRuntimeConfiguration, RuntimeCommand, RuntimeEvent,
     RuntimeLimits, RuntimeThread, ShutdownReceipt, start_hosted_runtime,
@@ -76,10 +78,7 @@ impl HostedE0Harness {
         let limits = RuntimeLimits::new(
             NonZeroU32::MIN,
             NonZeroU32::MIN,
-            MemoryBudget {
-                host_bytes: u64::MAX,
-                device_bytes: 0,
-            },
+            MemoryBudget::ZERO.with_host_bytes(ByteCount::MAX),
         );
         let (load_observation, load_observation_recorder) = CandleLoadObservation::channel();
         let started = Instant::now();

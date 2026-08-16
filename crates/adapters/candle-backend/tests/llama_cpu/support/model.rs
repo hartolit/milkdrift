@@ -22,22 +22,12 @@ pub(crate) fn execute_profile(
         expected_observed
     );
     assert_eq!(descriptor.estimated_footprint, expected_final);
-    let expected_cache_rate = match expected_execution {
-        ScalarType::F32 => F32_SEQUENCE_CACHE_BYTES_PER_TOKEN,
-        ScalarType::F16 | ScalarType::Bf16 => F16_SEQUENCE_CACHE_BYTES_PER_TOKEN,
-        _ => return Err("test profile selected a non-floating execution scalar".to_owned()),
-    };
-    assert_eq!(
-        descriptor.sequence_cache_bytes_per_token,
-        expected_cache_rate
-    );
-
     let (plan, mut model) = prepare_and_load(&mut loader, &source, load_configuration())?;
     assert_eq!(plan.descriptor, descriptor);
     assert_eq!(plan.execution_scalar_type, expected_execution);
     assert_eq!(plan.final_footprint, expected_final);
     assert_eq!(plan.loading_peak_footprint, expected_loading);
-    assert_eq!(plan.loading_peak_footprint.device_working_bytes, 0);
+    assert!(plan.loading_peak_footprint.device_working_bytes().is_zero());
     assert_eq!(model.descriptor(), &descriptor);
     assert_eq!(model.execution_scalar_type(), expected_execution);
     assert_eq!(model.reported_footprint(), expected_final);
@@ -95,18 +85,13 @@ pub(crate) fn assert_cpu_sequence_reservation(
         _ => return Err("test model selected a non-floating execution scalar".to_owned()),
     };
     for (footprint, host_working_bytes) in [
-        (plan.reservation.persistent_footprint, expected.0),
-        (plan.reservation.transient_footprint, expected.1),
-        (plan.reservation.total_footprint, expected.2),
+        (plan.reservation.persistent_footprint(), expected.0),
+        (plan.reservation.transient_footprint(), expected.1),
+        (plan.reservation.total_footprint(), expected.2),
     ] {
         assert_eq!(
             footprint,
-            MemoryFootprint {
-                host_weight_bytes: 0,
-                device_weight_bytes: 0,
-                host_working_bytes,
-                device_working_bytes: 0,
-            }
+            MemoryFootprint::host_working(ByteCount::from_u64(host_working_bytes))
         );
     }
     Ok(())

@@ -80,7 +80,8 @@ pub(crate) fn validate_prepared_load_plan(plan: &LoadPlan) -> BenchmarkResult {
         .metadata
         .observed_tensor_scalar_types
         .is_empty()
-        || (final_footprint.host_weight_bytes == 0 && final_footprint.device_weight_bytes == 0)
+        || (final_footprint.host_weight_bytes().is_zero()
+            && final_footprint.device_weight_bytes().is_zero())
         || loading_host < final_host
         || loading_device < final_device
         || !loading_contains_final
@@ -92,15 +93,15 @@ pub(crate) fn validate_prepared_load_plan(plan: &LoadPlan) -> BenchmarkResult {
 
     match plan.accepted_configuration.execution_device.kind {
         DeviceKind::Cpu
-            if final_footprint.host_weight_bytes > 0
-                && final_footprint.device_weight_bytes == 0
-                && final_footprint.device_working_bytes == 0 =>
+            if !final_footprint.host_weight_bytes().is_zero()
+                && final_footprint.device_weight_bytes().is_zero()
+                && final_footprint.device_working_bytes().is_zero() =>
         {
             Ok(())
         }
         DeviceKind::Cuda
-            if final_footprint.host_weight_bytes == 0
-                && final_footprint.device_weight_bytes > 0 =>
+            if final_footprint.host_weight_bytes().is_zero()
+                && !final_footprint.device_weight_bytes().is_zero() =>
         {
             Ok(())
         }
@@ -115,10 +116,10 @@ pub(crate) fn validate_prepared_load_plan(plan: &LoadPlan) -> BenchmarkResult {
 
 pub(crate) const fn footprint_record(value: MemoryFootprint) -> MemoryFootprintRecord {
     MemoryFootprintRecord {
-        host_weight_bytes: value.host_weight_bytes,
-        device_weight_bytes: value.device_weight_bytes,
-        host_working_bytes: value.host_working_bytes,
-        device_working_bytes: value.device_working_bytes,
+        host_weight_bytes: value.host_weight_bytes().as_u64(),
+        device_weight_bytes: value.device_weight_bytes().as_u64(),
+        host_working_bytes: value.host_working_bytes().as_u64(),
+        device_working_bytes: value.device_working_bytes().as_u64(),
     }
 }
 

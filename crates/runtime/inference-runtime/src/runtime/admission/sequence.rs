@@ -219,7 +219,7 @@ where
             return Err(RuntimeError::BackendContractViolation);
         }
         let committed_footprint =
-            checked_add_footprint(plan.reservation.total_footprint, workspace_footprint)?;
+            checked_add_footprint(plan.reservation.total_footprint(), workspace_footprint)?;
         admit_footprint(
             self.reserved_footprint,
             committed_footprint,
@@ -338,7 +338,7 @@ where
         }
         let expected_token_capacity = usize::try_from(plan.configuration.maximum_tokens.get())
             .map_err(|_| RuntimeError::BackendContractViolation)?;
-        let backend_footprint = plan.reservation.total_footprint;
+        let backend_footprint = plan.reservation.total_footprint();
         let committed_footprint =
             checked_add_footprint(backend_footprint, request.workspace_footprint)?;
         Ok(SequenceAdmission {
@@ -607,10 +607,10 @@ where
     let ownership = if backend_contradiction {
         RetainedOwnership::Unverified {
             accepted_footprint: admission.backend_footprint,
-            reported_footprint: reported_plan.reservation.total_footprint,
+            reported_footprint: reported_plan.reservation.total_footprint(),
             conservative_footprint: conservative_footprint(
                 admission.backend_footprint,
-                reported_plan.reservation.total_footprint,
+                reported_plan.reservation.total_footprint(),
             ),
         }
     } else {
@@ -644,37 +644,6 @@ fn validate_sequence_plan(
 ) -> Result<(), RuntimeError> {
     if plan.configuration != requested
         || !sequence_configuration_is_supported(descriptor, plan.configuration)
-        || !plan.reservation.is_consistent()
-        || plan
-            .reservation
-            .persistent_footprint
-            .checked_host_bytes()
-            .is_none()
-        || plan
-            .reservation
-            .persistent_footprint
-            .checked_device_bytes()
-            .is_none()
-        || plan
-            .reservation
-            .transient_footprint
-            .checked_host_bytes()
-            .is_none()
-        || plan
-            .reservation
-            .transient_footprint
-            .checked_device_bytes()
-            .is_none()
-        || plan
-            .reservation
-            .total_footprint
-            .checked_host_bytes()
-            .is_none()
-        || plan
-            .reservation
-            .total_footprint
-            .checked_device_bytes()
-            .is_none()
     {
         Err(RuntimeError::BackendContractViolation)
     } else {

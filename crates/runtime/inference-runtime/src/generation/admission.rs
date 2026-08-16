@@ -3,8 +3,8 @@
 use std::mem::size_of;
 
 use domain_contracts::{
-    CapacityExhausted, CapacityResource, MemoryFootprint, ModelHandle, ModelLoader, RequestId,
-    TokenId,
+    ByteCount, CapacityExhausted, CapacityResource, MemoryFootprint, ModelHandle, ModelLoader,
+    RequestId, TokenId,
 };
 use host_runtime::TokenOutputProducer;
 use sampling::Sampler;
@@ -296,14 +296,14 @@ fn generation_workspace_footprint(
     let prompt = allocation_bytes::<TokenId>(prompt_tokens)?;
     let eos = allocation_bytes::<TokenId>(eos_tokens)?;
     let stop_descriptors = allocation_bytes::<GenerationStopSequence>(stop_sequences.len())?;
-    let stop_tokens =
-        stop_sequences
-            .iter()
-            .try_fold(0_u64, |total, stop| -> Result<u64, RuntimeError> {
-                total
-                    .checked_add(allocation_bytes::<TokenId>(stop.tokens.len())?)
-                    .ok_or(RuntimeError::MemoryArithmeticOverflow)
-            })?;
+    let stop_tokens = stop_sequences.iter().try_fold(
+        ByteCount::ZERO,
+        |total, stop| -> Result<ByteCount, RuntimeError> {
+            total
+                .checked_add(allocation_bytes::<TokenId>(stop.tokens.len())?)
+                .ok_or(RuntimeError::MemoryArithmeticOverflow)
+        },
+    )?;
     let host_working_bytes = logits
         .checked_add(sampling_indices)
         .and_then(|value| value.checked_add(repetition_epochs))
@@ -314,19 +314,16 @@ fn generation_workspace_footprint(
         .and_then(|value| value.checked_add(stop_descriptors))
         .and_then(|value| value.checked_add(stop_tokens))
         .ok_or(RuntimeError::MemoryArithmeticOverflow)?;
-    Ok(MemoryFootprint {
-        host_weight_bytes: 0,
-        device_weight_bytes: 0,
-        host_working_bytes,
-        device_working_bytes: 0,
-    })
+    Ok(MemoryFootprint::host_working(host_working_bytes))
 }
 
-fn allocation_bytes<T>(length: usize) -> Result<u64, RuntimeError> {
+fn allocation_bytes<T>(length: usize) -> Result<ByteCount, RuntimeError> {
     let bytes = length
         .checked_mul(size_of::<T>())
         .ok_or(RuntimeError::MemoryArithmeticOverflow)?;
-    u64::try_from(bytes).map_err(|_| RuntimeError::MemoryArithmeticOverflow)
+    u64::try_from(bytes)
+        .map(ByteCount::from_u64)
+        .map_err(|_| RuntimeError::MemoryArithmeticOverflow)
 }
 
 fn reserved_f32(length: usize, resource: CapacityResource) -> Result<Vec<f32>, RuntimeError> {

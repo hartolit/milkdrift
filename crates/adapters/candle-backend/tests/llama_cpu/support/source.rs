@@ -4,10 +4,7 @@ pub(crate) const fn load_configuration() -> LoadConfiguration {
     LoadConfiguration {
         handle: ModelHandle::new(ModelId::new(9), ModelGeneration::new(1)),
         execution_device: ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cpu),
-        memory_budget: MemoryBudget {
-            host_bytes: u64::MAX,
-            device_bytes: 0,
-        },
+        memory_budget: MemoryBudget::ZERO.with_host_bytes(ByteCount::MAX),
     }
 }
 

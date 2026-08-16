@@ -245,7 +245,7 @@ impl ApplicationRuntime {
             preferences.selected_device,
             summaries,
             failures,
-            memory_budget.device_bytes,
+            memory_budget.device_bytes(),
         );
 
         let local = create_runtime(memory_budget, &configuration)?;

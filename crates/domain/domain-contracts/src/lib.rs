@@ -3,6 +3,7 @@
 #![doc = "Portable, allocation-neutral contracts shared by inference engines and backends."]
 
 mod backend;
+mod bytes;
 mod capacity;
 mod error;
 mod generation;
@@ -16,6 +17,7 @@ pub use backend::{
     BackendSequence, FailedLoad, FailedLoadOwner, LoadedModel, ModelLoader, PreparedLoad,
     decode_checked, prefill_checked,
 };
+pub use bytes::ByteCount;
 pub use capacity::{CapacityExhausted, CapacityResource};
 pub use error::{
     BackendFailure, BackendFailureKind, BackendLoadFailure, LoadError, LoadFailureContext,

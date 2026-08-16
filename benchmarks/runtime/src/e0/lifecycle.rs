@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use candle_backend::CandleLoadObservationSnapshot;
 use domain_contracts::{
-    CapabilitySet, DecodeOutcome, DeviceId, DeviceKind, ExecutionDevice, FinishReason,
+    ByteCount, CapabilitySet, DecodeOutcome, DeviceId, DeviceKind, ExecutionDevice, FinishReason,
     LoadConfiguration, MemoryBudget, MemoryFootprint, ModelArchitecture, ModelGeneration,
     ModelHandle, PrefillOutcome, QuantizationFormat, RequestId, ScalarType, ScalarTypeSet,
     SequenceConfiguration, TokenId, UnloadPolicy,
@@ -77,10 +77,7 @@ const fn fixture_load_configuration() -> LoadConfiguration {
     LoadConfiguration {
         handle: ModelHandle::new(FIXTURE_MODEL_ID, ModelGeneration::new(1)),
         execution_device: ExecutionDevice::new(CPU_DEVICE, DeviceKind::Cpu),
-        memory_budget: MemoryBudget {
-            host_bytes: u64::MAX,
-            device_bytes: 0,
-        },
+        memory_budget: MemoryBudget::ZERO.with_host_bytes(ByteCount::MAX),
     }
 }
 
@@ -496,6 +493,7 @@ mod tests {
     use crate::fixture::VerifiedFixture;
     use crate::report::SCHEMA_VERSION;
     use candle_backend::{CandleLoadCleanupOutcome, CandleLoadObservationOutcome};
+    use domain_contracts::ByteCount;
 
     #[test]
     fn hosted_fixture_load_produces_actual_schema_six_observation() -> Result<(), String> {
@@ -505,8 +503,8 @@ mod tests {
             let loaded = load_fixture(&mut harness, &fixture)?;
             let snapshot = harness.load_observation_snapshot();
             if snapshot.plan.is_none()
-                || snapshot.required_bytes_read != 3_680
-                || snapshot.whole_file_verification_bytes_read != 4_800
+                || snapshot.required_bytes_read != ByteCount::from_u64(3_680)
+                || snapshot.whole_file_verification_bytes_read != ByteCount::from_u64(4_800)
                 || snapshot.transfer_batches != 0
                 || snapshot.loading_device_synchronizations != 0
                 || snapshot.outcome != CandleLoadObservationOutcome::Succeeded

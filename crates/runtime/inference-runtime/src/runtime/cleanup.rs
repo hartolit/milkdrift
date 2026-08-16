@@ -435,7 +435,7 @@ where
         }
         let mut lifecycle = slot.lifecycle;
         let lifecycle_action = lifecycle.finish_request()?;
-        let backend_footprint = request.accepted_plan.reservation.total_footprint;
+        let backend_footprint = request.accepted_plan.reservation.total_footprint();
         let total = checked_add_footprint(backend_footprint, request.workspace_footprint)?;
         Ok(RequestRemovalTransition {
             model_id,
@@ -514,7 +514,7 @@ where
             RuntimeOperation::SequenceDestruction,
             FailureDetail::Sequence(cleanup),
         );
-        let reported_footprint = report_after_cleanup.reservation.total_footprint;
+        let reported_footprint = report_after_cleanup.reservation.total_footprint();
         let ownership = if contract_matches {
             RetainedOwnership::Exact(transition.backend_footprint)
         } else {

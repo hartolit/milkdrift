@@ -37,24 +37,33 @@ pub(super) fn remaining_budget(
     let used_device = used
         .checked_device_bytes()
         .ok_or(RuntimeError::MemoryArithmeticOverflow)?;
-    if used_host > limit.host_bytes {
+    if !limit.host_bytes().contains(used_host) {
         return Err(RuntimeError::InsufficientMemory {
             kind: MemoryKind::Host,
             required_bytes: used_host,
-            available_bytes: limit.host_bytes,
+            available_bytes: limit.host_bytes(),
         });
     }
-    if used_device > limit.device_bytes {
+    if !limit.device_bytes().contains(used_device) {
         return Err(RuntimeError::InsufficientMemory {
             kind: MemoryKind::Device,
             required_bytes: used_device,
-            available_bytes: limit.device_bytes,
+            available_bytes: limit.device_bytes(),
         });
     }
-    Ok(MemoryBudget {
-        host_bytes: limit.host_bytes - used_host,
-        device_bytes: limit.device_bytes - used_device,
-    })
+    Ok(MemoryBudget::ZERO
+        .with_host_bytes(
+            limit
+                .host_bytes()
+                .checked_sub(used_host)
+                .ok_or(RuntimeError::MemoryArithmeticUnderflow)?,
+        )
+        .with_device_bytes(
+            limit
+                .device_bytes()
+                .checked_sub(used_device)
+                .ok_or(RuntimeError::MemoryArithmeticUnderflow)?,
+        ))
 }
 
 pub(super) fn admit_footprint(
@@ -66,21 +75,21 @@ pub(super) fn admit_footprint(
     let required_host = next
         .checked_host_bytes()
         .ok_or(RuntimeError::MemoryArithmeticOverflow)?;
-    if required_host > budget.host_bytes {
+    if !budget.host_bytes().contains(required_host) {
         return Err(RuntimeError::InsufficientMemory {
             kind: MemoryKind::Host,
             required_bytes: required_host,
-            available_bytes: budget.host_bytes,
+            available_bytes: budget.host_bytes(),
         });
     }
     let required_device = next
         .checked_device_bytes()
         .ok_or(RuntimeError::MemoryArithmeticOverflow)?;
-    if required_device > budget.device_bytes {
+    if !budget.device_bytes().contains(required_device) {
         return Err(RuntimeError::InsufficientMemory {
             kind: MemoryKind::Device,
             required_bytes: required_device,
-            available_bytes: budget.device_bytes,
+            available_bytes: budget.device_bytes(),
         });
     }
     Ok(next)
@@ -164,42 +173,35 @@ pub(super) fn saturating_u64(value: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use domain_contracts::ByteCount;
+
+    const fn bytes(value: u64) -> ByteCount {
+        ByteCount::from_u64(value)
+    }
+
+    const fn footprint(
+        host_weights: u64,
+        device_weights: u64,
+        host_working: u64,
+        device_working: u64,
+    ) -> MemoryFootprint {
+        MemoryFootprint::ZERO
+            .with_host_weight_bytes(bytes(host_weights))
+            .with_device_weight_bytes(bytes(device_weights))
+            .with_host_working_bytes(bytes(host_working))
+            .with_device_working_bytes(bytes(device_working))
+    }
 
     const COMPONENTS: [MemoryFootprint; 4] = [
-        MemoryFootprint {
-            host_weight_bytes: 1,
-            device_weight_bytes: 0,
-            host_working_bytes: 0,
-            device_working_bytes: 0,
-        },
-        MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 1,
-            host_working_bytes: 0,
-            device_working_bytes: 0,
-        },
-        MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 0,
-            host_working_bytes: 1,
-            device_working_bytes: 0,
-        },
-        MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 0,
-            host_working_bytes: 0,
-            device_working_bytes: 1,
-        },
+        MemoryFootprint::host_weights(bytes(1)),
+        MemoryFootprint::device_weights(bytes(1)),
+        MemoryFootprint::host_working(bytes(1)),
+        MemoryFootprint::device_working(bytes(1)),
     ];
 
     #[test]
     fn component_addition_and_subtraction_are_exact_inverses() {
-        let base = MemoryFootprint {
-            host_weight_bytes: 7,
-            device_weight_bytes: 11,
-            host_working_bytes: 13,
-            device_working_bytes: 17,
-        };
+        let base = footprint(7, 11, 13, 17);
         for component in COMPONENTS {
             let round_trip = checked_add_footprint(base, component)
                 .and_then(|added| checked_sub_footprint(added, component));
@@ -210,28 +212,27 @@ mod tests {
     #[test]
     fn every_component_overflow_and_underflow_is_rejected() {
         for component in COMPONENTS {
-            let maximum = MemoryFootprint {
-                host_weight_bytes: if component.host_weight_bytes == 1 {
-                    u64::MAX
+            let maximum = MemoryFootprint::ZERO
+                .with_host_weight_bytes(if component.host_weight_bytes().is_zero() {
+                    ByteCount::ZERO
                 } else {
-                    0
-                },
-                device_weight_bytes: if component.device_weight_bytes == 1 {
-                    u64::MAX
+                    ByteCount::MAX
+                })
+                .with_device_weight_bytes(if component.device_weight_bytes().is_zero() {
+                    ByteCount::ZERO
                 } else {
-                    0
-                },
-                host_working_bytes: if component.host_working_bytes == 1 {
-                    u64::MAX
+                    ByteCount::MAX
+                })
+                .with_host_working_bytes(if component.host_working_bytes().is_zero() {
+                    ByteCount::ZERO
                 } else {
-                    0
-                },
-                device_working_bytes: if component.device_working_bytes == 1 {
-                    u64::MAX
+                    ByteCount::MAX
+                })
+                .with_device_working_bytes(if component.device_working_bytes().is_zero() {
+                    ByteCount::ZERO
                 } else {
-                    0
-                },
-            };
+                    ByteCount::MAX
+                });
             assert_eq!(
                 checked_add_footprint(maximum, component),
                 Err(RuntimeError::MemoryArithmeticOverflow)
@@ -245,20 +246,9 @@ mod tests {
 
     #[test]
     fn domain_total_overflow_is_rejected_even_when_components_fit() {
-        let host = MemoryFootprint {
-            host_weight_bytes: u64::MAX,
-            host_working_bytes: 1,
-            ..MemoryFootprint::default()
-        };
+        let host = footprint(u64::MAX, 0, 1, 0);
         assert_eq!(
-            admit_footprint(
-                MemoryFootprint::default(),
-                host,
-                MemoryBudget {
-                    host_bytes: u64::MAX,
-                    device_bytes: u64::MAX,
-                },
-            ),
+            admit_footprint(MemoryFootprint::default(), host, MemoryBudget::UNLIMITED,),
             Err(RuntimeError::MemoryArithmeticOverflow)
         );
         assert_eq!(
@@ -269,53 +259,25 @@ mod tests {
 
     #[test]
     fn conservative_evidence_preserves_reclassified_components_without_exactness() {
-        let planned = MemoryFootprint {
-            host_weight_bytes: 64,
-            ..MemoryFootprint::default()
-        };
-        let reported = MemoryFootprint {
-            device_weight_bytes: 96,
-            ..MemoryFootprint::default()
-        };
+        let planned = footprint(64, 0, 0, 0);
+        let reported = footprint(0, 96, 0, 0);
         assert_eq!(
             conservative_footprint(planned, reported),
-            ConservativeFootprint::Known(MemoryFootprint {
-                host_weight_bytes: 64,
-                device_weight_bytes: 96,
-                ..MemoryFootprint::default()
-            })
+            ConservativeFootprint::Known(footprint(64, 96, 0, 0))
         );
     }
 
     #[test]
     fn conservative_extension_is_monotonic_across_changing_reports() {
-        let initial = ConservativeFootprint::Known(MemoryFootprint {
-            host_weight_bytes: 64,
-            host_working_bytes: 32,
-            ..MemoryFootprint::default()
-        });
-        let larger_device_report = MemoryFootprint {
-            device_weight_bytes: 128,
-            device_working_bytes: 16,
-            ..MemoryFootprint::default()
-        };
+        let initial = ConservativeFootprint::Known(footprint(64, 0, 32, 0));
+        let larger_device_report = footprint(0, 128, 0, 16);
         let extended = extend_conservative_footprint(initial, larger_device_report);
         assert_eq!(
             extended,
-            ConservativeFootprint::Known(MemoryFootprint {
-                host_weight_bytes: 64,
-                device_weight_bytes: 128,
-                host_working_bytes: 32,
-                device_working_bytes: 16,
-            })
+            ConservativeFootprint::Known(footprint(64, 128, 32, 16))
         );
 
-        let smaller_report = MemoryFootprint {
-            host_weight_bytes: 1,
-            device_weight_bytes: 2,
-            host_working_bytes: 3,
-            device_working_bytes: 4,
-        };
+        let smaller_report = footprint(1, 2, 3, 4);
         assert_eq!(
             extend_conservative_footprint(extended, smaller_report),
             extended

@@ -67,10 +67,7 @@ pub(crate) fn runtime_with_limits(
         maximum_attempts,
         1,
         2,
-        MemoryBudget {
-            host_bytes,
-            device_bytes: 0,
-        },
+        MemoryBudget::ZERO.with_host_bytes(ByteCount::from_u64(host_bytes)),
     )
 }
 
@@ -208,26 +205,15 @@ pub(crate) const fn descriptor(source_scalar_type: ScalarType) -> ModelDescripto
             maximum_prefill_batch: 4,
         },
         estimated_footprint: model_footprint(),
-        sequence_cache_bytes_per_token: 0,
     }
 }
 
 pub(crate) const fn model_footprint() -> MemoryFootprint {
-    MemoryFootprint {
-        host_weight_bytes: 100,
-        device_weight_bytes: 0,
-        host_working_bytes: 10,
-        device_working_bytes: 0,
-    }
+    footprint(100, 0, 10, 0)
 }
 
 pub(crate) const fn loading_peak_footprint() -> MemoryFootprint {
-    MemoryFootprint {
-        host_weight_bytes: 100,
-        device_weight_bytes: 0,
-        host_working_bytes: 40,
-        device_working_bytes: 0,
-    }
+    footprint(100, 0, 40, 0)
 }
 
 pub(crate) const fn loading_peak_host_bytes() -> u64 {
@@ -235,131 +221,78 @@ pub(crate) const fn loading_peak_host_bytes() -> u64 {
 }
 
 pub(crate) const fn checked_total_footprint() -> MemoryFootprint {
-    MemoryFootprint {
-        host_weight_bytes: 100,
-        device_weight_bytes: 0,
-        host_working_bytes: 18,
-        device_working_bytes: 0,
-    }
+    footprint(100, 0, 18, 0)
 }
 
 pub(crate) const fn sequence_footprint() -> MemoryFootprint {
-    MemoryFootprint {
-        host_weight_bytes: 0,
-        device_weight_bytes: 0,
-        host_working_bytes: 8,
-        device_working_bytes: 0,
-    }
+    footprint(0, 0, 8, 0)
 }
 
 pub(crate) const fn sequence_persistent_footprint() -> MemoryFootprint {
-    MemoryFootprint {
-        host_weight_bytes: 0,
-        device_weight_bytes: 0,
-        host_working_bytes: 3,
-        device_working_bytes: 0,
-    }
+    footprint(0, 0, 3, 0)
 }
 
 pub(crate) const fn sequence_transient_footprint() -> MemoryFootprint {
-    MemoryFootprint {
-        host_weight_bytes: 0,
-        device_weight_bytes: 0,
-        host_working_bytes: 5,
-        device_working_bytes: 0,
-    }
+    footprint(0, 0, 5, 0)
 }
 
-pub(crate) const fn sequence_reservation() -> SequenceReservation {
-    SequenceReservation {
-        persistent_footprint: sequence_persistent_footprint(),
-        transient_footprint: sequence_transient_footprint(),
-        total_footprint: sequence_footprint(),
-    }
+pub(crate) fn sequence_reservation() -> SequenceReservation {
+    SequenceReservation::checked(
+        sequence_persistent_footprint(),
+        sequence_transient_footprint(),
+    )
+    .unwrap_or_default()
 }
 
-pub(crate) const fn sequence_report_reservation(
+pub(crate) fn sequence_report_reservation(
     host_bytes: u64,
     device_bytes: u64,
 ) -> SequenceReservation {
-    let footprint = MemoryFootprint {
-        host_weight_bytes: 0,
-        device_weight_bytes: 0,
-        host_working_bytes: host_bytes,
-        device_working_bytes: device_bytes,
-    };
-    SequenceReservation {
-        persistent_footprint: footprint,
-        transient_footprint: MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 0,
-            host_working_bytes: 0,
-            device_working_bytes: 0,
-        },
-        total_footprint: footprint,
-    }
+    SequenceReservation::checked(
+        footprint(0, 0, host_bytes, device_bytes),
+        MemoryFootprint::ZERO,
+    )
+    .unwrap_or_default()
+}
+
+pub(crate) const fn footprint(
+    host_weights: u64,
+    device_weights: u64,
+    host_working: u64,
+    device_working: u64,
+) -> MemoryFootprint {
+    MemoryFootprint::ZERO
+        .with_host_weight_bytes(ByteCount::from_u64(host_weights))
+        .with_device_weight_bytes(ByteCount::from_u64(device_weights))
+        .with_host_working_bytes(ByteCount::from_u64(host_working))
+        .with_device_working_bytes(ByteCount::from_u64(device_working))
 }
 
 pub(crate) fn complete_report_cases() -> [(Faults, MemoryFootprint, ConservativeFootprint); 8] {
     [
         (
             Faults::REPORTED_LARGER_THAN_PEAK,
-            MemoryFootprint {
-                host_weight_bytes: 200,
-                device_weight_bytes: 0,
-                host_working_bytes: 100,
-                device_working_bytes: 0,
-            },
-            ConservativeFootprint::Known(MemoryFootprint {
-                host_weight_bytes: 200,
-                device_weight_bytes: 0,
-                host_working_bytes: 100,
-                device_working_bytes: 0,
-            }),
+            footprint(200, 0, 100, 0),
+            ConservativeFootprint::Known(footprint(200, 0, 100, 0)),
         ),
         (
             Faults::REPORTED_RECLASSIFIED_TO_DEVICE,
-            MemoryFootprint {
-                host_weight_bytes: 0,
-                device_weight_bytes: 100,
-                host_working_bytes: 0,
-                device_working_bytes: 10,
-            },
-            ConservativeFootprint::Known(MemoryFootprint {
-                host_weight_bytes: 100,
-                device_weight_bytes: 100,
-                host_working_bytes: 40,
-                device_working_bytes: 10,
-            }),
+            footprint(0, 100, 0, 10),
+            ConservativeFootprint::Known(footprint(100, 100, 40, 10)),
         ),
         (
             Faults::REPORTED_OVERFLOWING_HOST,
-            MemoryFootprint {
-                host_weight_bytes: u64::MAX,
-                device_weight_bytes: 0,
-                host_working_bytes: 1,
-                device_working_bytes: 0,
-            },
+            footprint(u64::MAX, 0, 1, 0),
             ConservativeFootprint::Overflow,
         ),
         (
             Faults::REPORTED_OVERFLOWING_DEVICE,
-            MemoryFootprint {
-                host_weight_bytes: 100,
-                device_weight_bytes: u64::MAX,
-                host_working_bytes: 10,
-                device_working_bytes: 1,
-            },
+            footprint(100, u64::MAX, 10, 1),
             ConservativeFootprint::Overflow,
         ),
         (
             Faults::REPORTED_SMALLER_THAN_FINAL,
-            MemoryFootprint {
-                host_weight_bytes: 50,
-                device_weight_bytes: 0,
-                host_working_bytes: 0,
-                device_working_bytes: 0,
-            },
+            footprint(50, 0, 0, 0),
             ConservativeFootprint::Known(loading_peak_footprint()),
         ),
         (

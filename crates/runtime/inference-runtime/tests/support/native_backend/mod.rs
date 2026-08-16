@@ -9,7 +9,7 @@ pub(crate) use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub(crate) use candle_backend::{CandleLlamaLoader, CandleLlamaSource};
 pub(crate) use candle_core::{DType, Device, Tensor};
 pub(crate) use domain_contracts::{
-    BackendId, CancellationReason, CapabilitySet, DeviceId, DeviceKind, ExecutionDevice,
+    BackendId, ByteCount, CancellationReason, CapabilitySet, DeviceId, DeviceKind, ExecutionDevice,
     FinishReason, LoadConfiguration, LoadPlan, MemoryBudget, MemoryFootprint, ModelArchitecture,
     ModelCapabilities, ModelDescriptor, ModelGeneration, ModelHandle, ModelId, ModelLoader,
     ModelMetadata, PreparedLoad, QuantizationFormat, RequestId, ScalarType, ScalarTypeSet,

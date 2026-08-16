@@ -4,7 +4,7 @@ use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use domain_contracts::{
-    BackendFailure, BackendFailureKind, BackendId, BackendSequence, CapabilitySet,
+    BackendFailure, BackendFailureKind, BackendId, BackendSequence, ByteCount, CapabilitySet,
     DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind, ExecutionDevice,
     FailedLoad, FailedLoadOwner, LoadConfiguration, LoadError, LoadPlan, LoadedModel, MemoryBudget,
     MemoryFootprint, ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelError,
@@ -429,10 +429,7 @@ fn test_runtime_with_counts(
     let limits = RuntimeLimits::new(
         NonZeroU32::MIN,
         NonZeroU32::MIN,
-        MemoryBudget {
-            host_bytes: 1_024,
-            device_bytes: 0,
-        },
+        MemoryBudget::ZERO.with_host_bytes(ByteCount::from_u64(1_024)),
     );
     let configuration = HostedRuntimeConfiguration::new(
         NonZeroUsize::new(4).unwrap_or(NonZeroUsize::MIN),
@@ -514,13 +511,7 @@ fn descriptor() -> ModelDescriptor {
             maximum_sequences: 1,
             maximum_prefill_batch: 1,
         },
-        estimated_footprint: MemoryFootprint {
-            host_weight_bytes: 1,
-            device_weight_bytes: 0,
-            host_working_bytes: 0,
-            device_working_bytes: 0,
-        },
-        sequence_cache_bytes_per_token: 0,
+        estimated_footprint: MemoryFootprint::host_weights(ByteCount::from_u64(1)),
     }
 }
 

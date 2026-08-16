@@ -9,7 +9,7 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use domain_contracts::LoadPlan;
+use domain_contracts::{ByteCount, LoadPlan};
 
 /// Terminal or in-progress stage observed for one Candle load attempt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,9 +57,9 @@ pub struct CandleLoadObservationSnapshot {
     /// Tensor materialization, model construction, and loading sync time.
     pub materialization_duration: Option<Duration>,
     /// Required tensor payload bytes successfully read for materialization.
-    pub required_bytes_read: u64,
+    pub required_bytes_read: ByteCount,
     /// All bytes successfully read into a whole-file identity digest.
-    pub whole_file_verification_bytes_read: u64,
+    pub whole_file_verification_bytes_read: ByteCount,
     /// Accelerator transfer batches started by materialization.
     pub transfer_batches: u64,
     /// Device synchronization calls started inside materialization.
@@ -86,8 +86,8 @@ impl Default for CandleLoadObservationSnapshot {
         Self {
             preparation_duration: None,
             materialization_duration: None,
-            required_bytes_read: 0,
-            whole_file_verification_bytes_read: 0,
+            required_bytes_read: ByteCount::ZERO,
+            whole_file_verification_bytes_read: ByteCount::ZERO,
             transfer_batches: 0,
             loading_device_synchronizations: 0,
             plan: None,
@@ -127,6 +127,16 @@ impl ObservationState {
             false
         } else {
             *counter = u64::MAX;
+            true
+        }
+    }
+
+    fn add_bytes(counter: &mut ByteCount, amount: ByteCount) -> bool {
+        if let Some(total) = counter.checked_add(amount) {
+            *counter = total;
+            false
+        } else {
+            *counter = ByteCount::MAX;
             true
         }
     }
@@ -255,14 +265,14 @@ impl CandleLoadObservationRecorder {
     }
 
     /// Adds bytes read for both required materialization and whole-file hashing.
-    pub(crate) fn required_and_verified_bytes_read(&self, bytes: u64) {
+    pub(crate) fn required_and_verified_bytes_read(&self, bytes: ByteCount) {
         let mut state = lock(&self.shared);
         if !state.require_outcome(CandleLoadObservationOutcome::Materializing) {
             return;
         }
         let required_overflow =
-            ObservationState::add_counter(&mut state.snapshot.required_bytes_read, bytes);
-        let verification_overflow = ObservationState::add_counter(
+            ObservationState::add_bytes(&mut state.snapshot.required_bytes_read, bytes);
+        let verification_overflow = ObservationState::add_bytes(
             &mut state.snapshot.whole_file_verification_bytes_read,
             bytes,
         );
@@ -275,7 +285,7 @@ impl CandleLoadObservationRecorder {
     ///
     /// This includes headers, ignored tensor ranges, and any pre-materialization
     /// local identity baseline.
-    pub(crate) fn verification_only_bytes_read(&self, bytes: u64) {
+    pub(crate) fn verification_only_bytes_read(&self, bytes: ByteCount) {
         let mut state = lock(&self.shared);
         if !matches!(
             state.snapshot.outcome,
@@ -284,7 +294,7 @@ impl CandleLoadObservationRecorder {
             state.record_error();
             return;
         }
-        if ObservationState::add_counter(
+        if ObservationState::add_bytes(
             &mut state.snapshot.whole_file_verification_bytes_read,
             bytes,
         ) {
@@ -373,10 +383,10 @@ fn lock(shared: &SharedObservation) -> MutexGuard<'_, ObservationState> {
 #[cfg(test)]
 mod tests {
     use domain_contracts::{
-        BackendId, CapabilitySet, DeviceId, DeviceKind, ExecutionDevice, LoadConfiguration,
-        LoadPlan, MemoryBudget, MemoryFootprint, ModelArchitecture, ModelCapabilities,
-        ModelDescriptor, ModelGeneration, ModelHandle, ModelId, ModelMetadata, QuantizationFormat,
-        ScalarType, ScalarTypeSet,
+        BackendId, ByteCount, CapabilitySet, DeviceId, DeviceKind, ExecutionDevice,
+        LoadConfiguration, LoadPlan, MemoryBudget, MemoryFootprint, ModelArchitecture,
+        ModelCapabilities, ModelDescriptor, ModelGeneration, ModelHandle, ModelId, ModelMetadata,
+        QuantizationFormat, ScalarType, ScalarTypeSet,
     };
 
     use super::{CandleLoadCleanupOutcome, CandleLoadObservation, CandleLoadObservationOutcome};
@@ -385,13 +395,16 @@ mod tests {
     fn preparation_failure_is_terminal_without_cleanup() {
         let (observation, recorder) = CandleLoadObservation::channel();
         recorder.preparation_started();
-        recorder.verification_only_bytes_read(41);
+        recorder.verification_only_bytes_read(ByteCount::from_u64(41));
         recorder.preparation_failed();
 
         let snapshot = observation.snapshot();
         assert!(snapshot.preparation_duration.is_some());
         assert!(snapshot.materialization_duration.is_none());
-        assert_eq!(snapshot.whole_file_verification_bytes_read, 41);
+        assert_eq!(
+            snapshot.whole_file_verification_bytes_read,
+            ByteCount::from_u64(41)
+        );
         assert_eq!(
             snapshot.outcome,
             CandleLoadObservationOutcome::PreparationFailed
@@ -410,7 +423,7 @@ mod tests {
         recorder.preparation_started();
         recorder.preparation_succeeded(&plan);
         recorder.materialization_started();
-        recorder.required_and_verified_bytes_read(80);
+        recorder.required_and_verified_bytes_read(ByteCount::from_u64(80));
         recorder.transfer_batches_started(2);
         recorder.loading_device_synchronizations_started(2);
         recorder.materialization_failed();
@@ -421,7 +434,7 @@ mod tests {
         recorder.cleanup_succeeded();
         let after_success = observation.snapshot();
 
-        assert_eq!(after_failure.required_bytes_read, 80);
+        assert_eq!(after_failure.required_bytes_read, ByteCount::from_u64(80));
         assert_eq!(after_failure.transfer_batches, 2);
         assert_eq!(after_failure.loading_device_synchronizations, 2);
         assert_eq!(after_failure.cleanup_attempts, 1);
@@ -430,7 +443,7 @@ mod tests {
             after_failure.cleanup_outcome,
             CandleLoadCleanupOutcome::Failed
         );
-        assert_eq!(after_success.required_bytes_read, 80);
+        assert_eq!(after_success.required_bytes_read, ByteCount::from_u64(80));
         assert_eq!(after_success.transfer_batches, 2);
         assert_eq!(after_success.loading_device_synchronizations, 2);
         assert_eq!(after_success.cleanup_attempts, 2);
@@ -446,11 +459,11 @@ mod tests {
     fn counters_saturate_and_invalidate_evidence_without_panicking() {
         let (observation, recorder) = CandleLoadObservation::channel();
         recorder.preparation_started();
-        recorder.verification_only_bytes_read(u64::MAX);
-        recorder.verification_only_bytes_read(1);
+        recorder.verification_only_bytes_read(ByteCount::MAX);
+        recorder.verification_only_bytes_read(ByteCount::from_u64(1));
 
         let snapshot = observation.snapshot();
-        assert_eq!(snapshot.whole_file_verification_bytes_read, u64::MAX);
+        assert_eq!(snapshot.whole_file_verification_bytes_read, ByteCount::MAX);
         assert_eq!(snapshot.recording_errors, 1);
     }
 
@@ -464,20 +477,12 @@ mod tests {
 
     fn fixture_plan() -> LoadPlan {
         let execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda);
-        let final_footprint = MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 4_096,
-            host_working_bytes: 0,
-            device_working_bytes: 0,
-        };
+        let final_footprint = MemoryFootprint::device_weights(ByteCount::from_u64(4_096));
         LoadPlan {
             accepted_configuration: LoadConfiguration {
                 handle: ModelHandle::new(ModelId::new(7), ModelGeneration::new(1)),
                 execution_device,
-                memory_budget: MemoryBudget {
-                    host_bytes: u64::MAX,
-                    device_bytes: u64::MAX,
-                },
+                memory_budget: MemoryBudget::UNLIMITED,
             },
             descriptor: ModelDescriptor {
                 backend: BackendId::new(10_001),
@@ -496,16 +501,11 @@ mod tests {
                     maximum_prefill_batch: 32,
                 },
                 estimated_footprint: final_footprint,
-                sequence_cache_bytes_per_token: 64,
             },
             execution_scalar_type: ScalarType::F32,
             final_footprint,
-            loading_peak_footprint: MemoryFootprint {
-                host_weight_bytes: 0,
-                device_weight_bytes: 4_096,
-                host_working_bytes: 1_024,
-                device_working_bytes: 0,
-            },
+            loading_peak_footprint: final_footprint
+                .with_host_working_bytes(ByteCount::from_u64(1_024)),
         }
     }
 }

@@ -143,10 +143,10 @@ pub(super) fn validate_active_snapshot(
         checked_add_footprints(loaded_footprint, request_footprint, checkpoint)?;
     let generation_workspace = runtime.reserved_generation_workspace;
     let exact_generation_workspace = runtime.generation_workspaces == 1
-        && generation_workspace.host_weight_bytes == 0
-        && generation_workspace.device_weight_bytes == 0
-        && generation_workspace.host_working_bytes != 0
-        && generation_workspace.device_working_bytes == 0
+        && generation_workspace.host_weight_bytes().is_zero()
+        && generation_workspace.device_weight_bytes().is_zero()
+        && !generation_workspace.host_working_bytes().is_zero()
+        && generation_workspace.device_working_bytes().is_zero()
         && footprint_contains(request_footprint, generation_workspace);
     if runtime.loaded_models != 1
         || runtime.active_requests != 1

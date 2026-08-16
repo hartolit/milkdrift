@@ -88,7 +88,6 @@ impl CandleLlamaModel {
             self.dtype,
             self.execution_device.kind,
             configuration,
-            self.descriptor.sequence_cache_bytes_per_token,
         )
     }
 
@@ -629,10 +628,13 @@ mod tests {
                     NonZeroU32::new(16).unwrap_or(NonZeroU32::MIN),
                     NonZeroU32::new(8).unwrap_or(NonZeroU32::MIN),
                 ),
-                cache_bytes_per_token,
             )
             .map_err(|error| format!("calculate sequence reservation: {error:?}"))?;
-            assert!(reservation.is_consistent());
+            let summed = reservation
+                .persistent_footprint()
+                .checked_add(reservation.transient_footprint())
+                .ok_or_else(|| "reservation sum overflowed".to_owned())?;
+            assert_eq!(reservation.total_footprint(), summed);
 
             let model = conformance_model(&config, DType::F32)?;
             let mut cache = Cache::new(true, DType::F32, &config, &Device::Cpu)

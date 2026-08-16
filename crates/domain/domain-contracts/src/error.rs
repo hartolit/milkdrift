@@ -1,6 +1,6 @@
 //! Allocation-free error taxonomy shared by engines and backend adapters.
 
-use crate::{BackendId, CancellationReason, CapacityExhausted, MemoryKind, ScalarType};
+use crate::{BackendId, ByteCount, CancellationReason, CapacityExhausted, MemoryKind, ScalarType};
 
 /// Stable classification of a backend-native failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -261,9 +261,9 @@ pub enum LoadError {
         /// Memory domain whose bound was exceeded.
         kind: MemoryKind,
         /// Required bytes.
-        required_bytes: u64,
+        required_bytes: ByteCount,
         /// Available bytes.
-        available_bytes: u64,
+        available_bytes: ByteCount,
     },
     /// Loading was cancelled.
     Cancelled(CancellationReason),

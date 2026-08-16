@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use candle_backend::{CandleLlamaLoader, CandleLlamaSource};
 use domain_contracts::{
-    BackendId, CancellationReason, DeviceId, DeviceKind, ExecutionDevice, FinishReason,
+    BackendId, ByteCount, CancellationReason, DeviceId, DeviceKind, ExecutionDevice, FinishReason,
     MemoryBudget, MemoryFootprint, ModelArchitecture, ModelHandle, ModelId, RequestId,
     SequenceConfiguration, SequenceId, TokenId, UnloadPolicy,
 };
@@ -216,10 +216,7 @@ fn hosted_runtime() -> SmokeResult<(HostedRuntime<CandleLlamaSource>, RuntimeThr
         RuntimeLimits::new(
             NonZeroU32::MIN,
             NonZeroU32::new(2).ok_or_else(|| SmokeError::runtime("request limit is zero"))?,
-            MemoryBudget {
-                host_bytes: u64::MAX,
-                device_bytes: 0,
-            },
+            MemoryBudget::ZERO.with_host_bytes(ByteCount::MAX),
         ),
         configuration,
     )

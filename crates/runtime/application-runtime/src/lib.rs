@@ -133,7 +133,7 @@ pub use conversation::{
     ResponseAttemptState,
 };
 
-pub use domain_contracts::MemoryFootprint;
+pub use domain_contracts::{ByteCount, MemoryFootprint};
 pub use error::{
     ApplicationConfigurationField, ApplicationError, ApplicationFailure, ApplicationFailureKind,
     ApplicationWorker, GenerationSettingsField,

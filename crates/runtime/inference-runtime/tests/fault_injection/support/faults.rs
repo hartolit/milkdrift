@@ -62,8 +62,6 @@ impl Faults {
     pub(crate) const UNDERREPORTED_SEQUENCE_REPORT: Self = Self(1 << 42);
     pub(crate) const OVERREPORTED_SEQUENCE_REPORT: Self = Self(1 << 43);
     pub(crate) const RECLASSIFIED_SEQUENCE_REPORT: Self = Self(1 << 44);
-    pub(crate) const OVERFLOWING_SEQUENCE_PLAN: Self = Self(1 << 45);
-    pub(crate) const INCONSISTENT_SEQUENCE_PLAN: Self = Self(1 << 46);
     pub(crate) const MUTATE_SEQUENCE_REPORT_ON_CLEANUP_FAILURE: Self = Self(1 << 47);
     pub(crate) const MUTATE_SEQUENCE_REPORT_AFTER_PREFILL: Self = Self(1 << 48);
     pub(crate) const MUTATE_SEQUENCE_ID_ON_CLEANUP_FAILURE: Self = Self(1 << 49);

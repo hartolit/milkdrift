@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use domain_contracts::{
-    CancellationReason, FinishReason, MemoryFootprint, ModelGeneration, ModelHandle, ModelId,
-    RequestId,
+    ByteCount, CancellationReason, FinishReason, MemoryFootprint, ModelGeneration, ModelHandle,
+    ModelId, RequestId,
 };
 use hf_hub_adapter::{
     ArtifactContentIdentity, ArtifactContentIdentityAuthority, ArtifactContentKind,
@@ -37,12 +37,7 @@ pub(super) const TEST_POLL: Duration = Duration::from_millis(1);
 pub(super) const TEST_CUDA_MEMORY_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 pub(super) const CUDA_ZERO: ApplicationDevice = ApplicationDevice::Cuda { ordinal: 0 };
 
-const EMPTY_FOOTPRINT: MemoryFootprint = MemoryFootprint {
-    host_weight_bytes: 0,
-    device_weight_bytes: 0,
-    host_working_bytes: 0,
-    device_working_bytes: 0,
-};
+const EMPTY_FOOTPRINT: MemoryFootprint = MemoryFootprint::ZERO;
 const CANDLE_FIXTURE_WEIGHT_BYTES: u64 = 4_800;
 const CANDLE_FIXTURE_WEIGHT_SHA256: [u8; 32] = [
     0xcc, 0x47, 0x98, 0xaf, 0x93, 0x48, 0x8b, 0x4f, 0xb2, 0xae, 0x05, 0x48, 0xc2, 0xb2, 0x8a, 0xce,
@@ -164,7 +159,7 @@ where
 pub(super) const fn default_test_configuration(
     configuration: &mut ApplicationRuntimeConfiguration,
 ) {
-    configuration.defaults.maximum_host_memory_bytes = u64::MAX;
+    configuration.defaults.maximum_host_memory_bytes = ByteCount::MAX;
     configuration.defaults.drain_timeout_milliseconds = 5_000;
     configuration.timing.runtime_poll = TEST_POLL;
     configuration.timing.hub_worker_poll = TEST_POLL;

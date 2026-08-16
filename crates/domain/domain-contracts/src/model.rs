@@ -2,7 +2,7 @@
 
 use core::num::NonZeroU32;
 
-use crate::{BackendId, DeviceId, ModelHandle};
+use crate::{BackendId, ByteCount, DeviceId, ModelHandle};
 
 /// Model architecture family understood by adapters and schedulers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -230,17 +230,97 @@ pub struct ModelCapabilities {
 /// field explicitly defines otherwise.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MemoryFootprint {
-    /// Host-resident weight tensor ownership.
-    pub host_weight_bytes: u64,
-    /// Device-resident weight tensor ownership.
-    pub device_weight_bytes: u64,
-    /// Host working payload ownership or reservation headroom excluding weights.
-    pub host_working_bytes: u64,
-    /// Device working payload ownership or reservation headroom excluding weights.
-    pub device_working_bytes: u64,
+    host_weight_bytes: ByteCount,
+    device_weight_bytes: ByteCount,
+    host_working_bytes: ByteCount,
+    device_working_bytes: ByteCount,
 }
 
 impl MemoryFootprint {
+    /// Empty deterministic ownership.
+    pub const ZERO: Self = Self {
+        host_weight_bytes: ByteCount::ZERO,
+        device_weight_bytes: ByteCount::ZERO,
+        host_working_bytes: ByteCount::ZERO,
+        device_working_bytes: ByteCount::ZERO,
+    };
+
+    /// Returns a footprint containing only host-resident weights.
+    #[must_use]
+    pub const fn host_weights(bytes: ByteCount) -> Self {
+        Self::ZERO.with_host_weight_bytes(bytes)
+    }
+
+    /// Returns a footprint containing only device-resident weights.
+    #[must_use]
+    pub const fn device_weights(bytes: ByteCount) -> Self {
+        Self::ZERO.with_device_weight_bytes(bytes)
+    }
+
+    /// Returns a footprint containing only host working payload.
+    #[must_use]
+    pub const fn host_working(bytes: ByteCount) -> Self {
+        Self::ZERO.with_host_working_bytes(bytes)
+    }
+
+    /// Returns a footprint containing only device working payload.
+    #[must_use]
+    pub const fn device_working(bytes: ByteCount) -> Self {
+        Self::ZERO.with_device_working_bytes(bytes)
+    }
+
+    /// Replaces the host-resident weight component.
+    #[must_use]
+    pub const fn with_host_weight_bytes(mut self, bytes: ByteCount) -> Self {
+        self.host_weight_bytes = bytes;
+        self
+    }
+
+    /// Replaces the device-resident weight component.
+    #[must_use]
+    pub const fn with_device_weight_bytes(mut self, bytes: ByteCount) -> Self {
+        self.device_weight_bytes = bytes;
+        self
+    }
+
+    /// Replaces the host working component.
+    #[must_use]
+    pub const fn with_host_working_bytes(mut self, bytes: ByteCount) -> Self {
+        self.host_working_bytes = bytes;
+        self
+    }
+
+    /// Replaces the device working component.
+    #[must_use]
+    pub const fn with_device_working_bytes(mut self, bytes: ByteCount) -> Self {
+        self.device_working_bytes = bytes;
+        self
+    }
+
+    /// Returns host-resident weight ownership.
+    #[must_use]
+    pub const fn host_weight_bytes(self) -> ByteCount {
+        self.host_weight_bytes
+    }
+
+    /// Returns device-resident weight ownership.
+    #[must_use]
+    pub const fn device_weight_bytes(self) -> ByteCount {
+        self.device_weight_bytes
+    }
+
+    /// Returns host working payload ownership or reservation.
+    #[must_use]
+    pub const fn host_working_bytes(self) -> ByteCount {
+        self.host_working_bytes
+    }
+
+    /// Returns device working payload ownership or reservation.
+    #[must_use]
+    pub const fn device_working_bytes(self) -> ByteCount {
+        self.device_working_bytes
+    }
+
     /// Returns the exact component-wise sum, or `None` if any component overflows.
     #[must_use]
     pub const fn checked_add(self, other: Self) -> Option<Self> {
@@ -299,47 +379,45 @@ impl MemoryFootprint {
     #[must_use]
     pub const fn component_max(self, other: Self) -> Self {
         Self {
-            host_weight_bytes: if self.host_weight_bytes >= other.host_weight_bytes {
-                self.host_weight_bytes
-            } else {
-                other.host_weight_bytes
-            },
-            device_weight_bytes: if self.device_weight_bytes >= other.device_weight_bytes {
-                self.device_weight_bytes
-            } else {
-                other.device_weight_bytes
-            },
-            host_working_bytes: if self.host_working_bytes >= other.host_working_bytes {
-                self.host_working_bytes
-            } else {
-                other.host_working_bytes
-            },
-            device_working_bytes: if self.device_working_bytes >= other.device_working_bytes {
-                self.device_working_bytes
-            } else {
-                other.device_working_bytes
-            },
+            host_weight_bytes: self
+                .host_weight_bytes
+                .component_max(other.host_weight_bytes),
+            device_weight_bytes: self
+                .device_weight_bytes
+                .component_max(other.device_weight_bytes),
+            host_working_bytes: self
+                .host_working_bytes
+                .component_max(other.host_working_bytes),
+            device_working_bytes: self
+                .device_working_bytes
+                .component_max(other.device_working_bytes),
         }
     }
 
     /// Returns whether every component is at least the corresponding required component.
     #[must_use]
     pub const fn contains_components(self, required: Self) -> bool {
-        self.host_weight_bytes >= required.host_weight_bytes
-            && self.device_weight_bytes >= required.device_weight_bytes
-            && self.host_working_bytes >= required.host_working_bytes
-            && self.device_working_bytes >= required.device_working_bytes
+        self.host_weight_bytes.contains(required.host_weight_bytes)
+            && self
+                .device_weight_bytes
+                .contains(required.device_weight_bytes)
+            && self
+                .host_working_bytes
+                .contains(required.host_working_bytes)
+            && self
+                .device_working_bytes
+                .contains(required.device_working_bytes)
     }
 
     /// Returns the exact host byte total, or `None` on overflow.
     #[must_use]
-    pub const fn checked_host_bytes(self) -> Option<u64> {
+    pub const fn checked_host_bytes(self) -> Option<ByteCount> {
         self.host_weight_bytes.checked_add(self.host_working_bytes)
     }
 
     /// Returns the exact device byte total, or `None` on overflow.
     #[must_use]
-    pub const fn checked_device_bytes(self) -> Option<u64> {
+    pub const fn checked_device_bytes(self) -> Option<ByteCount> {
         self.device_weight_bytes
             .checked_add(self.device_working_bytes)
     }
@@ -357,10 +435,48 @@ pub enum MemoryKind {
 /// Admission-control budget supplied by the engine.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MemoryBudget {
-    /// Maximum host bytes available for the operation.
-    pub host_bytes: u64,
-    /// Maximum device bytes available for the operation.
-    pub device_bytes: u64,
+    host_bytes: ByteCount,
+    device_bytes: ByteCount,
+}
+
+impl MemoryBudget {
+    /// Empty admission budget.
+    pub const ZERO: Self = Self {
+        host_bytes: ByteCount::ZERO,
+        device_bytes: ByteCount::ZERO,
+    };
+
+    /// An unbounded-by-policy budget in both portable memory domains.
+    pub const UNLIMITED: Self = Self {
+        host_bytes: ByteCount::MAX,
+        device_bytes: ByteCount::MAX,
+    };
+
+    /// Replaces the host-memory limit.
+    #[must_use]
+    pub const fn with_host_bytes(mut self, bytes: ByteCount) -> Self {
+        self.host_bytes = bytes;
+        self
+    }
+
+    /// Replaces the device-memory limit.
+    #[must_use]
+    pub const fn with_device_bytes(mut self, bytes: ByteCount) -> Self {
+        self.device_bytes = bytes;
+        self
+    }
+
+    /// Returns the host-memory limit.
+    #[must_use]
+    pub const fn host_bytes(self) -> ByteCount {
+        self.host_bytes
+    }
+
+    /// Returns the device-memory limit.
+    #[must_use]
+    pub const fn device_bytes(self) -> ByteCount {
+        self.device_bytes
+    }
 }
 
 /// Immutable model metadata exposed after inspection or load.
@@ -400,12 +516,6 @@ pub struct ModelDescriptor {
     pub capabilities: ModelCapabilities,
     /// Inspection-phase, device-independent deterministic tensor footprint estimate.
     pub estimated_footprint: MemoryFootprint,
-    /// Deterministic sequence-cache planning rate in bytes per token.
-    ///
-    /// This coefficient scales a requested maximum sequence length during
-    /// sequence planning. It is a rate, not current byte ownership, reserved
-    /// capacity, or a component of [`Self::estimated_footprint`].
-    pub sequence_cache_bytes_per_token: u64,
 }
 
 /// Cold-path configuration for loading one model instance.
@@ -475,12 +585,9 @@ impl SequenceConfiguration {
 /// and other non-deterministic observations are also outside this contract.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SequenceReservation {
-    /// Maximum sequence-owned payload retained between backend calls.
-    pub persistent_footprint: MemoryFootprint,
-    /// Maximum additional payload/headroom covered during creation or execution.
-    pub transient_footprint: MemoryFootprint,
-    /// Checked sum of persistent and transient footprints admitted by E0.
-    pub total_footprint: MemoryFootprint,
+    persistent_footprint: MemoryFootprint,
+    transient_footprint: MemoryFootprint,
+    total_footprint: MemoryFootprint,
 }
 
 impl SequenceReservation {
@@ -490,26 +597,45 @@ impl SequenceReservation {
         persistent_footprint: MemoryFootprint,
         transient_footprint: MemoryFootprint,
     ) -> Option<Self> {
+        if persistent_footprint.checked_host_bytes().is_none()
+            || persistent_footprint.checked_device_bytes().is_none()
+            || transient_footprint.checked_host_bytes().is_none()
+            || transient_footprint.checked_device_bytes().is_none()
+        {
+            return None;
+        }
         match persistent_footprint.checked_add(transient_footprint) {
-            Some(total_footprint) => Some(Self {
-                persistent_footprint,
-                transient_footprint,
-                total_footprint,
-            }),
+            Some(total_footprint)
+                if total_footprint.checked_host_bytes().is_some()
+                    && total_footprint.checked_device_bytes().is_some() =>
+            {
+                Some(Self {
+                    persistent_footprint,
+                    transient_footprint,
+                    total_footprint,
+                })
+            }
             None => None,
+            Some(_) => None,
         }
     }
 
-    /// Returns whether the reported aggregate equals the checked component sum.
+    /// Returns the persistent payload retained between calls.
     #[must_use]
-    pub fn is_consistent(self) -> bool {
-        match self
-            .persistent_footprint
-            .checked_add(self.transient_footprint)
-        {
-            Some(total) => total == self.total_footprint,
-            None => false,
-        }
+    pub const fn persistent_footprint(self) -> MemoryFootprint {
+        self.persistent_footprint
+    }
+
+    /// Returns the additional transient payload covered by the reservation.
+    #[must_use]
+    pub const fn transient_footprint(self) -> MemoryFootprint {
+        self.transient_footprint
+    }
+
+    /// Returns the constructor-owned checked aggregate reservation.
+    #[must_use]
+    pub const fn total_footprint(self) -> MemoryFootprint {
+        self.total_footprint
     }
 }
 

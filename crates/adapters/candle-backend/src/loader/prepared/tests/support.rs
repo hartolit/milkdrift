@@ -335,7 +335,6 @@ pub(crate) fn test_prepared(
             maximum_prefill_batch: 16,
         },
         estimated_footprint: MemoryFootprint::default(),
-        sequence_cache_bytes_per_token: 0,
     };
     let plan = LoadPlan {
         accepted_configuration: LoadConfiguration {

@@ -83,11 +83,14 @@ pub(super) fn source_tensor(
 }
 
 pub(super) fn verification_buffer(backend: BackendId) -> Result<Vec<u8>, LoadError> {
+    let capacity = VERIFICATION_BUFFER_BYTES
+        .checked_to_usize()
+        .ok_or_else(|| numeric_error(backend))?;
     let mut buffer = Vec::new();
     buffer
-        .try_reserve_exact(VERIFICATION_BUFFER_BYTES)
+        .try_reserve_exact(capacity)
         .map_err(|_| host_memory_failure(backend, CODE_INSPECTION_ALLOCATION))?;
-    buffer.resize(VERIFICATION_BUFFER_BYTES, 0);
+    buffer.resize(capacity, 0);
     Ok(buffer)
 }
 

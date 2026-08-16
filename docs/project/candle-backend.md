@@ -133,7 +133,7 @@ primary diagnostic.
 
 ## Final and loading-peak formulas
 
-`MemoryFootprint` contains deterministic concrete required-tensor bytes, aligned payload allocation bounds, the fixed 64 KiB verification buffer that is live during shard materialization, and the actual retained heap capacities of the accelerator plan/owner vectors. The exact sequence-cache bytes-per-token rate is stored separately in `ModelDescriptor`; the complete sequence reservation is described below. Parsed config/header/inspection metadata and required-name/load-map metadata are independently capped by the limits above. Required maps cannot exceed 16,384 entries or 8 MiB aggregate names, and entry names move from the bounded manifest through the batch into the final map rather than acquiring another string allocation. Map buckets, additional tensor handles outside the counted plan/owner vector allocations, allocator bookkeeping/fragmentation, driver/context allocation, process RSS, and whole-device observations remain outside the logical tensor footprint.
+`MemoryFootprint` contains deterministic concrete required-tensor bytes, aligned payload allocation bounds, the fixed 64 KiB verification buffer that is live during shard materialization, and the actual retained heap capacities of the accelerator plan/owner vectors. Its components, budgets, device observations, and failure byte reports use the portable `ByteCount` contract; conversion to `usize` occurs only at allocation and slice boundaries. Inspection does not publish an execution-specific cache rate. The loaded Candle model derives each concrete sequence reservation from its validated Llama geometry and selected execution scalar/device. Parsed config/header/inspection metadata and required-name/load-map metadata are independently capped by the limits above. Required maps cannot exceed 16,384 entries or 8 MiB aggregate names, and entry names move from the bounded manifest through the batch into the final map rather than acquiring another string allocation. Map buckets, additional tensor handles outside the counted plan/owner vector allocations, allocator bookkeeping/fragmentation, driver/context allocation, process RSS, and whole-device observations remain outside the logical tensor footprint.
 
 For each required tensor `i` in materialization order:
 
@@ -145,8 +145,7 @@ For each required tensor `i` in materialization order:
 - `V = 64 KiB` is the shard-verification buffer;
 - `M_plan = capacity(TransferPlan.batches) × size_of::<TransferBatchPlan>() + capacity(TransferPlan.entries) × size_of::<TransferEntryPlan>()`;
 - `M_owner = capacity(TransferBatchOwner.entries) × size_of::<TransferBatchEntry>()`;
-- `M = M_plan + M_owner`, using the actual checked capacities retained by the preparation;
-- and `C = layers × 2 × key_value_heads × head_dimension × execution_width` is cache bytes per token.
+- and `M = M_plan + M_owner`, using the actual checked capacities retained by the preparation.
 
 Unused tensors enter no formula. All arithmetic is checked.
 
@@ -195,11 +194,14 @@ CUDA is the currently implemented accelerator path. The partition, batch owner, 
 
 ## Sequence reservation follows simultaneous lifetimes
 
-`SequencePlan::reservation` is a `SequenceReservation` with three explicit facts:
+`SequencePlan::reservation` is a `SequenceReservation` constructed from two independent facts:
 
 - `persistent_footprint` is maximum sequence-owned logical payload retained between backend calls;
-- `transient_footprint` is additional creation or one-call logical-payload/source-transfer headroom; and
-- `total_footprint` is their checked component-wise sum and is the value E0 admits before native creation.
+- `transient_footprint` is additional creation or one-call logical-payload/source-transfer headroom.
+
+The checked constructor privately caches their component-wise sum. Callers can read
+`total_footprint`, but cannot supply or mutate it, so an inconsistent reservation is
+unrepresentable. The complete total is the value E0 admits before native creation.
 
 Caller-owned logits, sampling, token history, stop matching, output queues, and terminal records are accounted separately by E0. RSS/VRAM, allocator size classes and fragmentation, pools, CUDA contexts, kernel/library workspaces, stacks, and driver observations are not deterministic logical payload and are not included. The component arithmetic is exact for the documented upper-bound model; it is not an instantaneous allocator measurement.
 

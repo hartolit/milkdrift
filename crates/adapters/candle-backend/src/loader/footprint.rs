@@ -1,15 +1,14 @@
-//! Exact required-tensor load phases and sequence cache-rate calculation.
+//! Exact required-tensor load phases and budget validation.
 
 use candle_core::DType;
-use candle_transformers::models::llama::Config;
 use domain_contracts::{
-    BackendId, DeviceKind, LoadError, MemoryBudget, MemoryFootprint, MemoryKind,
+    BackendId, ByteCount, DeviceKind, LoadError, MemoryBudget, MemoryFootprint, MemoryKind,
 };
 
 use super::manifest::InspectedShard;
 use super::math::{execution_dtype_bytes, numeric_overflow};
 use super::transfer_plan::TransferPlan;
-use super::{VERIFICATION_BUFFER_BYTES_U64, unsupported_scalar};
+use super::{VERIFICATION_BUFFER_BYTES, unsupported_scalar};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct CalculatedFootprints {
@@ -28,7 +27,8 @@ pub(super) fn calculate(
     let execution_width =
         execution_dtype_bytes(execution_dtype).ok_or_else(|| unsupported_scalar(backend))?;
     let mut required_execution_bytes = 0_u64;
-    let mut host_peak = VERIFICATION_BUFFER_BYTES_U64;
+    let verification_buffer_bytes = VERIFICATION_BUFFER_BYTES.as_u64();
+    let mut host_peak = verification_buffer_bytes;
 
     for tensor in shards
         .iter()
@@ -60,14 +60,14 @@ pub(super) fn calculate(
                 let raw_peak = required_execution_bytes
                     .checked_add(aligned_staging)
                     .and_then(|bytes| bytes.checked_add(tensor.source_bytes))
-                    .and_then(|bytes| bytes.checked_add(VERIFICATION_BUFFER_BYTES_U64))
+                    .and_then(|bytes| bytes.checked_add(verification_buffer_bytes))
                     .ok_or_else(|| numeric_overflow(backend))?;
                 host_peak = host_peak.max(raw_peak);
                 if source_dtype != execution_dtype {
                     let cast_peak = required_execution_bytes
                         .checked_add(tensor.source_bytes)
                         .and_then(|bytes| bytes.checked_add(execution_bytes))
-                        .and_then(|bytes| bytes.checked_add(VERIFICATION_BUFFER_BYTES_U64))
+                        .and_then(|bytes| bytes.checked_add(verification_buffer_bytes))
                         .ok_or_else(|| numeric_overflow(backend))?;
                     host_peak = host_peak.max(cast_peak);
                 }
@@ -87,7 +87,7 @@ pub(super) fn calculate(
             if transfer_plan.total_execution_bytes() != required_execution_bytes {
                 return Err(numeric_overflow(backend));
             }
-            let host_peak = VERIFICATION_BUFFER_BYTES_U64
+            let host_peak = verification_buffer_bytes
                 .checked_add(transfer_plan.maximum_host_staging_bytes())
                 .and_then(|bytes| bytes.checked_add(transfer_plan.metadata_bytes()))
                 .and_then(|bytes| bytes.checked_add(transfer_owner_metadata_bytes))
@@ -108,35 +108,25 @@ fn cpu_footprints(
         .checked_sub(required_execution_bytes)
         .ok_or_else(|| numeric_overflow(backend))?;
     Ok(CalculatedFootprints {
-        final_footprint: MemoryFootprint {
-            host_weight_bytes: required_execution_bytes,
-            device_weight_bytes: 0,
-            host_working_bytes: 0,
-            device_working_bytes: 0,
-        },
-        loading_peak_footprint: MemoryFootprint {
-            host_weight_bytes: required_execution_bytes,
-            device_weight_bytes: 0,
-            host_working_bytes,
-            device_working_bytes: 0,
-        },
+        final_footprint: MemoryFootprint::host_weights(ByteCount::from_u64(
+            required_execution_bytes,
+        )),
+        loading_peak_footprint: MemoryFootprint::host_weights(ByteCount::from_u64(
+            required_execution_bytes,
+        ))
+        .with_host_working_bytes(ByteCount::from_u64(host_working_bytes)),
     })
 }
 
 const fn cuda_footprints(required_execution_bytes: u64, host_peak: u64) -> CalculatedFootprints {
     CalculatedFootprints {
-        final_footprint: MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: required_execution_bytes,
-            host_working_bytes: 0,
-            device_working_bytes: 0,
-        },
-        loading_peak_footprint: MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: required_execution_bytes,
-            host_working_bytes: host_peak,
-            device_working_bytes: 0,
-        },
+        final_footprint: MemoryFootprint::device_weights(ByteCount::from_u64(
+            required_execution_bytes,
+        )),
+        loading_peak_footprint: MemoryFootprint::device_weights(ByteCount::from_u64(
+            required_execution_bytes,
+        ))
+        .with_host_working_bytes(ByteCount::from_u64(host_peak)),
     }
 }
 
@@ -144,30 +134,30 @@ pub(super) fn validate_memory_plan(
     backend: BackendId,
     footprint: MemoryFootprint,
     budget: MemoryBudget,
-    currently_available_device_bytes: Option<u64>,
+    currently_available_device_bytes: Option<ByteCount>,
 ) -> Result<(), LoadError> {
     let required_host = footprint
         .checked_host_bytes()
         .ok_or_else(|| numeric_overflow(backend))?;
-    if required_host > budget.host_bytes {
+    if !budget.host_bytes().contains(required_host) {
         return Err(LoadError::InsufficientMemory {
             kind: MemoryKind::Host,
             required_bytes: required_host,
-            available_bytes: budget.host_bytes,
+            available_bytes: budget.host_bytes(),
         });
     }
     let required_device = footprint
         .checked_device_bytes()
         .ok_or_else(|| numeric_overflow(backend))?;
-    if required_device > budget.device_bytes {
+    if !budget.device_bytes().contains(required_device) {
         return Err(LoadError::InsufficientMemory {
             kind: MemoryKind::Device,
             required_bytes: required_device,
-            available_bytes: budget.device_bytes,
+            available_bytes: budget.device_bytes(),
         });
     }
     if let Some(available) = currently_available_device_bytes
-        && required_device > available
+        && !available.contains(required_device)
     {
         return Err(LoadError::InsufficientMemory {
             kind: MemoryKind::Device,
@@ -178,45 +168,16 @@ pub(super) fn validate_memory_plan(
     Ok(())
 }
 
-pub(super) fn sequence_cache_bytes_per_token(
-    backend: BackendId,
-    config: &Config,
-    execution_dtype: DType,
-) -> Result<u64, LoadError> {
-    let scalar_bytes =
-        execution_dtype_bytes(execution_dtype).ok_or_else(|| unsupported_scalar(backend))?;
-    let head_dimension = config
-        .hidden_size
-        .checked_div(config.num_attention_heads)
-        .ok_or_else(|| numeric_overflow(backend))?;
-    let factors = [
-        u64::try_from(config.num_hidden_layers),
-        Ok(2_u64),
-        u64::try_from(config.num_key_value_heads),
-        u64::try_from(head_dimension),
-        Ok(scalar_bytes),
-    ];
-    factors.into_iter().try_fold(1_u64, |total, factor| {
-        let factor = factor.map_err(|_| numeric_overflow(backend))?;
-        total
-            .checked_mul(factor)
-            .ok_or_else(|| numeric_overflow(backend))
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs::File;
 
     use candle_core::DType;
-    use candle_transformers::models::llama::Config;
     use domain_contracts::{
-        BackendId, DeviceKind, LoadError, MemoryBudget, MemoryFootprint, MemoryKind,
+        BackendId, ByteCount, DeviceKind, LoadError, MemoryBudget, MemoryFootprint, MemoryKind,
     };
 
-    use super::{
-        CalculatedFootprints, calculate, sequence_cache_bytes_per_token, validate_memory_plan,
-    };
+    use super::{CalculatedFootprints, calculate, validate_memory_plan};
     use crate::loader::identity::{ContentIdentityEstablishment, EstablishedContentIdentity};
     use crate::loader::manifest::{
         InspectedShard, InspectedTensor, SourceTensorDType, TensorShape,
@@ -231,7 +192,6 @@ mod tests {
             calculation_tensor("required.f32", SourceTensorDType::F32, 4, true)?,
             calculation_tensor("ignored.f64", SourceTensorDType::F64, 10_000, false)?,
         ])?;
-        let config = test_config();
         let backend = BackendId::new(1);
 
         assert_eq!(
@@ -245,18 +205,9 @@ mod tests {
             )
             .map_err(|error| format!("CPU footprint: {error:?}"))?,
             CalculatedFootprints {
-                final_footprint: MemoryFootprint {
-                    host_weight_bytes: 28,
-                    device_weight_bytes: 0,
-                    host_working_bytes: 0,
-                    device_working_bytes: 0,
-                },
-                loading_peak_footprint: MemoryFootprint {
-                    host_weight_bytes: 28,
-                    device_weight_bytes: 0,
-                    host_working_bytes: 65_563,
-                    device_working_bytes: 0,
-                },
+                final_footprint: MemoryFootprint::host_weights(bytes(28)),
+                loading_peak_footprint: MemoryFootprint::host_weights(bytes(28))
+                    .with_host_working_bytes(bytes(65_563)),
             }
         );
         let transfer_plan = TransferPlan::build(backend, std::slice::from_ref(&shard), DType::F16)
@@ -282,29 +233,10 @@ mod tests {
             )
             .map_err(|error| format!("CUDA footprint: {error:?}"))?,
             CalculatedFootprints {
-                final_footprint: MemoryFootprint {
-                    host_weight_bytes: 0,
-                    device_weight_bytes: 28,
-                    host_working_bytes: 0,
-                    device_working_bytes: 0,
-                },
-                loading_peak_footprint: MemoryFootprint {
-                    host_weight_bytes: 0,
-                    device_weight_bytes: 28,
-                    host_working_bytes: expected_cuda_host,
-                    device_working_bytes: 0,
-                },
+                final_footprint: MemoryFootprint::device_weights(bytes(28)),
+                loading_peak_footprint: MemoryFootprint::device_weights(bytes(28))
+                    .with_host_working_bytes(bytes(expected_cuda_host)),
             }
-        );
-        assert_eq!(
-            sequence_cache_bytes_per_token(backend, &config, DType::F16)
-                .map_err(|error| format!("F16 cache rate: {error:?}"))?,
-            32
-        );
-        assert_eq!(
-            sequence_cache_bytes_per_token(backend, &config, DType::F32)
-                .map_err(|error| format!("F32 cache rate: {error:?}"))?,
-            64
         );
         Ok(())
     }
@@ -312,41 +244,22 @@ mod tests {
     #[test]
     fn loading_budget_and_current_device_availability_are_exact() -> Result<(), String> {
         let backend = BackendId::new(1);
-        let footprint = MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 100,
-            host_working_bytes: 50,
-            device_working_bytes: 0,
-        };
-        let exact = MemoryBudget {
-            host_bytes: 50,
-            device_bytes: 100,
-        };
-        validate_memory_plan(backend, footprint, exact, Some(100))
+        let footprint =
+            MemoryFootprint::device_weights(bytes(100)).with_host_working_bytes(bytes(50));
+        let exact = budget(50, 100);
+        validate_memory_plan(backend, footprint, exact, Some(bytes(100)))
             .map_err(|error| format!("exact budget rejected: {error:?}"))?;
 
         for (budget, available, kind, required, observed_available) in [
+            (budget(49, 100), Some(bytes(100)), MemoryKind::Host, 50, 49),
             (
-                MemoryBudget {
-                    host_bytes: 49,
-                    device_bytes: 100,
-                },
-                Some(100),
-                MemoryKind::Host,
-                50,
-                49,
-            ),
-            (
-                MemoryBudget {
-                    host_bytes: 50,
-                    device_bytes: 99,
-                },
-                Some(100),
+                budget(50, 99),
+                Some(bytes(100)),
                 MemoryKind::Device,
                 100,
                 99,
             ),
-            (exact, Some(99), MemoryKind::Device, 100, 99),
+            (exact, Some(bytes(99)), MemoryKind::Device, 100, 99),
         ] {
             let error = validate_memory_plan(backend, footprint, budget, available)
                 .err()
@@ -355,8 +268,8 @@ mod tests {
                 error,
                 LoadError::InsufficientMemory {
                     kind,
-                    required_bytes: required,
-                    available_bytes: observed_available,
+                    required_bytes: bytes(required),
+                    available_bytes: bytes(observed_available),
                 }
             );
         }
@@ -407,22 +320,13 @@ mod tests {
         })
     }
 
-    fn test_config() -> Config {
-        Config {
-            hidden_size: 8,
-            intermediate_size: 16,
-            vocab_size: 16,
-            num_hidden_layers: 1,
-            num_attention_heads: 2,
-            num_key_value_heads: 2,
-            use_flash_attn: false,
-            rms_norm_eps: 1e-5,
-            rope_theta: 10_000.0,
-            bos_token_id: None,
-            eos_token_id: None,
-            rope_scaling: None,
-            max_position_embeddings: 16,
-            tie_word_embeddings: false,
-        }
+    const fn bytes(value: u64) -> ByteCount {
+        ByteCount::from_u64(value)
+    }
+
+    const fn budget(host: u64, device: u64) -> MemoryBudget {
+        MemoryBudget::ZERO
+            .with_host_bytes(bytes(host))
+            .with_device_bytes(bytes(device))
     }
 }

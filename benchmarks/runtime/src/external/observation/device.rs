@@ -395,8 +395,8 @@ fn validate_e1_cpu_summary(summary: &ApplicationDeviceSummary) -> BenchmarkResul
 fn validate_e1_cuda_summary(summary: &ApplicationDeviceSummary) -> BenchmarkResult {
     validate_e1_cuda_fields(
         summary.display_name(),
-        summary.total_memory_bytes(),
-        summary.available_memory_bytes(),
+        summary.total_memory_bytes().map(|bytes| bytes.as_u64()),
+        summary.available_memory_bytes().map(|bytes| bytes.as_u64()),
         summary.compute_capability(),
     )
 }

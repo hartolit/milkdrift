@@ -52,7 +52,9 @@ shutdown()
 Candle, Safetensors, `hf-hub`, redb, Flume, or frontend toolkit values.
 `ApplicationDeviceSummary` contains structured device identity and observations,
 including an optional backend-reported `display_name`; E1 does not manufacture
-frontend labels.
+frontend labels. Device-memory observations, the startup budget, load footprints,
+and byte-valued application failures use `domain_contracts::ByteCount`; persisted
+preference integers and frontend formatting are explicit raw-value boundaries.
 
 ## Selection and resolution
 

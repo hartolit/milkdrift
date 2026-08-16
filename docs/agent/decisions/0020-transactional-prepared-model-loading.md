@@ -140,7 +140,7 @@ state for retry.
 
 ### Distinguish exact final ownership from the loading peak
 
-`LoadPlan::final_footprint` is exact final required execution-tensor byte ownership. `LoadPlan::loading_peak_footprint` is the exact component-wise deterministic byte peak for selective materialization. `MemoryFootprint` contains only host/device weight and host/device working bytes. `ModelDescriptor::sequence_cache_bytes_per_token` is a separate planning rate used to derive concrete `SequencePlan` ownership; a rate is not current ownership. None of these quantities is physical RSS/VRAM or allocator/driver accounting.
+`LoadPlan::final_footprint` is exact final required execution-tensor byte ownership. `LoadPlan::loading_peak_footprint` is the exact component-wise deterministic byte peak for selective materialization. `MemoryFootprint` contains only host/device weight and host/device working bytes. Inspection is device-independent and publishes no execution-specific cache byte rate; concrete sequence ownership is planned by the loaded model after execution scalar and device selection. None of these quantities is physical RSS/VRAM or allocator/driver accounting. The private byte representation and reservation-construction amendment is owned by ADR-0022.
 
 For required tensor `i`, let:
 
@@ -185,7 +185,7 @@ Haccelerator = M + V + max_b(W_b)
 
 `sum_i(Q_i)` is the post-enqueue retained host payload; `C_b,i + A_i + S_i` is the aligned-payload/source construction phase; and the cast term is the simultaneous prior-batch/source/execution phase. `M` and `V` are additive because the plan/owner capacities remain retained throughout materialization and the verifier remains allocated throughout staging and while the shard-final batch waits for identity verification and then synchronizes/commits. The candidate `W_b` is also the quantity compared with the preferred byte target, so the limit is tied to the actual ownership graph rather than added as a generic margin.
 
-The accelerator final footprint records `R` device weight bytes. The accelerator loading footprint records `Haccelerator` host working bytes, `R` device weight bytes, and zero device working bytes. During commit a batch entry and the final map temporarily hold shallow handles to the same storage; model construction adds another shallow handle before the map is released. These aliases do not duplicate payload, and all transferred-but-uncommitted plus committed storage remains within `R`, so it is classified as device weight ownership rather than inventing device working bytes. The descriptor separately reports the exact sequence-cache byte rate at execution width. Every operation uses checked arithmetic. Parsed config/header/inspection and name/map metadata remain governed by their separate structural ceilings; allocator bookkeeping/fragmentation, driver/context allocation, process RSS, and whole-device observations are not represented as exact ownership.
+The accelerator final footprint records `R` device weight bytes. The accelerator loading footprint records `Haccelerator` host working bytes, `R` device weight bytes, and zero device working bytes. During commit a batch entry and the final map temporarily hold shallow handles to the same storage; model construction adds another shallow handle before the map is released. These aliases do not duplicate payload, and all transferred-but-uncommitted plus committed storage remains within `R`, so it is classified as device weight ownership rather than inventing device working bytes. The loaded model derives the exact sequence reservation at the selected execution width. Every operation uses checked arithmetic. Parsed config/header/inspection and name/map metadata remain governed by their separate structural ceilings; allocator bookkeeping/fragmentation, driver/context allocation, process RSS, and whole-device observations are not represented as exact ownership.
 
 ### Admit the peak at E0 before materialization
 
@@ -276,7 +276,7 @@ No default feature reaches CUDA. Explicit CUDA failure never falls back to CPU. 
 - CPU behavior remains F32→F32, F16→F16, and BF16→F32; CUDA policy remains explicit and capability-checked.
 - Accelerator transfers use deterministic 256 MiB-preferred, 64-entry, shard-bounded batches with an allowed oversized singleton.
 - Normal loading synchronizes once per nonempty transfer batch and not after handle-only Llama construction.
-- Final and loading footprints contain the implemented tensor and verification-buffer bytes; sequence-cache rate is separate, and ignored extras enter neither load footprint.
+- Final and loading footprints contain the implemented tensor and verification-buffer bytes; sequence ownership is planned separately by the loaded model, and ignored extras enter neither load footprint.
 - Failed preparations retain the exact admitted loading peak; verified model unload failures retain exact final ownership.
 - Backend load failures may preserve bounded stage and exact tensor correlation through E0/E1 without exporting adapter inventory; cleanup identity remains separate.
 - Contract-violating complete models retain explicit unverified evidence, block admission, and are never mislabeled exact.

@@ -281,7 +281,7 @@ where
         }
 
         let formerly_exact = self.ownership.exact_footprint();
-        let reported_footprint = reported_plan.reservation.total_footprint;
+        let reported_footprint = reported_plan.reservation.total_footprint();
         let conservative_footprint = match self.ownership {
             RetainedOwnership::Unverified {
                 conservative_footprint,
@@ -289,13 +289,13 @@ where
             } => memory::extend_conservative_footprint(conservative_footprint, reported_footprint),
             RetainedOwnership::Exact(_) | RetainedOwnership::Released => {
                 memory::conservative_footprint(
-                    self.accepted_plan.reservation.total_footprint,
+                    self.accepted_plan.reservation.total_footprint(),
                     reported_footprint,
                 )
             }
         };
         self.ownership = RetainedOwnership::Unverified {
-            accepted_footprint: self.accepted_plan.reservation.total_footprint,
+            accepted_footprint: self.accepted_plan.reservation.total_footprint(),
             reported_footprint,
             conservative_footprint,
         };

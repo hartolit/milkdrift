@@ -10,11 +10,12 @@
 use candle_core::DType;
 use candle_transformers::models::llama::Config;
 use domain_contracts::{
-    BackendFailureKind, BackendId, DeviceKind, MemoryFootprint, ModelError, SequenceConfiguration,
-    SequenceReservation,
+    BackendFailureKind, BackendId, ByteCount, DeviceKind, MemoryFootprint, ModelError,
+    SequenceConfiguration, SequenceReservation,
 };
 
 use crate::failure::{CODE_NUMERIC_OVERFLOW, failure};
+use crate::loader::math::execution_dtype_bytes;
 
 const REVIEWED_MAX_HIDDEN_LAYERS: u64 = 256;
 
@@ -24,21 +25,17 @@ pub(super) fn calculate(
     dtype: DType,
     device_kind: DeviceKind,
     configuration: SequenceConfiguration,
-    expected_cache_bytes_per_token: u64,
 ) -> Result<SequenceReservation, ModelError> {
     if !matches!(device_kind, DeviceKind::Cpu | DeviceKind::Cuda) {
         return Err(ModelError::Unsupported);
     }
-    let inputs = ReservationInputs::new(backend, config, dtype, configuration)?;
+    let inputs = LlamaMemoryGeometry::new(backend, config, dtype, configuration)?;
     let components = inputs.components(backend)?;
-    if components.cache_bytes_per_token != expected_cache_bytes_per_token {
-        return Err(numeric_error(backend));
-    }
     components.reservation(backend, device_kind)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ReservationInputs {
+struct LlamaMemoryGeometry {
     hidden_size: u64,
     intermediate_size: u64,
     attention_heads: u64,
@@ -56,7 +53,7 @@ struct ReservationInputs {
     mask_producing_prefill: u64,
 }
 
-impl ReservationInputs {
+impl LlamaMemoryGeometry {
     fn new(
         backend: BackendId,
         config: &Config,
@@ -76,11 +73,7 @@ impl ReservationInputs {
         let maximum_positions = checked_usize_to_u64(backend, config.max_position_embeddings)?;
         let maximum_tokens = u64::from(configuration.maximum_tokens.get());
         let maximum_prefill = u64::from(configuration.maximum_prefill_batch.get());
-        let dtype_bytes = match dtype {
-            DType::F32 => 4,
-            DType::F16 | DType::BF16 => 2,
-            _ => return Err(ModelError::Unsupported),
-        };
+        let dtype_bytes = execution_dtype_bytes(dtype).ok_or(ModelError::Unsupported)?;
 
         let required_non_zero = [
             hidden_size,
@@ -186,18 +179,13 @@ impl PersistentComponents {
     ) -> Result<MemoryFootprint, ModelError> {
         let device_tensor_bytes = self.device_tensor_bytes(backend)?;
         match device_kind {
-            DeviceKind::Cpu => Ok(MemoryFootprint {
-                host_weight_bytes: 0,
-                device_weight_bytes: 0,
-                host_working_bytes: checked_add(backend, self.token_staging, device_tensor_bytes)?,
-                device_working_bytes: 0,
-            }),
-            DeviceKind::Cuda => Ok(MemoryFootprint {
-                host_weight_bytes: 0,
-                device_weight_bytes: 0,
-                host_working_bytes: self.token_staging,
-                device_working_bytes: device_tensor_bytes,
-            }),
+            DeviceKind::Cpu => Ok(MemoryFootprint::host_working(ByteCount::from_u64(
+                checked_add(backend, self.token_staging, device_tensor_bytes)?,
+            ))),
+            DeviceKind::Cuda => Ok(MemoryFootprint::host_working(ByteCount::from_u64(
+                self.token_staging,
+            ))
+            .with_device_working_bytes(ByteCount::from_u64(device_tensor_bytes))),
             _ => Err(ModelError::Unsupported),
         }
     }
@@ -285,29 +273,24 @@ impl ReservationComponents {
     ) -> Result<SequenceReservation, ModelError> {
         let persistent_footprint = self.persistent.footprint(backend, device_kind)?;
         let transient_footprint = match device_kind {
-            DeviceKind::Cpu => MemoryFootprint {
-                host_weight_bytes: 0,
-                device_weight_bytes: 0,
-                host_working_bytes: self.creation.cache_device_bytes.max(checked_add(
+            DeviceKind::Cpu => MemoryFootprint::host_working(ByteCount::from_u64(
+                self.creation.cache_device_bytes.max(checked_add(
                     backend,
                     self.execution.mask_source_bytes,
                     self.execution.model_forward_peak_bytes,
                 )?),
-                device_working_bytes: 0,
-            },
-            DeviceKind::Cuda => MemoryFootprint {
-                host_weight_bytes: 0,
-                device_weight_bytes: 0,
-                host_working_bytes: self
-                    .creation
+            )),
+            DeviceKind::Cuda => MemoryFootprint::host_working(ByteCount::from_u64(
+                self.creation
                     .cuda_host_source_bytes
                     .max(self.execution.mask_source_bytes)
                     .max(self.execution.cuda_logits_transfer_bytes),
-                device_working_bytes: self
-                    .creation
+            ))
+            .with_device_working_bytes(ByteCount::from_u64(
+                self.creation
                     .cache_device_bytes
                     .max(self.execution.model_forward_peak_bytes),
-            },
+            )),
             _ => return Err(ModelError::Unsupported),
         };
         SequenceReservation::checked(persistent_footprint, transient_footprint)
@@ -315,7 +298,10 @@ impl ReservationComponents {
     }
 }
 
-fn cache_bytes_per_token(backend: BackendId, inputs: ReservationInputs) -> Result<u64, ModelError> {
+fn cache_bytes_per_token(
+    backend: BackendId,
+    inputs: LlamaMemoryGeometry,
+) -> Result<u64, ModelError> {
     checked_product(
         backend,
         &[
@@ -355,7 +341,7 @@ fn maximum_mask_cache_bytes(
 
 fn cache_creation_device_peak(
     backend: BackendId,
-    inputs: ReservationInputs,
+    inputs: LlamaMemoryGeometry,
 ) -> Result<u64, ModelError> {
     // `Cache::new`: retained F32 theta plus idx-theta and the retained/temporary
     // cos/sin tensors. Both F32 and half/BF16 paths reach the same byte peak.
@@ -373,7 +359,7 @@ fn cache_creation_device_peak(
 
 fn cache_creation_cuda_host_bytes(
     backend: BackendId,
-    inputs: ReservationInputs,
+    inputs: LlamaMemoryGeometry,
 ) -> Result<u64, ModelError> {
     // Llama3 rope scaling can hold input and output inverse-frequency Vecs at
     // once (4 * head_dimension bytes total). Arange separately owns one u32 Vec.
@@ -384,7 +370,7 @@ fn cache_creation_cuda_host_bytes(
 
 fn execution_transient_components(
     backend: BackendId,
-    inputs: ReservationInputs,
+    inputs: LlamaMemoryGeometry,
 ) -> Result<ExecutionTransientComponents, ModelError> {
     let prefill_hidden_elements = checked_mul(backend, inputs.maximum_prefill, inputs.hidden_size)?;
     let prefill_kv_elements =
@@ -486,7 +472,7 @@ fn execution_transient_components(
 
 fn attention_phase_components(
     backend: BackendId,
-    inputs: ReservationInputs,
+    inputs: LlamaMemoryGeometry,
     prefill_hidden_elements: u64,
     prefill_kv_elements: u64,
     context_kv_elements: u64,
@@ -584,7 +570,7 @@ fn attention_phase_components(
 
 fn attention_layout_components(
     backend: BackendId,
-    inputs: ReservationInputs,
+    inputs: LlamaMemoryGeometry,
     prefill_hidden_elements: u64,
     prefill_kv_elements: u64,
     context_kv_elements: u64,
@@ -632,7 +618,7 @@ fn attention_layout_components(
 
 fn attention_f32_components(
     backend: BackendId,
-    inputs: ReservationInputs,
+    inputs: LlamaMemoryGeometry,
     prefill_hidden_elements: u64,
     prefill_kv_elements: u64,
     context_hidden_elements: u64,

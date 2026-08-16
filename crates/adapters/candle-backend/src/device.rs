@@ -2,7 +2,8 @@
 
 use candle_core::Device;
 use domain_contracts::{
-    BackendFailureKind, BackendId, DeviceKind, ExecutionDevice, LoadError, LoadFailureStage,
+    BackendFailureKind, BackendId, ByteCount, DeviceKind, ExecutionDevice, LoadError,
+    LoadFailureStage,
 };
 
 #[cfg(not(feature = "cuda"))]
@@ -37,9 +38,9 @@ pub struct CandleDeviceSummary {
     /// CUDA compute capability when this is a CUDA device.
     pub compute_capability: Option<CudaComputeCapability>,
     /// Physical device-local memory capacity reported during this probe.
-    pub total_memory_bytes: Option<u64>,
+    pub total_memory_bytes: Option<ByteCount>,
     /// Moment-in-time available device-local memory reported during this probe.
-    pub available_memory_bytes: Option<u64>,
+    pub available_memory_bytes: Option<ByteCount>,
     /// Whether Candle reports BF16 execution support for this device.
     pub supports_bf16: bool,
 }
@@ -131,8 +132,8 @@ fn prepare_cuda_device(
             ordinal: Some(execution_device.id.get()),
             display_name: Some(display_name),
             compute_capability: Some(CudaComputeCapability { major, minor }),
-            total_memory_bytes: Some(total),
-            available_memory_bytes: Some(available),
+            total_memory_bytes: Some(ByteCount::from_u64(total)),
+            available_memory_bytes: Some(ByteCount::from_u64(available)),
             supports_bf16: device.supports_bf16(),
         },
         device,

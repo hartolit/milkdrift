@@ -71,6 +71,11 @@ existing ownership plus the loading peak and existing ownership plus final
 footprint against its aggregate budget. It reserves the loading peak before any
 fallible native materialization.
 
+All cross-crate deterministic byte facts use `ByteCount`, whose representation is
+portable `u64` and whose arithmetic is named and checked. Raw values are exposed
+only at persistence, report serialization, display, and platform allocation
+boundaries.
+
 Admission also checks handle/generation identity, descriptor limits, requested
 device, and checked arithmetic. E0 does not interpret tensor names, choose a
 required primary scalar, partition transfers, or impose CPU/CUDA placement.
@@ -111,7 +116,8 @@ command before publishing the active application session.
 E0 validates model lifecycle, prompt/context/prefill limits, output capacity,
 sampling policy, stop data, and aggregate memory. Its generation admission owns
 caller workspaces and a nested `SequenceAdmissionTransaction`. Candle plans the
-sequence reservation; E0 admits the complete persistent-plus-transient total
+sequence reservation from loaded execution geometry; its checked constructor
+owns the derived total, and E0 admits the complete persistent-plus-transient total
 before native sequence creation and verifies the created sequence's identity,
 capacity, and immutable plan before scheduler visibility.
 

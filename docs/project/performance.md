@@ -194,7 +194,7 @@ All nine generation operations across the three sample cycles reached matching t
 
 ### Deterministic accounting and sampled RSS
 
-After load, public E0 accounting reported 4,800 host weight bytes, 4,800 host working bytes, and 64 cache bytes per token. During output backpressure it reported one active request, one generation workspace, 4,800 host weight bytes, 6,320 host working bytes, 128 cache bytes per token, and a 240-host-byte generation workspace.
+This preserved pre-ADR-0022 run recorded 4,800 host weight bytes, 4,800 host working bytes, and a derived 64 cache bytes per token after load. During output backpressure it recorded one active request, one generation workspace, 4,800 host weight bytes, 6,320 host working bytes, a derived 128 cache bytes per token, and a 240-host-byte generation workspace. Those historical derived rates are not fields in the current inspection descriptor or schema; the original values remain here rather than being rewritten as new evidence.
 
 After each checked-prefill, first-token/proxy, backpressure, and cancellation release, accounting exactly matched the model-only after-load state. After every unload, model/request/workspace/cleanup/maintenance accounting and all reserved footprints were exactly zero, with no loaded model.
 
@@ -379,12 +379,12 @@ Progress was established before cancellation. Both primary runs generated exactl
 
 #### Accounted E0 footprint and E1 load contract
 
-| Composition | Accounted weight bytes | Accounted host working bytes | Accounted cache bytes per token |
+| Composition | Accounted weight bytes | Accounted host working bytes | Historical derived cache bytes per token |
 |---|---:|---:|---:|
 | CPU / BF16 source → F32 execution | 4,400,239,728 B host weights | 2,200,119,864 B | 45,056 B |
 | CUDA / BF16 source → BF16 execution | 2,200,119,864 B device weights | 2,200,119,864 B | 22,528 B |
 
-This is an independent E0 plan plus the E1 accepted load contract, not a reservation snapshot from the same worker that ran the product workload. Exact zero-accounting evidence is owned by the direct E0 snapshot test.
+This is preserved pre-ADR-0022 evidence: an independent E0 plan plus the E1 accepted load contract, not a reservation snapshot from the same worker that ran the product workload. The derived rate column is historical and is not a current descriptor/schema field. Exact zero-accounting evidence is owned by the direct E0 snapshot test.
 
 #### Process RSS observations
 

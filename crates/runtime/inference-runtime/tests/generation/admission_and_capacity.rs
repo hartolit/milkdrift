@@ -68,9 +68,10 @@ fn generation_workspace_bytes_are_admitted_before_native_sequence_creation() -> 
         error,
         inference_runtime::RuntimeError::InsufficientMemory {
             kind: inference_runtime::MemoryKind::Host,
-            required_bytes: 220,
-            available_bytes: 219,
-        }
+            required_bytes,
+            available_bytes,
+        } if required_bytes == ByteCount::from_u64(220)
+            && available_bytes == ByteCount::from_u64(219)
     ));
     {
         let counters = counters.lock().map_err(|_| "counter mutex poisoned")?;
@@ -121,21 +122,12 @@ fn generation_workspace_accounting_is_retained_until_terminal_output_release() -
             assert_eq!(runtime.generation_workspaces, 1);
             assert_eq!(
                 runtime.reserved_generation_workspace,
-                MemoryFootprint {
-                    host_weight_bytes: 0,
-                    device_weight_bytes: 0,
-                    host_working_bytes: 64,
-                    device_working_bytes: 0,
-                }
+                MemoryFootprint::host_working(ByteCount::from_u64(64))
             );
             assert_eq!(
                 runtime.reserved_footprint,
-                MemoryFootprint {
-                    host_weight_bytes: MODEL_HOST_BYTES,
-                    device_weight_bytes: 0,
-                    host_working_bytes: 64,
-                    device_working_bytes: 0,
-                }
+                MemoryFootprint::host_weights(ByteCount::from_u64(MODEL_HOST_BYTES))
+                    .with_host_working_bytes(ByteCount::from_u64(64))
             );
             assert!(runtime.unverified_ownership.is_none());
             assert!(!runtime.admission_blocked);

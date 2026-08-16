@@ -3,7 +3,7 @@
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use domain_contracts::MemoryBudget;
+use domain_contracts::{ByteCount, MemoryBudget};
 use hf_hub_adapter::{ArtifactScalarType, HubClientConfiguration};
 use host_runtime::ThreadPanicked;
 use inference_runtime::{HostedRuntimeConfiguration, RuntimeLimits};
@@ -36,17 +36,16 @@ pub fn runtime_memory_budget(
     let discovered_physical_capacity = devices
         .iter()
         .filter(|summary| matches!(summary.device(), ApplicationDevice::Cuda { .. }))
-        .map(|summary| summary.total_memory_bytes().unwrap_or(0))
+        .map(|summary| summary.total_memory_bytes().unwrap_or(ByteCount::ZERO))
         .min()
-        .unwrap_or(0);
+        .unwrap_or(ByteCount::ZERO);
     let device_bytes = match preferences.accelerator_memory_policy {
         AcceleratorMemoryPolicy::Automatic => discovered_physical_capacity,
-        AcceleratorMemoryPolicy::Limit { bytes } => bytes.get().min(discovered_physical_capacity),
+        AcceleratorMemoryPolicy::Limit { bytes } => bytes.min(discovered_physical_capacity),
     };
-    MemoryBudget {
-        host_bytes: preferences.maximum_host_memory_bytes,
-        device_bytes,
-    }
+    MemoryBudget::ZERO
+        .with_host_bytes(preferences.maximum_host_memory_bytes)
+        .with_device_bytes(device_bytes)
 }
 
 pub fn create_runtime(
@@ -134,6 +133,16 @@ pub fn validate_preferences(preferences: &ApplicationPreferences) -> Result<(), 
             ApplicationConfigurationField::DefaultRevision,
         ));
     }
+    if matches!(
+        preferences.accelerator_memory_policy,
+        AcceleratorMemoryPolicy::Limit {
+            bytes: ByteCount::ZERO
+        }
+    ) {
+        return Err(ApplicationError::InvalidConfiguration(
+            ApplicationConfigurationField::AcceleratorMemoryLimit,
+        ));
+    }
     validate_non_zero(
         &preferences.drain_timeout_milliseconds,
         ApplicationConfigurationField::DrainTimeout,
@@ -144,38 +153,43 @@ pub fn application_preferences(settings: ApplicationSettings) -> ApplicationPref
     ApplicationPreferences {
         default_repository: settings.default_repository,
         default_revision: settings.default_revision,
-        maximum_host_memory_bytes: settings.maximum_host_memory_bytes,
+        maximum_host_memory_bytes: ByteCount::from_u64(settings.maximum_host_memory_bytes),
         selected_device: match settings.selected_device {
             StoredApplicationDevice::Cpu => ApplicationDevice::Cpu,
             StoredApplicationDevice::Cuda { ordinal } => ApplicationDevice::Cuda { ordinal },
         },
         accelerator_memory_policy: match settings.accelerator_memory_policy {
             StoredAcceleratorMemoryPolicy::Automatic => AcceleratorMemoryPolicy::Automatic,
-            StoredAcceleratorMemoryPolicy::Limit { bytes } => {
-                AcceleratorMemoryPolicy::Limit { bytes }
-            }
+            StoredAcceleratorMemoryPolicy::Limit { bytes } => AcceleratorMemoryPolicy::Limit {
+                bytes: ByteCount::from_u64(bytes.get()),
+            },
         },
         drain_timeout_milliseconds: settings.drain_timeout_milliseconds,
     }
 }
 
-pub fn stored_settings(preferences: &ApplicationPreferences) -> ApplicationSettings {
-    ApplicationSettings {
+pub fn stored_settings(
+    preferences: &ApplicationPreferences,
+) -> Result<ApplicationSettings, ApplicationConfigurationField> {
+    let accelerator_memory_policy = match preferences.accelerator_memory_policy {
+        AcceleratorMemoryPolicy::Automatic => StoredAcceleratorMemoryPolicy::Automatic,
+        AcceleratorMemoryPolicy::Limit { bytes } => {
+            let bytes = NonZeroU64::new(bytes.as_u64())
+                .ok_or(ApplicationConfigurationField::AcceleratorMemoryLimit)?;
+            StoredAcceleratorMemoryPolicy::Limit { bytes }
+        }
+    };
+    Ok(ApplicationSettings {
         default_repository: preferences.default_repository.clone(),
         default_revision: preferences.default_revision.clone(),
-        maximum_host_memory_bytes: preferences.maximum_host_memory_bytes,
+        maximum_host_memory_bytes: preferences.maximum_host_memory_bytes.as_u64(),
         selected_device: match preferences.selected_device {
             ApplicationDevice::Cpu => StoredApplicationDevice::Cpu,
             ApplicationDevice::Cuda { ordinal } => StoredApplicationDevice::Cuda { ordinal },
         },
-        accelerator_memory_policy: match preferences.accelerator_memory_policy {
-            AcceleratorMemoryPolicy::Automatic => StoredAcceleratorMemoryPolicy::Automatic,
-            AcceleratorMemoryPolicy::Limit { bytes } => {
-                StoredAcceleratorMemoryPolicy::Limit { bytes }
-            }
-        },
+        accelerator_memory_policy,
         drain_timeout_milliseconds: preferences.drain_timeout_milliseconds,
-    }
+    })
 }
 
 pub const fn application_configuration_declared_scalar_type(
@@ -374,16 +388,16 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroU64;
-
+    use domain_contracts::ByteCount;
     use hf_hub_adapter::HubError;
 
     use super::{
         application_preferences, model_resolution_failure, runtime_memory_budget, stored_settings,
+        validate_preferences,
     };
     use crate::{
-        AcceleratorMemoryPolicy, ApplicationDevice, ApplicationDeviceSummary,
-        ApplicationFailureKind, ApplicationPreferences,
+        AcceleratorMemoryPolicy, ApplicationConfigurationField, ApplicationDevice,
+        ApplicationDeviceSummary, ApplicationError, ApplicationFailureKind, ApplicationPreferences,
     };
 
     const GIBIBYTE: u64 = 1024 * 1024 * 1024;
@@ -392,8 +406,8 @@ mod tests {
         ApplicationDeviceSummary::discovered(
             ApplicationDevice::Cuda { ordinal },
             Some("test device".to_owned()),
-            Some(total_memory_bytes),
-            Some(total_memory_bytes / 2),
+            Some(ByteCount::from_u64(total_memory_bytes)),
+            Some(ByteCount::from_u64(total_memory_bytes / 2)),
             None,
         )
     }
@@ -440,8 +454,8 @@ mod tests {
 
         let budget = runtime_memory_budget(&preferences, &devices);
 
-        assert_eq!(budget.host_bytes, preferences.maximum_host_memory_bytes);
-        assert_eq!(budget.device_bytes, 6 * GIBIBYTE);
+        assert_eq!(budget.host_bytes(), preferences.maximum_host_memory_bytes);
+        assert_eq!(budget.device_bytes(), ByteCount::from_u64(6 * GIBIBYTE));
     }
 
     #[test]
@@ -458,8 +472,8 @@ mod tests {
         ];
 
         assert_eq!(
-            runtime_memory_budget(&ApplicationPreferences::default(), &devices).device_bytes,
-            0
+            runtime_memory_budget(&ApplicationPreferences::default(), &devices).device_bytes(),
+            ByteCount::ZERO
         );
     }
 
@@ -475,8 +489,8 @@ mod tests {
         ];
 
         assert_eq!(
-            runtime_memory_budget(&ApplicationPreferences::default(), &devices).device_bytes,
-            0
+            runtime_memory_budget(&ApplicationPreferences::default(), &devices).device_bytes(),
+            ByteCount::ZERO
         );
     }
 
@@ -484,7 +498,7 @@ mod tests {
     fn explicit_accelerator_limit_is_capped_by_physical_capacity() {
         let preferences = ApplicationPreferences {
             accelerator_memory_policy: AcceleratorMemoryPolicy::Limit {
-                bytes: NonZeroU64::new(8 * GIBIBYTE).unwrap_or(NonZeroU64::MIN),
+                bytes: ByteCount::from_u64(8 * GIBIBYTE),
             },
             ..ApplicationPreferences::default()
         };
@@ -495,19 +509,19 @@ mod tests {
         ];
 
         assert_eq!(
-            runtime_memory_budget(&preferences, &devices).device_bytes,
-            6 * GIBIBYTE
+            runtime_memory_budget(&preferences, &devices).device_bytes(),
+            ByteCount::from_u64(6 * GIBIBYTE)
         );
 
         let lower_preferences = ApplicationPreferences {
             accelerator_memory_policy: AcceleratorMemoryPolicy::Limit {
-                bytes: NonZeroU64::new(4 * GIBIBYTE).unwrap_or(NonZeroU64::MIN),
+                bytes: ByteCount::from_u64(4 * GIBIBYTE),
             },
             ..preferences
         };
         assert_eq!(
-            runtime_memory_budget(&lower_preferences, &devices).device_bytes,
-            4 * GIBIBYTE
+            runtime_memory_budget(&lower_preferences, &devices).device_bytes(),
+            ByteCount::from_u64(4 * GIBIBYTE)
         );
     }
 
@@ -516,13 +530,13 @@ mod tests {
         let preferences = ApplicationPreferences::default();
         let budget = runtime_memory_budget(&preferences, &[ApplicationDeviceSummary::cpu()]);
 
-        assert_eq!(budget.host_bytes, preferences.maximum_host_memory_bytes);
-        assert_eq!(budget.device_bytes, 0);
+        assert_eq!(budget.host_bytes(), preferences.maximum_host_memory_bytes);
+        assert_eq!(budget.device_bytes(), ByteCount::ZERO);
     }
 
     #[test]
     fn preference_storage_conversion_round_trips_device_and_policy() {
-        let limit = NonZeroU64::new(3 * GIBIBYTE).unwrap_or(NonZeroU64::MIN);
+        let limit = ByteCount::from_u64(3 * GIBIBYTE);
         let preferences = ApplicationPreferences {
             selected_device: ApplicationDevice::Cuda { ordinal: 3 },
             accelerator_memory_policy: AcceleratorMemoryPolicy::Limit { bytes: limit },
@@ -530,8 +544,25 @@ mod tests {
         };
 
         assert_eq!(
-            application_preferences(stored_settings(&preferences)),
-            preferences
+            stored_settings(&preferences).map(application_preferences),
+            Ok(preferences)
         );
+    }
+
+    #[test]
+    fn zero_explicit_accelerator_limit_is_rejected_before_persistence() {
+        let preferences = ApplicationPreferences {
+            accelerator_memory_policy: AcceleratorMemoryPolicy::Limit {
+                bytes: ByteCount::ZERO,
+            },
+            ..ApplicationPreferences::default()
+        };
+        let field = ApplicationConfigurationField::AcceleratorMemoryLimit;
+
+        assert_eq!(
+            validate_preferences(&preferences),
+            Err(ApplicationError::InvalidConfiguration(field))
+        );
+        assert_eq!(stored_settings(&preferences).map(|_| ()), Err(field));
     }
 }

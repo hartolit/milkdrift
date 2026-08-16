@@ -347,11 +347,8 @@ impl LoadedModel for FakeModel {
     ) -> Result<SequencePlan, ModelError> {
         Ok(SequencePlan {
             configuration: *configuration,
-            reservation: SequenceReservation {
-                persistent_footprint: sequence_footprint(),
-                transient_footprint: MemoryFootprint::default(),
-                total_footprint: sequence_footprint(),
-            },
+            reservation: SequenceReservation::checked(sequence_footprint(), MemoryFootprint::ZERO)
+                .ok_or(ModelError::Unsupported)?,
             logits_capacity: self.source.logits_capacity,
         })
     }

@@ -61,27 +61,6 @@ fn failed_sequence_rollback_is_reported_without_registry_mutation() -> TestResul
 }
 
 #[test]
-fn invalid_sequence_reservations_are_rejected_before_native_creation() -> TestResult {
-    for fault in [
-        Faults::OVERFLOWING_SEQUENCE_PLAN,
-        Faults::INCONSISTENT_SEQUENCE_PLAN,
-    ] {
-        let counts = Rc::new(CleanupCounts::default());
-        let mut runtime = runtime(fault, Rc::clone(&counts));
-        let loaded = load(&mut runtime).map_err(debug_error)?;
-
-        assert_eq!(
-            start(&mut runtime, loaded.handle, 10, 100),
-            Err(RuntimeError::BackendContractViolation)
-        );
-        assert_eq!(counts.sequence_creations.get(), 0);
-        assert_eq!(counts.sequence_destructions.get(), 0);
-        assert_only_model_reserved(&runtime);
-    }
-    Ok(())
-}
-
-#[test]
 fn sequence_report_mismatch_matrix_rolls_back_without_publication() -> TestResult {
     for fault in [
         Faults::UNDERREPORTED_SEQUENCE_REPORT,
@@ -106,27 +85,9 @@ fn sequence_report_mismatch_matrix_rolls_back_without_publication() -> TestResul
 #[test]
 fn mismatched_sequence_reports_with_failed_cleanup_are_unverified() -> TestResult {
     for (report_fault, reported_footprint) in [
-        (
-            Faults::UNDERREPORTED_SEQUENCE_REPORT,
-            MemoryFootprint {
-                host_working_bytes: 4,
-                ..MemoryFootprint::default()
-            },
-        ),
-        (
-            Faults::OVERREPORTED_SEQUENCE_REPORT,
-            MemoryFootprint {
-                host_working_bytes: 16,
-                ..MemoryFootprint::default()
-            },
-        ),
-        (
-            Faults::RECLASSIFIED_SEQUENCE_REPORT,
-            MemoryFootprint {
-                device_working_bytes: 8,
-                ..MemoryFootprint::default()
-            },
-        ),
+        (Faults::UNDERREPORTED_SEQUENCE_REPORT, footprint(0, 0, 4, 0)),
+        (Faults::OVERREPORTED_SEQUENCE_REPORT, footprint(0, 0, 16, 0)),
+        (Faults::RECLASSIFIED_SEQUENCE_REPORT, footprint(0, 0, 0, 8)),
     ] {
         let counts = Rc::new(CleanupCounts::default());
         let faults = report_fault.union(Faults::FAIL_SEQUENCE_DESTRUCTION);
@@ -202,8 +163,8 @@ fn sequence_report_mutation_during_failed_cleanup_extends_unverified_evidence() 
                         reported_footprint,
                         conservative_footprint: ConservativeFootprint::Known(conservative),
                     } if accepted_footprint == sequence_footprint()
-                        && reported_footprint.host_working_bytes == 16
-                        && conservative.host_working_bytes == 16
+                        && reported_footprint.host_working_bytes() == ByteCount::from_u64(16)
+                        && conservative.host_working_bytes() == ByteCount::from_u64(16)
                 )
     ));
     assert_eq!(runtime.snapshot().reserved_footprint, model_footprint());

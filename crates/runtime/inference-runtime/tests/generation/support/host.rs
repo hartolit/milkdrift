@@ -128,10 +128,7 @@ pub(crate) fn synchronous_runtime(source: &FakeSource) -> TestResult<Synchronous
         RuntimeLimits::new(
             NonZeroU32::MIN,
             NonZeroU32::new(4).unwrap_or(NonZeroU32::MIN),
-            MemoryBudget {
-                host_bytes: 10_000,
-                device_bytes: 0,
-            },
+            MemoryBudget::ZERO.with_host_bytes(ByteCount::from_u64(10_000)),
         ),
     );
     let handle = runtime
@@ -202,10 +199,7 @@ pub(crate) fn start_hosted(
         RuntimeLimits::new(
             maximum_loaded_models,
             maximum_active_requests,
-            MemoryBudget {
-                host_bytes,
-                device_bytes: 0,
-            },
+            MemoryBudget::ZERO.with_host_bytes(ByteCount::from_u64(host_bytes)),
         ),
         configuration,
     )
@@ -383,26 +377,15 @@ pub(crate) const fn descriptor(operations: CapabilitySet) -> ModelDescriptor {
             maximum_prefill_batch: 8,
         },
         estimated_footprint: model_footprint(),
-        sequence_cache_bytes_per_token: 0,
     }
 }
 
 pub(crate) const fn model_footprint() -> MemoryFootprint {
-    MemoryFootprint {
-        host_weight_bytes: MODEL_HOST_BYTES,
-        device_weight_bytes: 0,
-        host_working_bytes: 0,
-        device_working_bytes: 0,
-    }
+    MemoryFootprint::host_weights(ByteCount::from_u64(MODEL_HOST_BYTES))
 }
 
 pub(crate) const fn sequence_footprint() -> MemoryFootprint {
-    MemoryFootprint {
-        host_weight_bytes: 0,
-        device_weight_bytes: 0,
-        host_working_bytes: SEQUENCE_HOST_BYTES,
-        device_working_bytes: 0,
-    }
+    MemoryFootprint::host_working(ByteCount::from_u64(SEQUENCE_HOST_BYTES))
 }
 
 pub(crate) const fn failure(code: u32) -> BackendFailure {

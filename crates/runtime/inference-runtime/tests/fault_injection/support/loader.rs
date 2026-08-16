@@ -55,11 +55,16 @@ impl FailedLoadOwner for FaultPrepared {
                 .faults
                 .contains(Faults::MUTATE_FAILED_PLAN_ON_CLEANUP_FAILURE)
             {
-                self.plan.loading_peak_footprint.host_working_bytes = self
+                let bytes = self
                     .plan
                     .loading_peak_footprint
-                    .host_working_bytes
+                    .host_working_bytes()
+                    .as_u64()
                     .saturating_add(7);
+                self.plan.loading_peak_footprint = self
+                    .plan
+                    .loading_peak_footprint
+                    .with_host_working_bytes(ByteCount::from_u64(bytes));
             }
             return Err(SynchronizationError::Backend(backend_failure(4)));
         }
@@ -163,23 +168,29 @@ impl ModelLoader for FaultLoader {
         }
         let mut expected_footprint = descriptor.estimated_footprint;
         if faults.contains(Faults::OVERFLOWING_FINAL_FOOTPRINT) {
-            expected_footprint.host_weight_bytes = u64::MAX;
-            expected_footprint.host_working_bytes = 1;
+            expected_footprint = expected_footprint
+                .with_host_weight_bytes(ByteCount::MAX)
+                .with_host_working_bytes(ByteCount::from_u64(1));
         }
         let mut loading_peak_footprint = loading_peak_footprint();
         if faults.contains(Faults::OVERFLOWING_LOADING_PEAK) {
-            loading_peak_footprint.host_weight_bytes = u64::MAX;
-            loading_peak_footprint.host_working_bytes = 1;
+            loading_peak_footprint = loading_peak_footprint
+                .with_host_weight_bytes(ByteCount::MAX)
+                .with_host_working_bytes(ByteCount::from_u64(1));
         }
         if faults.contains(Faults::LOADING_PEAK_BELOW_FINAL) {
-            loading_peak_footprint.host_working_bytes = 0;
+            loading_peak_footprint =
+                loading_peak_footprint.with_host_working_bytes(ByteCount::ZERO);
         }
 
         if faults.contains(Faults::RECLASSIFIED_LOADING_PEAK) {
-            loading_peak_footprint.host_working_bytes = loading_peak_footprint
-                .host_working_bytes
-                .saturating_add(loading_peak_footprint.host_weight_bytes);
-            loading_peak_footprint.host_weight_bytes = 0;
+            let reclassified = loading_peak_footprint
+                .host_working_bytes()
+                .as_u64()
+                .saturating_add(loading_peak_footprint.host_weight_bytes().as_u64());
+            loading_peak_footprint = loading_peak_footprint
+                .with_host_working_bytes(ByteCount::from_u64(reclassified))
+                .with_host_weight_bytes(ByteCount::ZERO);
         }
         let plan = LoadPlan {
             accepted_configuration,
@@ -189,10 +200,14 @@ impl ModelLoader for FaultLoader {
             loading_peak_footprint,
         };
         let mut alternate_plan = plan;
-        alternate_plan.loading_peak_footprint.host_working_bytes = alternate_plan
+        let alternate_bytes = alternate_plan
             .loading_peak_footprint
-            .host_working_bytes
+            .host_working_bytes()
+            .as_u64()
             .saturating_add(1);
+        alternate_plan.loading_peak_footprint = alternate_plan
+            .loading_peak_footprint
+            .with_host_working_bytes(ByteCount::from_u64(alternate_bytes));
         Ok(FaultPrepared {
             plan,
             alternate_plan,
@@ -265,36 +280,33 @@ impl ModelLoader for FaultLoader {
         };
         let mut reported_footprint = prepared.plan.final_footprint;
         if faults.contains(Faults::WRONG_MODEL_FOOTPRINT) {
-            reported_footprint.host_working_bytes =
-                reported_footprint.host_working_bytes.saturating_add(1);
+            let bytes = reported_footprint
+                .host_working_bytes()
+                .as_u64()
+                .saturating_add(1);
+            reported_footprint =
+                reported_footprint.with_host_working_bytes(ByteCount::from_u64(bytes));
         }
         if faults.contains(Faults::REPORTED_LARGER_THAN_PEAK) {
-            reported_footprint.host_weight_bytes = 200;
-            reported_footprint.host_working_bytes = 100;
+            reported_footprint = reported_footprint
+                .with_host_weight_bytes(ByteCount::from_u64(200))
+                .with_host_working_bytes(ByteCount::from_u64(100));
         }
         if faults.contains(Faults::REPORTED_RECLASSIFIED_TO_DEVICE) {
-            reported_footprint = MemoryFootprint {
-                host_weight_bytes: 0,
-                device_weight_bytes: 100,
-                host_working_bytes: 0,
-                device_working_bytes: 10,
-            };
+            reported_footprint = footprint(0, 100, 0, 10);
         }
         if faults.contains(Faults::REPORTED_OVERFLOWING_HOST) {
-            reported_footprint.host_weight_bytes = u64::MAX;
-            reported_footprint.host_working_bytes = 1;
+            reported_footprint = reported_footprint
+                .with_host_weight_bytes(ByteCount::MAX)
+                .with_host_working_bytes(ByteCount::from_u64(1));
         }
         if faults.contains(Faults::REPORTED_OVERFLOWING_DEVICE) {
-            reported_footprint.device_weight_bytes = u64::MAX;
-            reported_footprint.device_working_bytes = 1;
+            reported_footprint = reported_footprint
+                .with_device_weight_bytes(ByteCount::MAX)
+                .with_device_working_bytes(ByteCount::from_u64(1));
         }
         if faults.contains(Faults::REPORTED_SMALLER_THAN_FINAL) {
-            reported_footprint = MemoryFootprint {
-                host_weight_bytes: 50,
-                device_weight_bytes: 0,
-                host_working_bytes: 0,
-                device_working_bytes: 0,
-            };
+            reported_footprint = footprint(50, 0, 0, 0);
         }
         Ok(FaultModel {
             handle,

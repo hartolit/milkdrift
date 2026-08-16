@@ -7,7 +7,7 @@ mod construction;
 mod footprint;
 mod identity;
 mod manifest;
-mod math;
+pub(crate) mod math;
 mod observer;
 mod payload;
 mod prepared;
@@ -23,8 +23,8 @@ use std::collections::HashMap;
 use candle_core::Device;
 use candle_transformers::models::llama::Config;
 use domain_contracts::{
-    BackendFailureKind, BackendId, CapabilitySet, DeviceKind, ExecutionDevice, FailedLoad,
-    LoadConfiguration, LoadError, LoadFailureContext, LoadFailureStage, LoadPlan,
+    BackendFailureKind, BackendId, ByteCount, CapabilitySet, DeviceKind, ExecutionDevice,
+    FailedLoad, LoadConfiguration, LoadError, LoadFailureContext, LoadFailureStage, LoadPlan,
     ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelLoader, ModelMetadata,
     QuantizationFormat, ScalarType, TensorFailureLocation,
 };
@@ -38,7 +38,7 @@ use crate::model::{CandleLlamaModel, CandleLlamaModelParameters};
 use crate::source::{CandleConfigurationSource, CandleLlamaSource};
 
 pub use self::cleanup::CandleLlamaFailedPreparation;
-use self::footprint::{calculate, sequence_cache_bytes_per_token, validate_memory_plan};
+use self::footprint::{calculate, validate_memory_plan};
 use self::manifest::{InspectedShard, InspectionLimits};
 use self::math::numeric_overflow;
 #[cfg(feature = "cuda-hardware-tests")]
@@ -48,8 +48,7 @@ use self::scalar::{execution_scalar_type, select_execution_dtype, select_require
 use self::transfer_batch::TransferBatchOwner;
 use self::transfer_plan::{MAXIMUM_BATCH_ENTRIES, TransferPlan};
 
-pub(super) const VERIFICATION_BUFFER_BYTES: usize = 64 * 1024;
-pub(super) const VERIFICATION_BUFFER_BYTES_U64: u64 = 64 * 1024;
+pub(super) const VERIFICATION_BUFFER_BYTES: ByteCount = ByteCount::from_u64(64 * 1024);
 
 /// Cold-path loader for unquantized Hugging Face Llama Safetensors.
 #[derive(Clone, Debug)]
@@ -164,9 +163,6 @@ impl CandleLlamaLoader {
             None,
             0,
         )?;
-        let sequence_cache_bytes_per_token =
-            sequence_cache_bytes_per_token(backend, &parsed_config.config, cpu_execution_dtype)?;
-
         let context_length = u32::try_from(parsed_config.config.max_position_embeddings)
             .map_err(|_| numeric_overflow(backend))?;
         let vocabulary_size = u32::try_from(parsed_config.config.vocab_size)
@@ -192,7 +188,6 @@ impl CandleLlamaLoader {
                 maximum_prefill_batch: context_length,
             },
             estimated_footprint: cpu_footprints.final_footprint,
-            sequence_cache_bytes_per_token,
         };
 
         Ok(InspectedSource {
@@ -274,8 +269,6 @@ impl ModelLoader for CandleLlamaLoader {
                 transfer_plan.as_ref(),
                 transfer_owner_metadata_bytes,
             )?;
-            inspected.descriptor.sequence_cache_bytes_per_token =
-                sequence_cache_bytes_per_token(self.backend, &inspected.config, execution_dtype)?;
             validate_memory_plan(
                 self.backend,
                 footprints.loading_peak_footprint,

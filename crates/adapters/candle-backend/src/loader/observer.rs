@@ -1,6 +1,8 @@
 //! Private materialization checkpoints and bounded load evidence recording.
 
 use candle_core::Device;
+#[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
+use domain_contracts::ByteCount;
 use domain_contracts::{BackendFailureKind, BackendId, LoadError, LoadFailureStage};
 
 use crate::failure::{CODE_LOAD_SYNCHRONIZE, load_failure};
@@ -133,7 +135,9 @@ impl CandleLlamaPreparedLoad {
     pub(super) fn record_verification_only_bytes(&self, bytes: usize) {
         #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
         if let Some(observation) = &self.load_observation {
-            observation.verification_only_bytes_read(u64::try_from(bytes).unwrap_or(u64::MAX));
+            observation.verification_only_bytes_read(ByteCount::from_u64(
+                u64::try_from(bytes).unwrap_or(u64::MAX),
+            ));
         }
         #[cfg(not(any(feature = "benchmark-observation", feature = "cuda-hardware-tests")))]
         let _ = (self, bytes);
@@ -142,7 +146,9 @@ impl CandleLlamaPreparedLoad {
     pub(super) fn record_required_bytes(&self, bytes: usize) {
         #[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
         if let Some(observation) = &self.load_observation {
-            observation.required_and_verified_bytes_read(u64::try_from(bytes).unwrap_or(u64::MAX));
+            observation.required_and_verified_bytes_read(ByteCount::from_u64(
+                u64::try_from(bytes).unwrap_or(u64::MAX),
+            ));
         }
         #[cfg(not(any(feature = "benchmark-observation", feature = "cuda-hardware-tests")))]
         let _ = (self, bytes);

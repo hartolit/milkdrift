@@ -1,9 +1,9 @@
 use super::{
-    BackendId, CandleLlamaLoader, CandleLlamaSource, CapabilitySet, DeviceId, DeviceKind, Duration,
-    ExecutionDevice, LoadConfiguration, LoadPlan, LoadReceipt, MemoryBudget, MemoryFootprint,
-    ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelGeneration, ModelHandle, ModelId,
-    ModelLoader, ModelMetadata, PreparedLoad, QuantizationFormat, ScalarType, ScalarTypeSet,
-    TestResult, TokenId,
+    BackendId, ByteCount, CandleLlamaLoader, CandleLlamaSource, CapabilitySet, DeviceId,
+    DeviceKind, Duration, ExecutionDevice, LoadConfiguration, LoadPlan, LoadReceipt, MemoryBudget,
+    MemoryFootprint, ModelArchitecture, ModelCapabilities, ModelDescriptor, ModelGeneration,
+    ModelHandle, ModelId, ModelLoader, ModelMetadata, PreparedLoad, QuantizationFormat, ScalarType,
+    ScalarTypeSet, TestResult, TokenId,
 };
 
 pub(crate) const CANDLE_BACKEND: BackendId = BackendId::new(41);
@@ -19,19 +19,11 @@ pub(crate) const EXPECTED_CANDLE_OPERATIONS: CapabilitySet = CapabilitySet::PREF
     .union(CapabilitySet::INCREMENTAL_DECODE)
     .union(CapabilitySet::MULTIPLE_SEQUENCES)
     .union(CapabilitySet::EXPLICIT_SYNCHRONIZATION);
-pub(crate) const HOMOGENEOUS_F32_FINAL_FOOTPRINT: MemoryFootprint = MemoryFootprint {
-    host_weight_bytes: 3_680,
-    device_weight_bytes: 0,
-    host_working_bytes: 0,
-    device_working_bytes: 0,
-};
-pub(crate) const HOMOGENEOUS_F32_LOADING_PEAK_FOOTPRINT: MemoryFootprint = MemoryFootprint {
-    host_weight_bytes: 3_680,
-    device_weight_bytes: 0,
-    host_working_bytes: 65_763,
-    device_working_bytes: 0,
-};
-pub(crate) const HOMOGENEOUS_F32_CACHE_BYTES_PER_TOKEN: u64 = 64;
+pub(crate) const HOMOGENEOUS_F32_FINAL_FOOTPRINT: MemoryFootprint =
+    MemoryFootprint::host_weights(ByteCount::from_u64(3_680));
+pub(crate) const HOMOGENEOUS_F32_LOADING_PEAK_FOOTPRINT: MemoryFootprint =
+    MemoryFootprint::host_weights(ByteCount::from_u64(3_680))
+        .with_host_working_bytes(ByteCount::from_u64(65_763));
 pub(crate) const HOMOGENEOUS_F32_DESCRIPTOR: ModelDescriptor = ModelDescriptor {
     backend: CANDLE_BACKEND,
     metadata: ModelMetadata {
@@ -49,10 +41,8 @@ pub(crate) const HOMOGENEOUS_F32_DESCRIPTOR: ModelDescriptor = ModelDescriptor {
         maximum_prefill_batch: CONTEXT_LENGTH,
     },
     estimated_footprint: HOMOGENEOUS_F32_FINAL_FOOTPRINT,
-    sequence_cache_bytes_per_token: HOMOGENEOUS_F32_CACHE_BYTES_PER_TOKEN,
 };
 pub(crate) const MIXED_EXECUTION_WEIGHT_BYTES: u64 = 1_840;
-pub(crate) const MIXED_CACHE_BYTES_PER_TOKEN: u64 = 32;
 pub(crate) const MIXED_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 75_665;
 
 pub(crate) fn prepare_plan(
@@ -63,10 +53,7 @@ pub(crate) fn prepare_plan(
     let configuration = LoadConfiguration {
         handle: ModelHandle::new(MODEL, ModelGeneration::new(1)),
         execution_device,
-        memory_budget: MemoryBudget {
-            host_bytes: u64::MAX,
-            device_bytes: u64::MAX,
-        },
+        memory_budget: MemoryBudget::UNLIMITED,
     };
     let prepared = loader
         .prepare_load(source, &configuration)
@@ -96,56 +83,53 @@ pub(crate) fn assert_mixed_f16_plan(
     );
 
     let expected_final = match execution_device.kind {
-        DeviceKind::Cpu => MemoryFootprint {
-            host_weight_bytes: MIXED_EXECUTION_WEIGHT_BYTES,
-            device_weight_bytes: 0,
-            host_working_bytes: 0,
-            device_working_bytes: 0,
-        },
-        DeviceKind::Cuda => MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: MIXED_EXECUTION_WEIGHT_BYTES,
-            host_working_bytes: 0,
-            device_working_bytes: 0,
-        },
+        DeviceKind::Cpu => {
+            MemoryFootprint::host_weights(ByteCount::from_u64(MIXED_EXECUTION_WEIGHT_BYTES))
+        }
+        DeviceKind::Cuda => {
+            MemoryFootprint::device_weights(ByteCount::from_u64(MIXED_EXECUTION_WEIGHT_BYTES))
+        }
         _ => return Err("mixed fixture test selected an unsupported execution device".to_owned()),
     };
     assert_eq!(plan.final_footprint, expected_final);
     assert_eq!(
         plan.descriptor.estimated_footprint,
-        MemoryFootprint {
-            host_weight_bytes: MIXED_EXECUTION_WEIGHT_BYTES,
-            device_weight_bytes: 0,
-            host_working_bytes: 0,
-            device_working_bytes: 0,
-        }
-    );
-    assert_eq!(
-        plan.descriptor.sequence_cache_bytes_per_token,
-        MIXED_CACHE_BYTES_PER_TOKEN
+        MemoryFootprint::host_weights(ByteCount::from_u64(MIXED_EXECUTION_WEIGHT_BYTES))
     );
 
     match execution_device.kind {
         DeviceKind::Cpu => {
             assert_eq!(
-                plan.loading_peak_footprint.host_weight_bytes,
-                MIXED_EXECUTION_WEIGHT_BYTES
+                plan.loading_peak_footprint.host_weight_bytes(),
+                ByteCount::from_u64(MIXED_EXECUTION_WEIGHT_BYTES)
             );
-            assert_eq!(plan.loading_peak_footprint.device_weight_bytes, 0);
-            assert!(plan.loading_peak_footprint.host_working_bytes > 0);
-            assert_eq!(plan.loading_peak_footprint.device_working_bytes, 0);
+            assert_eq!(
+                plan.loading_peak_footprint.device_weight_bytes(),
+                ByteCount::ZERO
+            );
+            assert!(!plan.loading_peak_footprint.host_working_bytes().is_zero());
+            assert_eq!(
+                plan.loading_peak_footprint.device_working_bytes(),
+                ByteCount::ZERO
+            );
         }
         DeviceKind::Cuda => {
-            assert_eq!(plan.loading_peak_footprint.host_weight_bytes, 0);
             assert_eq!(
-                plan.loading_peak_footprint.device_weight_bytes,
-                MIXED_EXECUTION_WEIGHT_BYTES
+                plan.loading_peak_footprint.host_weight_bytes(),
+                ByteCount::ZERO
             );
             assert_eq!(
-                plan.loading_peak_footprint.host_working_bytes,
-                MIXED_CUDA_HOST_LOADING_PEAK_BYTES
+                plan.loading_peak_footprint.device_weight_bytes(),
+                ByteCount::from_u64(MIXED_EXECUTION_WEIGHT_BYTES)
             );
-            assert_eq!(plan.loading_peak_footprint.device_working_bytes, 0);
+            assert_eq!(
+                plan.loading_peak_footprint.host_working_bytes(),
+                ByteCount::from_u64(MIXED_CUDA_HOST_LOADING_PEAK_BYTES)
+            );
+            assert_eq!(
+                plan.loading_peak_footprint.device_working_bytes(),
+                ByteCount::ZERO
+            );
         }
         _ => return Err("mixed fixture test selected an unsupported execution device".to_owned()),
     }

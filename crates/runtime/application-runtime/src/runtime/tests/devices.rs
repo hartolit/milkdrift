@@ -1,7 +1,6 @@
-use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use domain_contracts::{DeviceId, DeviceKind, ExecutionDevice};
+use domain_contracts::{ByteCount, DeviceId, DeviceKind, ExecutionDevice};
 use redb_storage::{
     ApplicationSettings as StoredApplicationSettings, RedbStorage, StoredAcceleratorMemoryPolicy,
     StoredApplicationDevice,
@@ -24,8 +23,8 @@ fn available_device_probe(device: ApplicationDevice) -> crate::local::DeviceProb
         ApplicationDevice::Cuda { .. } => Ok(ApplicationDeviceSummary::discovered(
             device,
             Some("deterministic test device".to_owned()),
-            Some(TEST_CUDA_MEMORY_BYTES),
-            Some(TEST_CUDA_MEMORY_BYTES / 2),
+            Some(ByteCount::from_u64(TEST_CUDA_MEMORY_BYTES)),
+            Some(ByteCount::from_u64(TEST_CUDA_MEMORY_BYTES / 2)),
             Some(ApplicationComputeCapability {
                 major: 12,
                 minor: 0,
@@ -71,8 +70,8 @@ fn shrinking_cuda_probe(device: ApplicationDevice) -> crate::local::DeviceProbeR
             Ok(ApplicationDeviceSummary::discovered(
                 device,
                 Some("shrinking deterministic test device".to_owned()),
-                Some(total_memory_bytes),
-                Some(total_memory_bytes / 2),
+                Some(ByteCount::from_u64(total_memory_bytes)),
+                Some(ByteCount::from_u64(total_memory_bytes / 2)),
                 None,
             ))
         }
@@ -110,8 +109,7 @@ fn fresh_configuration_selects_cpu_and_keeps_cpu_catalogue_identity() -> TestRes
 #[test]
 fn selected_cuda_and_memory_limit_persist_across_restart() -> TestResult {
     let database_path = unique_database_path();
-    let limit = NonZeroU64::new(TEST_CUDA_MEMORY_BYTES / 2)
-        .ok_or_else(|| "test CUDA memory limit was zero".to_owned())?;
+    let limit = ByteCount::from_u64(TEST_CUDA_MEMORY_BYTES / 2);
     let result = with_runtime_at_with_probe(
         &database_path,
         |configuration| {
@@ -125,7 +123,7 @@ fn selected_cuda_and_memory_limit_persist_across_restart() -> TestResult {
                 .select_device(CUDA_ZERO)
                 .map_err(application_error)?;
             assert_eq!(runtime.state().selected_device(), CUDA_ZERO);
-            assert_eq!(runtime.memory_budget.device_bytes, limit.get());
+            assert_eq!(runtime.memory_budget.device_bytes(), limit);
             Ok(())
         },
     )
@@ -142,7 +140,7 @@ fn selected_cuda_and_memory_limit_persist_across_restart() -> TestResult {
                     runtime.preferences().accelerator_memory_policy,
                     AcceleratorMemoryPolicy::Limit { bytes: limit }
                 );
-                assert_eq!(runtime.memory_budget.device_bytes, limit.get());
+                assert_eq!(runtime.memory_budget.device_bytes(), limit);
                 Ok(())
             },
         )
@@ -275,18 +273,24 @@ fn selected_cuda_capacity_shrink_blocks_load_without_fallback() -> TestResult {
         |runtime| {
             assert_eq!(runtime.state().selected_device(), selected_device);
             assert!(runtime.state().selected_device_available());
-            assert_eq!(runtime.memory_budget.device_bytes, TEST_CUDA_MEMORY_BYTES);
+            assert_eq!(
+                runtime.memory_budget.device_bytes(),
+                ByteCount::from_u64(TEST_CUDA_MEMORY_BYTES)
+            );
             let (selection, _resolved) =
                 resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
 
-            assert_eq!(
+            assert!(matches!(
                 runtime.load_model(&selection),
                 Err(ApplicationError::SelectedDeviceMemoryBudgetUnavailable {
-                    device: selected_device,
-                    budget_bytes: TEST_CUDA_MEMORY_BYTES,
-                    total_memory_bytes: Some(TEST_CUDA_MEMORY_BYTES / 2),
-                })
-            );
+                    device,
+                    budget_bytes,
+                    total_memory_bytes,
+                }) if device == selected_device
+                    && budget_bytes == ByteCount::from_u64(TEST_CUDA_MEMORY_BYTES)
+                    && total_memory_bytes
+                        == Some(ByteCount::from_u64(TEST_CUDA_MEMORY_BYTES / 2))
+            ));
             assert_eq!(runtime.state().selected_device(), selected_device);
             assert!(runtime.state().selected_device_available());
             assert!(!runtime.state().can_load(&selection));

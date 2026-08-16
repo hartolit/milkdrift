@@ -77,9 +77,11 @@ CPU/CUDA tensor placement. A nonempty observed set may include `F32`, `F16`,
 required and which types can execute. E1 likewise treats nonemptiness as its
 generic observed-evidence condition and does not reject truthful unused extras.
 
-`MemoryFootprint` has four concrete ownership components: host/device weights and
-host/device working memory. `sequence_cache_bytes_per_token` is a planning rate,
-not a fifth current-ownership component.
+`MemoryFootprint` has four private `ByteCount` ownership components: host/device
+weights and host/device working memory. `MemoryBudget` and byte-valued admission
+failures use the same portable checked representation. Inspection publishes no
+execution-specific cache rate; the loaded backend reports a concrete sequence
+reservation after its execution scalar and device are known.
 
 Let `R₀` be existing exact reservation, `P` the loading peak, `F` the final
 footprint, and `B` the aggregate budget. E0 checks and admits both:
@@ -231,10 +233,10 @@ path, and a destruction failure moves the same sole sequence owner into retained
 cleanup rather than losing or double-releasing it.
 
 Before sequence creation E0 checks model/identity/lifecycle, context and prefill
-limits, sampling, output capacity, and memory. It validates that the proposed
-`SequenceReservation` has checked persistent/transient components and an exact
-checked total, admits that complete backend total, and only then calls native
-sequence creation. Caller-owned logits, sampling, token-history, stop, output,
+limits, sampling, output capacity, and memory. `SequenceReservation` construction
+already guarantees that its private total is the checked persistent/transient
+sum; E0 admits that complete backend total without reconstructing or rechecking
+Candle/Llama geometry, and only then calls native sequence creation. Caller-owned logits, sampling, token-history, stop, output,
 and terminal-state workspaces are admitted independently; they are never hidden
 inside the backend plan. Aggregate model + sequence + workspace capacity rejects
 before registry or backend mutation.

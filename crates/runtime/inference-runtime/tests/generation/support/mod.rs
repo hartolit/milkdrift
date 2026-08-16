@@ -4,7 +4,7 @@ pub(crate) use std::sync::{Arc, Mutex, mpsc};
 pub(crate) use std::time::{Duration, Instant};
 
 pub(crate) use domain_contracts::{
-    BackendFailure, BackendFailureKind, BackendId, BackendLoadFailure, BackendSequence,
+    BackendFailure, BackendFailureKind, BackendId, BackendLoadFailure, BackendSequence, ByteCount,
     CapabilitySet, DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind,
     DrainTimeout, ExecutionDevice, FailedLoad, FailedLoadOwner, FinishReason, LoadConfiguration,
     LoadError, LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint, ModelArchitecture,

@@ -1,5 +1,7 @@
 //! Application-owned selection and model-reporting vocabulary.
 
+use domain_contracts::ByteCount;
+
 /// Application-owned identity of one local execution device.
 ///
 /// CUDA ordinals are process-local backend selectors rather than permanent
@@ -40,8 +42,8 @@ pub struct ApplicationDeviceSummary {
     display_name: Option<String>,
     available: bool,
     unavailable_reason: Option<ApplicationDeviceUnavailableReason>,
-    total_memory_bytes: Option<u64>,
-    available_memory_bytes: Option<u64>,
+    total_memory_bytes: Option<ByteCount>,
+    available_memory_bytes: Option<ByteCount>,
     compute_capability: Option<ApplicationComputeCapability>,
 }
 
@@ -61,8 +63,8 @@ impl ApplicationDeviceSummary {
     pub(crate) fn discovered(
         device: ApplicationDevice,
         display_name: Option<String>,
-        total_memory_bytes: Option<u64>,
-        available_memory_bytes: Option<u64>,
+        total_memory_bytes: Option<ByteCount>,
+        available_memory_bytes: Option<ByteCount>,
         compute_capability: Option<ApplicationComputeCapability>,
     ) -> Self {
         Self {
@@ -120,13 +122,13 @@ impl ApplicationDeviceSummary {
 
     /// Returns total device-local memory reported during discovery.
     #[must_use]
-    pub const fn total_memory_bytes(&self) -> Option<u64> {
+    pub const fn total_memory_bytes(&self) -> Option<ByteCount> {
         self.total_memory_bytes
     }
 
     /// Returns the point-in-time available device-local memory observation.
     #[must_use]
-    pub const fn available_memory_bytes(&self) -> Option<u64> {
+    pub const fn available_memory_bytes(&self) -> Option<ByteCount> {
         self.available_memory_bytes
     }
 

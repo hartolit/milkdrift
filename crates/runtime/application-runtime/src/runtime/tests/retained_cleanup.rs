@@ -1,7 +1,7 @@
 use domain_contracts::{
-    BackendFailure, BackendFailureKind, BackendId, BackendLoadFailure, LoadError, LoadFailureStage,
-    MemoryFootprint, ModelGeneration, ModelHandle, ModelId, RequestId, ScalarType, SequenceId,
-    TensorFailureLocation,
+    BackendFailure, BackendFailureKind, BackendId, BackendLoadFailure, ByteCount, LoadError,
+    LoadFailureStage, MemoryFootprint, ModelGeneration, ModelHandle, ModelId, RequestId,
+    ScalarType, SequenceId, TensorFailureLocation,
 };
 use inference_runtime::{
     CleanupFailureReport, CleanupResource, CleanupRetryState, CommandTicket, ConservativeFootprint,
@@ -23,24 +23,21 @@ use crate::{
 
 const RETAINED_HANDLE: ModelHandle = ModelHandle::new(ModelId::new(7), ModelGeneration::new(3));
 const UNRELATED_HANDLE: ModelHandle = ModelHandle::new(ModelId::new(11), ModelGeneration::new(5));
-const EXACT_FOOTPRINT: MemoryFootprint = MemoryFootprint {
-    host_weight_bytes: 11,
-    device_weight_bytes: 13,
-    host_working_bytes: 17,
-    device_working_bytes: 19,
-};
-const ACCEPTED_LOADING_PEAK: MemoryFootprint = MemoryFootprint {
-    host_weight_bytes: 41,
-    device_weight_bytes: 43,
-    host_working_bytes: 47,
-    device_working_bytes: 53,
-};
-const REPORTED_FOOTPRINT: MemoryFootprint = MemoryFootprint {
-    host_weight_bytes: 59,
-    device_weight_bytes: 61,
-    host_working_bytes: 67,
-    device_working_bytes: 71,
-};
+const EXACT_FOOTPRINT: MemoryFootprint = MemoryFootprint::ZERO
+    .with_host_weight_bytes(ByteCount::from_u64(11))
+    .with_device_weight_bytes(ByteCount::from_u64(13))
+    .with_host_working_bytes(ByteCount::from_u64(17))
+    .with_device_working_bytes(ByteCount::from_u64(19));
+const ACCEPTED_LOADING_PEAK: MemoryFootprint = MemoryFootprint::ZERO
+    .with_host_weight_bytes(ByteCount::from_u64(41))
+    .with_device_weight_bytes(ByteCount::from_u64(43))
+    .with_host_working_bytes(ByteCount::from_u64(47))
+    .with_device_working_bytes(ByteCount::from_u64(53));
+const REPORTED_FOOTPRINT: MemoryFootprint = MemoryFootprint::ZERO
+    .with_host_weight_bytes(ByteCount::from_u64(59))
+    .with_device_weight_bytes(ByteCount::from_u64(61))
+    .with_host_working_bytes(ByteCount::from_u64(67))
+    .with_device_working_bytes(ByteCount::from_u64(71));
 const RETAINED_LOAD_DIAGNOSTIC: BackendLoadFailure = BackendLoadFailure::at_tensor(
     BackendFailure::new(BackendId::new(1), BackendFailureKind::DeviceExecution, 29),
     LoadFailureStage::DeviceTransfer,

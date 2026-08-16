@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use domain_contracts::ByteCount;
+
 use hf_hub_adapter::{
     ArtifactContentIdentity, ArtifactContentIdentityAuthority, ArtifactContentKind,
     ArtifactScalarType, ResolvedContentArtifact, ResolvedSafetensorsLlamaArtifacts,
@@ -108,8 +110,8 @@ fn available_device_probe(device: ApplicationDevice) -> DeviceProbeResult {
         ApplicationDevice::Cuda { .. } => Ok(ApplicationDeviceSummary::discovered(
             device,
             Some("deterministic CUDA hardware-suite device".to_owned()),
-            Some(TEST_CUDA_MEMORY_BYTES),
-            Some(TEST_CUDA_MEMORY_BYTES / 2),
+            Some(ByteCount::from_u64(TEST_CUDA_MEMORY_BYTES)),
+            Some(ByteCount::from_u64(TEST_CUDA_MEMORY_BYTES / 2)),
             Some(ApplicationComputeCapability {
                 major: 12,
                 minor: 0,
@@ -203,7 +205,7 @@ where
 {
     let database_path = unique_database_path();
     let mut configuration = ApplicationRuntimeConfiguration::new(&database_path);
-    configuration.defaults.maximum_host_memory_bytes = u64::MAX;
+    configuration.defaults.maximum_host_memory_bytes = ByteCount::MAX;
     configuration.defaults.drain_timeout_milliseconds = 5_000;
     configuration.timing.runtime_poll = TEST_POLL;
     configuration.timing.hub_worker_poll = TEST_POLL;

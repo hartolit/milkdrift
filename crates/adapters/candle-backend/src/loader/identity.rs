@@ -3,12 +3,14 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 
+#[cfg(any(feature = "benchmark-observation", feature = "cuda-hardware-tests"))]
+use domain_contracts::ByteCount;
 use domain_contracts::{BackendId, LoadError};
 use sha2::{Digest, Sha256};
 
 use super::manifest::InspectedShard;
 use super::payload::verification_buffer;
-use super::{VERIFICATION_BUFFER_BYTES_U64, invalid_model_failure};
+use super::{VERIFICATION_BUFFER_BYTES, invalid_model_failure};
 use crate::failure::{
     CODE_HEADER_IDENTITY_MISMATCH, CODE_NUMERIC_OVERFLOW, CODE_PAYLOAD_READ,
     CODE_SOURCE_IDENTITY_LENGTH,
@@ -44,8 +46,9 @@ pub(super) fn establish_all_observed(
 
     impl IdentityObserver for LoadIdentityObserver<'_> {
         fn baseline_bytes(&mut self, bytes: usize) {
-            self.0
-                .verification_only_bytes_read(u64::try_from(bytes).unwrap_or(u64::MAX));
+            self.0.verification_only_bytes_read(ByteCount::from_u64(
+                u64::try_from(bytes).unwrap_or(u64::MAX),
+            ));
         }
     }
 
@@ -135,8 +138,11 @@ fn hash_exact<O: IdentityObserver>(
 ) -> Result<(), LoadError> {
     let mut remaining = byte_count;
     while remaining > 0 {
-        let chunk_length = usize::try_from(remaining.min(VERIFICATION_BUFFER_BYTES_U64))
-            .map_err(|_| invalid_model_failure(backend, CODE_NUMERIC_OVERFLOW))?;
+        let chunk_length = domain_contracts::ByteCount::from_u64(
+            remaining.min(VERIFICATION_BUFFER_BYTES.as_u64()),
+        )
+        .checked_to_usize()
+        .ok_or_else(|| invalid_model_failure(backend, CODE_NUMERIC_OVERFLOW))?;
         let chunk = buffer
             .get_mut(..chunk_length)
             .ok_or_else(|| invalid_model_failure(backend, CODE_PAYLOAD_READ))?;

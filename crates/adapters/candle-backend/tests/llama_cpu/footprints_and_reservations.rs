@@ -42,9 +42,52 @@ fn homogeneous_f32_f16_and_bf16_preserve_execution_behavior() -> TestResult {
 }
 
 #[test]
+fn source_layout_does_not_change_sequence_bytes_when_execution_scalar_is_equal() -> TestResult {
+    let homogeneous = TinyLlamaFixture::create(RequiredProfile::F16, &[])?;
+    let mixed = TinyLlamaFixture::create(RequiredProfile::MixedF16F32, &[])?;
+    let homogeneous_source = homogeneous.source(ConfigDeclaration::F16)?;
+    let mixed_source = mixed.source(ConfigDeclaration::F16)?;
+    let mut homogeneous_loader = CandleLlamaLoader::new(BACKEND);
+    let mut mixed_loader = CandleLlamaLoader::new(BACKEND);
+    let (_, mut homogeneous_model) = prepare_and_load(
+        &mut homogeneous_loader,
+        &homogeneous_source,
+        load_configuration(),
+    )?;
+    let (_, mut mixed_model) =
+        prepare_and_load(&mut mixed_loader, &mixed_source, load_configuration())?;
+    let configuration = SequenceConfiguration::new(
+        NonZeroU32::new(16).ok_or_else(|| "maximum tokens must be nonzero".to_owned())?,
+        NonZeroU32::new(8).ok_or_else(|| "maximum prefill must be nonzero".to_owned())?,
+    );
+
+    assert_eq!(homogeneous_model.execution_scalar_type(), ScalarType::F16);
+    assert_eq!(mixed_model.execution_scalar_type(), ScalarType::F16);
+    assert_eq!(
+        homogeneous_model
+            .plan_sequence(&configuration)
+            .map_err(debug_error)?
+            .reservation,
+        mixed_model
+            .plan_sequence(&configuration)
+            .map_err(debug_error)?
+            .reservation
+    );
+
+    clean_model(&mut homogeneous_model)?;
+    clean_model(&mut mixed_model)
+}
+
+#[test]
 fn huge_ignored_extra_does_not_change_exact_cpu_footprints_or_working_bytes() -> TestResult {
-    assert_eq!(CPU_F32_FINAL.host_weight_bytes, REQUIRED_ELEMENTS * 4);
-    assert_eq!(CPU_F16_FINAL.host_weight_bytes, REQUIRED_ELEMENTS * 2);
+    assert_eq!(
+        CPU_F32_FINAL.host_weight_bytes().as_u64(),
+        REQUIRED_ELEMENTS * 4
+    );
+    assert_eq!(
+        CPU_F16_FINAL.host_weight_bytes().as_u64(),
+        REQUIRED_ELEMENTS * 2
+    );
     let base = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
     let base_source = base.source(ConfigDeclaration::F32)?;
     let mut loader = CandleLlamaLoader::new(BACKEND);
@@ -71,11 +114,12 @@ fn huge_ignored_extra_does_not_change_exact_cpu_footprints_or_working_bytes() ->
         base_plan.loading_peak_footprint
     );
     assert_eq!(descriptor.estimated_footprint, CPU_F32_FINAL);
-    assert_eq!(
-        descriptor.sequence_cache_bytes_per_token,
-        F32_SEQUENCE_CACHE_BYTES_PER_TOKEN
+    assert!(
+        huge_plan
+            .loading_peak_footprint
+            .device_working_bytes()
+            .is_zero()
     );
-    assert_eq!(huge_plan.loading_peak_footprint.device_working_bytes, 0);
     assert_eq!(model.reported_footprint(), CPU_F32_FINAL);
     clean_model(&mut model)
 }
@@ -85,17 +129,23 @@ fn host_budget_rejects_exact_required_only_loading_peak() -> TestResult {
     let fixture = TinyLlamaFixture::create(RequiredProfile::F32, &[])?;
     let source = fixture.source(ConfigDeclaration::F32)?;
     let mut loader = CandleLlamaLoader::new(BACKEND);
-    assert_eq!(CPU_F32_LOADING_PEAK.checked_host_bytes(), Some(69_443));
+    assert_eq!(
+        CPU_F32_LOADING_PEAK.checked_host_bytes(),
+        Some(ByteCount::from_u64(69_443))
+    );
 
     let mut constrained = load_configuration();
-    constrained.memory_budget.host_bytes = 69_442;
+    constrained.memory_budget = constrained
+        .memory_budget
+        .with_host_bytes(ByteCount::from_u64(69_442));
     assert!(matches!(
         loader.prepare_load(&source, &constrained),
         Err(LoadError::InsufficientMemory {
             kind: domain_contracts::MemoryKind::Host,
-            required_bytes: 69_443,
-            available_bytes: 69_442,
-        })
+            required_bytes,
+            available_bytes,
+        }) if required_bytes == ByteCount::from_u64(69_443)
+            && available_bytes == ByteCount::from_u64(69_442)
     ));
     Ok(())
 }

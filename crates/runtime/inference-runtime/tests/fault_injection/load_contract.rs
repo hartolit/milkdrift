@@ -77,10 +77,10 @@ fn failed_owner_plan_substitution_blocks_admission_until_release() -> TestResult
             reported_footprint,
             conservative_footprint: ConservativeFootprint::Known(conservative),
         } if accepted_footprint == loading_peak_footprint()
-            && reported_footprint.host_working_bytes
-                == loading_peak_footprint().host_working_bytes.saturating_add(1)
-            && conservative.host_working_bytes
-                == loading_peak_footprint().host_working_bytes.saturating_add(1)
+            && reported_footprint.host_working_bytes().as_u64()
+                == loading_peak_footprint().host_working_bytes().as_u64().saturating_add(1)
+            && conservative.host_working_bytes().as_u64()
+                == loading_peak_footprint().host_working_bytes().as_u64().saturating_add(1)
     ));
     assert_eq!(state.failure.primary_failure, FailureClass::BackendContract);
     assert!(runtime.snapshot().admission_blocked);
@@ -123,10 +123,10 @@ fn failed_owner_plan_mutation_during_cleanup_blocks_admission_until_release() ->
             reported_footprint,
             conservative_footprint: ConservativeFootprint::Known(conservative),
         } if accepted_footprint == loading_peak_footprint()
-            && reported_footprint.host_working_bytes
-                == loading_peak_footprint().host_working_bytes.saturating_add(7)
-            && conservative.host_working_bytes
-                == loading_peak_footprint().host_working_bytes.saturating_add(7)
+            && reported_footprint.host_working_bytes().as_u64()
+                == loading_peak_footprint().host_working_bytes().as_u64().saturating_add(7)
+            && conservative.host_working_bytes().as_u64()
+                == loading_peak_footprint().host_working_bytes().as_u64().saturating_add(7)
     ));
     assert_eq!(state.failure.primary_failure, FailureClass::BackendContract);
     assert!(runtime.snapshot().admission_blocked);
@@ -156,10 +156,7 @@ fn retained_failed_transaction_release_then_reload_advances_generation() -> Test
         3,
         1,
         1,
-        MemoryBudget {
-            host_bytes: 1_024,
-            device_bytes: 0,
-        },
+        MemoryBudget::ZERO.with_host_bytes(ByteCount::from_u64(1_024)),
     );
     let failed_source =
         source_with_faults(Faults::FAIL_LOAD.union(Faults::FAIL_FAILED_LOAD_CLEANUP_ONCE));
@@ -207,8 +204,8 @@ fn aggregate_loading_peak_budget_rejection_precedes_materialization() {
             kind: MemoryKind::Host,
             required_bytes,
             available_bytes,
-        }) if required_bytes == loading_peak_host_bytes()
-            && available_bytes == loading_peak_host_bytes() - 1
+        }) if required_bytes == ByteCount::from_u64(loading_peak_host_bytes())
+            && available_bytes == ByteCount::from_u64(loading_peak_host_bytes() - 1)
     ));
     assert_eq!(counts.preparations.get(), 1);
     assert_eq!(counts.model_loads.get(), 0);

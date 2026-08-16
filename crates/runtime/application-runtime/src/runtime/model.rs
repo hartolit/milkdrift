@@ -316,10 +316,7 @@ impl ApplicationRuntime {
                 .map(application_configuration_declared_scalar_type),
             chat_profile,
         );
-        let persistence_warning = self
-            .persist_resolved(&artifacts, &resolved)
-            .err()
-            .map(|error| ApplicationFailure::new(ApplicationFailureKind::Storage, error));
+        let persistence_warning = self.persist_resolved(&artifacts, &resolved).err();
         self.resolved_artifacts = Some(artifacts);
         self.tokenizer = Some(tokenizer);
         self.state.set_resolved(resolved.clone());
@@ -525,8 +522,11 @@ impl ApplicationRuntime {
             .checked_host_bytes()
             .zip(footprint.checked_device_bytes())
             .is_some_and(|(host_bytes, device_bytes)| {
-                host_bytes <= admission.memory_budget.host_bytes
-                    && device_bytes <= admission.memory_budget.device_bytes
+                admission.memory_budget.host_bytes().contains(host_bytes)
+                    && admission
+                        .memory_budget
+                        .device_bytes()
+                        .contains(device_bytes)
             })
     }
 
@@ -534,23 +534,34 @@ impl ApplicationRuntime {
         &mut self,
         artifacts: &ResolvedSafetensorsLlamaArtifacts,
         resolved: &ResolvedModel,
-    ) -> Result<(), redb_storage::StorageError> {
+    ) -> Result<(), ApplicationFailure> {
         let mut candidate = self.preferences.clone();
         candidate
             .default_repository
             .clone_from(&artifacts.repository);
         candidate.default_revision.clone_from(&artifacts.revision);
-        self.storage.save_settings(&stored_settings(&candidate))?;
+        let settings = stored_settings(&candidate).map_err(|field| {
+            ApplicationFailure::from_debug(
+                ApplicationFailureKind::Storage,
+                "preferences failed validation before persistence",
+                field,
+            )
+        })?;
+        self.storage
+            .save_settings(&settings)
+            .map_err(|error| ApplicationFailure::new(ApplicationFailureKind::Storage, error))?;
         self.preferences = candidate;
-        self.storage.upsert_model(&ModelRecord {
-            name: format!("{}@{}", artifacts.repository, artifacts.commit),
-            repository: artifacts.repository.clone(),
-            revision: artifacts.commit.clone(),
-            configuration_declared_scalar_type: resolved
-                .configuration_declared_scalar_type()
-                .map(stored_configuration_declared_scalar_type),
-            last_resolved_unix_milliseconds: unix_milliseconds(),
-        })
+        self.storage
+            .upsert_model(&ModelRecord {
+                name: format!("{}@{}", artifacts.repository, artifacts.commit),
+                repository: artifacts.repository.clone(),
+                revision: artifacts.commit.clone(),
+                configuration_declared_scalar_type: resolved
+                    .configuration_declared_scalar_type()
+                    .map(stored_configuration_declared_scalar_type),
+                last_resolved_unix_milliseconds: unix_milliseconds(),
+            })
+            .map_err(|error| ApplicationFailure::new(ApplicationFailureKind::Storage, error))
     }
 }
 

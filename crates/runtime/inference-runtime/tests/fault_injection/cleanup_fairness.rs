@@ -78,10 +78,9 @@ fn cleanup_selection_rotates_across_classes_and_owners() -> TestResult {
         2,
         6,
         4,
-        MemoryBudget {
-            host_bytes: 10_000,
-            device_bytes: 10_000,
-        },
+        MemoryBudget::ZERO
+            .with_host_bytes(ByteCount::from_u64(10_000))
+            .with_device_bytes(ByteCount::from_u64(10_000)),
     );
 
     let sequence_model = load_model_id(

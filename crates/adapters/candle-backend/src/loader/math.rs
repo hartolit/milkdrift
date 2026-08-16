@@ -11,7 +11,7 @@ use super::invalid_model_failure;
 ///
 /// Source-format dtype classification remains owned by the Safetensors parser;
 /// this function covers only concrete execution dtypes used by loader math.
-pub(super) const fn execution_dtype_bytes(dtype: DType) -> Option<u64> {
+pub(crate) const fn execution_dtype_bytes(dtype: DType) -> Option<u64> {
     match dtype {
         DType::F32 => Some(4),
         DType::F16 | DType::BF16 => Some(2),

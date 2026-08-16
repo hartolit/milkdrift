@@ -1,12 +1,13 @@
 //! Validated defaults and host-worker configuration for application orchestration.
 
 use std::fmt::{self, Formatter};
-use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use domain_contracts::ByteCount;
+
 const DEFAULT_REVISION: &str = "main";
-const DEFAULT_HOST_MEMORY_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+const DEFAULT_HOST_MEMORY_BYTES: ByteCount = ByteCount::from_u64(16 * 1024 * 1024 * 1024);
 const DEFAULT_DRAIN_TIMEOUT_MILLISECONDS: u64 = 2_000;
 const DEFAULT_MAXIMUM_REQUESTS: u32 = 1;
 const DEFAULT_COMMAND_CAPACITY: usize = 32;
@@ -60,7 +61,7 @@ pub enum AcceleratorMemoryPolicy {
     /// Apply an explicit nonzero cap below discovered physical capacity.
     Limit {
         /// Maximum accelerator bytes admitted by E0.
-        bytes: NonZeroU64,
+        bytes: ByteCount,
     },
 }
 
@@ -72,7 +73,7 @@ pub struct ApplicationPreferences {
     /// Initial branch, tag, reference, or commit shown by a frontend.
     pub default_revision: String,
     /// Aggregate host-memory admission limit.
-    pub maximum_host_memory_bytes: u64,
+    pub maximum_host_memory_bytes: ByteCount,
     /// Explicit execution-device selection, independent from model artifacts.
     pub selected_device: crate::ApplicationDevice,
     /// Accelerator-memory admission policy resolved against discovered capacity.

@@ -47,30 +47,7 @@ impl LoadedModel for FaultModel {
         } else {
             *configuration
         };
-        let reservation = if self.faults.contains(Faults::OVERFLOWING_SEQUENCE_PLAN) {
-            let overflowing = MemoryFootprint {
-                host_weight_bytes: u64::MAX,
-                device_weight_bytes: 0,
-                host_working_bytes: 1,
-                device_working_bytes: 0,
-            };
-            SequenceReservation {
-                persistent_footprint: overflowing,
-                transient_footprint: MemoryFootprint::default(),
-                total_footprint: overflowing,
-            }
-        } else if self.faults.contains(Faults::INCONSISTENT_SEQUENCE_PLAN) {
-            SequenceReservation {
-                persistent_footprint: sequence_persistent_footprint(),
-                transient_footprint: sequence_transient_footprint(),
-                total_footprint: MemoryFootprint {
-                    host_working_bytes: 7,
-                    ..MemoryFootprint::default()
-                },
-            }
-        } else {
-            sequence_reservation()
-        };
+        let reservation = sequence_reservation();
         Ok(SequencePlan {
             configuration: accepted,
             reservation,
@@ -232,10 +209,14 @@ impl LoadedModel for FaultModel {
                 .faults
                 .contains(Faults::MUTATE_MODEL_REPORT_ON_CLEANUP_FAILURE)
             {
-                self.reported_footprint.device_working_bytes = self
+                let bytes = self
                     .reported_footprint
-                    .device_working_bytes
+                    .device_working_bytes()
+                    .as_u64()
                     .saturating_add(11);
+                self.reported_footprint = self
+                    .reported_footprint
+                    .with_device_working_bytes(ByteCount::from_u64(bytes));
             }
             Err(SynchronizationError::Backend(backend_failure(3)))
         } else if self.released {

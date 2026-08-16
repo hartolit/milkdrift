@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::fmt::{self, Debug, Display, Formatter};
 
-use domain_contracts::{BackendLoadFailure, RequestId};
+use domain_contracts::{BackendLoadFailure, ByteCount, RequestId};
 
 use crate::{
     ApplicationActivity, ApplicationDevice, ApplicationDeviceUnavailableReason, GenerationPhase,
@@ -153,6 +153,8 @@ pub enum ApplicationConfigurationField {
     HubShutdownPoll,
     /// Persisted or default repository revision.
     DefaultRevision,
+    /// Explicit accelerator-memory limit.
+    AcceleratorMemoryLimit,
     /// Persisted or default drain timeout.
     DrainTimeout,
 }
@@ -259,9 +261,9 @@ pub enum ApplicationError {
         /// Device that remains selected; no fallback was attempted.
         device: ApplicationDevice,
         /// Accelerator bytes fixed into E0 at process startup.
-        budget_bytes: u64,
+        budget_bytes: ByteCount,
         /// Latest reported physical capacity, or `None` when discovery omitted it.
-        total_memory_bytes: Option<u64>,
+        total_memory_bytes: Option<ByteCount>,
     },
     /// No retained model cleanup is currently owned by E1.
     NoRetainedModelCleanup,

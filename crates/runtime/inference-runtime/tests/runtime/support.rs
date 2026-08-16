@@ -4,7 +4,7 @@ pub(crate) use std::thread;
 pub(crate) use std::time::{Duration, Instant};
 
 pub(crate) use domain_contracts::{
-    BackendFailure, BackendFailureKind, BackendId, BackendSequence, CancellationReason,
+    BackendFailure, BackendFailureKind, BackendId, BackendSequence, ByteCount, CancellationReason,
     CapabilitySet, DecodeBufferRequirements, DecodeInput, DecodeOutcome, DeviceId, DeviceKind,
     DrainTimeout, ExecutionDevice, FailedLoad, FailedLoadOwner, FinishReason, LoadConfiguration,
     LoadError, LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint, MemoryKind, ModelArchitecture,
@@ -121,11 +121,11 @@ impl ModelLoader for MockLoader {
             .estimated_footprint
             .checked_host_bytes()
             .ok_or(LoadError::InvalidSource)?;
-        if required > configuration.memory_budget.host_bytes {
+        if !configuration.memory_budget.host_bytes().contains(required) {
             return Err(LoadError::InsufficientMemory {
                 kind: MemoryKind::Host,
                 required_bytes: required,
-                available_bytes: configuration.memory_budget.host_bytes,
+                available_bytes: configuration.memory_budget.host_bytes(),
             });
         }
         let plan = LoadPlan {
@@ -192,21 +192,13 @@ impl LoadedModel for MockModel {
         }
         Ok(SequencePlan {
             configuration: *configuration,
-            reservation: SequenceReservation {
-                persistent_footprint: MemoryFootprint {
-                    host_weight_bytes: 0,
-                    device_weight_bytes: 0,
-                    host_working_bytes: u64::from(configuration.maximum_tokens.get()),
-                    device_working_bytes: 0,
-                },
-                transient_footprint: MemoryFootprint::default(),
-                total_footprint: MemoryFootprint {
-                    host_weight_bytes: 0,
-                    device_weight_bytes: 0,
-                    host_working_bytes: u64::from(configuration.maximum_tokens.get()),
-                    device_working_bytes: 0,
-                },
-            },
+            reservation: SequenceReservation::checked(
+                MemoryFootprint::host_working(ByteCount::from_u64(u64::from(
+                    configuration.maximum_tokens.get(),
+                ))),
+                MemoryFootprint::ZERO,
+            )
+            .ok_or_else(|| ModelError::Backend(mock_failure(1)))?,
             logits_capacity: self.descriptor.metadata.vocabulary_size as usize,
         })
     }
@@ -355,13 +347,8 @@ pub(crate) const fn descriptor(source: MockSource) -> ModelDescriptor {
             maximum_sequences: 4,
             maximum_prefill_batch: 128,
         },
-        estimated_footprint: MemoryFootprint {
-            host_weight_bytes: source.model_bytes,
-            device_weight_bytes: 0,
-            host_working_bytes: 10,
-            device_working_bytes: 0,
-        },
-        sequence_cache_bytes_per_token: 1,
+        estimated_footprint: MemoryFootprint::host_weights(ByteCount::from_u64(source.model_bytes))
+            .with_host_working_bytes(ByteCount::from_u64(10)),
     }
 }
 
@@ -369,10 +356,7 @@ pub(crate) fn limits(models: u32, requests: u32, host_bytes: u64) -> RuntimeLimi
     RuntimeLimits::new(
         NonZeroU32::new(models).unwrap_or(NonZeroU32::MIN),
         NonZeroU32::new(requests).unwrap_or(NonZeroU32::MIN),
-        MemoryBudget {
-            host_bytes,
-            device_bytes: 0,
-        },
+        MemoryBudget::ZERO.with_host_bytes(ByteCount::from_u64(host_bytes)),
     )
 }
 

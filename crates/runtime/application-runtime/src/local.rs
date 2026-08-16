@@ -216,7 +216,7 @@ fn worker_start_failure(error: inference_runtime::HostedRuntimeStartError) -> Ap
 #[cfg(test)]
 mod tests {
     use candle_backend::{CandleDeviceSummary, CudaComputeCapability};
-    use domain_contracts::{DeviceId, DeviceKind, ExecutionDevice};
+    use domain_contracts::{ByteCount, DeviceId, DeviceKind, ExecutionDevice};
 
     use super::{application_device, execution_device, translate_device_summary};
     use crate::{ApplicationDevice, ApplicationDeviceSummary};
@@ -252,8 +252,8 @@ mod tests {
                     major: 12,
                     minor: 0,
                 }),
-                total_memory_bytes: Some(16_000),
-                available_memory_bytes: Some(12_000),
+                total_memory_bytes: Some(ByteCount::from_u64(16_000)),
+                available_memory_bytes: Some(ByteCount::from_u64(12_000)),
                 supports_bf16: true,
             },
         )
@@ -262,8 +262,14 @@ mod tests {
         assert_eq!(translated.device(), device);
         assert_eq!(translated.display_name(), Some("NVIDIA Test Device"));
         assert!(translated.available());
-        assert_eq!(translated.total_memory_bytes(), Some(16_000));
-        assert_eq!(translated.available_memory_bytes(), Some(12_000));
+        assert_eq!(
+            translated.total_memory_bytes(),
+            Some(ByteCount::from_u64(16_000))
+        );
+        assert_eq!(
+            translated.available_memory_bytes(),
+            Some(ByteCount::from_u64(12_000))
+        );
         assert_eq!(
             translated.compute_capability(),
             Some(crate::ApplicationComputeCapability {

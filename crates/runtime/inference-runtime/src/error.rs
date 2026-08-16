@@ -396,9 +396,9 @@ pub enum RuntimeError {
         /// Memory domain that exceeded its hard limit.
         kind: MemoryKind,
         /// Total resident bytes required after the attempted admission.
-        required_bytes: u64,
+        required_bytes: domain_contracts::ByteCount,
         /// Configured aggregate byte limit.
-        available_bytes: u64,
+        available_bytes: domain_contracts::ByteCount,
     },
     /// Model loading failed.
     Load(LoadError),

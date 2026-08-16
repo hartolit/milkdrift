@@ -14,7 +14,7 @@ use crate::failure::{
 use super::observer::{HashedRange, MaterializationObserver};
 use super::payload::{AlignedPayload, verification_buffer};
 use super::prepared::{CandleLlamaPreparedLoad, RequiredTensorFacts};
-use super::{VERIFICATION_BUFFER_BYTES_U64, invalid_model_failure, with_tensor};
+use super::{VERIFICATION_BUFFER_BYTES, invalid_model_failure, with_tensor};
 
 #[cfg(test)]
 thread_local! {
@@ -191,8 +191,11 @@ impl CandleLlamaPreparedLoad {
     ) -> Result<(), LoadError> {
         let mut remaining = byte_count;
         while remaining > 0 {
-            let chunk_length = usize::try_from(remaining.min(VERIFICATION_BUFFER_BYTES_U64))
-                .map_err(|_| invalid_model_failure(self.backend, CODE_NUMERIC_OVERFLOW))?;
+            let chunk_length = domain_contracts::ByteCount::from_u64(
+                remaining.min(VERIFICATION_BUFFER_BYTES.as_u64()),
+            )
+            .checked_to_usize()
+            .ok_or_else(|| invalid_model_failure(self.backend, CODE_NUMERIC_OVERFLOW))?;
             let chunk = buffer
                 .get_mut(..chunk_length)
                 .ok_or_else(|| invalid_model_failure(self.backend, CODE_PAYLOAD_READ))?;

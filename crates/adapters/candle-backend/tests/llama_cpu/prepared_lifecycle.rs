@@ -48,7 +48,9 @@ fn cuda_request_fails_explicitly_when_support_is_not_compiled() -> TestResult {
     let mut loader = CandleLlamaLoader::new(BACKEND);
     let mut configuration = load_configuration();
     configuration.execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda);
-    configuration.memory_budget.device_bytes = u64::MAX;
+    configuration.memory_budget = configuration
+        .memory_budget
+        .with_device_bytes(ByteCount::MAX);
 
     assert!(matches!(
         loader.prepare_load(&source, &configuration),

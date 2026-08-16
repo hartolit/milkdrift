@@ -56,6 +56,9 @@ and [lifecycle](lifecycle.md).
   execution scalar, artifact provenance, expected content, final footprint,
   loading peak, sequence reservation, and retained ownership certainty are
   separate facts.
+- Deterministic cross-crate byte facts use one private-representation `ByteCount`;
+  footprint, budget, device-observation, and reservation fields cannot be forged
+  with raw public integers, and report/persistence conversion is explicit.
 - Candle performs bounded complete inspection, sequential whole-shard
   verification, required-only materialization, and shard-aware accelerator
   transfer batches. Final and loading footprints count required ownership only.
@@ -63,7 +66,9 @@ and [lifecycle](lifecycle.md).
   verified model, and retains failed or contradictory owners through explicit
   bounded cleanup.
 - Sequence reservation separates all-layer persistent state from one block's
-  simultaneous transient peak and outer model state.
+  simultaneous transient peak and outer model state. Its aggregate is privately
+  derived by the checked constructor, and execution-specific cache geometry lives
+  only in the loaded Candle planner rather than the inspection descriptor.
 - E0 publishes a newly created sequence only after its exact identity, capacity,
   immutable plan, `Empty` state, and zero position match the admitted contract.
 - E1 has one cleanup coordinator and exposes durable exact, unverified, or unknown

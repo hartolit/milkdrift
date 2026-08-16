@@ -1,6 +1,8 @@
 //! Frontend-neutral application state exposed by the orchestration engine.
 
-use domain_contracts::{FinishReason, GenerationUsage, MemoryFootprint, ModelHandle, RequestId};
+use domain_contracts::{
+    ByteCount, FinishReason, GenerationUsage, MemoryFootprint, ModelHandle, RequestId,
+};
 
 use crate::{
     ApplicationDevice, ApplicationDeviceDiscoveryFailure, ApplicationDeviceSummary,
@@ -284,7 +286,7 @@ pub struct ApplicationState {
     devices: Vec<ApplicationDeviceSummary>,
     selected_device: ApplicationDevice,
     device_discovery_failures: Vec<ApplicationDeviceDiscoveryFailure>,
-    accelerator_memory_budget_bytes: u64,
+    accelerator_memory_budget_bytes: ByteCount,
     resolved: Option<ResolvedModel>,
     loaded: Option<LoadedModel>,
     retained_model: Option<ApplicationRetainedModel>,
@@ -301,7 +303,7 @@ impl Default for ApplicationState {
             devices: vec![ApplicationDeviceSummary::cpu()],
             selected_device: ApplicationDevice::Cpu,
             device_discovery_failures: Vec::new(),
-            accelerator_memory_budget_bytes: 0,
+            accelerator_memory_budget_bytes: ByteCount::ZERO,
             resolved: None,
             loaded: None,
             retained_model: None,
@@ -318,7 +320,7 @@ impl ApplicationState {
         selected_device: ApplicationDevice,
         devices: Vec<ApplicationDeviceSummary>,
         device_discovery_failures: Vec<ApplicationDeviceDiscoveryFailure>,
-        accelerator_memory_budget_bytes: u64,
+        accelerator_memory_budget_bytes: ByteCount,
     ) -> Self {
         let mut state = Self::default();
         state.devices.clear();
@@ -486,11 +488,11 @@ impl ApplicationState {
         match self.selected_device {
             ApplicationDevice::Cpu => true,
             ApplicationDevice::Cuda { .. } => {
-                self.accelerator_memory_budget_bytes > 0
+                !self.accelerator_memory_budget_bytes.is_zero()
                     && self
                         .selected_device_summary()
                         .and_then(ApplicationDeviceSummary::total_memory_bytes)
-                        .is_some_and(|total| self.accelerator_memory_budget_bytes <= total)
+                        .is_some_and(|total| total.contains(self.accelerator_memory_budget_bytes))
             }
         }
     }

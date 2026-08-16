@@ -206,12 +206,7 @@ fn direct_prefill_preserves_primary_and_exposes_retained_cleanup() -> Result<(),
         || cleanup.failure.cleanup_detail
             != FailureDetail::Sequence(SequenceError::Backend(mock_failure(2)))
         || cleanup.ownership
-            != RetainedOwnership::Exact(MemoryFootprint {
-                host_weight_bytes: 0,
-                device_weight_bytes: 0,
-                host_working_bytes: 8,
-                device_working_bytes: 0,
-            })
+            != RetainedOwnership::Exact(MemoryFootprint::host_working(ByteCount::from_u64(8)))
     {
         return Err("retained direct-prefill cleanup state lost structured identity".into());
     }

@@ -67,8 +67,8 @@ pub(crate) fn candle_loader_observation_record(
             snapshot.materialization_duration,
             "Candle materialization",
         )?,
-        required_bytes_read: snapshot.required_bytes_read,
-        whole_file_verification_bytes_read: snapshot.whole_file_verification_bytes_read,
+        required_bytes_read: snapshot.required_bytes_read.as_u64(),
+        whole_file_verification_bytes_read: snapshot.whole_file_verification_bytes_read.as_u64(),
         transfer_batches: snapshot.transfer_batches,
         loading_device_synchronizations: snapshot.loading_device_synchronizations,
     })
@@ -127,10 +127,10 @@ mod tests {
         CandleLoadCleanupOutcome, CandleLoadObservationOutcome, CandleLoadObservationSnapshot,
     };
     use domain_contracts::{
-        BackendId, CapabilitySet, DeviceId, DeviceKind, ExecutionDevice, LoadConfiguration,
-        LoadPlan, MemoryBudget, MemoryFootprint, ModelArchitecture, ModelCapabilities,
-        ModelDescriptor, ModelGeneration, ModelHandle, ModelId, ModelMetadata, QuantizationFormat,
-        ScalarType, ScalarTypeSet,
+        BackendId, ByteCount, CapabilitySet, DeviceId, DeviceKind, ExecutionDevice,
+        LoadConfiguration, LoadPlan, MemoryBudget, MemoryFootprint, ModelArchitecture,
+        ModelCapabilities, ModelDescriptor, ModelGeneration, ModelHandle, ModelId, ModelMetadata,
+        QuantizationFormat, ScalarType, ScalarTypeSet,
     };
     use inference_runtime::LoadReceipt;
 
@@ -177,20 +177,12 @@ mod tests {
 
     fn fixture_plan() -> LoadPlan {
         let execution_device = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda);
-        let final_footprint = MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 4_096,
-            host_working_bytes: 0,
-            device_working_bytes: 0,
-        };
+        let final_footprint = MemoryFootprint::device_weights(ByteCount::from_u64(4_096));
         LoadPlan {
             accepted_configuration: LoadConfiguration {
                 handle: ModelHandle::new(ModelId::new(7), ModelGeneration::new(1)),
                 execution_device,
-                memory_budget: MemoryBudget {
-                    host_bytes: u64::MAX,
-                    device_bytes: u64::MAX,
-                },
+                memory_budget: MemoryBudget::UNLIMITED,
             },
             descriptor: ModelDescriptor {
                 backend: BackendId::new(10_001),
@@ -209,16 +201,11 @@ mod tests {
                     maximum_prefill_batch: 32,
                 },
                 estimated_footprint: final_footprint,
-                sequence_cache_bytes_per_token: 64,
             },
             execution_scalar_type: ScalarType::F32,
             final_footprint,
-            loading_peak_footprint: MemoryFootprint {
-                host_weight_bytes: 0,
-                device_weight_bytes: 4_096,
-                host_working_bytes: 1_024,
-                device_working_bytes: 0,
-            },
+            loading_peak_footprint: final_footprint
+                .with_host_working_bytes(ByteCount::from_u64(1_024)),
         }
     }
 

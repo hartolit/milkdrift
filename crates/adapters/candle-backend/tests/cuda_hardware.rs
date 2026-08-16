@@ -15,11 +15,11 @@ use candle_backend::{
 };
 use candle_core::{DType, Device, Tensor};
 use domain_contracts::{
-    BackendFailureKind, BackendId, CancellationStatus, DecodeBuffers, DecodeInput, DecodeOutcome,
-    DeviceId, DeviceKind, ExecutionDevice, LoadConfiguration, LoadError, LoadFailureStage,
-    LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint, ModelGeneration, ModelHandle, ModelId,
-    ModelLoader, PrefillBuffers, PrefillInput, PrefillOutcome, PreparedLoad, ScalarType,
-    ScalarTypeSet, SequenceConfiguration, SequenceId, TensorFailureLocation, TokenId,
+    BackendFailureKind, BackendId, ByteCount, CancellationStatus, DecodeBuffers, DecodeInput,
+    DecodeOutcome, DeviceId, DeviceKind, ExecutionDevice, LoadConfiguration, LoadError,
+    LoadFailureStage, LoadPlan, LoadedModel, MemoryBudget, MemoryFootprint, ModelGeneration,
+    ModelHandle, ModelId, ModelLoader, PrefillBuffers, PrefillInput, PrefillOutcome, PreparedLoad,
+    ScalarType, ScalarTypeSet, SequenceConfiguration, SequenceId, TensorFailureLocation, TokenId,
     decode_checked, prefill_checked,
 };
 use serde_json::{Value as JsonValue, json};
@@ -29,14 +29,12 @@ const CPU: ExecutionDevice = ExecutionDevice::new(DeviceId::new(0), DeviceKind::
 const CUDA_0: ExecutionDevice = ExecutionDevice::new(DeviceId::new(0), DeviceKind::Cuda);
 const VOCABULARY_SIZE: usize = 16;
 const F32_EXECUTION_WEIGHT_BYTES: u64 = 3_680;
-const F32_CACHE_BYTES_PER_TOKEN: u64 = 64;
 const F32_CPU_SEQUENCE_HOST_WORKING_BYTES: u64 = 7_556;
 const F32_CUDA_SEQUENCE_HOST_WORKING_BYTES: u64 = 160;
 const F32_CUDA_SEQUENCE_DEVICE_WORKING_BYTES: u64 = 7_396;
 const F32_CPU_LOADING_WORKING_BYTES: u64 = 65_763;
 const F32_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 77_571;
 const HALF_EXECUTION_WEIGHT_BYTES: u64 = 1_840;
-const HALF_CACHE_BYTES_PER_TOKEN: u64 = 32;
 const HALF_CUDA_SEQUENCE_HOST_WORKING_BYTES: u64 = 160;
 const HALF_CUDA_SEQUENCE_DEVICE_WORKING_BYTES: u64 = 6_884;
 const HALF_HOMOGENEOUS_CUDA_HOST_LOADING_PEAK_BYTES: u64 = 75_617;
@@ -117,8 +115,8 @@ hardware_cases!(
         assert_exact_f32_cpu_footprints(&result);
         assert_eq!(result.transfer_batches, 0);
         assert_eq!(result.loading_device_synchronizations, 0);
-        assert!(result.sequence_footprint.host_working_bytes > 0);
-        assert_eq!(result.sequence_footprint.device_working_bytes, 0);
+        assert!(!result.sequence_footprint.host_working_bytes().is_zero());
+        assert!(result.sequence_footprint.device_working_bytes().is_zero());
         assert_eq!(
             maximum_logit_token(&result.prefill_logits)?,
             TokenId::new(2)
@@ -162,11 +160,15 @@ hardware_cases!(
                 minor: 0,
             })
         );
-        assert!(summary.total_memory_bytes.is_some_and(|bytes| bytes > 0));
+        assert!(
+            summary
+                .total_memory_bytes
+                .is_some_and(|bytes| !bytes.is_zero())
+        );
         assert!(
             summary
                 .available_memory_bytes
-                .is_some_and(|bytes| bytes > 0)
+                .is_some_and(|bytes| !bytes.is_zero())
         );
         assert!(matches!(
             loader.discover_device(ExecutionDevice::new(
@@ -187,12 +189,12 @@ hardware_cases!(
         assert_eq!(cuda.transfer_batches, 1);
         assert_eq!(cuda.loading_device_synchronizations, 1);
         assert_eq!(
-            cuda.sequence_footprint.host_working_bytes,
-            F32_CUDA_SEQUENCE_HOST_WORKING_BYTES
+            cuda.sequence_footprint.host_working_bytes(),
+            ByteCount::from_u64(F32_CUDA_SEQUENCE_HOST_WORKING_BYTES)
         );
         assert_eq!(
-            cuda.sequence_footprint.device_working_bytes,
-            F32_CUDA_SEQUENCE_DEVICE_WORKING_BYTES
+            cuda.sequence_footprint.device_working_bytes(),
+            ByteCount::from_u64(F32_CUDA_SEQUENCE_DEVICE_WORKING_BYTES)
         );
         assert_logits_close(&cpu.prefill_logits, &cuda.prefill_logits, 1.0e-3)?;
         assert_logits_close(&cpu.decode_logits, &cuda.decode_logits, 1.0e-3)?;
@@ -212,10 +214,7 @@ hardware_cases!(
         let configuration = LoadConfiguration {
             handle: ModelHandle::new(ModelId::new(2), ModelGeneration::new(1)),
             execution_device: CUDA_0,
-            memory_budget: MemoryBudget {
-                host_bytes: u64::MAX,
-                device_bytes: u64::MAX,
-            },
+            memory_budget: MemoryBudget::UNLIMITED,
         };
         let prepared = loader
             .prepare_load(&source, &configuration)
@@ -319,71 +318,61 @@ hardware_cases!(
     }
 );
 
+const fn footprint(
+    host_weights: u64,
+    device_weights: u64,
+    host_working: u64,
+    device_working: u64,
+) -> MemoryFootprint {
+    MemoryFootprint::ZERO
+        .with_host_weight_bytes(ByteCount::from_u64(host_weights))
+        .with_device_weight_bytes(ByteCount::from_u64(device_weights))
+        .with_host_working_bytes(ByteCount::from_u64(host_working))
+        .with_device_working_bytes(ByteCount::from_u64(device_working))
+}
+
 fn assert_exact_f32_cpu_footprints(result: &FixtureExecution) {
     assert_eq!(
         result.reported_footprint,
-        MemoryFootprint {
-            host_weight_bytes: F32_EXECUTION_WEIGHT_BYTES,
-            device_weight_bytes: 0,
-            host_working_bytes: 0,
-            device_working_bytes: 0,
-        }
+        footprint(F32_EXECUTION_WEIGHT_BYTES, 0, 0, 0)
     );
     assert_eq!(
         result.loading_peak_footprint,
-        MemoryFootprint {
-            host_weight_bytes: F32_EXECUTION_WEIGHT_BYTES,
-            device_weight_bytes: 0,
-            host_working_bytes: F32_CPU_LOADING_WORKING_BYTES,
-            device_working_bytes: 0,
-        }
-    );
-    assert_eq!(
-        result.sequence_cache_bytes_per_token,
-        F32_CACHE_BYTES_PER_TOKEN
+        footprint(
+            F32_EXECUTION_WEIGHT_BYTES,
+            0,
+            F32_CPU_LOADING_WORKING_BYTES,
+            0,
+        )
     );
     assert_eq!(
         result.sequence_footprint,
-        MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 0,
-            host_working_bytes: F32_CPU_SEQUENCE_HOST_WORKING_BYTES,
-            device_working_bytes: 0,
-        }
+        footprint(0, 0, F32_CPU_SEQUENCE_HOST_WORKING_BYTES, 0)
     );
 }
 
 fn assert_exact_f32_cuda_footprints(result: &FixtureExecution) {
     assert_eq!(
         result.reported_footprint,
-        MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: F32_EXECUTION_WEIGHT_BYTES,
-            host_working_bytes: 0,
-            device_working_bytes: 0,
-        }
+        footprint(0, F32_EXECUTION_WEIGHT_BYTES, 0, 0)
     );
     assert_eq!(
         result.loading_peak_footprint,
-        MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: F32_EXECUTION_WEIGHT_BYTES,
-            host_working_bytes: F32_CUDA_HOST_LOADING_PEAK_BYTES,
-            device_working_bytes: 0,
-        }
-    );
-    assert_eq!(
-        result.sequence_cache_bytes_per_token,
-        F32_CACHE_BYTES_PER_TOKEN
+        footprint(
+            0,
+            F32_EXECUTION_WEIGHT_BYTES,
+            F32_CUDA_HOST_LOADING_PEAK_BYTES,
+            0,
+        )
     );
     assert_eq!(
         result.sequence_footprint,
-        MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 0,
-            host_working_bytes: F32_CUDA_SEQUENCE_HOST_WORKING_BYTES,
-            device_working_bytes: F32_CUDA_SEQUENCE_DEVICE_WORKING_BYTES,
-        }
+        footprint(
+            0,
+            0,
+            F32_CUDA_SEQUENCE_HOST_WORKING_BYTES,
+            F32_CUDA_SEQUENCE_DEVICE_WORKING_BYTES,
+        )
     );
 }
 
@@ -393,34 +382,25 @@ fn assert_exact_half_cuda_footprints(
 ) {
     assert_eq!(
         result.reported_footprint,
-        MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: HALF_EXECUTION_WEIGHT_BYTES,
-            host_working_bytes: 0,
-            device_working_bytes: 0,
-        }
+        footprint(0, HALF_EXECUTION_WEIGHT_BYTES, 0, 0)
     );
     assert_eq!(
         result.loading_peak_footprint,
-        MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: HALF_EXECUTION_WEIGHT_BYTES,
-            host_working_bytes: expected_host_loading_peak_bytes,
-            device_working_bytes: 0,
-        }
-    );
-    assert_eq!(
-        result.sequence_cache_bytes_per_token,
-        HALF_CACHE_BYTES_PER_TOKEN
+        footprint(
+            0,
+            HALF_EXECUTION_WEIGHT_BYTES,
+            expected_host_loading_peak_bytes,
+            0,
+        )
     );
     assert_eq!(
         result.sequence_footprint,
-        MemoryFootprint {
-            host_weight_bytes: 0,
-            device_weight_bytes: 0,
-            host_working_bytes: HALF_CUDA_SEQUENCE_HOST_WORKING_BYTES,
-            device_working_bytes: HALF_CUDA_SEQUENCE_DEVICE_WORKING_BYTES,
-        }
+        footprint(
+            0,
+            0,
+            HALF_CUDA_SEQUENCE_HOST_WORKING_BYTES,
+            HALF_CUDA_SEQUENCE_DEVICE_WORKING_BYTES,
+        )
     );
 }
 
@@ -431,7 +411,6 @@ struct FixtureExecution {
     execution_device: ExecutionDevice,
     reported_footprint: MemoryFootprint,
     loading_peak_footprint: MemoryFootprint,
-    sequence_cache_bytes_per_token: u64,
     sequence_footprint: MemoryFootprint,
     transfer_batches: u64,
     loading_device_synchronizations: u64,
@@ -457,7 +436,6 @@ fn execute_fixture(
     let sequence_plan = model
         .plan_sequence(&sequence_configuration)
         .map_err(|error| format!("plan sequence: {error:?}"))?;
-    let sequence_cache_bytes_per_token = plan.descriptor.sequence_cache_bytes_per_token;
     let mut sequence = model
         .create_sequence(SequenceId::new(1), &sequence_configuration)
         .map_err(|error| format!("create sequence: {error:?}"))?;
@@ -518,8 +496,7 @@ fn execute_fixture(
         execution_device,
         reported_footprint,
         loading_peak_footprint: plan.loading_peak_footprint,
-        sequence_cache_bytes_per_token,
-        sequence_footprint: sequence_plan.reservation.total_footprint,
+        sequence_footprint: sequence_plan.reservation.total_footprint(),
         transfer_batches: load_observation.transfer_batches,
         loading_device_synchronizations: load_observation.loading_device_synchronizations,
         prefill_logits,
@@ -544,10 +521,7 @@ fn load_fixture(
     let configuration = LoadConfiguration {
         handle: ModelHandle::new(ModelId::new(1), ModelGeneration::new(1)),
         execution_device,
-        memory_budget: MemoryBudget {
-            host_bytes: u64::MAX,
-            device_bytes: u64::MAX,
-        },
+        memory_budget: MemoryBudget::UNLIMITED,
     };
     let prepared = loader
         .prepare_load(source, &configuration)

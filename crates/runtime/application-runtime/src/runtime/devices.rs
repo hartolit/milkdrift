@@ -96,8 +96,10 @@ impl ApplicationRuntime {
         let (summary, failure) = probe_device(device, self.device_probe);
         let mut candidate = self.preferences.clone();
         candidate.selected_device = device;
+        let settings =
+            stored_settings(&candidate).map_err(ApplicationError::InvalidConfiguration)?;
         self.storage
-            .save_settings(&stored_settings(&candidate))
+            .save_settings(&settings)
             .map_err(storage_failure)?;
 
         self.preferences = candidate;
@@ -120,7 +122,7 @@ impl ApplicationRuntime {
         if !self.state.selected_device_memory_budget_available() {
             return Err(ApplicationError::SelectedDeviceMemoryBudgetUnavailable {
                 device: selected_device,
-                budget_bytes: self.memory_budget.device_bytes,
+                budget_bytes: self.memory_budget.device_bytes(),
                 total_memory_bytes: self
                     .state
                     .selected_device_summary()

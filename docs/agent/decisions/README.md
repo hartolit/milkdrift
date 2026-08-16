@@ -25,7 +25,8 @@ Accepted ADRs remain part of the project architecture until superseded. A supers
 - [ADR-0017: Keep stable Clippy lints mandatory and nursery exploratory](0017-stable-clippy-gate-exploratory-nursery.md) — mandatory gate amended by ADR-0021
 - [ADR-0018: Separate benchmark roles and govern measurement artifacts](0018-benchmark-and-model-fixture-policy.md) — observer roles and maintained-target registration amended
 - [ADR-0019: Add explicit feature-gated CUDA execution with application-owned selection](0019-explicit-cuda-execution-foundation.md) — Phase 12 loading/scalar clauses amended by ADR-0020
-- [ADR-0020: Use transaction-bound prepared model loading](0020-transactional-prepared-model-loading.md)
+- [ADR-0020: Use transaction-bound prepared model loading](0020-transactional-prepared-model-loading.md) — byte ownership and sequence-rate clauses amended by ADR-0022
 - [ADR-0021: Keep only present canonical package responsibilities](0021-canonical-present-scope.md)
+- [ADR-0022: Make deterministic byte ownership typed and non-contradictory](0022-memory-accounting-and-byte-ownership.md)
 
 For current applied structure, see [project architecture](../../project/architecture.md). For the reusable selectable model, see the [architecture blueprint](../../architecture.md).
