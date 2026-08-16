@@ -9,6 +9,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "platform"
+responsibility = "Own bounded host threads, channels, monotonic time, and output storage"
 
 [dependencies]
 domain-contracts.workspace = true

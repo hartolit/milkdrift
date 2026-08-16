@@ -18,7 +18,7 @@ E1 owns:
 - explicit bounded shutdown of Hub and inference workers.
 
 It does not own tensor compatibility, Safetensors materialization, backend
-sequences, token scheduling, corrective-workflow state, vendor storage/network
+sequences, token scheduling, workflow state, vendor storage/network
 implementation, provider/peer transport, or frontend presentation.
 
 ## Public boundary

@@ -128,11 +128,6 @@ pub struct GenerationAdmission {
     pub request: RequestStartReceipt,
 }
 
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the private generation module exposes scheduler state only to the sibling \
-              worker module"
-)]
 pub(super) struct GenerationScheduler {
     requests: BTreeMap<RequestId, GenerationTask>,
     cursor: Option<RequestId>,
@@ -156,11 +151,6 @@ struct GenerationTask {
     pending_yield: Option<YieldReason>,
 }
 
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the private generation module exposes scheduler progress only to the sibling \
-              worker module"
-)]
 pub(super) struct SchedulerAdvance {
     pub(super) progressed: bool,
     pub(super) completed: Option<RequestId>,

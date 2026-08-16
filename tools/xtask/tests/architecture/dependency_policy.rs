@@ -72,7 +72,7 @@ fn product_dependencies_on_benchmarks_and_tools_are_absolute_denials_for_all_kin
             fixture.write(
                 "crates/domain/f1-b/Cargo.toml",
                 &format!(
-                    "[package]\nname = \"f1-b\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[package.metadata.milkdrift]\nrole = \"domain-feature\"\n\n[{section}]\n{target} = {{ path = \"{path}\" }}\n"
+                    "[package]\nname = \"f1-b\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[package.metadata.milkdrift]\nrole = \"domain-feature\"\nresponsibility = \"Exercise a fixture dependency policy case\"\n\n[{section}]\n{target} = {{ path = \"{path}\" }}\n"
                 ),
             )?;
             let report = fixture.report()?;
@@ -104,16 +104,33 @@ fn actual_acyclic_domain_peer_edges_need_no_duplicate_registry() -> Result<(), B
 fn same_layer_runtime_peers_are_not_universally_permitted() -> Result<(), Box<dyn Error>> {
     let fixture = FixtureWorkspace::new("scalable-policy")?;
     fixture.replace(
-        "crates/runtime/capability/Cargo.toml",
-        "role = \"runtime-capability\"",
+        "crates/runtime/e1/Cargo.toml",
+        "role = \"runtime-application\"",
         "role = \"runtime-foundation\"",
     )?;
     let report = fixture.report()?;
     assert!(report.violations().iter().any(|violation| {
-        violation.source() == "capability"
+        violation.source() == "e1"
             && violation.target() == "e0"
             && violation.rule() == "LAYER-DAG-1"
     }));
+    Ok(())
+}
+
+#[test]
+fn unreachable_runtime_scope_fails_closed() -> Result<(), Box<dyn Error>> {
+    let fixture = FixtureWorkspace::new("scalable-policy")?;
+    fixture.replace(
+        "crates/apps/app/Cargo.toml",
+        "\n[dependencies]\ne1 = { path = \"../../runtime/e1\" }\n",
+        "",
+    )?;
+    let report = fixture.report()?;
+    for runtime in ["e0", "e1"] {
+        assert!(report.violations().iter().any(|violation| {
+            violation.source() == runtime && violation.rule() == "PRODUCT-REACHABILITY-1"
+        }));
+    }
     Ok(())
 }
 
@@ -126,11 +143,14 @@ fn build_and_development_edges_follow_explicit_policy_distinctions() -> Result<(
         "[build-dependencies]",
     )?;
     let legal_report = legal_build.report()?;
-    assert!(
-        legal_report.is_valid(),
-        "legal downward build edge failed: {:#?}",
-        legal_report.violations()
-    );
+    assert!(legal_report.violations().iter().any(|violation| {
+        violation.source() == "e0" && violation.rule() == "PRODUCT-REACHABILITY-1"
+    }));
+    assert!(!legal_report.violations().iter().any(|violation| {
+        violation.source() == "e1"
+            && violation.target() == "e0"
+            && violation.rule() == "LAYER-DAG-1"
+    }));
 
     let observer_build = FixtureWorkspace::new("scalable-policy")?;
     observer_build.replace(
@@ -146,11 +166,12 @@ fn build_and_development_edges_follow_explicit_policy_distinctions() -> Result<(
     ));
 
     let reviewed_development = FixtureWorkspace::new("scalable-policy")?;
-    reviewed_development.replace(
-        "crates/runtime/e1/Cargo.toml",
-        "[dependencies]",
-        "[dev-dependencies]",
+    let mut e1_manifest = reviewed_development.read("crates/runtime/e1/Cargo.toml")?;
+    write!(
+        e1_manifest,
+        "\n[dev-dependencies]\nf1-b = {{ path = \"../../domain/f1-b\" }}\n"
     )?;
+    reviewed_development.write("crates/runtime/e1/Cargo.toml", &e1_manifest)?;
     let unreviewed_report = reviewed_development.report()?;
     assert!(has_violation(
         &unreviewed_report,
@@ -158,7 +179,7 @@ fn build_and_development_edges_follow_explicit_policy_distinctions() -> Result<(
         "POLICY-EXCEPTION-1"
     ));
     reviewed_development.append_root(
-        "\n[[workspace.metadata.milkdrift.exceptions]]\nid = \"local-e1-capability-dev\"\nsource = \"e1\"\ntarget = \"capability\"\nscope = \"local\"\nkind = \"development\"\nrationale = \"the fixture proves exact local development-edge review\"\n",
+        "\n[[workspace.metadata.milkdrift.exceptions]]\nid = \"local-e1-f1-b-dev\"\nsource = \"e1\"\ntarget = \"f1-b\"\nscope = \"local\"\nkind = \"development\"\nrationale = \"the fixture proves exact local development-edge review\"\n",
     )?;
     let reviewed_report = reviewed_development.report()?;
     assert!(

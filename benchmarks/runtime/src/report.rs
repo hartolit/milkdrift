@@ -167,10 +167,6 @@ pub(crate) struct CancellationMeasurement {
     pub(crate) released_ns: u64,
 }
 
-#[expect(
-    clippy::struct_field_names,
-    reason = "nanosecond suffixes are explicit serialized units"
-)]
 #[derive(Serialize)]
 pub(crate) struct ShutdownMeasurement {
     pub(crate) event_ns: u64,
@@ -203,10 +199,6 @@ pub(crate) struct RuntimeAccounting {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[expect(
-    clippy::struct_field_names,
-    reason = "serialized footprint fields retain explicit byte units and domain/component names"
-)]
 pub(crate) struct MemoryFootprintRecord {
     pub(crate) host_weight_bytes: u64,
     pub(crate) device_weight_bytes: u64,

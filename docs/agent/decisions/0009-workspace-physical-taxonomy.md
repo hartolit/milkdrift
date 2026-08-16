@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-07-29
+- **Scope amendment:** 2026-08-16 — ADR-0021 removed the inactive capability and task packages without changing these physical roots
 
 ## Context
 

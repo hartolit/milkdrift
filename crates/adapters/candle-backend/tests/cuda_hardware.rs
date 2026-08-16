@@ -127,10 +127,6 @@ hardware_cases!(
         Ok(())
     }
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "all hardware cases use one fallible function-pointer signature"
-    )]
     fn invalid_cuda_ordinal_is_rejected_before_driver_initialization() -> TestResult {
         let loader = CandleLlamaLoader::new(BACKEND);
         assert_eq!(

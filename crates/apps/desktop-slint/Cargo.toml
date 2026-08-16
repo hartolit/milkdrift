@@ -10,6 +10,7 @@ build = "build.rs"
 
 [package.metadata.milkdrift]
 role = "application"
+responsibility = "Own the native Slint event loop and presentation over application-runtime"
 
 [features]
 default = []

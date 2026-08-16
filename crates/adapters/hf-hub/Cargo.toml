@@ -9,6 +9,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "adapter"
+responsibility = "Resolve immutable Hugging Face model artifacts and verified content identities"
 
 [dependencies]
 hf-hub = { workspace = true }

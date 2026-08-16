@@ -9,6 +9,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "adapter"
+responsibility = "Persist versioned desktop settings and model catalogue records in redb"
 
 [dependencies]
 redb.workspace = true

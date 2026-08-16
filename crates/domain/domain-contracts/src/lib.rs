@@ -2,15 +2,15 @@
 #![forbid(unsafe_code)]
 #![doc = "Portable, allocation-neutral contracts shared by inference engines and backends."]
 
-pub mod backend;
-pub mod capacity;
-pub mod error;
-pub mod generation;
-pub mod identifiers;
-pub mod lifecycle;
-pub mod model;
-pub mod sequence;
-pub mod time;
+mod backend;
+mod capacity;
+mod error;
+mod generation;
+mod identifiers;
+mod lifecycle;
+mod model;
+mod sequence;
+mod time;
 
 pub use backend::{
     BackendSequence, FailedLoad, FailedLoadOwner, LoadedModel, ModelLoader, PreparedLoad,

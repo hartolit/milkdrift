@@ -569,10 +569,6 @@ fn assert_unloaded_snapshot(hosted: &HostedRuntime<CandleLlamaSource>) -> SmokeR
     }
 }
 
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "the helper owns both runtime endpoints through worker join"
-)]
 fn shutdown(hosted: HostedRuntime<CandleLlamaSource>, thread: RuntimeThread) -> SmokeResult {
     hosted
         .try_submit(RuntimeCommand::Shutdown {

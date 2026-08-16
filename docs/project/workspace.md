@@ -21,8 +21,7 @@ milkdrift/
     │   ├── domain-contracts/
     │   ├── tokenization/
     │   ├── context-planner/
-    │   ├── sampling/
-    │   └── task-graph/
+    │   └── sampling/
     ├── platform/
     │   └── host-runtime/
     ├── adapters/
@@ -32,7 +31,6 @@ milkdrift/
     │   └── redb-storage/
     ├── runtime/
     │   ├── inference-runtime/
-    │   ├── corrective-workflow/
     │   └── application-runtime/
     └── apps/
         └── desktop-slint/
@@ -49,21 +47,21 @@ crates/domain/domain-contracts
 crates/domain/tokenization
 crates/domain/context-planner
 crates/domain/sampling
-crates/domain/task-graph
 crates/platform/host-runtime
 crates/adapters/candle-backend
 crates/adapters/hf-tokenizer
 crates/adapters/hf-hub
 crates/adapters/redb-storage
 crates/runtime/inference-runtime
-crates/runtime/corrective-workflow
 crates/runtime/application-runtime
 crates/apps/desktop-slint
 ```
 
-Each domain and runtime crate owns a coherent, independently testable responsibility. None exists merely to hold one identifier, data structure, or callback.
+Each member declares one nonempty present responsibility beside its role. Missing,
+non-string, or empty responsibility metadata fails architecture and verification
+planning.
 
-Every tracked non-fixture package manifest must appear in the root workspace, and every member declares one explicit `[package.metadata.milkdrift] role`. Role strings and compatible direct-child locations are documented in [project architecture](architecture.md); omitted members and missing, unknown, or misplaced roles fail closed. The declaration—not a package-name match—classifies future workflow runtimes, portable SDKs, provider adapters, headless applications, benchmark observers, and tools.
+Every tracked non-fixture package manifest must appear in the root workspace, and every member declares one explicit `[package.metadata.milkdrift] role`. Role strings and compatible direct-child locations are documented in [project architecture](architecture.md); omitted members and missing, unknown, or misplaced roles fail closed. Runtime packages must also be reachable from an `application` role through actual normal Cargo edges, so build/development dependencies and workspace membership cannot certify inactive runtime scope.
 
 `benchmarks/runtime` is the root-workspace member whose package name is `runtime-benchmarks` and role is `benchmark-observer`. It uses the root `Cargo.lock`, declares `publish = false`, and has no nested workspace/lockfile, build script, Cargo custom-build target, or build dependencies. No workspace package has an incoming dependency edge to it. Unknown or unclassified benchmark manifests fail closed, while a future explicitly classified observer can be added without changing a sole-package constant.
 
@@ -71,12 +69,6 @@ Every tracked non-fixture package manifest must appear in the root workspace, an
 
 Several larger responsibilities are split into private or crate-internal modules without creating new workspace layers:
 
-- `task-graph` separates generic graph structure/validation (including its owned
-  `TaskId`), identity-only artifact provenance, runtime state transitions, and
-  errors; corrective/model policy remains in the runtime capability;
-- `corrective-workflow` separates borrowed definition validation, six-stage
-  reference-template construction, typed artifacts/diagnostics/output, and the
-  bounded data-driven executor;
 - `inference-runtime` separates admission, execution, cleanup, memory/accounting, inspection, unload, and shutdown around one `InferenceRuntime` registry;
 - E1 generation separates admission, the inference/text bridge, bounded output, and generation settings inside `application-runtime`;
 - the desktop presenter separates callback binding, control synchronization, model mapping, and bounded output/conversation presentation.
@@ -89,12 +81,10 @@ These are responsibility and maintainability boundaries. Visibility remains cont
 tokenization        -> domain-contracts
 context-planner     -> domain-contracts
 sampling            -> domain-contracts
-task-graph          -> domain-contracts
 candle-backend      -> domain-contracts
 hf-tokenizer        -> tokenization + domain-contracts
 host-runtime        -> domain-contracts
 inference-runtime   -> host-runtime + sampling + domain-contracts
-corrective-workflow -> task-graph + domain-contracts
 application-runtime -> context-planner + tokenization + domain-contracts
                     + candle-backend + hf-hub-adapter + hf-tokenizer
                     + redb-storage + host-runtime + inference-runtime
@@ -130,11 +120,14 @@ These are measurement-observer edges outside the production graph even where Car
 
 Production code may not acquire an upward dependency. Platform and adapter crates do not import runtimes or applications, and same-role runtime peers are denied. Ordinary legal normal/build edges follow the generic role DAG and are not duplicated in Rust. Workspace-local development dependencies remain separately reviewed; the current exact exception is `inference-runtime -> candle-backend` for executable E0 compatibility and CUDA hardware suites.
 
-`inference-runtime`, `corrective-workflow`, `application-runtime`, and `host-runtime` declare `runtime-foundation`, `runtime-capability`, `runtime-application`, and `platform` respectively in their manifests. Their identities are not inferred from directory position or matched in a package registry.
+`inference-runtime`, `application-runtime`, and `host-runtime` declare
+`runtime-foundation`, `runtime-application`, and `platform` respectively in their
+manifests. Their identities are not inferred from directory position or matched
+in a package registry.
 
 ## Architecture and verification registration
 
-`cargo xtask architecture` uses locked typed Cargo metadata, fails closed on unknown roles/locations and unresolved local path targets, distinguishes dependency kinds, derives the actual domain DAG, validates exact exception records bidirectionally, and applies the generic role rules documented in [dependency policy](dependency-policy.md).
+`cargo xtask architecture` uses locked typed Cargo metadata, fails closed on unknown roles/locations, missing responsibilities, unreachable runtimes, and unresolved local path targets, distinguishes dependency kinds, derives the actual domain DAG, validates exact exception records bidirectionally, and applies the generic role rules documented in [dependency policy](dependency-policy.md).
 
 The accepted direct-child roots are `crates/domain`, `crates/platform`, `crates/adapters`, `crates/runtime`, `crates/apps`, `tools`, and `benchmarks`. A package is accepted only when its manifest role is compatible with its root; path placement never supplies a missing role. Deeper grouping requires a deliberate structural change rather than accidental prefix acceptance.
 

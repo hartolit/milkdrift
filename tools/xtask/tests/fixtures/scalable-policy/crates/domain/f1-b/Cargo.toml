@@ -6,6 +6,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "domain-feature"
+responsibility = "Provide the second fixture domain algorithm"
 
 [dependencies]
 f1-a = { path = "../f1-a" }

@@ -23,5 +23,6 @@ pub(crate) use inventory::{
 pub(crate) use metadata::load_metadata;
 pub use role::Role;
 pub(crate) use role::{
-    cuda_provider, package_role, relative_manifest, role_location_is_compatible,
+    cuda_provider, package_responsibility, package_role, relative_manifest,
+    role_location_is_compatible,
 };

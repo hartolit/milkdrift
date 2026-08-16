@@ -6,6 +6,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "runtime-foundation"
+responsibility = "Own fixture foundation runtime resources"
 
 [dependencies]
 adapter = { path = "../../adapters/adapter" }

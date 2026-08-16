@@ -2,11 +2,11 @@
 
 ## Architecture enforcement
 
-`cargo xtask architecture` loads the virtual workspace through locked typed `cargo_metadata`. Every tracked non-fixture Cargo package must be a root workspace member, every member must declare one known `[package.metadata.milkdrift] role`, and that declaration must occupy the compatible direct-child root. Roles are not inferred from names or prefixes; omitted members, unresolved local path targets, missing/unknown roles, and incompatible locations fail closed. The verification planner uses that same locked, role-validated workspace inventory to produce exact sorted package selections for check, test, Clippy, and rustdoc. Architecture and hygiene remain independently runnable, and `cargo xtask verify` runs both first.
+`cargo xtask architecture` loads the virtual workspace through locked typed `cargo_metadata`. Every tracked non-fixture Cargo package must be a root workspace member, every member must declare one known `[package.metadata.milkdrift] role` and one nonempty present `responsibility`, and those declarations must occupy the compatible direct-child root. Roles are not inferred from names or prefixes; omitted members, unresolved local path targets, missing/unknown roles, missing responsibilities, and incompatible locations fail closed. Runtime packages must be reachable from an application role through actual normal dependencies; build and development edges do not establish a product execution path. The verification planner uses that same locked, role-validated workspace inventory to produce exact sorted package selections for check, test, Clippy, and rustdoc. Architecture and hygiene remain independently runnable, and `cargo xtask verify` runs both first.
 
-The generic inward role DAG is canonical in [project architecture](architecture.md). It keeps portable domain code below platform/adapters, E0 below capability/E1, applications above E1, benchmark observers outside production, and tooling isolated. Same-role runtime peers are denied. Normal/build Cargo edges that obey the role DAG are ordinary legal edges and are not copied into another registry.
+The generic inward role DAG is canonical in [project architecture](architecture.md). It keeps portable domain code below platform/adapters, E0 below E1, applications above E1, benchmark observers outside production, and tooling isolated. Same-role runtime peers are denied. Normal/build Cargo edges that obey the role DAG are ordinary legal edges and are not copied into another registry.
 
-The actual normal/build F0/F1 graph is derived from Cargo declarations and must remain acyclic, including any allowed peer/foundation edge. This preserves domain ownership without making every future workflow or SDK crate edit a package-name constitution. `TaskId` remains owned by `task-graph`; shared-foundation vocabulary still requires real cross-boundary ownership rather than policy convenience.
+The actual normal/build F0/F1 graph is derived from Cargo declarations and must remain acyclic, including any allowed peer/foundation edge. This preserves domain ownership without making every future domain crate edit a package-name constitution. Shared-foundation vocabulary still requires real cross-boundary ownership rather than policy convenience.
 
 The root `[workspace.metadata.milkdrift]` namespace and exact integer `policy-version = 1` are mandatory; omission or an unknown version fails closed. Its exception registry is intentionally small. Each record has a stable ID, exact source/target/scope/kind, and nonempty rationale. Restricted external edges, every workspace-local/external development edge, and CUDA forwards require records. Records are validated in both directions: duplicates, stale declarations, wrong kinds, missing packages, empty rationales, and unnecessary exceptions fail. An exception cannot override an upward role edge or any tooling/observer absolute denial.
 
@@ -14,8 +14,8 @@ The current workspace-local development exception is `inference-runtime -> candl
 
 - F0/F1, runtimes, tooling, and observers require exact review for production external dependencies;
 - current portable production review is `sampling -> libm`; allocation-test
-  development reviews cover `domain-contracts`, `sampling`, and `task-graph`
-  through `stats_alloc`;
+  development reviews cover `domain-contracts` and `sampling` through
+  `stats_alloc`;
 - platform/adapters/apps may use ordinary implementation dependencies appropriate to their boundary, but sensitive CUDA and every development dependency still require exact review;
 - E0's external development `candle-core` edge supports download-free mixed-fixture conversion only;
 - tooling reviews `cargo_metadata`, `serde_json`, and `toml` for policy parsing,

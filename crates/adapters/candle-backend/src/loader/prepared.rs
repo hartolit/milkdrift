@@ -358,10 +358,6 @@ impl CandleLlamaPreparedLoad {
             })
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one transactional transfer operation keeps preflight, endpoint ownership, validation, and commit-boundary state auditable together"
-    )]
     fn enqueue_transfer<O: MaterializationObserver>(
         &mut self,
         facts: RequiredTensorFacts,
@@ -607,10 +603,6 @@ impl CandleLlamaPreparedLoad {
         self.flush_transfer_batch(observer)
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one transactional batch close keeps validation, synchronization, per-entry commit, and final accounting in order"
-    )]
     fn flush_transfer_batch<O: MaterializationObserver>(
         &mut self,
         observer: &mut O,

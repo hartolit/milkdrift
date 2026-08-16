@@ -8,7 +8,6 @@ members = [
     "crates/platform/platform",
     "crates/adapters/adapter",
     "crates/runtime/e0",
-    "crates/runtime/capability",
     "crates/runtime/e1",
     "crates/apps/app",
 ]

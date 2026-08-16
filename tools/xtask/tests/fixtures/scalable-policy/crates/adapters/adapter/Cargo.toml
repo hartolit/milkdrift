@@ -6,6 +6,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "adapter"
+responsibility = "Adapt the fixture platform"
 
 [dependencies]
 platform = { path = "../../platform/platform" }

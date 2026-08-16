@@ -6,6 +6,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "runtime-application"
+responsibility = "Coordinate the fixture application runtime"
 
 [dependencies]
-capability = { path = "../capability" }
+e0 = { path = "../e0" }

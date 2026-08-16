@@ -9,6 +9,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "domain-feature"
+responsibility = "Select context entries deterministically within caller-provided token budgets"
 
 [dependencies]
 domain-contracts.workspace = true

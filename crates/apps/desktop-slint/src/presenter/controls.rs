@@ -7,10 +7,6 @@ use super::model::{
 };
 use crate::AppWindow;
 
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each field is one authoritative E1 admission or lifecycle flag"
-)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct RuntimeAdmissions {
     pub(super) can_select_device: bool,
@@ -25,10 +21,6 @@ pub(super) struct RuntimeAdmissions {
     pub(super) can_retry_model_cleanup: bool,
 }
 
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each field maps one independent Slint control-enablement property"
-)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ControlState {
     pub(super) can_select_device: bool,

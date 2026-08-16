@@ -1,7 +1,7 @@
 # Milkdrift execution plan
 
-**Plan status:** independent final source review complete; exact-tree acceptance next
-**Status date:** 2026-08-15
+**Plan status:** canonical present-scope consolidation complete locally; exact-tree acceptance external
+**Status date:** 2026-08-16
 
 This document owns ordered program activation only. Current support and accepted
 historical evidence are in [implementation status](../../project/implementation-status.md),
@@ -28,6 +28,7 @@ No later product capability is implied by these closures.
 | 2 | Context locality, deduplication, and dependency audit | Complete in `0ad2531` |
 | 3 | Evidence authority and project truth | Complete in `8466ae9` |
 | 4 | Independent final source closure | Source review complete; exact-SHA acceptance external |
+| 5 | Canonical present-scope consolidation | Complete locally on 2026-08-16 |
 
 Exact current-commit remote acceptance is evaluated externally after the closure
 commit is pushed. It is an acceptance condition, not a tracked implementation

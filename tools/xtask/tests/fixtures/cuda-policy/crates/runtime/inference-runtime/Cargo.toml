@@ -6,6 +6,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "runtime-foundation"
+responsibility = "Own fixture CUDA runtime resources"
 hardware-suites = [
     { profile = "cuda", target = "cuda_hardware", feature = "cuda-hardware-tests", runner = "harness-free" },
     { profile = "cuda", target = "fault_injection", feature = "cuda", runner = "serial-libtest" },

@@ -9,6 +9,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "runtime-application"
+responsibility = "Coordinate frontend-neutral model selection, lifecycle, completion, and chat"
 hardware-suites = [
     { profile = "cuda", target = "cuda_hardware", feature = "cuda-hardware-tests", runner = "harness-free" },
 ]

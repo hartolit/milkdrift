@@ -18,10 +18,6 @@ use crate::{
 static COUNTED_CUDA_PROBES: AtomicU64 = AtomicU64::new(0);
 static SHRINKING_CUDA_THREE_PROBES: AtomicU64 = AtomicU64::new(0);
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "the deterministic probe conforms to the private fallible discovery seam"
-)]
 fn available_device_probe(device: ApplicationDevice) -> crate::local::DeviceProbeResult {
     match device {
         ApplicationDevice::Cpu => Ok(ApplicationDeviceSummary::cpu()),
@@ -58,10 +54,6 @@ fn counted_unavailable_cuda_probe(device: ApplicationDevice) -> crate::local::De
     unavailable_cuda_probe(device)
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "the deterministic probe conforms to the private fallible discovery seam"
-)]
 fn shrinking_cuda_probe(device: ApplicationDevice) -> crate::local::DeviceProbeResult {
     match device {
         ApplicationDevice::Cpu => Ok(ApplicationDeviceSummary::cpu()),

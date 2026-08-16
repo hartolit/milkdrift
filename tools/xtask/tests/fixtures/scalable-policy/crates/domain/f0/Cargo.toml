@@ -6,3 +6,4 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "domain-foundation"
+responsibility = "Define fixture domain contracts"

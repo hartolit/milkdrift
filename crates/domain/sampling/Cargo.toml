@@ -10,6 +10,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "domain-feature"
+responsibility = "Perform deterministic allocation-free logit sampling and stop matching"
 benchmark-targets = ["sampling_pipeline"]
 
 [dependencies]

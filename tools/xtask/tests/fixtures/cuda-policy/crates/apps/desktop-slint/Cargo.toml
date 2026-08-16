@@ -6,6 +6,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "application"
+responsibility = "Run the fixture CUDA application"
 
 [features]
 default = []

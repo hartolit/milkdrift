@@ -238,3 +238,19 @@ alignment in `0ad2531`, and the evidence-authority reconciliation recorded by th
 entry. Independent final source closure remains the next source package. Exact
 post-closure acceptance is evaluated externally after push and is not committed as
 mutable current-state truth.
+
+## Canonical present-scope consolidation
+
+**Date:** 2026-08-16
+**Input:** `a4d969de39a179f4354db4488c066adcde86ccf6`, tree
+`97d1c461057c7e64a034d4d93d08b76b33b76817`
+
+A fresh manifest, metadata, dependency, source-consumer, policy, and documentation
+review found no production path to `corrective-workflow`; `task-graph` existed
+only to support that inactive package. Both packages and their dedicated current
+documentation were removed. The retained 14-member workspace now records one
+responsibility per package, derives product reachability from Cargo metadata,
+keeps one public crate-root path for domain contracts, and enforces the curated
+lint set documented by ADR-0021. This entry records working-tree evidence; a later
+commit does not inherit exact-tree external acceptance until that commit is
+evaluated independently.

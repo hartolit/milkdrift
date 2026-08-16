@@ -3,6 +3,8 @@ use std::fmt;
 pub use crate::workspace::Role as Layer;
 
 pub(super) const RULE_ROLE: &str = "ROLE-1";
+pub(super) const RULE_RESPONSIBILITY: &str = "RESPONSIBILITY-1";
+pub(super) const RULE_PRODUCT_REACHABILITY: &str = "PRODUCT-REACHABILITY-1";
 pub(super) const RULE_LOCATION: &str = "LAYOUT-1";
 pub(super) const RULE_LOCAL_TARGET: &str = "LOCAL-TARGET-1";
 pub(super) const RULE_KNOWN_KIND: &str = "DEPENDENCY-KIND-1";
@@ -138,14 +140,6 @@ pub(super) const fn permits_product_edge(source: Layer, target: Layer) -> bool {
             target,
             Layer::DomainFoundation | Layer::DomainFeature | Layer::Platform | Layer::Adapter
         ),
-        Layer::RuntimeCapability => matches!(
-            target,
-            Layer::DomainFoundation
-                | Layer::DomainFeature
-                | Layer::Platform
-                | Layer::Adapter
-                | Layer::RuntimeFoundation
-        ),
         Layer::RuntimeApplication => matches!(
             target,
             Layer::DomainFoundation
@@ -153,7 +147,6 @@ pub(super) const fn permits_product_edge(source: Layer, target: Layer) -> bool {
                 | Layer::Platform
                 | Layer::Adapter
                 | Layer::RuntimeFoundation
-                | Layer::RuntimeCapability
         ),
         Layer::Application => matches!(target, Layer::RuntimeApplication),
     }
@@ -181,7 +174,6 @@ pub(super) fn external_dependency_policy(
         | Layer::DomainFoundation
         | Layer::DomainFeature
         | Layer::RuntimeFoundation
-        | Layer::RuntimeCapability
         | Layer::RuntimeApplication => ExternalDecision::NeedsException,
     }
 }
@@ -209,19 +201,11 @@ mod tests {
     fn runtime_layers_allow_only_explicitly_lower_runtime_roles() {
         assert!(permits_product_edge(
             Layer::RuntimeApplication,
-            Layer::RuntimeCapability
-        ));
-        assert!(permits_product_edge(
-            Layer::RuntimeCapability,
             Layer::RuntimeFoundation
         ));
         assert!(!permits_product_edge(
             Layer::RuntimeFoundation,
             Layer::RuntimeFoundation
-        ));
-        assert!(!permits_product_edge(
-            Layer::RuntimeCapability,
-            Layer::RuntimeCapability
         ));
         assert!(!permits_product_edge(
             Layer::RuntimeApplication,

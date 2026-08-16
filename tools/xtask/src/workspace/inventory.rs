@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use cargo_metadata::Metadata;
 
-use super::{CUDA_FEATURE, package_role};
+use super::{CUDA_FEATURE, package_responsibility, package_role};
 
 pub(crate) struct WorkspaceInventoryIssue {
     pub(crate) package: String,
@@ -30,6 +30,13 @@ pub(crate) fn workspace_package_inventory(
             issues.push(WorkspaceInventoryIssue {
                 package: package_name,
                 target: "role".to_owned(),
+                reason: error.reason,
+            });
+        }
+        if let Err(error) = package_responsibility(package) {
+            issues.push(WorkspaceInventoryIssue {
+                package: package.name.to_string(),
+                target: "responsibility".to_owned(),
                 reason: error.reason,
             });
         }
@@ -77,6 +84,13 @@ pub(crate) fn domain_package_inventory(
                 target: "role".to_owned(),
                 reason: error.reason,
             }),
+        }
+        if let Err(error) = package_responsibility(package) {
+            issues.push(WorkspaceInventoryIssue {
+                package: package.name.to_string(),
+                target: "responsibility".to_owned(),
+                reason: error.reason,
+            });
         }
     }
 

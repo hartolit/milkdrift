@@ -401,7 +401,10 @@ const fn is_exactly_one(value: f32) -> bool {
 ///
 /// Counts above `f32`'s exact integer range are intentionally rounded because
 /// the configured thresholds and returned probabilities are themselves `f32`.
-#[allow(clippy::cast_precision_loss)]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "candidate counts are intentionally converted to the probability representation used by the sampler"
+)]
 const fn count_as_f32(count: usize) -> f32 {
     count as f32
 }

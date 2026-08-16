@@ -1,6 +1,6 @@
 # ADR-0007: Name the supported portability targets
 
-- **Status:** Accepted
+- **Status:** Accepted; package set amended by ADR-0021
 - **Date:** 2026-07-23
 
 ## Context
@@ -15,7 +15,12 @@ Use these named targets as the Phase 1 portability contract:
 - WebAssembly compilation: `wasm32-unknown-unknown`;
 - embedded `no_std` compilation: `thumbv7em-none-eabihf`.
 
-The contract applies only to `domain-contracts`, `tokenization`, `context-planner`, `sampling`, and `task-graph`. CI compiles each crate's library target for both cross targets with the committed lockfile. It does not cross-compile tests or benchmarks because their development dependencies are host-oriented.
+The contract applies only to current domain-role packages. At this decision's
+adoption that set also included `task-graph`; ADR-0021 removed that inactive
+package. The current set is `domain-contracts`, `tokenization`, `context-planner`,
+and `sampling`. CI derives it from Cargo metadata and compiles each library for
+both cross targets with the committed lockfile. It does not cross-compile tests or
+benchmarks because their development dependencies are host-oriented.
 
 Allocation-free behavior is a separate, path-specific property. It may be claimed only where project-owned code has an allocation test or can execute without an allocator by construction; it is not inferred from successful cross-compilation.
 
@@ -28,7 +33,7 @@ Allocation-free behavior is a separate, path-specific property. It may be claime
 
 ## Consequences
 
-- Portability regressions for the five feature crates fail CI on two named non-host targets.
+- Portability regressions for every current domain-role crate fail CI on two named non-host targets.
 - Adding a new portable crate requires adding it to the target checks and the portability matrix.
 - Supporting another embedded architecture, atomics profile, or WebAssembly runtime requires explicit validation rather than extrapolation.
 - Allocation claims remain narrower than crate-level target support.

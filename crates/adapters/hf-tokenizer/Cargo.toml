@@ -9,6 +9,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "adapter"
+responsibility = "Adapt Hugging Face tokenizers to Milkdrift's portable tokenization contracts"
 
 [dependencies]
 domain-contracts.workspace = true

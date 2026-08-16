@@ -18,7 +18,7 @@ A host chooses E1 when it wants this concrete package of behavior:
 - explicit shutdown of the Hub and inference workers.
 
 E1 does not own model tensor policy, backend sequences, per-token scheduling,
-corrective-workflow state, provider/peer transports, Slint types, or OS data-path
+workflow state, provider/peer transports, Slint types, or OS data-path
 selection.
 
 ## Public construction and state

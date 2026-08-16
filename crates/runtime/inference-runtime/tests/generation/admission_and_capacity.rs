@@ -82,10 +82,6 @@ fn generation_workspace_bytes_are_admitted_before_native_sequence_creation() -> 
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the hosted workspace-retention scenario keeps ordered terminal and snapshot evidence together"
-)]
 fn generation_workspace_accounting_is_retained_until_terminal_output_release() -> TestResult {
     let source = FakeSource::scripted([1; 8], 8);
     let (hosted, thread, counters, handle) = hosted(source, 1, 1)?;

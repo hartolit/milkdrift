@@ -70,10 +70,6 @@ fn repeated_sequence_cleanup_failure_exhausts_without_releasing_accounting() -> 
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the six-owner fairness scenario keeps class and within-class poll order explicit"
-)]
 fn cleanup_selection_rotates_across_classes_and_owners() -> TestResult {
     let counts = Rc::new(CleanupCounts::default());
     let mut runtime = runtime_with_resources(

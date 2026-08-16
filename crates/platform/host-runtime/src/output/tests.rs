@@ -302,10 +302,6 @@ fn token_wrapper_conforms_to_bounded_output_invariants() -> Result<(), String> {
     run_conformance::<TokenHarness>()
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one shared conformance flow keeps the complete invariant matrix identical for both wrappers"
-)]
 fn run_conformance<H: OutputHarness>() -> Result<(), String> {
     let request = RequestId::new(1);
 

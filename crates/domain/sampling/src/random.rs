@@ -23,7 +23,10 @@ impl SplitMix64 {
     }
 
     /// Produces a uniformly distributed value in `[0, 1)` using 24 random bits.
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "the sampled value is deliberately reduced to the 24 bits exactly representable by f32"
+    )]
     pub const fn next_unit_f32(&mut self) -> f32 {
         const SCALE: f32 = 1.0 / 16_777_216.0;
         let bits = (self.next_u64() >> 40) as u32;

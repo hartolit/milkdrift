@@ -1231,14 +1231,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "corrective-workflow"
-version = "0.1.0"
-dependencies = [
- "domain-contracts",
- "task-graph",
-]
-
-[[package]]
 name = "countio"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6789,14 +6781,6 @@ dependencies = [
  "filetime",
  "libc",
  "xattr",
-]
-
-[[package]]
-name = "task-graph"
-version = "0.1.0"
-dependencies = [
- "domain-contracts",
- "stats_alloc",
 ]
 
 [[package]]

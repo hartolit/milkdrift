@@ -6,6 +6,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "runtime-application"
+responsibility = "Coordinate the fixture CUDA application"
 hardware-suites = [
     { profile = "cuda", target = "cuda_hardware", feature = "cuda-hardware-tests", runner = "harness-free" },
 ]
@@ -17,6 +18,7 @@ cuda-hardware-tests = ["cuda"]
 
 [dependencies]
 candle-backend = { path = "../../adapters/candle-backend" }
+inference-runtime = { path = "../inference-runtime" }
 
 [[test]]
 name = "cuda_hardware"

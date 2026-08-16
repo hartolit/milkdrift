@@ -78,10 +78,6 @@ pub(crate) fn assert_unloaded_snapshot(hosted: &CandleRuntime) -> TestResult {
     }
 }
 
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "the helper owns both runtime endpoints through worker join"
-)]
 pub(crate) fn shutdown(hosted: CandleRuntime, thread: RuntimeThread) -> TestResult {
     hosted
         .try_submit(RuntimeCommand::Shutdown {

@@ -61,9 +61,7 @@ The current foundation provides:
 - mandatory/default CPU execution and an explicit no-fallback CUDA path limited
   to the exact hardware evidence in the support matrix;
 - immutable Hugging Face artifact resolution, tokenizer integration, redb state,
-  frontend-neutral application services, and a thin Slint host; and
-- generic task-graph mechanics plus an incubating data-defined corrective
-  workflow engine.
+  frontend-neutral application services, and a thin Slint host.
 
 General workflow definitions and runs, durable context workspaces, plugins,
 provider/peer targets, browser transport, and a visual control center are not
@@ -76,7 +74,7 @@ Milkdrift uses a layered workspace:
 
 ```text
 apps / hosts
-    -> application and capability runtimes
+    -> application-runtime
         -> E0 local inference
             -> adapters / platform / domain algorithms
                 -> domain contracts
@@ -94,7 +92,7 @@ request through resolution, loading, generation, cleanup, unload, and shutdown.
 crates/domain/      portable contracts and algorithms
 crates/platform/    process-host primitives
 crates/adapters/    Candle, Hub, tokenizer, and storage integrations
-crates/runtime/     inference, corrective, and application runtimes
+crates/runtime/     inference and application runtimes
 crates/apps/        process and presentation boundaries
 benchmarks/         non-production measurement observers
 tools/xtask/        architecture, hygiene, and verification policy

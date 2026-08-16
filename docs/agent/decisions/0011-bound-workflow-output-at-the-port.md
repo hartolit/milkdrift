@@ -1,6 +1,6 @@
 # ADR-0011: Bound workflow output at the service port
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-0021
 - **Date:** 2026-07-30
 
 ## Context

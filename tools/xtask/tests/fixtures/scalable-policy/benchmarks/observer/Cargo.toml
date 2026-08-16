@@ -6,6 +6,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "benchmark-observer"
+responsibility = "Observe fixture application behavior"
 benchmark-targets = ["runtime"]
 
 [dependencies]

@@ -286,10 +286,6 @@ fn hosted_worker_retries_a_failed_forced_release() -> Result<(), String> {
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the hosted regression keeps accepted, duplicate, completion, and terminal ticket ordering explicit"
-)]
 fn hosted_worker_reports_terminal_unload_after_natural_drain() -> Result<(), String> {
     let hosted_configuration = HostedRuntimeConfiguration::new(
         non_zero_usize(4)?,
@@ -416,10 +412,6 @@ fn hosted_worker_reports_terminal_unload_after_natural_drain() -> Result<(), Str
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the bounded-queue deadline scenario keeps event backpressure and unload ordering explicit"
-)]
 fn hosted_worker_enforces_deadline_while_event_queue_is_full() -> Result<(), String> {
     let hosted_configuration = HostedRuntimeConfiguration::new(
         non_zero_usize(4)?,

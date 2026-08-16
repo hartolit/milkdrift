@@ -22,8 +22,6 @@ pub enum Role {
     Adapter,
     /// E0 resource ownership and inference lifecycle.
     RuntimeFoundation,
-    /// Independently stateful reusable orchestration below E1.
-    RuntimeCapability,
     /// E1 application orchestration.
     RuntimeApplication,
     /// Process and presentation boundaries.
@@ -40,7 +38,6 @@ impl Role {
             "platform" => Some(Self::Platform),
             "adapter" => Some(Self::Adapter),
             "runtime-foundation" => Some(Self::RuntimeFoundation),
-            "runtime-capability" => Some(Self::RuntimeCapability),
             "runtime-application" => Some(Self::RuntimeApplication),
             "application" => Some(Self::Application),
             _ => None,
@@ -56,7 +53,6 @@ impl Role {
             Self::Platform => "platform",
             Self::Adapter => "adapter",
             Self::RuntimeFoundation => "runtime-foundation",
-            Self::RuntimeCapability => "runtime-capability",
             Self::RuntimeApplication => "runtime-application",
             Self::Application => "application",
         }
@@ -64,6 +60,10 @@ impl Role {
 
     pub(crate) const fn is_domain(self) -> bool {
         matches!(self, Self::DomainFoundation | Self::DomainFeature)
+    }
+
+    pub(crate) const fn is_runtime(self) -> bool {
+        matches!(self, Self::RuntimeFoundation | Self::RuntimeApplication)
     }
 }
 
@@ -105,9 +105,44 @@ pub(crate) fn package_role(package: &Package) -> Result<Role, RoleMetadataError>
     };
     Role::parse(value).ok_or_else(|| RoleMetadataError {
         reason: format!(
-            "unknown role `{value}`; roles fail closed and must use one of the ten documented Milkdrift role names"
+            "unknown role `{value}`; roles fail closed and must use one of the nine documented Milkdrift role names"
         ),
     })
+}
+
+pub(crate) fn package_responsibility(package: &Package) -> Result<&str, RoleMetadataError> {
+    let Some(namespace) = package.metadata.get(METADATA_NAMESPACE) else {
+        return Err(RoleMetadataError {
+            reason: format!(
+                "missing mandatory [package.metadata.{METADATA_NAMESPACE}] responsibility declaration"
+            ),
+        });
+    };
+    let Some(table) = namespace.as_object() else {
+        return Err(RoleMetadataError {
+            reason: format!(
+                "[package.metadata.{METADATA_NAMESPACE}] must be a table containing a responsibility string"
+            ),
+        });
+    };
+    let Some(value) = table.get("responsibility") else {
+        return Err(RoleMetadataError {
+            reason: "missing mandatory responsibility string".to_owned(),
+        });
+    };
+    let Some(value) = value.as_str() else {
+        return Err(RoleMetadataError {
+            reason: "responsibility must be a string".to_owned(),
+        });
+    };
+    let responsibility = value.trim();
+    if responsibility.is_empty() {
+        return Err(RoleMetadataError {
+            reason: "responsibility must describe a present nonempty package responsibility"
+                .to_owned(),
+        });
+    }
+    Ok(responsibility)
 }
 
 pub(crate) fn cuda_provider(package: &Package) -> Result<bool, String> {
@@ -143,9 +178,7 @@ pub(crate) fn role_location_is_compatible(root: &Path, package: &Package, role: 
         Role::DomainFoundation | Role::DomainFeature => Path::new("crates/domain"),
         Role::Platform => Path::new("crates/platform"),
         Role::Adapter => Path::new("crates/adapters"),
-        Role::RuntimeFoundation | Role::RuntimeCapability | Role::RuntimeApplication => {
-            Path::new("crates/runtime")
-        }
+        Role::RuntimeFoundation | Role::RuntimeApplication => Path::new("crates/runtime"),
         Role::Application => Path::new("crates/apps"),
     };
 

@@ -9,6 +9,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "domain-foundation"
+responsibility = "Define portable inference backend, lifecycle, identity, and resource contracts"
 
 [dependencies]
 

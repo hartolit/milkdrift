@@ -207,10 +207,6 @@ impl ModelLoader for FaultLoader {
         })
     }
 
-    #[allow(
-        clippy::too_many_lines,
-        reason = "the deterministic malicious loader keeps all complete-model report mutations in one exhaustive fixture boundary"
-    )]
     fn load_prepared(
         &mut self,
         mut prepared: Self::Prepared,

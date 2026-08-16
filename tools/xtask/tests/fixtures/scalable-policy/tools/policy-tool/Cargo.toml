@@ -6,6 +6,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "tooling"
+responsibility = "Validate fixture repository policy"
 
 [dependencies]
 reviewed-ext = "=0.1.0"

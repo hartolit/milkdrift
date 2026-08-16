@@ -5,16 +5,15 @@ Portable domain building blocks.
 `domain-contracts` is the sole F0 foundation and has no workspace-local production
 dependencies. A type belongs in F0 only when it crosses the backend/runtime
 boundary or has at least two stable, distinct domain consumers. Single-feature
-vocabulary stays with its owner; in particular, `TaskId` belongs to `task-graph`.
+vocabulary stays with its owner.
 
-`tokenization`, `context-planner`, `sampling`, and `task-graph` are F1 algorithm
+`tokenization`, `context-planner`, and `sampling` are F1 algorithm
 crates. The current exact reviewed domain production DAG is:
 
 ```text
 tokenization    -> domain-contracts
 context-planner -> domain-contracts
 sampling        -> domain-contracts
-task-graph      -> domain-contracts
 ```
 
 There is no current F1-to-F1 production edge, but F1 peers are not categorically
@@ -24,5 +23,3 @@ graph must remain acyclic. Unreviewed domain peers fail closed.
 
 Domain crates are always `no_std`. Host-process facilities, vendor SDKs, filesystem
 I/O, network access, databases, and OS synchronization belong outside this layer.
-`task-graph` additionally measures its generic topology, provenance, and runtime
-state paths and requires zero allocations after caller-owned preparation.

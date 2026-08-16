@@ -102,10 +102,6 @@ fn require_cuda_opt_in() -> TestResult {
     }
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "the deterministic probe conforms to the private fallible discovery seam"
-)]
 fn available_device_probe(device: ApplicationDevice) -> DeviceProbeResult {
     match device {
         ApplicationDevice::Cpu => Ok(ApplicationDeviceSummary::cpu()),

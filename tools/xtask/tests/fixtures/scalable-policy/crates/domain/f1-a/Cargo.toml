@@ -6,6 +6,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "domain-feature"
+responsibility = "Provide the first fixture domain algorithm"
 benchmark-targets = ["sampling_pipeline"]
 
 [lib]

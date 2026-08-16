@@ -1,16 +1,16 @@
 # Current execution context
 
-**Status date:** 2026-08-15
-**State:** independent final source review complete; exact-tree acceptance next
+**Status date:** 2026-08-16
+**State:** canonical present-scope consolidation complete locally; exact-tree acceptance external
 
 ## Immediate handoff
 
-The final-foundation source chain now includes bounded load diagnostics,
-context-local ownership/test refactoring, dependency alignment, a
-non-self-referential evidence authority model, and independent whole-tree review.
-The next action is to push the exact source-closure commit and execute the
-external exact-tree acceptance package. No product successor is active;
-workflow/workspace/authority remains unratified direction.
+The workspace now contains only the implemented product/runtime spine plus its
+benchmark and policy tooling. Every retained package declares a single
+responsibility, runtime reachability is derived from Cargo's resolved production
+graph, the inactive task graph and corrective workflow are removed, and the
+documented lint contract matches the enforced gate. No product successor is
+active; workflow/workspace/authority remains unratified direction.
 
 Exact current-commit remote acceptance is an external property evaluated after
 push. Tracked execution state neither predicts that result nor stores a run ID to

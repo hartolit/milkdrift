@@ -30,7 +30,6 @@ Accepted and superseded rationale is indexed in the
 | [Inference runtime](inference-runtime.md) | E0 admission, exclusive ownership, scheduling, backpressure, quarantine, unload, and shutdown |
 | [Application runtime](application-runtime.md) | E1 resolution/load correlation, application state, chat/completion, persistence, retained cleanup, and worker coordination |
 | [Desktop runtime](desktop-runtime.md) | Slint projection, event cadence, paths, and presentation boundary |
-| [Corrective orchestration](orchestration.md) | Generic graph versus corrective capability semantics |
 | [Model lifecycle](lifecycle.md) | Cross-component cancellation, cleanup, retention, and reclamation guarantees |
 
 Component pages describe behavior only. The sole product support/evidence matrix

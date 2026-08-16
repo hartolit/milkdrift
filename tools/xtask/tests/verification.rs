@@ -10,7 +10,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use cargo_metadata::{Metadata, MetadataCommand};
 use xtask::{
     CargoCommand, VerificationComponent, VerificationOperation, VerificationPlan,
-    cuda_clippy_command_plan, cuda_clippy_command_plan_for_metadata, cuda_compile_command_plan,
+    benchmark_command_plan_for_metadata, cuda_clippy_command_plan,
+    cuda_clippy_command_plan_for_metadata, cuda_compile_command_plan,
     cuda_compile_command_plan_for_metadata, hardware_profile_command_plan_for_metadata,
     native_verification_plan, portable_command_plan, portable_command_plan_for_metadata,
     verification_component_plan, verification_component_plan_for_metadata,
@@ -147,7 +148,6 @@ fn package_command(prefix: &[&str], suffix: &[&str]) -> Vec<String> {
     let packages = [
         "adapter",
         "app",
-        "capability",
         "e0",
         "e1",
         "f0",
@@ -345,6 +345,61 @@ fn every_native_component_rejects_unknown_roles() -> Result<(), Box<dyn Error>> 
 }
 
 #[test]
+fn every_command_family_rejects_missing_present_responsibility() -> Result<(), Box<dyn Error>> {
+    let native = FixtureWorkspace::new("scalable-policy")?;
+    native.replace(
+        "crates/domain/f0/Cargo.toml",
+        "responsibility = \"Define fixture domain contracts\"\n",
+        "",
+    )?;
+    native.refresh_lock()?;
+    let metadata = native.metadata()?;
+
+    for component in VerificationComponent::CANONICAL
+        .into_iter()
+        .chain([VerificationComponent::Nursery])
+    {
+        let Err(error) = verification_component_plan_for_metadata(&metadata, component) else {
+            return Err(format!(
+                "{} accepted a package without a responsibility",
+                component.as_str()
+            )
+            .into());
+        };
+        assert!(error.to_string().contains("responsibility"));
+    }
+    for result in [
+        benchmark_command_plan_for_metadata(&metadata).map(|_| ()),
+        portable_command_plan_for_metadata(&metadata, "wasm32-unknown-unknown").map(|_| ()),
+    ] {
+        let Err(error) = result else {
+            return Err("a native planner accepted a package without a responsibility".into());
+        };
+        assert!(error.to_string().contains("responsibility"));
+    }
+
+    let cuda = FixtureWorkspace::new("cuda-policy")?;
+    cuda.replace(
+        "crates/adapters/candle-backend/Cargo.toml",
+        "responsibility = \"Provide the fixture CUDA adapter\"\n",
+        "",
+    )?;
+    cuda.refresh_lock()?;
+    let metadata = cuda.metadata()?;
+    for result in [
+        cuda_compile_command_plan_for_metadata(&metadata).map(|_| ()),
+        cuda_clippy_command_plan_for_metadata(&metadata).map(|_| ()),
+        hardware_profile_command_plan_for_metadata(&metadata, "cuda").map(|_| ()),
+    ] {
+        let Err(error) = result else {
+            return Err("a CUDA planner accepted a package without a responsibility".into());
+        };
+        assert!(error.to_string().contains("responsibility"));
+    }
+    Ok(())
+}
+
+#[test]
 fn unknown_native_component_name_fails() -> Result<(), Box<dyn Error>> {
     let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .args(["verify-component", "unknown"])
@@ -364,7 +419,7 @@ fn portable_plan_automatically_owns_a_new_valid_domain_package() -> Result<(), B
     )?;
     fixture.write(
         "crates/domain/f1-c/Cargo.toml",
-        "[package]\nname = \"f1-c\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[package.metadata.milkdrift]\nrole = \"domain-feature\"\n",
+        "[package]\nname = \"f1-c\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[package.metadata.milkdrift]\nrole = \"domain-feature\"\nresponsibility = \"Provide a generated fixture domain algorithm\"\n",
     )?;
     fixture.write("crates/domain/f1-c/src/lib.rs", "pub fn fixture() {}\n")?;
     fixture.refresh_lock()?;
@@ -431,10 +486,6 @@ fn portable_plan_rejects_invalid_roles_empty_ownership_and_unknown_targets()
 }
 
 #[test]
-#[allow(
-    clippy::too_many_lines,
-    reason = "the exact CUDA command matrices are intentionally visible in one comparison test"
-)]
 fn cuda_plans_are_sorted_exact_and_keep_hardware_targets_separate() -> Result<(), Box<dyn Error>> {
     let fixture = FixtureWorkspace::new("cuda-policy")?;
     fixture.refresh_lock()?;

@@ -12,7 +12,7 @@ fn actual_workspace_satisfies_architecture_policy() -> Result<(), Box<dyn Error>
 }
 
 #[test]
-fn scalable_fixture_accepts_all_roles_and_ordinary_legal_edges() -> Result<(), Box<dyn Error>> {
+fn scalable_fixture_accepts_current_roles_and_ordinary_legal_edges() -> Result<(), Box<dyn Error>> {
     let fixture = FixtureWorkspace::new("scalable-policy")?;
     let report = fixture.report()?;
     assert!(
@@ -20,6 +20,31 @@ fn scalable_fixture_accepts_all_roles_and_ordinary_legal_edges() -> Result<(), B
         "ordinary role-DAG fixture violations: {:#?}",
         report.violations()
     );
+    Ok(())
+}
+
+#[test]
+fn missing_empty_and_non_string_responsibilities_fail_closed() -> Result<(), Box<dyn Error>> {
+    let cases = [
+        ("responsibility = \"Define fixture domain contracts\"\n", ""),
+        (
+            "responsibility = \"Define fixture domain contracts\"",
+            "responsibility = \"   \"",
+        ),
+        (
+            "responsibility = \"Define fixture domain contracts\"",
+            "responsibility = false",
+        ),
+    ];
+
+    for (existing, replacement) in cases {
+        let fixture = FixtureWorkspace::new("scalable-policy")?;
+        fixture.replace("crates/domain/f0/Cargo.toml", existing, replacement)?;
+        let report = fixture.report()?;
+        assert!(report.violations().iter().any(|violation| {
+            violation.source() == "f0" && violation.rule() == "RESPONSIBILITY-1"
+        }));
+    }
     Ok(())
 }
 

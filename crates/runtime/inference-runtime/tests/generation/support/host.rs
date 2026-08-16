@@ -304,10 +304,6 @@ pub(crate) fn submit_generation_error(
     }
 }
 
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "the helper owns the client through worker join and then drops both endpoints together"
-)]
 pub(crate) fn shutdown(hosted: HostedRuntime<FakeSource>, thread: RuntimeThread) -> TestResult {
     hosted
         .try_submit(RuntimeCommand::Shutdown {

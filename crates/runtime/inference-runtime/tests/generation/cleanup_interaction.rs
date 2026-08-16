@@ -260,10 +260,6 @@ fn model_unload_retry_recovers_and_releases_accounting_once() -> TestResult {
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the complete two-model isolation scenario is intentionally kept contiguous"
-)]
 fn healthy_model_progresses_while_another_model_retries_cleanup() -> TestResult {
     let (prefill_gate, entered, release) = blocking_gate();
     let mut failing = FakeSource::scripted([1; 8], 8);

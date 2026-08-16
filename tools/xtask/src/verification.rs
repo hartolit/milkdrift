@@ -245,6 +245,7 @@ pub fn benchmark_command_plan(manifest_path: &Path) -> Result<Vec<CargoCommand>,
 pub fn benchmark_command_plan_for_metadata(
     metadata: &Metadata,
 ) -> Result<Vec<CargoCommand>, CommandPlanError> {
+    validate_workspace_ownership(metadata, "benchmark workspace ownership")?;
     let inventory = benchmark_inventory(metadata).map_err(|issues| CommandPlanError {
         message: issues
             .into_iter()
@@ -415,6 +416,7 @@ pub fn cuda_compile_command_plan(
 pub fn cuda_compile_command_plan_for_metadata(
     metadata: &Metadata,
 ) -> Result<Vec<CargoCommand>, CommandPlanError> {
+    validate_workspace_ownership(metadata, "CUDA workspace ownership")?;
     let packages = cuda_feature_package_inventory(metadata)
         .map_err(|issues| CommandPlanError::inventory("exact CUDA feature ownership", issues))?;
     let hardware_targets = cuda_hardware_target_inventory(metadata)
@@ -466,6 +468,7 @@ pub fn cuda_clippy_command_plan(
 pub fn cuda_clippy_command_plan_for_metadata(
     metadata: &Metadata,
 ) -> Result<Vec<CargoCommand>, CommandPlanError> {
+    validate_workspace_ownership(metadata, "CUDA workspace ownership")?;
     let packages = cuda_feature_package_inventory(metadata)
         .map_err(|issues| CommandPlanError::inventory("exact CUDA feature ownership", issues))?;
     let hardware_targets = cuda_hardware_target_inventory(metadata)
@@ -512,6 +515,7 @@ pub fn hardware_profile_command_plan_for_metadata(
     metadata: &Metadata,
     profile: &str,
 ) -> Result<Vec<CargoCommand>, CommandPlanError> {
+    validate_workspace_ownership(metadata, "hardware workspace ownership")?;
     let hardware_targets = hardware_suite_inventory(metadata, profile).map_err(|issues| {
         CommandPlanError::inventory(&format!("`{profile}` hardware profile ownership"), issues)
     })?;
@@ -525,6 +529,15 @@ pub fn hardware_profile_command_plan_for_metadata(
             )
         })
         .collect())
+}
+
+fn validate_workspace_ownership(
+    metadata: &Metadata,
+    context: &str,
+) -> Result<(), CommandPlanError> {
+    workspace_package_inventory(metadata)
+        .map(|_| ())
+        .map_err(|issues| CommandPlanError::inventory(context, issues))
 }
 
 /// Returns whether a portable target name is maintained by the command planner.

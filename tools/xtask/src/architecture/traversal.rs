@@ -8,12 +8,13 @@ use super::exceptions::load_exception_registry;
 use super::policy::{
     DependencyKind, ExternalDecision, Layer, PolicyFailure, RULE_BENCHMARK_BUILD,
     RULE_BENCHMARK_PACKAGE, RULE_BENCHMARK_REGISTRY, RULE_DOMAIN_DAG, RULE_EXCEPTION,
-    RULE_EXTERNAL, RULE_KNOWN_KIND, RULE_LOCAL_TARGET, RULE_LOCATION, RULE_ROLE, dependency_kind,
-    external_dependency_policy, local_dependency_policy,
+    RULE_EXTERNAL, RULE_KNOWN_KIND, RULE_LOCAL_TARGET, RULE_LOCATION, RULE_PRODUCT_REACHABILITY,
+    RULE_RESPONSIBILITY, RULE_ROLE, dependency_kind, external_dependency_policy,
+    local_dependency_policy,
 };
 use super::report::{ValidationError, ValidationReport, Violation};
 use crate::workspace::{
-    benchmark_inventory, load_metadata, package_role, relative_manifest,
+    benchmark_inventory, load_metadata, package_responsibility, package_role, relative_manifest,
     role_location_is_compatible,
 };
 
@@ -97,7 +98,7 @@ fn validate_metadata(metadata: &Metadata) -> ValidationReport {
         })
         .collect::<BTreeMap<_, _>>();
 
-    for package in packages {
+    for package in &packages {
         let source_name = package.name.to_string();
         let Some(source_role) = roles.get(&source_name).copied() else {
             continue;
@@ -128,6 +129,8 @@ fn validate_metadata(metadata: &Metadata) -> ValidationReport {
             ),
         ));
     }
+
+    validate_product_reachability(&packages, &packages_by_directory, &roles, &mut report);
 
     report
 }
@@ -188,12 +191,73 @@ fn build_workspace_index<'a>(
                 error.reason,
             )),
         }
+        if let Err(error) = package_responsibility(package) {
+            report.push(Violation::new(
+                package.name.to_string(),
+                relative_manifest(root, package).display().to_string(),
+                None,
+                roles.get(package.name.as_ref()).copied(),
+                None,
+                RULE_RESPONSIBILITY,
+                error.reason,
+            ));
+        }
     }
 
     WorkspaceIndex {
         packages_by_name,
         packages_by_directory,
         roles,
+    }
+}
+
+fn validate_product_reachability(
+    packages: &[&Package],
+    packages_by_directory: &BTreeMap<PathBuf, &Package>,
+    roles: &BTreeMap<String, Layer>,
+    report: &mut ValidationReport,
+) {
+    let mut graph = BTreeMap::<String, BTreeSet<String>>::new();
+    for package in packages {
+        let source = package.name.to_string();
+        let targets = graph.entry(source).or_default();
+        for dependency in &package.dependencies {
+            if dependency_kind(dependency.kind) == Some(DependencyKind::Normal)
+                && let Some(path) = &dependency.path
+                && let Some(target) = packages_by_directory.get(path.as_std_path())
+            {
+                targets.insert(target.name.to_string());
+            }
+        }
+    }
+
+    let mut reachable = BTreeSet::new();
+    let mut pending = roles
+        .iter()
+        .filter_map(|(package, role)| (*role == Layer::Application).then_some(package.clone()))
+        .collect::<Vec<_>>();
+    while let Some(package) = pending.pop() {
+        if !reachable.insert(package.clone()) {
+            continue;
+        }
+        if let Some(targets) = graph.get(&package) {
+            pending.extend(targets.iter().cloned());
+        }
+    }
+
+    for (package, role) in roles {
+        if role.is_runtime() && !reachable.contains(package) {
+            report.push(Violation::new(
+                package.clone(),
+                "supported application entry point".to_owned(),
+                None,
+                Some(*role),
+                None,
+                RULE_PRODUCT_REACHABILITY,
+                "runtime packages must be reachable from an application role through actual normal Cargo dependencies; build and development dependencies do not establish a product execution path"
+                    .to_owned(),
+            ));
+        }
     }
 }
 

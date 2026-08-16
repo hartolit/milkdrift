@@ -136,10 +136,6 @@ pub(super) struct SamplingMetadata {
     pub(super) fixed_seed: u64,
 }
 
-#[expect(
-    clippy::struct_field_names,
-    reason = "the cycle suffix makes every serialized count's unit explicit"
-)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub(super) struct LifecycleCounts {
     pub(super) primary_full_workload_cycles: u32,
@@ -190,10 +186,6 @@ pub(super) struct ResourceCheckpoint {
     pub(super) whole_device_cuda_memory: Option<CudaMemoryObservation>,
 }
 
-#[expect(
-    clippy::struct_field_names,
-    reason = "the byte suffix distinguishes every serialized memory quantity's unit"
-)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub(super) struct CudaMemoryObservation {
     pub(super) total_bytes: u64,
@@ -212,10 +204,6 @@ pub(super) struct CancellationResult {
     pub(super) terminal_kind: &'static str,
 }
 
-#[expect(
-    clippy::struct_field_names,
-    reason = "the to prefix identifies the shared generation-submission timing origin"
-)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub(super) struct GenerationSubmissionTimings {
     pub(super) to_generation_started_ns: u64,
@@ -223,10 +211,6 @@ pub(super) struct GenerationSubmissionTimings {
     pub(super) to_cancellation_submission_ns: u64,
 }
 
-#[expect(
-    clippy::struct_field_names,
-    reason = "the to prefix identifies the shared cancellation-submission timing origin"
-)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub(super) struct CancellationSubmissionTimings {
     pub(super) to_acknowledgement_ns: u64,

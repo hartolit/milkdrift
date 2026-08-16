@@ -9,6 +9,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "domain-feature"
+responsibility = "Define allocation-free tokenization, decoding, and caller-owned sink contracts"
 
 [dependencies]
 domain-contracts.workspace = true

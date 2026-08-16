@@ -6,6 +6,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "benchmark-observer"
+responsibility = "Observe the fixture runtime"
 
 [features]
 default = []

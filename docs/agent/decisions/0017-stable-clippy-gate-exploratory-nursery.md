@@ -11,7 +11,19 @@ Nursery findings are still useful as early design feedback, but their explorator
 
 ## Decision
 
-The mandatory workspace Clippy policy consists of the stable `clippy::all` and `clippy::pedantic` groups plus the explicitly selected `clippy::unwrap_used`, `clippy::expect_used`, `clippy::panic`, and `clippy::indexing_slicing` lints. The canonical `cargo xtask verify` command runs Clippy for the whole workspace and all targets with warnings denied. Findings from this mandatory set are acceptance failures unless handled by a narrow, intentional code-level exception.
+The mandatory workspace Clippy policy consists of stable `clippy::all`; hard
+denials for `unwrap_used`, `expect_used`, and `panic`; and exact reviewed lints for
+indexing, lossy integer/float casts, large inline ownership types, and large error
+values. The canonical `cargo xtask verify` command runs Clippy for the whole
+workspace and all targets with warnings denied. Findings from this mandatory set
+are acceptance failures unless handled by a narrow, intentional code-level
+exception.
+
+The blanket `clippy::pedantic` group is not workspace policy. It created
+acceptance pressure around line counts, boolean field groupings, parameter
+passing, and naming without demonstrating an ownership or correctness defect.
+Individual pedantic lints remain eligible when their repository-specific signal
+is understood; current numeric-cast and inline-ownership selections are examples.
 
 Do not enable the blanket `clippy::nursery` group in inherited workspace lints or in the mandatory composite gate. Run it separately as an exploratory, non-blocking report, including on the scheduled CI review. Nursery diagnostics must remain visible, but they do not determine the success of the mandatory gate.
 
@@ -27,6 +39,8 @@ A nursery lint may become mandatory only through exact review of that lint after
 ## Consequences
 
 - `cargo xtask verify` retains a strict, deterministic Clippy acceptance boundary over the selected stable policy.
+- Style diagnostics cannot require extra wrappers, parameter structs, or public
+  surface merely to satisfy a blanket lint group.
 - Scheduled nursery runs can surface new findings without turning toolchain experimentation into merge-blocking churn.
 - Nursery findings require triage rather than automatic cleanup or blanket suppression.
 - The mandatory set can evolve one reviewed lint at a time without weakening existing explicit safety and correctness policy.

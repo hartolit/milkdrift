@@ -10,7 +10,6 @@ The portability contract is established by [ADR-0007](../agent/decisions/0007-po
 | `tokenization` | Yes | Yes | Yes | APIs use caller-owned token/byte storage; no crate-wide measured allocation claim |
 | `context-planner` | Yes | Yes | Yes | Fixed caller-provided entries and output storage; no crate-wide measured allocation claim |
 | `sampling` | Yes | Yes | Yes | Allocation test covers the prepared sampling pipeline and reusable workspace |
-| `task-graph` | Yes | Yes | Yes | Allocation test covers topology validation, artifact provenance, ready discovery, and attempt transitions after caller preparation |
 
 “Yes” for a cross target means the library compiles for that exact target with the committed lockfile. It does not claim browser integration, JavaScript bindings, firmware integration, target execution tests, or support for every WebAssembly/embedded target.
 
@@ -18,8 +17,8 @@ The portability contract is established by [ADR-0007](../agent/decisions/0007-po
 
 ```text
 cargo test --workspace --locked
-cargo check --locked --target wasm32-unknown-unknown --lib -p domain-contracts -p tokenization -p context-planner -p sampling -p task-graph
-cargo check --locked --target thumbv7em-none-eabihf --lib -p domain-contracts -p tokenization -p context-planner -p sampling -p task-graph
+cargo check --locked --target wasm32-unknown-unknown --lib -p domain-contracts -p tokenization -p context-planner -p sampling
+cargo check --locked --target thumbv7em-none-eabihf --lib -p domain-contracts -p tokenization -p context-planner -p sampling
 ```
 
 Cross-compilation deliberately selects `--lib` so host-only development dependencies such as Criterion and allocation instrumentation do not broaden the production portability boundary.

@@ -5,7 +5,7 @@
 
 ## Context
 
-Slint currently needs model resolution, tokenizer validation, persistence, lifecycle commands, normalized state, and shutdown behavior. Native Tauri, CLI, or server hosts would need the same use cases. Reimplementing them in every frontend would duplicate correctness-sensitive orchestration. At the same time, `application-runtime` currently contains concrete Candle, Hugging Face, redb, and host-runtime composition and is growing corrective-workflow responsibilities.
+Slint needs model resolution, tokenizer validation, persistence, lifecycle commands, normalized state, and shutdown behavior. Native Tauri, CLI, or server hosts would need the same use cases. Reimplementing them in every frontend would duplicate correctness-sensitive orchestration. `application-runtime` contains concrete Candle, Hugging Face, redb, and host-runtime composition.
 
 ## Decision
 
@@ -28,4 +28,4 @@ Do not make its public type generic over every storage, resolver, tokenizer, bac
 
 ## Review trigger
 
-Review when a second backend must be selected through E1, a remote/browser transport is implemented, a second storage/resolver composition is needed, or corrective workflow growth gives it an independent lifecycle or consumer.
+Review when a second backend must be selected through E1, a remote/browser transport is implemented, or a second storage/resolver composition is needed.

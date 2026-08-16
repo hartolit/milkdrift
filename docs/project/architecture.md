@@ -20,23 +20,22 @@ benchmarks/runtime/ outer measurement observer
 crates/domain/      portable contracts and algorithms
 crates/platform/    process-host primitives
 crates/adapters/    vendor, artifact, filesystem, network, and storage integration
-crates/runtime/     stateful resource and capability owners
+crates/runtime/     stateful inference and application resource owners
 crates/apps/        process, transport, event-loop, and presentation boundaries
 ```
 
 Every tracked non-fixture package is a root workspace member and declares one
-role in `[package.metadata.milkdrift]`. Roles and locations are validated rather
-than inferred from names. The current role vocabulary is `tooling`,
+role and one present responsibility in `[package.metadata.milkdrift]`. Roles and
+locations are validated rather than inferred from names. The current role vocabulary is `tooling`,
 `benchmark-observer`, `domain-foundation`, `domain-feature`, `platform`, `adapter`,
-`runtime-foundation`, `runtime-capability`, `runtime-application`, and
-`application`.
+`runtime-foundation`, `runtime-application`, and `application`.
 
 ## Dependency direction
 
 ```text
 apps / hosts
     -> optional application-runtime (E1 reference services)
-        -> capability runtimes and inference-runtime (E0)
+        -> inference-runtime (E0)
             -> platform, adapters, and domain algorithms
                 -> domain-contracts
 
@@ -45,8 +44,8 @@ tooling              -> repository metadata only
 ```
 
 Dependencies point inward. Domain code never imports adapters, runtimes, or apps.
-Adapters do not depend on runtimes. E0 and capability runtimes do not depend on
-E1. Same-role runtime peers are not generally legal. Cargo's actual domain graph
+Adapters do not depend on runtimes. E0 does not depend on E1. Same-role runtime
+peers are not legal. Cargo's actual domain graph
 must be acyclic; reviewed exceptional development or external edges are explicit
 policy records, not a second list of ordinary legal edges.
 
@@ -54,22 +53,13 @@ policy records, not a second list of ordinary legal edges.
 APIs but cannot become a dependency of product, applications, tooling, tests, or
 another observer.
 
-## Domain and capability ownership
+## Domain ownership
 
 `domain-contracts` is the F0 shared foundation. `tokenization`, `context-planner`,
-`sampling`, and `task-graph` are F1 algorithms with honest `no_std` boundaries.
-Vocabulary stays with its narrowest coherent owner; shared foundation is not a
-dumping ground.
-
-`task-graph` owns generic directed-work mechanics: topology, stable task identity,
-attempt state, deterministic readiness, cancellation/blocking, and identity-only
-artifact provenance. It does not own model policy, corrective stages, artifact
-semantics, or output bounds.
-
-`corrective-workflow` is a runtime capability. It owns a bounded data-defined
-corrective schema/executor and its six-stage reference template. It is not the
-general workflow/workspace runtime. A new capability runtime requires an
-independently coherent state, lifecycle, reuse, or deployment boundary.
+and `sampling` are F1 algorithms with honest `no_std` boundaries. Vocabulary stays
+with its narrowest coherent owner; shared foundation is not a dumping ground.
+`domain-contracts` exposes intentional contracts through its crate root rather
+than maintaining duplicate public module and re-export paths.
 
 ## E0 local inference ownership
 
@@ -105,13 +95,13 @@ application-runtime
 
 E1 coordinates application behavior; it must not absorb every domain it calls.
 Tensor compatibility stays in Candle, token scheduling in E0, algorithms in
-domain crates, vendor/storage implementation in adapters, corrective state in its
-capability runtime, and presentation in apps. Reconsider a coarse extraction only
-when a second consumer, deployment, or execution kind reveals an independent
-lifecycle—not for symmetry. Do not expose the composition as a façade with many
+domain crates, vendor/storage implementation in adapters, and presentation in
+apps. Reconsider a coarse extraction only when a second consumer, deployment, or
+execution kind reveals an independent lifecycle—not for symmetry. Do not expose
+the composition as a façade with many
 public backend/storage/tokenizer type parameters. This is the accepted boundary
-from [ADR-0008](../agent/decisions/0008-capability-and-execution-boundaries.md) and
-[ADR-0013](../agent/decisions/0013-candle-only-local-execution.md).
+from [ADR-0013](../agent/decisions/0013-candle-only-local-execution.md) and
+[ADR-0021](../agent/decisions/0021-canonical-present-scope.md).
 
 ## Adapter and host boundaries
 
@@ -149,14 +139,14 @@ automatic CPU fallback are absent. Exact support and evidence belong only in
 
 ## Enforcement and future placement
 
-`cargo xtask architecture` validates roles, locations, the generic inward DAG,
-actual domain acyclicity, observer/tooling isolation, reviewed exceptions, CUDA
-features, and maintained benchmark registration. `cargo xtask hygiene` validates
-tracked repository policy, including documentation authority. See
+`cargo xtask architecture` validates roles, present responsibilities, locations,
+the generic inward DAG, runtime reachability from applications, actual domain
+acyclicity, observer/tooling isolation, reviewed exceptions, CUDA features, and
+maintained benchmark registration. `cargo xtask hygiene` validates tracked
+repository policy, including documentation authority. See
 [dependency policy](dependency-policy.md).
 
-A future portable workflow or plugin SDK belongs in a domain role; a stateful
-workflow engine in `runtime-capability`; provider/peer implementations in
-adapters; a headless process in apps; and a control center as another host over
-public schemas. The [execution plan](../agent/execution/execution-plan.md) must
-ratify those packages before implementation.
+Workflow, workspace, authority, provider, and plugin package roles are not part of
+the current architecture. The
+[execution plan](../agent/execution/execution-plan.md) must ratify their contracts,
+roles, and first concrete consumers before implementation.

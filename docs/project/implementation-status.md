@@ -1,6 +1,6 @@
 # Current implementation status
 
-**Status date:** 2026-08-15
+**Status date:** 2026-08-16
 
 Milkdrift's implemented product is the local-inference foundation and optional E1
 reference application kit. No later product phase is active. The next direction is
@@ -44,7 +44,6 @@ product paths.
 | Completion and chat | Direct completion for every loaded compatible model. Built-in chat only for `TinyLlama/TinyLlama-1.1B-Chat-v1.0` at immutable revision `fe8a4ea1ffedaf415f4da2f062534de366a451e6`. |
 | Persistence | redb settings and model catalogue. `LAS1` writes v2/reads v1; `LAM1` writes v3 and reads exact v1/v2 without automatic rewrite. Conversation history is memory-only. |
 | Frontend | Thin Slint reference host. The current state path is `milkdrift/state.redb`; one legacy `llm-app/state.redb` is moved only when no current database exists. |
-| Orchestration foundation | `task-graph` owns generic allocation-free graph mechanics; `corrective-workflow` owns a bounded corrective definition/executor and reference template. Neither is the general workflow/workspace runtime. |
 
 The exact scalar/materialization algorithm is owned by the
 [Candle guide](candle-backend.md). Load, sequence, cleanup, and shutdown ownership

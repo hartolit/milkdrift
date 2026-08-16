@@ -86,8 +86,6 @@ boundary. They do not replace the canonical gate:
 
 ```sh
 cargo test --locked -p domain-contracts
-cargo test --locked -p task-graph
-cargo test --locked -p corrective-workflow
 
 cargo test --locked -p candle-backend
 cargo test --locked -p hf-hub-adapter
@@ -108,8 +106,6 @@ Important named boundaries include:
   shutdown;
 - E1 tests: immutable resolution/load correlation, persistence, chat/completion,
   output, cleanup coordination, disconnection, and shutdown;
-- task-graph's harness-free allocation contract and the corrective executor's
-  definition/rollback/release tests; and
 - benchmark/xtask schema, metadata, workflow, resource, and command-plan tests.
 
 Fixture regeneration is a maintenance operation, not ordinary validation:
@@ -132,9 +128,9 @@ cargo xtask portable thumbv7em-none-eabihf
 ```
 
 The expected product set is `domain-contracts`, `tokenization`, `context-planner`,
-`sampling`, and `task-graph`. No adapter, native runtime, storage, UI, observer, or
-tool package may leak into these library checks. A compile proves only the named
-target/library boundary, not browser or firmware integration.
+and `sampling`. No adapter, native runtime, storage, UI, observer, or tool package
+may leak into these library checks. A compile proves only the named target/library
+boundary, not browser or firmware integration.
 
 ## Architecture, hygiene, dependencies, and links
 

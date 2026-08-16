@@ -10,6 +10,7 @@ default-run = "xtask"
 
 [package.metadata.milkdrift]
 role = "tooling"
+responsibility = "Derive and execute workspace architecture, hygiene, and verification policy"
 
 [dependencies]
 cargo_metadata.workspace = true

@@ -485,10 +485,6 @@ pub(super) const fn with_tensor(
     }
 }
 
-#[expect(
-    clippy::match_same_arms,
-    reason = "explicit compatibility codes remain auditable while unknown codes fail closed to the same portable stage"
-)]
 const fn default_load_stage(code: u32) -> LoadFailureStage {
     use crate::failure::{
         CODE_ARCHITECTURE, CODE_CONFIG_ALLOCATION, CODE_CONFIG_DECODE, CODE_CONFIG_LIMIT,

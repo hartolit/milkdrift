@@ -1,6 +1,6 @@
 # ADR-0008: Separate application coordination, capabilities, and model execution
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-0021
 - **Date:** 2026-07-28
 
 ## Context

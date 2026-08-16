@@ -6,6 +6,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "platform"
+responsibility = "Provide fixture platform behavior"
 
 [dependencies]
 f1-a = { path = "../../domain/f1-a" }

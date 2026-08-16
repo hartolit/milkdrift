@@ -9,6 +9,7 @@ publish = false
 
 [package.metadata.milkdrift]
 role = "benchmark-observer"
+responsibility = "Measure the current E0 and E1 lifecycle through public product APIs"
 benchmark-targets = ["runtime"]
 
 [features]
