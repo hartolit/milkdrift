@@ -333,19 +333,24 @@ fn device_selection_is_rejected_while_loading_or_unloading() -> TestResult {
         default_test_configuration,
         available_device_probe,
         |runtime| {
-            runtime.state.begin_loading();
+            let (selection, _resolved) =
+                resolve_fixture_with(runtime, REPOSITORY, COMMIT, "tokenizer.json")?;
+            runtime.load_model(&selection).map_err(application_error)?;
             assert_eq!(
                 runtime.select_device(CUDA_ZERO),
                 Err(ApplicationError::DeviceSelectionLocked)
             );
-            runtime.state.set_idle();
+            let (ticket, receipt) = receive_successful_load_receipt(runtime)?;
+            let event = runtime.process_model_loaded(ticket, &Ok(receipt));
+            if !matches!(event, Some(ApplicationEvent::ModelLoaded { .. })) {
+                return Err(format!("load completion was not published: {event:?}"));
+            }
 
-            runtime.state.begin_unloading();
+            runtime.unload_model().map_err(application_error)?;
             assert_eq!(
                 runtime.select_device(CUDA_ZERO),
                 Err(ApplicationError::DeviceSelectionLocked)
             );
-            runtime.state.set_idle();
             Ok(())
         },
     )

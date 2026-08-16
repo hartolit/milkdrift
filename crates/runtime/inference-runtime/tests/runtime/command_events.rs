@@ -249,8 +249,8 @@ fn hosted_worker_retries_a_failed_forced_release() -> Result<(), String> {
         RuntimeEvent::ModelUnload {
             ticket,
             result: Err(inference_runtime::RuntimeError::CleanupFailed(state)),
-        } if state.failure.primary_failure == inference_runtime::FailureClass::Cancellation
-            && state.failure.cleanup_failure == inference_runtime::FailureClass::Sequence
+        } if state.failure().primary_failure() == inference_runtime::FailureClass::Cancellation
+            && state.failure().cleanup_failure() == inference_runtime::FailureClass::Sequence
             && ticket == CommandTicket::new(82) => {}
 
         _ => return Err("missing initial sequence-release failure".into()),

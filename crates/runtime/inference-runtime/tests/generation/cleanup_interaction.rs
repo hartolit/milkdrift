@@ -37,12 +37,15 @@ fn exhausted_failed_preparation_is_retained_until_process_exit() -> TestResult {
             ..
         } => {
             assert_eq!(
-                first.resource,
+                first.resource(),
                 CleanupResource::FailedLoad {
                     handle: ModelHandle::new(MODEL, ModelGeneration::new(1)),
                 }
             );
-            assert_eq!(first.ownership, RetainedOwnership::Exact(model_footprint()));
+            assert_eq!(
+                first.ownership(),
+                RetainedOwnership::Exact(model_footprint())
+            );
             assert_eq!(summary.failed_preparations, 1);
             assert_eq!(summary.verified_models, 0);
             assert_eq!(summary.incompatible_models, 0);
@@ -81,8 +84,8 @@ fn backend_failure_and_cleanup_retry_preserve_both_terminal_states() -> TestResu
     assert!(output.states.iter().any(|state| matches!(
         state,
         GenerationOutputState::CleanupPending { failure, .. }
-            if failure.primary_failure == inference_runtime::FailureClass::Sequence
-                && failure.cleanup_failure == inference_runtime::FailureClass::Sequence
+            if failure.primary_failure() == inference_runtime::FailureClass::Sequence
+                && failure.cleanup_failure() == inference_runtime::FailureClass::Sequence
     )));
     assert!(
         output
@@ -198,10 +201,10 @@ fn model_unload_retry_recovers_and_releases_accounting_once() -> TestResult {
         RuntimeEvent::ModelUnload {
             result: Err(inference_runtime::RuntimeError::CleanupFailed(state)),
             ..
-        } if state.failure.primary_operation
+        } if state.failure().primary_operation()
             == inference_runtime::RuntimeOperation::ModelUnload
-            && state.failure.primary_failure == inference_runtime::FailureClass::Completion
-            && state.failure.cleanup_failure
+            && state.failure().primary_failure() == inference_runtime::FailureClass::Completion
+            && state.failure().cleanup_failure()
                 == inference_runtime::FailureClass::Synchronization => {}
         _ => return Err("unexpected initial unload event".into()),
     }

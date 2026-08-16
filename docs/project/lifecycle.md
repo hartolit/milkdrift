@@ -112,3 +112,11 @@ resources. Public detailed evidence remains in `ApplicationState`; cleanup event
 carry only resource identity and the observed disposition transition. Clearing
 that state requires a correlated unload/shutdown success or an explicit released
 lower cleanup record, and happens once with the coordinator removal.
+
+At E1 the model lifecycle and generation lifecycle are deliberately orthogonal
+private enums. This permits a correlated generation terminal/output owner to remain
+observable while model draining completes, a worker disconnect quarantines model
+ownership, or shutdown begins. It does not permit new generation admission without
+the canonical loaded phase. Phase and request transitions are checked, stale events
+leave state unchanged, and frontend activity/capability values are exhaustive
+projections rather than independently synchronized fields.

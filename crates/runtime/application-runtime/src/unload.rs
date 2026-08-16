@@ -69,8 +69,21 @@ impl ApplicationRuntime {
             handle,
             policy,
         };
+        self.state.validate_begin_unloading().map_err(|error| {
+            crate::ApplicationFailure::from_debug(
+                crate::ApplicationFailureKind::Inference,
+                "application unload transition rejected",
+                error,
+            )
+        })?;
         self.submit_inference(command)?;
-        self.state.begin_unloading();
+        self.state.begin_unloading().map_err(|error| {
+            crate::ApplicationFailure::from_debug(
+                crate::ApplicationFailureKind::Inference,
+                "application unload commit transition rejected",
+                error,
+            )
+        })?;
         Ok(ticket)
     }
 

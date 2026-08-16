@@ -50,6 +50,20 @@ shutdown()
 
 `ApplicationState` exposes lifecycle predicates and facts. It does not expose
 Candle, Safetensors, `hf-hub`, redb, Flume, or frontend toolkit values.
+Its canonical model state is one private payload enum covering empty, resolving,
+resolved, loading, loaded, unloading, retained-cleanup, and shutdown phases.
+Generation ownership is a separate private idle/active enum because bounded
+terminal output release can outlive lower model unload or enter shutdown. Device
+catalogue/selection, worker availability, and last-generation history remain
+orthogonal facts. `ApplicationActivity`, `resolved()`, `loaded()`,
+`retained_model()`, and every `can_*` method are read-only projections; none is a
+second stored lifecycle flag or optional ownership bag.
+
+Lifecycle operations use checked begin/complete/fail transitions. Rejected phase,
+request, or generation identities return a typed internal transition error and
+leave the canonical state unchanged. Submission paths prevalidate their phase,
+submit through an exclusively owned bounded channel, and commit the phase before
+the same application thread can consume the correlated result.
 `ApplicationDeviceSummary` contains structured device identity and observations,
 including an optional backend-reported `display_name`; E1 does not manufacture
 frontend labels. Device-memory observations, the startup budget, load footprints,
@@ -110,7 +124,9 @@ Private publication uses one validated load commit containing receipt-derived
 execution facts, limits, identity, mode, and the canonical
 `domain_contracts::MemoryFootprint`. The application boundary does not maintain a
 field-for-field footprint DTO or accept those verified facts as swappable scalar
-constructor arguments.
+constructor arguments. The former execution/limit-only grouping wrappers were
+collapsed because the canonical loaded phase and this correlated commit already
+provide the invariant boundary.
 
 ## Correlated load transaction
 

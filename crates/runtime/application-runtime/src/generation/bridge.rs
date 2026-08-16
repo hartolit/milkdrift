@@ -139,9 +139,6 @@ impl ApplicationRuntime {
         if active.request_id != request_id {
             return Err(ApplicationError::GenerationNotActive(request_id));
         }
-        if active.phase == GenerationPhase::Cancelling {
-            return Ok(());
-        }
         if !matches!(
             active.phase,
             GenerationPhase::Starting | GenerationPhase::Running
@@ -157,7 +154,15 @@ impl ApplicationRuntime {
             request_id,
             reason: CancellationReason::UserRequested,
         })?;
-        self.state.set_generation_phase(GenerationPhase::Cancelling);
+        self.state
+            .transition_generation(request_id, GenerationPhase::Cancelling)
+            .map_err(|error| {
+                ApplicationFailure::from_debug(
+                    ApplicationFailureKind::Inference,
+                    "generation cancellation transition rejected",
+                    error,
+                )
+            })?;
         if let Some(session) = self.generation.session.as_mut() {
             session.cancellation_requested = true;
         }
@@ -204,12 +209,14 @@ impl ApplicationRuntime {
             }),
             usage: active.usage,
         };
+        if self.state.finish_generation(terminal.clone()).is_err() {
+            return;
+        }
         self.conversation.finish_active(
             active.request_id,
             &terminal.outcome,
             terminal.usage.generated_tokens,
         );
-        self.state.finish_generation(terminal.clone());
         self.generation.session = None;
         self.generation.pending.clear();
         self.generation.pending_event = Some(ApplicationEvent::GenerationFinished { terminal });
@@ -228,29 +235,32 @@ impl ApplicationRuntime {
                 let request_id = session.request_id;
                 match result {
                     Ok(admission) if admission.request.request_id == request_id => {
-                        self.state.set_generation_phase(GenerationPhase::Running);
+                        if self
+                            .state
+                            .transition_generation(request_id, GenerationPhase::Running)
+                            .is_err()
+                        {
+                            return None;
+                        }
                         Some(ApplicationEvent::GenerationStarted { request_id })
                     }
-                    Ok(_) => Some(
-                        self.fail_generation_admission(
-                            request_id,
-                            ApplicationFailure {
-                                kind: ApplicationFailureKind::Inference,
-                                message:
-                                    "generation admission returned a mismatched request identity"
-                                        .to_owned(),
-                                load_diagnostic: None,
-                            },
-                        ),
+                    Ok(_) => self.fail_generation_admission(
+                        request_id,
+                        ApplicationFailure {
+                            kind: ApplicationFailureKind::Inference,
+                            message: "generation admission returned a mismatched request identity"
+                                .to_owned(),
+                            load_diagnostic: None,
+                        },
                     ),
-                    Err(error) => Some(self.fail_generation_admission(
+                    Err(error) => self.fail_generation_admission(
                         request_id,
                         ApplicationFailure::from_debug(
                             ApplicationFailureKind::Inference,
                             "generation admission failed",
                             error,
                         ),
-                    )),
+                    ),
                 }
             }
             RuntimeEvent::GenerationCancellationRequested {
@@ -266,7 +276,13 @@ impl ApplicationRuntime {
                     }),
                     Err(error) => {
                         session.cancellation_requested = false;
-                        self.state.set_generation_phase(GenerationPhase::Running);
+                        if self
+                            .state
+                            .transition_generation(*request_id, GenerationPhase::Running)
+                            .is_err()
+                        {
+                            return None;
+                        }
                         Some(ApplicationEvent::GenerationCancellationFailed {
                             request_id: *request_id,
                             failure: ApplicationFailure::from_debug(
@@ -286,7 +302,7 @@ impl ApplicationRuntime {
         &mut self,
         request_id: RequestId,
         failure: ApplicationFailure,
-    ) -> ApplicationEvent {
+    ) -> Option<ApplicationEvent> {
         let usage = self
             .state
             .active_generation()
@@ -296,15 +312,17 @@ impl ApplicationRuntime {
             outcome: GenerationTerminalOutcome::Failed(failure),
             usage,
         };
+        if self.state.finish_generation(terminal.clone()).is_err() {
+            return None;
+        }
         self.conversation.finish_active(
             request_id,
             &terminal.outcome,
             terminal.usage.generated_tokens,
         );
-        self.state.finish_generation(terminal.clone());
         self.generation.session = None;
         self.generation.pending.clear();
-        ApplicationEvent::GenerationFinished { terminal }
+        Some(ApplicationEvent::GenerationFinished { terminal })
     }
 
     fn pump_generation_output(&mut self) {
@@ -377,6 +395,9 @@ impl ApplicationRuntime {
         let Some(session) = self.generation.session.as_mut() else {
             return Err(());
         };
+        self.state
+            .validate_generation_identity(session.request_id, "decode generation token")
+            .map_err(|_| ())?;
         if session.local_failure.is_some() {
             return Ok(true);
         }
@@ -392,7 +413,9 @@ impl ApplicationRuntime {
             self.conversation
                 .append_active_text(session.request_id, text);
         }
-        self.state.increment_generated_tokens();
+        self.state
+            .increment_generated_tokens(session.request_id)
+            .map_err(|_| ())?;
         Ok(true)
     }
 
@@ -406,6 +429,9 @@ impl ApplicationRuntime {
         let output_state = match state {
             GenerationOutputState::Yielded(reason) => ApplicationOutputState::Yielded(*reason),
             GenerationOutputState::Terminal(outcome) => {
+                self.state
+                    .validate_generation_transition(request_id, GenerationPhase::Finishing)
+                    .map_err(|_| ())?;
                 let effective = self.effective_generation_outcome(outcome);
                 let kind = application_terminal_kind(&effective);
                 if !self
@@ -414,17 +440,23 @@ impl ApplicationRuntime {
                     return Ok(false);
                 }
                 self.finish_conversation_attempt(request_id, &effective);
-                self.state.set_generation_phase(GenerationPhase::Finishing);
+                self.state
+                    .transition_generation(request_id, GenerationPhase::Finishing)
+                    .map_err(|_| ())?;
                 return Ok(true);
             }
             GenerationOutputState::CleanupPending { failure, retry, .. } => {
+                self.state
+                    .validate_generation_transition(request_id, GenerationPhase::CleanupPending)
+                    .map_err(|_| ())?;
                 if !self
                     .try_push_output_state(request_id, ApplicationOutputState::CleanupPending)?
                 {
                     return Ok(false);
                 }
                 self.state
-                    .set_generation_phase(GenerationPhase::CleanupPending);
+                    .transition_generation(request_id, GenerationPhase::CleanupPending)
+                    .map_err(|_| ())?;
                 self.generation.pending_event = Some(ApplicationEvent::GenerationCleanupPending {
                     request_id,
                     exhausted: false,
@@ -437,13 +469,17 @@ impl ApplicationRuntime {
                 return Ok(true);
             }
             GenerationOutputState::CleanupExhausted { failure, retry, .. } => {
+                self.state
+                    .validate_generation_transition(request_id, GenerationPhase::CleanupExhausted)
+                    .map_err(|_| ())?;
                 if !self
                     .try_push_output_state(request_id, ApplicationOutputState::CleanupExhausted)?
                 {
                     return Ok(false);
                 }
                 self.state
-                    .set_generation_phase(GenerationPhase::CleanupExhausted);
+                    .transition_generation(request_id, GenerationPhase::CleanupExhausted)
+                    .map_err(|_| ())?;
                 self.generation.pending_event = Some(ApplicationEvent::GenerationCleanupPending {
                     request_id,
                     exhausted: true,
@@ -456,6 +492,9 @@ impl ApplicationRuntime {
                 return Ok(true);
             }
             GenerationOutputState::Released(outcome) => {
+                self.state
+                    .validate_generation_identity(request_id, "release generation")
+                    .map_err(|_| ())?;
                 let effective = self.effective_generation_outcome(outcome);
                 let kind = application_terminal_kind(&effective);
                 if !self
@@ -463,7 +502,7 @@ impl ApplicationRuntime {
                 {
                     return Ok(false);
                 }
-                self.finish_released_generation(request_id, effective);
+                self.finish_released_generation(request_id, effective)?;
                 return Ok(true);
             }
         };
@@ -501,7 +540,7 @@ impl ApplicationRuntime {
         &mut self,
         request_id: RequestId,
         outcome: GenerationTerminalOutcome,
-    ) {
+    ) -> Result<(), ()> {
         let usage = self
             .state
             .active_generation()
@@ -511,9 +550,12 @@ impl ApplicationRuntime {
             outcome,
             usage,
         };
-        self.state.finish_generation(terminal.clone());
+        self.state
+            .finish_generation(terminal.clone())
+            .map_err(|_| ())?;
         self.generation.session = None;
         self.generation.pending_event = Some(ApplicationEvent::GenerationFinished { terminal });
+        Ok(())
     }
 
     fn try_push_output_state(
@@ -579,6 +621,17 @@ impl ApplicationRuntime {
         self.generation
             .pending
             .retain(|item| matches!(item, PendingOutput::State(_)));
+        if !matches!(
+            self.state.active_generation(),
+            Some(active)
+                if active.request_id == request_id
+                    && matches!(
+                        active.phase,
+                        GenerationPhase::Starting | GenerationPhase::Running
+                    )
+        ) {
+            return;
+        }
         let Ok(ticket) = self.next_ticket() else {
             return;
         };
@@ -593,7 +646,14 @@ impl ApplicationRuntime {
             if let Some(session) = self.generation.session.as_mut() {
                 session.cancellation_requested = true;
             }
-            self.state.set_generation_phase(GenerationPhase::Cancelling);
+            if self
+                .state
+                .transition_generation(request_id, GenerationPhase::Cancelling)
+                .is_err()
+                && let Some(session) = self.generation.session.as_mut()
+            {
+                session.cancellation_requested = false;
+            }
         }
     }
 }

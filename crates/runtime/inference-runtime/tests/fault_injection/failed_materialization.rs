@@ -32,16 +32,16 @@ fn failed_load_cleanup_failure_retains_owner_and_full_loading_peak() {
     assert!(matches!(
         load(&mut runtime),
         Err(RuntimeError::CleanupFailed(state))
-            if state.failure.primary_operation == RuntimeOperation::ModelLoad
-                && state.failure.primary_failure == FailureClass::Load
-                && state.failure.cleanup_operation == RuntimeOperation::FailedLoadCleanup
-                && state.failure.cleanup_failure == FailureClass::Synchronization
-                && state.failure.primary_detail == FailureDetail::Load(failed_load_error())
-                && state.resource
+            if state.failure().primary_operation() == RuntimeOperation::ModelLoad
+                && state.failure().primary_failure() == FailureClass::Load
+                && state.failure().cleanup_operation() == RuntimeOperation::FailedLoadCleanup
+                && state.failure().cleanup_failure() == FailureClass::Synchronization
+                && state.failure().primary_detail() == FailureDetail::Load(failed_load_error())
+                && state.resource()
                     == CleanupResource::FailedLoad {
                         handle: expected_handle(1),
                     }
-                && state.ownership == RetainedOwnership::Exact(loading_peak_footprint())
+                && state.ownership() == RetainedOwnership::Exact(loading_peak_footprint())
     ));
     let snapshot = runtime.snapshot();
     assert_eq!(snapshot.loaded_models, 0);
@@ -51,13 +51,13 @@ fn failed_load_cleanup_failure_retains_owner_and_full_loading_peak() {
     assert!(matches!(
         runtime.model_cleanup_state(ModelId::new(1)),
         Some(state)
-            if state.attempts == 1
+            if state.attempts() == 1
                 && !state.exhausted()
-                && state.resource
+                && state.resource()
                     == (CleanupResource::FailedLoad {
                         handle: expected_handle(1),
                     })
-                && state.ownership == RetainedOwnership::Exact(loading_peak_footprint())
+                && state.ownership() == RetainedOwnership::Exact(loading_peak_footprint())
     ));
     assert_eq!(counts.failed_load_cleanups.get(), 1);
     assert_eq!(counts.successful_failed_load_cleanups.get(), 0);
@@ -84,13 +84,13 @@ fn failed_load_cleanup_retry_releases_owner_and_accounting_once() -> TestResult 
     assert!(matches!(
         runtime.poll_cleanup().map_err(debug_error)?,
         CleanupPoll::Released(state)
-            if state.attempts == 2
-                && state.resource
+            if state.attempts() == 2
+                && state.resource()
                     == (CleanupResource::FailedLoad {
                         handle: expected_handle(1),
                     })
-                && state.ownership == RetainedOwnership::Released
-                && state.failure.primary_detail == FailureDetail::Load(failed_load_error())
+                && state.ownership() == RetainedOwnership::Released
+                && state.failure().primary_detail() == FailureDetail::Load(failed_load_error())
                 && !state.exhausted()
     ));
     assert_eq!(

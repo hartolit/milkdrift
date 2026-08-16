@@ -2,9 +2,10 @@ use domain_contracts::{
     LifecycleAction, ModelId, ModelLifecycleState, ModelLoader, MonotonicMillis, UnloadPolicy,
 };
 
+use crate::error::RetainedOwner;
 use crate::{
-    CleanupPoll, FailureClass, FailureDetail, RetainedOwnership, RuntimeError, RuntimeOperation,
-    ShutdownReceipt, TerminalRetentionSummary,
+    CleanupPoll, FailureClass, FailureDetail, RuntimeError, RuntimeOperation, ShutdownReceipt,
+    TerminalRetentionSummary,
 };
 
 use super::{
@@ -166,7 +167,7 @@ where
                     summary.incompatible_models = summary.incompatible_models.saturating_add(1);
                 }
             }
-            if let RetainedOwnership::Unverified {
+            if let RetainedOwner::Unverified {
                 conservative_footprint,
                 ..
             } = pending.ownership
@@ -188,7 +189,7 @@ where
             .values()
             .flat_map(|slot| slot.pending_sequences.values())
         {
-            if let RetainedOwnership::Unverified {
+            if let RetainedOwner::Unverified {
                 conservative_footprint,
                 ..
             } = pending.ownership

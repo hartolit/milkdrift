@@ -23,13 +23,13 @@ fn incompatible_complete_model_matrix_exhausts_to_process_retention() {
         assert!(matches!(
             terminal,
             Err(RuntimeError::TerminalCleanupRetention { first, summary })
-                if first.attempts == 3
+                if first.attempts() == 3
                     && first.exhausted()
-                    && first.resource
+                    && first.resource()
                         == CleanupResource::IncompatibleModel {
                             handle: expected_handle(1),
                         }
-                    && first.ownership
+                    && first.ownership()
                         == RetainedOwnership::Unverified {
                             accepted_footprint: loading_peak_footprint(),
                             reported_footprint,
@@ -84,18 +84,18 @@ fn failed_load_cleanup_exhaustion_survives_shutdown_accounted_and_owned() {
     assert!(matches!(
         runtime.shutdown(),
         Err(RuntimeError::TerminalCleanupRetention { first: state, summary })
-            if state.attempts == 3
+            if state.attempts() == 3
                 && state.exhausted()
-                && state.resource
+                && state.resource()
                     == (CleanupResource::FailedLoad {
                         handle: expected_handle(1),
                     })
-                && state.ownership == RetainedOwnership::Exact(loading_peak_footprint())
-                && state.failure.primary_operation == RuntimeOperation::ModelLoad
-                && state.failure.primary_failure == FailureClass::Load
-                && state.failure.primary_detail
+                && state.ownership() == RetainedOwnership::Exact(loading_peak_footprint())
+                && state.failure().primary_operation() == RuntimeOperation::ModelLoad
+                && state.failure().primary_failure() == FailureClass::Load
+                && state.failure().primary_detail()
                     == FailureDetail::Load(failed_load_error())
-                && state.failure.cleanup_operation == RuntimeOperation::FailedLoadCleanup
+                && state.failure().cleanup_operation() == RuntimeOperation::FailedLoadCleanup
                 && summary.failed_preparations == 1
                 && summary.verified_models == 0
                 && summary.incompatible_models == 0
@@ -125,12 +125,12 @@ fn shutdown_reports_model_cleanup_exhaustion_with_shutdown_as_primary() -> TestR
     assert!(matches!(
         runtime.shutdown(),
         Err(RuntimeError::TerminalCleanupRetention { first: state, summary })
-            if state.attempts == 3
-                && state.failure.primary_operation == RuntimeOperation::Shutdown
-                && state.failure.primary_failure == FailureClass::Shutdown
-                && state.ownership == RetainedOwnership::Exact(model_footprint())
+            if state.attempts() == 3
+                && state.failure().primary_operation() == RuntimeOperation::Shutdown
+                && state.failure().primary_failure() == FailureClass::Shutdown
+                && state.ownership() == RetainedOwnership::Exact(model_footprint())
                 && matches!(
-                    state.resource,
+                    state.resource(),
                     CleanupResource::Model { handle } if handle == loaded.handle
                 )
                 && summary.verified_models == 1

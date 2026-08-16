@@ -1,4 +1,4 @@
-use application_runtime::{ApplicationActivity, ApplicationRuntime};
+use application_runtime::ApplicationRuntime;
 
 use super::devices::DeviceSelectorModel;
 use super::model::{
@@ -78,7 +78,7 @@ pub(super) fn synchronize(
             can_submit_chat: runtime.can_submit_chat_message(),
             can_start_generation: state.can_start_generation(),
             can_regenerate: runtime.can_regenerate_response(),
-            can_clear: state.active_generation().is_none(),
+            can_clear: state.can_clear_conversation(),
             can_cancel: state.can_cancel_generation(),
             can_unload: state.can_unload(),
             can_retry_model_cleanup: state.can_retry_model_cleanup(),
@@ -90,12 +90,8 @@ pub(super) fn synchronize(
     device_selector.synchronize(state.devices());
     window.set_selected_device_index(device_selector.selected_index(state.selected_device()));
 
-    window.set_busy(state.activity() != ApplicationActivity::Idle);
-    window.set_can_edit_selection(
-        state.activity() == ApplicationActivity::Idle
-            && state.loaded().is_none()
-            && state.retained_model().is_none(),
-    );
+    window.set_busy(state.is_busy());
+    window.set_can_edit_selection(state.can_edit_model_selection());
     window.set_can_select_device(controls.can_select_device);
     window.set_can_resolve(controls.can_resolve);
     window.set_can_load(controls.can_load);

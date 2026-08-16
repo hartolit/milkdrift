@@ -49,11 +49,11 @@ fn failed_load_cleanup(
     attempts: u32,
     maximum_attempts: u32,
 ) -> CleanupRetryState {
-    CleanupRetryState {
-        resource: CleanupResource::FailedLoad {
+    cleanup_state(
+        CleanupResource::FailedLoad {
             handle: RETAINED_HANDLE,
         },
-        failure: CleanupFailureReport::with_details(
+        CleanupFailureReport::with_details(
             RuntimeOperation::ModelLoad,
             FailureDetail::Load(LoadError::Backend(RETAINED_LOAD_DIAGNOSTIC)),
             RuntimeOperation::FailedLoadCleanup,
@@ -62,62 +62,62 @@ fn failed_load_cleanup(
         ownership,
         attempts,
         maximum_attempts,
-    }
+    )
 }
 
 fn incompatible_cleanup(attempts: u32) -> CleanupRetryState {
-    CleanupRetryState {
-        resource: CleanupResource::IncompatibleModel {
+    cleanup_state(
+        CleanupResource::IncompatibleModel {
             handle: RETAINED_HANDLE,
         },
-        failure: CleanupFailureReport::new(
+        CleanupFailureReport::new(
             RuntimeOperation::ModelLoad,
             FailureClass::BackendContract,
             RuntimeOperation::ModelUnload,
             FailureClass::Synchronization,
         ),
-        ownership: RetainedOwnership::Unverified {
+        RetainedOwnership::Unverified {
             accepted_footprint: ACCEPTED_LOADING_PEAK,
             reported_footprint: REPORTED_FOOTPRINT,
             conservative_footprint: ConservativeFootprint::Known(REPORTED_FOOTPRINT),
         },
         attempts,
-        maximum_attempts: 3,
-    }
+        3,
+    )
 }
 
 fn verified_unload_cleanup(handle: ModelHandle, attempts: u32) -> CleanupRetryState {
-    CleanupRetryState {
-        resource: CleanupResource::Model { handle },
-        failure: CleanupFailureReport::new(
+    cleanup_state(
+        CleanupResource::Model { handle },
+        CleanupFailureReport::new(
             RuntimeOperation::ModelUnload,
             FailureClass::Completion,
             RuntimeOperation::ModelUnload,
             FailureClass::Synchronization,
         ),
-        ownership: RetainedOwnership::Exact(EXACT_FOOTPRINT),
+        RetainedOwnership::Exact(EXACT_FOOTPRINT),
         attempts,
-        maximum_attempts: 3,
-    }
+        3,
+    )
 }
 
 fn sequence_cleanup(handle: ModelHandle, attempts: u32) -> CleanupRetryState {
-    CleanupRetryState {
-        resource: CleanupResource::Sequence {
+    cleanup_state(
+        CleanupResource::Sequence {
             handle,
             request_id: RequestId::new(17),
             sequence_id: SequenceId::new(19),
         },
-        failure: CleanupFailureReport::new(
+        CleanupFailureReport::new(
             RuntimeOperation::Cancellation,
             FailureClass::Cancellation,
             RuntimeOperation::SequenceDestruction,
             FailureClass::Synchronization,
         ),
-        ownership: RetainedOwnership::Exact(EXACT_FOOTPRINT),
+        RetainedOwnership::Exact(EXACT_FOOTPRINT),
         attempts,
-        maximum_attempts: 3,
-    }
+        3,
+    )
 }
 
 fn retained(runtime: &ApplicationRuntime) -> TestResult<&ApplicationRetainedModel> {
@@ -278,7 +278,10 @@ fn ordinary_unload_failure_enters_the_same_coordinator() -> TestResult {
             ticket,
             handle: loaded.handle(),
         });
-        runtime.state.begin_unloading();
+        runtime
+            .state
+            .begin_unloading()
+            .map_err(|error| format!("begin unload: {error:?}"))?;
         let result = Err(RuntimeError::CleanupFailed(verified_unload_cleanup(
             loaded.handle(),
             1,
@@ -359,7 +362,7 @@ fn incompatible_unload_failure_transitions_to_lower_inspection_without_parallel_
                 resource,
                 attempts: 1,
                 ..
-            }) if resource == lower.resource
+            }) if resource == lower.resource()
         ));
         assert!(runtime.progress_model_cleanup_coordination().is_none());
         assert!(matches!(
@@ -367,7 +370,7 @@ fn incompatible_unload_failure_transitions_to_lower_inspection_without_parallel_
             Some(ModelCleanupAction::SubmittedCommand {
                 command: CleanupCommand::InspectRetainedOwner { resource },
                 ..
-            }) if resource == lower.resource
+            }) if resource == lower.resource()
         ));
         Ok(())
     })
@@ -405,7 +408,7 @@ fn busy_submission_exhaustion_allows_only_a_fresh_e1_round() -> TestResult {
             Some(ModelCleanupAction::PendingCommandSubmission {
                 command: CleanupCommand::InspectRetainedOwner { resource },
                 attempts: 0,
-            }) if resource == lower.resource
+            }) if resource == lower.resource()
         ));
         assert_eq!(
             retained(runtime)?.cleanup(),
@@ -424,12 +427,8 @@ fn explicit_release_clears_exact_and_unverified_owners_once() -> TestResult {
         with_runtime(default_test_configuration, |runtime| {
             runtime.begin_runtime_retention(lower, None);
             let ticket = CommandTicket::new(83);
-            submit_inspection(runtime, lower.resource, ticket);
-            let released = CleanupRetryState {
-                ownership: RetainedOwnership::Released,
-                attempts: 2,
-                ..lower
-            };
+            submit_inspection(runtime, lower.resource(), ticket);
+            let released = released_cleanup_state(lower, 2);
             let event = process_snapshot(
                 runtime,
                 ticket,
@@ -442,7 +441,7 @@ fn explicit_release_clears_exact_and_unverified_owners_once() -> TestResult {
             assert!(matches!(
                 event,
                 Some(ApplicationEvent::ModelCleanupReleased { resource })
-                    if resource == application_resource(lower.resource)
+                    if resource == application_resource(lower.resource())
             ));
             assert!(runtime.model_cleanup.is_none());
             assert!(runtime.state().retained_model().is_none());
@@ -470,7 +469,7 @@ fn stale_ticket_and_wrong_resource_cannot_advance_cleanup() -> TestResult {
         let lower = failed_load_cleanup(RetainedOwnership::Exact(EXACT_FOOTPRINT), 1, 3);
         runtime.begin_runtime_retention(lower, None);
         let ticket = CommandTicket::new(89);
-        submit_inspection(runtime, lower.resource, ticket);
+        submit_inspection(runtime, lower.resource(), ticket);
         let before = retained(runtime)?.clone();
 
         assert!(
@@ -478,10 +477,7 @@ fn stale_ticket_and_wrong_resource_cannot_advance_cleanup() -> TestResult {
                 runtime,
                 CommandTicket::new(90),
                 &RuntimeSnapshot {
-                    last_cleanup: Some(CleanupRetryState {
-                        ownership: RetainedOwnership::Released,
-                        ..lower
-                    }),
+                    last_cleanup: Some(released_cleanup_state(lower, lower.attempts())),
                     ..RuntimeSnapshot::default()
                 },
                 &[],
@@ -516,12 +512,8 @@ fn live_owner_overrides_contradictory_release_and_remains_unknown() -> TestResul
         let lower = failed_load_cleanup(RetainedOwnership::Exact(EXACT_FOOTPRINT), 1, 3);
         runtime.begin_runtime_retention(lower, None);
         let ticket = CommandTicket::new(97);
-        submit_inspection(runtime, lower.resource, ticket);
-        let released = CleanupRetryState {
-            ownership: RetainedOwnership::Released,
-            attempts: 2,
-            ..lower
-        };
+        submit_inspection(runtime, lower.resource(), ticket);
+        let released = released_cleanup_state(lower, 2);
         let event = process_snapshot(
             runtime,
             ticket,
@@ -552,16 +544,15 @@ fn sequence_release_does_not_publish_model_release_during_correlated_unload() ->
             ticket: unload_ticket,
             handle: loaded.handle(),
         });
-        runtime.state.begin_unloading();
+        runtime
+            .state
+            .begin_unloading()
+            .map_err(|error| format!("begin unload: {error:?}"))?;
         let lower = sequence_cleanup(loaded.handle(), 1);
         runtime.begin_runtime_retention(lower, None);
         let ticket = CommandTicket::new(103);
-        submit_inspection(runtime, lower.resource, ticket);
-        let released = CleanupRetryState {
-            ownership: RetainedOwnership::Released,
-            attempts: 2,
-            ..lower
-        };
+        submit_inspection(runtime, lower.resource(), ticket);
+        let released = released_cleanup_state(lower, 2);
         let event = process_snapshot(
             runtime,
             ticket,
@@ -586,7 +577,10 @@ fn mismatched_unload_receipt_enters_unknown_single_owner_state() -> TestResult {
             ticket,
             handle: loaded.handle(),
         });
-        runtime.state.begin_unloading();
+        runtime
+            .state
+            .begin_unloading()
+            .map_err(|error| format!("begin unload: {error:?}"))?;
         let receipt = UnloadReceipt {
             handle: UNRELATED_HANDLE,
             status: UnloadStatus::Unloaded,

@@ -402,11 +402,11 @@ fn ready_results_preserve_sequence_state_identity_and_capacity() -> TestResult {
                 .request_cleanup_state(request_id)
                 .ok_or("missing quarantined sequence")?;
             assert_eq!(
-                cleanup.failure.primary_failure,
+                cleanup.failure().primary_failure(),
                 FailureClass::BackendContract
             );
             assert!(matches!(
-                cleanup.resource,
+                cleanup.resource(),
                 CleanupResource::Sequence {
                     handle: retained_handle,
                     request_id: retained_request,
@@ -416,7 +416,7 @@ fn ready_results_preserve_sequence_state_identity_and_capacity() -> TestResult {
                     && retained_sequence == sequence_id
             ));
             assert_eq!(
-                cleanup.ownership,
+                cleanup.ownership(),
                 RetainedOwnership::Unverified {
                     accepted_footprint: sequence_footprint(),
                     reported_footprint: sequence_footprint(),

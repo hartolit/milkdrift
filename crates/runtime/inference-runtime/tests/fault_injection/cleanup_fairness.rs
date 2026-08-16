@@ -12,8 +12,8 @@ fn repeated_sequence_cleanup_failure_exhausts_without_releasing_accounting() -> 
     assert!(matches!(
         initial,
         Err(RuntimeError::CleanupFailed(state))
-            if state.failure.primary_failure == FailureClass::Cancellation
-                && state.failure.cleanup_failure == FailureClass::Sequence
+            if state.failure().primary_failure() == FailureClass::Cancellation
+                && state.failure().cleanup_failure() == FailureClass::Sequence
     ));
     assert_eq!(counts.sequence_destructions.get(), 1);
     assert_eq!(
@@ -25,16 +25,16 @@ fn repeated_sequence_cleanup_failure_exhausts_without_releasing_accounting() -> 
     assert!(matches!(
         runtime.poll_cleanup().map_err(debug_error)?,
         CleanupPoll::RetryFailed(state)
-            if state.attempts == 2 && !state.exhausted()
+            if state.attempts() == 2 && !state.exhausted()
     ));
     let exhausted = runtime.poll_cleanup().map_err(debug_error)?;
     assert!(matches!(
         exhausted,
         CleanupPoll::Exhausted(state)
-            if state.attempts == 3
+            if state.attempts() == 3
                 && state.exhausted()
                 && matches!(
-                    state.resource,
+                    state.resource(),
                     CleanupResource::Sequence {
                         handle,
                         request_id,
@@ -58,7 +58,7 @@ fn repeated_sequence_cleanup_failure_exhausts_without_releasing_accounting() -> 
     assert!(matches!(
         runtime.shutdown(),
         Err(RuntimeError::TerminalCleanupRetention { first: state, summary })
-            if state.attempts == 3
+            if state.attempts() == 3
                 && state.exhausted()
                 && summary.sequences == 1
                 && summary.failed_preparations == 0
@@ -175,7 +175,7 @@ fn cleanup_selection_rotates_across_classes_and_owners() -> TestResult {
         assert!(matches!(
             runtime.poll_cleanup().map_err(debug_error)?,
             CleanupPoll::Exhausted(state)
-                if state.resource == resource && state.attempts == 2
+                if state.resource() == resource && state.attempts() == 2
         ));
     }
     assert_eq!(

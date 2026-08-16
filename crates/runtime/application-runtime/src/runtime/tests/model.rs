@@ -29,18 +29,18 @@ fn retained_load_cleanup(
     footprint: MemoryFootprint,
     attempts: u32,
 ) -> CleanupRetryState {
-    CleanupRetryState {
-        resource: CleanupResource::FailedLoad { handle },
-        failure: CleanupFailureReport::new(
+    cleanup_state(
+        CleanupResource::FailedLoad { handle },
+        CleanupFailureReport::new(
             RuntimeOperation::ModelLoad,
             FailureClass::Load,
             RuntimeOperation::FailedLoadCleanup,
             FailureClass::Synchronization,
         ),
-        ownership: RetainedOwnership::Exact(footprint),
+        RetainedOwnership::Exact(footprint),
         attempts,
-        maximum_attempts: 3,
-    }
+        3,
+    )
 }
 
 fn copy_test_file(source: &Path, destination: &Path) -> TestResult {
@@ -136,6 +136,10 @@ fn same_size_tokenizer_mutation_before_acceptance_is_rejected_as_artifact_identi
             )?;
             mutate_test_file_without_changing_size(&tokenizer_path)?;
 
+            runtime
+                .state
+                .begin_resolving()
+                .map_err(|error| format!("begin fixture resolution: {error:?}"))?;
             let event = runtime.accept_resolved_artifacts(artifacts);
             let ApplicationEvent::ModelResolutionFailed { failure } = event else {
                 return Err(format!(
@@ -176,6 +180,10 @@ fn verified_malformed_tokenizer_is_rejected_as_tokenizer_parser_failure() -> Tes
                     Some(ArtifactScalarType::F32),
                 )?;
 
+                runtime
+                    .state
+                    .begin_resolving()
+                    .map_err(|error| format!("begin fixture resolution: {error:?}"))?;
                 let event = runtime.accept_resolved_artifacts(artifacts);
                 let ApplicationEvent::ModelResolutionFailed { failure } = event else {
                     return Err(format!("malformed tokenizer was accepted: {event:?}"));
@@ -664,7 +672,6 @@ fn load_receipt_without_a_pending_transaction_is_quarantined_from_idle() -> Test
         runtime.load_model(&selection).map_err(application_error)?;
         let (_ticket, receipt) = receive_successful_load_receipt(runtime)?;
         runtime.pending_load = None;
-        runtime.state.set_idle();
 
         let event =
             runtime.process_model_loaded(inference_runtime::CommandTicket::new(991), &Ok(receipt));
@@ -752,7 +759,6 @@ fn exhausted_retained_cleanup_without_a_pending_transaction_is_not_dropped() -> 
     with_runtime(default_test_configuration, |runtime| {
         let handle = ModelHandle::new(ModelId::new(17), domain_contracts::ModelGeneration::new(19));
         let lower = retained_load_cleanup(handle, MemoryFootprint::default(), 3);
-        runtime.state.set_idle();
 
         let event = runtime.process_model_loaded(
             inference_runtime::CommandTicket::new(992),

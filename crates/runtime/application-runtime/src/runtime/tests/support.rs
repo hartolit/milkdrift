@@ -48,21 +48,56 @@ static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(super) type TestResult<T = ()> = Result<T, String>;
 
-pub(super) const fn terminal_cleanup_failure() -> RuntimeError {
-    let first = CleanupRetryState {
-        resource: CleanupResource::Model {
+pub(super) fn cleanup_state(
+    resource: CleanupResource,
+    failure: CleanupFailureReport,
+    ownership: RetainedOwnership,
+    attempts: u32,
+    maximum_attempts: u32,
+) -> CleanupRetryState {
+    let attempts = match std::num::NonZeroU32::new(attempts) {
+        Some(attempts) => attempts,
+        None => unreachable!("test cleanup attempts must be non-zero"),
+    };
+    let maximum_attempts = match std::num::NonZeroU32::new(maximum_attempts) {
+        Some(maximum_attempts) => maximum_attempts,
+        None => unreachable!("test cleanup maximum must be non-zero"),
+    };
+    match CleanupRetryState::retained(resource, failure, ownership, attempts, maximum_attempts) {
+        Ok(state) => state,
+        Err(error) => unreachable!("test cleanup state must be valid: {error:?}"),
+    }
+}
+
+pub(super) fn released_cleanup_state(prior: CleanupRetryState, attempts: u32) -> CleanupRetryState {
+    let retained = cleanup_state(
+        prior.resource(),
+        prior.failure(),
+        prior.ownership(),
+        attempts,
+        prior.maximum_attempts(),
+    );
+    match retained.release() {
+        Ok(state) => state,
+        Err(error) => unreachable!("test cleanup owner must release once: {error:?}"),
+    }
+}
+
+pub(super) fn terminal_cleanup_failure() -> RuntimeError {
+    let first = cleanup_state(
+        CleanupResource::Model {
             handle: ModelHandle::new(ModelId::new(1), ModelGeneration::new(1)),
         },
-        failure: CleanupFailureReport::new(
+        CleanupFailureReport::new(
             RuntimeOperation::Shutdown,
             FailureClass::Shutdown,
             RuntimeOperation::ModelUnload,
             FailureClass::Synchronization,
         ),
-        ownership: RetainedOwnership::Exact(EMPTY_FOOTPRINT),
-        attempts: 3,
-        maximum_attempts: 3,
-    };
+        RetainedOwnership::Exact(EMPTY_FOOTPRINT),
+        3,
+        3,
+    );
     RuntimeError::TerminalCleanupRetention {
         first,
         summary: TerminalRetentionSummary {
@@ -212,6 +247,10 @@ pub(super) fn resolve_fixture_with_configuration(
         configuration_declared_scalar_type,
     )?;
     let selection = ModelSelection::new(repository, REVISION);
+    runtime
+        .state
+        .begin_resolving()
+        .map_err(|error| format!("begin fixture resolution: {error:?}"))?;
     match runtime.accept_resolved_artifacts(artifacts) {
         ApplicationEvent::ModelResolved {
             model,

@@ -4,9 +4,9 @@ use domain_contracts::{
     ModelLoader, RequestId, SequenceConfiguration, SequenceId, SequencePlan,
 };
 
+use crate::error::{CleanupRetryProgress, RetainedOwner};
 use crate::{
-    CleanupFailureReport, FailureDetail, RequestStartReceipt, RetainedOwnership, RuntimeError,
-    RuntimeOperation,
+    CleanupFailureReport, FailureDetail, RequestStartReceipt, RuntimeError, RuntimeOperation,
 };
 
 use super::super::{
@@ -67,7 +67,7 @@ where
     },
     Retained {
         report: CleanupFailureReport,
-        ownership: RetainedOwnership,
+        ownership: RetainedOwner,
     },
     Rejected(RuntimeError),
 }
@@ -182,7 +182,7 @@ where
         }
 
         let slot = self.exact_model(handle)?;
-        if slot.poisoned {
+        if !slot.pending_sequences.is_empty() {
             return Err(RuntimeError::ModelDegraded(handle.id));
         }
         if !matches!(
@@ -273,9 +273,10 @@ where
         request: SequenceAdmissionRequest,
     ) -> Result<SequenceAdmissionTransaction<'_, L>, RuntimeError> {
         let admission = self.prepare_sequence_admission(request)?;
+        let retry = CleanupRetryProgress::initial(self.maximum_cleanup_attempts());
         let preparation = {
             let slot = self.exact_model_mut(request.handle)?;
-            prepare_sequence_in_slot(slot, admission)?
+            prepare_sequence_in_slot(slot, admission, retry)?
         };
         match preparation {
             SequencePreparation::Ready {
@@ -301,7 +302,7 @@ where
         let transition = self.prepare_sequence_runtime_transition(request)?;
         let current_reserved = self.reserved_footprint;
         let slot = self.exact_model(request.handle)?;
-        if slot.poisoned {
+        if !slot.pending_sequences.is_empty() {
             return Err(RuntimeError::ModelDegraded(request.handle.id));
         }
         if !matches!(
@@ -430,7 +431,7 @@ where
         &mut self,
         admission: &SequenceAdmission,
         report: CleanupFailureReport,
-        ownership: RetainedOwnership,
+        ownership: RetainedOwner,
     ) -> RuntimeError {
         let request = admission.request;
         let previous_model = self
@@ -448,17 +449,18 @@ where
             "pending sequence index was preflighted"
         );
         self.pending_cleanup_sequences = admission.transition.pending_cleanup_sequences;
-        let state = self
+        let state = match self
             .models
             .get(&request.handle.id)
             .and_then(|slot| slot.pending_sequences.get(&request.request_id))
-            .unwrap_or_else(|| {
-                unreachable!("a retained sequence transaction publishes its cleanup owner")
-            })
-            .cleanup_state(request.handle, self.maximum_cleanup_attempts());
-        debug_assert_eq!(state.failure, report);
-        debug_assert_eq!(state.ownership, ownership);
-        if state.ownership.exact_footprint().is_some() {
+            .map(|pending| pending.cleanup_state(request.handle))
+        {
+            Some(state) => state,
+            None => return RuntimeError::BackendContractViolation,
+        };
+        debug_assert_eq!(state.failure(), report);
+        debug_assert_eq!(state.ownership(), ownership.public());
+        if state.ownership().exact_footprint().is_some() {
             self.reserved_footprint = admission.backend_next_reserved;
         }
         self.last_cleanup = Some(state);
@@ -519,6 +521,7 @@ where
         sequence: <L::Model as LoadedModel>::Sequence,
         primary: RuntimeError,
     ) -> RuntimeError {
+        let retry = CleanupRetryProgress::initial(self.maximum_cleanup_attempts());
         let preparation = {
             let slot = self
                 .models
@@ -526,7 +529,15 @@ where
                 .unwrap_or_else(|| {
                     unreachable!("an uncommitted sequence transaction retains its model")
                 });
-            rollback_sequence_in_slot(slot, admission, sequence, admission.plan, false, primary)
+            rollback_sequence_in_slot(
+                slot,
+                admission,
+                sequence,
+                admission.plan,
+                false,
+                primary,
+                retry,
+            )
         };
         match preparation {
             SequencePreparation::Retained { report, ownership } => {
@@ -543,6 +554,7 @@ where
 fn prepare_sequence_in_slot<M>(
     slot: &mut ModelSlot<M>,
     admission: SequenceAdmission,
+    retry: CleanupRetryProgress,
 ) -> Result<SequencePreparation<M::Sequence>, RuntimeError>
 where
     M: LoadedModel,
@@ -572,6 +584,7 @@ where
             reported_plan,
             backend_contradiction,
             primary,
+            retry,
         )),
         None => Ok(SequencePreparation::Ready {
             sequence,
@@ -587,6 +600,7 @@ fn rollback_sequence_in_slot<M>(
     reported_plan: SequencePlan,
     backend_contradiction: bool,
     primary: RuntimeError,
+    retry: CleanupRetryProgress,
 ) -> SequencePreparation<M::Sequence>
 where
     M: LoadedModel,
@@ -605,7 +619,7 @@ where
     // unverified. A runtime lifecycle rejection with a conforming report
     // still retains the already-admitted exact backend reservation.
     let ownership = if backend_contradiction {
-        RetainedOwnership::Unverified {
+        RetainedOwner::Unverified {
             accepted_footprint: admission.backend_footprint,
             reported_footprint: reported_plan.reservation.total_footprint(),
             conservative_footprint: conservative_footprint(
@@ -614,7 +628,7 @@ where
             ),
         }
     } else {
-        RetainedOwnership::Exact(admission.backend_footprint)
+        RetainedOwner::Exact(admission.backend_footprint)
     };
     let request = admission.request;
     let replaced = slot.pending_sequences.insert(
@@ -626,14 +640,13 @@ where
             accepted_plan: admission.plan,
             ownership,
             failure: report,
-            attempts: 1,
+            retry,
         },
     );
     debug_assert!(replaced.is_none(), "pending request index was preflighted");
     if ownership.exact_footprint().is_some() {
         slot.reserved_footprint = admission.backend_next_slot_reserved;
     }
-    slot.poisoned = true;
     SequencePreparation::Retained { report, ownership }
 }
 

@@ -121,8 +121,8 @@ fn failed_sequence_release_preserves_request_for_retry() -> Result<(), String> {
     if !matches!(
         first,
         Err(inference_runtime::RuntimeError::CleanupFailed(state))
-            if state.failure.primary_failure == inference_runtime::FailureClass::Cancellation
-                && state.failure.cleanup_failure == inference_runtime::FailureClass::Sequence
+            if state.failure().primary_failure() == inference_runtime::FailureClass::Cancellation
+                && state.failure().cleanup_failure() == inference_runtime::FailureClass::Sequence
     ) {
         return Err(format!("unexpected first release result: {first:?}"));
     }
@@ -139,7 +139,7 @@ fn failed_sequence_release_preserves_request_for_retry() -> Result<(), String> {
     if !matches!(
         runtime.poll_cleanup().map_err(debug_error)?,
         inference_runtime::CleanupPoll::Released(state)
-            if state.ownership == RetainedOwnership::Released && !state.exhausted()
+            if state.ownership() == RetainedOwnership::Released && !state.exhausted()
     ) {
         return Err("pending cleanup was not retried".into());
     }
@@ -199,13 +199,13 @@ fn direct_prefill_preserves_primary_and_exposes_retained_cleanup() -> Result<(),
     };
     if snapshot.active_requests != 0
         || snapshot.pending_cleanup_sequences != 1
-        || cleanup.resource != resource
-        || cleanup.failure.primary_operation != RuntimeOperation::Prefill
-        || cleanup.failure.primary_detail
+        || cleanup.resource() != resource
+        || cleanup.failure().primary_operation() != RuntimeOperation::Prefill
+        || cleanup.failure().primary_detail()
             != FailureDetail::Sequence(SequenceError::Backend(mock_failure(3)))
-        || cleanup.failure.cleanup_detail
+        || cleanup.failure().cleanup_detail()
             != FailureDetail::Sequence(SequenceError::Backend(mock_failure(2)))
-        || cleanup.ownership
+        || cleanup.ownership()
             != RetainedOwnership::Exact(MemoryFootprint::host_working(ByteCount::from_u64(8)))
     {
         return Err("retained direct-prefill cleanup state lost structured identity".into());
@@ -214,8 +214,8 @@ fn direct_prefill_preserves_primary_and_exposes_retained_cleanup() -> Result<(),
     if !matches!(
         runtime.poll_cleanup().map_err(debug_error)?,
         CleanupPoll::Released(state)
-            if state.resource == resource
-                && state.ownership == RetainedOwnership::Released
+            if state.resource() == resource
+                && state.ownership() == RetainedOwnership::Released
                 && !state.exhausted()
     ) {
         return Err("retained direct-prefill sequence was not released exactly once".into());

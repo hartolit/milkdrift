@@ -358,7 +358,7 @@ fn failed_cleanup_shutdown_retains_runtime_until_process_exit() -> TestResult {
         return Err(format!("unexpected failed-cleanup error: {error:?}"));
     };
     assert_eq!(
-        state.resource,
+        state.resource(),
         CleanupResource::Model {
             handle: loaded.handle,
         }
@@ -367,15 +367,21 @@ fn failed_cleanup_shutdown_retains_runtime_until_process_exit() -> TestResult {
     assert_eq!(summary.failed_preparations, 0);
     assert_eq!(summary.incompatible_models, 0);
     assert_eq!(summary.sequences, 0);
-    assert_eq!(state.failure.primary_operation, RuntimeOperation::Shutdown);
-    assert_eq!(state.failure.primary_failure, FailureClass::Shutdown);
     assert_eq!(
-        state.failure.cleanup_operation,
+        state.failure().primary_operation(),
+        RuntimeOperation::Shutdown
+    );
+    assert_eq!(state.failure().primary_failure(), FailureClass::Shutdown);
+    assert_eq!(
+        state.failure().cleanup_operation(),
         RuntimeOperation::ModelUnload
     );
-    assert_eq!(state.failure.cleanup_failure, FailureClass::Synchronization);
-    assert_eq!(state.attempts, 3);
-    assert_eq!(state.maximum_attempts, 3);
+    assert_eq!(
+        state.failure().cleanup_failure(),
+        FailureClass::Synchronization
+    );
+    assert_eq!(state.attempts(), 3);
+    assert_eq!(state.maximum_attempts(), 3);
     assert!(state.exhausted());
     assert!(matches!(
         normalize_runtime_shutdown(outcome),

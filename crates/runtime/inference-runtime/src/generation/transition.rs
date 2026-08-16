@@ -351,7 +351,7 @@ fn advance_terminal<L: ModelLoader>(
                 (
                     GenerationOutputState::CleanupPending {
                         outcome: terminal.outcome,
-                        failure: retry.failure,
+                        failure: retry.failure(),
                         retry,
                     },
                     TerminalPublicationStage::AwaitingCleanup,
@@ -368,7 +368,7 @@ fn advance_terminal<L: ModelLoader>(
                 (
                     GenerationOutputState::CleanupExhausted {
                         outcome: terminal.outcome,
-                        failure: retry.failure,
+                        failure: retry.failure(),
                         retry,
                     },
                     TerminalPublicationStage::CleanupExhausted,

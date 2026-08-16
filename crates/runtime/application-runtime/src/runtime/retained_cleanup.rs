@@ -180,7 +180,7 @@ impl ApplicationRuntime {
             .filter(|cleanup| {
                 self.model_cleanup
                     .as_ref()
-                    .is_some_and(|coordinator| coordinator.accepts_resource(cleanup.resource))
+                    .is_some_and(|coordinator| coordinator.accepts_resource(cleanup.resource()))
             })
             .collect::<Vec<_>>();
         if matching_live.len() > 1 {
@@ -190,22 +190,22 @@ impl ApplicationRuntime {
         let matching_last = snapshot.last_cleanup.filter(|cleanup| {
             self.model_cleanup
                 .as_ref()
-                .is_some_and(|coordinator| coordinator.accepts_resource(cleanup.resource))
+                .is_some_and(|coordinator| coordinator.accepts_resource(cleanup.resource()))
         });
         if let Some(live) = matching_live.first().copied() {
-            if matching_last
-                .is_some_and(|last| last.resource == live.resource && last.ownership.is_released())
-            {
+            if matching_last.is_some_and(|last| {
+                last.resource() == live.resource() && last.ownership().is_released()
+            }) {
                 let failure = ApplicationFailure::new(
                     ApplicationFailureKind::RetainedCleanup,
                     "runtime snapshot simultaneously reported explicit release and a live retained owner for the same cleanup resource",
                 );
                 if let Some(coordinator) = self.model_cleanup.as_mut() {
                     coordinator.record_unknown_evidence(
-                        application_cleanup_resource(live.resource),
+                        application_cleanup_resource(live.resource()),
                         failure,
                     );
-                    let _ = coordinator.continue_correlated_inspection(live.resource);
+                    let _ = coordinator.continue_correlated_inspection(live.resource());
                 }
                 self.publish_model_cleanup();
                 return Some(self.current_cleanup_event());
@@ -216,7 +216,7 @@ impl ApplicationRuntime {
         }
 
         if let Some(cleanup) = matching_last {
-            if cleanup.ownership.is_released() {
+            if cleanup.ownership().is_released() {
                 if self
                     .model_cleanup
                     .as_ref()
@@ -227,11 +227,11 @@ impl ApplicationRuntime {
                         "explicit cleanup release did not match the active coordinator resource",
                     ));
                 }
-                if matches!(cleanup.resource, CleanupResource::Sequence { .. })
+                if matches!(cleanup.resource(), CleanupResource::Sequence { .. })
                     && self.correlated_unload_exists()
                 {
                     if let Some(coordinator) = self.model_cleanup.as_mut() {
-                        let _ = coordinator.continue_correlated_inspection(cleanup.resource);
+                        let _ = coordinator.continue_correlated_inspection(cleanup.resource());
                     }
                     self.publish_model_cleanup();
                     return Some(self.current_cleanup_event());
@@ -311,19 +311,19 @@ impl ApplicationRuntime {
         cleanup: CleanupRetryState,
         primary_override: Option<ApplicationFailure>,
     ) {
-        let sequence_evidence = self.sequence_model_evidence(cleanup.resource);
-        if cleanup.ownership.is_released() {
+        let sequence_evidence = self.sequence_model_evidence(cleanup.resource());
+        if cleanup.ownership().is_released() {
             let primary = primary_override
                 .or_else(|| {
                     self.model_cleanup
                         .as_ref()
                         .map(|coordinator| coordinator.retained().primary_failure().clone())
                 })
-                .unwrap_or_else(|| application_primary_failure(cleanup.failure));
+                .unwrap_or_else(|| application_primary_failure(cleanup.failure()));
             let failure = ApplicationFailure::from_debug(
                 ApplicationFailureKind::RetainedCleanup,
                 "lower cleanup failure contradicted its released-ownership claim",
-                cleanup.failure,
+                cleanup.failure(),
             );
             self.model_cleanup = Some(ModelCleanupCoordinator::contradictory_lower(
                 cleanup, primary, failure,
@@ -445,19 +445,24 @@ impl ApplicationRuntime {
                     handle: receipt.handle,
                 }),
                 UnloadStatus::AlreadyAbsent | UnloadStatus::Unloaded => {
-                    self.pending_unload = None;
-                    self.model_cleanup = None;
-                    self.state.clear_retained_model();
-                    self.state.clear_loaded();
-                    Some(ApplicationEvent::ModelUnloaded {
-                        handle: receipt.handle,
-                        cancelled_requests: receipt.cancelled_requests,
-                    })
+                    match self.state.complete_model_release() {
+                        Ok(()) => {
+                            self.pending_unload = None;
+                            self.model_cleanup = None;
+                            Some(ApplicationEvent::ModelUnloaded {
+                                handle: receipt.handle,
+                                cancelled_requests: receipt.cancelled_requests,
+                            })
+                        }
+                        Err(_) => Some(self.record_internal_transition_failure(
+                            "model release receipt did not match the application unload phase",
+                        )),
+                    }
                 }
             },
             Err(
                 RuntimeError::CleanupFailed(cleanup) | RuntimeError::CleanupRetryExhausted(cleanup),
-            ) if cleanup_resource_belongs_to_model(cleanup.resource, transaction.handle) => {
+            ) if cleanup_resource_belongs_to_model(cleanup.resource(), transaction.handle) => {
                 self.begin_runtime_retention(*cleanup, None);
                 Some(self.current_cleanup_event())
             }
@@ -469,14 +474,19 @@ impl ApplicationRuntime {
             }
             Err(error) => {
                 self.pending_unload = None;
-                self.state.set_idle();
-                Some(ApplicationEvent::ModelUnloadFailed {
-                    failure: ApplicationFailure::from_debug(
+                let failure = match self.state.fail_unloading() {
+                    Ok(()) => ApplicationFailure::from_debug(
                         ApplicationFailureKind::Inference,
                         "model unload failed",
                         error,
                     ),
-                })
+                    Err(transition) => ApplicationFailure::from_debug(
+                        ApplicationFailureKind::Inference,
+                        "model unload failure did not match the application unload phase",
+                        transition,
+                    ),
+                };
+                Some(ApplicationEvent::ModelUnloadFailed { failure })
             }
         }
     }
@@ -520,12 +530,17 @@ impl ApplicationRuntime {
                     handle: receipt.handle,
                 },
                 UnloadStatus::AlreadyAbsent | UnloadStatus::Unloaded => {
-                    self.model_cleanup = None;
-                    self.state.clear_retained_model();
-                    self.state.clear_loaded();
-                    ApplicationEvent::ModelUnloaded {
-                        handle: receipt.handle,
-                        cancelled_requests: receipt.cancelled_requests,
+                    match self.state.complete_model_release() {
+                        Ok(()) => {
+                            self.model_cleanup = None;
+                            ApplicationEvent::ModelUnloaded {
+                                handle: receipt.handle,
+                                cancelled_requests: receipt.cancelled_requests,
+                            }
+                        }
+                        Err(_) => self.record_internal_transition_failure(
+                            "cleanup release receipt did not match the retained application phase",
+                        ),
                     }
                 }
             },
@@ -534,7 +549,7 @@ impl ApplicationRuntime {
             ) if self
                 .model_cleanup
                 .as_ref()
-                .is_some_and(|coordinator| coordinator.accepts_resource(cleanup.resource)) =>
+                .is_some_and(|coordinator| coordinator.accepts_resource(cleanup.resource())) =>
             {
                 self.begin_runtime_retention(*cleanup, None);
                 self.current_cleanup_event()
@@ -637,16 +652,28 @@ impl ApplicationRuntime {
         self.pending_load = None;
         self.pending_unload = None;
         self.generation.confirm_runtime_shutdown();
-        self.state.clear_normal_runtime_ownership_for_shutdown();
+        let transition_failure = self
+            .state
+            .clear_normal_runtime_ownership_for_shutdown()
+            .err()
+            .map(|error| {
+                ApplicationFailure::from_debug(
+                    ApplicationFailureKind::RetainedCleanup,
+                    "terminal worker failure did not match the application shutdown phase",
+                    error,
+                )
+            });
         let failure = ApplicationFailure::from_debug(
             ApplicationFailureKind::Inference,
             "terminal inference shutdown did not prove model release",
             error,
         );
         if let Some(coordinator) = self.model_cleanup.as_mut() {
-            coordinator.mark_retained_until_process_exit(Some(failure));
+            coordinator.mark_retained_until_process_exit(transition_failure.or(Some(failure)));
         } else if had_model_evidence {
-            self.model_cleanup = Some(ModelCleanupCoordinator::terminal_unknown(failure));
+            self.model_cleanup = Some(ModelCleanupCoordinator::terminal_unknown(
+                transition_failure.unwrap_or(failure),
+            ));
         }
         self.publish_model_cleanup();
     }
@@ -659,7 +686,17 @@ impl ApplicationRuntime {
         self.pending_load = None;
         self.pending_unload = None;
         self.generation.confirm_runtime_shutdown();
-        self.state.clear_normal_runtime_ownership_for_shutdown();
+        let transition_failure = self
+            .state
+            .clear_normal_runtime_ownership_for_shutdown()
+            .err()
+            .map(|error| {
+                ApplicationFailure::from_debug(
+                    ApplicationFailureKind::RetainedCleanup,
+                    "terminal retention did not match the application shutdown phase",
+                    error,
+                )
+            });
         let model_owners = summary
             .failed_preparations
             .saturating_add(summary.verified_models)
@@ -668,9 +705,10 @@ impl ApplicationRuntime {
             return;
         }
         if let Some(coordinator) = self.model_cleanup.as_mut() {
-            coordinator.mark_retained_until_process_exit(None);
-        } else if is_model_resource(first.resource) {
-            self.model_cleanup = ModelCleanupCoordinator::from_lower(first, None).ok();
+            coordinator.mark_retained_until_process_exit(transition_failure);
+        } else if is_model_resource(first.resource()) {
+            self.model_cleanup =
+                ModelCleanupCoordinator::from_lower(first, transition_failure).ok();
             if let Some(coordinator) = self.model_cleanup.as_mut() {
                 coordinator.mark_retained_until_process_exit(None);
             }
@@ -690,17 +728,22 @@ impl ApplicationRuntime {
             || application_cleanup_resource(resource),
             |coordinator| coordinator.retained().resource(),
         );
-        self.model_cleanup = None;
-        self.state.clear_retained_model();
-        ApplicationEvent::ModelCleanupReleased {
-            resource: public_resource,
+        match self.state.complete_model_release() {
+            Ok(()) => {
+                self.model_cleanup = None;
+                ApplicationEvent::ModelCleanupReleased {
+                    resource: public_resource,
+                }
+            }
+            Err(_) => self.record_internal_transition_failure(
+                "verified cleanup release did not match the retained application phase",
+            ),
         }
     }
 
     fn publish_model_cleanup(&mut self) {
         if let Some(coordinator) = self.model_cleanup.as_ref() {
-            self.state
-                .set_retained_model(coordinator.retained().clone());
+            self.state.retain_model(coordinator.retained().clone());
         }
     }
 
@@ -723,12 +766,21 @@ impl ApplicationRuntime {
         }
     }
 
-    pub(crate) fn confirm_runtime_shutdown_released(&mut self) {
+    pub(crate) fn confirm_runtime_shutdown_released(&mut self) -> Result<(), ApplicationError> {
         self.pending_load = None;
         self.pending_unload = None;
         self.model_cleanup = None;
         self.generation.confirm_runtime_shutdown();
-        self.state.confirm_runtime_shutdown_released();
+        self.state
+            .confirm_runtime_shutdown_released()
+            .map_err(|error| {
+                ApplicationFailure::from_debug(
+                    ApplicationFailureKind::Inference,
+                    "runtime shutdown release did not match the application shutdown phase",
+                    error,
+                )
+                .into()
+            })
     }
 
     #[cfg(test)]

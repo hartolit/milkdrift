@@ -9,9 +9,10 @@ use domain_contracts::{
     SynchronizationError,
 };
 
+use crate::error::{CleanupRetryProgress, RetainedOwner};
 use crate::{
     CleanupFailureReport, CleanupResource, CleanupRetryState, FailureClass, FailureDetail,
-    RetainedOwnership, RuntimeError, RuntimeLimits, RuntimeOperation,
+    RuntimeError, RuntimeLimits, RuntimeOperation,
 };
 
 mod admission;
@@ -66,7 +67,6 @@ where
     reserved_footprint: MemoryFootprint,
     requests: BTreeMap<RequestId, RequestSlot<M::Sequence>>,
     pending_sequences: BTreeMap<RequestId, PendingSequence<M::Sequence>>,
-    poisoned: bool,
     cancelled_requests_during_unload: u32,
 }
 
@@ -133,9 +133,9 @@ where
 {
     handle: ModelHandle,
     owner: PendingModelOwner<M, P>,
-    ownership: RetainedOwnership,
+    ownership: RetainedOwner,
     failure: CleanupFailureReport,
-    attempts: u32,
+    retry: CleanupRetryProgress,
     cancelled_requests: u32,
 }
 
@@ -144,14 +144,13 @@ where
     M: LoadedModel,
     P: FailedLoadOwner,
 {
-    const fn cleanup_state(&self, maximum_attempts: u32) -> CleanupRetryState {
-        CleanupRetryState {
-            resource: self.owner.cleanup_resource(self.handle),
-            failure: self.failure,
-            ownership: self.ownership,
-            attempts: self.attempts,
-            maximum_attempts,
-        }
+    const fn cleanup_state(&self) -> CleanupRetryState {
+        CleanupRetryState::from_retained(
+            self.owner.cleanup_resource(self.handle),
+            self.failure,
+            self.ownership,
+            self.retry,
+        )
     }
 
     /// Reclassifies a failed preparation whose report no longer matches the
@@ -174,28 +173,27 @@ where
 
         let formerly_exact = self.ownership.exact_footprint();
         let conservative_footprint = match self.ownership {
-            RetainedOwnership::Unverified {
+            RetainedOwner::Unverified {
                 conservative_footprint,
                 ..
             } => memory::extend_conservative_footprint(
                 conservative_footprint,
                 reported_plan.loading_peak_footprint,
             ),
-            RetainedOwnership::Exact(_) | RetainedOwnership::Released => {
-                memory::conservative_footprint(
-                    accepted_plan.loading_peak_footprint,
-                    reported_plan.loading_peak_footprint,
-                )
-            }
+            RetainedOwner::Exact(_) => memory::conservative_footprint(
+                accepted_plan.loading_peak_footprint,
+                reported_plan.loading_peak_footprint,
+            ),
         };
-        self.ownership = RetainedOwnership::Unverified {
+        self.ownership = RetainedOwner::Unverified {
             accepted_footprint: accepted_plan.loading_peak_footprint,
             reported_footprint: reported_plan.loading_peak_footprint,
             conservative_footprint,
         };
-        self.failure.primary_operation = RuntimeOperation::ModelAdmission;
-        self.failure.primary_failure = FailureClass::BackendContract;
-        self.failure.primary_detail = FailureDetail::Class(FailureClass::BackendContract);
+        self.failure.replace_primary(
+            RuntimeOperation::ModelAdmission,
+            FailureDetail::Class(FailureClass::BackendContract),
+        );
         formerly_exact
     }
 }
@@ -243,27 +241,26 @@ where
     sequence_id: SequenceId,
     sequence: S,
     accepted_plan: SequencePlan,
-    ownership: RetainedOwnership,
+    ownership: RetainedOwner,
     failure: CleanupFailureReport,
-    attempts: u32,
+    retry: CleanupRetryProgress,
 }
 
 impl<S> PendingSequence<S>
 where
     S: BackendSequence,
 {
-    const fn cleanup_state(&self, handle: ModelHandle, maximum_attempts: u32) -> CleanupRetryState {
-        CleanupRetryState {
-            resource: CleanupResource::Sequence {
+    const fn cleanup_state(&self, handle: ModelHandle) -> CleanupRetryState {
+        CleanupRetryState::from_retained(
+            CleanupResource::Sequence {
                 handle,
                 request_id: self.request_id,
                 sequence_id: self.sequence_id,
             },
-            failure: self.failure,
-            ownership: self.ownership,
-            attempts: self.attempts,
-            maximum_attempts,
-        }
+            self.failure,
+            self.ownership,
+            self.retry,
+        )
     }
 
     /// Reclassifies a retained sequence whose report no longer matches the
@@ -283,24 +280,24 @@ where
         let formerly_exact = self.ownership.exact_footprint();
         let reported_footprint = reported_plan.reservation.total_footprint();
         let conservative_footprint = match self.ownership {
-            RetainedOwnership::Unverified {
+            RetainedOwner::Unverified {
                 conservative_footprint,
                 ..
             } => memory::extend_conservative_footprint(conservative_footprint, reported_footprint),
-            RetainedOwnership::Exact(_) | RetainedOwnership::Released => {
-                memory::conservative_footprint(
-                    self.accepted_plan.reservation.total_footprint(),
-                    reported_footprint,
-                )
-            }
+            RetainedOwner::Exact(_) => memory::conservative_footprint(
+                self.accepted_plan.reservation.total_footprint(),
+                reported_footprint,
+            ),
         };
-        self.ownership = RetainedOwnership::Unverified {
+        self.ownership = RetainedOwner::Unverified {
             accepted_footprint: self.accepted_plan.reservation.total_footprint(),
             reported_footprint,
             conservative_footprint,
         };
-        self.failure.primary_failure = FailureClass::BackendContract;
-        self.failure.primary_detail = FailureDetail::Class(FailureClass::BackendContract);
+        self.failure.replace_primary(
+            self.failure.primary_operation(),
+            FailureDetail::Class(FailureClass::BackendContract),
+        );
         formerly_exact
     }
 }
@@ -384,8 +381,8 @@ where
         }
     }
 
-    const fn maximum_cleanup_attempts(&self) -> u32 {
-        self.limits.cleanup_retry.maximum_attempts.get()
+    const fn maximum_cleanup_attempts(&self) -> std::num::NonZeroU32 {
+        self.limits.cleanup_retry.maximum_attempts
     }
 
     fn unverified_owner_count(&self) -> u32 {

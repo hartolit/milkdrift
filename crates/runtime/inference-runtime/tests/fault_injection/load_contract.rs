@@ -71,7 +71,7 @@ fn failed_owner_plan_substitution_blocks_admission_until_release() -> TestResult
         .model_cleanup_state(ModelId::new(1))
         .ok_or_else(|| "failed preparation cleanup state was not retained".to_owned())?;
     assert!(matches!(
-        state.ownership,
+        state.ownership(),
         RetainedOwnership::Unverified {
             accepted_footprint,
             reported_footprint,
@@ -82,7 +82,10 @@ fn failed_owner_plan_substitution_blocks_admission_until_release() -> TestResult
             && conservative.host_working_bytes().as_u64()
                 == loading_peak_footprint().host_working_bytes().as_u64().saturating_add(1)
     ));
-    assert_eq!(state.failure.primary_failure, FailureClass::BackendContract);
+    assert_eq!(
+        state.failure().primary_failure(),
+        FailureClass::BackendContract
+    );
     assert!(runtime.snapshot().admission_blocked);
     assert_eq!(
         runtime.snapshot().reserved_footprint,
@@ -91,7 +94,7 @@ fn failed_owner_plan_substitution_blocks_admission_until_release() -> TestResult
     assert!(matches!(
         runtime.poll_cleanup().map_err(debug_error)?,
         CleanupPoll::Released(released)
-            if released.ownership == RetainedOwnership::Released && !released.exhausted()
+            if released.ownership() == RetainedOwnership::Released && !released.exhausted()
     ));
     assert_eq!(counts.plan_reads.get(), 6);
     assert_eq!(counts.prepared_drops.get(), 1);
@@ -117,7 +120,7 @@ fn failed_owner_plan_mutation_during_cleanup_blocks_admission_until_release() ->
         .model_cleanup_state(ModelId::new(1))
         .ok_or_else(|| "mutated failed owner was not retained".to_owned())?;
     assert!(matches!(
-        state.ownership,
+        state.ownership(),
         RetainedOwnership::Unverified {
             accepted_footprint,
             reported_footprint,
@@ -128,7 +131,10 @@ fn failed_owner_plan_mutation_during_cleanup_blocks_admission_until_release() ->
             && conservative.host_working_bytes().as_u64()
                 == loading_peak_footprint().host_working_bytes().as_u64().saturating_add(7)
     ));
-    assert_eq!(state.failure.primary_failure, FailureClass::BackendContract);
+    assert_eq!(
+        state.failure().primary_failure(),
+        FailureClass::BackendContract
+    );
     assert!(runtime.snapshot().admission_blocked);
     assert_eq!(
         runtime.snapshot().reserved_footprint,
@@ -138,7 +144,7 @@ fn failed_owner_plan_mutation_during_cleanup_blocks_admission_until_release() ->
     assert!(matches!(
         runtime.poll_cleanup().map_err(debug_error)?,
         CleanupPoll::Released(released)
-            if released.ownership == RetainedOwnership::Released && !released.exhausted()
+            if released.ownership() == RetainedOwnership::Released && !released.exhausted()
     ));
     assert_eq!(counts.plan_reads.get(), 6);
     assert_eq!(counts.prepared_drops.get(), 1);

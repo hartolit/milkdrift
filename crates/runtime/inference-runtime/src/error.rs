@@ -6,6 +6,7 @@ use domain_contracts::{
 };
 
 use core::fmt::{self, Debug, Formatter};
+use core::num::NonZeroU32;
 
 use crate::RuntimeCommand;
 
@@ -111,17 +112,13 @@ impl FailureDetail {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CleanupFailureReport {
     /// Operation that produced the original outcome.
-    pub primary_operation: RuntimeOperation,
-    /// Stable classification of the original outcome.
-    pub primary_failure: FailureClass,
+    primary_operation: RuntimeOperation,
     /// Structured bounded identity of the original outcome.
-    pub primary_detail: FailureDetail,
+    primary_detail: FailureDetail,
     /// Explicit cleanup operation that subsequently failed.
-    pub cleanup_operation: RuntimeOperation,
-    /// Stable classification of the cleanup failure.
-    pub cleanup_failure: FailureClass,
+    cleanup_operation: RuntimeOperation,
     /// Structured bounded identity of the cleanup failure.
-    pub cleanup_detail: FailureDetail,
+    cleanup_detail: FailureDetail,
 }
 
 impl CleanupFailureReport {
@@ -135,10 +132,8 @@ impl CleanupFailureReport {
     ) -> Self {
         Self {
             primary_operation,
-            primary_failure,
             primary_detail: FailureDetail::Class(primary_failure),
             cleanup_operation,
-            cleanup_failure,
             cleanup_detail: FailureDetail::Class(cleanup_failure),
         }
     }
@@ -153,12 +148,59 @@ impl CleanupFailureReport {
     ) -> Self {
         Self {
             primary_operation,
-            primary_failure: primary_detail.class(),
             primary_detail,
             cleanup_operation,
-            cleanup_failure: cleanup_detail.class(),
             cleanup_detail,
         }
+    }
+
+    /// Returns the operation that produced the primary outcome.
+    #[must_use]
+    pub const fn primary_operation(self) -> RuntimeOperation {
+        self.primary_operation
+    }
+
+    /// Derives the primary failure class from its sole stored detail.
+    #[must_use]
+    pub const fn primary_failure(self) -> FailureClass {
+        self.primary_detail.class()
+    }
+
+    /// Returns the bounded primary failure detail.
+    #[must_use]
+    pub const fn primary_detail(self) -> FailureDetail {
+        self.primary_detail
+    }
+
+    /// Returns the explicit cleanup operation.
+    #[must_use]
+    pub const fn cleanup_operation(self) -> RuntimeOperation {
+        self.cleanup_operation
+    }
+
+    /// Derives the cleanup failure class from its sole stored detail.
+    #[must_use]
+    pub const fn cleanup_failure(self) -> FailureClass {
+        self.cleanup_detail.class()
+    }
+
+    /// Returns the bounded cleanup failure detail.
+    #[must_use]
+    pub const fn cleanup_detail(self) -> FailureDetail {
+        self.cleanup_detail
+    }
+
+    pub(crate) const fn replace_primary(
+        &mut self,
+        operation: RuntimeOperation,
+        detail: FailureDetail,
+    ) {
+        self.primary_operation = operation;
+        self.primary_detail = detail;
+    }
+
+    pub(crate) const fn replace_cleanup_detail(&mut self, detail: FailureDetail) {
+        self.cleanup_detail = detail;
     }
 }
 
@@ -231,6 +273,118 @@ impl RetainedOwnership {
     }
 }
 
+/// Runtime-internal retained ownership evidence that cannot represent release.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RetainedOwner {
+    Exact(MemoryFootprint),
+    Unverified {
+        accepted_footprint: MemoryFootprint,
+        reported_footprint: MemoryFootprint,
+        conservative_footprint: ConservativeFootprint,
+    },
+}
+
+impl RetainedOwner {
+    pub(crate) const fn from_public(
+        ownership: RetainedOwnership,
+    ) -> Result<Self, CleanupRetryStateError> {
+        match ownership {
+            RetainedOwnership::Released => Err(CleanupRetryStateError::ReleasedOwnership),
+            RetainedOwnership::Exact(footprint) => Ok(Self::Exact(footprint)),
+            RetainedOwnership::Unverified {
+                accepted_footprint,
+                reported_footprint,
+                conservative_footprint,
+            } => Ok(Self::Unverified {
+                accepted_footprint,
+                reported_footprint,
+                conservative_footprint,
+            }),
+        }
+    }
+
+    pub(crate) const fn public(self) -> RetainedOwnership {
+        match self {
+            Self::Exact(footprint) => RetainedOwnership::Exact(footprint),
+            Self::Unverified {
+                accepted_footprint,
+                reported_footprint,
+                conservative_footprint,
+            } => RetainedOwnership::Unverified {
+                accepted_footprint,
+                reported_footprint,
+                conservative_footprint,
+            },
+        }
+    }
+
+    pub(crate) const fn exact_footprint(self) -> Option<MemoryFootprint> {
+        match self {
+            Self::Exact(footprint) => Some(footprint),
+            Self::Unverified { .. } => None,
+        }
+    }
+
+    pub(crate) const fn blocks_admission(self) -> bool {
+        matches!(self, Self::Unverified { .. })
+    }
+}
+
+/// Runtime-internal attempt pair that preserves the non-zero bounded invariant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CleanupRetryProgress {
+    attempts: NonZeroU32,
+    maximum_attempts: NonZeroU32,
+}
+
+impl CleanupRetryProgress {
+    pub(crate) const fn new(
+        attempts: NonZeroU32,
+        maximum_attempts: NonZeroU32,
+    ) -> Result<Self, CleanupRetryStateError> {
+        if attempts.get() > maximum_attempts.get() {
+            Err(CleanupRetryStateError::AttemptsExceedMaximum)
+        } else {
+            Ok(Self {
+                attempts,
+                maximum_attempts,
+            })
+        }
+    }
+
+    pub(crate) const fn initial(maximum_attempts: NonZeroU32) -> Self {
+        Self {
+            attempts: NonZeroU32::MIN,
+            maximum_attempts,
+        }
+    }
+
+    pub(crate) const fn attempts(self) -> NonZeroU32 {
+        self.attempts
+    }
+
+    pub(crate) const fn maximum_attempts(self) -> NonZeroU32 {
+        self.maximum_attempts
+    }
+
+    pub(crate) const fn exhausted(self) -> bool {
+        self.attempts.get() >= self.maximum_attempts.get()
+    }
+
+    pub(crate) const fn advance(self) -> Option<Self> {
+        if self.exhausted() {
+            return None;
+        }
+        match self.attempts.checked_add(1) {
+            Some(attempts) => Some(Self {
+                attempts,
+                maximum_attempts: self.maximum_attempts,
+            }),
+            None => None,
+        }
+    }
+}
+
 /// Resource identity addressed by a retained or completed cleanup transaction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CleanupResource {
@@ -264,27 +418,114 @@ pub enum CleanupResource {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CleanupRetryState {
     /// Stable resource identity for the cleanup transaction.
-    pub resource: CleanupResource,
+    resource: CleanupResource,
     /// Primary and cleanup failure classifications and bounded details.
-    pub failure: CleanupFailureReport,
+    failure: CleanupFailureReport,
     /// Ownership certainty before retry, or [`RetainedOwnership::Released`] after success.
-    pub ownership: RetainedOwnership,
+    ownership: RetainedOwnership,
     /// Total cleanup attempts already performed, including the initial failure.
-    pub attempts: u32,
+    attempts: NonZeroU32,
     /// Maximum total attempts permitted by policy.
-    pub maximum_attempts: u32,
+    maximum_attempts: NonZeroU32,
+}
+
+/// Invalid cleanup retry snapshot construction or release transition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CleanupRetryStateError {
+    /// A retained snapshot cannot claim that ownership was already released.
+    ReleasedOwnership,
+    /// Attempt accounting cannot exceed the validated policy limit.
+    AttemptsExceedMaximum,
+    /// A released snapshot cannot be released a second time.
+    AlreadyReleased,
 }
 
 impl CleanupRetryState {
+    /// Creates one retryable or exhausted retained cleanup snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Rejects released ownership and attempts beyond the non-zero policy limit.
+    pub const fn retained(
+        resource: CleanupResource,
+        failure: CleanupFailureReport,
+        ownership: RetainedOwnership,
+        attempts: NonZeroU32,
+        maximum_attempts: NonZeroU32,
+    ) -> Result<Self, CleanupRetryStateError> {
+        let ownership = match RetainedOwner::from_public(ownership) {
+            Ok(ownership) => ownership,
+            Err(error) => return Err(error),
+        };
+        let progress = match CleanupRetryProgress::new(attempts, maximum_attempts) {
+            Ok(progress) => progress,
+            Err(error) => return Err(error),
+        };
+        Ok(Self::from_retained(resource, failure, ownership, progress))
+    }
+
+    pub(crate) const fn from_retained(
+        resource: CleanupResource,
+        failure: CleanupFailureReport,
+        ownership: RetainedOwner,
+        progress: CleanupRetryProgress,
+    ) -> Self {
+        Self {
+            resource,
+            failure,
+            ownership: ownership.public(),
+            attempts: progress.attempts(),
+            maximum_attempts: progress.maximum_attempts(),
+        }
+    }
+
+    /// Transitions one validated retained cleanup snapshot to explicit release.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a second release of an already released snapshot.
+    pub const fn release(mut self) -> Result<Self, CleanupRetryStateError> {
+        if self.ownership.is_released() {
+            return Err(CleanupRetryStateError::AlreadyReleased);
+        }
+        self.ownership = RetainedOwnership::Released;
+        Ok(self)
+    }
+
+    /// Returns the stable cleanup resource identity.
+    #[must_use]
+    pub const fn resource(self) -> CleanupResource {
+        self.resource
+    }
+
+    /// Returns the primary-plus-cleanup failure report.
+    #[must_use]
+    pub const fn failure(self) -> CleanupFailureReport {
+        self.failure
+    }
+
+    /// Returns retained certainty or explicit verified release.
+    #[must_use]
+    pub const fn ownership(self) -> RetainedOwnership {
+        self.ownership
+    }
+
+    /// Returns the non-zero number of cleanup attempts already performed.
+    #[must_use]
+    pub const fn attempts(self) -> u32 {
+        self.attempts.get()
+    }
+
+    /// Returns the non-zero total-attempt policy limit.
+    #[must_use]
+    pub const fn maximum_attempts(self) -> u32 {
+        self.maximum_attempts.get()
+    }
+
     /// Returns whether unreleased ownership has exhausted its automatic retry budget.
     #[must_use]
     pub const fn exhausted(self) -> bool {
-        !self.ownership.is_released() && self.attempts >= self.maximum_attempts
-    }
-
-    pub(crate) const fn released(mut self) -> Self {
-        self.ownership = RetainedOwnership::Released;
-        self
+        !self.ownership.is_released() && self.attempts.get() >= self.maximum_attempts.get()
     }
 }
 
@@ -450,9 +691,9 @@ impl RuntimeError {
             Self::AdmissionBlockedByUnverifiedOwnership { .. } => FailureClass::UnverifiedOwnership,
             Self::BackendContractViolation => FailureClass::BackendContract,
             Self::CleanupFailed(state) | Self::CleanupRetryExhausted(state) => {
-                state.failure.primary_failure
+                state.failure.primary_failure()
             }
-            Self::TerminalCleanupRetention { first, .. } => first.failure.primary_failure,
+            Self::TerminalCleanupRetention { first, .. } => first.failure.primary_failure(),
             Self::ModelAlreadyLoaded(_)
             | Self::ModelNotLoaded(_)
             | Self::StaleModelHandle { .. }
@@ -477,9 +718,9 @@ impl RuntimeError {
             Self::Lifecycle(error) => FailureDetail::Lifecycle(error),
             Self::Sampling(error) => FailureDetail::Sampling(error),
             Self::CleanupFailed(state) | Self::CleanupRetryExhausted(state) => {
-                state.failure.primary_detail
+                state.failure.primary_detail()
             }
-            Self::TerminalCleanupRetention { first, .. } => first.failure.primary_detail,
+            Self::TerminalCleanupRetention { first, .. } => first.failure.primary_detail(),
             other => FailureDetail::Class(other.failure_class()),
         }
     }
@@ -544,5 +785,90 @@ impl<S> Debug for RuntimeSubmitError<S> {
             Self::Full(_) => formatter.write_str("RuntimeSubmitError::Full(..)"),
             Self::Disconnected(_) => formatter.write_str("RuntimeSubmitError::Disconnected(..)"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RESOURCE: CleanupResource = CleanupResource::Model {
+        handle: ModelHandle::new(ModelId::new(7), domain_contracts::ModelGeneration::new(3)),
+    };
+    const REPORT: CleanupFailureReport = CleanupFailureReport::with_details(
+        RuntimeOperation::ModelUnload,
+        FailureDetail::Synchronization(SynchronizationError::InvalidState),
+        RuntimeOperation::ModelUnload,
+        FailureDetail::Lifecycle(LifecycleError::InvalidTransition),
+    );
+    const TWO: NonZeroU32 = match NonZeroU32::new(2) {
+        Some(value) => value,
+        None => NonZeroU32::MIN,
+    };
+    const THREE: NonZeroU32 = match NonZeroU32::new(3) {
+        Some(value) => value,
+        None => NonZeroU32::MIN,
+    };
+
+    #[test]
+    fn cleanup_failure_classes_are_derived_from_the_only_stored_details() {
+        assert_eq!(REPORT.primary_failure(), FailureClass::Synchronization);
+        assert_eq!(REPORT.cleanup_failure(), FailureClass::Lifecycle);
+        assert_eq!(
+            REPORT.primary_detail(),
+            FailureDetail::Synchronization(SynchronizationError::InvalidState)
+        );
+    }
+
+    #[test]
+    fn retained_cleanup_state_rejects_released_or_over_limit_inputs() {
+        assert_eq!(
+            CleanupRetryState::retained(
+                RESOURCE,
+                REPORT,
+                RetainedOwnership::Released,
+                NonZeroU32::MIN,
+                THREE,
+            ),
+            Err(CleanupRetryStateError::ReleasedOwnership)
+        );
+        assert_eq!(
+            CleanupRetryState::retained(
+                RESOURCE,
+                REPORT,
+                RetainedOwnership::Exact(MemoryFootprint::default()),
+                THREE,
+                TWO,
+            ),
+            Err(CleanupRetryStateError::AttemptsExceedMaximum)
+        );
+    }
+
+    #[test]
+    fn exhaustion_and_one_time_release_are_derived_from_validated_state() {
+        let retained = CleanupRetryState::retained(
+            RESOURCE,
+            REPORT,
+            RetainedOwnership::Exact(MemoryFootprint::default()),
+            TWO,
+            TWO,
+        );
+        assert!(retained.is_ok());
+        let Ok(retained) = retained else {
+            return;
+        };
+        assert!(retained.exhausted());
+
+        let released = retained.release();
+        assert!(released.is_ok());
+        let Ok(released) = released else {
+            return;
+        };
+        assert!(!released.exhausted());
+        assert_eq!(released.ownership(), RetainedOwnership::Released);
+        assert_eq!(
+            released.release(),
+            Err(CleanupRetryStateError::AlreadyReleased)
+        );
     }
 }

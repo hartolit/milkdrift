@@ -3,9 +3,10 @@ use domain_contracts::{
     MonotonicMillis, UnloadPolicy,
 };
 
+use crate::error::{CleanupRetryProgress, RetainedOwner};
 use crate::{
-    CleanupFailureReport, FailureClass, FailureDetail, RetainedOwnership, RuntimeError,
-    RuntimeOperation, UnloadReceipt, UnloadStatus,
+    CleanupFailureReport, FailureClass, FailureDetail, RuntimeError, RuntimeOperation,
+    UnloadReceipt, UnloadStatus,
 };
 
 use super::{
@@ -265,16 +266,16 @@ where
                 FailureDetail::Synchronization(cleanup),
             );
             let handle = slot.handle;
-            let ownership = RetainedOwnership::Exact(slot.model_footprint);
+            let ownership = RetainedOwner::Exact(slot.model_footprint);
             let pending = PendingModel {
                 handle,
                 owner: PendingModelOwner::VerifiedModel(slot.model),
                 ownership,
                 failure: report,
-                attempts: 1,
+                retry: CleanupRetryProgress::initial(self.maximum_cleanup_attempts()),
                 cancelled_requests: slot.cancelled_requests_during_unload,
             };
-            let state = pending.cleanup_state(self.maximum_cleanup_attempts());
+            let state = pending.cleanup_state();
             let replaced = self.pending_models.insert(model_id, pending);
             debug_assert!(replaced.is_none(), "model release was prevalidated");
             self.last_cleanup = Some(state);

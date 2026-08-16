@@ -56,6 +56,11 @@ Retained state and normal loaded state are mutually exclusive. While
 device, resolving, loading, and generation remain locked. Worker disconnect is
 shown as `WorkerDisconnected`; it is not presented as release.
 
+The presenter reads `ApplicationState` capability projections for busy state,
+selection editing, conversation clearing, resolution, load, generation,
+cancellation, cleanup retry, and unload. Slint does not reconstruct phase legality
+from activity plus optional model fields.
+
 ## Resolution and loading
 
 The desktop maps repository/revision input to E1. The Hub worker pins that selection

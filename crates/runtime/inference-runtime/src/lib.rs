@@ -22,9 +22,10 @@ pub use command::{
 pub use configuration::{CleanupRetryPolicy, HostedRuntimeConfiguration, RuntimeLimits};
 pub use domain_contracts::MemoryKind;
 pub use error::{
-    CleanupFailureReport, CleanupPoll, CleanupResource, CleanupRetryState, ConservativeFootprint,
-    FailureClass, FailureDetail, RetainedOwnership, RuntimeError, RuntimeOperation,
-    RuntimeReceiveError, RuntimeSubmitError, SamplingFailure, TerminalRetentionSummary,
+    CleanupFailureReport, CleanupPoll, CleanupResource, CleanupRetryState, CleanupRetryStateError,
+    ConservativeFootprint, FailureClass, FailureDetail, RetainedOwnership, RuntimeError,
+    RuntimeOperation, RuntimeReceiveError, RuntimeSubmitError, SamplingFailure,
+    TerminalRetentionSummary,
 };
 pub use generation::{
     GenerationAdmission, GenerationOutcome, GenerationOutputCapacityPolicy, GenerationOutputState,

@@ -33,13 +33,13 @@ pub(super) const fn application_cleanup_disposition(
 ) -> ApplicationModelCleanupDisposition {
     if cleanup.exhausted() {
         ApplicationModelCleanupDisposition::LowerExhausted {
-            attempts: cleanup.attempts,
-            maximum_attempts: cleanup.maximum_attempts,
+            attempts: cleanup.attempts(),
+            maximum_attempts: cleanup.maximum_attempts(),
         }
     } else {
         ApplicationModelCleanupDisposition::LowerRetryable {
-            attempts: cleanup.attempts,
-            maximum_attempts: cleanup.maximum_attempts,
+            attempts: cleanup.attempts(),
+            maximum_attempts: cleanup.maximum_attempts(),
         }
     }
 }
@@ -68,7 +68,7 @@ pub(super) fn application_retained_ownership(
 }
 
 pub(super) fn application_primary_failure(report: CleanupFailureReport) -> ApplicationFailure {
-    let kind = match report.primary_failure {
+    let kind = match report.primary_failure() {
         inference_runtime::FailureClass::Load => ApplicationFailureKind::ModelLoad,
         inference_runtime::FailureClass::Capacity => ApplicationFailureKind::MemoryAdmission,
         inference_runtime::FailureClass::BackendContract => {
@@ -79,9 +79,9 @@ pub(super) fn application_primary_failure(report: CleanupFailureReport) -> Appli
     ApplicationFailure::from_debug(
         kind,
         "model operation failed before retained cleanup",
-        (report.primary_operation, report.primary_detail),
+        (report.primary_operation(), report.primary_detail()),
     )
-    .with_load_diagnostic(match report.primary_detail {
+    .with_load_diagnostic(match report.primary_detail() {
         FailureDetail::Load(domain_contracts::LoadError::Backend(failure)) => Some(failure),
         _ => None,
     })
@@ -91,6 +91,6 @@ pub(super) fn application_cleanup_failure(report: CleanupFailureReport) -> Appli
     ApplicationFailure::from_debug(
         ApplicationFailureKind::RetainedCleanup,
         "explicit lower cleanup failed",
-        (report.cleanup_operation, report.cleanup_detail),
+        (report.cleanup_operation(), report.cleanup_detail()),
     )
 }

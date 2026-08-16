@@ -99,17 +99,17 @@ fn wrong_execution_scalar_cleanup_failure_retains_accounting_until_successful_re
     assert!(matches!(
         load(&mut runtime),
         Err(RuntimeError::CleanupFailed(state))
-            if state.failure.primary_operation == RuntimeOperation::ModelAdmission
-                && state.failure.primary_failure == FailureClass::BackendContract
-                && state.failure.primary_detail
+            if state.failure().primary_operation() == RuntimeOperation::ModelAdmission
+                && state.failure().primary_failure() == FailureClass::BackendContract
+                && state.failure().primary_detail()
                     == FailureDetail::Class(FailureClass::BackendContract)
-                && state.failure.cleanup_operation == RuntimeOperation::ModelUnload
-                && state.failure.cleanup_failure == FailureClass::Synchronization
-                && state.resource
+                && state.failure().cleanup_operation() == RuntimeOperation::ModelUnload
+                && state.failure().cleanup_failure() == FailureClass::Synchronization
+                && state.resource()
                     == CleanupResource::IncompatibleModel {
                         handle: expected_handle(1),
                     }
-                && state.ownership
+                && state.ownership()
                     == RetainedOwnership::Unverified {
                         accepted_footprint: loading_peak_footprint(),
                         reported_footprint: model_footprint(),
@@ -136,20 +136,20 @@ fn wrong_execution_scalar_cleanup_failure_retains_accounting_until_successful_re
     assert!(matches!(
         runtime.model_cleanup_state(ModelId::new(1)),
         Some(state)
-            if state.attempts == 1
+            if state.attempts() == 1
                 && !state.exhausted()
-                && state.resource
+                && state.resource()
                     == CleanupResource::IncompatibleModel {
                         handle: expected_handle(1),
                     }
-                && matches!(state.ownership, RetainedOwnership::Unverified { .. })
+                && matches!(state.ownership(), RetainedOwnership::Unverified { .. })
     ));
 
     assert!(matches!(
         runtime.poll_cleanup().map_err(debug_error)?,
         CleanupPoll::Released(state)
-            if state.attempts == 2
-                && state.ownership == RetainedOwnership::Released
+            if state.attempts() == 2
+                && state.ownership() == RetainedOwnership::Released
                 && !state.exhausted()
     ));
     assert_eq!(counts.model_cleanups.get(), 2);
@@ -226,8 +226,8 @@ fn device_mismatch_cleanup_failure_preserves_primary_error_ownership_and_account
     assert!(matches!(
         result,
         Err(RuntimeError::CleanupFailed(state))
-            if state.failure.primary_failure == inference_runtime::FailureClass::BackendContract
-                && state.failure.cleanup_failure == inference_runtime::FailureClass::Synchronization
+            if state.failure().primary_failure() == inference_runtime::FailureClass::BackendContract
+                && state.failure().cleanup_failure() == inference_runtime::FailureClass::Synchronization
     ));
     assert_eq!(counts.model_cleanups.get(), 1);
     let snapshot = runtime.snapshot();
@@ -239,11 +239,11 @@ fn device_mismatch_cleanup_failure_preserves_primary_error_ownership_and_account
     assert!(matches!(
         runtime.model_cleanup_state(ModelId::new(1)),
         Some(state)
-            if state.resource
+            if state.resource()
                 == CleanupResource::IncompatibleModel {
                     handle: expected_handle(1),
                 }
-                && matches!(state.ownership, RetainedOwnership::Unverified { .. })
+                && matches!(state.ownership(), RetainedOwnership::Unverified { .. })
     ));
 }
 
@@ -269,9 +269,9 @@ fn incompatible_complete_model_matrix_retains_unverified_evidence_and_unlocks_on
         assert!(matches!(
             result,
             Err(RuntimeError::CleanupFailed(state))
-                if state.failure.primary_detail
+                if state.failure().primary_detail()
                     == FailureDetail::Class(FailureClass::BackendContract)
-                    && state.failure.cleanup_detail
+                    && state.failure().cleanup_detail()
                         == FailureDetail::Synchronization(SynchronizationError::Backend(
                             backend_failure(3),
                         ))
@@ -285,12 +285,12 @@ fn incompatible_complete_model_matrix_retains_unverified_evidence_and_unlocks_on
             .model_cleanup_state(ModelId::new(1))
             .ok_or_else(|| "incompatible owner was not retained".to_owned())?;
         assert_eq!(
-            state.resource,
+            state.resource(),
             CleanupResource::IncompatibleModel {
                 handle: expected_handle(1),
             }
         );
-        assert_eq!(state.ownership, expected_ownership);
+        assert_eq!(state.ownership(), expected_ownership);
         let retained = runtime.snapshot();
         assert_eq!(retained.reserved_footprint, MemoryFootprint::default());
         assert_eq!(
@@ -313,8 +313,8 @@ fn incompatible_complete_model_matrix_retains_unverified_evidence_and_unlocks_on
         assert!(matches!(
             runtime.poll_cleanup().map_err(debug_error)?,
             CleanupPoll::Released(released)
-                if released.attempts == 2
-                    && released.ownership == RetainedOwnership::Released
+                if released.attempts() == 2
+                    && released.ownership() == RetainedOwnership::Released
                     && !released.exhausted()
         ));
         assert_eq!(counts.successful_model_cleanups.get(), 1);
@@ -326,7 +326,7 @@ fn incompatible_complete_model_matrix_retains_unverified_evidence_and_unlocks_on
         assert!(matches!(
             released.last_cleanup,
             Some(state)
-                if state.ownership == RetainedOwnership::Released && !state.exhausted()
+                if state.ownership() == RetainedOwnership::Released && !state.exhausted()
         ));
         assert!(runtime.retained_model_snapshots().is_empty());
 
@@ -361,9 +361,9 @@ fn cleanup_success_on_final_attempt_is_released_not_exhausted() -> TestResult {
     assert!(matches!(
         runtime.poll_cleanup().map_err(debug_error)?,
         CleanupPoll::RetryFailed(state)
-            if state.attempts == 2
+            if state.attempts() == 2
                 && !state.exhausted()
-                && matches!(state.ownership, RetainedOwnership::Unverified { .. })
+                && matches!(state.ownership(), RetainedOwnership::Unverified { .. })
     ));
     let released = match runtime.poll_cleanup().map_err(debug_error)? {
         CleanupPoll::Released(state) => state,
@@ -373,8 +373,8 @@ fn cleanup_success_on_final_attempt_is_released_not_exhausted() -> TestResult {
             ));
         }
     };
-    assert_eq!(released.attempts, 3);
-    assert_eq!(released.ownership, RetainedOwnership::Released);
+    assert_eq!(released.attempts(), 3);
+    assert_eq!(released.ownership(), RetainedOwnership::Released);
     assert!(!released.exhausted());
     let snapshot = runtime.snapshot();
     assert_eq!(snapshot.last_cleanup, Some(released));

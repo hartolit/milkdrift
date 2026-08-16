@@ -137,23 +137,13 @@ pub(crate) struct LoadedModelCommit {
     pub(crate) handle: ModelHandle,
     pub(crate) selection: ModelSelection,
     pub(crate) identity: ImmutableModelIdentity,
-    pub(crate) execution: LoadedModelExecution,
-    pub(crate) limits: LoadedModelLimits,
-    pub(crate) generation_mode: ApplicationGenerationMode,
-    pub(crate) reserved_footprint: MemoryFootprint,
-}
-
-/// Receipt-derived execution facts kept together during loaded-model publication.
-pub(crate) struct LoadedModelExecution {
     pub(crate) device: ApplicationDevice,
-    pub(crate) scalar_type: ApplicationScalarType,
-}
-
-/// Receipt-derived generation limits kept together during loaded-model publication.
-pub(crate) struct LoadedModelLimits {
+    pub(crate) execution_scalar_type: ApplicationScalarType,
     pub(crate) vocabulary_size: u32,
     pub(crate) maximum_context_tokens: u32,
     pub(crate) maximum_prefill_batch: u32,
+    pub(crate) generation_mode: ApplicationGenerationMode,
+    pub(crate) reserved_footprint: MemoryFootprint,
 }
 
 impl LoadedModel {
@@ -162,11 +152,11 @@ impl LoadedModel {
             handle: validated.handle,
             selection: validated.selection,
             identity: validated.identity,
-            device: validated.execution.device,
-            execution_scalar_type: validated.execution.scalar_type,
-            vocabulary_size: validated.limits.vocabulary_size,
-            maximum_context_tokens: validated.limits.maximum_context_tokens,
-            maximum_prefill_batch: validated.limits.maximum_prefill_batch,
+            device: validated.device,
+            execution_scalar_type: validated.execution_scalar_type,
+            vocabulary_size: validated.vocabulary_size,
+            maximum_context_tokens: validated.maximum_context_tokens,
+            maximum_prefill_batch: validated.maximum_prefill_batch,
             generation_mode: validated.generation_mode,
             reserved_footprint: validated.reserved_footprint,
         }
@@ -279,18 +269,80 @@ pub struct GenerationTerminal {
     pub usage: GenerationUsage,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LoadedPhase {
+    resolved: ResolvedModel,
+    model: LoadedModel,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RetainedPhase {
+    resolved: Option<ResolvedModel>,
+    model: ApplicationRetainedModel,
+    status: RetainedCleanupStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RetainedCleanupStatus {
+    Available,
+    Releasing,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ShutdownOwnership {
+    Released { resolved: Option<ResolvedModel> },
+    Loading(ResolvedModel),
+    Loaded(LoadedPhase),
+    Unloading(LoadedPhase),
+    Retained(RetainedPhase),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ModelLifecycle {
+    Empty,
+    Resolving,
+    Resolved(ResolvedModel),
+    Loading(ResolvedModel),
+    Loaded(LoadedPhase),
+    Unloading(LoadedPhase),
+    RetainedCleanup(RetainedPhase),
+    ShuttingDown(ShutdownOwnership),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum GenerationLifecycle {
+    #[default]
+    Idle,
+    Active(GenerationSummary),
+}
+
+/// Typed rejection from one private application lifecycle transition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ApplicationTransitionError {
+    InvalidPhase {
+        operation: &'static str,
+        actual: ApplicationActivity,
+    },
+    StaleGeneration {
+        expected: RequestId,
+        actual: RequestId,
+    },
+    InvalidGenerationPhase {
+        request_id: RequestId,
+        from: GenerationPhase,
+        to: GenerationPhase,
+    },
+}
+
 /// Read-only application state shared by every frontend implementation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApplicationState {
-    activity: ApplicationActivity,
+    lifecycle: ModelLifecycle,
+    generation: GenerationLifecycle,
     devices: Vec<ApplicationDeviceSummary>,
     selected_device: ApplicationDevice,
     device_discovery_failures: Vec<ApplicationDeviceDiscoveryFailure>,
     accelerator_memory_budget_bytes: ByteCount,
-    resolved: Option<ResolvedModel>,
-    loaded: Option<LoadedModel>,
-    retained_model: Option<ApplicationRetainedModel>,
-    generation: Option<GenerationSummary>,
     last_generation: Option<GenerationTerminal>,
     hub_available: bool,
     inference_available: bool,
@@ -299,15 +351,12 @@ pub struct ApplicationState {
 impl Default for ApplicationState {
     fn default() -> Self {
         Self {
-            activity: ApplicationActivity::Idle,
+            lifecycle: ModelLifecycle::Empty,
+            generation: GenerationLifecycle::Idle,
             devices: vec![ApplicationDeviceSummary::cpu()],
             selected_device: ApplicationDevice::Cpu,
             device_discovery_failures: Vec::new(),
             accelerator_memory_budget_bytes: ByteCount::ZERO,
-            resolved: None,
-            loaded: None,
-            retained_model: None,
-            generation: None,
             last_generation: None,
             hub_available: true,
             inference_available: true,
@@ -353,19 +402,19 @@ impl ApplicationState {
         state
     }
 
-    /// Returns the process catalogue of available devices plus an unavailable selected device.
+    /// Returns the discovered execution-device catalogue.
     #[must_use]
     pub const fn devices(&self) -> &[ApplicationDeviceSummary] {
         self.devices.as_slice()
     }
 
-    /// Returns the explicit device used for the next model load.
+    /// Returns the device selected for the next model load.
     #[must_use]
     pub const fn selected_device(&self) -> ApplicationDevice {
         self.selected_device
     }
 
-    /// Returns the latest summary for the selected device.
+    /// Returns discovery evidence for the selected device.
     #[must_use]
     pub fn selected_device_summary(&self) -> Option<&ApplicationDeviceSummary> {
         self.devices
@@ -373,7 +422,7 @@ impl ApplicationState {
             .find(|summary| summary.device() == self.selected_device)
     }
 
-    /// Returns whether the selected device passed its latest bounded probe.
+    /// Returns whether the selected device is currently available.
     #[must_use]
     pub fn selected_device_available(&self) -> bool {
         self.selected_device_summary()
@@ -387,101 +436,127 @@ impl ApplicationState {
             .and_then(ApplicationDeviceSummary::unavailable_reason)
     }
 
-    /// Returns structured cold-path failures from the latest bounded probes.
+    /// Returns bounded device-discovery failures retained for diagnostics.
     #[must_use]
     pub const fn device_discovery_failures(&self) -> &[ApplicationDeviceDiscoveryFailure] {
         self.device_discovery_failures.as_slice()
     }
 
-    /// Returns whether explicit device selection may change without violating lifecycle ownership.
+    /// Returns whether device selection may change without contradicting model ownership.
     #[must_use]
     pub const fn can_select_device(&self) -> bool {
         matches!(
-            self.activity,
-            ApplicationActivity::Idle | ApplicationActivity::Resolving
-        ) && self.loaded.is_none()
-            && self.retained_model.is_none()
-            && self.generation.is_none()
+            self.lifecycle,
+            ModelLifecycle::Empty | ModelLifecycle::Resolving | ModelLifecycle::Resolved(_)
+        )
     }
 
-    /// Returns the current long-running model-lifecycle operation.
+    /// Projects the private model lifecycle into the stable frontend activity category.
     #[must_use]
     pub const fn activity(&self) -> ApplicationActivity {
-        self.activity
+        match &self.lifecycle {
+            ModelLifecycle::Empty | ModelLifecycle::Resolved(_) | ModelLifecycle::Loaded(_) => {
+                ApplicationActivity::Idle
+            }
+            ModelLifecycle::Resolving => ApplicationActivity::Resolving,
+            ModelLifecycle::Loading(_) => ApplicationActivity::Loading,
+            ModelLifecycle::Unloading(_) => ApplicationActivity::Unloading,
+            ModelLifecycle::RetainedCleanup(_) => ApplicationActivity::RetainedCleanup,
+            ModelLifecycle::ShuttingDown(_) => ApplicationActivity::ShuttingDown,
+        }
     }
 
-    /// Returns the immutable model resolution, when available.
+    /// Returns the immutable resolved model carried by the current lifecycle phase.
     #[must_use]
     pub const fn resolved(&self) -> Option<&ResolvedModel> {
-        self.resolved.as_ref()
+        match &self.lifecycle {
+            ModelLifecycle::Resolved(resolved) | ModelLifecycle::Loading(resolved) => {
+                Some(resolved)
+            }
+            ModelLifecycle::Loaded(phase) | ModelLifecycle::Unloading(phase) => {
+                Some(&phase.resolved)
+            }
+            ModelLifecycle::RetainedCleanup(phase) => phase.resolved.as_ref(),
+            ModelLifecycle::ShuttingDown(ownership) => shutdown_resolved_ref(ownership),
+            ModelLifecycle::Empty | ModelLifecycle::Resolving => None,
+        }
     }
 
-    /// Returns the loaded model generation, when present.
+    /// Returns the verified loaded model carried by the current lifecycle phase.
     #[must_use]
     pub const fn loaded(&self) -> Option<&LoadedModel> {
-        self.loaded.as_ref()
+        match &self.lifecycle {
+            ModelLifecycle::Loaded(phase) | ModelLifecycle::Unloading(phase) => Some(&phase.model),
+            ModelLifecycle::ShuttingDown(
+                ShutdownOwnership::Loaded(phase) | ShutdownOwnership::Unloading(phase),
+            ) => Some(&phase.model),
+            _ => None,
+        }
     }
 
-    /// Returns retained or unconfirmed lower model ownership, when present.
+    /// Returns fail-closed retained model ownership when cleanup remains unresolved.
     #[must_use]
     pub const fn retained_model(&self) -> Option<&ApplicationRetainedModel> {
-        self.retained_model.as_ref()
+        match &self.lifecycle {
+            ModelLifecycle::RetainedCleanup(phase)
+            | ModelLifecycle::ShuttingDown(ShutdownOwnership::Retained(phase)) => {
+                Some(&phase.model)
+            }
+            _ => None,
+        }
     }
 
-    /// Returns the stable generation mode of the normal loaded model.
+    /// Returns the generation mode derived from the current verified loaded model.
     #[must_use]
     pub const fn generation_mode(&self) -> ApplicationGenerationMode {
-        match self.loaded.as_ref() {
+        match self.loaded() {
             Some(model) => model.generation_mode(),
             None => ApplicationGenerationMode::Unavailable,
         }
     }
 
-    /// Returns whether E1 coordination for retained cleanup may be explicitly retried.
+    /// Returns whether the current retained model permits a fresh coordination round.
     #[must_use]
     pub fn can_retry_model_cleanup(&self) -> bool {
-        self.activity == ApplicationActivity::RetainedCleanup
-            && self.inference_available
-            && self.retained_model.as_ref().is_some_and(|model| {
-                matches!(
-                    model.cleanup(),
-                    crate::ApplicationModelCleanupDisposition::CoordinationRetryAvailable { .. }
-                )
-            })
+        self.inference_available
+            && matches!(&self.lifecycle, ModelLifecycle::RetainedCleanup(phase) if phase.status == RetainedCleanupStatus::Available && matches!(phase.model.cleanup(), crate::ApplicationModelCleanupDisposition::CoordinationRetryAvailable { .. }))
     }
 
-    /// Returns the active direct-completion request, when present.
+    /// Returns the independently active generation, if one exists.
     #[must_use]
     pub const fn active_generation(&self) -> Option<GenerationSummary> {
-        self.generation
+        match self.generation {
+            GenerationLifecycle::Idle => None,
+            GenerationLifecycle::Active(summary) => Some(summary),
+        }
     }
 
-    /// Returns the most recently terminal generation summary.
+    /// Returns the intentionally retained last terminal generation summary.
     #[must_use]
     pub const fn last_generation(&self) -> Option<&GenerationTerminal> {
         self.last_generation.as_ref()
     }
 
-    /// Returns whether the Hub resolver worker can accept work.
+    /// Returns whether the artifact-resolution service can accept work.
     #[must_use]
     pub const fn hub_available(&self) -> bool {
         self.hub_available
     }
 
-    /// Returns whether the inference worker can accept work.
+    /// Returns whether the inference service can accept work.
     #[must_use]
     pub const fn inference_available(&self) -> bool {
         self.inference_available
     }
 
-    /// Returns whether immutable artifact resolution may be started for a selection.
+    /// Returns whether immutable artifact resolution may begin.
     #[must_use]
     pub const fn can_resolve(&self, _selection: &ModelSelection) -> bool {
-        matches!(self.activity, ApplicationActivity::Idle)
-            && self.hub_available
-            && self.loaded.is_none()
-            && self.retained_model.is_none()
-            && self.generation.is_none()
+        self.hub_available
+            && matches!(
+                self.lifecycle,
+                ModelLifecycle::Empty | ModelLifecycle::Resolved(_)
+            )
     }
 
     pub(crate) fn selected_device_memory_budget_available(&self) -> bool {
@@ -497,37 +572,28 @@ impl ApplicationState {
         }
     }
 
-    /// Returns whether a model may be loaded for the complete visible selection.
+    /// Returns whether the exact resolved selection may be loaded now.
     #[must_use]
     pub fn can_load(&self, selection: &ModelSelection) -> bool {
-        self.activity == ApplicationActivity::Idle
-            && self.inference_available
+        self.inference_available
             && self.selected_device_available()
             && self.selected_device_memory_budget_available()
-            && self.loaded.is_none()
-            && self.retained_model.is_none()
-            && self.generation.is_none()
-            && self
-                .resolved
-                .as_ref()
-                .is_some_and(|resolved| resolved.matches_selection(selection))
+            && matches!(&self.lifecycle, ModelLifecycle::Resolved(resolved) if resolved.matches_selection(selection))
     }
 
-    /// Returns whether completion or compatible chat generation may start against the resident model.
+    /// Returns whether a generation may be admitted against the resident model.
     #[must_use]
     pub const fn can_start_generation(&self) -> bool {
-        matches!(self.activity, ApplicationActivity::Idle)
-            && self.inference_available
-            && self.loaded.is_some()
-            && self.retained_model.is_none()
-            && self.generation.is_none()
+        self.inference_available
+            && matches!(self.lifecycle, ModelLifecycle::Loaded(_))
+            && matches!(self.generation, GenerationLifecycle::Idle)
     }
 
-    /// Returns whether the active request still accepts an explicit cancellation request.
+    /// Returns whether the active generation is at a cancellable boundary.
     #[must_use]
     pub const fn can_cancel_generation(&self) -> bool {
         matches!(
-            self.generation,
+            self.active_generation(),
             Some(GenerationSummary {
                 phase: GenerationPhase::Starting | GenerationPhase::Running,
                 ..
@@ -535,13 +601,31 @@ impl ApplicationState {
         )
     }
 
-    /// Returns whether the resident model may be unloaded.
+    /// Returns whether deterministic model unload may be requested.
     #[must_use]
     pub const fn can_unload(&self) -> bool {
-        matches!(self.activity, ApplicationActivity::Idle)
-            && self.inference_available
-            && self.loaded.is_some()
-            && self.retained_model.is_none()
+        self.inference_available && matches!(self.lifecycle, ModelLifecycle::Loaded(_))
+    }
+
+    /// Returns whether a model-lifecycle operation is in progress.
+    #[must_use]
+    pub const fn is_busy(&self) -> bool {
+        !matches!(self.activity(), ApplicationActivity::Idle)
+    }
+
+    /// Returns whether the visible model selection may be edited.
+    #[must_use]
+    pub const fn can_edit_model_selection(&self) -> bool {
+        matches!(
+            self.lifecycle,
+            ModelLifecycle::Empty | ModelLifecycle::Resolved(_)
+        )
+    }
+
+    /// Returns whether conversation history can be cleared safely.
+    #[must_use]
+    pub const fn can_clear_conversation(&self) -> bool {
+        self.active_generation().is_none()
     }
 
     pub(crate) fn set_selected_device(&mut self, device: ApplicationDevice) {
@@ -571,92 +655,370 @@ impl ApplicationState {
         }
     }
 
-    pub(crate) fn begin_resolving(&mut self) {
-        self.activity = ApplicationActivity::Resolving;
-        self.resolved = None;
+    pub(crate) fn begin_resolving(&mut self) -> Result<(), ApplicationTransitionError> {
+        self.validate_begin_resolving()?;
+        self.lifecycle = ModelLifecycle::Resolving;
+        Ok(())
     }
 
-    pub(crate) const fn begin_loading(&mut self) {
-        self.activity = ApplicationActivity::Loading;
-    }
-
-    pub(crate) const fn begin_unloading(&mut self) {
-        self.activity = ApplicationActivity::Unloading;
-    }
-
-    pub(crate) const fn begin_shutdown(&mut self) {
-        self.activity = ApplicationActivity::ShuttingDown;
-    }
-
-    pub(crate) const fn set_idle(&mut self) {
-        self.activity = ApplicationActivity::Idle;
-    }
-
-    pub(crate) fn set_resolved(&mut self, resolved: ResolvedModel) {
-        self.resolved = Some(resolved);
-        self.activity = ApplicationActivity::Idle;
-    }
-
-    pub(crate) fn clear_resolved(&mut self) {
-        self.resolved = None;
-    }
-
-    pub(crate) fn set_loaded(&mut self, loaded: LoadedModel) {
-        self.loaded = Some(loaded);
-        self.retained_model = None;
-        self.activity = ApplicationActivity::Idle;
-    }
-
-    pub(crate) fn set_retained_model(&mut self, retained: ApplicationRetainedModel) {
-        self.loaded = None;
-        self.retained_model = Some(retained);
-        if self.activity != ApplicationActivity::ShuttingDown {
-            self.activity = ApplicationActivity::RetainedCleanup;
+    pub(crate) fn validate_begin_resolving(&self) -> Result<(), ApplicationTransitionError> {
+        if matches!(
+            self.lifecycle,
+            ModelLifecycle::Empty | ModelLifecycle::Resolved(_)
+        ) {
+            Ok(())
+        } else {
+            Err(self.invalid_transition("begin resolution"))
         }
     }
 
-    pub(crate) fn clear_retained_model(&mut self) {
-        self.retained_model = None;
-        if self.activity == ApplicationActivity::RetainedCleanup {
-            self.activity = ApplicationActivity::Idle;
+    pub(crate) fn complete_resolution(
+        &mut self,
+        resolved: ResolvedModel,
+    ) -> Result<(), ApplicationTransitionError> {
+        if !matches!(self.lifecycle, ModelLifecycle::Resolving) {
+            return Err(self.invalid_transition("complete resolution"));
+        }
+        self.lifecycle = ModelLifecycle::Resolved(resolved);
+        Ok(())
+    }
+
+    pub(crate) fn fail_resolution(&mut self) -> Result<(), ApplicationTransitionError> {
+        if !matches!(self.lifecycle, ModelLifecycle::Resolving) {
+            return Err(self.invalid_transition("fail resolution"));
+        }
+        self.lifecycle = ModelLifecycle::Empty;
+        Ok(())
+    }
+
+    pub(crate) fn begin_loading(&mut self) -> Result<(), ApplicationTransitionError> {
+        self.validate_begin_loading()?;
+        let previous = std::mem::replace(&mut self.lifecycle, ModelLifecycle::Empty);
+        match previous {
+            ModelLifecycle::Resolved(resolved) => {
+                self.lifecycle = ModelLifecycle::Loading(resolved);
+                Ok(())
+            }
+            other => self.restore_invalid(other, "begin load"),
         }
     }
 
-    pub(crate) fn clear_loaded(&mut self) {
-        self.loaded = None;
-        self.activity = ApplicationActivity::Idle;
+    pub(crate) fn validate_begin_loading(&self) -> Result<(), ApplicationTransitionError> {
+        if matches!(self.lifecycle, ModelLifecycle::Resolved(_)) {
+            Ok(())
+        } else {
+            Err(self.invalid_transition("begin load"))
+        }
     }
 
-    pub(crate) fn clear_normal_runtime_ownership_for_shutdown(&mut self) {
-        self.loaded = None;
-        self.generation = None;
+    pub(crate) fn fail_loading(&mut self) -> Result<(), ApplicationTransitionError> {
+        let previous = std::mem::replace(&mut self.lifecycle, ModelLifecycle::Empty);
+        match previous {
+            ModelLifecycle::Loading(resolved) => {
+                self.lifecycle = ModelLifecycle::Resolved(resolved);
+                Ok(())
+            }
+            other => self.restore_invalid(other, "fail load"),
+        }
     }
 
-    pub(crate) fn confirm_runtime_shutdown_released(&mut self) {
-        self.clear_normal_runtime_ownership_for_shutdown();
-        self.retained_model = None;
+    pub(crate) fn complete_loading(
+        &mut self,
+        model: LoadedModel,
+    ) -> Result<(), ApplicationTransitionError> {
+        let previous = std::mem::replace(&mut self.lifecycle, ModelLifecycle::Empty);
+        match previous {
+            ModelLifecycle::Loading(resolved) => {
+                self.lifecycle = ModelLifecycle::Loaded(LoadedPhase { resolved, model });
+                Ok(())
+            }
+            other => self.restore_invalid(other, "complete load"),
+        }
     }
 
-    pub(crate) fn begin_generation(&mut self, summary: GenerationSummary) {
-        self.generation = Some(summary);
+    pub(crate) fn begin_unloading(&mut self) -> Result<(), ApplicationTransitionError> {
+        self.validate_begin_unloading()?;
+        let previous = std::mem::replace(&mut self.lifecycle, ModelLifecycle::Empty);
+        match previous {
+            ModelLifecycle::Loaded(phase) => {
+                self.lifecycle = ModelLifecycle::Unloading(phase);
+                Ok(())
+            }
+            ModelLifecycle::RetainedCleanup(mut phase)
+                if phase.status == RetainedCleanupStatus::Available =>
+            {
+                phase.status = RetainedCleanupStatus::Releasing;
+                self.lifecycle = ModelLifecycle::RetainedCleanup(phase);
+                Ok(())
+            }
+            other => self.restore_invalid(other, "begin unload"),
+        }
+    }
+
+    pub(crate) fn validate_begin_unloading(&self) -> Result<(), ApplicationTransitionError> {
+        if matches!(
+            &self.lifecycle,
+            ModelLifecycle::Loaded(_)
+                | ModelLifecycle::RetainedCleanup(RetainedPhase {
+                    status: RetainedCleanupStatus::Available,
+                    ..
+                })
+        ) {
+            Ok(())
+        } else {
+            Err(self.invalid_transition("begin unload"))
+        }
+    }
+
+    pub(crate) fn fail_unloading(&mut self) -> Result<(), ApplicationTransitionError> {
+        let previous = std::mem::replace(&mut self.lifecycle, ModelLifecycle::Empty);
+        match previous {
+            ModelLifecycle::Unloading(phase) => {
+                self.lifecycle = ModelLifecycle::Loaded(phase);
+                Ok(())
+            }
+            ModelLifecycle::RetainedCleanup(mut phase)
+                if phase.status == RetainedCleanupStatus::Releasing =>
+            {
+                phase.status = RetainedCleanupStatus::Available;
+                self.lifecycle = ModelLifecycle::RetainedCleanup(phase);
+                Ok(())
+            }
+            other => self.restore_invalid(other, "fail unload"),
+        }
+    }
+
+    pub(crate) fn complete_model_release(&mut self) -> Result<(), ApplicationTransitionError> {
+        let previous = std::mem::replace(&mut self.lifecycle, ModelLifecycle::Empty);
+        match previous {
+            ModelLifecycle::Unloading(phase) => {
+                self.lifecycle = ModelLifecycle::Resolved(phase.resolved);
+                Ok(())
+            }
+            ModelLifecycle::RetainedCleanup(phase) => {
+                self.lifecycle = phase
+                    .resolved
+                    .map_or(ModelLifecycle::Empty, ModelLifecycle::Resolved);
+                Ok(())
+            }
+            ModelLifecycle::ShuttingDown(ownership) => {
+                self.lifecycle = ModelLifecycle::ShuttingDown(ShutdownOwnership::Released {
+                    resolved: shutdown_resolved(ownership),
+                });
+                Ok(())
+            }
+            other => self.restore_invalid(other, "complete model release"),
+        }
+    }
+
+    pub(crate) fn retain_model(&mut self, model: ApplicationRetainedModel) {
+        let previous = std::mem::replace(&mut self.lifecycle, ModelLifecycle::Empty);
+        self.lifecycle = match previous {
+            ModelLifecycle::ShuttingDown(ownership) => {
+                ModelLifecycle::ShuttingDown(ShutdownOwnership::Retained(RetainedPhase {
+                    resolved: shutdown_resolved(ownership),
+                    model,
+                    status: RetainedCleanupStatus::Available,
+                }))
+            }
+            ModelLifecycle::RetainedCleanup(phase) => {
+                ModelLifecycle::RetainedCleanup(RetainedPhase {
+                    resolved: phase.resolved,
+                    model,
+                    status: phase.status,
+                })
+            }
+            other => ModelLifecycle::RetainedCleanup(RetainedPhase {
+                resolved: lifecycle_resolved(other),
+                model,
+                status: RetainedCleanupStatus::Available,
+            }),
+        };
+    }
+
+    pub(crate) fn begin_shutdown(&mut self) -> Result<(), ApplicationTransitionError> {
+        if matches!(self.lifecycle, ModelLifecycle::ShuttingDown(_)) {
+            return Err(self.invalid_transition("begin shutdown"));
+        }
+        let previous = std::mem::replace(&mut self.lifecycle, ModelLifecycle::Empty);
+        let ownership = match previous {
+            ModelLifecycle::Empty | ModelLifecycle::Resolving => {
+                ShutdownOwnership::Released { resolved: None }
+            }
+            ModelLifecycle::Resolved(resolved) => ShutdownOwnership::Released {
+                resolved: Some(resolved),
+            },
+            ModelLifecycle::Loading(resolved) => ShutdownOwnership::Loading(resolved),
+            ModelLifecycle::Loaded(phase) => ShutdownOwnership::Loaded(phase),
+            ModelLifecycle::Unloading(phase) => ShutdownOwnership::Unloading(phase),
+            ModelLifecycle::RetainedCleanup(phase) => ShutdownOwnership::Retained(phase),
+            ModelLifecycle::ShuttingDown(ownership) => {
+                self.lifecycle = ModelLifecycle::ShuttingDown(ownership);
+                return Err(self.invalid_transition("begin shutdown"));
+            }
+        };
+        self.lifecycle = ModelLifecycle::ShuttingDown(ownership);
+        Ok(())
+    }
+
+    pub(crate) fn clear_normal_runtime_ownership_for_shutdown(
+        &mut self,
+    ) -> Result<(), ApplicationTransitionError> {
+        let previous = std::mem::replace(&mut self.lifecycle, ModelLifecycle::Empty);
+        match previous {
+            ModelLifecycle::ShuttingDown(ownership) => {
+                self.lifecycle = ModelLifecycle::ShuttingDown(ShutdownOwnership::Released {
+                    resolved: shutdown_resolved(ownership),
+                });
+                Ok(())
+            }
+            other => self.restore_invalid(other, "clear shutdown ownership"),
+        }
+    }
+
+    pub(crate) fn confirm_runtime_shutdown_released(
+        &mut self,
+    ) -> Result<(), ApplicationTransitionError> {
+        self.clear_normal_runtime_ownership_for_shutdown()
+    }
+
+    pub(crate) fn begin_generation(
+        &mut self,
+        summary: GenerationSummary,
+    ) -> Result<(), ApplicationTransitionError> {
+        if !matches!(self.lifecycle, ModelLifecycle::Loaded(_))
+            || !matches!(self.generation, GenerationLifecycle::Idle)
+        {
+            let actual = self.activity();
+            return Err(ApplicationTransitionError::InvalidPhase {
+                operation: "begin generation",
+                actual,
+            });
+        }
+        self.generation = GenerationLifecycle::Active(summary);
         self.last_generation = None;
+        Ok(())
     }
 
-    pub(crate) const fn set_generation_phase(&mut self, phase: GenerationPhase) {
-        if let Some(summary) = self.generation.as_mut() {
-            summary.phase = phase;
+    pub(crate) fn transition_generation(
+        &mut self,
+        request_id: RequestId,
+        next: GenerationPhase,
+    ) -> Result<(), ApplicationTransitionError> {
+        self.validate_generation_transition(request_id, next)?;
+        let GenerationLifecycle::Active(summary) = &mut self.generation else {
+            return Err(self.invalid_transition("advance generation"));
+        };
+        summary.phase = next;
+        Ok(())
+    }
+
+    pub(crate) fn validate_generation_transition(
+        &self,
+        request_id: RequestId,
+        next: GenerationPhase,
+    ) -> Result<(), ApplicationTransitionError> {
+        let summary = self.validate_generation_identity(request_id, "advance generation")?;
+        if valid_generation_transition(summary.phase, next) {
+            Ok(())
+        } else {
+            Err(ApplicationTransitionError::InvalidGenerationPhase {
+                request_id,
+                from: summary.phase,
+                to: next,
+            })
         }
     }
 
-    pub(crate) const fn increment_generated_tokens(&mut self) {
-        if let Some(summary) = self.generation.as_mut() {
-            summary.usage.generated_tokens = summary.usage.generated_tokens.saturating_add(1);
+    pub(crate) fn validate_generation_identity(
+        &self,
+        request_id: RequestId,
+        operation: &'static str,
+    ) -> Result<GenerationSummary, ApplicationTransitionError> {
+        let Some(summary) = self.active_generation() else {
+            return Err(ApplicationTransitionError::InvalidPhase {
+                operation,
+                actual: self.activity(),
+            });
+        };
+        if summary.request_id != request_id {
+            return Err(ApplicationTransitionError::StaleGeneration {
+                expected: summary.request_id,
+                actual: request_id,
+            });
         }
+        Ok(summary)
     }
 
-    pub(crate) fn finish_generation(&mut self, terminal: GenerationTerminal) {
-        self.generation = None;
+    pub(crate) fn abort_generation_start(
+        &mut self,
+        request_id: RequestId,
+    ) -> Result<(), ApplicationTransitionError> {
+        let actual = self.activity();
+        let Some(summary) = self.active_generation() else {
+            return Err(ApplicationTransitionError::InvalidPhase {
+                operation: "abort generation submission",
+                actual,
+            });
+        };
+        if summary.request_id != request_id {
+            return Err(ApplicationTransitionError::StaleGeneration {
+                expected: summary.request_id,
+                actual: request_id,
+            });
+        }
+        if summary.phase != GenerationPhase::Starting {
+            return Err(ApplicationTransitionError::InvalidGenerationPhase {
+                request_id,
+                from: summary.phase,
+                to: GenerationPhase::Starting,
+            });
+        }
+        self.generation = GenerationLifecycle::Idle;
+        Ok(())
+    }
+
+    pub(crate) fn increment_generated_tokens(
+        &mut self,
+        request_id: RequestId,
+    ) -> Result<(), ApplicationTransitionError> {
+        let actual = self.activity();
+        let GenerationLifecycle::Active(summary) = &mut self.generation else {
+            return Err(ApplicationTransitionError::InvalidPhase {
+                operation: "record generated token",
+                actual,
+            });
+        };
+        if summary.request_id != request_id {
+            return Err(ApplicationTransitionError::StaleGeneration {
+                expected: summary.request_id,
+                actual: request_id,
+            });
+        }
+        summary.usage.generated_tokens = summary.usage.generated_tokens.saturating_add(1);
+        Ok(())
+    }
+
+    pub(crate) fn finish_generation(
+        &mut self,
+        terminal: GenerationTerminal,
+    ) -> Result<(), ApplicationTransitionError> {
+        let actual = self.activity();
+        let Some(summary) = self.active_generation() else {
+            return Err(ApplicationTransitionError::InvalidPhase {
+                operation: "finish generation",
+                actual,
+            });
+        };
+        if summary.request_id != terminal.request_id {
+            return Err(ApplicationTransitionError::StaleGeneration {
+                expected: summary.request_id,
+                actual: terminal.request_id,
+            });
+        }
+        self.generation = GenerationLifecycle::Idle;
         self.last_generation = Some(terminal);
+        Ok(())
     }
 
     pub(crate) const fn disconnect_hub(&mut self) {
@@ -665,5 +1027,280 @@ impl ApplicationState {
 
     pub(crate) const fn disconnect_inference(&mut self) {
         self.inference_available = false;
+    }
+
+    fn invalid_transition(&self, operation: &'static str) -> ApplicationTransitionError {
+        ApplicationTransitionError::InvalidPhase {
+            operation,
+            actual: self.activity(),
+        }
+    }
+
+    fn restore_invalid(
+        &mut self,
+        previous: ModelLifecycle,
+        operation: &'static str,
+    ) -> Result<(), ApplicationTransitionError> {
+        self.lifecycle = previous;
+        Err(self.invalid_transition(operation))
+    }
+}
+
+fn lifecycle_resolved(lifecycle: ModelLifecycle) -> Option<ResolvedModel> {
+    match lifecycle {
+        ModelLifecycle::Resolved(resolved) | ModelLifecycle::Loading(resolved) => Some(resolved),
+        ModelLifecycle::Loaded(phase) | ModelLifecycle::Unloading(phase) => Some(phase.resolved),
+        ModelLifecycle::RetainedCleanup(phase) => phase.resolved,
+        ModelLifecycle::ShuttingDown(ownership) => shutdown_resolved(ownership),
+        ModelLifecycle::Empty | ModelLifecycle::Resolving => None,
+    }
+}
+
+const fn shutdown_resolved_ref(ownership: &ShutdownOwnership) -> Option<&ResolvedModel> {
+    match ownership {
+        ShutdownOwnership::Released { resolved } => resolved.as_ref(),
+        ShutdownOwnership::Loading(resolved) => Some(resolved),
+        ShutdownOwnership::Loaded(phase) | ShutdownOwnership::Unloading(phase) => {
+            Some(&phase.resolved)
+        }
+        ShutdownOwnership::Retained(phase) => phase.resolved.as_ref(),
+    }
+}
+
+fn shutdown_resolved(ownership: ShutdownOwnership) -> Option<ResolvedModel> {
+    match ownership {
+        ShutdownOwnership::Released { resolved } => resolved,
+        ShutdownOwnership::Loading(resolved) => Some(resolved),
+        ShutdownOwnership::Loaded(phase) | ShutdownOwnership::Unloading(phase) => {
+            Some(phase.resolved)
+        }
+        ShutdownOwnership::Retained(phase) => phase.resolved,
+    }
+}
+
+const fn valid_generation_transition(from: GenerationPhase, to: GenerationPhase) -> bool {
+    matches!(
+        (from, to),
+        (
+            GenerationPhase::Starting,
+            GenerationPhase::Running
+                | GenerationPhase::Cancelling
+                | GenerationPhase::Finishing
+                | GenerationPhase::CleanupPending
+                | GenerationPhase::CleanupExhausted
+        ) | (
+            GenerationPhase::Running,
+            GenerationPhase::Cancelling
+                | GenerationPhase::Finishing
+                | GenerationPhase::CleanupPending
+                | GenerationPhase::CleanupExhausted
+        ) | (
+            GenerationPhase::Cancelling,
+            GenerationPhase::Running
+                | GenerationPhase::Finishing
+                | GenerationPhase::CleanupPending
+                | GenerationPhase::CleanupExhausted
+        ) | (
+            GenerationPhase::Finishing,
+            GenerationPhase::CleanupPending | GenerationPhase::CleanupExhausted
+        ) | (
+            GenerationPhase::CleanupPending,
+            GenerationPhase::CleanupExhausted
+        )
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        ApplicationModelCleanupDisposition, ApplicationRetainedModelResource,
+        ApplicationRetainedOwnership,
+    };
+    use domain_contracts::{GenerationUsage, ModelGeneration, ModelId};
+
+    fn resolved_model() -> ResolvedModel {
+        ResolvedModel::new(
+            ModelSelection::new("owner/model", "main"),
+            ImmutableModelIdentity::new("owner/model", "012345"),
+            32,
+            None,
+            None,
+        )
+    }
+
+    fn loaded_model() -> LoadedModel {
+        LoadedModel::commit(LoadedModelCommit {
+            handle: ModelHandle::new(ModelId::new(1), ModelGeneration::new(1)),
+            selection: ModelSelection::new("owner/model", "main"),
+            identity: ImmutableModelIdentity::new("owner/model", "012345"),
+            device: ApplicationDevice::Cpu,
+            execution_scalar_type: ApplicationScalarType::F32,
+            vocabulary_size: 32,
+            maximum_context_tokens: 128,
+            maximum_prefill_batch: 64,
+            generation_mode: ApplicationGenerationMode::DirectCompletion,
+            reserved_footprint: MemoryFootprint::default(),
+        })
+    }
+
+    fn loaded_state() -> ApplicationState {
+        let mut state = ApplicationState::default();
+        assert_eq!(state.begin_resolving(), Ok(()));
+        assert_eq!(state.complete_resolution(resolved_model()), Ok(()));
+        assert_eq!(state.begin_loading(), Ok(()));
+        assert_eq!(state.complete_loading(loaded_model()), Ok(()));
+        state
+    }
+
+    fn active_summary(request_id: RequestId) -> GenerationSummary {
+        GenerationSummary {
+            request_id,
+            phase: GenerationPhase::Starting,
+            usage: GenerationUsage {
+                prompt_tokens: 4,
+                generated_tokens: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn invalid_model_transitions_are_typed_and_leave_state_unchanged() {
+        let mut state = ApplicationState::default();
+        for rejected in [
+            state.begin_loading(),
+            state.fail_loading(),
+            state.begin_unloading(),
+            state.complete_model_release(),
+        ] {
+            assert!(matches!(
+                rejected,
+                Err(ApplicationTransitionError::InvalidPhase { .. })
+            ));
+            assert_eq!(state, ApplicationState::default());
+        }
+    }
+
+    #[test]
+    fn model_transition_matrix_derives_capabilities_from_each_phase() {
+        let selection = ModelSelection::new("owner/model", "main");
+        let mut state = ApplicationState::default();
+        assert!(state.can_resolve(&selection));
+        assert!(!state.can_load(&selection));
+
+        assert_eq!(state.begin_resolving(), Ok(()));
+        assert_eq!(state.activity(), ApplicationActivity::Resolving);
+        assert!(!state.can_resolve(&selection));
+        assert_eq!(state.fail_resolution(), Ok(()));
+        assert_eq!(state, ApplicationState::default());
+
+        assert_eq!(state.begin_resolving(), Ok(()));
+        assert_eq!(state.complete_resolution(resolved_model()), Ok(()));
+        assert!(state.can_load(&selection));
+        assert_eq!(state.begin_loading(), Ok(()));
+        assert_eq!(state.activity(), ApplicationActivity::Loading);
+        assert_eq!(state.fail_loading(), Ok(()));
+        assert!(state.can_load(&selection));
+
+        assert_eq!(state.begin_loading(), Ok(()));
+        assert_eq!(state.complete_loading(loaded_model()), Ok(()));
+        assert!(state.can_start_generation());
+        assert!(state.can_unload());
+        assert_eq!(
+            state.generation_mode(),
+            ApplicationGenerationMode::DirectCompletion
+        );
+
+        assert_eq!(state.begin_unloading(), Ok(()));
+        assert_eq!(state.activity(), ApplicationActivity::Unloading);
+        assert_eq!(state.complete_model_release(), Ok(()));
+        assert!(state.loaded().is_none());
+        assert!(state.can_load(&selection));
+    }
+
+    #[test]
+    fn stale_generation_identity_and_invalid_phase_do_not_mutate_state() {
+        let request_id = RequestId::new(11);
+        let mut state = loaded_state();
+        assert_eq!(state.begin_generation(active_summary(request_id)), Ok(()));
+
+        let before = state.clone();
+        assert!(matches!(
+            state.transition_generation(RequestId::new(12), GenerationPhase::Running),
+            Err(ApplicationTransitionError::StaleGeneration { .. })
+        ));
+        assert_eq!(state, before);
+
+        assert!(matches!(
+            state.transition_generation(request_id, GenerationPhase::CleanupExhausted),
+            Ok(())
+        ));
+        let before = state.clone();
+        assert!(matches!(
+            state.transition_generation(request_id, GenerationPhase::Running),
+            Err(ApplicationTransitionError::InvalidGenerationPhase { .. })
+        ));
+        assert_eq!(state, before);
+    }
+
+    #[test]
+    fn generation_ownership_remains_correlated_across_unload_and_retention() {
+        let request_id = RequestId::new(21);
+        let mut state = loaded_state();
+        assert_eq!(state.begin_generation(active_summary(request_id)), Ok(()));
+        assert_eq!(state.begin_unloading(), Ok(()));
+        assert_eq!(state.complete_model_release(), Ok(()));
+        assert_eq!(
+            state.active_generation().map(|active| active.request_id),
+            Some(request_id)
+        );
+        assert!(state.loaded().is_none());
+
+        let terminal = GenerationTerminal {
+            request_id,
+            outcome: GenerationTerminalOutcome::Finished(FinishReason::TokenLimit),
+            usage: active_summary(request_id).usage,
+        };
+        assert_eq!(state.finish_generation(terminal.clone()), Ok(()));
+        assert!(state.active_generation().is_none());
+        assert_eq!(state.last_generation(), Some(&terminal));
+    }
+
+    #[test]
+    fn retained_cleanup_and_shutdown_preserve_independent_generation_identity() {
+        let request_id = RequestId::new(31);
+        let mut state = loaded_state();
+        assert_eq!(state.begin_generation(active_summary(request_id)), Ok(()));
+        let retained = ApplicationRetainedModel::new(
+            ApplicationRetainedModelResource::LoadedModel {
+                handle: loaded_model().handle(),
+            },
+            ApplicationRetainedOwnership::Exact(MemoryFootprint::default()),
+            ApplicationModelCleanupDisposition::Pending,
+            ApplicationFailure::new(
+                crate::ApplicationFailureKind::RetainedCleanup,
+                "cleanup pending",
+            ),
+            None,
+        );
+        state.retain_model(retained);
+        assert_eq!(state.activity(), ApplicationActivity::RetainedCleanup);
+        assert_eq!(
+            state.active_generation().map(|active| active.request_id),
+            Some(request_id)
+        );
+
+        assert_eq!(state.begin_shutdown(), Ok(()));
+        assert_eq!(state.activity(), ApplicationActivity::ShuttingDown);
+        assert_eq!(
+            state.active_generation().map(|active| active.request_id),
+            Some(request_id)
+        );
+        let before = state.clone();
+        assert!(matches!(
+            state.begin_shutdown(),
+            Err(ApplicationTransitionError::InvalidPhase { .. })
+        ));
+        assert_eq!(state, before);
     }
 }

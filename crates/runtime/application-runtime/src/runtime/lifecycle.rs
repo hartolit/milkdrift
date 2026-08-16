@@ -36,8 +36,16 @@ impl ApplicationRuntime {
                 Err(TryReceiveError::Empty) => {}
                 Err(TryReceiveError::Disconnected) => {
                     self.state.disconnect_hub();
-                    if self.state.activity() == ApplicationActivity::Resolving {
-                        self.state.set_idle();
+                    if self.state.activity() == ApplicationActivity::Resolving
+                        && let Err(error) = self.state.fail_resolution()
+                    {
+                        return Some(ApplicationEvent::ModelResolutionFailed {
+                            failure: crate::ApplicationFailure::from_debug(
+                                crate::ApplicationFailureKind::ArtifactResolution,
+                                "Hub disconnect resolution transition was rejected",
+                                error,
+                            ),
+                        });
                     }
                     return Some(ApplicationEvent::HubDisconnected);
                 }

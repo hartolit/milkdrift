@@ -31,8 +31,8 @@ fn failed_sequence_rollback_is_reported_without_registry_mutation() -> TestResul
     assert!(matches!(
         result,
         Err(RuntimeError::CleanupFailed(state))
-            if state.failure.primary_failure == inference_runtime::FailureClass::BackendContract
-                && state.failure.cleanup_failure == inference_runtime::FailureClass::Sequence
+            if state.failure().primary_failure() == inference_runtime::FailureClass::BackendContract
+                && state.failure().cleanup_failure() == inference_runtime::FailureClass::Sequence
     ));
     assert_eq!(counts.sequence_creations.get(), 1);
     assert_eq!(counts.sequence_destructions.get(), 1);
@@ -44,7 +44,7 @@ fn failed_sequence_rollback_is_reported_without_registry_mutation() -> TestResul
     assert!(matches!(
         runtime.request_cleanup_state(RequestId::new(10)),
         Some(state)
-            if state.ownership
+            if state.ownership()
                 == RetainedOwnership::Unverified {
                     accepted_footprint: sequence_footprint(),
                     reported_footprint: sequence_footprint(),
@@ -97,9 +97,9 @@ fn mismatched_sequence_reports_with_failed_cleanup_are_unverified() -> TestResul
         assert!(matches!(
             start(&mut runtime, loaded.handle, 10, 100),
             Err(RuntimeError::CleanupFailed(state))
-                if state.failure.primary_failure == FailureClass::BackendContract
+                if state.failure().primary_failure() == FailureClass::BackendContract
                     && matches!(
-                        state.ownership,
+                        state.ownership(),
                         RetainedOwnership::Unverified {
                             accepted_footprint,
                             reported_footprint: actual_report,
@@ -155,9 +155,9 @@ fn sequence_report_mutation_during_failed_cleanup_extends_unverified_evidence() 
     assert!(matches!(
         runtime.cancel_request(RequestId::new(10), CancellationReason::UserRequested),
         Err(RuntimeError::CleanupFailed(state))
-            if state.failure.primary_failure == FailureClass::BackendContract
+            if state.failure().primary_failure() == FailureClass::BackendContract
                 && matches!(
-                    state.ownership,
+                    state.ownership(),
                     RetainedOwnership::Unverified {
                         accepted_footprint,
                         reported_footprint,
@@ -172,7 +172,7 @@ fn sequence_report_mutation_during_failed_cleanup_extends_unverified_evidence() 
     assert!(matches!(
         runtime.poll_cleanup().map_err(debug_error)?,
         CleanupPoll::RetryFailed(state)
-            if matches!(state.ownership, RetainedOwnership::Unverified { .. })
+            if matches!(state.ownership(), RetainedOwnership::Unverified { .. })
     ));
     assert_eq!(counts.sequence_destructions.get(), 2);
     Ok(())
@@ -193,8 +193,8 @@ fn sequence_identity_or_capacity_mutation_during_failed_cleanup_is_unverified() 
         assert!(matches!(
             runtime.cancel_request(RequestId::new(10), CancellationReason::UserRequested),
             Err(RuntimeError::CleanupFailed(state))
-                if state.failure.primary_failure == FailureClass::BackendContract
-                    && state.ownership
+                if state.failure().primary_failure() == FailureClass::BackendContract
+                    && state.ownership()
                         == RetainedOwnership::Unverified {
                             accepted_footprint: sequence_footprint(),
                             reported_footprint: sequence_footprint(),

@@ -140,24 +140,24 @@ impl ModelCleanupCoordinator {
         cleanup: CleanupRetryState,
         primary_override: Option<ApplicationFailure>,
     ) -> Result<Self, CleanupTransitionError> {
-        if cleanup.ownership.is_released() {
+        if cleanup.ownership().is_released() {
             return Err(CleanupTransitionError::InvalidAction);
         }
-        let origin = origin_for_lower_resource(cleanup.resource);
+        let origin = origin_for_lower_resource(cleanup.resource());
         let primary_failure =
-            primary_override.unwrap_or_else(|| application_primary_failure(cleanup.failure));
+            primary_override.unwrap_or_else(|| application_primary_failure(cleanup.failure()));
         let action = lower_action(cleanup);
         Ok(Self {
             origin,
-            lower_resource: Some(cleanup.resource),
+            lower_resource: Some(cleanup.resource()),
             lower_attempts: Some(lower_cleanup_attempts(cleanup)),
             action,
             retained: ApplicationRetainedModel::new(
-                application_cleanup_resource(cleanup.resource),
-                application_retained_ownership(cleanup.ownership),
+                application_cleanup_resource(cleanup.resource()),
+                application_retained_ownership(cleanup.ownership()),
                 application_cleanup_disposition(cleanup),
                 primary_failure,
-                Some(application_cleanup_failure(cleanup.failure)),
+                Some(application_cleanup_failure(cleanup.failure())),
             ),
         })
     }
@@ -167,7 +167,7 @@ impl ModelCleanupCoordinator {
         primary_failure: ApplicationFailure,
         failure: ApplicationFailure,
     ) -> Self {
-        let resource = cleanup.resource;
+        let resource = cleanup.resource();
         Self {
             origin: origin_for_lower_resource(resource),
             lower_resource: Some(resource),
@@ -359,21 +359,21 @@ impl ModelCleanupCoordinator {
         cleanup: CleanupRetryState,
         primary_override: Option<ApplicationFailure>,
     ) -> Result<(), CleanupTransitionError> {
-        if cleanup.ownership.is_released() || !self.accepts_resource(cleanup.resource) {
+        if cleanup.ownership().is_released() || !self.accepts_resource(cleanup.resource()) {
             return Err(CleanupTransitionError::WrongResource);
         }
-        self.lower_resource = Some(cleanup.resource);
+        self.lower_resource = Some(cleanup.resource());
         self.lower_attempts = Some(lower_cleanup_attempts(cleanup));
         self.action = lower_action(cleanup);
         let primary_failure = primary_override
             .or_else(|| Some(self.retained.primary_failure().clone()))
-            .unwrap_or_else(|| application_primary_failure(cleanup.failure));
+            .unwrap_or_else(|| application_primary_failure(cleanup.failure()));
         self.retained = ApplicationRetainedModel::new(
-            application_cleanup_resource(cleanup.resource),
-            application_retained_ownership(cleanup.ownership),
+            application_cleanup_resource(cleanup.resource()),
+            application_retained_ownership(cleanup.ownership()),
             application_cleanup_disposition(cleanup),
             primary_failure,
-            Some(application_cleanup_failure(cleanup.failure)),
+            Some(application_cleanup_failure(cleanup.failure())),
         );
         Ok(())
     }
@@ -481,13 +481,13 @@ impl ModelCleanupCoordinator {
         &self,
         cleanup: CleanupRetryState,
     ) -> Result<CleanupResource, CleanupTransitionError> {
-        if !cleanup.ownership.is_released() {
+        if !cleanup.ownership().is_released() {
             return Err(CleanupTransitionError::InvalidAction);
         }
-        if !self.accepts_resource(cleanup.resource) {
+        if !self.accepts_resource(cleanup.resource()) {
             return Err(CleanupTransitionError::WrongResource);
         }
-        Ok(cleanup.resource)
+        Ok(cleanup.resource())
     }
 
     pub(super) fn mark_disconnected(&mut self, failure: ApplicationFailure) {
@@ -577,22 +577,22 @@ const fn origin_for_lower_resource(resource: CleanupResource) -> ModelCleanupOri
 const fn lower_action(cleanup: CleanupRetryState) -> ModelCleanupAction {
     if cleanup.exhausted() {
         ModelCleanupAction::LowerExhausted {
-            resource: cleanup.resource,
-            attempts: cleanup.attempts,
-            maximum_attempts: cleanup.maximum_attempts,
+            resource: cleanup.resource(),
+            attempts: cleanup.attempts(),
+            maximum_attempts: cleanup.maximum_attempts(),
         }
     } else {
         ModelCleanupAction::WaitingForLowerRetry {
-            resource: cleanup.resource,
-            attempts: cleanup.attempts,
-            maximum_attempts: cleanup.maximum_attempts,
+            resource: cleanup.resource(),
+            attempts: cleanup.attempts(),
+            maximum_attempts: cleanup.maximum_attempts(),
         }
     }
 }
 
 const fn lower_cleanup_attempts(cleanup: CleanupRetryState) -> LowerCleanupAttempts {
     LowerCleanupAttempts {
-        attempts: cleanup.attempts,
-        maximum_attempts: cleanup.maximum_attempts,
+        attempts: cleanup.attempts(),
+        maximum_attempts: cleanup.maximum_attempts(),
     }
 }

@@ -6,9 +6,10 @@ use domain_contracts::{
     PreparedLoad, ScalarType,
 };
 
+use crate::error::{CleanupRetryProgress, RetainedOwner};
 use crate::{
-    CleanupFailureReport, CleanupRetryState, FailureDetail, LoadReceipt, RetainedOwnership,
-    RuntimeError, RuntimeOperation,
+    CleanupFailureReport, CleanupRetryState, FailureDetail, LoadReceipt, RuntimeError,
+    RuntimeOperation,
 };
 
 use super::{
@@ -122,9 +123,9 @@ where
                 let pending = PendingModel {
                     handle: preflight.handle,
                     owner: PendingModelOwner::VerifiedModel(model),
-                    ownership: RetainedOwnership::Exact(admission.plan.final_footprint),
+                    ownership: RetainedOwner::Exact(admission.plan.final_footprint),
                     failure: report,
-                    attempts: 1,
+                    retry: CleanupRetryProgress::initial(self.maximum_cleanup_attempts()),
                     cancelled_requests: 0,
                 };
                 let state = self.commit_pending_model(model_id, pending, admission.final_reserved);
@@ -207,9 +208,9 @@ where
                     owner: failed,
                     accepted_plan: plan,
                 },
-                ownership: RetainedOwnership::Exact(plan.loading_peak_footprint),
+                ownership: RetainedOwner::Exact(plan.loading_peak_footprint),
                 failure: report,
-                attempts: 1,
+                retry: CleanupRetryProgress::initial(self.maximum_cleanup_attempts()),
                 cancelled_requests: 0,
             };
 
@@ -223,8 +224,7 @@ where
             } else {
                 preflight.previous_reserved
             };
-            let state = self.commit_pending_model(model_id, pending, exact_reserved);
-            cleanup_retention_error(state)
+            cleanup_retention_error(self.commit_pending_model(model_id, pending, exact_reserved))
         } else {
             self.reserved_footprint = preflight.previous_reserved;
             primary
@@ -247,7 +247,7 @@ where
                 RuntimeOperation::ModelUnload,
                 FailureDetail::Synchronization(cleanup),
             );
-            let ownership = RetainedOwnership::Unverified {
+            let ownership = RetainedOwner::Unverified {
                 accepted_footprint: plan.loading_peak_footprint,
                 reported_footprint,
                 conservative_footprint: conservative_footprint(
@@ -260,11 +260,14 @@ where
                 owner: PendingModelOwner::IncompatibleModel(model),
                 ownership,
                 failure: report,
-                attempts: 1,
+                retry: CleanupRetryProgress::initial(self.maximum_cleanup_attempts()),
                 cancelled_requests: 0,
             };
-            let state = self.commit_pending_model(model_id, pending, preflight.previous_reserved);
-            cleanup_retention_error(state)
+            cleanup_retention_error(self.commit_pending_model(
+                model_id,
+                pending,
+                preflight.previous_reserved,
+            ))
         } else {
             self.reserved_footprint = preflight.previous_reserved;
             primary
@@ -277,13 +280,7 @@ where
         pending: PendingModel<L::Model, FailedLoad<L::FailedPreparation>>,
         exact_reserved: MemoryFootprint,
     ) -> CleanupRetryState {
-        let state = CleanupRetryState {
-            resource: pending.owner.cleanup_resource(pending.handle),
-            failure: pending.failure,
-            ownership: pending.ownership,
-            attempts: pending.attempts,
-            maximum_attempts: self.maximum_cleanup_attempts(),
-        };
+        let state = pending.cleanup_state();
         self.reserved_footprint = exact_reserved;
         self.generations.insert(model_id, pending.handle.generation);
         let replaced = self.pending_models.insert(model_id, pending);
@@ -312,7 +309,6 @@ where
             reserved_footprint: admission.plan.final_footprint,
             requests: BTreeMap::new(),
             pending_sequences: BTreeMap::new(),
-            poisoned: false,
             cancelled_requests_during_unload: 0,
         };
         let replaced = self.models.insert(model_id, slot);

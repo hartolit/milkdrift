@@ -161,6 +161,15 @@ bounded lower policy is exhausted. The initial cleanup failure counts as attempt
 one. `poll_cleanup` performs at most one retryable retained operation per call and
 rotates fairly across owner classes and identities.
 
+Both retry-state and failure-report fields are private. Retained and released
+retry snapshots are constructed through checked APIs with non-zero attempt limits;
+attempts beyond the limit and retained snapshots claiming released ownership are
+unrepresentable through the public API. Exhaustion is derived from the validated
+attempt pair and ownership, and verified release consumes the retained transition
+once. `CleanupFailureReport` stores each operation and bounded detail exactly once;
+its stable primary and cleanup classes are derived from those details rather than
+stored as independently mutable fields.
+
 `CleanupResource` distinguishes verified model, incompatible model, failed load,
 and sequence identity. `RetainedOwnership` distinguishes:
 

@@ -35,7 +35,10 @@ fn terminal_generation_phases_reject_late_cancellation() -> TestResult {
             GenerationPhase::CleanupPending,
             GenerationPhase::CleanupExhausted,
         ] {
-            runtime.state.set_generation_phase(phase);
+            runtime
+                .state
+                .transition_generation(request_id, phase)
+                .map_err(|error| format!("generation phase transition failed: {error:?}"))?;
             assert!(!runtime.state().can_cancel_generation());
             assert_eq!(
                 runtime.cancel_generation(request_id),

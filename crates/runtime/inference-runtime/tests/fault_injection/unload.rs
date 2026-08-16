@@ -36,9 +36,9 @@ fn normal_model_unload_failure_uses_the_bounded_cleanup_state_machine() -> TestR
     assert!(matches!(
         initial,
         Err(RuntimeError::CleanupFailed(state))
-            if state.failure.primary_operation == RuntimeOperation::ModelUnload
-                && state.failure.primary_failure == FailureClass::Completion
-                && state.failure.cleanup_failure == FailureClass::Synchronization
+            if state.failure().primary_operation() == RuntimeOperation::ModelUnload
+                && state.failure().primary_failure() == FailureClass::Completion
+                && state.failure().cleanup_failure() == FailureClass::Synchronization
     ));
     let snapshot = runtime.snapshot();
     assert_eq!(snapshot.loaded_models, 0);
@@ -47,15 +47,15 @@ fn normal_model_unload_failure_uses_the_bounded_cleanup_state_machine() -> TestR
 
     assert!(matches!(
         runtime.poll_cleanup().map_err(debug_error)?,
-        CleanupPoll::RetryFailed(state) if state.attempts == 2
+        CleanupPoll::RetryFailed(state) if state.attempts() == 2
     ));
     assert!(matches!(
         runtime.poll_cleanup().map_err(debug_error)?,
         CleanupPoll::Exhausted(state)
-            if state.attempts == 3
-                && state.ownership == RetainedOwnership::Exact(model_footprint())
+            if state.attempts() == 3
+                && state.ownership() == RetainedOwnership::Exact(model_footprint())
                 && matches!(
-                    state.resource,
+                    state.resource(),
                     CleanupResource::Model { handle } if handle == loaded.handle
                 )
     ));
@@ -75,7 +75,7 @@ fn normal_model_unload_failure_uses_the_bounded_cleanup_state_machine() -> TestR
             MonotonicMillis::new(1),
         ),
         Err(RuntimeError::CleanupRetryExhausted(state))
-            if state.attempts == 3 && state.exhausted()
+            if state.attempts() == 3 && state.exhausted()
     ));
     Ok(())
 }

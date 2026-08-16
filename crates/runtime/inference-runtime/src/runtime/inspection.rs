@@ -1,15 +1,13 @@
-use domain_contracts::{
-    FailedLoad, ModelHandle, ModelId, ModelLifecycleState, ModelLoader, RequestId,
-};
+use domain_contracts::{ModelHandle, ModelId, ModelLifecycleState, ModelLoader, RequestId};
 
+use crate::error::RetainedOwner;
 use crate::{
     CleanupFailureReport, CleanupRetryState, ConservativeFootprint, ModelSnapshot,
-    RetainedModelSnapshot, RetainedOwnership, RuntimeError, RuntimeSnapshot,
-    UnverifiedOwnershipSummary,
+    RetainedModelSnapshot, RuntimeError, RuntimeSnapshot, UnverifiedOwnershipSummary,
 };
 
 use super::{
-    InferenceRuntime, PendingModel,
+    InferenceRuntime,
     memory::{add_conservative_footprint, saturating_u32},
 };
 
@@ -20,7 +18,6 @@ where
     /// Returns immutable aggregate runtime state.
     #[must_use]
     pub fn snapshot(&self) -> RuntimeSnapshot {
-        let maximum_attempts = self.maximum_cleanup_attempts();
         let unverified_ownership = self.unverified_ownership_summary();
         RuntimeSnapshot {
             loaded_models: saturating_u32(self.models.len()),
@@ -35,14 +32,14 @@ where
             exhausted_cleanup_models: saturating_u32(
                 self.pending_models
                     .values()
-                    .filter(|pending| pending.attempts >= maximum_attempts)
+                    .filter(|pending| pending.retry.exhausted())
                     .count(),
             ),
             exhausted_cleanup_sequences: saturating_u32(
                 self.models
                     .values()
                     .flat_map(|slot| slot.pending_sequences.values())
-                    .filter(|pending| pending.attempts >= maximum_attempts)
+                    .filter(|pending| pending.retry.exhausted())
                     .count(),
             ),
             last_cleanup: self.last_cleanup,
@@ -56,7 +53,7 @@ where
         let mut conservative_footprint =
             ConservativeFootprint::Known(domain_contracts::MemoryFootprint::default());
         for pending in self.pending_models.values() {
-            let RetainedOwnership::Unverified {
+            let RetainedOwner::Unverified {
                 conservative_footprint: owner_footprint,
                 ..
             } = pending.ownership
@@ -72,7 +69,7 @@ where
             .values()
             .flat_map(|slot| slot.pending_sequences.values())
         {
-            let RetainedOwnership::Unverified {
+            let RetainedOwner::Unverified {
                 conservative_footprint: owner_footprint,
                 ..
             } = pending.ownership
@@ -112,10 +109,10 @@ where
                 exhausted_cleanup_sequences: saturating_u32(
                     slot.pending_sequences
                         .values()
-                        .filter(|pending| pending.attempts >= self.maximum_cleanup_attempts())
+                        .filter(|pending| pending.retry.exhausted())
                         .count(),
                 ),
-                degraded: slot.poisoned,
+                degraded: !slot.pending_sequences.is_empty(),
             })
             .collect()
     }
@@ -126,7 +123,7 @@ where
             .values()
             .map(|pending| RetainedModelSnapshot {
                 handle: pending.handle,
-                cleanup: self.model_cleanup_retry_state(pending),
+                cleanup: pending.cleanup_state(),
             })
             .collect()
     }
@@ -153,14 +150,14 @@ where
             .pending_sequences
             .get(&request_id)?;
         let handle = self.models.get(&model_id)?.handle;
-        Some(pending.cleanup_state(handle, self.maximum_cleanup_attempts()))
+        Some(pending.cleanup_state(handle))
     }
 
     /// Returns the retained two-failure report for one quarantined request.
     #[must_use]
     pub fn request_cleanup_failure(&self, request_id: RequestId) -> Option<CleanupFailureReport> {
         self.request_cleanup_state(request_id)
-            .map(|state| state.failure)
+            .map(CleanupRetryState::failure)
     }
 
     /// Returns the complete bounded retry state for one quarantined model-level owner.
@@ -168,7 +165,7 @@ where
     pub fn model_cleanup_state(&self, model_id: ModelId) -> Option<CleanupRetryState> {
         self.pending_models
             .get(&model_id)
-            .map(|pending| self.model_cleanup_retry_state(pending))
+            .map(|pending| pending.cleanup_state())
     }
 
     /// Returns whether a complete model or failed load is retained for explicit cleanup.
@@ -231,27 +228,20 @@ where
             exhausted_cleanup_sequences: saturating_u32(
                 slot.pending_sequences
                     .values()
-                    .filter(|pending| pending.attempts >= self.maximum_cleanup_attempts())
+                    .filter(|pending| pending.retry.exhausted())
                     .count(),
             ),
-            degraded: slot.poisoned,
+            degraded: !slot.pending_sequences.is_empty(),
         })
     }
-    const fn model_cleanup_retry_state(
-        &self,
-        pending: &PendingModel<L::Model, FailedLoad<L::FailedPreparation>>,
-    ) -> CleanupRetryState {
-        pending.cleanup_state(self.maximum_cleanup_attempts())
-    }
-
     pub(super) fn first_pending_cleanup_state(&self) -> Option<CleanupRetryState> {
         for slot in self.models.values() {
             if let Some((_, pending)) = slot.pending_sequences.first_key_value() {
-                return Some(pending.cleanup_state(slot.handle, self.maximum_cleanup_attempts()));
+                return Some(pending.cleanup_state(slot.handle));
             }
         }
         self.pending_models
             .first_key_value()
-            .map(|(_, pending)| self.model_cleanup_retry_state(pending))
+            .map(|(_, pending)| pending.cleanup_state())
     }
 }

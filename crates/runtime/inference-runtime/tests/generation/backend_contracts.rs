@@ -64,8 +64,8 @@ fn short_prefill_logits_fail_before_sampling_and_cleanup_the_sequence() -> TestR
     assert!(output.states.iter().any(|state| matches!(
         state,
         GenerationOutputState::CleanupPending { failure, .. }
-            if failure.primary_operation == inference_runtime::RuntimeOperation::Prefill
-                && failure.primary_failure == FailureClass::BackendContract
+            if failure.primary_operation() == inference_runtime::RuntimeOperation::Prefill
+                && failure.primary_failure() == FailureClass::BackendContract
     )));
     {
         let counters = counters.lock().map_err(|_| "counter mutex poisoned")?;
@@ -92,8 +92,8 @@ fn short_decode_logits_fail_before_sampling_and_cleanup_the_sequence() -> TestRe
     assert!(output.states.iter().any(|state| matches!(
         state,
         GenerationOutputState::CleanupPending { failure, .. }
-            if failure.primary_operation == inference_runtime::RuntimeOperation::Decode
-                && failure.primary_failure == FailureClass::BackendContract
+            if failure.primary_operation() == inference_runtime::RuntimeOperation::Decode
+                && failure.primary_failure() == FailureClass::BackendContract
     )));
     {
         let counters = counters.lock().map_err(|_| "counter mutex poisoned")?;

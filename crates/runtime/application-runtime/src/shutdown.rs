@@ -112,7 +112,15 @@ pub fn shutdown(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationError
     }
 
     runtime.shutdown_control.status = ShutdownStatus::Stopping;
-    runtime.state.begin_shutdown();
+    if runtime.state.activity() != crate::ApplicationActivity::ShuttingDown {
+        runtime.state.begin_shutdown().map_err(|error| {
+            ApplicationFailure::from_debug(
+                crate::ApplicationFailureKind::Inference,
+                "application shutdown transition rejected",
+                error,
+            )
+        })?;
+    }
 
     let mut first_error = request_hub_shutdown(runtime).err();
     record_first_error(&mut first_error, shutdown_runtime(runtime).err());
@@ -231,7 +239,7 @@ fn shutdown_runtime(runtime: &mut ApplicationRuntime) -> Result<(), ApplicationE
         }
         RuntimeShutdown::Succeeded(_) => {
             runtime.shutdown_control.inference = InferenceShutdownState::CleanlyStopped;
-            runtime.confirm_runtime_shutdown_released();
+            runtime.confirm_runtime_shutdown_released()?;
             Ok(())
         }
         RuntimeShutdown::Failed(error) => {

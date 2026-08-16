@@ -315,10 +315,31 @@ impl GenerationAdmissionTransaction {
             command,
             commit,
         } = self;
-        runtime.submit_inference(command)?;
+        runtime
+            .state
+            .begin_generation(commit.summary)
+            .map_err(|error| {
+                ApplicationFailure::from_debug(
+                    ApplicationFailureKind::Inference,
+                    "generation start transition rejected",
+                    error,
+                )
+            })?;
+        if let Err(error) = runtime.submit_inference(command) {
+            runtime
+                .state
+                .abort_generation_start(request_id)
+                .map_err(|transition| {
+                    ApplicationFailure::from_debug(
+                        ApplicationFailureKind::Inference,
+                        "generation submission rollback was rejected",
+                        transition,
+                    )
+                })?;
+            return Err(error);
+        }
         commit.application.apply(runtime);
         runtime.generation.commit_session(commit.session);
-        runtime.state.begin_generation(commit.summary);
         Ok(request_id)
     }
 }

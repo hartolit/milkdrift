@@ -3,9 +3,10 @@ use domain_contracts::{
     ModelLifecycle, ModelLifecycleState, ModelLoader, RequestId, SequenceId, SequencePlan,
 };
 
+use crate::error::{CleanupRetryProgress, RetainedOwner};
 use crate::{
-    CleanupFailureReport, CleanupPoll, CleanupRetryState, FailureDetail, RetainedOwnership,
-    RuntimeError, RuntimeOperation,
+    CleanupFailureReport, CleanupPoll, CleanupRetryState, FailureDetail, RuntimeError,
+    RuntimeOperation,
 };
 
 use super::{
@@ -120,13 +121,12 @@ where
     }
 
     fn next_sequence_cleanup(&self) -> Option<(domain_contracts::ModelId, RequestId)> {
-        let maximum_attempts = self.maximum_cleanup_attempts();
         let cursor = self.cleanup_scheduler.sequence_cursor;
         let mut first = None;
         let mut after = None;
         for (model_id, slot) in &self.models {
             for (request_id, pending) in &slot.pending_sequences {
-                if pending.attempts >= maximum_attempts {
+                if pending.retry.exhausted() {
                     continue;
                 }
                 let key = (*model_id, *request_id);
@@ -146,7 +146,6 @@ where
     }
 
     fn next_model_cleanup(&self, class: CleanupClass) -> Option<domain_contracts::ModelId> {
-        let maximum_attempts = self.maximum_cleanup_attempts();
         let cursor = match class {
             CleanupClass::FailedPreparation => self.cleanup_scheduler.failed_preparation_cursor,
             CleanupClass::CompleteModel => self.cleanup_scheduler.complete_model_cursor,
@@ -155,7 +154,7 @@ where
         let mut first = None;
         let mut after = None;
         for (model_id, pending) in &self.pending_models {
-            if pending.attempts >= maximum_attempts || pending.owner.cleanup_class() != class {
+            if pending.retry.exhausted() || pending.owner.cleanup_class() != class {
                 continue;
             }
             if first.is_none() {
@@ -174,11 +173,10 @@ where
         model_id: domain_contracts::ModelId,
         request_id: RequestId,
     ) -> Result<CleanupPoll, RuntimeError> {
-        let maximum_attempts = self.maximum_cleanup_attempts();
         let (
             handle,
             sequence_id,
-            next_attempts,
+            next_retry,
             next_slot_reserved,
             next_reserved,
             next_pending_count,
@@ -191,7 +189,7 @@ where
                 .pending_sequences
                 .get(&request_id)
                 .ok_or(RuntimeError::BackendContractViolation)?;
-            if pending.attempts >= maximum_attempts
+            if pending.retry.exhausted()
                 || self.pending_request_index.get(&request_id) != Some(&model_id)
                 || self.pending_sequence_index.get(&pending.sequence_id) != Some(&request_id)
             {
@@ -202,8 +200,8 @@ where
                 slot.handle,
                 pending.sequence_id,
                 pending
-                    .attempts
-                    .checked_add(1)
+                    .retry
+                    .advance()
                     .ok_or(RuntimeError::BackendContractViolation)?,
                 match exact_footprint {
                     Some(footprint) => checked_sub_footprint(slot.reserved_footprint, footprint)?,
@@ -228,7 +226,7 @@ where
                 .pending_sequences
                 .remove(&request_id)
                 .ok_or(RuntimeError::BackendContractViolation)?;
-            pending.attempts = next_attempts;
+            pending.retry = next_retry;
             pending.reconcile_contract();
             let result = slot.model.destroy_sequence(&mut pending.sequence);
             pending.reconcile_contract();
@@ -236,9 +234,10 @@ where
         };
 
         if let Err(error) = cleanup_result {
-            pending.failure.cleanup_failure = FailureDetail::Sequence(error).class();
-            pending.failure.cleanup_detail = FailureDetail::Sequence(error);
-            let state = pending.cleanup_state(handle, maximum_attempts);
+            pending
+                .failure
+                .replace_cleanup_detail(FailureDetail::Sequence(error));
+            let state = pending.cleanup_state(handle);
             let slot = self
                 .models
                 .get_mut(&model_id)
@@ -257,13 +256,15 @@ where
             });
         }
 
-        let state = pending.cleanup_state(handle, maximum_attempts).released();
+        let state = pending
+            .cleanup_state(handle)
+            .release()
+            .map_err(|_| RuntimeError::BackendContractViolation)?;
         let slot = self
             .models
             .get_mut(&model_id)
             .ok_or(RuntimeError::ModelNotLoaded(model_id))?;
         slot.reserved_footprint = next_slot_reserved;
-        slot.poisoned = !slot.pending_sequences.is_empty();
         self.pending_request_index.remove(&request_id);
         self.pending_sequence_index.remove(&sequence_id);
         self.pending_cleanup_sequences = next_pending_count;
@@ -276,13 +277,12 @@ where
         &mut self,
         model_id: domain_contracts::ModelId,
     ) -> Result<CleanupPoll, RuntimeError> {
-        let maximum_attempts = self.maximum_cleanup_attempts();
-        let (next_attempts, reserved_after_release) = {
+        let (next_retry, reserved_after_release) = {
             let pending = self
                 .pending_models
                 .get(&model_id)
                 .ok_or(RuntimeError::ModelNotLoaded(model_id))?;
-            if pending.attempts >= maximum_attempts {
+            if pending.retry.exhausted() {
                 return Err(RuntimeError::BackendContractViolation);
             }
             let reserved_after_release = match pending.ownership.exact_footprint() {
@@ -291,8 +291,8 @@ where
             };
             (
                 pending
-                    .attempts
-                    .checked_add(1)
+                    .retry
+                    .advance()
                     .ok_or(RuntimeError::BackendContractViolation)?,
                 reserved_after_release,
             )
@@ -302,7 +302,7 @@ where
             .pending_models
             .remove(&model_id)
             .ok_or(RuntimeError::ModelNotLoaded(model_id))?;
-        pending.attempts = next_attempts;
+        pending.retry = next_retry;
 
         // A failed-preparation owner must continue to report the exact plan that
         // E0 admitted. Check both sides of the retry because a failing cleanup
@@ -312,15 +312,16 @@ where
         pending.reconcile_failed_preparation_contract();
 
         if let Err(error) = cleanup_result {
-            pending.failure.cleanup_failure = FailureDetail::Synchronization(error).class();
-            pending.failure.cleanup_detail = FailureDetail::Synchronization(error);
+            pending
+                .failure
+                .replace_cleanup_detail(FailureDetail::Synchronization(error));
             if pending.ownership.blocks_admission() {
                 // The formerly exact reservation is no longer represented as an
                 // exact quantity. The conservative evidence remains observable,
                 // and admission stays blocked until explicit cleanup succeeds.
                 self.reserved_footprint = reserved_after_release;
             }
-            let state = pending.cleanup_state(maximum_attempts);
+            let state = pending.cleanup_state();
             let replaced = self.pending_models.insert(model_id, pending);
             debug_assert!(replaced.is_none(), "cleanup owner was removed for retry");
             self.last_cleanup = Some(state);
@@ -331,7 +332,10 @@ where
             });
         }
 
-        let state = pending.cleanup_state(maximum_attempts).released();
+        let state = pending
+            .cleanup_state()
+            .release()
+            .map_err(|_| RuntimeError::BackendContractViolation)?;
         self.reserved_footprint = reserved_after_release;
         self.last_cleanup = Some(state);
         Ok(CleanupPoll::Released(state))
@@ -369,12 +373,10 @@ where
                     .models
                     .get(&transition.model_id)
                     .and_then(|slot| slot.pending_sequences.get(&request_id))
-                    .map(|pending| {
-                        pending.cleanup_state(transition.handle, self.maximum_cleanup_attempts())
-                    })
+                    .map(|pending| pending.cleanup_state(transition.handle))
                     .ok_or(RuntimeError::BackendContractViolation)?;
-                debug_assert_eq!(state.failure, report);
-                if state.ownership.blocks_admission() {
+                debug_assert_eq!(state.failure(), report);
+                if state.ownership().blocks_admission() {
                     self.reserved_footprint = transition.released_runtime_footprint;
                 }
                 self.last_cleanup = Some(state);
@@ -472,6 +474,7 @@ where
         primary_operation: RuntimeOperation,
         primary_detail: FailureDetail,
     ) -> Result<RequestRemovalDisposition, RuntimeError> {
+        let retry = CleanupRetryProgress::initial(self.maximum_cleanup_attempts());
         let slot = self
             .models
             .get_mut(&transition.model_id)
@@ -516,9 +519,9 @@ where
         );
         let reported_footprint = report_after_cleanup.reservation.total_footprint();
         let ownership = if contract_matches {
-            RetainedOwnership::Exact(transition.backend_footprint)
+            RetainedOwner::Exact(transition.backend_footprint)
         } else {
-            RetainedOwnership::Unverified {
+            RetainedOwner::Unverified {
                 accepted_footprint: transition.backend_footprint,
                 reported_footprint,
                 conservative_footprint: super::memory::conservative_footprint(
@@ -529,8 +532,10 @@ where
         };
         let mut report = report;
         if !contract_matches {
-            report.primary_failure = crate::FailureClass::BackendContract;
-            report.primary_detail = FailureDetail::Class(crate::FailureClass::BackendContract);
+            report.replace_primary(
+                report.primary_operation(),
+                FailureDetail::Class(crate::FailureClass::BackendContract),
+            );
         }
         let pending = PendingSequence {
             request_id,
@@ -539,14 +544,13 @@ where
             accepted_plan: transition.accepted_plan,
             ownership,
             failure: report,
-            attempts: 1,
+            retry,
         };
         slot.reserved_footprint = if ownership.exact_footprint().is_some() {
             transition.retained_slot_footprint
         } else {
             transition.released_slot_footprint
         };
-        slot.poisoned = true;
         let replaced = slot.pending_sequences.insert(request_id, pending);
         debug_assert!(
             replaced.is_none(),

@@ -16,7 +16,7 @@ use tokenization::Tokenizer;
 
 use crate::hub_worker::{HubCommand, HubEvent};
 use crate::local::{CANDLE_BACKEND_ID, application_device, execution_device};
-use crate::state::{LoadedModelCommit, LoadedModelExecution, LoadedModelLimits};
+use crate::state::LoadedModelCommit;
 use crate::support::{
     application_configuration_declared_scalar_type, application_scalar_type, hub_failure,
     model_resolution_failure, model_source_failure, stored_configuration_declared_scalar_type,
@@ -172,6 +172,13 @@ impl ApplicationRuntime {
         )
         .map_err(model_source_failure)?;
         let ticket = self.next_ticket()?;
+        self.state.validate_begin_loading().map_err(|error| {
+            ApplicationFailure::from_debug(
+                ApplicationFailureKind::Inference,
+                "application load transition rejected",
+                error,
+            )
+        })?;
         self.submit_inference(RuntimeCommand::LoadModel {
             ticket,
             model_id: MODEL_ID,
@@ -187,7 +194,13 @@ impl ApplicationRuntime {
                 memory_budget: self.memory_budget,
             },
         });
-        self.state.begin_loading();
+        self.state.begin_loading().map_err(|error| {
+            ApplicationFailure::from_debug(
+                ApplicationFailureKind::Inference,
+                "application load commit transition rejected",
+                error,
+            )
+        })?;
         Ok(())
     }
 
@@ -244,6 +257,13 @@ impl ApplicationRuntime {
         let reference =
             HubModelReference::new(repository, revision).map_err(|error| hub_failure(&error))?;
         let normalized = ModelSelection::new(reference.repository(), reference.revision());
+        self.state.validate_begin_resolving().map_err(|error| {
+            ApplicationFailure::from_debug(
+                ApplicationFailureKind::ArtifactResolution,
+                "application resolution transition rejected",
+                error,
+            )
+        })?;
         match self.hub_commands.try_send(HubCommand::Resolve(reference)) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => return Err(ApplicationError::HubBusy),
@@ -253,8 +273,14 @@ impl ApplicationRuntime {
             }
         }
         self.clear_resolution();
+        self.state.begin_resolving().map_err(|error| {
+            ApplicationFailure::from_debug(
+                ApplicationFailureKind::ArtifactResolution,
+                "application resolution commit transition rejected",
+                error,
+            )
+        })?;
         self.pending_hub_selection = Some(normalized);
-        self.state.begin_resolving();
         Ok(())
     }
 
@@ -263,10 +289,15 @@ impl ApplicationRuntime {
             HubEvent::Resolved(Ok(artifacts)) => self.accept_resolved_artifacts(artifacts),
             HubEvent::Resolved(Err(error)) => {
                 self.pending_hub_selection = None;
-                self.state.set_idle();
-                ApplicationEvent::ModelResolutionFailed {
-                    failure: model_resolution_failure(&error),
-                }
+                let failure = match self.state.fail_resolution() {
+                    Ok(()) => model_resolution_failure(&error),
+                    Err(transition) => ApplicationFailure::from_debug(
+                        ApplicationFailureKind::ArtifactResolution,
+                        "stale model-resolution failure was rejected",
+                        transition,
+                    ),
+                };
+                ApplicationEvent::ModelResolutionFailed { failure }
             }
         }
     }
@@ -319,7 +350,13 @@ impl ApplicationRuntime {
         let persistence_warning = self.persist_resolved(&artifacts, &resolved).err();
         self.resolved_artifacts = Some(artifacts);
         self.tokenizer = Some(tokenizer);
-        self.state.set_resolved(resolved.clone());
+        if let Err(error) = self.state.complete_resolution(resolved.clone()) {
+            return self.reject_resolution(ApplicationFailure::from_debug(
+                ApplicationFailureKind::ArtifactResolution,
+                "stale model resolution event was rejected",
+                error,
+            ));
+        }
         ApplicationEvent::ModelResolved {
             model: resolved,
             persistence_warning,
@@ -328,7 +365,14 @@ impl ApplicationRuntime {
 
     fn reject_resolution(&mut self, failure: ApplicationFailure) -> ApplicationEvent {
         self.clear_resolution();
-        self.state.set_idle();
+        let failure = match self.state.fail_resolution() {
+            Ok(()) => failure,
+            Err(transition) => ApplicationFailure::from_debug(
+                ApplicationFailureKind::ArtifactResolution,
+                "stale model-resolution rejection was rejected",
+                transition,
+            ),
+        };
         ApplicationEvent::ModelResolutionFailed { failure }
     }
 
@@ -337,7 +381,6 @@ impl ApplicationRuntime {
         self.pending_hub_selection = None;
         self.pending_load = None;
         self.tokenizer = None;
-        self.state.clear_resolved();
     }
 
     pub(super) fn process_model_loaded(
@@ -367,18 +410,32 @@ impl ApplicationRuntime {
                 return Some(self.current_cleanup_event());
             }
             Err(error) => {
-                self.state.set_idle();
-                return Some(ApplicationEvent::ModelLoadFailed {
-                    failure: model_load_failure(error),
-                });
+                let failure = match self.state.fail_loading() {
+                    Ok(()) => model_load_failure(error),
+                    Err(transition) => ApplicationFailure::from_debug(
+                        ApplicationFailureKind::Inference,
+                        "stale model-load failure was rejected",
+                        transition,
+                    ),
+                };
+                return Some(ApplicationEvent::ModelLoadFailed { failure });
             }
         };
 
         match self.validate_load_receipt(&transaction, &receipt) {
             Ok(validated) => {
                 self.model_cleanup = None;
-                self.state.clear_retained_model();
-                self.state.set_loaded(validated.loaded.clone());
+                if let Err(error) = self.state.complete_loading(validated.loaded.clone()) {
+                    return Some(self.reject_incompatible_model(
+                        validated.loaded.handle(),
+                        validated.loaded.reserved_footprint(),
+                        ApplicationFailure::from_debug(
+                            ApplicationFailureKind::IncompatibleReceipt,
+                            "stale model load completion was rejected",
+                            error,
+                        ),
+                    ));
+                }
                 Some(ApplicationEvent::ModelLoaded {
                     model: validated.loaded,
                 })
@@ -499,15 +556,11 @@ impl ApplicationRuntime {
             handle: receipt.handle,
             selection: resolved.selection().clone(),
             identity: resolved.identity().clone(),
-            execution: LoadedModelExecution {
-                device: actual_device,
-                scalar_type: execution_scalar_type,
-            },
-            limits: LoadedModelLimits {
-                vocabulary_size: descriptor.metadata.vocabulary_size,
-                maximum_context_tokens: descriptor.capabilities.maximum_context_tokens,
-                maximum_prefill_batch: descriptor.capabilities.maximum_prefill_batch,
-            },
+            device: actual_device,
+            execution_scalar_type,
+            vocabulary_size: descriptor.metadata.vocabulary_size,
+            maximum_context_tokens: descriptor.capabilities.maximum_context_tokens,
+            maximum_prefill_batch: descriptor.capabilities.maximum_prefill_batch,
             generation_mode,
             reserved_footprint: receipt.reserved_footprint,
         });
