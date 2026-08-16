@@ -20,6 +20,7 @@ use inference_runtime::{
 use sha2::{Digest, Sha256};
 
 use super::super::ApplicationRuntime;
+use crate::SamplingConfig;
 use crate::{
     ApplicationDevice, ApplicationEvent, ApplicationOutputRecordKind, ApplicationOutputState,
     ApplicationRuntimeConfiguration, ApplicationScalarType, GenerationSeed, GenerationSettings,
@@ -504,19 +505,10 @@ where
     }
 }
 
-pub(super) const fn deterministic_settings(maximum_new_tokens: u32) -> GenerationSettings {
-    GenerationSettings {
-        maximum_new_tokens,
-        temperature: 1.0,
-        top_k: 1,
-        top_p: 1.0,
-        min_p: 0.0,
-        repetition_penalty: 1.0,
-        repetition_window: 0,
-        seed: GenerationSeed::Fixed(7),
-        eos_tokens: Vec::new(),
-        stop_sequences: Vec::new(),
-    }
+pub(super) fn deterministic_settings(maximum_new_tokens: u32) -> GenerationSettings {
+    GenerationSettings::new(maximum_new_tokens, SamplingConfig::greedy())
+        .unwrap_or_default()
+        .with_seed(GenerationSeed::Fixed(7))
 }
 
 pub(super) fn unique_database_path() -> PathBuf {

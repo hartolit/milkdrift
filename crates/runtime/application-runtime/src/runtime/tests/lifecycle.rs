@@ -9,8 +9,8 @@ use crate::{
     ApplicationActivity, ApplicationError, ApplicationEvent, ApplicationFailure,
     ApplicationFailureKind, ApplicationOutputRecordKind, ApplicationOutputState,
     ApplicationRuntime, ApplicationRuntimeConfiguration, ApplicationWorker, ConversationRole,
-    GenerationPhase, GenerationSettingsField, GenerationTerminalKind, GenerationTerminalOutcome,
-    LoadedModel, ModelUnloadBehavior, ResponseAttemptState,
+    GenerationPhase, GenerationSettings, GenerationSettingsField, GenerationTerminalKind,
+    GenerationTerminalOutcome, LoadedModel, ModelUnloadBehavior, ResponseAttemptState,
 };
 
 #[test]
@@ -429,10 +429,8 @@ fn unknown_chat_compatibility_fails_without_guessing_a_template() -> TestResult 
 #[test]
 fn invalid_busy_and_eos_admission_are_normalized() -> TestResult {
     with_loaded_runtime(default_test_configuration, |runtime, loaded| {
-        let mut invalid = deterministic_settings(1);
-        invalid.maximum_new_tokens = 0;
         assert_eq!(
-            runtime.start_generation("", invalid),
+            GenerationSettings::new(0, crate::SamplingConfig::greedy()),
             Err(ApplicationError::InvalidGenerationSettings(
                 GenerationSettingsField::MaximumNewTokens
             ))
@@ -441,21 +439,21 @@ fn invalid_busy_and_eos_admission_are_normalized() -> TestResult {
             runtime.start_generation("", deterministic_settings(1)),
             Err(ApplicationError::EmptyPrompt)
         );
-        let mut empty_with_unencodable_stop = deterministic_settings(1);
-        empty_with_unencodable_stop.stop_sequences.push(
-            "word ".repeat(
-                usize::try_from(loaded.maximum_context_tokens())
-                    .unwrap_or(usize::MAX)
-                    .saturating_add(1),
-            ),
-        );
+        let empty_with_unencodable_stop = deterministic_settings(1)
+            .with_stop_sequences(vec![
+                "word ".repeat(
+                    usize::try_from(loaded.maximum_context_tokens())
+                        .unwrap_or(usize::MAX)
+                        .saturating_add(1),
+                ),
+            ])
+            .map_err(application_error)?;
         assert_eq!(
             runtime.start_generation("", empty_with_unencodable_stop),
             Err(ApplicationError::EmptyPrompt)
         );
 
-        let mut eos = deterministic_settings(3);
-        eos.eos_tokens.push(TokenId::new(2));
+        let eos = deterministic_settings(3).with_eos_tokens(vec![TokenId::new(2)]);
         let request_id = runtime
             .start_generation("prompt seed", eos)
             .map_err(application_error)?;
@@ -479,8 +477,9 @@ fn invalid_busy_and_eos_admission_are_normalized() -> TestResult {
 #[test]
 fn textual_stop_sequence_is_encoded_and_reported() -> TestResult {
     with_loaded_runtime(default_test_configuration, |runtime, _loaded| {
-        let mut settings = deterministic_settings(4);
-        settings.stop_sequences.push("seed".to_owned());
+        let settings = deterministic_settings(4)
+            .with_stop_sequences(vec!["seed".to_owned()])
+            .map_err(application_error)?;
         let request_id = runtime
             .start_generation("prompt seed", settings)
             .map_err(application_error)?;

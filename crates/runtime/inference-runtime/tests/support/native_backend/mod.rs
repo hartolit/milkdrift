@@ -70,7 +70,7 @@ pub(crate) fn candle_fixture_covers_generation_sampling_eos_and_lifecycle() -> T
     assert_finished(&greedy_output, FinishReason::TokenLimit);
     assert_released_snapshot(&hosted, &loaded, CommandTicket::new(20))?;
 
-    let sampling = stochastic_sampling();
+    let sampling = stochastic_sampling()?;
     let first_seeded = generation_request(2, 102, 5, sampling, 0x5eed, Box::new([]))?;
     submit_generation(&hosted, handle, CommandTicket::new(11), &first_seeded)?;
     let first_seeded_output = collect_until_released(

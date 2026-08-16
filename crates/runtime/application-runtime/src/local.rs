@@ -234,7 +234,7 @@ mod tests {
             None
         );
         assert_eq!(
-            application_device(ExecutionDevice::new(DeviceId::new(0), DeviceKind::Metal)),
+            application_device(ExecutionDevice::new(DeviceId::new(0), DeviceKind::Other(1))),
             None
         );
     }

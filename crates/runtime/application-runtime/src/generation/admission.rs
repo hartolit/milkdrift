@@ -84,9 +84,9 @@ impl ValidatedGenerationSettings {
         settings: GenerationSettings,
         loaded: &LoadedModel,
     ) -> Result<Self, ApplicationError> {
-        let sampling = settings.validate()?;
-        if settings
-            .eos_tokens
+        let (maximum_new_tokens, sampling, seed, eos_tokens, stop_sequences) =
+            settings.into_parts();
+        if eos_tokens
             .iter()
             .any(|token| token.get() >= loaded.vocabulary_size())
         {
@@ -94,15 +94,12 @@ impl ValidatedGenerationSettings {
                 GenerationSettingsField::EndOfSequenceToken,
             ));
         }
-        let maximum_new_tokens = NonZeroU32::new(settings.maximum_new_tokens).ok_or(
-            ApplicationError::InvalidGenerationSettings(GenerationSettingsField::MaximumNewTokens),
-        )?;
         Ok(Self {
             maximum_new_tokens,
             sampling,
-            seed: settings.seed,
-            eos_tokens: settings.eos_tokens,
-            stop_sequences: settings.stop_sequences,
+            seed,
+            eos_tokens,
+            stop_sequences,
         })
     }
 

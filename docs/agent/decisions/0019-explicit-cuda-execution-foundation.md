@@ -121,7 +121,7 @@ Slint remains a thin presentation adapter with stable Rust-owned identity/index 
 
 ### Deferred targets
 
-Metal remains domain vocabulary only. AMD/ROCm and Metal execution, cuDNN, flash attention, NCCL, multi-GPU, GPU-side sampling, GGUF/quantization, another engine, and automatic CPU fallback remain unsupported.
+Unimplemented device families use only the backend-defined portable device code; the domain contract does not advertise a named Metal capability. AMD/ROCm and Metal execution, cuDNN, flash attention, NCCL, multi-GPU, GPU-side sampling, GGUF/quantization, another engine, and automatic CPU fallback remain unsupported.
 
 ## Evidence boundary
 

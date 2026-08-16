@@ -57,36 +57,107 @@ pub enum StoredAcceleratorMemoryPolicy {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApplicationSettings {
     /// Default Hub repository, or empty before the first repository selection.
-    pub default_repository: String,
+    default_repository: String,
     /// Default Hub revision.
-    pub default_revision: String,
+    default_revision: String,
     /// Aggregate host-memory admission bound.
-    pub maximum_host_memory_bytes: u64,
+    maximum_host_memory_bytes: u64,
     /// Runtime device selected for application work.
-    pub selected_device: StoredApplicationDevice,
+    selected_device: StoredApplicationDevice,
     /// Accelerator-memory admission policy.
-    pub accelerator_memory_policy: StoredAcceleratorMemoryPolicy,
+    accelerator_memory_policy: StoredAcceleratorMemoryPolicy,
     /// Mandatory drain timeout used before forced cancellation.
-    pub drain_timeout_milliseconds: u64,
+    drain_timeout_milliseconds: std::num::NonZeroU64,
 }
 
 impl ApplicationSettings {
-    /// Validates semantic fields before persistence.
+    /// Creates validated persisted application settings.
     ///
     /// # Errors
     ///
     /// Returns [`StorageError::InvalidField`] when a nonempty repository consists
     /// only of whitespace, the revision is empty or whitespace-only, or the drain
     /// timeout is zero.
-    pub fn validate(&self) -> Result<(), StorageError> {
-        if !self.default_repository.is_empty() {
-            validate_non_empty(&self.default_repository, Field::Repository)?;
+    pub fn new(
+        default_repository: String,
+        default_revision: String,
+        maximum_host_memory_bytes: u64,
+        selected_device: StoredApplicationDevice,
+        accelerator_memory_policy: StoredAcceleratorMemoryPolicy,
+        drain_timeout_milliseconds: u64,
+    ) -> Result<Self, StorageError> {
+        if !default_repository.is_empty() {
+            validate_non_empty(&default_repository, Field::Repository)?;
         }
-        validate_non_empty(&self.default_revision, Field::Revision)?;
-        if self.drain_timeout_milliseconds == 0 {
-            return Err(StorageError::InvalidField(Field::DrainTimeout));
-        }
-        Ok(())
+        validate_non_empty(&default_revision, Field::Revision)?;
+        let drain_timeout_milliseconds = std::num::NonZeroU64::new(drain_timeout_milliseconds)
+            .ok_or(StorageError::InvalidField(Field::DrainTimeout))?;
+        Ok(Self {
+            default_repository,
+            default_revision,
+            maximum_host_memory_bytes,
+            selected_device,
+            accelerator_memory_policy,
+            drain_timeout_milliseconds,
+        })
+    }
+
+    /// Returns the default Hub repository, which may be empty.
+    #[must_use]
+    pub fn default_repository(&self) -> &str {
+        self.default_repository.as_str()
+    }
+
+    /// Returns the non-empty default Hub revision.
+    #[must_use]
+    pub fn default_revision(&self) -> &str {
+        self.default_revision.as_str()
+    }
+
+    /// Returns the aggregate host-memory admission bound.
+    #[must_use]
+    pub const fn maximum_host_memory_bytes(&self) -> u64 {
+        self.maximum_host_memory_bytes
+    }
+
+    /// Returns the persisted runtime device selection.
+    #[must_use]
+    pub const fn selected_device(&self) -> StoredApplicationDevice {
+        self.selected_device
+    }
+
+    /// Returns the accelerator-memory admission policy.
+    #[must_use]
+    pub const fn accelerator_memory_policy(&self) -> StoredAcceleratorMemoryPolicy {
+        self.accelerator_memory_policy
+    }
+
+    /// Returns the mandatory non-zero drain timeout in milliseconds.
+    #[must_use]
+    pub const fn drain_timeout_milliseconds(&self) -> u64 {
+        self.drain_timeout_milliseconds.get()
+    }
+
+    /// Consumes the record into its stable persisted fields.
+    #[must_use]
+    pub fn into_parts(
+        self,
+    ) -> (
+        String,
+        String,
+        u64,
+        StoredApplicationDevice,
+        StoredAcceleratorMemoryPolicy,
+        u64,
+    ) {
+        (
+            self.default_repository,
+            self.default_revision,
+            self.maximum_host_memory_bytes,
+            self.selected_device,
+            self.accelerator_memory_policy,
+            self.drain_timeout_milliseconds.get(),
+        )
     }
 }
 
@@ -105,31 +176,74 @@ pub enum StoredScalarType {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelRecord {
     /// User-visible unique catalogue name.
-    pub name: String,
+    name: String,
     /// Hugging Face repository.
-    pub repository: String,
+    repository: String,
     /// Branch, tag, reference, or commit.
-    pub revision: String,
+    revision: String,
     /// Optional scalar metadata declared by immutable model configuration.
     ///
     /// This is producer intent only. It does not describe per-tensor inventory or
     /// the scalar type selected for execution.
-    pub configuration_declared_scalar_type: Option<StoredScalarType>,
+    configuration_declared_scalar_type: Option<StoredScalarType>,
     /// Last successful model resolution in Unix milliseconds, supplied by the application.
-    pub last_resolved_unix_milliseconds: u64,
+    last_resolved_unix_milliseconds: u64,
 }
 
 impl ModelRecord {
-    /// Validates catalogue identity and Hub selection.
+    /// Creates a validated catalogue identity and Hub selection.
     ///
     /// # Errors
     ///
     /// Returns [`StorageError::InvalidField`] when the name, repository, or
     /// revision is empty or consists only of whitespace.
-    pub fn validate(&self) -> Result<(), StorageError> {
-        validate_non_empty(&self.name, Field::ModelName)?;
-        validate_non_empty(&self.repository, Field::Repository)?;
-        validate_non_empty(&self.revision, Field::Revision)
+    pub fn new(
+        name: String,
+        repository: String,
+        revision: String,
+        configuration_declared_scalar_type: Option<StoredScalarType>,
+        last_resolved_unix_milliseconds: u64,
+    ) -> Result<Self, StorageError> {
+        validate_non_empty(&name, Field::ModelName)?;
+        validate_non_empty(&repository, Field::Repository)?;
+        validate_non_empty(&revision, Field::Revision)?;
+        Ok(Self {
+            name,
+            repository,
+            revision,
+            configuration_declared_scalar_type,
+            last_resolved_unix_milliseconds,
+        })
+    }
+
+    /// Returns the unique catalogue name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        self.name.as_str()
+    }
+
+    /// Returns the Hub repository.
+    #[must_use]
+    pub fn repository(&self) -> &str {
+        self.repository.as_str()
+    }
+
+    /// Returns the immutable branch, reference, tag, or commit.
+    #[must_use]
+    pub fn revision(&self) -> &str {
+        self.revision.as_str()
+    }
+
+    /// Returns optional scalar metadata declared by model configuration.
+    #[must_use]
+    pub const fn configuration_declared_scalar_type(&self) -> Option<StoredScalarType> {
+        self.configuration_declared_scalar_type
+    }
+
+    /// Returns the application-supplied last-resolution timestamp.
+    #[must_use]
+    pub const fn last_resolved_unix_milliseconds(&self) -> u64 {
+        self.last_resolved_unix_milliseconds
     }
 }
 
@@ -312,7 +426,6 @@ impl RedbStorage {
     /// [`StorageError::StringTooLong`] if a persisted string exceeds the binary
     /// format's length limit, or [`StorageError::Database`] if the write fails.
     pub fn save_settings(&self, settings: &ApplicationSettings) -> Result<(), StorageError> {
-        settings.validate()?;
         let encoded = encode_settings(settings)?;
         self.insert(SETTINGS_TABLE, SETTINGS_KEY, encoded.as_slice())
     }
@@ -339,7 +452,6 @@ impl RedbStorage {
     /// [`StorageError::StringTooLong`] if a persisted string exceeds the binary
     /// format's length limit, or [`StorageError::Database`] if the write fails.
     pub fn upsert_model(&self, record: &ModelRecord) -> Result<(), StorageError> {
-        record.validate()?;
         let encoded = encode_model(record)?;
         self.insert(MODELS_TABLE, record.name.as_str(), encoded.as_slice())
     }
@@ -482,7 +594,7 @@ fn encode_settings(settings: &ApplicationSettings) -> Result<Vec<u8>, StorageErr
             output.extend_from_slice(&bytes.get().to_le_bytes());
         }
     }
-    output.extend_from_slice(&settings.drain_timeout_milliseconds.to_le_bytes());
+    output.extend_from_slice(&settings.drain_timeout_milliseconds.get().to_le_bytes());
     Ok(output)
 }
 
@@ -494,7 +606,6 @@ fn decode_settings(bytes: &[u8]) -> Result<ApplicationSettings, StorageError> {
         version => return Err(StorageError::UnsupportedVersion(version)),
     };
     decoder.finish()?;
-    settings.validate()?;
     Ok(settings)
 }
 
@@ -509,14 +620,14 @@ fn decode_settings_v1(decoder: &mut Decoder<'_>) -> Result<ApplicationSettings, 
     };
     let drain_timeout_milliseconds = decoder.u64()?;
 
-    Ok(ApplicationSettings {
+    ApplicationSettings::new(
         default_repository,
         default_revision,
         maximum_host_memory_bytes,
-        selected_device: StoredApplicationDevice::Cpu,
+        StoredApplicationDevice::Cpu,
         accelerator_memory_policy,
         drain_timeout_milliseconds,
-    })
+    )
 }
 
 fn decode_settings_v2(decoder: &mut Decoder<'_>) -> Result<ApplicationSettings, StorageError> {
@@ -542,14 +653,14 @@ fn decode_settings_v2(decoder: &mut Decoder<'_>) -> Result<ApplicationSettings, 
     };
     let drain_timeout_milliseconds = decoder.u64()?;
 
-    Ok(ApplicationSettings {
+    ApplicationSettings::new(
         default_repository,
         default_revision,
         maximum_host_memory_bytes,
         selected_device,
         accelerator_memory_policy,
         drain_timeout_milliseconds,
-    })
+    )
 }
 
 fn encode_model(record: &ModelRecord) -> Result<Vec<u8>, StorageError> {
@@ -579,18 +690,17 @@ fn decode_model(bytes: &[u8]) -> Result<ModelRecord, StorageError> {
         version => return Err(StorageError::UnsupportedVersion(version)),
     };
     decoder.finish()?;
-    record.validate()?;
     Ok(record)
 }
 
 fn decode_model_v1(decoder: &mut Decoder<'_>) -> Result<ModelRecord, StorageError> {
-    Ok(ModelRecord {
-        name: decoder.string()?,
-        repository: decoder.string()?,
-        revision: decoder.string()?,
-        configuration_declared_scalar_type: Some(decode_stored_scalar_type(decoder.u8()?)?),
-        last_resolved_unix_milliseconds: decoder.u64()?,
-    })
+    ModelRecord::new(
+        decoder.string()?,
+        decoder.string()?,
+        decoder.string()?,
+        Some(decode_stored_scalar_type(decoder.u8()?)?),
+        decoder.u64()?,
+    )
 }
 
 fn decode_model_v2(decoder: &mut Decoder<'_>) -> Result<ModelRecord, StorageError> {
@@ -603,13 +713,13 @@ fn decode_model_v2(decoder: &mut Decoder<'_>) -> Result<ModelRecord, StorageErro
     };
     let last_resolved_unix_milliseconds = decoder.u64()?;
 
-    Ok(ModelRecord {
+    ModelRecord::new(
         name,
         repository,
         revision,
         configuration_declared_scalar_type,
         last_resolved_unix_milliseconds,
-    })
+    )
 }
 
 fn decode_model_v3(decoder: &mut Decoder<'_>) -> Result<ModelRecord, StorageError> {
@@ -623,13 +733,13 @@ fn decode_model_v3(decoder: &mut Decoder<'_>) -> Result<ModelRecord, StorageErro
     };
     let last_resolved_unix_milliseconds = decoder.u64()?;
 
-    Ok(ModelRecord {
+    ModelRecord::new(
         name,
         repository,
         revision,
         configuration_declared_scalar_type,
         last_resolved_unix_milliseconds,
-    })
+    )
 }
 
 const fn stored_scalar_type_code(scalar_type: StoredScalarType) -> u8 {

@@ -60,7 +60,7 @@ pub(super) fn admit<L: ModelLoader>(
             .sequence
             .rollback(RuntimeError::RequestAlreadyActive(request_id)));
     }
-    Ok(transaction.commit(scheduler))
+    transaction.commit(scheduler)
 }
 
 fn validate<L: ModelLoader>(
@@ -102,8 +102,7 @@ fn validate<L: ModelLoader>(
     }
     let vocabulary_size = usize::try_from(snapshot.descriptor.metadata.vocabulary_size)
         .map_err(|_| RuntimeError::BackendContractViolation)?;
-    let sampler = Sampler::new(request.sampling, request.seed)
-        .map_err(|error| RuntimeError::Sampling(error.into()))?;
+    let sampler = Sampler::new(request.sampling, request.seed);
     let workspace_footprint = generation_workspace_footprint(
         vocabulary_size,
         required_sequence,
@@ -262,13 +261,16 @@ where
         })
     }
 
-    fn commit(self, scheduler: &mut GenerationScheduler) -> GenerationAdmission {
+    fn commit(
+        self,
+        scheduler: &mut GenerationScheduler,
+    ) -> Result<GenerationAdmission, RuntimeError> {
         let Self {
             request_id,
             task,
             sequence,
         } = self;
-        let receipt = sequence.commit();
+        let receipt = sequence.commit()?;
         debug_assert_eq!(receipt.request_id, request_id);
         // The transaction revalidates scheduler identity immediately before
         // this commit. Runtime registry ownership is made visible first; the
@@ -276,7 +278,7 @@ where
         // infallible after every recoverable admission step has completed.
         let replaced = scheduler.requests.insert(request_id, task);
         debug_assert!(replaced.is_none(), "scheduler request was preflighted");
-        GenerationAdmission { request: receipt }
+        Ok(GenerationAdmission { request: receipt })
     }
 }
 

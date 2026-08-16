@@ -39,11 +39,8 @@ fn main() -> ExitCode {
 }
 
 fn measure_sampling_allocations() -> Result<Stats, SamplingError> {
-    let configuration = SamplingConfig {
-        repetition_penalty: REPETITION_PENALTY,
-        ..SamplingConfig::default()
-    };
-    let mut sampler = Sampler::new(configuration, RANDOM_SEED)?;
+    let configuration = SamplingConfig::new(0.8, 40, 0.95, 0.0, REPETITION_PENALTY, 64)?;
+    let mut sampler = Sampler::new(configuration, RANDOM_SEED);
     let baseline_logits = [BASE_LOGIT; VOCABULARY_SIZE];
     let mut logits = baseline_logits;
     let repetition_history = [TokenId::new(REPEATED_TOKEN); REPETITION_HISTORY_LENGTH];

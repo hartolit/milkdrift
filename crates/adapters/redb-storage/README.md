@@ -32,7 +32,7 @@ readable without an implicit rewrite:
 - `LAM1` v2 uses scalar code `3` for absent metadata in its mandatory scalar slot.
 
 The legacy timestamp bytes decode unchanged into the truthfully named
-`ModelRecord::last_resolved_unix_milliseconds` field. Explicitly passing a record
+`ModelRecord::last_resolved_unix_milliseconds()` value. Explicitly passing a record
 read from v1 or v2 to `upsert_model` writes it back as v3.
 
 Every model read verifies that the redb table key exactly matches the model name

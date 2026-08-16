@@ -129,9 +129,9 @@ pub struct ContextEntry<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ContextBudget {
     /// Maximum model context length.
-    pub maximum_tokens: u32,
+    maximum_tokens: u32,
     /// Tokens kept free for model output.
-    pub reserved_output_tokens: u32,
+    reserved_output_tokens: u32,
 }
 
 impl ContextBudget {
@@ -159,6 +159,18 @@ impl ContextBudget {
     pub const fn available_input_tokens(self) -> u32 {
         self.maximum_tokens
             .saturating_sub(self.reserved_output_tokens)
+    }
+
+    /// Returns the complete model context capacity.
+    #[must_use]
+    pub const fn maximum_tokens(self) -> u32 {
+        self.maximum_tokens
+    }
+
+    /// Returns the output capacity reserved before input selection.
+    #[must_use]
+    pub const fn reserved_output_tokens(self) -> u32 {
+        self.reserved_output_tokens
     }
 }
 
@@ -400,8 +412,8 @@ pub fn plan<'entries, 'workspace>(
         selected: selected_result,
         dropped: dropped_result,
         input_tokens,
-        reserved_output_tokens: budget.reserved_output_tokens,
-        maximum_tokens: budget.maximum_tokens,
+        reserved_output_tokens: budget.reserved_output_tokens(),
+        maximum_tokens: budget.maximum_tokens(),
     })
 }
 

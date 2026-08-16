@@ -144,6 +144,7 @@ pub use generation::{
     ApplicationOutputState, ApplicationTextRange, GenerationSeed, GenerationSettings,
     GenerationTerminalKind,
 };
+pub use inference_runtime::SamplingConfig;
 pub use retention::{
     ApplicationConservativeFootprint, ApplicationModelCleanupDisposition, ApplicationRetainedModel,
     ApplicationRetainedModelResource, ApplicationRetainedOwnership,

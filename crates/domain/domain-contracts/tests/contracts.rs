@@ -649,6 +649,12 @@ fn sequence_reservation_requires_a_checked_component_sum() {
         SequenceReservation::checked(internally_overflowing, MemoryFootprint::ZERO),
         None
     );
+
+    let internally_device_overflowing = footprint(0, u64::MAX, 0, 1);
+    assert_eq!(
+        SequenceReservation::checked(internally_device_overflowing, MemoryFootprint::ZERO),
+        None
+    );
 }
 
 #[test]

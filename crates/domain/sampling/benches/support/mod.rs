@@ -224,26 +224,15 @@ impl SamplingCase {
 }
 
 impl ConfigurationFixture {
-    fn build(self) -> SamplingConfig {
+    fn build(self) -> Result<SamplingConfig, SamplingError> {
         match self {
-            Self::Greedy => SamplingConfig::greedy(),
-            Self::Default => SamplingConfig::default(),
-            Self::MinP => SamplingConfig {
-                top_k: 0,
-                top_p: 1.0,
-                min_p: MIN_P_THRESHOLD,
-                ..SamplingConfig::default()
-            },
-            Self::RepetitionDisabled => SamplingConfig {
-                repetition_penalty: 1.0,
-                repetition_window: 0,
-                ..SamplingConfig::default()
-            },
-            Self::RepetitionEnabled => SamplingConfig {
-                repetition_penalty: REPETITION_PENALTY,
-                repetition_window: 0,
-                ..SamplingConfig::default()
-            },
+            Self::Greedy => Ok(SamplingConfig::greedy()),
+            Self::Default => Ok(SamplingConfig::default()),
+            Self::MinP => SamplingConfig::new(0.8, 0, 1.0, MIN_P_THRESHOLD, 1.0, 64),
+            Self::RepetitionDisabled => SamplingConfig::new(0.8, 40, 0.95, 0.0, 1.0, 0),
+            Self::RepetitionEnabled => {
+                SamplingConfig::new(0.8, 40, 0.95, 0.0, REPETITION_PENALTY, 0)
+            }
         }
     }
 }
@@ -266,7 +255,7 @@ impl SamplingFixture {
             history: case.history.build(vocabulary_size)?,
             indices: vec![0_u32; vocabulary_size],
             seen_tokens: vec![0_u32; vocabulary_size],
-            sampler: Sampler::new(case.configuration.build(), RANDOM_SEED)?,
+            sampler: Sampler::new(case.configuration.build()?, RANDOM_SEED),
         })
     }
 

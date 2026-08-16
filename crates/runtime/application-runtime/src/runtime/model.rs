@@ -604,16 +604,18 @@ impl ApplicationRuntime {
             .save_settings(&settings)
             .map_err(|error| ApplicationFailure::new(ApplicationFailureKind::Storage, error))?;
         self.preferences = candidate;
+        let record = ModelRecord::new(
+            format!("{}@{}", artifacts.repository, artifacts.commit),
+            artifacts.repository.clone(),
+            artifacts.commit.clone(),
+            resolved
+                .configuration_declared_scalar_type()
+                .map(stored_configuration_declared_scalar_type),
+            unix_milliseconds(),
+        )
+        .map_err(|error| ApplicationFailure::new(ApplicationFailureKind::Storage, error))?;
         self.storage
-            .upsert_model(&ModelRecord {
-                name: format!("{}@{}", artifacts.repository, artifacts.commit),
-                repository: artifacts.repository.clone(),
-                revision: artifacts.commit.clone(),
-                configuration_declared_scalar_type: resolved
-                    .configuration_declared_scalar_type()
-                    .map(stored_configuration_declared_scalar_type),
-                last_resolved_unix_milliseconds: unix_milliseconds(),
-            })
+            .upsert_model(&record)
             .map_err(|error| ApplicationFailure::new(ApplicationFailureKind::Storage, error))
     }
 }

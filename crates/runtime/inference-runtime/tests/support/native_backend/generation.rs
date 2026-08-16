@@ -98,15 +98,9 @@ pub(crate) fn generation_request(
     })
 }
 
-pub(crate) const fn stochastic_sampling() -> SamplingConfig {
-    SamplingConfig {
-        temperature: 8.0,
-        top_k: 0,
-        top_p: 1.0,
-        min_p: 0.0,
-        repetition_penalty: 1.0,
-        repetition_window: 0,
-    }
+pub(crate) fn stochastic_sampling() -> TestResult<SamplingConfig> {
+    SamplingConfig::new(8.0, 0, 1.0, 0.0, 1.0, 0)
+        .map_err(|error| format!("sampling configuration failed: {error:?}"))
 }
 
 #[derive(Default)]

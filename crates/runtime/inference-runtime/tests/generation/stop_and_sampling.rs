@@ -6,14 +6,8 @@ fn stochastic_run(seed: u64) -> TestResult<Vec<TokenId>> {
     let (hosted, thread, _, handle) = hosted(source, 16, 32)?;
     let mut generation = request(50, 500, 5, &[], &[]);
     generation.seed = seed;
-    generation.sampling = SamplingConfig {
-        temperature: 1.0,
-        top_k: 0,
-        top_p: 1.0,
-        min_p: 0.0,
-        repetition_penalty: 1.0,
-        repetition_window: 0,
-    };
+    generation.sampling = SamplingConfig::new(1.0, 0, 1.0, 0.0, 1.0, 0)
+        .map_err(|error| format!("sampling configuration failed: {error:?}"))?;
     submit_generation(&hosted, handle, generation)?;
     let output = collect_until_released(&hosted, RequestId::new(50), Duration::from_secs(2))?;
     shutdown(hosted, thread)?;

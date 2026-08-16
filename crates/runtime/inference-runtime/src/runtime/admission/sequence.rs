@@ -53,7 +53,7 @@ where
 {
     runtime: &'runtime mut InferenceRuntime<L>,
     admission: SequenceAdmission,
-    sequence: Option<<L::Model as LoadedModel>::Sequence>,
+    sequence: <L::Model as LoadedModel>::Sequence,
     lifecycle: ModelLifecycle,
 }
 
@@ -72,42 +72,26 @@ where
     Rejected(RuntimeError),
 }
 
+enum SequenceRollback {
+    Retained {
+        report: CleanupFailureReport,
+        ownership: RetainedOwner,
+    },
+    Rejected(RuntimeError),
+}
+
 impl<L> SequenceAdmissionTransaction<'_, L>
 where
     L: ModelLoader,
 {
-    pub(crate) fn commit(mut self) -> RequestStartReceipt {
-        let sequence = self
-            .sequence
-            .take()
-            .unwrap_or_else(|| unreachable!("an uncommitted sequence has one owner"));
+    pub(crate) fn commit(self) -> Result<RequestStartReceipt, RuntimeError> {
         self.runtime
-            .commit_sequence_admission(self.admission, sequence, self.lifecycle)
+            .commit_sequence_admission(self.admission, self.sequence, self.lifecycle)
     }
 
-    pub(crate) fn rollback(mut self, primary: RuntimeError) -> RuntimeError {
-        let sequence = self
-            .sequence
-            .take()
-            .unwrap_or_else(|| unreachable!("an uncommitted sequence has one owner"));
+    pub(crate) fn rollback(self, primary: RuntimeError) -> RuntimeError {
         self.runtime
-            .rollback_uncommitted_sequence(self.admission, sequence, primary)
-    }
-}
-
-impl<L> Drop for SequenceAdmissionTransaction<'_, L>
-where
-    L: ModelLoader,
-{
-    fn drop(&mut self) {
-        let Some(sequence) = self.sequence.take() else {
-            return;
-        };
-        let _ = self.runtime.rollback_uncommitted_sequence(
-            self.admission,
-            sequence,
-            RuntimeError::BackendContractViolation,
-        );
+            .rollback_uncommitted_sequence(self.admission, self.sequence, primary)
     }
 }
 
@@ -246,7 +230,7 @@ where
             expected_logits_capacity,
         };
         let transaction = self.prepare_sequence_transaction(request)?;
-        Ok(transaction.commit())
+        transaction.commit()
     }
 
     pub(crate) fn prepare_generation_request(
@@ -285,7 +269,7 @@ where
             } => Ok(SequenceAdmissionTransaction {
                 runtime: self,
                 admission,
-                sequence: Some(sequence),
+                sequence,
                 lifecycle,
             }),
             SequencePreparation::Retained { report, ownership } => {
@@ -472,11 +456,12 @@ where
         admission: SequenceAdmission,
         sequence: <L::Model as LoadedModel>::Sequence,
         lifecycle: ModelLifecycle,
-    ) -> RequestStartReceipt {
+    ) -> Result<RequestStartReceipt, RuntimeError> {
         let request = admission.request;
-        let slot = self.models.get_mut(&request.handle.id).unwrap_or_else(|| {
-            unreachable!("an exclusively owned sequence transaction retains its model")
-        });
+        let slot = self
+            .models
+            .get_mut(&request.handle.id)
+            .ok_or(RuntimeError::BackendContractViolation)?;
         debug_assert_eq!(slot.handle, request.handle);
         debug_assert!(!slot.requests.contains_key(&request.request_id));
         let replaced = slot.requests.insert(
@@ -507,12 +492,12 @@ where
         self.generation_workspaces = admission.transition.generation_workspaces;
         self.reserved_generation_workspace = admission.transition.reserved_generation_workspace;
 
-        RequestStartReceipt {
+        Ok(RequestStartReceipt {
             request_id: request.request_id,
             sequence_id: request.sequence_id,
             logits_capacity: admission.plan.logits_capacity,
             reserved_footprint: admission.committed_footprint,
-        }
+        })
     }
 
     fn rollback_uncommitted_sequence(
@@ -523,12 +508,9 @@ where
     ) -> RuntimeError {
         let retry = CleanupRetryProgress::initial(self.maximum_cleanup_attempts());
         let preparation = {
-            let slot = self
-                .models
-                .get_mut(&admission.request.handle.id)
-                .unwrap_or_else(|| {
-                    unreachable!("an uncommitted sequence transaction retains its model")
-                });
+            let Some(slot) = self.models.get_mut(&admission.request.handle.id) else {
+                return RuntimeError::BackendContractViolation;
+            };
             rollback_sequence_in_slot(
                 slot,
                 admission,
@@ -540,13 +522,10 @@ where
             )
         };
         match preparation {
-            SequencePreparation::Retained { report, ownership } => {
+            SequenceRollback::Retained { report, ownership } => {
                 self.commit_retained_sequence(&admission, report, ownership)
             }
-            SequencePreparation::Rejected(error) => error,
-            SequencePreparation::Ready { .. } => {
-                unreachable!("rollback never produces a prepared transaction")
-            }
+            SequenceRollback::Rejected(error) => error,
         }
     }
 }
@@ -577,15 +556,22 @@ where
     };
 
     match rejection {
-        Some(primary) => Ok(rollback_sequence_in_slot(
-            slot,
-            admission,
-            sequence,
-            reported_plan,
-            backend_contradiction,
-            primary,
-            retry,
-        )),
+        Some(primary) => Ok(
+            match rollback_sequence_in_slot(
+                slot,
+                admission,
+                sequence,
+                reported_plan,
+                backend_contradiction,
+                primary,
+                retry,
+            ) {
+                SequenceRollback::Retained { report, ownership } => {
+                    SequencePreparation::Retained { report, ownership }
+                }
+                SequenceRollback::Rejected(error) => SequencePreparation::Rejected(error),
+            },
+        ),
         None => Ok(SequencePreparation::Ready {
             sequence,
             lifecycle,
@@ -601,12 +587,12 @@ fn rollback_sequence_in_slot<M>(
     backend_contradiction: bool,
     primary: RuntimeError,
     retry: CleanupRetryProgress,
-) -> SequencePreparation<M::Sequence>
+) -> SequenceRollback
 where
     M: LoadedModel,
 {
     let cleanup = match slot.model.destroy_sequence(&mut sequence) {
-        Ok(()) => return SequencePreparation::Rejected(primary),
+        Ok(()) => return SequenceRollback::Rejected(primary),
         Err(cleanup) => cleanup,
     };
     let report = CleanupFailureReport::with_details(
@@ -647,7 +633,7 @@ where
     if ownership.exact_footprint().is_some() {
         slot.reserved_footprint = admission.backend_next_slot_reserved;
     }
-    SequencePreparation::Retained { report, ownership }
+    SequenceRollback::Retained { report, ownership }
 }
 
 fn validate_sequence_plan(

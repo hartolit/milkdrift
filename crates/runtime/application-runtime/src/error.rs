@@ -153,6 +153,8 @@ pub enum ApplicationConfigurationField {
     HubShutdownPoll,
     /// Persisted or default repository revision.
     DefaultRevision,
+    /// Persisted or default repository identifier.
+    DefaultRepository,
     /// Explicit accelerator-memory limit.
     AcceleratorMemoryLimit,
     /// Persisted or default drain timeout.
@@ -164,14 +166,6 @@ pub enum ApplicationConfigurationField {
 pub enum GenerationSettingsField {
     /// Maximum generated-token count must be non-zero.
     MaximumNewTokens,
-    /// Temperature must be finite and positive.
-    Temperature,
-    /// Top-p must be finite and in `(0, 1]`.
-    TopP,
-    /// Min-p must be finite and in `[0, 1]`.
-    MinP,
-    /// Repetition penalty must be finite and positive.
-    RepetitionPenalty,
     /// Explicit EOS token identifiers must belong to the loaded vocabulary.
     EndOfSequenceToken,
     /// Textual stop sequences must be non-empty and encode to at least one token.

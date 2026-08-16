@@ -2,7 +2,9 @@
 
 use std::time::Instant;
 
-use application_runtime::{ApplicationRuntime, GenerationSeed, GenerationSettings, LoadedModel};
+use application_runtime::{
+    ApplicationRuntime, GenerationSeed, GenerationSettings, LoadedModel, SamplingConfig,
+};
 
 use super::observer::{GenerationEvidence, drive_generation};
 use super::summary;
@@ -144,7 +146,7 @@ fn run_chat_proof(
     validation::validate_chat_ready(runtime, loaded)?;
     let submitted_at = Instant::now();
     let request_id = runtime
-        .submit_user_message(CHAT_MESSAGE, generation_settings(CHAT_MAXIMUM_NEW_TOKENS))
+        .submit_user_message(CHAT_MESSAGE, generation_settings(CHAT_MAXIMUM_NEW_TOKENS)?)
         .map_err(|error| {
             BenchmarkError::new(format!(
                 "exact compatible-chat request could not be submitted: {error}"
@@ -183,7 +185,7 @@ fn run_direct_completion(
     let request_id = runtime
         .start_generation(
             DIRECT_COMPLETION_PROMPT,
-            generation_settings(maximum_new_tokens),
+            generation_settings(maximum_new_tokens)?,
         )
         .map_err(|error| {
             BenchmarkError::new(format!(
@@ -217,17 +219,17 @@ fn run_cancellation(
     Ok(result)
 }
 
-fn generation_settings(maximum_new_tokens: u32) -> GenerationSettings {
-    GenerationSettings {
-        maximum_new_tokens,
-        temperature: TEMPERATURE,
-        top_k: TOP_K,
-        top_p: TOP_P,
-        min_p: MIN_P,
-        repetition_penalty: REPETITION_PENALTY,
-        repetition_window: REPETITION_WINDOW,
-        seed: GenerationSeed::Fixed(FIXED_SEED),
-        eos_tokens: Vec::new(),
-        stop_sequences: Vec::new(),
-    }
+fn generation_settings(maximum_new_tokens: u32) -> BenchmarkResult<GenerationSettings> {
+    let sampling = SamplingConfig::new(
+        TEMPERATURE,
+        TOP_K,
+        TOP_P,
+        MIN_P,
+        REPETITION_PENALTY,
+        REPETITION_WINDOW,
+    )
+    .map_err(|error| BenchmarkError::new(format!("invalid sampling policy: {error:?}")))?;
+    GenerationSettings::new(maximum_new_tokens, sampling)
+        .map(|settings| settings.with_seed(GenerationSeed::Fixed(FIXED_SEED)))
+        .map_err(|error| BenchmarkError::new(format!("invalid generation settings: {error}")))
 }

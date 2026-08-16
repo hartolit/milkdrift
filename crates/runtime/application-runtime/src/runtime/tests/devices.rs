@@ -173,14 +173,17 @@ fn persisted_nonzero_cuda_uses_exactly_two_bounded_startup_probes() -> TestResul
     let database_path = unique_database_path();
     let storage = RedbStorage::open(&database_path).map_err(application_error)?;
     storage
-        .save_settings(&StoredApplicationSettings {
-            default_repository: String::new(),
-            default_revision: "main".to_owned(),
-            maximum_host_memory_bytes: 16 * 1024 * 1024 * 1024,
-            selected_device: StoredApplicationDevice::Cuda { ordinal: 3 },
-            accelerator_memory_policy: StoredAcceleratorMemoryPolicy::Automatic,
-            drain_timeout_milliseconds: 2_000,
-        })
+        .save_settings(
+            &StoredApplicationSettings::new(
+                String::new(),
+                "main".to_owned(),
+                16 * 1024 * 1024 * 1024,
+                StoredApplicationDevice::Cuda { ordinal: 3 },
+                StoredAcceleratorMemoryPolicy::Automatic,
+                2_000,
+            )
+            .map_err(application_error)?,
+        )
         .map_err(application_error)?;
     drop(storage);
     COUNTED_CUDA_PROBES.store(0, Ordering::Relaxed);
@@ -253,14 +256,17 @@ fn selected_cuda_capacity_shrink_blocks_load_without_fallback() -> TestResult {
     let database_path = unique_database_path();
     let storage = RedbStorage::open(&database_path).map_err(application_error)?;
     storage
-        .save_settings(&StoredApplicationSettings {
-            default_repository: String::new(),
-            default_revision: "main".to_owned(),
-            maximum_host_memory_bytes: 16 * 1024 * 1024 * 1024,
-            selected_device: StoredApplicationDevice::Cuda { ordinal: 3 },
-            accelerator_memory_policy: StoredAcceleratorMemoryPolicy::Automatic,
-            drain_timeout_milliseconds: 2_000,
-        })
+        .save_settings(
+            &StoredApplicationSettings::new(
+                String::new(),
+                "main".to_owned(),
+                16 * 1024 * 1024 * 1024,
+                StoredApplicationDevice::Cuda { ordinal: 3 },
+                StoredAcceleratorMemoryPolicy::Automatic,
+                2_000,
+            )
+            .map_err(application_error)?,
+        )
         .map_err(application_error)?;
     drop(storage);
     SHRINKING_CUDA_THREE_PROBES.store(0, Ordering::Relaxed);

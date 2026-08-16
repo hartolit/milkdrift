@@ -74,9 +74,7 @@ impl PromptCompatibilityProfile {
     fn apply_termination(self, settings: &mut GenerationSettings) {
         match self {
             Self::TinyLlamaChatV1 => {
-                settings.eos_tokens.clear();
-                settings.eos_tokens.push(TINYLLAMA_EOS_TOKEN);
-                settings.stop_sequences.clear();
+                settings.apply_chat_termination(TINYLLAMA_EOS_TOKEN);
             }
         }
     }
@@ -254,7 +252,7 @@ impl ApplicationRuntime {
             tokenizer,
             maximum_context_tokens: loaded.maximum_context_tokens(),
             maximum_prefill_tokens: loaded.maximum_prefill_batch(),
-            reserved_output_tokens: settings.maximum_new_tokens,
+            reserved_output_tokens: settings.maximum_new_tokens(),
         })?;
         self.start_chat_generation(
             prepared.prompt_tokens,

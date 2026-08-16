@@ -10,12 +10,6 @@ use crate::{BackendId, ByteCount, DeviceId, ModelHandle};
 pub enum ModelArchitecture {
     /// Decoder-only Llama-family transformer.
     Llama,
-    /// Decoder-only Mistral-family transformer.
-    Mistral,
-    /// Decoder-only Gemma-family transformer.
-    Gemma,
-    /// Decoder-only Qwen-family transformer.
-    Qwen,
     /// Backend-defined architecture code.
     Other(u32),
 }
@@ -111,10 +105,6 @@ impl ScalarTypeSet {
 pub enum QuantizationFormat {
     /// Model is not quantized.
     None,
-    /// Generic signed 8-bit quantization.
-    Int8,
-    /// Generic signed 4-bit quantization.
-    Int4,
     /// Backend-defined quantization code.
     Other(u16),
 }
@@ -127,10 +117,8 @@ pub enum DeviceKind {
     Cpu,
     /// CUDA-compatible GPU execution.
     Cuda,
-    /// Apple Metal execution.
-    Metal,
-    /// Other user-space accelerator.
-    Accelerator(u16),
+    /// Backend-defined execution-device category.
+    Other(u16),
 }
 
 /// Backend-visible identity of the device that executes a loaded model.
@@ -597,13 +585,6 @@ impl SequenceReservation {
         persistent_footprint: MemoryFootprint,
         transient_footprint: MemoryFootprint,
     ) -> Option<Self> {
-        if persistent_footprint.checked_host_bytes().is_none()
-            || persistent_footprint.checked_device_bytes().is_none()
-            || transient_footprint.checked_host_bytes().is_none()
-            || transient_footprint.checked_device_bytes().is_none()
-        {
-            return None;
-        }
         match persistent_footprint.checked_add(transient_footprint) {
             Some(total_footprint)
                 if total_footprint.checked_host_bytes().is_some()

@@ -103,10 +103,10 @@ fn resolved_selection_defaults_persist_without_restoring_resolution() -> TestRes
             .load_model(&name)
             .map_err(application_error)?
             .ok_or_else(|| "resolved model catalogue record was absent".to_owned())?;
-        assert_eq!(record.repository, REPOSITORY);
-        assert_eq!(record.revision, COMMIT);
+        assert_eq!(record.repository(), REPOSITORY);
+        assert_eq!(record.revision(), COMMIT);
         assert_eq!(
-            record.configuration_declared_scalar_type,
+            record.configuration_declared_scalar_type(),
             Some(StoredScalarType::F32)
         );
         Ok(())
@@ -336,7 +336,7 @@ fn absent_configuration_declaration_remains_loadable_and_is_persisted() -> TestR
             .load_model(&name)
             .map_err(application_error)?
             .ok_or_else(|| "resolved model catalogue record was absent".to_owned())?;
-        assert_eq!(record.configuration_declared_scalar_type, None);
+        assert_eq!(record.configuration_declared_scalar_type(), None);
         Ok(())
     });
 

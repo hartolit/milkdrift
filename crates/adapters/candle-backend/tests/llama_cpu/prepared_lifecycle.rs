@@ -29,7 +29,7 @@ fn rejects_invalid_cpu_identity_and_unsupported_devices() -> TestResult {
         Err(LoadError::InvalidConfiguration)
     ));
 
-    for kind in [DeviceKind::Metal, DeviceKind::Accelerator(1)] {
+    for kind in [DeviceKind::Other(1), DeviceKind::Other(u16::MAX)] {
         configuration.execution_device = ExecutionDevice::new(DeviceId::new(0), kind);
         assert!(matches!(
             loader.prepare_load(&source, &configuration),

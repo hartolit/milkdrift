@@ -39,14 +39,15 @@ pub(super) struct DecodePhase;
 #[derive(Clone, Copy)]
 pub(super) struct TerminalPublication {
     outcome: GenerationOutcome,
-    initial_cleanup: Option<CleanupRetryState>,
     stage: TerminalPublicationStage,
 }
 
 #[derive(Clone, Copy)]
 enum TerminalPublicationStage {
-    Terminal,
-    CleanupPending,
+    Terminal {
+        initial_cleanup: Option<CleanupRetryState>,
+    },
+    CleanupPending(CleanupRetryState),
     AwaitingCleanup,
     CleanupExhausted,
     Release,
@@ -335,19 +336,17 @@ fn advance_terminal<L: ModelLoader>(
 ) -> PhaseTransition {
     loop {
         let (state, next_stage) = match terminal.stage {
-            TerminalPublicationStage::Terminal => {
-                let next = if terminal.initial_cleanup.is_some() {
-                    TerminalPublicationStage::CleanupPending
-                } else {
-                    TerminalPublicationStage::Release
-                };
+            TerminalPublicationStage::Terminal { initial_cleanup } => {
+                let next = initial_cleanup.map_or(
+                    TerminalPublicationStage::Release,
+                    TerminalPublicationStage::CleanupPending,
+                );
                 (GenerationOutputState::Terminal(terminal.outcome), next)
             }
-            TerminalPublicationStage::CleanupPending => {
+            TerminalPublicationStage::CleanupPending(initial_cleanup) => {
                 let retry = runtime
                     .request_cleanup_state(request_id)
-                    .or(terminal.initial_cleanup)
-                    .unwrap_or_else(|| unreachable!("cleanup publication retains initial state"));
+                    .unwrap_or(initial_cleanup);
                 (
                     GenerationOutputState::CleanupPending {
                         outcome: terminal.outcome,
@@ -442,8 +441,7 @@ const fn terminal_publication(
 ) -> GenerationPhase {
     GenerationPhase::Terminal(TerminalPublication {
         outcome,
-        initial_cleanup,
-        stage: TerminalPublicationStage::Terminal,
+        stage: TerminalPublicationStage::Terminal { initial_cleanup },
     })
 }
 

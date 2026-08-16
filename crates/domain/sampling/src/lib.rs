@@ -16,20 +16,45 @@ pub use stop::{StopMatch, StopSequence, match_stop_suffix};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SamplingConfig {
     /// Positive finite softmax temperature.
-    pub temperature: f32,
+    temperature: f32,
     /// Maximum candidates retained after logit ordering. Zero retains all.
-    pub top_k: u32,
+    top_k: u32,
     /// Cumulative probability threshold in `(0, 1]`.
-    pub top_p: f32,
+    top_p: f32,
     /// Minimum probability relative to the highest-probability token in `[0, 1]`.
-    pub min_p: f32,
+    min_p: f32,
     /// Positive finite repetition penalty. One disables the penalty.
-    pub repetition_penalty: f32,
+    repetition_penalty: f32,
     /// Number of trailing tokens considered for repetition. Zero uses full history.
-    pub repetition_window: u32,
+    repetition_window: u32,
 }
 
 impl SamplingConfig {
+    /// Creates an immutable sampling policy after validating every numeric bound.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SamplingError::InvalidConfiguration`] when a floating-point
+    /// field is non-finite or outside its documented bounds.
+    pub fn new(
+        temperature: f32,
+        top_k: u32,
+        top_p: f32,
+        min_p: f32,
+        repetition_penalty: f32,
+        repetition_window: u32,
+    ) -> Result<Self, SamplingError> {
+        validate_configuration(temperature, top_p, min_p, repetition_penalty)?;
+        Ok(Self {
+            temperature,
+            top_k,
+            top_p,
+            min_p,
+            repetition_penalty,
+            repetition_window,
+        })
+    }
+
     /// Returns deterministic highest-logit selection.
     #[must_use]
     pub const fn greedy() -> Self {
@@ -43,34 +68,40 @@ impl SamplingConfig {
         }
     }
 
-    /// Validates all numeric bounds.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SamplingError::InvalidConfiguration`] when a numeric field is
-    /// non-finite or outside its documented bounds.
-    pub fn validate(self) -> Result<Self, SamplingError> {
-        if !self.temperature.is_finite() || self.temperature <= 0.0 {
-            return Err(SamplingError::InvalidConfiguration(
-                SamplingConfigurationField::Temperature,
-            ));
-        }
-        if !self.top_p.is_finite() || self.top_p <= 0.0 || self.top_p > 1.0 {
-            return Err(SamplingError::InvalidConfiguration(
-                SamplingConfigurationField::TopP,
-            ));
-        }
-        if !self.min_p.is_finite() || self.min_p < 0.0 || self.min_p > 1.0 {
-            return Err(SamplingError::InvalidConfiguration(
-                SamplingConfigurationField::MinP,
-            ));
-        }
-        if !self.repetition_penalty.is_finite() || self.repetition_penalty <= 0.0 {
-            return Err(SamplingError::InvalidConfiguration(
-                SamplingConfigurationField::RepetitionPenalty,
-            ));
-        }
-        Ok(self)
+    /// Returns the softmax temperature.
+    #[must_use]
+    pub const fn temperature(self) -> f32 {
+        self.temperature
+    }
+
+    /// Returns the top-k candidate bound, or zero when all candidates are retained.
+    #[must_use]
+    pub const fn top_k(self) -> u32 {
+        self.top_k
+    }
+
+    /// Returns the cumulative probability threshold.
+    #[must_use]
+    pub const fn top_p(self) -> f32 {
+        self.top_p
+    }
+
+    /// Returns the relative minimum-probability threshold.
+    #[must_use]
+    pub const fn min_p(self) -> f32 {
+        self.min_p
+    }
+
+    /// Returns the repetition penalty.
+    #[must_use]
+    pub const fn repetition_penalty(self) -> f32 {
+        self.repetition_penalty
+    }
+
+    /// Returns the trailing repetition window, or zero for the full history.
+    #[must_use]
+    pub const fn repetition_window(self) -> u32 {
+        self.repetition_window
     }
 }
 
@@ -85,6 +116,35 @@ impl Default for SamplingConfig {
             repetition_window: 64,
         }
     }
+}
+
+fn validate_configuration(
+    temperature: f32,
+    top_p: f32,
+    min_p: f32,
+    repetition_penalty: f32,
+) -> Result<(), SamplingError> {
+    if !temperature.is_finite() || temperature <= 0.0 {
+        return Err(SamplingError::InvalidConfiguration(
+            SamplingConfigurationField::Temperature,
+        ));
+    }
+    if !top_p.is_finite() || top_p <= 0.0 || top_p > 1.0 {
+        return Err(SamplingError::InvalidConfiguration(
+            SamplingConfigurationField::TopP,
+        ));
+    }
+    if !min_p.is_finite() || !(0.0..=1.0).contains(&min_p) {
+        return Err(SamplingError::InvalidConfiguration(
+            SamplingConfigurationField::MinP,
+        ));
+    }
+    if !repetition_penalty.is_finite() || repetition_penalty <= 0.0 {
+        return Err(SamplingError::InvalidConfiguration(
+            SamplingConfigurationField::RepetitionPenalty,
+        ));
+    }
+    Ok(())
 }
 
 /// Configuration field that failed validation.
@@ -158,18 +218,14 @@ pub struct Sampler {
 }
 
 impl Sampler {
-    /// Creates a sampler after validating its immutable configuration.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SamplingError::InvalidConfiguration`] when `configuration`
-    /// contains a non-finite value or a value outside its documented bounds.
-    pub fn new(configuration: SamplingConfig, seed: u64) -> Result<Self, SamplingError> {
-        Ok(Self {
-            configuration: configuration.validate()?,
+    /// Creates a sampler from an already validated immutable configuration.
+    #[must_use]
+    pub const fn new(configuration: SamplingConfig, seed: u64) -> Self {
+        Self {
+            configuration,
             random: SplitMix64::new(seed),
             repetition_epoch: 0,
-        })
+        }
     }
 
     /// Returns the active immutable configuration.

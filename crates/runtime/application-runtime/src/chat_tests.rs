@@ -50,12 +50,13 @@ fn tinyllama_profile_formats_roles_and_owns_eos_compatibility() -> TestResult {
         rendered,
         "<|system|>\nbe concise</s>\n<|user|>\nhello</s>\n<|assistant|>\n"
     );
-    let mut settings = GenerationSettings::default();
-    settings.eos_tokens.push(domain_contracts::TokenId::new(15));
-    settings.stop_sequences.push("fallback".to_owned());
+    let mut settings = GenerationSettings::default()
+        .with_eos_tokens(vec![domain_contracts::TokenId::new(15)])
+        .with_stop_sequences(vec!["fallback".to_owned()])
+        .map_err(|error| error.to_string())?;
     PromptCompatibilityProfile::TinyLlamaChatV1.apply_termination(&mut settings);
-    assert_eq!(settings.eos_tokens, [domain_contracts::TokenId::new(2)]);
-    assert!(settings.stop_sequences.is_empty());
+    assert_eq!(settings.eos_tokens(), [domain_contracts::TokenId::new(2)]);
+    assert!(settings.stop_sequences().is_empty());
 
     let prepared = prepare_chat(&ChatPreparationRequest {
         raw_records: records.as_slice(),

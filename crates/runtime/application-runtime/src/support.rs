@@ -128,6 +128,13 @@ pub fn validate_configuration(
 }
 
 pub fn validate_preferences(preferences: &ApplicationPreferences) -> Result<(), ApplicationError> {
+    if !preferences.default_repository.is_empty()
+        && preferences.default_repository.trim().is_empty()
+    {
+        return Err(ApplicationError::InvalidConfiguration(
+            ApplicationConfigurationField::DefaultRepository,
+        ));
+    }
     if preferences.default_revision.trim().is_empty() {
         return Err(ApplicationError::InvalidConfiguration(
             ApplicationConfigurationField::DefaultRevision,
@@ -150,21 +157,29 @@ pub fn validate_preferences(preferences: &ApplicationPreferences) -> Result<(), 
 }
 
 pub fn application_preferences(settings: ApplicationSettings) -> ApplicationPreferences {
+    let (
+        default_repository,
+        default_revision,
+        maximum_host_memory_bytes,
+        selected_device,
+        accelerator_memory_policy,
+        drain_timeout_milliseconds,
+    ) = settings.into_parts();
     ApplicationPreferences {
-        default_repository: settings.default_repository,
-        default_revision: settings.default_revision,
-        maximum_host_memory_bytes: ByteCount::from_u64(settings.maximum_host_memory_bytes),
-        selected_device: match settings.selected_device {
+        default_repository,
+        default_revision,
+        maximum_host_memory_bytes: ByteCount::from_u64(maximum_host_memory_bytes),
+        selected_device: match selected_device {
             StoredApplicationDevice::Cpu => ApplicationDevice::Cpu,
             StoredApplicationDevice::Cuda { ordinal } => ApplicationDevice::Cuda { ordinal },
         },
-        accelerator_memory_policy: match settings.accelerator_memory_policy {
+        accelerator_memory_policy: match accelerator_memory_policy {
             StoredAcceleratorMemoryPolicy::Automatic => AcceleratorMemoryPolicy::Automatic,
             StoredAcceleratorMemoryPolicy::Limit { bytes } => AcceleratorMemoryPolicy::Limit {
                 bytes: ByteCount::from_u64(bytes.get()),
             },
         },
-        drain_timeout_milliseconds: settings.drain_timeout_milliseconds,
+        drain_timeout_milliseconds,
     }
 }
 
@@ -179,16 +194,25 @@ pub fn stored_settings(
             StoredAcceleratorMemoryPolicy::Limit { bytes }
         }
     };
-    Ok(ApplicationSettings {
-        default_repository: preferences.default_repository.clone(),
-        default_revision: preferences.default_revision.clone(),
-        maximum_host_memory_bytes: preferences.maximum_host_memory_bytes.as_u64(),
-        selected_device: match preferences.selected_device {
+    ApplicationSettings::new(
+        preferences.default_repository.clone(),
+        preferences.default_revision.clone(),
+        preferences.maximum_host_memory_bytes.as_u64(),
+        match preferences.selected_device {
             ApplicationDevice::Cpu => StoredApplicationDevice::Cpu,
             ApplicationDevice::Cuda { ordinal } => StoredApplicationDevice::Cuda { ordinal },
         },
         accelerator_memory_policy,
-        drain_timeout_milliseconds: preferences.drain_timeout_milliseconds,
+        preferences.drain_timeout_milliseconds,
+    )
+    .map_err(|error| match error {
+        redb_storage::StorageError::InvalidField(redb_storage::Field::Repository) => {
+            ApplicationConfigurationField::DefaultRepository
+        }
+        redb_storage::StorageError::InvalidField(redb_storage::Field::DrainTimeout) => {
+            ApplicationConfigurationField::DrainTimeout
+        }
+        _ => ApplicationConfigurationField::DefaultRevision,
     })
 }
 
