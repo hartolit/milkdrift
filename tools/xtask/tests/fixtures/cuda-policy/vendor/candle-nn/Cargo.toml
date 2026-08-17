@@ -1,9 +1,0 @@
-[package]
-name = "candle-nn"
-version = "0.11.0"
-edition = "2024"
-publish = false
-
-[features]
-default = []
-cuda = []

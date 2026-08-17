@@ -1,5 +1,0 @@
-no_progress = true
-include_fragments = "full"
-exclude_path = ["target"]
-max_retries = 2
-timeout = 20
