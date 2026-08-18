@@ -1,0 +1,11 @@
+# Product vision
+
+Milkdrift exists to remove a familiar kind of operational drag: copying prompts and artifacts between tools, opening another fresh agent window after context decays, reconstructing what happened, and manually shepherding work that should be programmable. The product should make continuous and long-running work understandable and governable without hiding it behind a chat transcript.
+
+An operator defines work as a graph, visually on a canvas or programmatically through the same semantic commands. Execution is inspected on a timeline and through node inspectors that expose exact inputs, selected context, outputs, artifacts, actor, capability, and provenance. Sequential work is ordinary; isolated concurrent branches, structured fork/join, reducers, approvals, durable waits, external signals, subworkflows, and bounded continuous controllers are first-class.
+
+Workflows stay editable while runs exist. A human or an authorized AI controller may propose and, only within granted authority, approve or apply changes to future work. Every edit creates an immutable revision. Reconciliation may redirect work that has not happened, but it never rewrites completed history. The lineage is Git-like in its immutability and explicit ancestry, without pretending that a workflow engine is literally Git or inheriting Git's object and merge semantics.
+
+Context follows causality. A task receives selected upstream evidence, explicit artifacts, and memory budgets, rather than a dump of every chronological event. That boundary makes poor decisions, leakage, hostile input, errors, and side effects traceable. It also keeps the operator in control of authority, secrets, spending and resource budgets, providers, filesystem paths, network access, and termination.
+
+Capabilities are open at the boundary: hosted providers, user-run local model servers, coding-agent processes, ordinary tools, humans, and peer machines can all participate when they honestly describe their operations and constraints. Local inference was removed from Milkdrift itself because mature inference engines already specialize in tensor formats, hardware kernels, sampling, and device evolution. They should evolve independently and connect as user-provided capabilities; duplicating them would weaken the workflow product and couple it to hardware concerns it does not own.
