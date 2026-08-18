@@ -1,0 +1,1 @@
+{"request":{"capability":"publisher-primary","extensions":{"org.milkdrift/trace":"trace-7"},"idempotency_key":"run-1-node-2-attempt-1","inputs":[{"name":"payload","value":{"type":"inline","value":{"message":"hello"}}}],"invocation":"invocation-007","operation":"tool.publish","provider_profile":"publisher-prod"},"schema_version":1}

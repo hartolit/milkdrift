@@ -202,6 +202,43 @@ impl fmt::Display for ContentDigest {
     }
 }
 
+/// Domain-separated digest of one node configuration or its incident dependencies.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub struct NodeFingerprint(String);
+
+impl NodeFingerprint {
+    pub(crate) fn from_hash(hash: blake3::Hash) -> Self {
+        Self(format!("node_b3_{hash}"))
+    }
+
+    fn parse(value: String) -> Result<Self, IdentityError> {
+        validate_digest_identity(&value, "NodeFingerprint", "node_b3_")?;
+        Ok(Self(value))
+    }
+
+    /// Returns the stable lowercase digest identity.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for NodeFingerprint {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::parse(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+impl fmt::Display for NodeFingerprint {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
 fn validate_digest_identity(
     value: &str,
     kind: &'static str,

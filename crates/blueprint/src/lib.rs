@@ -48,16 +48,19 @@ mod validation;
 pub use condition::{
     Comparison, Condition, ConditionError, ConditionOperand, PathSegment, PathSelector,
 };
-pub use document::{BlueprintRevisionDocument, DocumentError, canonical_blueprint_json};
+pub use document::{
+    BlueprintRevisionDocument, DocumentError, canonical_blueprint_json,
+    node_configuration_fingerprint, node_dependency_fingerprint,
+};
 pub use identity::{
-    AuthorRef, BlueprintId, ContentDigest, EdgeId, FieldId, IdentityError, MutationBatchId, NodeId,
-    PortId, RevisionId, WorkflowId,
+    AuthorRef, BlueprintId, ContentDigest, EdgeId, FieldId, IdentityError, MutationBatchId,
+    NodeFingerprint, NodeId, PortId, RevisionId, WorkflowId,
 };
 pub use model::{
-    BindingSource, BlueprintMetadata, BranchConfig, DataPort, Edge, EdgeKind, ForkConfig,
-    InterfaceField, JoinConfig, JoinPolicy, ModelError, Node, NodeKind, PinnedSubworkflow,
-    ReducerConfig, ReducerStrategy, RepeatBudget, RepeatConfig, RepeatTermination, SchemaRef,
-    SemanticBlueprint, TerminalOutcome, WorkflowInterface,
+    BindingSource, BlueprintMetadata, BranchConfig, CostCurrencyCode, DataPort, Edge, EdgeKind,
+    ForkConfig, InterfaceField, JoinConfig, JoinPolicy, ModelError, Node, NodeKind,
+    PinnedSubworkflow, ReducerConfig, ReducerStrategy, RepeatBudget, RepeatConfig,
+    RepeatTermination, SchemaRef, SemanticBlueprint, TerminalOutcome, WorkflowInterface,
 };
 pub use mutation::{Mutation, MutationBatch, MutationError};
 pub use revision::BlueprintRevision;

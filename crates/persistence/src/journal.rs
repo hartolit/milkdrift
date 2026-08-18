@@ -1,0 +1,1096 @@
+use std::collections::BTreeSet;
+
+use milkdrift_blueprint::{RevisionId, WorkflowId};
+use milkdrift_capability::BoundedJson;
+use milkdrift_workspace::{
+    ArtifactReference, RunId, ScopeId, ScopeReference, ValueKey, WorkspaceBudget, WorkspaceScope,
+    WorkspaceUsage, WorkspaceValueEntry, WorkspaceValueReference,
+};
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    ActorRef, AttemptId, CommandId, IntegrityDigest, LeaseId, NodeExecutionId, PageSize,
+    PersistenceError, RunEventEnvelope, RunSequence, TimerId, TimestampMillis, WorkerId,
+    bounded::MAX_EVENTS_PER_COMMIT,
+};
+
+/// Maximum canonical runtime command bytes retained for exact idempotency evidence.
+pub const MAX_COMMAND_DOCUMENT_BYTES: usize = 262_144;
+/// Maximum canonical bytes in one retained command-result document.
+pub const MAX_COMMAND_RESULT_DOCUMENT_BYTES: usize = 524_288;
+/// Maximum index changes included in one aggregate commit.
+pub const MAX_INDEX_MUTATIONS_PER_COMMIT: usize = 2_048;
+/// Maximum scope/value mutations in one atomic aggregate commit.
+pub const MAX_WORKSPACE_MUTATIONS_PER_COMMIT: usize = 2_048;
+/// Maximum distinct committed artifact references validated in one commit.
+pub const MAX_REQUIRED_ARTIFACTS_PER_COMMIT: usize = 2_048;
+/// Current opaque command-receipt/result document schema.
+pub const COMMAND_RESULT_SCHEMA_VERSION_V1: u32 = 1;
+
+/// Exact canonical runtime command receipt used for durable idempotency.
+///
+/// Persistence does not interpret runtime transitions. It retains canonical bytes and
+/// their digest so a repeated [`CommandId`] can be proven identical or conflicting.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommandReceipt {
+    command: CommandId,
+    run: RunId,
+    actor: ActorRef,
+    expected_sequence: RunSequence,
+    submitted_at: TimestampMillis,
+    canonical_document: Vec<u8>,
+    fingerprint: IntegrityDigest,
+}
+
+impl CommandReceipt {
+    /// Constructs a receipt from a runtime-owned canonical command document.
+    pub fn new(
+        command: CommandId,
+        run: RunId,
+        actor: ActorRef,
+        expected_sequence: RunSequence,
+        submitted_at: TimestampMillis,
+        canonical_document: Vec<u8>,
+    ) -> Result<Self, PersistenceError> {
+        if canonical_document.is_empty() || canonical_document.len() > MAX_COMMAND_DOCUMENT_BYTES {
+            return Err(PersistenceError::Bounds {
+                location: "command.document",
+                reason: format!(
+                    "must contain 1..={MAX_COMMAND_DOCUMENT_BYTES} canonical document bytes"
+                ),
+            });
+        }
+        // Require syntactically valid JSON. The runtime's versioned command document owns
+        // semantic decoding; persistence owns byte-for-byte idempotency evidence.
+        let value: serde_json::Value = serde_json::from_slice(&canonical_document)?;
+        let canonical = crate::document::canonical_json_bytes(&value, MAX_COMMAND_DOCUMENT_BYTES)?;
+        if canonical != canonical_document {
+            return Err(PersistenceError::InvalidDocument(
+                "command receipt bytes must be canonical compact key-sorted JSON".to_owned(),
+            ));
+        }
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"milkdrift.command-receipt.v1\0");
+        for component in [
+            command.as_str().as_bytes(),
+            run.as_str().as_bytes(),
+            actor.as_str().as_bytes(),
+        ] {
+            let length = u32::try_from(component.len()).map_err(|_| PersistenceError::Bounds {
+                location: "command.receipt_component",
+                reason: "component length does not fit u32".to_owned(),
+            })?;
+            hasher.update(&length.to_be_bytes());
+            hasher.update(component);
+        }
+        hasher.update(&expected_sequence.get().to_be_bytes());
+        hasher.update(&submitted_at.get().to_be_bytes());
+        let document_length =
+            u32::try_from(canonical_document.len()).map_err(|_| PersistenceError::Bounds {
+                location: "command.document",
+                reason: "document length does not fit u32".to_owned(),
+            })?;
+        hasher.update(&document_length.to_be_bytes());
+        hasher.update(&canonical_document);
+        let fingerprint = IntegrityDigest::new(format!("b3_{}", hasher.finalize()))?;
+        Ok(Self {
+            command,
+            run,
+            actor,
+            expected_sequence,
+            submitted_at,
+            canonical_document,
+            fingerprint,
+        })
+    }
+
+    /// Command/idempotency identity.
+    #[must_use]
+    pub const fn command(&self) -> &CommandId {
+        &self.command
+    }
+
+    /// Owning aggregate.
+    #[must_use]
+    pub const fn run(&self) -> &RunId {
+        &self.run
+    }
+
+    /// Issuer reference retained with the command.
+    #[must_use]
+    pub const fn actor(&self) -> &ActorRef {
+        &self.actor
+    }
+
+    /// Optimistic guard supplied by the runtime.
+    #[must_use]
+    pub const fn expected_sequence(&self) -> RunSequence {
+        self.expected_sequence
+    }
+
+    /// Boundary-clock receipt timestamp.
+    #[must_use]
+    pub const fn submitted_at(&self) -> TimestampMillis {
+        self.submitted_at
+    }
+
+    /// Runtime-owned canonical command bytes.
+    #[must_use]
+    pub fn canonical_document(&self) -> &[u8] {
+        &self.canonical_document
+    }
+
+    /// Domain-separated command fingerprint.
+    #[must_use]
+    pub const fn fingerprint(&self) -> &IntegrityDigest {
+        &self.fingerprint
+    }
+}
+
+/// Whether runtime transition validation accepted or rejected a command.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandDisposition {
+    /// The command emitted one or more semantic events.
+    Accepted,
+    /// Runtime validation rejected it without semantic events.
+    Rejected,
+}
+
+/// Fully durable typed result returned for exact command redelivery.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandResultDocument {
+    schema_version: u32,
+    command: CommandId,
+    run: RunId,
+    command_fingerprint: IntegrityDigest,
+    disposition: CommandDisposition,
+    resulting_sequence: RunSequence,
+    event_ids: Vec<crate::EventId>,
+    result: BoundedJson,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommandResultWire {
+    schema_version: u32,
+    command: CommandId,
+    run: RunId,
+    command_fingerprint: IntegrityDigest,
+    disposition: CommandDisposition,
+    resulting_sequence: RunSequence,
+    event_ids: Vec<crate::EventId>,
+    result: BoundedJson,
+}
+
+impl<'de> Deserialize<'de> for CommandResultDocument {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = CommandResultWire::deserialize(deserializer)?;
+        if wire.schema_version != COMMAND_RESULT_SCHEMA_VERSION_V1 {
+            return Err(serde::de::Error::custom(format!(
+                "unsupported command_result schema version {}; supported version is {}",
+                wire.schema_version, COMMAND_RESULT_SCHEMA_VERSION_V1
+            )));
+        }
+        Self::new(
+            wire.command,
+            wire.run,
+            wire.command_fingerprint,
+            wire.disposition,
+            wire.resulting_sequence,
+            wire.event_ids,
+            wire.result,
+        )
+        .map_err(serde::de::Error::custom)
+    }
+}
+
+impl CommandResultDocument {
+    /// Constructs the exact result retained by the idempotency record.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        command: CommandId,
+        run: RunId,
+        command_fingerprint: IntegrityDigest,
+        disposition: CommandDisposition,
+        resulting_sequence: RunSequence,
+        event_ids: Vec<crate::EventId>,
+        result: BoundedJson,
+    ) -> Result<Self, PersistenceError> {
+        if event_ids.len() > MAX_EVENTS_PER_COMMIT {
+            return Err(PersistenceError::Bounds {
+                location: "command_result.event_ids",
+                reason: format!("at most {MAX_EVENTS_PER_COMMIT} event identities are allowed"),
+            });
+        }
+        if matches!(disposition, CommandDisposition::Accepted) == event_ids.is_empty() {
+            return Err(PersistenceError::InvalidDocument(
+                "accepted command results require events and rejected results require none"
+                    .to_owned(),
+            ));
+        }
+        let mut unique = BTreeSet::new();
+        if !event_ids.iter().all(|event| unique.insert(event)) {
+            return Err(PersistenceError::InvalidDocument(
+                "a command result cannot contain duplicate event identities".to_owned(),
+            ));
+        }
+        Ok(Self {
+            schema_version: COMMAND_RESULT_SCHEMA_VERSION_V1,
+            command,
+            run,
+            command_fingerprint,
+            disposition,
+            resulting_sequence,
+            event_ids,
+            result,
+        })
+    }
+
+    /// Document schema.
+    #[must_use]
+    pub const fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    /// Command identity.
+    #[must_use]
+    pub const fn command(&self) -> &CommandId {
+        &self.command
+    }
+
+    /// Aggregate identity.
+    #[must_use]
+    pub const fn run(&self) -> &RunId {
+        &self.run
+    }
+
+    /// Fingerprint that must match a redelivered receipt.
+    #[must_use]
+    pub const fn command_fingerprint(&self) -> &IntegrityDigest {
+        &self.command_fingerprint
+    }
+
+    /// Accepted/rejected disposition.
+    #[must_use]
+    pub const fn disposition(&self) -> CommandDisposition {
+        self.disposition
+    }
+
+    /// Authoritative journal sequence after the original result.
+    #[must_use]
+    pub const fn resulting_sequence(&self) -> RunSequence {
+        self.resulting_sequence
+    }
+
+    /// Event identities emitted by the command, in sequence order.
+    #[must_use]
+    pub fn event_ids(&self) -> &[crate::EventId] {
+        &self.event_ids
+    }
+
+    /// Bounded runtime-owned typed result payload.
+    #[must_use]
+    pub const fn result(&self) -> &BoundedJson {
+        &self.result
+    }
+
+    /// Serializes recursively key-sorted canonical compact JSON.
+    pub fn to_canonical_json(&self) -> Result<Vec<u8>, PersistenceError> {
+        crate::document::canonical_json_bytes(self, MAX_COMMAND_RESULT_DOCUMENT_BYTES)
+    }
+
+    /// Decodes, version-checks, and revalidates a persisted command result.
+    pub fn from_json(bytes: &[u8]) -> Result<Self, PersistenceError> {
+        if bytes.len() > MAX_COMMAND_RESULT_DOCUMENT_BYTES {
+            return Err(PersistenceError::Bounds {
+                location: "command_result.document",
+                reason: format!("exceeds {MAX_COMMAND_RESULT_DOCUMENT_BYTES} bytes"),
+            });
+        }
+        let value = crate::document::parse_json_without_duplicates(bytes)?;
+        let version = value
+            .get("schema_version")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or_else(|| {
+                PersistenceError::InvalidDocument(
+                    "command result requires a numeric u32 schema_version".to_owned(),
+                )
+            })?;
+        if version != COMMAND_RESULT_SCHEMA_VERSION_V1 {
+            return Err(PersistenceError::UnsupportedVersion {
+                document: "command_result",
+                found: version,
+                supported: COMMAND_RESULT_SCHEMA_VERSION_V1,
+            });
+        }
+        Ok(serde_json::from_value(value)?)
+    }
+}
+
+/// Workspace mutation applied in the same transaction as accepted event history.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+pub enum WorkspaceMutation {
+    /// Create one validated structured scope.
+    CreateScope {
+        /// Immutable scope declaration.
+        scope: WorkspaceScope,
+    },
+    /// Publish one exact immutable value version.
+    PutValue {
+        /// Immutable value record.
+        entry: WorkspaceValueEntry,
+    },
+}
+
+/// Optimistic workspace budget/accounting guard coordinated with a journal commit.
+///
+/// Artifact content publication and aggregate reference accounting are separate.
+/// This guard atomically charges inline immutable value versions and the exact first
+/// references admitted by this journal commit; the adapter verifies those references
+/// against `AtomicRunCommitRequest::newly_referenced_artifacts`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkspaceAccounting {
+    /// Immutable limits for the run/workspace accounting domain.
+    pub budget: WorkspaceBudget,
+    /// Exact durable usage observed by the runtime.
+    pub expected_usage: WorkspaceUsage,
+    /// Exact usage after all `PutValue` mutations and first artifact references in this commit.
+    pub resulting_usage: WorkspaceUsage,
+}
+
+impl WorkspaceMutation {
+    fn run(&self) -> &RunId {
+        match self {
+            Self::CreateScope { scope } => scope.reference().run(),
+            Self::PutValue { entry } => entry.reference().scope().run(),
+        }
+    }
+
+    fn referenced_artifact(&self) -> Option<&ArtifactReference> {
+        match self {
+            Self::PutValue { entry } => entry.value().as_artifact(),
+            Self::CreateScope { .. } => None,
+        }
+    }
+}
+
+/// Discoverability state derived from authoritative run events.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexedRunState {
+    /// Created but not started.
+    Created,
+    /// Contains eligible work.
+    Runnable,
+    /// Started and not paused/cancelling/terminal.
+    Active,
+    /// Admission and dispatch are paused.
+    Paused,
+    /// Cancellation intent is being drained.
+    Cancelling,
+    /// Waiting on a timer, signal, child, or authority.
+    Waiting,
+    /// Has unresolved uncertain/retained external work.
+    Uncertain,
+    /// Reached a terminal boundary.
+    Terminal,
+}
+
+/// Rebuildable summary/discovery index for one run.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunSummaryIndex {
+    /// Run aggregate.
+    pub run: RunId,
+    /// Workflow lineage.
+    pub workflow: WorkflowId,
+    /// Current exact revision pin.
+    pub revision: RevisionId,
+    /// Derived discovery state.
+    pub state: IndexedRunState,
+    /// Exact authoritative journal sequence used to derive this entry.
+    pub through_sequence: RunSequence,
+    /// Boundary timestamp of the last contributing fact.
+    pub updated_at: TimestampMillis,
+}
+
+/// Rebuildable runnable-discovery record.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunnableIndexEntry {
+    /// Owning aggregate.
+    pub run: RunId,
+    /// Eligible logical execution.
+    pub execution: NodeExecutionId,
+    /// Earliest boundary-clock admission time.
+    pub eligible_at: TimestampMillis,
+    /// Stable caller-derived priority; fairness is runtime-owned.
+    pub priority: u16,
+    /// Journal sequence used to derive the entry.
+    pub through_sequence: RunSequence,
+}
+
+/// Stable runnable-discovery cursor based on the last represented run.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunnableCursor {
+    /// Last run represented by the previous page (exclusive resume point).
+    pub after_run: RunId,
+}
+
+/// One bounded runnable page with no more than one candidate per run.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunnablePage {
+    /// Best eligible candidate for each represented run.
+    pub entries: Vec<RunnableIndexEntry>,
+    /// Exclusive run cursor, absent when the physical index tail was reached.
+    pub next: Option<RunnableCursor>,
+}
+
+/// Rebuildable timer-discovery record.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimerIndexEntry {
+    /// Owning aggregate.
+    pub run: RunId,
+    /// Durable timer.
+    pub timer: TimerId,
+    /// Exact deadline.
+    pub fire_at: TimestampMillis,
+    /// Journal sequence used to derive the entry.
+    pub through_sequence: RunSequence,
+}
+
+/// Rebuildable active-lease discovery record.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LeaseIndexEntry {
+    /// Owning aggregate.
+    pub run: RunId,
+    /// Lease identity.
+    pub lease: LeaseId,
+    /// Owning attempt.
+    pub attempt: AttemptId,
+    /// Assigned worker.
+    pub worker: WorkerId,
+    /// Exact expiration.
+    pub expires_at: TimestampMillis,
+    /// Journal sequence used to derive the entry.
+    pub through_sequence: RunSequence,
+}
+
+/// Upsert/remove mutation for runnable discoverability.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+pub enum RunnableIndexMutation {
+    /// Insert or replace a derived record.
+    Upsert {
+        /// Complete replacement entry.
+        entry: RunnableIndexEntry,
+    },
+    /// Remove an execution from discovery.
+    Remove {
+        /// Owning run.
+        run: RunId,
+        /// Execution identity.
+        execution: NodeExecutionId,
+    },
+}
+
+/// Upsert/remove mutation for timer discoverability.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+pub enum TimerIndexMutation {
+    /// Insert or replace a derived record.
+    Upsert {
+        /// Complete replacement entry.
+        entry: TimerIndexEntry,
+    },
+    /// Remove a fired/cancelled timer.
+    Remove {
+        /// Owning run.
+        run: RunId,
+        /// Timer identity.
+        timer: TimerId,
+    },
+}
+
+/// Upsert/remove mutation for active-lease discoverability.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+pub enum LeaseIndexMutation {
+    /// Insert or replace a derived record.
+    Upsert {
+        /// Complete replacement entry.
+        entry: LeaseIndexEntry,
+    },
+    /// Remove an expired/released lease.
+    Remove {
+        /// Owning run.
+        run: RunId,
+        /// Lease identity.
+        lease: LeaseId,
+    },
+}
+
+/// Complete rebuildable index update coordinated with one journal append.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunIndexUpdate {
+    /// Required summary for any accepted event append.
+    pub summary: Option<RunSummaryIndex>,
+    /// Runnable index changes.
+    pub runnable: Vec<RunnableIndexMutation>,
+    /// Timer index changes.
+    pub timers: Vec<TimerIndexMutation>,
+    /// Lease index changes.
+    pub leases: Vec<LeaseIndexMutation>,
+}
+
+/// One all-or-nothing command receipt, event, workspace, result, and index commit.
+///
+/// Implementations must first look up `(run, command)`. An equal fingerprint returns
+/// the original result without checking the now-stale optimistic guard or writing;
+/// a different fingerprint returns [`PersistenceError::IdempotencyConflict`]. Only a
+/// previously unseen command checks `expected_sequence` and performs the transaction.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct AtomicRunCommitRequest {
+    /// Exact receipt bytes and idempotency fingerprint.
+    pub receipt: CommandReceipt,
+    /// Contiguous checksummed facts, empty only for a rejected command.
+    pub events: Vec<RunEventEnvelope>,
+    /// Workspace scopes/values committed atomically with history.
+    pub workspace: Vec<WorkspaceMutation>,
+    /// Optimistic budget/accounting transition; required for accepted commits.
+    pub workspace_accounting: Option<WorkspaceAccounting>,
+    /// Every artifact referenced by events/workspace; append must prove each is committed.
+    pub required_artifacts: Vec<ArtifactReference>,
+    /// Required artifacts first admitted into this run's accounting domain by this commit.
+    pub newly_referenced_artifacts: Vec<ArtifactReference>,
+    /// Fully durable result returned on redelivery.
+    pub result: CommandResultDocument,
+    /// Rebuildable discovery/index changes committed atomically.
+    pub indexes: RunIndexUpdate,
+}
+
+impl AtomicRunCommitRequest {
+    /// Validates cross-document atomicity and sequence invariants.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        receipt: CommandReceipt,
+        events: Vec<RunEventEnvelope>,
+        workspace: Vec<WorkspaceMutation>,
+        workspace_accounting: Option<WorkspaceAccounting>,
+        required_artifacts: Vec<ArtifactReference>,
+        newly_referenced_artifacts: Vec<ArtifactReference>,
+        result: CommandResultDocument,
+        indexes: RunIndexUpdate,
+    ) -> Result<Self, PersistenceError> {
+        if events.len() > MAX_EVENTS_PER_COMMIT {
+            return Err(PersistenceError::Bounds {
+                location: "commit.events",
+                reason: format!("at most {MAX_EVENTS_PER_COMMIT} events are allowed"),
+            });
+        }
+        if workspace.len() > MAX_WORKSPACE_MUTATIONS_PER_COMMIT {
+            return Err(PersistenceError::Bounds {
+                location: "commit.workspace",
+                reason: format!(
+                    "at most {MAX_WORKSPACE_MUTATIONS_PER_COMMIT} workspace mutations are allowed"
+                ),
+            });
+        }
+        if required_artifacts.len() > MAX_REQUIRED_ARTIFACTS_PER_COMMIT {
+            return Err(PersistenceError::Bounds {
+                location: "commit.required_artifacts",
+                reason: format!(
+                    "at most {MAX_REQUIRED_ARTIFACTS_PER_COMMIT} artifact references are allowed"
+                ),
+            });
+        }
+        if newly_referenced_artifacts.len() > MAX_REQUIRED_ARTIFACTS_PER_COMMIT {
+            return Err(PersistenceError::Bounds {
+                location: "commit.newly_referenced_artifacts",
+                reason: format!(
+                    "at most {MAX_REQUIRED_ARTIFACTS_PER_COMMIT} artifact references are allowed"
+                ),
+            });
+        }
+        let index_count = indexes
+            .runnable
+            .len()
+            .saturating_add(indexes.timers.len())
+            .saturating_add(indexes.leases.len());
+        if index_count > MAX_INDEX_MUTATIONS_PER_COMMIT {
+            return Err(PersistenceError::Bounds {
+                location: "commit.indexes",
+                reason: format!(
+                    "at most {MAX_INDEX_MUTATIONS_PER_COMMIT} index mutations are allowed"
+                ),
+            });
+        }
+        if receipt.command() != result.command()
+            || receipt.run() != result.run()
+            || receipt.fingerprint() != result.command_fingerprint()
+        {
+            return Err(PersistenceError::InvalidDocument(
+                "command receipt and result identities/fingerprint differ".to_owned(),
+            ));
+        }
+        if events.is_empty() != matches!(result.disposition(), CommandDisposition::Rejected) {
+            return Err(PersistenceError::InvalidDocument(
+                "only a rejected command may commit no events".to_owned(),
+            ));
+        }
+
+        let mut expected = receipt.expected_sequence();
+        let mut event_ids = Vec::with_capacity(events.len());
+        for event in &events {
+            expected = expected.next()?;
+            if event.run_id() != receipt.run() || event.sequence() != expected {
+                return Err(PersistenceError::InvalidDocument(format!(
+                    "events must belong to run {} and be contiguous after sequence {}",
+                    receipt.run(),
+                    receipt.expected_sequence()
+                )));
+            }
+            event_ids.push(event.event_id().clone());
+        }
+        let resulting_sequence = if events.is_empty() {
+            receipt.expected_sequence()
+        } else {
+            expected
+        };
+        if result.resulting_sequence() != resulting_sequence || result.event_ids() != event_ids {
+            return Err(PersistenceError::InvalidDocument(
+                "command result sequence/event identities do not describe the append".to_owned(),
+            ));
+        }
+        if workspace
+            .iter()
+            .any(|mutation| mutation.run() != receipt.run())
+        {
+            return Err(PersistenceError::InvalidDocument(
+                "workspace mutations must belong to the command run".to_owned(),
+            ));
+        }
+        match (&workspace_accounting, events.is_empty()) {
+            (None, false) => {
+                return Err(PersistenceError::InvalidDocument(
+                    "an accepted command requires workspace budget/accounting".to_owned(),
+                ));
+            }
+            (Some(_), true) => {
+                return Err(PersistenceError::InvalidDocument(
+                    "a rejected command cannot change workspace accounting".to_owned(),
+                ));
+            }
+            _ => {}
+        }
+        let required: BTreeSet<_> = required_artifacts.iter().collect();
+        let newly_referenced: BTreeSet<_> = newly_referenced_artifacts.iter().collect();
+        if required.len() != required_artifacts.len()
+            || newly_referenced.len() != newly_referenced_artifacts.len()
+            || !newly_referenced.is_subset(&required)
+        {
+            return Err(PersistenceError::InvalidDocument(
+                "required/newly-referenced artifact lists must be distinct and newly-referenced artifacts must be a subset"
+                    .to_owned(),
+            ));
+        }
+        let referenced: BTreeSet<_> = workspace
+            .iter()
+            .filter_map(WorkspaceMutation::referenced_artifact)
+            .chain(
+                events
+                    .iter()
+                    .flat_map(|event| event.kind().referenced_artifacts()),
+            )
+            .collect();
+        if referenced != required {
+            return Err(PersistenceError::InvalidDocument(
+                "required_artifacts must exactly equal all direct event/workspace artifact references"
+                    .to_owned(),
+            ));
+        }
+        if let Some(accounting) = &workspace_accounting {
+            accounting
+                .budget
+                .validate_usage(&accounting.expected_usage)
+                .map_err(|error| PersistenceError::InvalidDocument(error.to_string()))?;
+            let mut calculated = accounting.expected_usage;
+            for mutation in &workspace {
+                if let WorkspaceMutation::PutValue { entry } = mutation {
+                    calculated = accounting
+                        .budget
+                        .admit_value(&calculated, entry.value())
+                        .map_err(|error| PersistenceError::InvalidDocument(error.to_string()))?;
+                }
+            }
+            for artifact in &newly_referenced_artifacts {
+                calculated = accounting
+                    .budget
+                    .admit_artifact_reference(&calculated, artifact)
+                    .map_err(|error| PersistenceError::InvalidDocument(error.to_string()))?;
+            }
+            if calculated != accounting.resulting_usage {
+                return Err(PersistenceError::InvalidDocument(
+                    "workspace resulting usage must exactly charge committed value mutations and newly referenced artifacts"
+                        .to_owned(),
+                ));
+            }
+        }
+
+        if events.is_empty() {
+            if indexes != RunIndexUpdate::default() || !workspace.is_empty() {
+                return Err(PersistenceError::InvalidDocument(
+                    "a rejected command cannot mutate indexes or workspace".to_owned(),
+                ));
+            }
+        } else {
+            let summary = indexes.summary.as_ref().ok_or_else(|| {
+                PersistenceError::InvalidDocument(
+                    "an accepted event append requires a discoverability summary".to_owned(),
+                )
+            })?;
+            if &summary.run != receipt.run() || summary.through_sequence != resulting_sequence {
+                return Err(PersistenceError::InvalidDocument(
+                    "summary run/sequence must match the resulting journal head".to_owned(),
+                ));
+            }
+            validate_index_sequences(&indexes, receipt.run(), resulting_sequence)?;
+        }
+
+        Ok(Self {
+            receipt,
+            events,
+            workspace,
+            workspace_accounting,
+            required_artifacts,
+            newly_referenced_artifacts,
+            result,
+            indexes,
+        })
+    }
+}
+
+fn validate_index_sequences(
+    indexes: &RunIndexUpdate,
+    run: &RunId,
+    through: RunSequence,
+) -> Result<(), PersistenceError> {
+    let runnable_unique = indexes
+        .runnable
+        .iter()
+        .map(|mutation| match mutation {
+            RunnableIndexMutation::Upsert { entry } => (&entry.run, &entry.execution),
+            RunnableIndexMutation::Remove {
+                run: entry_run,
+                execution,
+            } => (entry_run, execution),
+        })
+        .collect::<BTreeSet<_>>()
+        .len()
+        == indexes.runnable.len();
+    let timers_unique = indexes
+        .timers
+        .iter()
+        .map(|mutation| match mutation {
+            TimerIndexMutation::Upsert { entry } => (&entry.run, &entry.timer),
+            TimerIndexMutation::Remove {
+                run: entry_run,
+                timer,
+            } => (entry_run, timer),
+        })
+        .collect::<BTreeSet<_>>()
+        .len()
+        == indexes.timers.len();
+    let leases_unique = indexes
+        .leases
+        .iter()
+        .map(|mutation| match mutation {
+            LeaseIndexMutation::Upsert { entry } => (&entry.run, &entry.lease),
+            LeaseIndexMutation::Remove {
+                run: entry_run,
+                lease,
+            } => (entry_run, lease),
+        })
+        .collect::<BTreeSet<_>>()
+        .len()
+        == indexes.leases.len();
+    if !(runnable_unique && timers_unique && leases_unique) {
+        return Err(PersistenceError::InvalidDocument(
+            "one atomic commit cannot mutate the same derived index identity more than once"
+                .to_owned(),
+        ));
+    }
+    let runnable_valid = indexes.runnable.iter().all(|mutation| match mutation {
+        RunnableIndexMutation::Upsert { entry } => {
+            &entry.run == run && entry.through_sequence == through
+        }
+        RunnableIndexMutation::Remove { run: entry_run, .. } => entry_run == run,
+    });
+    let timers_valid = indexes.timers.iter().all(|mutation| match mutation {
+        TimerIndexMutation::Upsert { entry } => {
+            &entry.run == run && entry.through_sequence == through
+        }
+        TimerIndexMutation::Remove { run: entry_run, .. } => entry_run == run,
+    });
+    let leases_valid = indexes.leases.iter().all(|mutation| match mutation {
+        LeaseIndexMutation::Upsert { entry } => {
+            &entry.run == run && entry.through_sequence == through
+        }
+        LeaseIndexMutation::Remove { run: entry_run, .. } => entry_run == run,
+    });
+    if !(runnable_valid && timers_valid && leases_valid) {
+        return Err(PersistenceError::InvalidDocument(
+            "every index mutation must belong to the run and resulting sequence".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// Result of the one atomic durable command operation.
+#[derive(Clone, Debug, PartialEq)]
+pub enum AtomicRunCommitOutcome {
+    /// A previously unseen command was committed.
+    Committed(CommandResultDocument),
+    /// An exactly matching command was redelivered; no bytes were changed.
+    Replayed(CommandResultDocument),
+}
+
+impl AtomicRunCommitOutcome {
+    /// Returns the original durable result for either first delivery or replay.
+    #[must_use]
+    pub const fn result(&self) -> &CommandResultDocument {
+        match self {
+            Self::Committed(result) | Self::Replayed(result) => result,
+        }
+    }
+}
+
+/// Narrow synchronous object-safe append/idempotency port.
+pub trait RunJournal: Send + Sync {
+    /// Atomically accepts/rejects one command and coordinates every durable consequence.
+    ///
+    /// Receipt, contiguous event append, command result, workspace mutations,
+    /// required-artifact validation, run summary, and runnable/timer/lease indexes are
+    /// one crash-atomic call. Implementations must never expose an accepted event that
+    /// references absent workspace state or uncommitted artifact content.
+    fn commit_command(
+        &self,
+        request: &AtomicRunCommitRequest,
+    ) -> Result<AtomicRunCommitOutcome, PersistenceError>;
+
+    /// Returns the sole authoritative aggregate sequence, or zero when absent.
+    fn head(&self, run: &RunId) -> Result<RunSequence, PersistenceError>;
+
+    /// Returns a prior exact idempotency result when present.
+    fn command_result(
+        &self,
+        run: &RunId,
+        command: &CommandId,
+    ) -> Result<Option<CommandResultDocument>, PersistenceError>;
+}
+
+/// Stable event page cursor; the next sequence is inclusive.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EventCursor {
+    /// Owning aggregate prevents cross-run reuse.
+    pub run: RunId,
+    /// Inclusive next sequence.
+    pub next_sequence: RunSequence,
+}
+
+/// Bounded page query over authoritative ordered events.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EventPageQuery {
+    /// Aggregate to read.
+    pub run: RunId,
+    /// Cursor from a previous page; absent starts at sequence one.
+    pub cursor: Option<EventCursor>,
+    /// Maximum returned envelopes.
+    pub limit: PageSize,
+}
+
+impl EventPageQuery {
+    /// Constructs a query and rejects a cursor for another run or sequence zero.
+    pub fn new(
+        run: RunId,
+        cursor: Option<EventCursor>,
+        limit: PageSize,
+    ) -> Result<Self, PersistenceError> {
+        if let Some(cursor) = &cursor {
+            if cursor.run != run || cursor.next_sequence == RunSequence::ZERO {
+                return Err(PersistenceError::InvalidCursor(
+                    "event cursor must belong to the query run and name a non-zero sequence"
+                        .to_owned(),
+                ));
+            }
+        }
+        Ok(Self { run, cursor, limit })
+    }
+}
+
+/// One ordered event page plus a resumable cursor.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EventPage {
+    /// Strictly contiguous verified envelopes.
+    pub events: Vec<RunEventEnvelope>,
+    /// Cursor for the next page, absent at the observed head.
+    pub next: Option<EventCursor>,
+    /// Journal head observed during this read transaction.
+    pub observed_head: RunSequence,
+}
+
+/// Query filter for immutable run summaries.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RunSummaryFilter {
+    /// Optional exact discovery state.
+    pub state: Option<IndexedRunState>,
+    /// Optional workflow lineage.
+    pub workflow: Option<WorkflowId>,
+}
+
+/// Stable summary cursor based on the last returned run identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunSummaryCursor {
+    /// Last run returned by the previous page (exclusive resume point).
+    pub after_run: RunId,
+}
+
+/// Bounded run-summary page query.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunSummaryPageQuery {
+    /// Immutable filters.
+    pub filter: RunSummaryFilter,
+    /// Resume point.
+    pub cursor: Option<RunSummaryCursor>,
+    /// Maximum returned summaries.
+    pub limit: PageSize,
+}
+
+/// One immutable run-summary page.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunSummaryPage {
+    /// Rebuildable summaries.
+    pub runs: Vec<RunSummaryIndex>,
+    /// Resume point, absent when exhausted.
+    pub next: Option<RunSummaryCursor>,
+}
+
+/// Read-only journal and discoverability queries for runtime/recovery/control APIs.
+pub trait RunQueryStore: Send + Sync {
+    /// Reads a verified contiguous event page. Malformed history is an error.
+    fn events(&self, query: &EventPageQuery) -> Result<EventPage, PersistenceError>;
+
+    /// Gets one run summary.
+    fn run_summary(&self, run: &RunId) -> Result<Option<RunSummaryIndex>, PersistenceError>;
+
+    /// Lists run summaries with stable identity-based pagination.
+    fn run_summaries(
+        &self,
+        query: &RunSummaryPageQuery,
+    ) -> Result<RunSummaryPage, PersistenceError>;
+
+    /// Discovers one stable identity-ordered page of nonterminal runs.
+    ///
+    /// The cursor is exclusive. Callers performing bounded recurring maintenance
+    /// retain the returned cursor and reset to the beginning only after `next` is
+    /// absent, so an early run cannot permanently hide later owned work.
+    fn nonterminal_run_page(
+        &self,
+        cursor: Option<&RunSummaryCursor>,
+        limit: PageSize,
+    ) -> Result<RunSummaryPage, PersistenceError>;
+
+    /// Compatibility shorthand for the first nonterminal page.
+    fn nonterminal_runs(&self, limit: PageSize) -> Result<Vec<RunSummaryIndex>, PersistenceError> {
+        Ok(self.nonterminal_run_page(None, limit)?.runs)
+    }
+
+    /// Discovers eligible work with at most one best candidate per run.
+    ///
+    /// The page bound applies to distinct runs, not raw index rows. Implementations
+    /// must therefore continue past additional candidates for an already represented
+    /// run so a run with a saturated runnable set cannot hide every other run behind
+    /// the adapter page. Within one run the selected candidate is ordered by priority
+    /// descending, eligibility time ascending, then execution identity ascending.
+    /// Runtime owns fairness between the returned runs and all dispatch decisions.
+    fn runnable_page(
+        &self,
+        eligible_through: TimestampMillis,
+        cursor: Option<&RunnableCursor>,
+        limit: PageSize,
+    ) -> Result<RunnablePage, PersistenceError>;
+
+    /// Compatibility shorthand for the first fair runnable page.
+    fn runnable(
+        &self,
+        eligible_through: TimestampMillis,
+        limit: PageSize,
+    ) -> Result<Vec<RunnableIndexEntry>, PersistenceError> {
+        Ok(self.runnable_page(eligible_through, None, limit)?.entries)
+    }
+
+    /// Reads up to `limit` active durable leases in stable expiry/identity order.
+    ///
+    /// Callers that query with their global admission bound may reject immediately
+    /// when the returned page reaches that bound. A shorter page is the complete
+    /// active set and can be projected into exact run/branch/capability counts without
+    /// scanning unrelated run summaries.
+    fn active_leases(&self, limit: PageSize) -> Result<Vec<LeaseIndexEntry>, PersistenceError>;
+
+    /// Discovers due timers; firing remains a runtime command/event decision.
+    fn due_timers(
+        &self,
+        due_through: TimestampMillis,
+        limit: PageSize,
+    ) -> Result<Vec<TimerIndexEntry>, PersistenceError>;
+
+    /// Discovers expired leases; recovery classification remains runtime-owned.
+    fn expired_leases(
+        &self,
+        expired_through: TimestampMillis,
+        limit: PageSize,
+    ) -> Result<Vec<LeaseIndexEntry>, PersistenceError>;
+}
+
+/// Read-only access to durable workspace state. All mutations occur through
+/// [`RunJournal::commit_command`] to preserve crash atomicity with event history.
+pub trait WorkspaceStore: Send + Sync {
+    /// Reads the exact durable budget usage used as the next optimistic accounting guard.
+    fn workspace_usage(&self, run: &RunId) -> Result<WorkspaceUsage, PersistenceError>;
+
+    /// Gets one exact scope declaration.
+    fn scope(
+        &self,
+        run: &RunId,
+        scope: &ScopeId,
+    ) -> Result<Option<WorkspaceScope>, PersistenceError>;
+
+    /// Gets one exact immutable value version.
+    fn value(
+        &self,
+        reference: &WorkspaceValueReference,
+    ) -> Result<Option<WorkspaceValueEntry>, PersistenceError>;
+
+    /// Gets the latest immutable version of one scope-local stream.
+    fn latest_value(
+        &self,
+        scope: &ScopeReference,
+        key: &ValueKey,
+    ) -> Result<Option<WorkspaceValueEntry>, PersistenceError>;
+
+    /// Lists a bounded root-to-leaf lineage after validating stored parent links.
+    fn scope_lineage(&self, leaf: &ScopeReference)
+    -> Result<Vec<WorkspaceScope>, PersistenceError>;
+}

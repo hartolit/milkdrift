@@ -153,6 +153,10 @@ fn unsupported_version_and_hostile_bounds_fail_clearly() -> Result<(), Box<dyn s
         CapabilityDescriptorDocument::from_json(oversized.as_bytes()),
         Err(ContractError::Bounds { .. })
     ));
+    assert!(
+        CapabilityDescriptorDocument::from_json(br#"{"schema_version":1,"schema_version":1}"#)
+            .is_err()
+    );
     assert!(ExtensionKey::new("not-namespaced").is_err());
     assert!(CapabilityId::new("contains a space").is_err());
     Ok(())

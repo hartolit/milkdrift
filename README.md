@@ -2,7 +2,9 @@
 
 Milkdrift is a local-first foundation for durable, live-editable workflows whose tasks can be satisfied by explicitly constrained capabilities: hosted AI providers, local servers, coding agents, tools, humans, or peer machines. Its semantic core keeps workflow meaning independent of any executor, UI, database, network, or provider.
 
-This first rebirth pass implements two pure Rust domains. `milkdrift-capability` defines bounded, versioned capability descriptions, requirements, invocation contracts, observations, and canonical JSON. `milkdrift-blueprint` defines immutable workflow revisions, the semantic graph, a closed atomic mutation model, deterministic content identity, and validation. There is no runtime, persistence, provider adapter, daemon, networking, or desktop application yet.
+Milkdrift currently has a headless Rust execution center. It stores immutable workflow revisions, accepts versioned idempotent run commands, records checksummed append-only events, rebuilds pure projections, schedules bounded work through exact capability snapshots, keeps branch-local workspace values, publishes content-addressed artifacts, recovers local runs after restart, and applies compatible revision changes prospectively through persisted reconciliation plans.
+
+The production local backend uses redb plus a filesystem artifact directory. Capability execution is deliberately a narrow port with a deterministic executor for tests; real registries, provider/process adapters, causal context construction, secrets/authority mediation, peers, daemon APIs, CLI, and desktop UI remain outside this pass.
 
 ```sh
 cargo test --workspace
@@ -12,8 +14,12 @@ A minimal revision is constructed through a validated mutation batch; see the cr
 
 ## Repository map
 
-- `crates/capability`: provider-neutral capability and invocation contracts.
-- `crates/blueprint`: immutable workflow definitions and revision transactions.
+- `crates/capability`: provider-neutral capability, exact resolution, and invocation contracts.
+- `crates/blueprint`: immutable workflow definitions, fingerprints, and revision transactions.
+- `crates/workspace`: scoped immutable values, branch lineage, artifact metadata, and budgets.
+- `crates/persistence`: versioned events and narrow journal/revision/snapshot/workspace/artifact ports.
+- `crates/runtime`: commands, pure projections, scheduling, execution ownership, recovery, and reconciliation.
+- `adapters/redb-store`: transactional local redb storage and content-addressed artifact bytes.
 - `docs`: status, roadmap, development commands, and durable decisions.
 - `.github/workflows/quality.yml`: the single repository quality workflow.
 

@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    BindingSource, EdgeKind, JoinPolicy, Node, NodeId, NodeKind, SemanticBlueprint,
+    BindingSource, Condition, ConditionOperand, EdgeKind, JoinPolicy, Node, NodeId, NodeKind,
+    SemanticBlueprint,
     model::{MAX_EDGES, MAX_NODES},
 };
 
@@ -127,11 +128,23 @@ fn bound_text(mut value: String, limit: usize) -> String {
     if value.len() <= limit {
         return value;
     }
-    while !value.is_char_boundary(limit) {
-        value.remove(limit);
+    let mut boundary = limit;
+    while boundary > 0 && !value.is_char_boundary(boundary) {
+        boundary -= 1;
     }
-    value.truncate(limit);
+    value.truncate(boundary);
     value
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bound_text;
+
+    #[test]
+    fn unicode_diagnostic_truncation_uses_a_character_boundary() {
+        assert_eq!(bound_text("abcdéf".to_owned(), 5), "abcd");
+        assert_eq!(bound_text("ééé".to_owned(), 5), "éé");
+    }
 }
 
 /// One or more independent semantic validation failures.
@@ -167,14 +180,82 @@ pub(crate) fn validate_semantic(semantic: &SemanticBlueprint) -> Result<(), Vali
     let mut diagnostics = Vec::new();
     validate_bounds_and_local(semantic, &mut diagnostics);
     validate_edges_and_bindings(semantic, &mut diagnostics);
+    validate_condition_bindings(semantic, &mut diagnostics);
     validate_acyclic(semantic, &mut diagnostics);
     validate_control_topology(semantic, &mut diagnostics);
     validate_fork_join(semantic, &mut diagnostics);
     validate_reducers_and_subworkflows(semantic, &mut diagnostics);
+    validate_interface_outputs(semantic, &mut diagnostics);
     if diagnostics.is_empty() {
         Ok(())
     } else {
         Err(ValidationError::new(diagnostics))
+    }
+}
+
+fn validate_condition_bindings(semantic: &SemanticBlueprint, diagnostics: &mut Vec<Diagnostic>) {
+    for (node_id, node) in semantic.nodes() {
+        let conditions: Vec<(&str, &Condition)> = match node.kind() {
+            NodeKind::Branch { config } => config
+                .arms()
+                .values()
+                .map(|condition| ("branch", condition))
+                .collect(),
+            NodeKind::Repeat { config } => vec![("repeat", config.condition())],
+            NodeKind::Task { .. }
+            | NodeKind::Fork { .. }
+            | NodeKind::Join { .. }
+            | NodeKind::Reducer { .. }
+            | NodeKind::Wait { .. }
+            | NodeKind::SignalWait { .. }
+            | NodeKind::Subworkflow { .. }
+            | NodeKind::Terminal { .. } => Vec::new(),
+        };
+        for (kind, condition) in conditions {
+            let mut sources = Vec::new();
+            collect_condition_sources(condition, &mut sources);
+            for source in sources {
+                if matches!(source, BindingSource::Literal { .. })
+                    || node
+                        .data_inputs()
+                        .values()
+                        .any(|port| port.binding() == Some(source))
+                {
+                    continue;
+                }
+                push(
+                    diagnostics,
+                    Diagnostic::new(
+                        DiagnosticCode::MissingInput,
+                        format!("nodes.{node_id}.{kind}.condition"),
+                        "every non-literal condition source must be declared by an exact node data-input binding",
+                    ),
+                );
+            }
+        }
+    }
+}
+
+fn collect_condition_sources<'a>(condition: &'a Condition, sources: &mut Vec<&'a BindingSource>) {
+    match condition {
+        Condition::Constant { .. } => {}
+        Condition::All { conditions } | Condition::Any { conditions } => {
+            for condition in conditions {
+                collect_condition_sources(condition, sources);
+            }
+        }
+        Condition::Not { condition } => collect_condition_sources(condition, sources),
+        Condition::Compare { left, right, .. } => {
+            collect_operand_source(left, sources);
+            collect_operand_source(right, sources);
+        }
+        Condition::Exists { source } => sources.push(source),
+    }
+}
+
+fn collect_operand_source<'a>(operand: &'a ConditionOperand, sources: &mut Vec<&'a BindingSource>) {
+    if let ConditionOperand::Binding { source } = operand {
+        sources.push(source);
     }
 }
 
@@ -346,7 +427,7 @@ fn validate_edges_and_bindings(semantic: &SemanticBlueprint, diagnostics: &mut V
                     ),
                 );
             }
-            if port.required() && port.binding().is_none() && incoming.is_empty() {
+            if port.is_required() && port.binding().is_none() && incoming.is_empty() {
                 push(
                     diagnostics,
                     Diagnostic::new(
@@ -485,9 +566,10 @@ fn dependency_adjacency(semantic: &SemanticBlueprint) -> BTreeMap<NodeId, BTreeS
     for edge in semantic.edges().values() {
         if semantic.nodes().contains_key(edge.source_node())
             && semantic.nodes().contains_key(edge.target_node())
-            && let Some(targets) = adjacency.get_mut(edge.source_node())
         {
-            targets.insert(edge.target_node().clone());
+            if let Some(targets) = adjacency.get_mut(edge.source_node()) {
+                targets.insert(edge.target_node().clone());
+            }
         }
     }
     adjacency
@@ -857,17 +939,6 @@ fn validate_reducers_and_subworkflows(
             NodeKind::Repeat { config } => {
                 validate_subworkflow_ports(node_id, node, config.body().interface(), diagnostics);
             }
-            NodeKind::Task {
-                requirement,
-                operation,
-            } if requirement.operation() != operation => push(
-                diagnostics,
-                Diagnostic::new(
-                    DiagnosticCode::MissingCapabilityRequirement,
-                    format!("nodes.{node_id}.task"),
-                    "task requirement does not name its configured operation",
-                ),
-            ),
             _ => {}
         }
     }
@@ -906,5 +977,49 @@ fn validate_subworkflow_ports(
                 "node data ports must cover the pinned subworkflow interface with exact schemas",
             ),
         );
+    }
+}
+
+fn validate_interface_outputs(semantic: &SemanticBlueprint, diagnostics: &mut Vec<Diagnostic>) {
+    for (node_id, terminal) in semantic.nodes().iter().filter(|(_, node)| {
+        matches!(
+            node.kind(),
+            NodeKind::Terminal {
+                outcome: crate::TerminalOutcome::Success
+            }
+        )
+    }) {
+        for (field, expected) in semantic.interface().outputs() {
+            let port = crate::PortId::new(field.as_str())
+                .ok()
+                .and_then(|port| terminal.data_inputs().get(&port));
+            match port {
+                Some(port) if !port.schema().compatible_with(expected.schema()) => push(
+                    diagnostics,
+                    Diagnostic::new(
+                        DiagnosticCode::SchemaMismatch,
+                        format!("nodes.{node_id}.data_inputs.{field}"),
+                        "terminal output port schema differs from the workflow interface",
+                    ),
+                ),
+                Some(port) if expected.is_required() && !port.is_required() => push(
+                    diagnostics,
+                    Diagnostic::new(
+                        DiagnosticCode::MissingInput,
+                        format!("nodes.{node_id}.data_inputs.{field}"),
+                        "a required workflow output must be a required terminal data input",
+                    ),
+                ),
+                None if expected.is_required() => push(
+                    diagnostics,
+                    Diagnostic::new(
+                        DiagnosticCode::MissingInput,
+                        format!("nodes.{node_id}.data_inputs.{field}"),
+                        "every successful terminal must materialize each required workflow output",
+                    ),
+                ),
+                Some(_) | None => {}
+            }
+        }
     }
 }

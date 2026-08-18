@@ -27,15 +27,15 @@ The repository does not own tensor loading or execution, model architectures, to
 
 Blueprint/workflow revisions are immutable snapshots with exact parent references, a user-facing lineage sequence, and a deterministic semantic content digest. The digest excludes timestamps, random map order, JSON object order, and layout. A revision is created only by applying one complete, versioned mutation batch to genesis or one exact optimistic base and validating the final private candidate. Multiple parents denote a deliberate resolved merge; the kernel never invents semantic conflict resolution.
 
-Runs will pin one revision and record append-only events. Events say what was accepted, scheduled, observed, produced, failed, cancelled, or left uncertain. A projection may be rebuilt from events, but neither a projection nor a later revision alters recorded history.
+Runs pin one revision and record append-only events. Events say what was accepted, scheduled, observed, produced, failed, cancelled, or left uncertain. A projection may be rebuilt from events, but neither a projection nor a later revision alters recorded history.
 
 ## 4. Commands, events, projections, effects, and ownership
 
-A **command** asks an owning domain to change state and carries actor, authority, idempotency, and optimistic expectations. The blueprint crate owns the closed semantic mutation command model. The future daemon/runtime will own run-control commands. Commands are validated intent, not evidence that an action happened.
+A **command** asks an owning domain to change state and carries actor, authority, idempotency, and optimistic expectations. The blueprint crate owns the closed semantic mutation command model; the runtime owns closed versioned run-control commands. Commands are validated intent, not evidence that an action happened.
 
 An **event** is an immutable accepted fact appended by the durable runtime. **Projections** are disposable, versioned read models derived from ordered events. **Effects** are explicit interactions with capabilities or infrastructure. The scheduler decides desired transitions; an outbox/effect executor performs effects; adapters report observations; the runtime alone decides workflow state. Effects and their acknowledgements must be idempotently correlated so crash recovery cannot quietly duplicate non-idempotent work.
 
-The daemon will own durable journals, authoritative projections, leases, scheduling, reconciliation, secrets mediation, and effect dispatch. Clients request commands and render projections; they do not own truth.
+The headless runtime owns transition decisions, projections, leases, scheduling, recovery, and reconciliation through narrow persistence/execution ports. A future daemon owns their lifecycle plus secrets mediation and real effect dispatch. Clients request commands and render projections; they do not own truth.
 
 ## 5. Prospective live reconciliation
 
@@ -71,7 +71,7 @@ Context is selected from graph causality, declared inputs, chosen artifacts, sco
 
 ## 10. Durable persistence and crash recovery
 
-The future persistence boundary will append checksummed, versioned events transactionally with command idempotency and effect-outbox intent. Durable timers, signals, leases, cancellation requests, and uncertain invocations survive process restarts. Startup verifies journal integrity, rebuilds or checks projections, reclaims expired leases, and resumes only from persisted state. A crash between external effect and acknowledgement becomes an explicit uncertain/reconciliation case governed by idempotency and side-effect facts, never guessed success.
+The persistence boundary appends checksummed, versioned events transactionally with command idempotency, workspace/accounting changes, and recovery indexes. Durable timers, signals, leases, cancellation requests, and uncertain invocations survive process restarts. Startup verifies journal integrity, rebuilds or checks projections, reclaims expired leases, and resumes only from persisted state. A crash between external effect and acknowledgement becomes an explicit uncertain/reconciliation case governed by idempotency and side-effect facts, never guessed success.
 
 Storage engines are adapters. No database type enters blueprint or capability semantics. Compatibility fixtures cover old on-disk data, recovery tests inject truncation/reordering/duplicate delivery/failed fsync boundaries where the selected backend permits, and migrations are restartable.
 
@@ -85,15 +85,26 @@ One daemon process will own authoritative durable state, scheduling, registries,
 
 ## 13. Dependency direction and forbidden coupling
 
-The semantic dependency direction begins as:
+The implemented production dependency direction is shown below. Arrows point
+from a stable contract to a crate that consumes it:
 
 ```text
-milkdrift-capability
-        ↑
-milkdrift-blueprint
+milkdrift-capability  -> {blueprint, workspace, persistence, runtime}
+milkdrift-blueprint   -> {persistence, runtime, redb-store}
+milkdrift-workspace   -> {persistence, runtime, redb-store}
+milkdrift-persistence -> {runtime, redb-store}
 ```
 
-Capability contracts know nothing about blueprints. Blueprint may use pure capability requirements and schema identities. Future runtime depends on semantic crates; persistence/workspace/capability registries implement runtime-facing ports; adapters depend inward on contracts; apps depend on daemon protocols. Dependencies may point toward stable semantics, never from semantics toward a host.
+The redb adapter also consumes blueprint documents directly for immutable
+revision storage. Capability contracts know nothing about blueprints.
+Blueprint uses only pure capability requirements and schema identities.
+Persistence documents depend on immutable semantic/workspace contracts but own
+no runtime decisions. Runtime and the redb/filesystem adapter are sibling
+consumers of persistence and the immutable domain contracts; runtime uses the
+adapter only as a development dependency in adapter-backed integration tests.
+Future registries implement runtime-facing ports, and apps depend on daemon
+protocols. Dependencies may point toward stable semantics, never from semantics
+toward a host.
 
 Forbidden in the semantic crates are Tokio or another executor, HTTP clients/servers, databases, Iced, provider SDKs, subprocess/OS APIs, transport types, secret values, tensor/inference types, live handles, clocks, randomness that affects identity, and mutable singleton registries. Project-authored code is safe Rust unless an independently proven requirement has a focused safety contract and tests.
 
@@ -161,25 +172,26 @@ The logical map is the long-lived ownership reference. Its exact current physica
 | `blueprint/validation` | `milkdrift-blueprint::validation` |
 | `blueprint/revision` | `milkdrift-blueprint::revision` |
 | `blueprint/mutation` | `milkdrift-blueprint::mutation` |
-| `runtime/scheduler` | Not implemented; Pass 2 boundary |
-| `runtime/execution` | Not implemented; Pass 2 boundary |
-| `runtime/structured-concurrency` | Definition semantics are in blueprint; execution ownership is not implemented |
-| `runtime/reconciliation` | Not implemented; Pass 2 boundary |
-| `runtime/recovery` | Not implemented; Pass 2 boundary |
+| `runtime/scheduler` | `milkdrift-runtime::scheduler` and runtime controller admission/index decisions |
+| `runtime/execution` | `milkdrift-runtime::{command,executor,engine,projection}` |
+| `runtime/structured-concurrency` | Blueprint definitions, `milkdrift-runtime::{engine,projection}`, and `milkdrift-workspace::scope` |
+| `runtime/reconciliation` | `milkdrift-runtime::reconciliation` plus persistence-owned plan event documents |
+| `runtime/recovery` | `milkdrift-runtime::{engine,query,projection}` and recovery indexes in the redb adapter |
 | `capability/contracts` | `milkdrift-capability::{descriptor,invocation,document,identity,bounded}` |
-| `capability/registry` | Not implemented; live state is intentionally outside descriptors |
-| `capability/resolution` | Pure requirement matching is in `milkdrift-capability::descriptor`; live policy/selection is not implemented |
-| `workspace/context` | Not implemented |
-| `workspace/artifacts` | Artifact reference contracts only in `milkdrift-capability::invocation`; storage is not implemented |
-| `workspace/branches` | Definition semantics only; workspace implementation is not implemented |
-| `persistence/events` | Not implemented; capability invocation event contracts are not a run journal |
-| `persistence/journal` | Not implemented; Pass 2 boundary |
-| `persistence/projections` | Not implemented; Pass 2 boundary |
+| `capability/registry` | Deterministic test boundary only; live Pass 3 registry remains unimplemented |
+| `capability/resolution` | Pure requirement matching and exact immutable snapshots in `milkdrift-capability`; live policy selection remains Pass 3 |
+| `workspace/context` | Scoped immutable values/budgets in `milkdrift-workspace`; causal context construction remains Pass 3 |
+| `workspace/artifacts` | Metadata/contracts in `milkdrift-workspace` and durable bytes in `milkdrift-redb-store` |
+| `workspace/branches` | `milkdrift-workspace::scope` plus runtime branch/iteration/subworkflow projections |
+| `persistence/events` | `milkdrift-persistence::{event,document}` with schema-v1 golden fixtures |
+| `persistence/journal` | Narrow `milkdrift-persistence` ports implemented by `milkdrift-redb-store` |
+| `persistence/projections` | Pure `milkdrift-runtime::projection`; optional checked snapshots are persistence documents |
 | `peer/protocol` | Not implemented |
 | `peer/capability-advertisement` | Generic descriptor contract exists; peer protocol/advertisement is not implemented |
 | `adapters/model` | Not implemented |
 | `adapters/process` | Not implemented |
-| `adapters/filesystem` | Not implemented |
+| `adapters/filesystem` | Content-addressed artifact ownership in `milkdrift-redb-store` |
+| `adapters/redb` | `milkdrift-redb-store` transactional local durable adapter |
 | `adapters/peer-transport` | Not implemented |
 | `apps/desktop-iced` | Not implemented |
 | `apps/daemon` | Not implemented |

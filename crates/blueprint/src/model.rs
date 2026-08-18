@@ -256,6 +256,30 @@ impl BlueprintMetadata {
         })
     }
 
+    /// Human-facing blueprint name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Bounded human-facing description.
+    #[must_use]
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+
+    /// Deterministically ordered labels.
+    #[must_use]
+    pub const fn labels(&self) -> &BTreeSet<String> {
+        &self.labels
+    }
+
+    /// Bounded namespaced semantic extensions.
+    #[must_use]
+    pub const fn extensions(&self) -> &BTreeMap<ExtensionKey, BoundedJson> {
+        &self.extensions
+    }
+
     pub(crate) fn default_for(workflow: &WorkflowId) -> Result<Self, ModelError> {
         Self::new(workflow.as_str(), "", BTreeSet::new(), BTreeMap::new())
     }
@@ -328,13 +352,42 @@ enum PortDirection {
 }
 
 /// Declared data port; constructors prevent input/output contradictions.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DataPort {
     schema: SchemaRef,
     required: bool,
     binding: Option<BindingSource>,
     direction: PortDirection,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DataPortWire {
+    schema: SchemaRef,
+    required: bool,
+    binding: Option<BindingSource>,
+    direction: PortDirection,
+}
+
+impl<'de> Deserialize<'de> for DataPort {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = DataPortWire::deserialize(deserializer)?;
+        match wire.direction {
+            PortDirection::Input => Self::input(wire.schema, wire.required, wire.binding),
+            PortDirection::Output if !wire.required && wire.binding.is_none() => {
+                Ok(Self::output(wire.schema))
+            }
+            PortDirection::Output => Err(ModelError::new(
+                "port.direction",
+                "an output cannot be required or carry an input binding",
+            )),
+        }
+        .map_err(serde::de::Error::custom)
+    }
 }
 
 impl DataPort {
@@ -378,7 +431,12 @@ impl DataPort {
         self.binding.as_ref()
     }
 
-    pub(crate) fn required(&self) -> bool {
+    /// Whether this input must resolve before its owning node may execute.
+    ///
+    /// Output ports always return `false` because their constructor cannot carry
+    /// an input requirement.
+    #[must_use]
+    pub const fn is_required(&self) -> bool {
         self.required
     }
 
@@ -441,6 +499,18 @@ impl BranchConfig {
         Ok(Self { arms, fallback })
     }
 
+    /// Condition arms keyed by their outgoing control ports.
+    #[must_use]
+    pub const fn arms(&self) -> &BTreeMap<PortId, Condition> {
+        &self.arms
+    }
+
+    /// Fallback outgoing control port, when declared.
+    #[must_use]
+    pub const fn fallback(&self) -> Option<&PortId> {
+        self.fallback.as_ref()
+    }
+
     pub(crate) fn ports(&self) -> BTreeSet<PortId> {
         self.arms
             .keys()
@@ -498,9 +568,14 @@ impl ForkConfig {
 pub enum JoinPolicy {
     /// Wait for every owned branch.
     All,
-    /// Continue after any successful branch.
+    /// Continue after the first branch reaches any terminal outcome.
+    Any,
+    /// Continue after the first successful branch and cancel unfinished losers.
+    FirstSuccess,
+    /// Legacy spelling of `first_success`, retained for schema-v1 compatibility.
+    #[deprecated(note = "use FirstSuccess for new revisions")]
     AnySuccessful,
-    /// Continue after exactly the bounded number of successful branches.
+    /// Continue after at least the bounded number of successful branches.
     Quorum(u16),
 }
 
@@ -519,11 +594,15 @@ impl JoinConfig {
         Self { fork, policy }
     }
 
-    pub(crate) fn fork(&self) -> &NodeId {
+    /// Fork whose child branches this join owns and synchronizes.
+    #[must_use]
+    pub const fn fork(&self) -> &NodeId {
         &self.fork
     }
 
-    pub(crate) fn policy(&self) -> JoinPolicy {
+    /// Declared synchronization policy.
+    #[must_use]
+    pub const fn policy(&self) -> JoinPolicy {
         self.policy
     }
 }
@@ -594,16 +673,28 @@ impl ReducerConfig {
         })
     }
 
-    pub(crate) fn input_port(&self) -> &PortId {
+    /// Data input receiving explicit branch result references.
+    #[must_use]
+    pub const fn input_port(&self) -> &PortId {
         &self.input_port
     }
 
-    pub(crate) fn item_schema(&self) -> &SchemaRef {
+    /// Exact schema of each collected item.
+    #[must_use]
+    pub const fn item_schema(&self) -> &SchemaRef {
         &self.item_schema
     }
 
-    pub(crate) fn minimum_items(&self) -> u16 {
+    /// Minimum number of items needed before reduction.
+    #[must_use]
+    pub const fn minimum_items(&self) -> u16 {
         self.minimum_items
+    }
+
+    /// Explicit deterministic or capability-backed reduction strategy.
+    #[must_use]
+    pub const fn strategy(&self) -> &ReducerStrategy {
+        &self.strategy
     }
 }
 
@@ -637,19 +728,112 @@ impl PinnedSubworkflow {
         &self.revision
     }
 
-    pub(crate) fn interface(&self) -> &WorkflowInterface {
+    /// Workflow lineage owning the pinned revision.
+    #[must_use]
+    pub const fn workflow(&self) -> &WorkflowId {
+        &self.workflow
+    }
+
+    /// Exact interface expected from the pinned revision.
+    #[must_use]
+    pub const fn interface(&self) -> &WorkflowInterface {
         &self.interface
     }
 }
 
+/// Validated currency ledger used by a repeat cost budget.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct CostCurrencyCode(String);
+
+impl CostCurrencyCode {
+    /// Validates an uppercase three-letter currency code.
+    pub fn new(value: impl Into<String>) -> Result<Self, ModelError> {
+        let value = value.into();
+        if value.len() != 3 || !value.bytes().all(|byte| byte.is_ascii_uppercase()) {
+            return Err(ModelError::new(
+                "repeat.budget.cost_currency",
+                "must contain exactly three uppercase ASCII letters",
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    /// Returns the validated currency code.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Serialize for CostCurrencyCode {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for CostCurrencyCode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Self::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Additional hard limits for a bounded repeat.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RepeatBudget {
-    /// Maximum elapsed runtime when enforced by a later runtime.
+    /// Maximum elapsed runtime enforced by the owning runtime.
     pub max_duration_ms: Option<u64>,
-    /// Maximum observed cost in millionths when enforced by a later runtime.
+    /// Maximum observed cost in millionths enforced by the owning runtime.
     pub max_cost_micros: Option<u64>,
+    /// Exact currency ledger governed by `max_cost_micros`.
+    #[serde(default)]
+    pub max_cost_currency: Option<CostCurrencyCode>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RepeatBudgetWire {
+    max_duration_ms: Option<u64>,
+    max_cost_micros: Option<u64>,
+    #[serde(default)]
+    max_cost_currency: Option<CostCurrencyCode>,
+}
+
+impl<'de> Deserialize<'de> for RepeatBudget {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = RepeatBudgetWire::deserialize(deserializer)?;
+        let budget = Self {
+            max_duration_ms: wire.max_duration_ms,
+            max_cost_micros: wire.max_cost_micros,
+            max_cost_currency: wire.max_cost_currency,
+        };
+        budget.validate().map_err(serde::de::Error::custom)?;
+        Ok(budget)
+    }
+}
+
+impl RepeatBudget {
+    fn validate(&self) -> Result<(), ModelError> {
+        if self.max_duration_ms == Some(0)
+            || self.max_cost_micros == Some(0)
+            || self.max_cost_micros.is_some() != self.max_cost_currency.is_some()
+        {
+            return Err(ModelError::new(
+                "repeat.budget",
+                "duration must be nonzero and cost micros/currency must be supplied together",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Behavior when a repeat reaches a hard bound.
@@ -717,12 +901,7 @@ impl RepeatConfig {
                 format!("must be between 1 and {MAX_REPEAT_ITERATIONS}"),
             ));
         }
-        if budget.max_duration_ms == Some(0) || budget.max_cost_micros == Some(0) {
-            return Err(ModelError::new(
-                "repeat.budget",
-                "supplied duration and cost budgets must be nonzero",
-            ));
-        }
+        budget.validate()?;
         condition
             .validate()
             .map_err(|error| ModelError::new("repeat.condition", error.to_string()))?;
@@ -735,8 +914,34 @@ impl RepeatConfig {
         })
     }
 
-    pub(crate) fn body(&self) -> &PinnedSubworkflow {
+    /// Exact acyclic body invoked for each iteration.
+    #[must_use]
+    pub const fn body(&self) -> &PinnedSubworkflow {
         &self.body
+    }
+
+    /// Condition recorded after each completed iteration.
+    #[must_use]
+    pub const fn condition(&self) -> &Condition {
+        &self.condition
+    }
+
+    /// Hard maximum number of iterations.
+    #[must_use]
+    pub const fn maximum_iterations(&self) -> u32 {
+        self.maximum_iterations
+    }
+
+    /// Additional runtime-enforced budget hooks.
+    #[must_use]
+    pub const fn budget(&self) -> &RepeatBudget {
+        &self.budget
+    }
+
+    /// Behavior when a hard bound is reached.
+    #[must_use]
+    pub const fn termination(&self) -> RepeatTermination {
+        self.termination
     }
 }
 
@@ -753,15 +958,13 @@ pub enum TerminalOutcome {
 }
 
 /// Complete semantic behavior of one definition-time node.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum NodeKind {
     /// Invoke an operation through capability selection.
     Task {
         /// Requirement matched later by a registry.
         requirement: CapabilityRequirement,
-        /// Exact operation expected from the chosen capability.
-        operation: OperationId,
     },
     /// Select one typed control arm.
     Branch {
@@ -808,6 +1011,79 @@ pub enum NodeKind {
         /// Declared workflow result.
         outcome: TerminalOutcome,
     },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+enum NodeKindWire {
+    Task {
+        requirement: CapabilityRequirement,
+        // Pass 1 encoded the operation twice. Accept that legacy v1 spelling only
+        // when it agrees, then migrate to the requirement-owned representation.
+        #[serde(default)]
+        operation: Option<OperationId>,
+    },
+    Branch {
+        config: BranchConfig,
+    },
+    Fork {
+        config: ForkConfig,
+    },
+    Join {
+        config: JoinConfig,
+    },
+    Reducer {
+        config: ReducerConfig,
+    },
+    Repeat {
+        config: RepeatConfig,
+    },
+    Wait {
+        duration_ms: u64,
+    },
+    SignalWait {
+        signal: OperationId,
+    },
+    Subworkflow {
+        reference: PinnedSubworkflow,
+    },
+    Terminal {
+        outcome: TerminalOutcome,
+    },
+}
+
+impl<'de> Deserialize<'de> for NodeKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = NodeKindWire::deserialize(deserializer)?;
+        match wire {
+            NodeKindWire::Task {
+                requirement,
+                operation,
+            } => {
+                if operation
+                    .as_ref()
+                    .is_some_and(|legacy| legacy != requirement.operation())
+                {
+                    return Err(serde::de::Error::custom(
+                        "legacy task operation conflicts with its capability requirement",
+                    ));
+                }
+                Ok(Self::Task { requirement })
+            }
+            NodeKindWire::Branch { config } => Ok(Self::Branch { config }),
+            NodeKindWire::Fork { config } => Ok(Self::Fork { config }),
+            NodeKindWire::Join { config } => Ok(Self::Join { config }),
+            NodeKindWire::Reducer { config } => Ok(Self::Reducer { config }),
+            NodeKindWire::Repeat { config } => Ok(Self::Repeat { config }),
+            NodeKindWire::Wait { duration_ms } => Ok(Self::Wait { duration_ms }),
+            NodeKindWire::SignalWait { signal } => Ok(Self::SignalWait { signal }),
+            NodeKindWire::Subworkflow { reference } => Ok(Self::Subworkflow { reference }),
+            NodeKindWire::Terminal { outcome } => Ok(Self::Terminal { outcome }),
+        }
+    }
 }
 
 /// Definition-time node with declared control/data ports and immutable configuration.
@@ -928,11 +1204,15 @@ impl Node {
         &self.data_outputs
     }
 
-    pub(crate) fn control_inputs(&self) -> &BTreeSet<PortId> {
+    /// Declared control inputs.
+    #[must_use]
+    pub const fn control_inputs(&self) -> &BTreeSet<PortId> {
         &self.control_inputs
     }
 
-    pub(crate) fn control_outputs(&self) -> &BTreeSet<PortId> {
+    /// Declared control outputs.
+    #[must_use]
+    pub const fn control_outputs(&self) -> &BTreeSet<PortId> {
         &self.control_outputs
     }
 
@@ -975,19 +1255,10 @@ impl Node {
 
     fn validate_kind(&self) -> Result<(), ModelError> {
         match &self.kind {
-            NodeKind::Task {
-                requirement,
-                operation,
-            } => {
+            NodeKind::Task { requirement } => {
                 requirement
                     .validate()
                     .map_err(|error| ModelError::new("node.task.requirement", error.to_string()))?;
-                if requirement.operation() != operation {
-                    return Err(ModelError::new(
-                        "node.task.operation",
-                        "task operation must equal its capability requirement operation",
-                    ));
-                }
                 Ok(())
             }
             NodeKind::Wait { duration_ms: 0 } => Err(ModelError::new(
@@ -1057,23 +1328,33 @@ impl Edge {
         &self.id
     }
 
-    pub(crate) const fn kind(&self) -> EdgeKind {
+    /// Whether this is a control or typed data dependency.
+    #[must_use]
+    pub const fn kind(&self) -> EdgeKind {
         self.kind
     }
 
-    pub(crate) const fn source_node(&self) -> &NodeId {
+    /// Source node identity.
+    #[must_use]
+    pub const fn source_node(&self) -> &NodeId {
         &self.source_node
     }
 
-    pub(crate) const fn source_port(&self) -> &PortId {
+    /// Declared source port.
+    #[must_use]
+    pub const fn source_port(&self) -> &PortId {
         &self.source_port
     }
 
-    pub(crate) const fn target_node(&self) -> &NodeId {
+    /// Target node identity.
+    #[must_use]
+    pub const fn target_node(&self) -> &NodeId {
         &self.target_node
     }
 
-    pub(crate) const fn target_port(&self) -> &PortId {
+    /// Declared target port.
+    #[must_use]
+    pub const fn target_port(&self) -> &PortId {
         &self.target_port
     }
 }

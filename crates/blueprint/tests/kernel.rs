@@ -3,12 +3,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use milkdrift_blueprint::{
-    AuthorRef, BlueprintMetadata, BlueprintRevision, BlueprintRevisionDocument, BranchConfig,
-    Condition, DataPort, DiagnosticCode, DocumentError, Edge, EdgeId, EdgeKind, ForkConfig,
-    JoinConfig, JoinPolicy, Mutation, MutationBatch, MutationError, Node, NodeId, NodeKind,
-    PathSegment, PathSelector, PinnedSubworkflow, PortId, ReducerConfig, ReducerStrategy,
-    RepeatBudget, RepeatConfig, RepeatTermination, RevisionId, SchemaRef, TerminalOutcome,
-    WorkflowId, WorkflowInterface,
+    AuthorRef, BindingSource, BlueprintMetadata, BlueprintRevision, BlueprintRevisionDocument,
+    BranchConfig, Condition, CostCurrencyCode, DataPort, DiagnosticCode, DocumentError, Edge,
+    EdgeId, EdgeKind, FieldId, ForkConfig, InterfaceField, JoinConfig, JoinPolicy, Mutation,
+    MutationBatch, MutationError, Node, NodeId, NodeKind, PathSegment, PathSelector,
+    PinnedSubworkflow, PortId, ReducerConfig, ReducerStrategy, RepeatBudget, RepeatConfig,
+    RepeatTermination, RevisionId, SchemaRef, TerminalOutcome, WorkflowId, WorkflowInterface,
+    node_configuration_fingerprint, node_dependency_fingerprint,
 };
 use milkdrift_capability::{CapabilityRequirement, OperationId, SchemaId};
 use proptest::prelude::*;
@@ -36,8 +37,7 @@ fn task_node(name: &str) -> TestResult<Node> {
     Ok(Node::new(
         id(name)?,
         NodeKind::Task {
-            requirement: CapabilityRequirement::new(operation.clone()),
-            operation,
+            requirement: CapabilityRequirement::new(operation),
         },
     )?)
 }
@@ -104,6 +104,132 @@ fn valid_sequence_is_immutable_and_round_trips() -> TestResult {
 }
 
 #[test]
+fn successful_terminals_materialize_required_interface_outputs_explicitly() -> TestResult {
+    let result_schema = schema()?;
+    let interface = WorkflowInterface::new(
+        [],
+        [(
+            FieldId::new("result")?,
+            InterfaceField::required(result_schema.clone()),
+        )],
+    )?;
+    let source = task_node("source")?
+        .with_control_output(port("next")?)?
+        .with_data_output(port("result")?, DataPort::output(result_schema.clone()))?;
+    let terminal_without_output = terminal_node("done")?.with_control_input(port("in")?)?;
+    let control_edge = Edge::new(
+        EdgeId::new("source-done")?,
+        EdgeKind::Control,
+        id("source")?,
+        port("next")?,
+        id("done")?,
+        port("in")?,
+    );
+    let missing = genesis(
+        "missing-terminal-output",
+        vec![
+            Mutation::SetInterface {
+                interface: interface.clone(),
+            },
+            Mutation::AddNode {
+                node: source.clone(),
+            },
+            Mutation::AddNode {
+                node: terminal_without_output,
+            },
+            Mutation::AddEdge {
+                edge: control_edge.clone(),
+            },
+        ],
+    );
+    let Err(MutationError::Validation(error)) = missing else {
+        return Err("required workflow output was not enforced at the success terminal".into());
+    };
+    assert!(
+        error
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code() == DiagnosticCode::MissingInput)
+    );
+
+    let terminal = terminal_node("done")?
+        .with_control_input(port("in")?)?
+        .with_data_input(port("result")?, DataPort::input(result_schema, true, None)?)?;
+    let revision = genesis(
+        "materialized-terminal-output",
+        vec![
+            Mutation::SetInterface { interface },
+            Mutation::AddNode { node: source },
+            Mutation::AddNode { node: terminal },
+            Mutation::AddEdge { edge: control_edge },
+            Mutation::AddEdge {
+                edge: Edge::new(
+                    EdgeId::new("result-done")?,
+                    EdgeKind::Data,
+                    id("source")?,
+                    port("result")?,
+                    id("done")?,
+                    port("result")?,
+                ),
+            },
+        ],
+    )?;
+    assert_eq!(revision.semantic().interface().outputs().len(), 1);
+    Ok(())
+}
+
+#[test]
+fn node_and_dependency_fingerprints_are_stable_and_separate() -> TestResult {
+    let revision = simple_sequence("fingerprints", false)?;
+    let first = revision
+        .semantic()
+        .nodes()
+        .get(&id("first")?)
+        .ok_or("missing first node")?;
+    let configuration = node_configuration_fingerprint(first)?;
+    let dependencies = node_dependency_fingerprint(revision.semantic(), first.id())?;
+    assert_ne!(configuration, dependencies);
+    assert_eq!(configuration, node_configuration_fingerprint(first)?);
+    assert_eq!(
+        dependencies,
+        node_dependency_fingerprint(revision.semantic(), first.id())?
+    );
+    Ok(())
+}
+
+#[test]
+fn standalone_output_port_deserialization_cannot_smuggle_an_input_binding() -> TestResult {
+    let invalid = serde_json::json!({
+        "schema": { "id": "milkdrift.value", "version": 1 },
+        "required": true,
+        "binding": { "type": "literal", "value": null },
+        "direction": "output"
+    });
+    assert!(serde_json::from_value::<DataPort>(invalid).is_err());
+    Ok(())
+}
+
+#[test]
+fn legacy_duplicated_task_operation_migrates_but_conflicts_are_rejected() -> TestResult {
+    let kind = NodeKind::Task {
+        requirement: CapabilityRequirement::new(OperationId::new("tool.execute")?),
+    };
+    let mut wire = serde_json::to_value(&kind)?;
+    assert!(wire.get("operation").is_none());
+
+    wire.as_object_mut()
+        .ok_or("task kind must encode as an object")?
+        .insert("operation".to_owned(), serde_json::json!("tool.execute"));
+    assert_eq!(serde_json::from_value::<NodeKind>(wire.clone())?, kind);
+
+    wire.as_object_mut()
+        .ok_or("task kind must encode as an object")?
+        .insert("operation".to_owned(), serde_json::json!("tool.other"));
+    assert!(serde_json::from_value::<NodeKind>(wire).is_err());
+    Ok(())
+}
+
+#[test]
 fn branch_arms_are_explicit_and_typed() -> TestResult {
     let yes = port("yes")?;
     let no = port("no")?;
@@ -152,6 +278,55 @@ fn branch_arms_are_explicit_and_typed() -> TestResult {
         ],
     )?;
     assert_eq!(revision.semantic().nodes().len(), 3);
+    Ok(())
+}
+
+#[test]
+fn condition_sources_must_be_declared_as_exact_node_inputs() -> TestResult {
+    let yes = port("yes")?;
+    let source = BindingSource::WorkflowInput {
+        field: FieldId::new("undeclared")?,
+    };
+    let branch = Node::new(
+        id("branch-with-hidden-input")?,
+        NodeKind::Branch {
+            config: BranchConfig::new(
+                BTreeMap::from([(yes.clone(), Condition::Exists { source })]),
+                None,
+            )?,
+        },
+    )?
+    .with_control_output(yes.clone())?;
+    let done = terminal_node("condition-done")?.with_control_input(port("in")?)?;
+    let result = genesis(
+        "condition-hidden-input",
+        vec![
+            Mutation::SetInterface {
+                interface: empty_interface()?,
+            },
+            Mutation::AddNode { node: branch },
+            Mutation::AddNode { node: done },
+            Mutation::AddEdge {
+                edge: Edge::new(
+                    EdgeId::new("condition-route")?,
+                    EdgeKind::Control,
+                    id("branch-with-hidden-input")?,
+                    yes,
+                    id("condition-done")?,
+                    port("in")?,
+                ),
+            },
+        ],
+    );
+    let Err(MutationError::Validation(error)) = result else {
+        return Err("condition source without an exact data binding was accepted".into());
+    };
+    assert!(
+        error
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code() == DiagnosticCode::MissingInput)
+    );
     Ok(())
 }
 
@@ -275,6 +450,7 @@ fn repeat_wait_signal_subworkflow_and_terminal_form_an_acyclic_sequence() -> Tes
                 RepeatBudget {
                     max_duration_ms: Some(60_000),
                     max_cost_micros: None,
+                    max_cost_currency: None,
                 },
                 RepeatTermination::Fail,
             )?,
@@ -320,6 +496,53 @@ fn repeat_wait_signal_subworkflow_and_terminal_form_an_acyclic_sequence() -> Tes
     }
     let revision = genesis("durable-nodes", operations)?;
     assert_eq!(revision.semantic().nodes().len(), 5);
+    Ok(())
+}
+
+#[test]
+fn repeat_cost_budgets_bind_one_validated_currency_ledger() -> TestResult {
+    let usd = CostCurrencyCode::new("USD")?;
+    assert_eq!(usd.as_str(), "USD");
+    assert!(CostCurrencyCode::new("usd").is_err());
+    assert!(CostCurrencyCode::new("EURO").is_err());
+
+    let budget = RepeatBudget {
+        max_duration_ms: Some(1_000),
+        max_cost_micros: Some(50_000),
+        max_cost_currency: Some(usd),
+    };
+    assert_eq!(
+        serde_json::from_value::<RepeatBudget>(serde_json::to_value(&budget)?)?,
+        budget
+    );
+
+    let legacy_none = serde_json::json!({
+        "max_duration_ms": null,
+        "max_cost_micros": null
+    });
+    assert_eq!(
+        serde_json::from_value::<RepeatBudget>(legacy_none)?,
+        RepeatBudget {
+            max_duration_ms: None,
+            max_cost_micros: None,
+            max_cost_currency: None,
+        }
+    );
+    assert!(
+        serde_json::from_value::<RepeatBudget>(serde_json::json!({
+            "max_duration_ms": null,
+            "max_cost_micros": 1,
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<RepeatBudget>(serde_json::json!({
+            "max_duration_ms": null,
+            "max_cost_micros": null,
+            "max_cost_currency": "USD",
+        }))
+        .is_err()
+    );
     Ok(())
 }
 
@@ -482,6 +705,10 @@ fn hostile_depth_path_and_future_version_are_rejected() -> TestResult {
         BlueprintRevisionDocument::from_json(hostile.as_bytes()),
         Err(DocumentError::Bounds { .. })
     ));
+    assert!(
+        BlueprintRevisionDocument::from_json(br#"{"schema_version":1,"schema_version":1}"#)
+            .is_err()
+    );
     Ok(())
 }
 

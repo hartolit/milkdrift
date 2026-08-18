@@ -1,0 +1,27 @@
+[package]
+name = "milkdrift-redb-store"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+blake3.workspace = true
+milkdrift-blueprint = { path = "../../crates/blueprint" }
+milkdrift-persistence = { path = "../../crates/persistence" }
+milkdrift-workspace = { path = "../../crates/workspace" }
+redb = "=2.6.3"
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.4", features = ["fs"] }
+
+[dev-dependencies]
+milkdrift-capability = { path = "../../crates/capability" }
+tempfile = "3.21.0"
+
+[lints]
+workspace = true

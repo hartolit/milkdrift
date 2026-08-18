@@ -84,6 +84,30 @@ impl ArtifactReference {
         })
     }
 
+    /// Returns the durable artifact identity.
+    #[must_use]
+    pub fn identity(&self) -> &str {
+        &self.identity
+    }
+
+    /// Returns the lowercase BLAKE3 content digest.
+    #[must_use]
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+
+    /// Returns the declared media type, when supplied.
+    #[must_use]
+    pub fn media_type(&self) -> Option<&str> {
+        self.media_type.as_deref()
+    }
+
+    /// Returns the exact artifact byte size, when supplied.
+    #[must_use]
+    pub const fn size_bytes(&self) -> Option<u64> {
+        self.size_bytes
+    }
+
     fn validate(&self) -> Result<(), ContractError> {
         Self::new(
             self.identity.clone(),
@@ -96,7 +120,7 @@ impl ArtifactReference {
 }
 
 /// Provider-neutral reference used as an invocation input.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum InvocationValueReference {
     /// Immutable artifact reference.
@@ -118,32 +142,102 @@ pub enum InvocationValueReference {
     },
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+enum InvocationValueReferenceWire {
+    Artifact { reference: ArtifactReference },
+    WorkspaceValue { identity: String, version: String },
+    Inline { value: BoundedJson },
+}
+
+impl<'de> Deserialize<'de> for InvocationValueReference {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = match InvocationValueReferenceWire::deserialize(deserializer)? {
+            InvocationValueReferenceWire::Artifact { reference } => Self::Artifact { reference },
+            InvocationValueReferenceWire::WorkspaceValue { identity, version } => {
+                Self::WorkspaceValue { identity, version }
+            }
+            InvocationValueReferenceWire::Inline { value } => Self::Inline { value },
+        };
+        value.validate().map_err(serde::de::Error::custom)?;
+        Ok(value)
+    }
+}
+
 impl InvocationValueReference {
+    /// Returns the artifact reference when this value points to an artifact.
+    #[must_use]
+    pub const fn artifact(&self) -> Option<&ArtifactReference> {
+        match self {
+            Self::Artifact { reference } => Some(reference),
+            Self::WorkspaceValue { .. } | Self::Inline { .. } => None,
+        }
+    }
+
+    /// Returns the exact workspace value identity and version when applicable.
+    #[must_use]
+    pub fn workspace_value(&self) -> Option<(&str, &str)> {
+        match self {
+            Self::WorkspaceValue { identity, version } => Some((identity, version)),
+            Self::Artifact { .. } | Self::Inline { .. } => None,
+        }
+    }
+
+    /// Returns the bounded inline control value when applicable.
+    #[must_use]
+    pub const fn inline(&self) -> Option<&BoundedJson> {
+        match self {
+            Self::Inline { value } => Some(value),
+            Self::Artifact { .. } | Self::WorkspaceValue { .. } => None,
+        }
+    }
+
     fn validate(&self) -> Result<(), ContractError> {
         if let Self::Artifact { reference } = self {
             reference.validate()?;
         }
-        if let Self::WorkspaceValue { identity, version } = self
-            && (identity.is_empty()
+        if let Self::WorkspaceValue { identity, version } = self {
+            if identity.is_empty()
                 || identity.len() > MAX_REFERENCE
                 || version.is_empty()
-                || version.len() > MAX_REFERENCE)
-        {
-            return Err(ContractError::Bounds {
-                location: "workspace_value".to_owned(),
-                reason: format!("identity and version must contain 1 to {MAX_REFERENCE} bytes"),
-            });
+                || version.len() > MAX_REFERENCE
+            {
+                return Err(ContractError::Bounds {
+                    location: "workspace_value".to_owned(),
+                    reason: format!("identity and version must contain 1 to {MAX_REFERENCE} bytes"),
+                });
+            }
         }
         Ok(())
     }
 }
 
 /// One named invocation input reference.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InputReference {
     name: String,
     value: InvocationValueReference,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InputReferenceWire {
+    name: String,
+    value: InvocationValueReference,
+}
+
+impl<'de> Deserialize<'de> for InputReference {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = InputReferenceWire::deserialize(deserializer)?;
+        Self::new(wire.name, wire.value).map_err(serde::de::Error::custom)
+    }
 }
 
 impl InputReference {
@@ -172,6 +266,12 @@ impl InputReference {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Returns the immutable value reference supplied for this input.
+    #[must_use]
+    pub const fn value(&self) -> &InvocationValueReference {
+        &self.value
     }
 
     fn validate(&self) -> Result<(), ContractError> {
@@ -279,6 +379,42 @@ impl InvocationRequest {
     pub const fn invocation(&self) -> &InvocationId {
         &self.invocation
     }
+
+    /// Exact capability selected before dispatch.
+    #[must_use]
+    pub const fn capability(&self) -> &CapabilityId {
+        &self.capability
+    }
+
+    /// Exact operation selected before dispatch.
+    #[must_use]
+    pub const fn operation(&self) -> &OperationId {
+        &self.operation
+    }
+
+    /// Opaque provider-profile reference selected before dispatch.
+    #[must_use]
+    pub const fn provider_profile(&self) -> Option<&ProviderProfileRef> {
+        self.provider_profile.as_ref()
+    }
+
+    /// Caller-selected idempotency identity, when the operation accepts one.
+    #[must_use]
+    pub const fn idempotency_key(&self) -> Option<&IdempotencyKey> {
+        self.idempotency_key.as_ref()
+    }
+
+    /// Bounded named input references in caller-defined order.
+    #[must_use]
+    pub fn inputs(&self) -> &[InputReference] {
+        &self.inputs
+    }
+
+    /// Bounded namespaced invocation extensions.
+    #[must_use]
+    pub const fn extensions(&self) -> &BTreeMap<ExtensionKey, BoundedJson> {
+        &self.extensions
+    }
 }
 
 /// Stable failure classification; adapters report it but never choose workflow state.
@@ -306,22 +442,98 @@ pub enum ErrorClass {
 }
 
 /// Structured failure reported by an adapter.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InvocationFailure {
     /// Stable error classification.
-    pub class: ErrorClass,
+    class: ErrorClass,
     /// Whether the adapter considers a retry potentially useful.
-    pub retryable: bool,
+    retryable: bool,
     /// Bounded adapter or provider error code.
-    pub code: String,
+    code: String,
     /// Bounded redacted summary suitable for durable history.
-    pub message: String,
+    message: String,
     /// Optional retry delay supplied by the provider.
-    pub retry_after_ms: Option<u64>,
+    retry_after_ms: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InvocationFailureWire {
+    class: ErrorClass,
+    retryable: bool,
+    code: String,
+    message: String,
+    retry_after_ms: Option<u64>,
+}
+
+impl<'de> Deserialize<'de> for InvocationFailure {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = InvocationFailureWire::deserialize(deserializer)?;
+        Self::new(
+            wire.class,
+            wire.retryable,
+            wire.code,
+            wire.message,
+            wire.retry_after_ms,
+        )
+        .map_err(serde::de::Error::custom)
+    }
 }
 
 impl InvocationFailure {
+    /// Constructs bounded, structured failure details.
+    pub fn new(
+        class: ErrorClass,
+        retryable: bool,
+        code: impl Into<String>,
+        message: impl Into<String>,
+        retry_after_ms: Option<u64>,
+    ) -> Result<Self, ContractError> {
+        let failure = Self {
+            class,
+            retryable,
+            code: code.into(),
+            message: message.into(),
+            retry_after_ms,
+        };
+        failure.validate()?;
+        Ok(failure)
+    }
+
+    /// Returns the stable failure classification.
+    #[must_use]
+    pub const fn class(&self) -> ErrorClass {
+        self.class
+    }
+
+    /// Returns whether retry may be useful according to the adapter.
+    #[must_use]
+    pub const fn retryable(&self) -> bool {
+        self.retryable
+    }
+
+    /// Returns the bounded adapter or provider error code.
+    #[must_use]
+    pub fn code(&self) -> &str {
+        &self.code
+    }
+
+    /// Returns the bounded redacted failure summary.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Returns the provider-supplied retry delay in milliseconds, when observed.
+    #[must_use]
+    pub const fn retry_after_ms(&self) -> Option<u64> {
+        self.retry_after_ms
+    }
+
     fn validate(&self) -> Result<(), ContractError> {
         if self.code.is_empty() || self.code.len() > 128 || self.message.len() > MAX_EVENT_TEXT {
             return Err(ContractError::Bounds {
@@ -334,29 +546,122 @@ impl InvocationFailure {
 }
 
 /// Adapter-reported resource and usage measurements.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct UsageObservation {
     /// Provider-defined input units when observed.
-    pub input_units: Option<u64>,
+    input_units: Option<u64>,
     /// Provider-defined output units when observed.
-    pub output_units: Option<u64>,
+    output_units: Option<u64>,
     /// Total wall duration observed by the adapter.
-    pub duration_ms: Option<u64>,
+    duration_ms: Option<u64>,
     /// Observed monetary cost in millionths when supplied.
-    pub cost_micros: Option<u64>,
+    cost_micros: Option<u64>,
     /// Currency for `cost_micros`.
-    pub currency: Option<String>,
+    currency: Option<String>,
     /// Namespaced bounded provider-specific observations.
-    pub extensions: BTreeMap<ExtensionKey, BoundedJson>,
+    extensions: BTreeMap<ExtensionKey, BoundedJson>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UsageObservationWire {
+    input_units: Option<u64>,
+    output_units: Option<u64>,
+    duration_ms: Option<u64>,
+    cost_micros: Option<u64>,
+    currency: Option<String>,
+    extensions: BTreeMap<ExtensionKey, BoundedJson>,
+}
+
+impl<'de> Deserialize<'de> for UsageObservation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = UsageObservationWire::deserialize(deserializer)?;
+        Self::new(
+            wire.input_units,
+            wire.output_units,
+            wire.duration_ms,
+            wire.cost_micros,
+            wire.currency,
+            wire.extensions,
+        )
+        .map_err(serde::de::Error::custom)
+    }
 }
 
 impl UsageObservation {
+    /// Constructs validated adapter-reported usage measurements.
+    pub fn new(
+        input_units: Option<u64>,
+        output_units: Option<u64>,
+        duration_ms: Option<u64>,
+        cost_micros: Option<u64>,
+        currency: Option<String>,
+        extensions: BTreeMap<ExtensionKey, BoundedJson>,
+    ) -> Result<Self, ContractError> {
+        let usage = Self {
+            input_units,
+            output_units,
+            duration_ms,
+            cost_micros,
+            currency,
+            extensions,
+        };
+        usage.validate()?;
+        Ok(usage)
+    }
+
+    /// Returns observed input units.
+    #[must_use]
+    pub const fn input_units(&self) -> Option<u64> {
+        self.input_units
+    }
+
+    /// Returns observed output units.
+    #[must_use]
+    pub const fn output_units(&self) -> Option<u64> {
+        self.output_units
+    }
+
+    /// Returns observed wall duration in milliseconds.
+    #[must_use]
+    pub const fn duration_ms(&self) -> Option<u64> {
+        self.duration_ms
+    }
+
+    /// Returns observed cost in millionths.
+    #[must_use]
+    pub const fn cost_micros(&self) -> Option<u64> {
+        self.cost_micros
+    }
+
+    /// Returns the currency associated with observed cost.
+    #[must_use]
+    pub fn currency(&self) -> Option<&str> {
+        self.currency.as_deref()
+    }
+
+    /// Returns bounded namespaced provider-specific observations.
+    #[must_use]
+    pub const fn extensions(&self) -> &BTreeMap<ExtensionKey, BoundedJson> {
+        &self.extensions
+    }
+
     fn validate(&self) -> Result<(), ContractError> {
         if self.cost_micros.is_some() != self.currency.is_some() {
             return Err(ContractError::InvalidContract(
                 "usage cost and currency must be supplied together".to_owned(),
             ));
+        }
+        if let Some(currency) = &self.currency {
+            if currency.len() != 3 || !currency.bytes().all(|byte| byte.is_ascii_uppercase()) {
+                return Err(ContractError::InvalidContract(
+                    "usage currency must be a three-letter uppercase ISO code".to_owned(),
+                ));
+            }
         }
         validate_extensions(&self.extensions)
     }
@@ -379,22 +684,98 @@ pub enum TerminalStatus {
 }
 
 /// Terminal invocation report.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InvocationTerminal {
     /// Terminal status.
-    pub status: TerminalStatus,
+    status: TerminalStatus,
     /// Bounded output references for success or partial uncertain output.
-    pub outputs: Vec<ArtifactReference>,
+    outputs: Vec<ArtifactReference>,
     /// Classified failure when status requires it.
-    pub failure: Option<InvocationFailure>,
+    failure: Option<InvocationFailure>,
     /// Observed usage when the adapter supplied it.
-    pub usage: Option<UsageObservation>,
+    usage: Option<UsageObservation>,
     /// Side-effect fact observed at termination.
-    pub side_effect: SideEffectClass,
+    side_effect: SideEffectClass,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InvocationTerminalWire {
+    status: TerminalStatus,
+    outputs: Vec<ArtifactReference>,
+    failure: Option<InvocationFailure>,
+    usage: Option<UsageObservation>,
+    side_effect: SideEffectClass,
+}
+
+impl<'de> Deserialize<'de> for InvocationTerminal {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = InvocationTerminalWire::deserialize(deserializer)?;
+        Self::new(
+            wire.status,
+            wire.outputs,
+            wire.failure,
+            wire.usage,
+            wire.side_effect,
+        )
+        .map_err(serde::de::Error::custom)
+    }
 }
 
 impl InvocationTerminal {
+    /// Constructs a validated terminal invocation outcome.
+    pub fn new(
+        status: TerminalStatus,
+        outputs: Vec<ArtifactReference>,
+        failure: Option<InvocationFailure>,
+        usage: Option<UsageObservation>,
+        side_effect: SideEffectClass,
+    ) -> Result<Self, ContractError> {
+        let terminal = Self {
+            status,
+            outputs,
+            failure,
+            usage,
+            side_effect,
+        };
+        terminal.validate()?;
+        Ok(terminal)
+    }
+
+    /// Returns the terminal status.
+    #[must_use]
+    pub const fn status(&self) -> TerminalStatus {
+        self.status
+    }
+
+    /// Returns bounded artifact output references.
+    #[must_use]
+    pub fn outputs(&self) -> &[ArtifactReference] {
+        &self.outputs
+    }
+
+    /// Returns structured failure details when required by the status.
+    #[must_use]
+    pub const fn failure(&self) -> Option<&InvocationFailure> {
+        self.failure.as_ref()
+    }
+
+    /// Returns adapter-observed usage when supplied.
+    #[must_use]
+    pub const fn usage(&self) -> Option<&UsageObservation> {
+        self.usage.as_ref()
+    }
+
+    /// Returns the side-effect fact observed at termination.
+    #[must_use]
+    pub const fn side_effect(&self) -> SideEffectClass {
+        self.side_effect
+    }
+
     fn validate(&self) -> Result<(), ContractError> {
         if self.outputs.len() > MAX_INPUTS {
             return Err(ContractError::Bounds {
@@ -415,6 +796,15 @@ impl InvocationTerminal {
                     .to_owned(),
             ));
         }
+        if !matches!(
+            self.status,
+            TerminalStatus::Success | TerminalStatus::Uncertain
+        ) && !self.outputs.is_empty()
+        {
+            return Err(ContractError::InvalidContract(
+                "outputs are permitted only for success or uncertain terminal outcomes".to_owned(),
+            ));
+        }
         if let Some(failure) = &self.failure {
             failure.validate()?;
         }
@@ -426,7 +816,7 @@ impl InvocationTerminal {
 }
 
 /// Bounded progress, output-reference, and terminal event variants.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum InvocationEventKind {
     /// Human-readable bounded progress observation.
@@ -450,6 +840,115 @@ pub enum InvocationEventKind {
         /// Terminal status and observations.
         terminal: InvocationTerminal,
     },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+enum InvocationEventKindWire {
+    Progress {
+        message: String,
+        completed_units: Option<u64>,
+        total_units: Option<u64>,
+    },
+    Output {
+        name: String,
+        reference: ArtifactReference,
+    },
+    Terminal {
+        terminal: InvocationTerminal,
+    },
+}
+
+impl<'de> Deserialize<'de> for InvocationEventKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let kind = match InvocationEventKindWire::deserialize(deserializer)? {
+            InvocationEventKindWire::Progress {
+                message,
+                completed_units,
+                total_units,
+            } => Self::Progress {
+                message,
+                completed_units,
+                total_units,
+            },
+            InvocationEventKindWire::Output { name, reference } => Self::Output { name, reference },
+            InvocationEventKindWire::Terminal { terminal } => Self::Terminal { terminal },
+        };
+        kind.validate().map_err(serde::de::Error::custom)?;
+        Ok(kind)
+    }
+}
+
+impl InvocationEventKind {
+    /// Returns progress facts when this is a progress event.
+    #[must_use]
+    pub fn progress(&self) -> Option<(&str, Option<u64>, Option<u64>)> {
+        match self {
+            Self::Progress {
+                message,
+                completed_units,
+                total_units,
+            } => Some((message, *completed_units, *total_units)),
+            Self::Output { .. } | Self::Terminal { .. } => None,
+        }
+    }
+
+    /// Returns the declared output name and artifact when this is an output event.
+    #[must_use]
+    pub fn output(&self) -> Option<(&str, &ArtifactReference)> {
+        match self {
+            Self::Output { name, reference } => Some((name, reference)),
+            Self::Progress { .. } | Self::Terminal { .. } => None,
+        }
+    }
+
+    /// Returns the terminal report when this is a terminal event.
+    #[must_use]
+    pub const fn terminal(&self) -> Option<&InvocationTerminal> {
+        match self {
+            Self::Terminal { terminal } => Some(terminal),
+            Self::Progress { .. } | Self::Output { .. } => None,
+        }
+    }
+
+    fn validate(&self) -> Result<(), ContractError> {
+        match self {
+            Self::Progress {
+                message,
+                completed_units,
+                total_units,
+            } => {
+                if message.len() > MAX_EVENT_TEXT {
+                    return Err(ContractError::Bounds {
+                        location: "event.progress.message".to_owned(),
+                        reason: format!("must not exceed {MAX_EVENT_TEXT} bytes"),
+                    });
+                }
+                if completed_units
+                    .zip(*total_units)
+                    .is_some_and(|(done, total)| done > total)
+                {
+                    return Err(ContractError::InvalidContract(
+                        "completed progress units cannot exceed total units".to_owned(),
+                    ));
+                }
+            }
+            Self::Output { name, reference } => {
+                if name.is_empty() || name.len() > MAX_INPUT_NAME {
+                    return Err(ContractError::Bounds {
+                        location: "event.output.name".to_owned(),
+                        reason: format!("must contain 1 to {MAX_INPUT_NAME} bytes"),
+                    });
+                }
+                reference.validate()?;
+            }
+            Self::Terminal { terminal } => terminal.validate()?,
+        }
+        Ok(())
+    }
 }
 
 /// Sequenced adapter event for one invocation.
@@ -490,43 +989,30 @@ impl InvocationEvent {
                 "event sequence must start at one".to_owned(),
             ));
         }
-        match &kind {
-            InvocationEventKind::Progress {
-                message,
-                completed_units,
-                total_units,
-            } => {
-                if message.len() > MAX_EVENT_TEXT {
-                    return Err(ContractError::Bounds {
-                        location: "event.progress.message".to_owned(),
-                        reason: format!("must not exceed {MAX_EVENT_TEXT} bytes"),
-                    });
-                }
-                if completed_units
-                    .zip(*total_units)
-                    .is_some_and(|(done, total)| done > total)
-                {
-                    return Err(ContractError::InvalidContract(
-                        "completed progress units cannot exceed total units".to_owned(),
-                    ));
-                }
-            }
-            InvocationEventKind::Output { name, reference } => {
-                if name.is_empty() || name.len() > MAX_INPUT_NAME {
-                    return Err(ContractError::Bounds {
-                        location: "event.output.name".to_owned(),
-                        reason: format!("must contain 1 to {MAX_INPUT_NAME} bytes"),
-                    });
-                }
-                reference.validate()?;
-            }
-            InvocationEventKind::Terminal { terminal } => terminal.validate()?,
-        }
+        kind.validate()?;
         Ok(Self {
             invocation,
             sequence,
             kind,
         })
+    }
+
+    /// Invocation identity correlated by this event.
+    #[must_use]
+    pub const fn invocation(&self) -> &InvocationId {
+        &self.invocation
+    }
+
+    /// Executor-local event sequence, beginning at one.
+    #[must_use]
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    /// Immutable event facts.
+    #[must_use]
+    pub const fn kind(&self) -> &InvocationEventKind {
+        &self.kind
     }
 }
 
@@ -556,6 +1042,24 @@ impl CancellationRequest {
         };
         request.validate()?;
         Ok(request)
+    }
+
+    /// Invocation whose cancellation was requested.
+    #[must_use]
+    pub const fn invocation(&self) -> &InvocationId {
+        &self.invocation
+    }
+
+    /// Monotonic runtime-supplied cancellation request sequence.
+    #[must_use]
+    pub const fn request_sequence(&self) -> u64 {
+        self.request_sequence
+    }
+
+    /// Bounded runtime or operator reason.
+    #[must_use]
+    pub fn reason(&self) -> &str {
+        &self.reason
     }
 
     pub(crate) fn validate(&self) -> Result<(), ContractError> {
@@ -622,6 +1126,36 @@ impl CancellationAcknowledgement {
         };
         acknowledgement.validate()?;
         Ok(acknowledgement)
+    }
+
+    /// Invocation whose cancellation request was acknowledged.
+    #[must_use]
+    pub const fn invocation(&self) -> &InvocationId {
+        &self.invocation
+    }
+
+    /// Cancellation request sequence being acknowledged.
+    #[must_use]
+    pub const fn request_sequence(&self) -> u64 {
+        self.request_sequence
+    }
+
+    /// Whether cancellation was accepted for processing.
+    #[must_use]
+    pub const fn accepted(&self) -> bool {
+        self.accepted
+    }
+
+    /// Whether no later externally visible side effect can occur.
+    #[must_use]
+    pub const fn terminal_boundary(&self) -> bool {
+        self.terminal_boundary
+    }
+
+    /// Bounded rejection or uncertainty detail.
+    #[must_use]
+    pub fn detail(&self) -> Option<&str> {
+        self.detail.as_deref()
     }
 
     pub(crate) fn validate(&self) -> Result<(), ContractError> {
