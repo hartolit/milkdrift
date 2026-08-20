@@ -19,7 +19,12 @@ pub struct ConditionError {
 
 /// One non-executable structured-value path segment.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case", tag = "type", content = "value")]
+#[serde(
+    rename_all = "snake_case",
+    tag = "type",
+    content = "value",
+    deny_unknown_fields
+)]
 pub enum PathSegment {
     /// Object field selected by a validated interface-field identity.
     Field(FieldId),

@@ -333,11 +333,15 @@ impl BindingSource {
     pub(crate) fn validate(&self) -> Result<(), ModelError> {
         match self {
             Self::WorkspaceValue { reference, .. } | Self::Artifact { reference, .. }
-                if reference.is_empty() || reference.len() > 256 =>
+                if reference.is_empty()
+                    || reference.len() > milkdrift_capability::MAX_DURABLE_REFERENCE_BYTES =>
             {
                 Err(ModelError::new(
                     "binding.reference",
-                    "must contain 1..=256 bytes",
+                    format!(
+                        "must contain 1..={} bytes",
+                        milkdrift_capability::MAX_DURABLE_REFERENCE_BYTES
+                    ),
                 ))
             }
             _ => Ok(()),
@@ -564,7 +568,12 @@ impl ForkConfig {
 
 /// Synchronization policy for a structured join.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case", tag = "type", content = "quorum")]
+#[serde(
+    rename_all = "snake_case",
+    tag = "type",
+    content = "quorum",
+    deny_unknown_fields
+)]
 pub enum JoinPolicy {
     /// Wait for every owned branch.
     All,
@@ -609,7 +618,12 @@ impl JoinConfig {
 
 /// Provider-neutral reducer strategy, separate from join synchronization.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case", tag = "type", content = "operation")]
+#[serde(
+    rename_all = "snake_case",
+    tag = "type",
+    content = "operation",
+    deny_unknown_fields
+)]
 pub enum ReducerStrategy {
     /// Collect branch values without provider execution.
     Collect,

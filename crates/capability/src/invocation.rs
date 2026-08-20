@@ -9,7 +9,13 @@ use crate::{
 
 const MAX_INPUTS: usize = 256;
 const MAX_INPUT_NAME: usize = 128;
-const MAX_REFERENCE: usize = 256;
+/// Maximum encoded bytes of one opaque durable value/artifact reference.
+///
+/// This deliberately accommodates the canonical encoding of every valid
+/// Milkdrift workspace and artifact reference without teaching capability
+/// contracts about workspace identity components.
+pub const MAX_DURABLE_REFERENCE_BYTES: usize = 1_024;
+const MAX_ARTIFACT_MEDIA_TYPE_BYTES: usize = 255;
 const MAX_EVENT_TEXT: usize = 4_096;
 
 /// Reference to an immutable artifact rather than its unbounded bytes.
@@ -52,10 +58,10 @@ impl ArtifactReference {
     ) -> Result<Self, ContractError> {
         let identity = identity.into();
         let digest = digest.into();
-        if identity.is_empty() || identity.len() > MAX_REFERENCE {
+        if identity.is_empty() || identity.len() > MAX_DURABLE_REFERENCE_BYTES {
             return Err(ContractError::Bounds {
                 location: "artifact.identity".to_owned(),
-                reason: format!("must contain 1 to {MAX_REFERENCE} bytes"),
+                reason: format!("must contain 1 to {MAX_DURABLE_REFERENCE_BYTES} bytes"),
             });
         }
         if digest.len() != 64
@@ -69,11 +75,13 @@ impl ArtifactReference {
         }
         if media_type
             .as_ref()
-            .is_some_and(|value| value.is_empty() || value.len() > 128)
+            .is_some_and(|value| value.is_empty() || value.len() > MAX_ARTIFACT_MEDIA_TYPE_BYTES)
         {
             return Err(ContractError::Bounds {
                 location: "artifact.media_type".to_owned(),
-                reason: "must contain 1 to 128 bytes when supplied".to_owned(),
+                reason: format!(
+                    "must contain 1 to {MAX_ARTIFACT_MEDIA_TYPE_BYTES} bytes when supplied"
+                ),
             });
         }
         Ok(Self {
@@ -201,13 +209,15 @@ impl InvocationValueReference {
         }
         if let Self::WorkspaceValue { identity, version } = self {
             if identity.is_empty()
-                || identity.len() > MAX_REFERENCE
+                || identity.len() > MAX_DURABLE_REFERENCE_BYTES
                 || version.is_empty()
-                || version.len() > MAX_REFERENCE
+                || version.len() > MAX_DURABLE_REFERENCE_BYTES
             {
                 return Err(ContractError::Bounds {
                     location: "workspace_value".to_owned(),
-                    reason: format!("identity and version must contain 1 to {MAX_REFERENCE} bytes"),
+                    reason: format!(
+                        "identity and version must contain 1 to {MAX_DURABLE_REFERENCE_BYTES} bytes"
+                    ),
                 });
             }
         }

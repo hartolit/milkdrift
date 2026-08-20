@@ -5,7 +5,10 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use milkdrift_blueprint::{BlueprintRevisionDocument, RevisionId, WorkflowId};
+use milkdrift_blueprint::{
+    BlueprintRevisionDocument, ContentDigest as BlueprintContentDigest, PortId, RevisionId,
+    WorkflowId,
+};
 use milkdrift_capability::BoundedJson;
 use milkdrift_persistence::{
     ActorRef, ArtifactPublicationId, ArtifactReadAuthority, ArtifactReadRequest, ArtifactStore,
@@ -14,10 +17,11 @@ use milkdrift_persistence::{
     EventId, EventPageQuery, ImmutableRevisionPut, IndexedRunState, IntegrityScanRequest, LeaseId,
     LeaseIndexEntry, LeaseIndexMutation, NodeExecutionId, OrphanCleanupRequest, PageSize,
     PersistenceError, RevisionStore, RunEventEnvelope, RunEventKind, RunIndexUpdate, RunJournal,
-    RunQueryStore, RunSequence, RunSummaryIndex, RunnableIndexEntry, RunnableIndexMutation,
-    SnapshotDocument, SnapshotId, SnapshotLoad, SnapshotStore, StorageAdmin, StorageFailureClass,
-    TimestampMillis, WorkerId, WorkspaceAccounting, WorkspaceMutation, WorkspaceStore,
-    history_digest,
+    RunQueryStore, RunSequence, RunSummaryFilter, RunSummaryIndex, RunSummaryPageQuery,
+    RunnableIndexEntry, RunnableIndexMutation, SnapshotDocument, SnapshotId, SnapshotLoad,
+    SnapshotStore, StorageAdmin, StorageFailureClass, StorageHealthStatus, TimerId,
+    TimerIndexEntry, TimerIndexMutation, TimestampMillis, WorkerId, WorkspaceAccounting,
+    WorkspaceMutation, WorkspaceStore, history_digest,
 };
 use milkdrift_redb_store::{
     FaultInjector, FaultPoint, RedbStore, RedbStoreConfig, injected_failure,
@@ -26,13 +30,58 @@ use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactRetention, ArtifactSensitivity,
     BranchId, CausalId, CausalReference, ContentDigest, MediaType, RunId, ScopeId, ValueKey,
     WorkspaceBudget, WorkspaceScope, WorkspaceUsage, WorkspaceValue, WorkspaceValueEntry,
+    WorkspaceValueReference,
 };
-use redb::{Database, TableDefinition};
+use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
 use serde_json::json;
 use tempfile::TempDir;
 
 fn revision_id() -> Result<RevisionId, PersistenceError> {
     serde_json::from_value(json!(format!("rev_{}", "0".repeat(64)))).map_err(PersistenceError::Json)
+}
+
+fn revision_digest() -> Result<BlueprintContentDigest, PersistenceError> {
+    serde_json::from_value(json!(format!("b3_{}", "0".repeat(64)))).map_err(PersistenceError::Json)
+}
+
+fn stored_workspace_value_key(
+    reference: &WorkspaceValueReference,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut encoded = Vec::new();
+    for component in [
+        reference.scope().run().as_str(),
+        reference.scope().scope().as_str(),
+        reference.key().as_str(),
+    ] {
+        encoded.extend_from_slice(&u32::try_from(component.len())?.to_be_bytes());
+        encoded.extend_from_slice(component.as_bytes());
+    }
+    encoded.extend_from_slice(&reference.version().get().to_be_bytes());
+    Ok(encoded)
+}
+
+fn stored_workspace_scope_key(
+    scope: &milkdrift_workspace::ScopeReference,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut encoded = Vec::new();
+    for component in [scope.run().as_str(), scope.scope().as_str()] {
+        encoded.extend_from_slice(&u32::try_from(component.len())?.to_be_bytes());
+        encoded.extend_from_slice(component.as_bytes());
+    }
+    Ok(encoded)
+}
+
+fn assert_storage_corruption<T: std::fmt::Debug>(result: Result<T, PersistenceError>) {
+    assert!(
+        matches!(
+            &result,
+            Err(PersistenceError::Storage {
+                class: StorageFailureClass::Corruption,
+                ..
+            }) | Err(PersistenceError::Corruption(_))
+        ),
+        "expected storage corruption, got {result:?}"
+    );
 }
 
 fn accepted_request(
@@ -80,6 +129,7 @@ fn accepted_request(
         Some(accounting),
         Vec::new(),
         Vec::new(),
+        None,
         result,
         RunIndexUpdate {
             summary: Some(RunSummaryIndex {
@@ -93,6 +143,222 @@ fn accepted_request(
             ..RunIndexUpdate::default()
         },
     )?)
+}
+
+fn accepted_followup_request(
+    run: RunId,
+    command: &str,
+    event: &str,
+) -> Result<AtomicRunCommitRequest, Box<dyn std::error::Error>> {
+    let sequence = RunSequence::new(2);
+    let command = CommandId::new(command)?;
+    let document = br#"{"schema_version":1,"type":"followup"}"#.to_vec();
+    let receipt = CommandReceipt::new(
+        command.clone(),
+        run.clone(),
+        ActorRef::new("actor-test")?,
+        RunSequence::FIRST,
+        TimestampMillis::new(11),
+        document,
+    )?;
+    let event = RunEventEnvelope::new(
+        EventId::new(event)?,
+        run.clone(),
+        sequence,
+        TimestampMillis::new(11),
+        RunEventKind::RunStarted,
+    )?;
+    let result = CommandResultDocument::new(
+        command,
+        run.clone(),
+        receipt.fingerprint().clone(),
+        CommandDisposition::Accepted,
+        sequence,
+        vec![event.event_id().clone()],
+        BoundedJson::new(json!({"accepted": true}))?,
+    )?;
+    Ok(AtomicRunCommitRequest::new(
+        receipt,
+        vec![event],
+        Vec::new(),
+        Some(WorkspaceAccounting {
+            budget: WorkspaceBudget::new(0, 0, 0, 0, 0, 0)?,
+            expected_usage: WorkspaceUsage::EMPTY,
+            resulting_usage: WorkspaceUsage::EMPTY,
+        }),
+        Vec::new(),
+        Vec::new(),
+        None,
+        result,
+        RunIndexUpdate {
+            summary: Some(RunSummaryIndex {
+                run,
+                workflow: WorkflowId::new("workflow-test")?,
+                revision: revision_id()?,
+                state: IndexedRunState::Active,
+                through_sequence: sequence,
+                updated_at: TimestampMillis::new(11),
+            }),
+            ..RunIndexUpdate::default()
+        },
+    )?)
+}
+
+fn accepted_workspace_request(
+    run: RunId,
+    command: &str,
+    event_prefix: &str,
+    kinds: Vec<RunEventKind>,
+    workspace: Vec<WorkspaceMutation>,
+    accounting: WorkspaceAccounting,
+) -> Result<AtomicRunCommitRequest, Box<dyn std::error::Error>> {
+    let command = CommandId::new(command)?;
+    let receipt = CommandReceipt::new(
+        command.clone(),
+        run.clone(),
+        ActorRef::new("actor-test")?,
+        RunSequence::ZERO,
+        TimestampMillis::new(10),
+        br#"{"schema_version":1,"type":"workspace-test"}"#.to_vec(),
+    )?;
+    let events = kinds
+        .into_iter()
+        .enumerate()
+        .map(|(index, kind)| {
+            RunEventEnvelope::new(
+                EventId::new(format!("{event_prefix}-{index}"))?,
+                run.clone(),
+                RunSequence::new(index as u64 + 1),
+                TimestampMillis::new(10),
+                kind,
+            )
+        })
+        .collect::<Result<Vec<_>, PersistenceError>>()?;
+    let resulting_sequence = RunSequence::new(events.len() as u64);
+    let result = CommandResultDocument::new(
+        command,
+        run.clone(),
+        receipt.fingerprint().clone(),
+        CommandDisposition::Accepted,
+        resulting_sequence,
+        events
+            .iter()
+            .map(|event| event.event_id().clone())
+            .collect(),
+        BoundedJson::new(json!({"accepted": true}))?,
+    )?;
+    Ok(AtomicRunCommitRequest::new(
+        receipt,
+        events,
+        workspace,
+        Some(accounting),
+        Vec::new(),
+        Vec::new(),
+        None,
+        result,
+        RunIndexUpdate {
+            summary: Some(RunSummaryIndex {
+                run,
+                workflow: WorkflowId::new("workflow-test")?,
+                revision: revision_id()?,
+                state: IndexedRunState::Active,
+                through_sequence: resulting_sequence,
+                updated_at: TimestampMillis::new(10),
+            }),
+            ..RunIndexUpdate::default()
+        },
+    )?)
+}
+
+fn accepted_workspace_followup_request(
+    run: RunId,
+    expected_sequence: RunSequence,
+    command: &str,
+    event_prefix: &str,
+    kinds: Vec<RunEventKind>,
+    workspace: Vec<WorkspaceMutation>,
+    accounting: WorkspaceAccounting,
+) -> Result<AtomicRunCommitRequest, Box<dyn std::error::Error>> {
+    let command = CommandId::new(command)?;
+    let receipt = CommandReceipt::new(
+        command.clone(),
+        run.clone(),
+        ActorRef::new("actor-test")?,
+        expected_sequence,
+        TimestampMillis::new(11),
+        br#"{"schema_version":1,"type":"workspace-followup-test"}"#.to_vec(),
+    )?;
+    let events = kinds
+        .into_iter()
+        .enumerate()
+        .map(|(index, kind)| {
+            let offset = u64::try_from(index)?
+                .checked_add(1)
+                .ok_or("event offset overflow")?;
+            let sequence = expected_sequence
+                .get()
+                .checked_add(offset)
+                .ok_or("event sequence overflow")?;
+            Ok(RunEventEnvelope::new(
+                EventId::new(format!("{event_prefix}-{index}"))?,
+                run.clone(),
+                RunSequence::new(sequence),
+                TimestampMillis::new(11),
+                kind,
+            )?)
+        })
+        .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+    let resulting_sequence = events
+        .last()
+        .map_or(expected_sequence, RunEventEnvelope::sequence);
+    let result = CommandResultDocument::new(
+        command,
+        run.clone(),
+        receipt.fingerprint().clone(),
+        CommandDisposition::Accepted,
+        resulting_sequence,
+        events
+            .iter()
+            .map(|event| event.event_id().clone())
+            .collect(),
+        BoundedJson::new(json!({"accepted": true}))?,
+    )?;
+    Ok(AtomicRunCommitRequest::new(
+        receipt,
+        events,
+        workspace,
+        Some(accounting),
+        Vec::new(),
+        Vec::new(),
+        None,
+        result,
+        RunIndexUpdate {
+            summary: Some(RunSummaryIndex {
+                run,
+                workflow: WorkflowId::new("workflow-test")?,
+                revision: revision_id()?,
+                state: IndexedRunState::Active,
+                through_sequence: resulting_sequence,
+                updated_at: TimestampMillis::new(11),
+            }),
+            ..RunIndexUpdate::default()
+        },
+    )?)
+}
+
+fn run_created_kind(
+    root_scope: WorkspaceScope,
+    workspace_budget: WorkspaceBudget,
+    inputs: Vec<milkdrift_workspace::WorkspaceValueReference>,
+) -> Result<RunEventKind, Box<dyn std::error::Error>> {
+    Ok(RunEventKind::RunCreated {
+        workflow: WorkflowId::new("workflow-test")?,
+        revision: revision_id()?,
+        revision_digest: revision_digest()?,
+        root_scope,
+        workspace_budget,
+        inputs,
+    })
 }
 
 fn accepted_request_with_runnable(
@@ -114,6 +380,7 @@ fn accepted_request_with_runnable(
         request.workspace_accounting,
         request.required_artifacts,
         request.newly_referenced_artifacts,
+        request.expected_lease_catalog,
         request.result,
         indexes,
     )?)
@@ -135,6 +402,72 @@ fn accepted_request_with_lease(
         request.workspace_accounting,
         request.required_artifacts,
         request.newly_referenced_artifacts,
+        request.expected_lease_catalog,
+        request.result,
+        indexes,
+    )?)
+}
+
+#[derive(Clone, Copy)]
+enum DiscoveryIndexKind {
+    Runnable,
+    Timer,
+    Lease,
+}
+
+fn accepted_request_with_discovery_index(
+    kind: DiscoveryIndexKind,
+    suffix: &str,
+) -> Result<AtomicRunCommitRequest, Box<dyn std::error::Error>> {
+    let run_text = format!("run-discovery-{suffix}");
+    let command = format!("command-discovery-{suffix}");
+    let event = format!("event-discovery-{suffix}");
+    let request = accepted_request(&run_text, &command, &event, "start")?;
+    let run = request.receipt.run().clone();
+    let mut indexes = request.indexes.clone();
+    match kind {
+        DiscoveryIndexKind::Runnable => {
+            indexes.runnable.push(RunnableIndexMutation::Upsert {
+                entry: RunnableIndexEntry {
+                    run,
+                    execution: NodeExecutionId::new(format!("execution-{suffix}"))?,
+                    eligible_at: TimestampMillis::new(10),
+                    priority: 1,
+                    through_sequence: RunSequence::FIRST,
+                },
+            });
+        }
+        DiscoveryIndexKind::Timer => {
+            indexes.timers.push(TimerIndexMutation::Upsert {
+                entry: TimerIndexEntry {
+                    run,
+                    timer: TimerId::new(format!("timer-{suffix}"))?,
+                    fire_at: TimestampMillis::new(10),
+                    through_sequence: RunSequence::FIRST,
+                },
+            });
+        }
+        DiscoveryIndexKind::Lease => {
+            indexes.leases.push(LeaseIndexMutation::Upsert {
+                entry: LeaseIndexEntry {
+                    run,
+                    lease: LeaseId::new(format!("lease-{suffix}"))?,
+                    attempt: AttemptId::new(format!("attempt-{suffix}"))?,
+                    worker: WorkerId::new("worker-discovery")?,
+                    expires_at: TimestampMillis::new(10),
+                    through_sequence: RunSequence::FIRST,
+                },
+            });
+        }
+    }
+    Ok(AtomicRunCommitRequest::new(
+        request.receipt,
+        request.events,
+        request.workspace,
+        request.workspace_accounting,
+        request.required_artifacts,
+        request.newly_referenced_artifacts,
+        request.expected_lease_catalog,
         request.result,
         indexes,
     )?)
@@ -270,11 +603,36 @@ fn revision_lookup_and_integrity_scan_detect_physical_key_mismatches()
             ..
         })
     ));
-    let scan = store.scan_integrity(IntegrityScanRequest {
-        limit: PageSize::new(100)?,
-        verify_artifact_content: false,
-    })?;
-    assert!(scan.failures.len() >= 2);
+    let mut cursor = None;
+    let mut pages = 0_u32;
+    let mut failures = 0_usize;
+    loop {
+        let scan = store.scan_integrity(IntegrityScanRequest {
+            limit: PageSize::new(1)?,
+            verify_artifact_content: false,
+            cursor,
+        })?;
+        pages += 1;
+        if pages == 1 {
+            assert!(scan.failures.is_empty());
+            assert!(scan.next_cursor.is_some());
+            assert!(matches!(
+                store.scan_integrity(IntegrityScanRequest {
+                    limit: PageSize::new(1)?,
+                    verify_artifact_content: true,
+                    cursor: scan.next_cursor.clone(),
+                }),
+                Err(PersistenceError::InvalidCursor(_))
+            ));
+        }
+        failures += scan.failures.len();
+        let Some(next) = scan.next_cursor else {
+            break;
+        };
+        cursor = Some(next);
+    }
+    assert!(pages >= 4);
+    assert!(failures >= 2);
     Ok(())
 }
 
@@ -352,7 +710,17 @@ fn runnable_page_is_bounded_by_distinct_runs_not_noisy_run_rows()
     // A raw timestamp-ordered page of this size contains only noisy-run rows.
     // The query contract instead walks the grouped identity index and returns one
     // best candidate for each distinct run represented by the page bound.
-    let runnable = store.runnable(TimestampMillis::new(10), PageSize::new(2)?)?;
+    let mut runnable = Vec::new();
+    let mut cursor = None;
+    for _ in 0..16 {
+        let page =
+            store.runnable_page(TimestampMillis::new(10), cursor.as_ref(), PageSize::new(2)?)?;
+        runnable.extend(page.entries);
+        cursor = page.next;
+        if cursor.is_none() {
+            break;
+        }
+    }
     assert_eq!(runnable.len(), 2);
     assert!(runnable.iter().any(|entry| entry.run == quiet_run));
     let selected_noisy = runnable
@@ -364,24 +732,116 @@ fn runnable_page_is_bounded_by_distinct_runs_not_noisy_run_rows()
 
     // Even a one-item scheduler budget progresses to another run on the next
     // bounded discovery call instead of restarting at the noisy run forever.
+    let mut one_at_a_time = Vec::new();
+    let mut cursor = None;
+    for _ in 0..16 {
+        let page =
+            store.runnable_page(TimestampMillis::new(10), cursor.as_ref(), PageSize::new(1)?)?;
+        one_at_a_time.extend(page.entries);
+        cursor = page.next;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(one_at_a_time.len(), 2);
+    assert_ne!(one_at_a_time[0].run, one_at_a_time[1].run);
+    assert!(one_at_a_time.iter().any(|entry| entry.run == quiet_run));
+    Ok(())
+}
+
+#[test]
+fn runnable_pages_advance_across_future_rows_and_removed_anchors()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = TempDir::new()?;
+    let store = RedbStore::open(directory.path())?;
+    for ordinal in 0..10 {
+        let run = RunId::new(format!("run-future-{ordinal:02}"))?;
+        store.commit_command(&accepted_request_with_runnable(
+            run.as_str(),
+            &format!("command-future-{ordinal:02}"),
+            &format!("event-future-{ordinal:02}"),
+            vec![RunnableIndexEntry {
+                run: run.clone(),
+                execution: NodeExecutionId::new(format!("execution-future-{ordinal:02}"))?,
+                eligible_at: TimestampMillis::new(1_000),
+                priority: 1,
+                through_sequence: RunSequence::FIRST,
+            }],
+        )?)?;
+    }
+    let eligible_run = RunId::new("run-later-eligible")?;
+    store.commit_command(&accepted_request_with_runnable(
+        eligible_run.as_str(),
+        "command-later-eligible",
+        "event-later-eligible",
+        vec![RunnableIndexEntry {
+            run: eligible_run.clone(),
+            execution: NodeExecutionId::new("execution-later-eligible")?,
+            eligible_at: TimestampMillis::new(1),
+            priority: 1,
+            through_sequence: RunSequence::FIRST,
+        }],
+    )?)?;
+
     let first = store.runnable_page(TimestampMillis::new(10), None, PageSize::new(1)?)?;
-    assert_eq!(first.entries.len(), 1);
+    assert!(first.entries.is_empty());
     assert!(first.next.is_some());
     let second = store.runnable_page(
-        TimestampMillis::new(10),
+        TimestampMillis::new(20),
         first.next.as_ref(),
         PageSize::new(1)?,
     )?;
     assert_eq!(second.entries.len(), 1);
-    assert!(second.next.is_none());
-    assert_ne!(first.entries[0].run, second.entries[0].run);
-    assert!(
-        first
-            .entries
-            .iter()
-            .chain(&second.entries)
-            .any(|entry| entry.run == quiet_run)
-    );
+    assert_eq!(second.entries[0].run, eligible_run);
+
+    let anchor_directory = TempDir::new()?;
+    let anchor_store = RedbStore::open(anchor_directory.path())?;
+    let first_run = RunId::new("run-anchor-a")?;
+    let second_run = RunId::new("run-anchor-b")?;
+    let first_execution = NodeExecutionId::new("execution-anchor-a")?;
+    let second_execution = NodeExecutionId::new("execution-anchor-b")?;
+    for (run, execution, suffix) in [
+        (&first_run, &first_execution, "a"),
+        (&second_run, &second_execution, "b"),
+    ] {
+        anchor_store.commit_command(&accepted_request_with_runnable(
+            run.as_str(),
+            &format!("command-anchor-{suffix}"),
+            &format!("event-anchor-{suffix}"),
+            vec![RunnableIndexEntry {
+                run: run.clone(),
+                execution: execution.clone(),
+                eligible_at: TimestampMillis::new(1),
+                priority: 1,
+                through_sequence: RunSequence::FIRST,
+            }],
+        )?)?;
+    }
+    let first_page =
+        anchor_store.runnable_page(TimestampMillis::new(10), None, PageSize::new(1)?)?;
+    assert_eq!(first_page.entries.len(), 1);
+    assert_eq!(first_page.entries[0].run, first_run);
+    let mut removal = accepted_followup_request(
+        first_run.clone(),
+        "command-remove-anchor",
+        "event-remove-anchor",
+    )?;
+    removal
+        .indexes
+        .runnable
+        .push(RunnableIndexMutation::Remove {
+            run: first_run,
+            execution: first_execution,
+        });
+    anchor_store.commit_command(&removal)?;
+    let second_page = anchor_store.runnable_page(
+        TimestampMillis::new(20),
+        first_page.next.as_ref(),
+        PageSize::new(1)?,
+    )?;
+    assert_eq!(second_page.entries.len(), 1);
+    assert_eq!(second_page.entries[0].run, second_run);
+    assert!(second_page.next.is_none());
     Ok(())
 }
 
@@ -421,6 +881,104 @@ fn nonterminal_run_pages_resume_past_early_runs() -> Result<(), Box<dyn std::err
 }
 
 #[test]
+fn summary_and_nonterminal_cursors_advance_by_last_scanned_head()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = TempDir::new()?;
+    let store = RedbStore::open(directory.path())?;
+    for ordinal in 0..10 {
+        let mut request = accepted_request(
+            &format!("run-filter-{ordinal:02}"),
+            &format!("command-filter-{ordinal:02}"),
+            &format!("event-filter-{ordinal:02}"),
+            "start",
+        )?;
+        request
+            .indexes
+            .summary
+            .as_mut()
+            .ok_or("summary missing")?
+            .workflow = WorkflowId::new("workflow-nonmatch")?;
+        store.commit_command(&request)?;
+    }
+    let matching_run = RunId::new("run-filter-z-match")?;
+    let mut matching = accepted_request(
+        matching_run.as_str(),
+        "command-filter-match",
+        "event-filter-match",
+        "start",
+    )?;
+    matching
+        .indexes
+        .summary
+        .as_mut()
+        .ok_or("summary missing")?
+        .workflow = WorkflowId::new("workflow-match")?;
+    store.commit_command(&matching)?;
+
+    let filter = RunSummaryFilter {
+        state: None,
+        workflow: Some(WorkflowId::new("workflow-match")?),
+    };
+    let first = store.run_summaries(&RunSummaryPageQuery {
+        filter: filter.clone(),
+        cursor: None,
+        limit: PageSize::new(1)?,
+    })?;
+    assert!(first.runs.is_empty());
+    assert!(first.next.is_some());
+    let second = store.run_summaries(&RunSummaryPageQuery {
+        filter: filter.clone(),
+        cursor: first.next.clone(),
+        limit: PageSize::new(1)?,
+    })?;
+    assert_eq!(second.runs.len(), 1);
+    assert_eq!(second.runs[0].run, matching_run);
+    assert!(matches!(
+        store.run_summaries(&RunSummaryPageQuery {
+            filter: RunSummaryFilter {
+                state: None,
+                workflow: Some(WorkflowId::new("workflow-other")?),
+            },
+            cursor: first.next,
+            limit: PageSize::new(1)?,
+        }),
+        Err(PersistenceError::InvalidCursor(_))
+    ));
+
+    let terminal_directory = TempDir::new()?;
+    let terminal_store = RedbStore::open(terminal_directory.path())?;
+    for ordinal in 0..3 {
+        let mut request = accepted_request(
+            &format!("run-terminal-{ordinal}"),
+            &format!("command-terminal-{ordinal}"),
+            &format!("event-terminal-{ordinal}"),
+            "start",
+        )?;
+        request
+            .indexes
+            .summary
+            .as_mut()
+            .ok_or("summary missing")?
+            .state = IndexedRunState::Terminal;
+        terminal_store.commit_command(&request)?;
+    }
+    terminal_store.commit_command(&accepted_request(
+        "run-terminal-z-active",
+        "command-terminal-active",
+        "event-terminal-active",
+        "start",
+    )?)?;
+    let terminal_page = terminal_store.nonterminal_run_page(None, PageSize::new(2)?)?;
+    assert!(terminal_page.runs.is_empty());
+    assert!(terminal_page.next.is_some());
+    let active_page =
+        terminal_store.nonterminal_run_page(terminal_page.next.as_ref(), PageSize::new(2)?)?;
+    assert_eq!(active_page.runs.len(), 1);
+    assert_eq!(active_page.runs[0].run.as_str(), "run-terminal-z-active");
+    Ok(())
+}
+
+#[test]
 fn active_lease_query_is_a_bounded_complete_prefix() -> Result<(), Box<dyn std::error::Error>> {
     let directory = TempDir::new()?;
     let store = RedbStore::open(directory.path())?;
@@ -441,8 +999,8 @@ fn active_lease_query_is_a_bounded_complete_prefix() -> Result<(), Box<dyn std::
         )?)?;
     }
 
-    assert_eq!(store.active_leases(PageSize::new(2)?)?.len(), 2);
-    assert_eq!(store.active_leases(PageSize::new(4)?)?.len(), 3);
+    assert_eq!(store.active_leases(PageSize::new(2)?)?.entries.len(), 2);
+    assert_eq!(store.active_leases(PageSize::new(4)?)?.entries.len(), 3);
     Ok(())
 }
 
@@ -461,25 +1019,29 @@ fn durable_workspace_imports_require_an_exact_cross_run_source_without_ancestry(
     );
     let child_budget = WorkspaceBudget::new(1, 1024, 1024, 0, 0, 0)?;
     let child_usage = child_budget.admit_value(&WorkspaceUsage::EMPTY, child_value.value())?;
-    let mut child_request = accepted_request(
-        "child-import-run",
+    let child_request = accepted_workspace_request(
+        child_root.reference().run().clone(),
         "command-child-import",
         "event-child-import",
-        "start",
+        vec![run_created_kind(
+            child_root.clone(),
+            child_budget.clone(),
+            vec![child_value.reference().clone()],
+        )?],
+        vec![
+            WorkspaceMutation::CreateScope {
+                scope: child_root.clone(),
+            },
+            WorkspaceMutation::PutValue {
+                entry: child_value.clone(),
+            },
+        ],
+        WorkspaceAccounting {
+            budget: child_budget,
+            expected_usage: WorkspaceUsage::EMPTY,
+            resulting_usage: child_usage,
+        },
     )?;
-    child_request.workspace = vec![
-        WorkspaceMutation::CreateScope {
-            scope: child_root.clone(),
-        },
-        WorkspaceMutation::PutValue {
-            entry: child_value.clone(),
-        },
-    ];
-    child_request.workspace_accounting = Some(WorkspaceAccounting {
-        budget: child_budget,
-        expected_usage: WorkspaceUsage::EMPTY,
-        resulting_usage: child_usage,
-    });
     store.commit_command(&child_request)?;
 
     let parent_root = WorkspaceScope::run_root(
@@ -494,23 +1056,27 @@ fn durable_workspace_imports_require_an_exact_cross_run_source_without_ancestry(
     )?;
     let parent_budget = WorkspaceBudget::new(1, 1024, 1024, 0, 0, 0)?;
     let parent_usage = parent_budget.admit_value(&WorkspaceUsage::EMPTY, imported.value())?;
-    let mut parent_request = accepted_request(
-        "parent-import-run",
+    let parent_request = accepted_workspace_request(
+        parent_root.reference().run().clone(),
         "command-parent-import",
         "event-parent-import",
-        "start",
-    )?;
-    parent_request.workspace = vec![
-        WorkspaceMutation::CreateScope { scope: parent_root },
-        WorkspaceMutation::PutValue {
-            entry: imported.clone(),
+        vec![run_created_kind(
+            parent_root.clone(),
+            parent_budget.clone(),
+            vec![imported.reference().clone()],
+        )?],
+        vec![
+            WorkspaceMutation::CreateScope { scope: parent_root },
+            WorkspaceMutation::PutValue {
+                entry: imported.clone(),
+            },
+        ],
+        WorkspaceAccounting {
+            budget: parent_budget,
+            expected_usage: WorkspaceUsage::EMPTY,
+            resulting_usage: parent_usage,
         },
-    ];
-    parent_request.workspace_accounting = Some(WorkspaceAccounting {
-        budget: parent_budget,
-        expected_usage: WorkspaceUsage::EMPTY,
-        resulting_usage: parent_usage,
-    });
+    )?;
     store.commit_command(&parent_request)?;
     assert_eq!(store.value(imported.reference())?, Some(imported));
 
@@ -527,25 +1093,29 @@ fn durable_workspace_imports_require_an_exact_cross_run_source_without_ancestry(
     let altered_budget = WorkspaceBudget::new(1, 1024, 1024, 0, 0, 0)?;
     let altered_usage =
         altered_budget.admit_value(&WorkspaceUsage::EMPTY, altered_import.value())?;
-    let mut altered_request = accepted_request(
-        "parent-altered-import",
+    let altered_request = accepted_workspace_request(
+        altered_root.reference().run().clone(),
         "command-altered-import",
         "event-altered-import",
-        "start",
+        vec![run_created_kind(
+            altered_root.clone(),
+            altered_budget.clone(),
+            vec![altered_import.reference().clone()],
+        )?],
+        vec![
+            WorkspaceMutation::CreateScope {
+                scope: altered_root,
+            },
+            WorkspaceMutation::PutValue {
+                entry: altered_import,
+            },
+        ],
+        WorkspaceAccounting {
+            budget: altered_budget,
+            expected_usage: WorkspaceUsage::EMPTY,
+            resulting_usage: altered_usage,
+        },
     )?;
-    altered_request.workspace = vec![
-        WorkspaceMutation::CreateScope {
-            scope: altered_root,
-        },
-        WorkspaceMutation::PutValue {
-            entry: altered_import,
-        },
-    ];
-    altered_request.workspace_accounting = Some(WorkspaceAccounting {
-        budget: altered_budget,
-        expected_usage: WorkspaceUsage::EMPTY,
-        resulting_usage: altered_usage,
-    });
     assert!(matches!(
         store.commit_command(&altered_request),
         Err(PersistenceError::InvalidDocument(_))
@@ -575,25 +1145,29 @@ fn durable_workspace_imports_require_an_exact_cross_run_source_without_ancestry(
     let missing_budget = WorkspaceBudget::new(1, 1024, 1024, 0, 0, 0)?;
     let missing_usage =
         missing_budget.admit_value(&WorkspaceUsage::EMPTY, missing_import.value())?;
-    let mut missing_request = accepted_request(
-        "parent-missing-import",
+    let missing_request = accepted_workspace_request(
+        missing_root.reference().run().clone(),
         "command-missing-import",
         "event-missing-import",
-        "start",
+        vec![run_created_kind(
+            missing_root.clone(),
+            missing_budget.clone(),
+            vec![missing_import.reference().clone()],
+        )?],
+        vec![
+            WorkspaceMutation::CreateScope {
+                scope: missing_root,
+            },
+            WorkspaceMutation::PutValue {
+                entry: missing_import,
+            },
+        ],
+        WorkspaceAccounting {
+            budget: missing_budget,
+            expected_usage: WorkspaceUsage::EMPTY,
+            resulting_usage: missing_usage,
+        },
     )?;
-    missing_request.workspace = vec![
-        WorkspaceMutation::CreateScope {
-            scope: missing_root,
-        },
-        WorkspaceMutation::PutValue {
-            entry: missing_import,
-        },
-    ];
-    missing_request.workspace_accounting = Some(WorkspaceAccounting {
-        budget: missing_budget,
-        expected_usage: WorkspaceUsage::EMPTY,
-        resulting_usage: missing_usage,
-    });
     assert!(matches!(
         store.commit_command(&missing_request),
         Err(PersistenceError::NotFound {
@@ -604,6 +1178,635 @@ fn durable_workspace_imports_require_an_exact_cross_run_source_without_ancestry(
     assert_eq!(
         store.head(missing_request.receipt.run())?,
         RunSequence::ZERO
+    );
+    Ok(())
+}
+
+#[test]
+fn workspace_scope_and_value_envelopes_detect_valid_json_payload_tampering()
+-> Result<(), Box<dyn std::error::Error>> {
+    const SCOPES: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.workspace.scopes");
+    const VALUES: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.workspace.values");
+
+    let directory = TempDir::new()?;
+    let run = RunId::new("run-envelope-tamper")?;
+    let root = WorkspaceScope::run_root(run.clone(), ScopeId::new("scope-root")?);
+    let child = WorkspaceScope::branch(
+        ScopeId::new("scope-child")?,
+        &root,
+        BranchId::new("branch-a")?,
+    )?;
+    let entry = WorkspaceValueEntry::initial(
+        child.reference().clone(),
+        ValueKey::new("answer")?,
+        WorkspaceValue::Json(BoundedJson::new(json!({"answer": 42}))?),
+    );
+    let budget = WorkspaceBudget::new(1, 1024, 1024, 0, 0, 0)?;
+    let usage = budget.admit_value(&WorkspaceUsage::EMPTY, entry.value())?;
+    {
+        let store = RedbStore::open(directory.path())?;
+        store.commit_command(&accepted_workspace_request(
+            run.clone(),
+            "command-envelope-tamper",
+            "event-envelope-tamper",
+            vec![
+                run_created_kind(root.clone(), budget.clone(), Vec::new())?,
+                RunEventKind::BranchScopeCreated {
+                    fork_execution: NodeExecutionId::new("fork-envelope-tamper")?,
+                    port: PortId::new("branch-a")?,
+                    branch: BranchId::new("branch-a")?,
+                    scope: child.clone(),
+                },
+                RunEventKind::DeterministicOutputPublished {
+                    execution: NodeExecutionId::new("output-envelope-tamper")?,
+                    value: entry.reference().clone(),
+                    artifact: None,
+                },
+            ],
+            vec![
+                WorkspaceMutation::CreateScope { scope: root },
+                WorkspaceMutation::CreateScope {
+                    scope: child.clone(),
+                },
+                WorkspaceMutation::PutValue {
+                    entry: entry.clone(),
+                },
+            ],
+            WorkspaceAccounting {
+                budget,
+                expected_usage: WorkspaceUsage::EMPTY,
+                resulting_usage: usage,
+            },
+        )?)?;
+    }
+
+    let database = Database::open(directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut scopes = write.open_table(SCOPES)?;
+        let (key, bytes) = {
+            let mut found = None;
+            for item in scopes.iter()? {
+                let (key, bytes) = item?;
+                if bytes
+                    .value()
+                    .windows(b"branch-a".len())
+                    .any(|part| part == b"branch-a")
+                {
+                    found = Some((key.value().to_vec(), bytes.value().to_vec()));
+                    break;
+                }
+            }
+            found.ok_or("child scope envelope was not found")?
+        };
+        let tampered = String::from_utf8(bytes)?.replace("branch-a", "branch-b");
+        scopes.insert(key.as_slice(), tampered.as_bytes())?;
+    }
+    {
+        let mut values = write.open_table(VALUES)?;
+        let (key, bytes) = {
+            let mut rows = values.iter()?;
+            let (key, bytes) = rows
+                .next()
+                .transpose()?
+                .ok_or("workspace value is absent")?;
+            (key.value().to_vec(), bytes.value().to_vec())
+        };
+        let tampered = String::from_utf8(bytes)?.replace("\"answer\":42", "\"answer\":43");
+        values.insert(key.as_slice(), tampered.as_bytes())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = RedbStore::open(directory.path())?;
+    let scope_result = store.scope(&run, child.reference().scope());
+    assert_storage_corruption(scope_result);
+    let value_result = store.value(entry.reference());
+    assert_storage_corruption(value_result);
+    Ok(())
+}
+
+#[test]
+fn durable_workspace_inheritance_preserves_exact_ancestor_content()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = TempDir::new()?;
+    let store = RedbStore::open(directory.path())?;
+    let root =
+        WorkspaceScope::run_root(RunId::new("run-inherited-content")?, ScopeId::new("root")?);
+    let branch_id = BranchId::new("branch-a")?;
+    let branch = WorkspaceScope::branch(ScopeId::new("branch-scope")?, &root, branch_id.clone())?;
+    let root_value = WorkspaceValueEntry::initial(
+        root.reference().clone(),
+        ValueKey::new("request")?,
+        WorkspaceValue::Json(BoundedJson::new(json!({"prompt": "original"}))?),
+    );
+    let altered_inheritance = WorkspaceValueEntry::inherited(
+        branch.reference().clone(),
+        ValueKey::new("request")?,
+        root_value.reference().clone(),
+        WorkspaceValue::Json(BoundedJson::new(json!({"prompt": "altered"}))?),
+    )?;
+    let budget = WorkspaceBudget::new(2, 1024, 2048, 0, 0, 0)?;
+    let root_usage = budget.admit_value(&WorkspaceUsage::EMPTY, root_value.value())?;
+    let resulting_usage = budget.admit_value(&root_usage, altered_inheritance.value())?;
+    let request = accepted_workspace_request(
+        root.reference().run().clone(),
+        "command-inherited-content",
+        "event-inherited-content",
+        vec![
+            run_created_kind(
+                root.clone(),
+                budget.clone(),
+                vec![root_value.reference().clone()],
+            )?,
+            RunEventKind::BranchScopeCreated {
+                fork_execution: NodeExecutionId::new("fork-inherited-content")?,
+                port: PortId::new("branch-a")?,
+                branch: branch_id,
+                scope: branch.clone(),
+            },
+            RunEventKind::DeterministicOutputPublished {
+                execution: NodeExecutionId::new("output-inherited-content")?,
+                value: altered_inheritance.reference().clone(),
+                artifact: None,
+            },
+        ],
+        vec![
+            WorkspaceMutation::CreateScope {
+                scope: root.clone(),
+            },
+            WorkspaceMutation::CreateScope { scope: branch },
+            WorkspaceMutation::PutValue { entry: root_value },
+            WorkspaceMutation::PutValue {
+                entry: altered_inheritance,
+            },
+        ],
+        WorkspaceAccounting {
+            budget,
+            expected_usage: WorkspaceUsage::EMPTY,
+            resulting_usage,
+        },
+    )?;
+
+    assert!(matches!(
+        store.commit_command(&request),
+        Err(PersistenceError::InvalidDocument(reason))
+            if reason.contains("preserve its exact ancestor content")
+    ));
+    assert_eq!(store.head(request.receipt.run())?, RunSequence::ZERO);
+    assert!(
+        store
+            .scope(request.receipt.run(), root.reference().scope())?
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn deleted_successor_history_blocks_reads_latest_and_next_version()
+-> Result<(), Box<dyn std::error::Error>> {
+    const VALUES: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.workspace.values");
+
+    let directory = TempDir::new()?;
+    let run = RunId::new("run-deleted-successor-history")?;
+    let root = WorkspaceScope::run_root(run.clone(), ScopeId::new("root")?);
+    let key = ValueKey::new("stream")?;
+    let first = WorkspaceValueEntry::initial(
+        root.reference().clone(),
+        key.clone(),
+        WorkspaceValue::Json(BoundedJson::new(json!({"version": 1}))?),
+    );
+    let second = WorkspaceValueEntry::successor(
+        first.reference().clone(),
+        WorkspaceValue::Json(BoundedJson::new(json!({"version": 2}))?),
+    )?;
+    let third = WorkspaceValueEntry::successor(
+        second.reference().clone(),
+        WorkspaceValue::Json(BoundedJson::new(json!({"version": 3}))?),
+    )?;
+    let budget = WorkspaceBudget::new(3, 1024, 3072, 0, 0, 0)?;
+    let usage_one = budget.admit_value(&WorkspaceUsage::EMPTY, first.value())?;
+    let usage_two = budget.admit_value(&usage_one, second.value())?;
+    let usage_three = budget.admit_value(&usage_two, third.value())?;
+    {
+        let store = RedbStore::open(directory.path())?;
+        store.commit_command(&accepted_workspace_request(
+            run.clone(),
+            "command-successor-one",
+            "event-successor-one",
+            vec![run_created_kind(
+                root.clone(),
+                budget.clone(),
+                vec![first.reference().clone()],
+            )?],
+            vec![
+                WorkspaceMutation::CreateScope {
+                    scope: root.clone(),
+                },
+                WorkspaceMutation::PutValue {
+                    entry: first.clone(),
+                },
+            ],
+            WorkspaceAccounting {
+                budget: budget.clone(),
+                expected_usage: WorkspaceUsage::EMPTY,
+                resulting_usage: usage_one,
+            },
+        )?)?;
+        store.commit_command(&accepted_workspace_followup_request(
+            run.clone(),
+            RunSequence::FIRST,
+            "command-successor-two",
+            "event-successor-two",
+            vec![RunEventKind::DeterministicOutputPublished {
+                execution: NodeExecutionId::new("execution-successor-two")?,
+                value: second.reference().clone(),
+                artifact: None,
+            }],
+            vec![WorkspaceMutation::PutValue {
+                entry: second.clone(),
+            }],
+            WorkspaceAccounting {
+                budget: budget.clone(),
+                expected_usage: usage_one,
+                resulting_usage: usage_two,
+            },
+        )?)?;
+    }
+    let database = Database::open(directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut values = write.open_table(VALUES)?;
+        assert!(
+            values
+                .remove(stored_workspace_value_key(first.reference())?.as_slice())?
+                .is_some()
+        );
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = RedbStore::open(directory.path())?;
+    assert_storage_corruption(store.value(second.reference()));
+    assert_storage_corruption(store.latest_value(root.reference(), &key));
+    let next = accepted_workspace_followup_request(
+        run,
+        RunSequence::new(2),
+        "command-successor-three",
+        "event-successor-three",
+        vec![RunEventKind::DeterministicOutputPublished {
+            execution: NodeExecutionId::new("execution-successor-three")?,
+            value: third.reference().clone(),
+            artifact: None,
+        }],
+        vec![WorkspaceMutation::PutValue { entry: third }],
+        WorkspaceAccounting {
+            budget,
+            expected_usage: usage_two,
+            resulting_usage: usage_three,
+        },
+    )?;
+    assert_storage_corruption(store.commit_command(&next));
+    assert_eq!(
+        store.health(TimestampMillis::new(20))?.status,
+        StorageHealthStatus::Degraded
+    );
+    Ok(())
+}
+
+#[test]
+fn deleted_inherited_source_history_is_corruption() -> Result<(), Box<dyn std::error::Error>> {
+    const VALUES: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.workspace.values");
+
+    let directory = TempDir::new()?;
+    let run = RunId::new("run-deleted-inherited-history")?;
+    let root = WorkspaceScope::run_root(run.clone(), ScopeId::new("root")?);
+    let branch =
+        WorkspaceScope::branch(ScopeId::new("branch")?, &root, BranchId::new("branch-a")?)?;
+    let source_one = WorkspaceValueEntry::initial(
+        root.reference().clone(),
+        ValueKey::new("source")?,
+        WorkspaceValue::Json(BoundedJson::new(json!({"value": 1}))?),
+    );
+    let source_two = WorkspaceValueEntry::successor(
+        source_one.reference().clone(),
+        WorkspaceValue::Json(BoundedJson::new(json!({"value": 2}))?),
+    )?;
+    let inherited = WorkspaceValueEntry::inherited(
+        branch.reference().clone(),
+        ValueKey::new("inherited")?,
+        source_two.reference().clone(),
+        source_two.value().clone(),
+    )?;
+    let budget = WorkspaceBudget::new(3, 1024, 3072, 0, 0, 0)?;
+    let usage_one = budget.admit_value(&WorkspaceUsage::EMPTY, source_one.value())?;
+    let usage_two = budget.admit_value(&usage_one, source_two.value())?;
+    let usage_three = budget.admit_value(&usage_two, inherited.value())?;
+    {
+        let store = RedbStore::open(directory.path())?;
+        store.commit_command(&accepted_workspace_request(
+            run.clone(),
+            "command-inherited-source-one",
+            "event-inherited-source-one",
+            vec![run_created_kind(
+                root.clone(),
+                budget.clone(),
+                vec![source_one.reference().clone()],
+            )?],
+            vec![
+                WorkspaceMutation::CreateScope {
+                    scope: root.clone(),
+                },
+                WorkspaceMutation::PutValue {
+                    entry: source_one.clone(),
+                },
+            ],
+            WorkspaceAccounting {
+                budget: budget.clone(),
+                expected_usage: WorkspaceUsage::EMPTY,
+                resulting_usage: usage_one,
+            },
+        )?)?;
+        store.commit_command(&accepted_workspace_followup_request(
+            run,
+            RunSequence::FIRST,
+            "command-inherited-source-two",
+            "event-inherited-source-two",
+            vec![
+                RunEventKind::BranchScopeCreated {
+                    fork_execution: NodeExecutionId::new("fork-inherited-history")?,
+                    port: PortId::new("branch-a")?,
+                    branch: BranchId::new("branch-a")?,
+                    scope: branch.clone(),
+                },
+                RunEventKind::DeterministicOutputPublished {
+                    execution: NodeExecutionId::new("execution-source-two")?,
+                    value: source_two.reference().clone(),
+                    artifact: None,
+                },
+                RunEventKind::DeterministicOutputPublished {
+                    execution: NodeExecutionId::new("execution-inherited")?,
+                    value: inherited.reference().clone(),
+                    artifact: None,
+                },
+            ],
+            vec![
+                WorkspaceMutation::CreateScope { scope: branch },
+                WorkspaceMutation::PutValue { entry: source_two },
+                WorkspaceMutation::PutValue {
+                    entry: inherited.clone(),
+                },
+            ],
+            WorkspaceAccounting {
+                budget,
+                expected_usage: usage_one,
+                resulting_usage: usage_three,
+            },
+        )?)?;
+    }
+    let database = Database::open(directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut values = write.open_table(VALUES)?;
+        assert!(
+            values
+                .remove(stored_workspace_value_key(source_one.reference())?.as_slice())?
+                .is_some()
+        );
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = RedbStore::open(directory.path())?;
+    assert_storage_corruption(store.value(inherited.reference()));
+    assert_eq!(
+        store.health(TimestampMillis::new(20))?.status,
+        StorageHealthStatus::Degraded
+    );
+    Ok(())
+}
+
+#[test]
+fn deleted_imported_source_history_is_corruption() -> Result<(), Box<dyn std::error::Error>> {
+    const VALUES: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.workspace.values");
+
+    let directory = TempDir::new()?;
+    let child_run = RunId::new("run-import-source-history")?;
+    let child_root = WorkspaceScope::run_root(child_run.clone(), ScopeId::new("child-root")?);
+    let source_one = WorkspaceValueEntry::initial(
+        child_root.reference().clone(),
+        ValueKey::new("source")?,
+        WorkspaceValue::Json(BoundedJson::new(json!({"value": 1}))?),
+    );
+    let source_two = WorkspaceValueEntry::successor(
+        source_one.reference().clone(),
+        WorkspaceValue::Json(BoundedJson::new(json!({"value": 2}))?),
+    )?;
+    let child_budget = WorkspaceBudget::new(2, 1024, 2048, 0, 0, 0)?;
+    let child_usage_one = child_budget.admit_value(&WorkspaceUsage::EMPTY, source_one.value())?;
+    let child_usage_two = child_budget.admit_value(&child_usage_one, source_two.value())?;
+
+    let parent_run = RunId::new("run-import-target-history")?;
+    let parent_root = WorkspaceScope::run_root(parent_run.clone(), ScopeId::new("parent-root")?);
+    let imported = WorkspaceValueEntry::imported(
+        parent_root.reference().clone(),
+        ValueKey::new("imported")?,
+        source_two.reference().clone(),
+        source_two.value().clone(),
+    )?;
+    let parent_budget = WorkspaceBudget::new(1, 1024, 1024, 0, 0, 0)?;
+    let parent_usage = parent_budget.admit_value(&WorkspaceUsage::EMPTY, imported.value())?;
+    {
+        let store = RedbStore::open(directory.path())?;
+        store.commit_command(&accepted_workspace_request(
+            child_run.clone(),
+            "command-import-source-one",
+            "event-import-source-one",
+            vec![run_created_kind(
+                child_root.clone(),
+                child_budget.clone(),
+                vec![source_one.reference().clone()],
+            )?],
+            vec![
+                WorkspaceMutation::CreateScope { scope: child_root },
+                WorkspaceMutation::PutValue {
+                    entry: source_one.clone(),
+                },
+            ],
+            WorkspaceAccounting {
+                budget: child_budget.clone(),
+                expected_usage: WorkspaceUsage::EMPTY,
+                resulting_usage: child_usage_one,
+            },
+        )?)?;
+        store.commit_command(&accepted_workspace_followup_request(
+            child_run,
+            RunSequence::FIRST,
+            "command-import-source-two",
+            "event-import-source-two",
+            vec![RunEventKind::DeterministicOutputPublished {
+                execution: NodeExecutionId::new("execution-import-source-two")?,
+                value: source_two.reference().clone(),
+                artifact: None,
+            }],
+            vec![WorkspaceMutation::PutValue { entry: source_two }],
+            WorkspaceAccounting {
+                budget: child_budget,
+                expected_usage: child_usage_one,
+                resulting_usage: child_usage_two,
+            },
+        )?)?;
+        store.commit_command(&accepted_workspace_request(
+            parent_run,
+            "command-import-target",
+            "event-import-target",
+            vec![run_created_kind(
+                parent_root.clone(),
+                parent_budget.clone(),
+                vec![imported.reference().clone()],
+            )?],
+            vec![
+                WorkspaceMutation::CreateScope { scope: parent_root },
+                WorkspaceMutation::PutValue {
+                    entry: imported.clone(),
+                },
+            ],
+            WorkspaceAccounting {
+                budget: parent_budget,
+                expected_usage: WorkspaceUsage::EMPTY,
+                resulting_usage: parent_usage,
+            },
+        )?)?;
+    }
+    let database = Database::open(directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut values = write.open_table(VALUES)?;
+        assert!(
+            values
+                .remove(stored_workspace_value_key(source_one.reference())?.as_slice())?
+                .is_some()
+        );
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = RedbStore::open(directory.path())?;
+    assert_storage_corruption(store.value(imported.reference()));
+    assert_eq!(
+        store.health(TimestampMillis::new(20))?.status,
+        StorageHealthStatus::Degraded
+    );
+    Ok(())
+}
+
+#[test]
+fn deleted_parent_scope_blocks_child_reads_writes_and_health()
+-> Result<(), Box<dyn std::error::Error>> {
+    const SCOPES: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.workspace.scopes");
+
+    let directory = TempDir::new()?;
+    let run = RunId::new("run-deleted-parent-scope")?;
+    let root = WorkspaceScope::run_root(run.clone(), ScopeId::new("root")?);
+    let parent = WorkspaceScope::branch(
+        ScopeId::new("parent")?,
+        &root,
+        BranchId::new("branch-parent")?,
+    )?;
+    let child = WorkspaceScope::branch(
+        ScopeId::new("child")?,
+        &parent,
+        BranchId::new("branch-child")?,
+    )?;
+    let budget = WorkspaceBudget::new(1, 1024, 1024, 0, 0, 0)?;
+    {
+        let store = RedbStore::open(directory.path())?;
+        store.commit_command(&accepted_workspace_request(
+            run.clone(),
+            "command-parent-scope",
+            "event-parent-scope",
+            vec![
+                run_created_kind(root.clone(), budget.clone(), Vec::new())?,
+                RunEventKind::BranchScopeCreated {
+                    fork_execution: NodeExecutionId::new("fork-parent")?,
+                    port: PortId::new("branch-parent")?,
+                    branch: BranchId::new("branch-parent")?,
+                    scope: parent.clone(),
+                },
+                RunEventKind::BranchScopeCreated {
+                    fork_execution: NodeExecutionId::new("fork-child")?,
+                    port: PortId::new("branch-child")?,
+                    branch: BranchId::new("branch-child")?,
+                    scope: child.clone(),
+                },
+            ],
+            vec![
+                WorkspaceMutation::CreateScope { scope: root },
+                WorkspaceMutation::CreateScope {
+                    scope: parent.clone(),
+                },
+                WorkspaceMutation::CreateScope {
+                    scope: child.clone(),
+                },
+            ],
+            WorkspaceAccounting {
+                budget: budget.clone(),
+                expected_usage: WorkspaceUsage::EMPTY,
+                resulting_usage: WorkspaceUsage::EMPTY,
+            },
+        )?)?;
+    }
+    let database = Database::open(directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut scopes = write.open_table(SCOPES)?;
+        assert!(
+            scopes
+                .remove(stored_workspace_scope_key(parent.reference())?.as_slice())?
+                .is_some()
+        );
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = RedbStore::open(directory.path())?;
+    assert_storage_corruption(store.scope(&run, child.reference().scope()));
+    assert_storage_corruption(
+        store.latest_value(child.reference(), &ValueKey::new("never-written")?),
+    );
+    let value = WorkspaceValueEntry::initial(
+        child.reference().clone(),
+        ValueKey::new("blocked")?,
+        WorkspaceValue::Json(BoundedJson::new(json!(true))?),
+    );
+    let resulting_usage = budget.admit_value(&WorkspaceUsage::EMPTY, value.value())?;
+    let write_request = accepted_workspace_followup_request(
+        run,
+        RunSequence::new(3),
+        "command-child-after-parent-delete",
+        "event-child-after-parent-delete",
+        vec![RunEventKind::DeterministicOutputPublished {
+            execution: NodeExecutionId::new("execution-child-after-parent-delete")?,
+            value: value.reference().clone(),
+            artifact: None,
+        }],
+        vec![WorkspaceMutation::PutValue { entry: value }],
+        WorkspaceAccounting {
+            budget,
+            expected_usage: WorkspaceUsage::EMPTY,
+            resulting_usage,
+        },
+    )?;
+    assert_storage_corruption(store.commit_command(&write_request));
+    assert_eq!(
+        store.health(TimestampMillis::new(20))?.status,
+        StorageHealthStatus::Degraded
     );
     Ok(())
 }
@@ -885,6 +2088,551 @@ fn malformed_stored_event_is_classified_as_corruption() -> Result<(), Box<dyn st
 }
 
 #[test]
+fn missing_or_lowered_journal_heads_are_never_interpreted_as_empty()
+-> Result<(), Box<dyn std::error::Error>> {
+    const HEADS: TableDefinition<'static, &'static str, u64> =
+        TableDefinition::new("milkdrift.v1.runs.heads");
+    const EVENTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.runs.events");
+
+    let missing_directory = TempDir::new()?;
+    let missing = accepted_request(
+        "run-missing-head",
+        "command-missing-head",
+        "event-missing-head",
+        "start",
+    )?;
+    {
+        let store = RedbStore::open(missing_directory.path())?;
+        store.commit_command(&missing)?;
+    }
+    let database = Database::open(missing_directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut heads = write.open_table(HEADS)?;
+        let _removed = heads.remove(missing.receipt.run().as_str())?;
+    }
+    write.commit()?;
+    drop(database);
+    let store = RedbStore::open(missing_directory.path())?;
+    let missing_head = store.head(missing.receipt.run());
+    assert!(
+        matches!(
+            missing_head,
+            Err(PersistenceError::Storage {
+                class: StorageFailureClass::Corruption,
+                ..
+            })
+        ),
+        "unexpected missing-head result: {missing_head:?}"
+    );
+    assert!(matches!(
+        store.events(&EventPageQuery::new(
+            missing.receipt.run().clone(),
+            None,
+            PageSize::new(1)?,
+        )?),
+        Err(PersistenceError::Storage {
+            class: StorageFailureClass::Corruption,
+            ..
+        })
+    ));
+    assert!(matches!(
+        store.command_result(missing.receipt.run(), missing.receipt.command()),
+        Err(PersistenceError::Storage {
+            class: StorageFailureClass::Corruption,
+            ..
+        })
+    ));
+    assert!(matches!(
+        store.commit_command(&missing),
+        Err(PersistenceError::Storage {
+            class: StorageFailureClass::Corruption,
+            ..
+        })
+    ));
+    drop(store);
+
+    let lowered_directory = TempDir::new()?;
+    let first = accepted_request(
+        "run-lowered-head",
+        "command-lowered-head",
+        "event-lowered-head",
+        "start",
+    )?;
+    let second = accepted_followup_request(
+        first.receipt.run().clone(),
+        "command-beyond-head",
+        "event-beyond-head",
+    )?;
+    {
+        let store = RedbStore::open(lowered_directory.path())?;
+        store.commit_command(&first)?;
+        store.commit_command(&second)?;
+    }
+    let database = Database::open(lowered_directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut heads = write.open_table(HEADS)?;
+        heads.insert(first.receipt.run().as_str(), RunSequence::FIRST.get())?;
+    }
+    write.commit()?;
+    drop(database);
+    let store = RedbStore::open(lowered_directory.path())?;
+    assert!(matches!(
+        store.head(first.receipt.run()),
+        Err(PersistenceError::Storage {
+            class: StorageFailureClass::Corruption,
+            ..
+        })
+    ));
+    assert!(matches!(
+        store.events(&EventPageQuery::new(
+            first.receipt.run().clone(),
+            None,
+            PageSize::new(1)?,
+        )?),
+        Err(PersistenceError::Storage {
+            class: StorageFailureClass::Corruption,
+            ..
+        })
+    ));
+    assert!(matches!(
+        store.command_result(second.receipt.run(), second.receipt.command()),
+        Err(PersistenceError::Storage {
+            class: StorageFailureClass::Corruption,
+            ..
+        })
+    ));
+    assert!(matches!(
+        store.commit_command(&second),
+        Err(PersistenceError::Storage {
+            class: StorageFailureClass::Corruption,
+            ..
+        })
+    ));
+
+    let missing_event_directory = TempDir::new()?;
+    let first = accepted_request(
+        "run-missing-command-event",
+        "command-before-missing-event",
+        "event-to-remove",
+        "start",
+    )?;
+    let second = accepted_followup_request(
+        first.receipt.run().clone(),
+        "command-after-missing-event",
+        "event-head-remains",
+    )?;
+    {
+        let store = RedbStore::open(missing_event_directory.path())?;
+        store.commit_command(&first)?;
+        store.commit_command(&second)?;
+    }
+    let database = Database::open(missing_event_directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut events = write.open_table(EVENTS)?;
+        let mut key = Vec::new();
+        key.extend_from_slice(&(first.receipt.run().as_str().len() as u32).to_be_bytes());
+        key.extend_from_slice(first.receipt.run().as_str().as_bytes());
+        key.extend_from_slice(&RunSequence::FIRST.get().to_be_bytes());
+        let _removed = events.remove(key.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+    let store = RedbStore::open(missing_event_directory.path())?;
+    assert_storage_corruption(store.head(first.receipt.run()));
+    assert!(matches!(
+        store.command_result(first.receipt.run(), first.receipt.command()),
+        Err(PersistenceError::Storage {
+            class: StorageFailureClass::Corruption,
+            ..
+        })
+    ));
+    assert!(matches!(
+        store.commit_command(&first),
+        Err(PersistenceError::Storage {
+            class: StorageFailureClass::Corruption,
+            ..
+        })
+    ));
+    Ok(())
+}
+
+#[test]
+fn missing_summary_usage_or_budget_rows_are_classified_as_corruption()
+-> Result<(), Box<dyn std::error::Error>> {
+    const SUMMARIES: TableDefinition<'static, &'static str, &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.discovery.run_summaries");
+    const USAGE: TableDefinition<'static, &'static str, &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.workspace.usage");
+    const BUDGETS: TableDefinition<'static, &'static str, &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.workspace.budgets");
+
+    let summary_directory = TempDir::new()?;
+    let summary_request = accepted_request(
+        "run-missing-summary",
+        "command-missing-summary",
+        "event-missing-summary",
+        "start",
+    )?;
+    {
+        let store = RedbStore::open(summary_directory.path())?;
+        store.commit_command(&summary_request)?;
+    }
+    let database = Database::open(summary_directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut summaries = write.open_table(SUMMARIES)?;
+        let _removed = summaries.remove(summary_request.receipt.run().as_str())?;
+    }
+    write.commit()?;
+    drop(database);
+    let store = RedbStore::open(summary_directory.path())?;
+    assert!(matches!(
+        store.run_summary(summary_request.receipt.run()),
+        Err(PersistenceError::Storage {
+            class: StorageFailureClass::Corruption,
+            ..
+        })
+    ));
+    drop(store);
+
+    for (suffix, table) in [("usage", USAGE), ("budget", BUDGETS)] {
+        let directory = TempDir::new()?;
+        let request = accepted_request(
+            &format!("run-missing-{suffix}"),
+            &format!("command-missing-{suffix}"),
+            &format!("event-missing-{suffix}"),
+            "start",
+        )?;
+        {
+            let store = RedbStore::open(directory.path())?;
+            store.commit_command(&request)?;
+        }
+        let database = Database::open(directory.path().join("milkdrift.redb"))?;
+        let write = database.begin_write()?;
+        {
+            let mut rows = write.open_table(table)?;
+            let _removed = rows.remove(request.receipt.run().as_str())?;
+        }
+        write.commit()?;
+        drop(database);
+
+        let store = RedbStore::open(directory.path())?;
+        if suffix == "usage" {
+            assert!(matches!(
+                store.workspace_usage(request.receipt.run()),
+                Err(PersistenceError::Storage {
+                    class: StorageFailureClass::Corruption,
+                    ..
+                })
+            ));
+        }
+        let followup = accepted_followup_request(
+            request.receipt.run().clone(),
+            &format!("command-after-missing-{suffix}"),
+            &format!("event-after-missing-{suffix}"),
+        )?;
+        assert!(matches!(
+            store.commit_command(&followup),
+            Err(PersistenceError::Storage {
+                class: StorageFailureClass::Corruption,
+                ..
+            })
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn deleted_discovery_and_lease_rows_refuse_recovery_and_admission()
+-> Result<(), Box<dyn std::error::Error>> {
+    const NONTERMINAL: TableDefinition<'static, &'static str, u8> =
+        TableDefinition::new("milkdrift.v1.discovery.nonterminal_runs");
+    const ORDERED_LEASES: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.discovery.leases");
+
+    let recovery_directory = TempDir::new()?;
+    let recovery = accepted_request(
+        "run-hidden-recovery",
+        "command-hidden-recovery",
+        "event-hidden-recovery",
+        "start",
+    )?;
+    {
+        let store = RedbStore::open(recovery_directory.path())?;
+        store.commit_command(&recovery)?;
+    }
+    let database = Database::open(recovery_directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut nonterminal = write.open_table(NONTERMINAL)?;
+        let _removed = nonterminal.remove(recovery.receipt.run().as_str())?;
+    }
+    write.commit()?;
+    drop(database);
+    let store = RedbStore::open(recovery_directory.path())?;
+    assert!(matches!(
+        store.nonterminal_run_page(None, PageSize::new(10)?),
+        Err(PersistenceError::Storage {
+            class: StorageFailureClass::Corruption,
+            ..
+        })
+    ));
+    drop(store);
+
+    let lease_directory = TempDir::new()?;
+    let run = RunId::new("run-hidden-lease")?;
+    let lease_request = accepted_request_with_lease(
+        run.as_str(),
+        "command-hidden-lease",
+        "event-hidden-lease",
+        LeaseIndexEntry {
+            run: run.clone(),
+            lease: LeaseId::new("lease-hidden")?,
+            attempt: AttemptId::new("attempt-hidden")?,
+            worker: WorkerId::new("worker-hidden")?,
+            expires_at: TimestampMillis::new(100),
+            through_sequence: RunSequence::FIRST,
+        },
+    )?;
+    {
+        let store = RedbStore::open(lease_directory.path())?;
+        store.commit_command(&lease_request)?;
+    }
+    let database = Database::open(lease_directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut leases = write.open_table(ORDERED_LEASES)?;
+        let key = {
+            let mut rows = leases.iter()?;
+            let (key, _) = rows.next().transpose()?.ok_or("ordered lease is absent")?;
+            key.value().to_vec()
+        };
+        let _removed = leases.remove(key.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+    let store = RedbStore::open(lease_directory.path())?;
+    assert!(matches!(
+        store.active_leases(PageSize::new(10)?),
+        Err(PersistenceError::Storage {
+            class: StorageFailureClass::Corruption,
+            ..
+        })
+    ));
+    assert!(matches!(
+        store.expired_leases(TimestampMillis::new(u64::MAX), PageSize::new(10)?),
+        Err(PersistenceError::Storage {
+            class: StorageFailureClass::Corruption,
+            ..
+        })
+    ));
+    Ok(())
+}
+
+fn assert_symmetric_discovery_pair_deletion_is_corruption(
+    kind: DiscoveryIndexKind,
+    suffix: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    const RUNNABLE_IDENTITIES: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.discovery.runnable_by_identity");
+    const RUNNABLE_ORDERED: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.discovery.runnable");
+    const TIMER_IDENTITIES: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.discovery.timers_by_identity");
+    const TIMER_ORDERED: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.discovery.timers");
+    const LEASE_IDENTITIES: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.discovery.leases_by_identity");
+    const LEASE_ORDERED: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.discovery.leases");
+
+    let (identity_definition, ordered_definition) = match kind {
+        DiscoveryIndexKind::Runnable => (RUNNABLE_IDENTITIES, RUNNABLE_ORDERED),
+        DiscoveryIndexKind::Timer => (TIMER_IDENTITIES, TIMER_ORDERED),
+        DiscoveryIndexKind::Lease => (LEASE_IDENTITIES, LEASE_ORDERED),
+    };
+    let directory = TempDir::new()?;
+    {
+        let store = RedbStore::open(directory.path())?;
+        store.commit_command(&accepted_request_with_discovery_index(kind, suffix)?)?;
+    }
+    let database = Database::open(directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut identities = write.open_table(identity_definition)?;
+        let key = {
+            let mut rows = identities.iter()?;
+            let (key, _) = rows.next().transpose()?.ok_or("identity row is absent")?;
+            key.value().to_vec()
+        };
+        assert!(identities.remove(key.as_slice())?.is_some());
+        let mut ordered = write.open_table(ordered_definition)?;
+        let key = {
+            let mut rows = ordered.iter()?;
+            let (key, _) = rows.next().transpose()?.ok_or("ordered row is absent")?;
+            key.value().to_vec()
+        };
+        assert!(ordered.remove(key.as_slice())?.is_some());
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = RedbStore::open(directory.path())?;
+    let query = match kind {
+        DiscoveryIndexKind::Runnable => store
+            .runnable_page(TimestampMillis::new(10), None, PageSize::new(10)?)
+            .map(|_| ()),
+        DiscoveryIndexKind::Timer => store
+            .due_timers(TimestampMillis::new(10), PageSize::new(10)?)
+            .map(|_| ()),
+        DiscoveryIndexKind::Lease => store.active_leases(PageSize::new(10)?).map(|_| ()),
+    };
+    assert!(matches!(
+        query,
+        Err(PersistenceError::Storage {
+            class: StorageFailureClass::Corruption,
+            ..
+        })
+    ));
+    assert_eq!(
+        store.health(TimestampMillis::new(20))?.status,
+        StorageHealthStatus::Degraded
+    );
+    Ok(())
+}
+
+#[test]
+fn symmetric_runnable_pair_deletion_is_corruption() -> Result<(), Box<dyn std::error::Error>> {
+    assert_symmetric_discovery_pair_deletion_is_corruption(
+        DiscoveryIndexKind::Runnable,
+        "symmetric-runnable",
+    )
+}
+
+#[test]
+fn symmetric_timer_pair_deletion_is_corruption() -> Result<(), Box<dyn std::error::Error>> {
+    assert_symmetric_discovery_pair_deletion_is_corruption(
+        DiscoveryIndexKind::Timer,
+        "symmetric-timer",
+    )
+}
+
+#[test]
+fn symmetric_lease_pair_deletion_is_corruption() -> Result<(), Box<dyn std::error::Error>> {
+    assert_symmetric_discovery_pair_deletion_is_corruption(
+        DiscoveryIndexKind::Lease,
+        "symmetric-lease",
+    )
+}
+
+#[test]
+fn enveloped_v1_store_backfills_discovery_accounting_atomically()
+-> Result<(), Box<dyn std::error::Error>> {
+    const METADATA: TableDefinition<'static, &'static str, u64> =
+        TableDefinition::new("milkdrift.v1.metadata");
+    const DISCOVERY_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.discovery.accounting");
+    const WORKSPACE_VALUE_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.workspace.value_accounting");
+    const INTEGRITY_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.integrity.accounting");
+    const INTEGRITY_ROOTS: TableDefinition<'static, &'static str, &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.integrity.roots");
+    const INTEGRITY_NODES: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.integrity.trie_nodes");
+    const ARTIFACT_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.artifacts.accounting");
+
+    let directory = TempDir::new()?;
+    {
+        let store = RedbStore::open(directory.path())?;
+        for (kind, suffix) in [
+            (DiscoveryIndexKind::Runnable, "migrate-runnable"),
+            (DiscoveryIndexKind::Timer, "migrate-timer"),
+            (DiscoveryIndexKind::Lease, "migrate-lease"),
+        ] {
+            store.commit_command(&accepted_request_with_discovery_index(kind, suffix)?)?;
+        }
+    }
+    let database = Database::open(directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut metadata = write.open_table(METADATA)?;
+        metadata.insert("internal_document_format_version", 1)?;
+        let mut accounting = write.open_table(DISCOVERY_ACCOUNTING)?;
+        drop(accounting.remove("active_index_counts")?);
+        drop(accounting);
+        let mut value_accounting = write.open_table(WORKSPACE_VALUE_ACCOUNTING)?;
+        let keys = value_accounting
+            .iter()?
+            .map(|row| row.map(|(key, _)| key.value().to_owned()))
+            .collect::<Result<Vec<_>, _>>()?;
+        for key in keys {
+            drop(value_accounting.remove(key.as_str())?);
+        }
+        drop(value_accounting);
+        for definition in [INTEGRITY_ACCOUNTING, INTEGRITY_ROOTS, ARTIFACT_ACCOUNTING] {
+            let mut table = write.open_table(definition)?;
+            let keys = table
+                .iter()?
+                .map(|row| row.map(|(key, _)| key.value().to_owned()))
+                .collect::<Result<Vec<_>, _>>()?;
+            for key in keys {
+                drop(table.remove(key.as_str())?);
+            }
+        }
+        let mut nodes = write.open_table(INTEGRITY_NODES)?;
+        let keys = nodes
+            .iter()?
+            .map(|row| row.map(|(key, _)| key.value().to_vec()))
+            .collect::<Result<Vec<_>, _>>()?;
+        for key in keys {
+            drop(nodes.remove(key.as_slice())?);
+        }
+    }
+    write.commit()?;
+    drop(database);
+
+    {
+        let store = RedbStore::open(directory.path())?;
+        assert_eq!(
+            store
+                .runnable_page(TimestampMillis::new(10), None, PageSize::new(10)?)?
+                .entries
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .due_timers(TimestampMillis::new(10), PageSize::new(10)?)?
+                .len(),
+            1
+        );
+        assert_eq!(store.active_leases(PageSize::new(10)?)?.entries.len(), 1);
+    }
+    let database = Database::open(directory.path().join("milkdrift.redb"))?;
+    let read = database.begin_read()?;
+    let metadata = read.open_table(METADATA)?;
+    assert_eq!(
+        metadata
+            .get("internal_document_format_version")?
+            .ok_or("internal document format marker is absent")?
+            .value(),
+        3
+    );
+    let accounting = read.open_table(DISCOVERY_ACCOUNTING)?;
+    assert!(accounting.get("active_index_counts")?.is_some());
+    let value_accounting = read.open_table(WORKSPACE_VALUE_ACCOUNTING)?;
+    assert!(value_accounting.get("")?.is_some());
+    assert_eq!(value_accounting.len()?, 4);
+    Ok(())
+}
+
+#[test]
 fn verified_snapshot_survives_reopen() -> Result<(), Box<dyn std::error::Error>> {
     let directory = TempDir::new()?;
     let request = accepted_request(
@@ -1111,6 +2859,7 @@ fn cleanup_fault_boundaries_expire_writable_sessions_and_release_reservations()
             observed_at: TimestampMillis::new(u64::MAX),
             created_before: TimestampMillis::new(u64::MAX - 1),
             limit: PageSize::new(100)?,
+            cursor: None,
         };
         let store = RedbStore::open_with_config(
             RedbStoreConfig::new(directory.path())
@@ -1118,7 +2867,7 @@ fn cleanup_fault_boundaries_expire_writable_sessions_and_release_reservations()
         )?;
         store.begin_publication(&request)?;
         store.write_chunk(&request.publication, 0, &bytes[..3])?;
-        assert!(store.cleanup_orphans(cleanup_request).is_err());
+        assert!(store.cleanup_orphans(cleanup_request.clone()).is_err());
         drop(store);
 
         let reopened = RedbStore::open(directory.path())?;
@@ -1181,6 +2930,7 @@ fn cleanup_expires_a_session_crashed_after_content_rename() -> Result<(), Box<dy
         observed_at: TimestampMillis::new(u64::MAX),
         created_before: TimestampMillis::new(u64::MAX - 1),
         limit: PageSize::new(100)?,
+        cursor: None,
     })?;
     assert_eq!(cleanup.temporary_publications_removed, 0);
     assert_eq!(cleanup.unreferenced_blobs_removed, 1);
@@ -1216,8 +2966,9 @@ fn cleanup_file_delete_fault_boundaries_are_restart_safe() -> Result<(), Box<dyn
             observed_at: TimestampMillis::new(u64::MAX),
             created_before: TimestampMillis::new(u64::MAX - 1),
             limit: PageSize::new(100)?,
+            cursor: None,
         };
-        assert!(store.cleanup_orphans(request).is_err());
+        assert!(store.cleanup_orphans(request.clone()).is_err());
         if point == FaultPoint::BeforeArtifactCleanupDelete {
             assert!(orphan.exists());
             assert_eq!(
@@ -1236,6 +2987,108 @@ fn cleanup_file_delete_fault_boundaries_are_restart_safe() -> Result<(), Box<dyn
             );
         }
     }
+    Ok(())
+}
+
+#[test]
+fn orphan_cleanup_cursors_visit_every_family_without_starvation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = TempDir::new()?;
+    let store = RedbStore::open(directory.path())?;
+    let artifact_budget = WorkspaceBudget::new(0, 0, 0, 1, 4096, 4096)?;
+
+    let referenced_bytes = b"durably-referenced-content";
+    let referenced = artifact_metadata(
+        "artifact-cleanup-referenced",
+        referenced_bytes,
+        ArtifactSensitivity::Public,
+    )?;
+    let referenced_request = BeginArtifactPublication::new(
+        ArtifactPublicationId::new("publication-cleanup-referenced")?,
+        RunId::new("run-cleanup-referenced")?,
+        referenced.clone(),
+        artifact_budget.clone(),
+        WorkspaceUsage::EMPTY,
+    )?;
+    store.begin_publication(&referenced_request)?;
+    store.write_chunk(&referenced_request.publication, 0, referenced_bytes)?;
+    store.commit_publication(&referenced_request.publication)?;
+
+    for index in 0..3 {
+        let bytes = format!("abandoned-publication-{index}").into_bytes();
+        let metadata = artifact_metadata(
+            &format!("artifact-abandoned-{index}"),
+            &bytes,
+            ArtifactSensitivity::Public,
+        )?;
+        let request = BeginArtifactPublication::new(
+            ArtifactPublicationId::new(format!("publication-abandoned-{index}"))?,
+            RunId::new(format!("run-abandoned-{index}"))?,
+            metadata,
+            artifact_budget.clone(),
+            WorkspaceUsage::EMPTY,
+        )?;
+        store.begin_publication(&request)?;
+        store.write_chunk(&request.publication, 0, &bytes[..1])?;
+    }
+
+    for index in 0..4 {
+        std::fs::write(
+            directory
+                .path()
+                .join("artifacts/.tmp")
+                .join(format!("unowned-{index}.part")),
+            format!("temporary-{index}"),
+        )?;
+        let bytes = format!("unowned-content-{index}").into_bytes();
+        let digest = ContentDigest::for_bytes(&bytes).to_hex();
+        let shard = directory.path().join("artifacts").join(&digest[..2]);
+        std::fs::create_dir_all(&shard)?;
+        std::fs::write(shard.join(&digest[2..]), bytes)?;
+    }
+
+    let observed_at = TimestampMillis::new(u64::MAX);
+    let created_before = TimestampMillis::new(u64::MAX - 1);
+    let mut page = store.cleanup_orphans(OrphanCleanupRequest {
+        observed_at,
+        created_before,
+        limit: PageSize::new(2)?,
+        cursor: None,
+    })?;
+    let first_cursor = page
+        .next_cursor
+        .clone()
+        .ok_or("first cleanup page must have a continuation")?;
+    assert!(matches!(
+        store.cleanup_orphans(OrphanCleanupRequest {
+            observed_at,
+            created_before: TimestampMillis::new(u64::MAX - 2),
+            limit: PageSize::new(2)?,
+            cursor: Some(first_cursor),
+        }),
+        Err(PersistenceError::InvalidCursor(_))
+    ));
+
+    let mut pages = 1_u32;
+    let mut temporary_removed = page.temporary_publications_removed;
+    let mut content_removed = page.unreferenced_blobs_removed;
+    while let Some(cursor) = page.next_cursor {
+        page = store.cleanup_orphans(OrphanCleanupRequest {
+            observed_at,
+            created_before,
+            limit: PageSize::new(2)?,
+            cursor: Some(cursor),
+        })?;
+        pages += 1;
+        assert!(pages < 20, "cleanup cursor failed to converge");
+        temporary_removed = temporary_removed.saturating_add(page.temporary_publications_removed);
+        content_removed = content_removed.saturating_add(page.unreferenced_blobs_removed);
+    }
+
+    assert!(pages >= 6);
+    assert_eq!(temporary_removed, 7);
+    assert_eq!(content_removed, 4);
+    assert!(store.is_committed(referenced.reference())?);
     Ok(())
 }
 
@@ -1288,6 +3141,7 @@ fn artifact_publication_fault_boundaries_recover_without_dangling_metadata()
             observed_at: TimestampMillis::new(u64::MAX),
             created_before: TimestampMillis::new(0),
             limit: PageSize::new(100)?,
+            cursor: None,
         })?;
         assert_eq!(cleanup.temporary_publications_removed, 0);
         assert_eq!(cleanup.unreferenced_blobs_removed, 0);
@@ -1463,6 +3317,7 @@ fn artifact_publication_resumes_deduplicates_verifies_and_cleans_orphans()
         observed_at: TimestampMillis::new(u64::MAX),
         created_before: TimestampMillis::new(u64::MAX - 1),
         limit: PageSize::new(100)?,
+        cursor: None,
     })?;
     assert_eq!(cleanup.temporary_publications_removed, 1);
     assert_eq!(cleanup.unreferenced_blobs_removed, 1);

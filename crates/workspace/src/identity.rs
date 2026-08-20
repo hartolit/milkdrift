@@ -4,8 +4,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::WorkspaceError;
 
-const MAX_STANDARD_ID_BYTES: usize = 128;
-const MAX_EXTENDED_ID_BYTES: usize = 192;
+/// Maximum bytes in run/scope/structured-work identity components.
+pub const MAX_STANDARD_ID_BYTES: usize = 128;
+/// Maximum bytes in value, artifact, and external-causal identity components.
+pub const MAX_EXTENDED_ID_BYTES: usize = 192;
 
 fn validate_identity(
     value: &str,

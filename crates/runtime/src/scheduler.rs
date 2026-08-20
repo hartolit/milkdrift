@@ -16,6 +16,8 @@ use serde_json::{Number, Value};
 
 use crate::RuntimeError;
 
+pub(crate) const MAX_RETRY_ATTEMPTS: u32 = 1_000;
+
 /// Hard scheduler admission limits. Every value is non-zero.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SchedulerLimits {
@@ -159,6 +161,7 @@ pub struct AdmissionUsage {
 }
 
 /// Deterministically interleaves runnable entries by run so one run cannot monopolize a page.
+/// Within a run, older eligibility wins; priority breaks ties at the same boundary.
 #[must_use]
 pub fn select_fair_runnable(
     entries: impl IntoIterator<Item = RunnableIndexEntry>,
@@ -170,10 +173,9 @@ pub fn select_fair_runnable(
     }
     for run_entries in by_run.values_mut() {
         run_entries.sort_by(|left, right| {
-            right
-                .priority
-                .cmp(&left.priority)
-                .then_with(|| left.eligible_at.cmp(&right.eligible_at))
+            left.eligible_at
+                .cmp(&right.eligible_at)
+                .then_with(|| right.priority.cmp(&left.priority))
                 .then_with(|| left.execution.cmp(&right.execution))
         });
     }
@@ -216,7 +218,7 @@ impl RetryPolicy {
         maximum_recorded_jitter_ms: u64,
     ) -> Result<Self, RuntimeError> {
         if maximum_attempts == 0
-            || maximum_attempts > 1_000
+            || maximum_attempts > MAX_RETRY_ATTEMPTS
             || initial_backoff_ms == 0
             || initial_backoff_ms > maximum_backoff_ms
             || retryable_errors.len() > 32
@@ -359,11 +361,17 @@ impl EvaluationContext {
                 "literal operands are embedded and cannot be inserted into context".to_owned(),
             ));
         }
-        if self.values.insert(binding_key(source)?, value).is_some() {
+        let key = binding_key(source)?;
+        if let Some(existing) = self.values.get(&key) {
+            if existing == &value {
+                return Ok(());
+            }
             return Err(RuntimeError::Scheduling(
-                "evaluation context cannot replace an existing durable binding".to_owned(),
+                "evaluation context cannot assign conflicting values to one durable binding"
+                    .to_owned(),
             ));
         }
+        self.values.insert(key, value);
         Ok(())
     }
 
@@ -705,25 +713,29 @@ mod tests {
     }
 
     #[test]
-    fn runnable_selection_round_robins_runs_and_preserves_local_priority()
+    fn runnable_selection_round_robins_runs_and_preserves_age_before_tied_priority()
     -> Result<(), Box<dyn std::error::Error>> {
-        let entry =
-            |run: &str, execution: &str, priority| -> Result<_, Box<dyn std::error::Error>> {
+        let entry = |run: &str,
+                     execution: &str,
+                     eligible_at: u64,
+                     priority|
+         -> Result<_, Box<dyn std::error::Error>> {
                 Ok(RunnableIndexEntry {
                     run: RunId::new(run)?,
                     execution: NodeExecutionId::new(execution)?,
-                    eligible_at: TimestampMillis::new(1),
+                    eligible_at: TimestampMillis::new(eligible_at),
                     priority,
                     through_sequence: RunSequence::FIRST,
                 })
             };
         let selected = select_fair_runnable(
             [
-                entry("run-a", "execution-a-low", 1)?,
-                entry("run-a", "execution-a-high", 9)?,
-                entry("run-b", "execution-b", 2)?,
+                entry("run-a", "execution-a-old", 1, 1)?,
+                entry("run-a", "execution-a-tied-low", 2, 1)?,
+                entry("run-a", "execution-a-tied-high", 2, 9)?,
+                entry("run-b", "execution-b", 1, 2)?,
             ],
-            3,
+            4,
         );
         let observed: Vec<_> = selected
             .iter()
@@ -732,9 +744,10 @@ mod tests {
         assert_eq!(
             observed,
             vec![
-                ("run-a", "execution-a-high"),
+                ("run-a", "execution-a-old"),
                 ("run-b", "execution-b"),
-                ("run-a", "execution-a-low"),
+                ("run-a", "execution-a-tied-high"),
+                ("run-a", "execution-a-tied-low"),
             ]
         );
         Ok(())

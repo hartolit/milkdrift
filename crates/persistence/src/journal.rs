@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use milkdrift_blueprint::{RevisionId, WorkflowId};
 use milkdrift_capability::BoundedJson;
@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ActorRef, AttemptId, CommandId, IntegrityDigest, LeaseId, NodeExecutionId, PageSize,
-    PersistenceError, RunEventEnvelope, RunSequence, TimerId, TimestampMillis, WorkerId,
-    bounded::MAX_EVENTS_PER_COMMIT,
+    PersistenceError, RunEventEnvelope, RunEventKind, RunSequence, TimerId, TimestampMillis,
+    WorkerId, bounded::MAX_EVENTS_PER_COMMIT,
 };
 
 /// Maximum canonical runtime command bytes retained for exact idempotency evidence.
@@ -22,6 +22,11 @@ pub const MAX_COMMAND_RESULT_DOCUMENT_BYTES: usize = 524_288;
 pub const MAX_INDEX_MUTATIONS_PER_COMMIT: usize = 2_048;
 /// Maximum scope/value mutations in one atomic aggregate commit.
 pub const MAX_WORKSPACE_MUTATIONS_PER_COMMIT: usize = 2_048;
+/// Maximum number of immutable origin hops verified for one workspace value.
+///
+/// This matches the atomic workspace-mutation ceiling so validation always has
+/// a fixed adapter-neutral memory and lookup bound.
+pub const MAX_VALUE_PROVENANCE_DEPTH: usize = MAX_WORKSPACE_MUTATIONS_PER_COMMIT;
 /// Maximum distinct committed artifact references validated in one commit.
 pub const MAX_REQUIRED_ARTIFACTS_PER_COMMIT: usize = 2_048;
 /// Current opaque command-receipt/result document schema.
@@ -437,19 +442,48 @@ pub struct RunnableIndexEntry {
     pub through_sequence: RunSequence,
 }
 
-/// Stable runnable-discovery cursor based on the last represented run.
+/// Stable runnable-discovery cursor based on the last authenticated run head.
+///
+/// The eligibility boundary is bound into the continuation. A completed cycle
+/// therefore has one stable view of time even when the caller's boundary clock
+/// advances between bounded pages.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunnableCursor {
-    /// Last run represented by the previous page (exclusive resume point).
-    pub after_run: RunId,
+    after_run: RunId,
+    eligible_through: TimestampMillis,
+}
+
+impl RunnableCursor {
+    /// Constructs a validated exclusive runnable continuation.
+    #[must_use]
+    pub const fn new(after_run: RunId, eligible_through: TimestampMillis) -> Self {
+        Self {
+            after_run,
+            eligible_through,
+        }
+    }
+
+    /// Run component of the exclusive physical identity resume point.
+    #[must_use]
+    pub fn after_run(&self) -> &RunId {
+        &self.after_run
+    }
+
+    /// Eligibility boundary owned by this continuation. A later page preserves
+    /// this boundary even if its caller's wall clock has advanced; newly eligible
+    /// work joins the next full cycle after the cursor is exhausted.
+    #[must_use]
+    pub const fn eligible_through(&self) -> TimestampMillis {
+        self.eligible_through
+    }
 }
 
 /// One bounded runnable page with no more than one candidate per run.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunnablePage {
-    /// Best eligible candidate for each represented run.
+    /// Deterministically selected eligible candidate for each represented run.
     pub entries: Vec<RunnableIndexEntry>,
-    /// Exclusive run cursor, absent when the physical index tail was reached.
+    /// Exclusive last-scanned cursor, absent when the physical index tail was reached.
     pub next: Option<RunnableCursor>,
 }
 
@@ -483,6 +517,19 @@ pub struct LeaseIndexEntry {
     pub expires_at: TimestampMillis,
     /// Journal sequence used to derive the entry.
     pub through_sequence: RunSequence,
+}
+
+/// One bounded active-lease catalog snapshot and its atomic-admission witness.
+///
+/// The witness is opaque to the runtime. Implementations must change it whenever
+/// any active-lease catalog row changes and compare an admission commit's expected
+/// witness inside the same transaction that grants the new lease.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActiveLeaseSnapshot {
+    /// Active leases in stable expiry/identity order, bounded by the requested page size.
+    pub entries: Vec<LeaseIndexEntry>,
+    /// Integrity-protected root of the complete active-lease catalog observed by this read.
+    pub witness: IntegrityDigest,
 }
 
 /// Upsert/remove mutation for runnable discoverability.
@@ -574,6 +621,12 @@ pub struct AtomicRunCommitRequest {
     pub required_artifacts: Vec<ArtifactReference>,
     /// Required artifacts first admitted into this run's accounting domain by this commit.
     pub newly_referenced_artifacts: Vec<ArtifactReference>,
+    /// Exact active-lease catalog observed while admitting a new durable lease.
+    ///
+    /// Present exactly when this commit contains a `LeaseGranted` fact. The adapter
+    /// compares it atomically before the lease/index mutation so concurrent runtime
+    /// services cannot both admit against the same pre-lease global usage.
+    pub expected_lease_catalog: Option<IntegrityDigest>,
     /// Fully durable result returned on redelivery.
     pub result: CommandResultDocument,
     /// Rebuildable discovery/index changes committed atomically.
@@ -590,6 +643,7 @@ impl AtomicRunCommitRequest {
         workspace_accounting: Option<WorkspaceAccounting>,
         required_artifacts: Vec<ArtifactReference>,
         newly_referenced_artifacts: Vec<ArtifactReference>,
+        expected_lease_catalog: Option<IntegrityDigest>,
         result: CommandResultDocument,
         indexes: RunIndexUpdate,
     ) -> Result<Self, PersistenceError> {
@@ -622,6 +676,18 @@ impl AtomicRunCommitRequest {
                     "at most {MAX_REQUIRED_ARTIFACTS_PER_COMMIT} artifact references are allowed"
                 ),
             });
+        }
+        let grants_lease = events.iter().any(|event| {
+            matches!(
+                event.kind(),
+                RunEventKind::LeaseGranted { .. } | RunEventKind::NodeReLeased { .. }
+            )
+        });
+        if grants_lease != expected_lease_catalog.is_some() {
+            return Err(PersistenceError::InvalidDocument(
+                "expected_lease_catalog must be present exactly for a lease-creating commit"
+                    .to_owned(),
+            ));
         }
         let index_count = indexes
             .runnable
@@ -661,6 +727,17 @@ impl AtomicRunCommitRequest {
                     receipt.expected_sequence()
                 )));
             }
+            if matches!(
+                event.kind(),
+                RunEventKind::SignalDeduplicated {
+                    duplicate_command,
+                    ..
+                } if duplicate_command != receipt.command()
+            ) {
+                return Err(PersistenceError::InvalidDocument(
+                    "signal deduplication must name the command atomically recording it".to_owned(),
+                ));
+            }
             event_ids.push(event.event_id().clone());
         }
         let resulting_sequence = if events.is_empty() {
@@ -681,6 +758,100 @@ impl AtomicRunCommitRequest {
                 "workspace mutations must belong to the command run".to_owned(),
             ));
         }
+        let mut declared_scopes = BTreeMap::new();
+        let mut introduced_values = BTreeSet::new();
+        for event in &events {
+            let scope = match event.kind() {
+                RunEventKind::RunCreated { root_scope, .. } => Some(root_scope),
+                RunEventKind::BranchScopeCreated { scope, .. }
+                | RunEventKind::RepeatIterationCreated { scope, .. }
+                | RunEventKind::SubworkflowCreated { scope, .. } => Some(scope),
+                _ => None,
+            };
+            if scope.is_some_and(|scope| {
+                declared_scopes
+                    .insert(scope.reference().clone(), scope.clone())
+                    .is_some()
+            }) {
+                return Err(PersistenceError::InvalidDocument(
+                    "one atomic commit cannot declare the same workspace scope twice".to_owned(),
+                ));
+            }
+            match event.kind() {
+                RunEventKind::RunCreated { inputs, .. } => {
+                    for value in inputs {
+                        if !introduced_values.insert(value.clone()) {
+                            return Err(PersistenceError::InvalidDocument(
+                                "one atomic commit cannot introduce the same workspace value twice"
+                                    .to_owned(),
+                            ));
+                        }
+                    }
+                }
+                RunEventKind::NodeOutputPublished { value, .. }
+                | RunEventKind::DeterministicOutputPublished { value, .. }
+                    if !introduced_values.insert(value.clone()) =>
+                {
+                    return Err(PersistenceError::InvalidDocument(
+                        "one atomic commit cannot introduce the same workspace value twice"
+                            .to_owned(),
+                    ));
+                }
+                RunEventKind::SubworkflowCreated { scope, inputs, .. } => {
+                    for value in inputs
+                        .iter()
+                        .filter(|value| value.scope() == scope.reference())
+                    {
+                        if !introduced_values.insert(value.clone()) {
+                            return Err(PersistenceError::InvalidDocument(
+                                "one atomic commit cannot introduce the same workspace value twice"
+                                    .to_owned(),
+                            ));
+                        }
+                    }
+                }
+                RunEventKind::SubworkflowOutputImported { parent_value, .. }
+                    if !introduced_values.insert(parent_value.clone()) =>
+                {
+                    return Err(PersistenceError::InvalidDocument(
+                        "one atomic commit cannot introduce the same workspace value twice"
+                            .to_owned(),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        let mut mutated_scopes = BTreeMap::new();
+        let mut mutated_values = BTreeSet::new();
+        for mutation in &workspace {
+            match mutation {
+                WorkspaceMutation::CreateScope { scope } => {
+                    if mutated_scopes
+                        .insert(scope.reference().clone(), scope.clone())
+                        .is_some()
+                    {
+                        return Err(PersistenceError::InvalidDocument(
+                            "one atomic commit cannot create the same workspace scope twice"
+                                .to_owned(),
+                        ));
+                    }
+                }
+                WorkspaceMutation::PutValue { entry } => {
+                    if !mutated_values.insert(entry.reference().clone()) {
+                        return Err(PersistenceError::InvalidDocument(
+                            "one atomic commit cannot put the same workspace value twice"
+                                .to_owned(),
+                        ));
+                    }
+                }
+            }
+        }
+        if mutated_scopes != declared_scopes || mutated_values != introduced_values {
+            return Err(PersistenceError::InvalidDocument(
+                "workspace mutations must exactly materialize scope/value references introduced by the command's events"
+                    .to_owned(),
+            ));
+        }
         match (&workspace_accounting, events.is_empty()) {
             (None, false) => {
                 return Err(PersistenceError::InvalidDocument(
@@ -694,8 +865,8 @@ impl AtomicRunCommitRequest {
             }
             _ => {}
         }
-        let required: BTreeSet<_> = required_artifacts.iter().collect();
-        let newly_referenced: BTreeSet<_> = newly_referenced_artifacts.iter().collect();
+        let required: BTreeSet<_> = required_artifacts.iter().cloned().collect();
+        let newly_referenced: BTreeSet<_> = newly_referenced_artifacts.iter().cloned().collect();
         if required.len() != required_artifacts.len()
             || newly_referenced.len() != newly_referenced_artifacts.len()
             || !newly_referenced.is_subset(&required)
@@ -705,15 +876,14 @@ impl AtomicRunCommitRequest {
                     .to_owned(),
             ));
         }
-        let referenced: BTreeSet<_> = workspace
+        let mut referenced: BTreeSet<_> = workspace
             .iter()
             .filter_map(WorkspaceMutation::referenced_artifact)
-            .chain(
-                events
-                    .iter()
-                    .flat_map(|event| event.kind().referenced_artifacts()),
-            )
+            .cloned()
             .collect();
+        for event in &events {
+            referenced.extend(event.kind().required_artifacts()?);
+        }
         if referenced != required {
             return Err(PersistenceError::InvalidDocument(
                 "required_artifacts must exactly equal all direct event/workspace artifact references"
@@ -775,6 +945,7 @@ impl AtomicRunCommitRequest {
             workspace_accounting,
             required_artifacts,
             newly_referenced_artifacts,
+            expected_lease_catalog,
             result,
             indexes,
         })
@@ -960,11 +1131,60 @@ pub struct RunSummaryFilter {
     pub workflow: Option<WorkflowId>,
 }
 
-/// Stable summary cursor based on the last returned run identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum RunSummaryCursorScope {
+    Query(RunSummaryFilter),
+    Nonterminal,
+}
+
+/// Stable summary cursor based on the last physically scanned run identity.
+///
+/// The cursor is bound to the exact logical query that produced it. This lets an
+/// adapter return an empty but advancing page when a bounded physical scan finds
+/// no matching summaries, without allowing that continuation to be reused with a
+/// different filter or with nonterminal recovery discovery.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunSummaryCursor {
-    /// Last run returned by the previous page (exclusive resume point).
-    pub after_run: RunId,
+    after_run: RunId,
+    scope: RunSummaryCursorScope,
+}
+
+impl RunSummaryCursor {
+    /// Constructs a cursor for the exact immutable summary filter.
+    #[must_use]
+    pub fn for_query(after_run: RunId, filter: RunSummaryFilter) -> Self {
+        Self {
+            after_run,
+            scope: RunSummaryCursorScope::Query(filter),
+        }
+    }
+
+    /// Constructs a cursor for authoritative nonterminal discovery.
+    #[must_use]
+    pub fn for_nonterminal(after_run: RunId) -> Self {
+        Self {
+            after_run,
+            scope: RunSummaryCursorScope::Nonterminal,
+        }
+    }
+
+    /// Last physically scanned run (the exclusive resume point).
+    #[must_use]
+    pub fn after_run(&self) -> &RunId {
+        &self.after_run
+    }
+
+    /// Whether this cursor belongs to the exact summary filter.
+    #[must_use]
+    pub fn matches_query(&self, filter: &RunSummaryFilter) -> bool {
+        matches!(&self.scope, RunSummaryCursorScope::Query(bound) if bound == filter)
+    }
+
+    /// Whether this cursor belongs to nonterminal recovery discovery.
+    #[must_use]
+    pub fn is_nonterminal(&self) -> bool {
+        self.scope == RunSummaryCursorScope::Nonterminal
+    }
 }
 
 /// Bounded run-summary page query.
@@ -972,7 +1192,7 @@ pub struct RunSummaryCursor {
 pub struct RunSummaryPageQuery {
     /// Immutable filters.
     pub filter: RunSummaryFilter,
-    /// Resume point.
+    /// Last-scanned resume point bound to this exact filter.
     pub cursor: Option<RunSummaryCursor>,
     /// Maximum returned summaries.
     pub limit: PageSize,
@@ -983,7 +1203,8 @@ pub struct RunSummaryPageQuery {
 pub struct RunSummaryPage {
     /// Rebuildable summaries.
     pub runs: Vec<RunSummaryIndex>,
-    /// Resume point, absent when exhausted.
+    /// Last-scanned resume point, absent when exhausted. `runs` may be empty
+    /// while this cursor advances across a bounded range of nonmatching rows.
     pub next: Option<RunSummaryCursor>,
 }
 
@@ -1017,14 +1238,16 @@ pub trait RunQueryStore: Send + Sync {
         Ok(self.nonterminal_run_page(None, limit)?.runs)
     }
 
-    /// Discovers eligible work with at most one best candidate per run.
+    /// Discovers eligible work with at most one deterministic candidate per run.
     ///
-    /// The page bound applies to distinct runs, not raw index rows. Implementations
-    /// must therefore continue past additional candidates for an already represented
-    /// run so a run with a saturated runnable set cannot hide every other run behind
-    /// the adapter page. Within one run the selected candidate is ordered by priority
-    /// descending, eligibility time ascending, then execution identity ascending.
-    /// Runtime owns fairness between the returned runs and all dispatch decisions.
+    /// The page bound applies directly to authenticated per-run heads, so a run
+    /// with a saturated runnable set cannot hide another run behind its entries.
+    /// Within one run the selected candidate is ordered by eligibility time
+    /// ascending, priority descending only among equal eligibility timestamps,
+    /// then execution identity ascending. Runtime owns fairness between returned
+    /// runs and all dispatch decisions.
+    /// A continuation retains the first page's `eligible_through` boundary and its
+    /// exclusive key remains valid if a dispatched anchor row has been removed.
     fn runnable_page(
         &self,
         eligible_through: TimestampMillis,
@@ -1047,7 +1270,7 @@ pub trait RunQueryStore: Send + Sync {
     /// when the returned page reaches that bound. A shorter page is the complete
     /// active set and can be projected into exact run/branch/capability counts without
     /// scanning unrelated run summaries.
-    fn active_leases(&self, limit: PageSize) -> Result<Vec<LeaseIndexEntry>, PersistenceError>;
+    fn active_leases(&self, limit: PageSize) -> Result<ActiveLeaseSnapshot, PersistenceError>;
 
     /// Discovers due timers; firing remains a runtime command/event decision.
     fn due_timers(

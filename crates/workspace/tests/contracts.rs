@@ -1,12 +1,16 @@
 //! Integration evidence for durable workspace contracts and hostile input.
 
+use milkdrift_capability::{
+    ArtifactReference as InvocationArtifactReference, InputReference, InvocationValueReference,
+    MAX_DURABLE_REFERENCE_BYTES,
+};
 use milkdrift_capability::{BoundedJson, InvocationId};
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactReference, ArtifactRetention,
-    ArtifactSensitivity, BranchId, CausalId, CausalReference, ContentDigest, MediaType, RunId,
-    ScopeId, ScopeLineage, ScopeReference, ValueKey, ValueOrigin, ValueVersion, WorkspaceBudget,
-    WorkspaceError, WorkspaceScope, WorkspaceUsage, WorkspaceValue, WorkspaceValueEntry,
-    WorkspaceValueReference,
+    ArtifactSensitivity, BranchId, CausalId, CausalReference, ContentDigest, MAX_EXTENDED_ID_BYTES,
+    MAX_MEDIA_TYPE_BYTES, MAX_STANDARD_ID_BYTES, MediaType, RunId, ScopeId, ScopeLineage,
+    ScopeReference, ValueKey, ValueOrigin, ValueVersion, WorkspaceBudget, WorkspaceError,
+    WorkspaceScope, WorkspaceUsage, WorkspaceValue, WorkspaceValueEntry, WorkspaceValueReference,
 };
 use proptest::prelude::*;
 use serde_json::{Value, json};
@@ -286,6 +290,50 @@ fn unknown_fields_and_oversized_identities_do_not_deserialize()
     assert!(serde_json::from_value::<ScopeReference>(unknown_scope_field).is_err());
     assert!(RunId::new("x".repeat(129)).is_err());
     assert!(ValueVersion::new(0).is_err());
+    Ok(())
+}
+
+#[test]
+fn maximum_workspace_and_artifact_references_fit_capability_inputs()
+-> Result<(), Box<dyn std::error::Error>> {
+    let reference = WorkspaceValueReference::new(
+        ScopeReference::new(
+            RunId::new("r".repeat(MAX_STANDARD_ID_BYTES))?,
+            ScopeId::new("s".repeat(MAX_STANDARD_ID_BYTES))?,
+        ),
+        ValueKey::new("k".repeat(MAX_EXTENDED_ID_BYTES))?,
+        ValueVersion::new(u64::MAX)?,
+    );
+    let encoded = serde_json::to_string(&reference)?;
+    assert!(encoded.len() <= MAX_DURABLE_REFERENCE_BYTES);
+    InputReference::new(
+        "workspace",
+        InvocationValueReference::WorkspaceValue {
+            identity: encoded,
+            version: reference.version().to_string(),
+        },
+    )?;
+
+    let media_type = format!("a/{}", "b".repeat(MAX_MEDIA_TYPE_BYTES - 2));
+    let artifact = ArtifactReference::new(
+        ArtifactId::new("a".repeat(MAX_EXTENDED_ID_BYTES))?,
+        ContentDigest::for_bytes(b"maximum-reference"),
+        MediaType::new(&media_type)?,
+        u64::MAX,
+    );
+    let encoded = serde_json::to_string(&artifact)?;
+    assert!(encoded.len() <= MAX_DURABLE_REFERENCE_BYTES);
+    InputReference::new(
+        "artifact",
+        InvocationValueReference::Artifact {
+            reference: InvocationArtifactReference::new(
+                artifact.artifact().as_str(),
+                artifact.digest().to_hex(),
+                Some(media_type),
+                Some(artifact.size_bytes()),
+            )?,
+        },
+    )?;
     Ok(())
 }
 

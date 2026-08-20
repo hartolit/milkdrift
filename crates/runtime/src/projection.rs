@@ -15,10 +15,11 @@ use milkdrift_capability::{
 use milkdrift_persistence::{
     ActorRef, AttemptId, AttemptUsage, AuthorityDecision, BoundedDetail, BranchResultReference,
     CommandId, CorrelationKey, CurrencyCode, EventId, EvidenceReference, JoinRule, LeaseId,
-    MAX_REPEAT_CONTINUATION_CYCLES, MAX_REPEAT_EFFECTIVE_ITERATIONS, NodeExecutionId,
-    NodeExecutionMode, NodeOutcome, Reason, ReconciliationAction, ReconciliationClassification,
-    ReconciliationDecisionId, ReconciliationId, ReconciliationItem, ReconciliationPlanId,
-    ReconciliationPolicy, RecoveryClassification, RepeatContinuationCause,
+    MAX_PAGE_SIZE, MAX_REPEAT_CONTINUATION_CYCLES, MAX_REPEAT_EFFECTIVE_ITERATIONS,
+    NodeExecutionId, NodeExecutionMode, NodeOutcome, Reason, ReconciliationAction,
+    ReconciliationClassification, ReconciliationDecisionId, ReconciliationId,
+    ReconciliationItem, ReconciliationPlanId, ReconciliationPolicy, RecoveryClassification,
+    RepeatContinuationCause,
     RepeatContinuationDecision, RepeatDecisionId, RepeatTerminationReason, RunEventEnvelope,
     RunEventKind, RunOutcome, RunSequence, SignalDeliveryMode, SignalId, SignalTypeId,
     SubworkflowOwnership, TimerId, TimestampMillis, WaitCondition, WaitSatisfaction, WorkerId,
@@ -123,6 +124,34 @@ pub struct RunCancellation {
     sequence: RunSequence,
 }
 
+/// Durable internal drain intent selected by an explicit non-cancellation terminal.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunTerminationIntent {
+    outcome: RunOutcome,
+    reason: Reason,
+    sequence: RunSequence,
+}
+
+impl RunTerminationIntent {
+    /// Outcome to record after all structured ownership becomes quiescent.
+    #[must_use]
+    pub const fn outcome(&self) -> RunOutcome {
+        self.outcome
+    }
+
+    /// Bounded rationale for draining already-owned work.
+    #[must_use]
+    pub const fn reason(&self) -> &Reason {
+        &self.reason
+    }
+
+    /// Sequence at which the terminal selection became durable.
+    #[must_use]
+    pub const fn sequence(&self) -> RunSequence {
+        self.sequence
+    }
+}
+
 impl RunCancellation {
     /// Recorded cancellation rationale.
     #[must_use]
@@ -192,7 +221,8 @@ impl NodeExecutionCancellationProjection {
     }
 }
 
-/// Terminal fact for a runtime-owned deterministic execution.
+/// Terminal fact for an attempt-free execution, including deterministic runtime
+/// work and immutable executor request failures before dispatch.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeterministicNodeTerminalProjection {
     outcome: NodeOutcome,
@@ -298,7 +328,7 @@ impl NodeExecutionProjection {
         self.cancellation.as_ref()
     }
 
-    /// Direct terminal fact for runtime-owned deterministic work, when present.
+    /// Direct attempt-free terminal fact, when present.
     #[must_use]
     pub const fn deterministic_terminal(&self) -> Option<&DeterministicNodeTerminalProjection> {
         self.deterministic_terminal.as_ref()
@@ -359,6 +389,18 @@ pub enum AttemptState {
     Terminal(NodeOutcome),
     /// External outcome cannot currently be established.
     Uncertain,
+    /// The physical attempt remains uncertain, but a later exact safe replay
+    /// established the logical invocation result.
+    UncertainSupersededByRetry {
+        /// Exact terminal retry whose immutable request covered this one.
+        covering_attempt: AttemptId,
+    },
+    /// The physical attempt remains uncertain, but cancellation abandoned a
+    /// harmless replay chain that cannot have external write effects.
+    UncertainAbandonedByCancellation {
+        /// Reserved retry whose cancellation closed the logical work.
+        cancelled_retry: AttemptId,
+    },
     /// External work is intentionally retained as an unresolved obligation.
     Retained,
     /// Evidence and authority resolved an uncertain outcome.
@@ -621,6 +663,7 @@ pub struct NodeAttemptProjection {
     invocation: Option<InvocationId>,
     idempotency_key: Option<IdempotencyKey>,
     request: Option<InvocationRequest>,
+    scheduled_sequence: Option<RunSequence>,
     state: AttemptState,
     capability: Option<CapabilityResolution>,
     side_effect: Option<SideEffectClassification>,
@@ -670,6 +713,16 @@ impl NodeAttemptProjection {
     #[must_use]
     pub const fn request(&self) -> Option<&InvocationRequest> {
         self.request.as_ref()
+    }
+
+    /// Sequence at which the exact executor request became durable.
+    ///
+    /// This is absent only while a retry identity is reserved but not yet
+    /// scheduled. Combined with [`RunProjection::revision_at`], it identifies
+    /// the immutable workflow revision governing this attempt.
+    #[must_use]
+    pub const fn scheduled_sequence(&self) -> Option<RunSequence> {
+        self.scheduled_sequence
     }
 
     /// Current projected attempt state.
@@ -732,7 +785,7 @@ impl NodeAttemptProjection {
         self.terminal.as_ref()
     }
 
-    /// Current external-outcome obligation, if unresolved or retained.
+    /// Durable external-outcome record, including one later covered by a safe retry.
     #[must_use]
     pub const fn obligation(&self) -> Option<&ExternalOutcomeObligation> {
         self.obligation.as_ref()
@@ -761,13 +814,15 @@ impl NodeAttemptProjection {
         matches!(self.state, AttemptState::Leased | AttemptState::Running)
     }
 
-    /// Returns whether the attempt has a known terminal outcome.
+    /// Returns whether the attempt no longer owns outstanding logical work.
     #[must_use]
     pub const fn is_completed(&self) -> bool {
         matches!(
             self.state,
             AttemptState::Terminal(_)
                 | AttemptState::Resolved(_)
+                | AttemptState::UncertainSupersededByRetry { .. }
+                | AttemptState::UncertainAbandonedByCancellation { .. }
                 | AttemptState::CancelledBeforeDispatch
         )
     }
@@ -1612,6 +1667,8 @@ pub struct SignalProjection {
     payload: BoundedJson,
     received_sequence: RunSequence,
     consumed_by: BTreeSet<NodeExecutionId>,
+    broadcast_scan_through: Option<NodeExecutionId>,
+    broadcast_scan_complete: bool,
     duplicate_commands: Vec<CommandId>,
 }
 
@@ -1656,6 +1713,18 @@ impl SignalProjection {
     #[must_use]
     pub const fn consumed_by(&self) -> &BTreeSet<NodeExecutionId> {
         &self.consumed_by
+    }
+
+    /// Last ordered wait identity examined by the bounded broadcast drain.
+    #[must_use]
+    pub const fn broadcast_scan_through(&self) -> Option<&NodeExecutionId> {
+        self.broadcast_scan_through.as_ref()
+    }
+
+    /// Returns whether every pre-receipt compatible wait has been examined.
+    #[must_use]
+    pub const fn broadcast_scan_complete(&self) -> bool {
+        self.broadcast_scan_complete
     }
 
     /// Later command identities whose duplicate observations were recorded.
@@ -2413,31 +2482,60 @@ pub struct RunProjection {
     workspace_values: BTreeSet<WorkspaceValueReference>,
     event_ids: BTreeSet<EventId>,
     cancellation: Option<RunCancellation>,
+    termination: Option<RunTerminationIntent>,
     node_executions: BTreeMap<NodeExecutionId, NodeExecutionProjection>,
+    execution_ids_by_node: BTreeMap<NodeId, BTreeSet<NodeExecutionId>>,
+    latest_descendant_execution_by_scope_node:
+        BTreeMap<(ScopeReference, NodeId), NodeExecutionId>,
+    active_execution_ids: BTreeSet<NodeExecutionId>,
+    eligible_executions: BTreeSet<NodeExecutionId>,
+    pending_successor_executions: BTreeSet<NodeExecutionId>,
     reserved_executions: BTreeSet<NodeExecutionId>,
     attempts: BTreeMap<AttemptId, NodeAttemptProjection>,
+    active_attempt_ids: BTreeSet<AttemptId>,
     invocations: BTreeSet<InvocationId>,
     leases: BTreeMap<LeaseId, LeaseProjection>,
+    active_lease_by_attempt: BTreeMap<AttemptId, LeaseId>,
     timers: BTreeMap<TimerId, TimerProjection>,
+    pending_timer_ids: BTreeSet<TimerId>,
+    pending_timers_by_execution: BTreeMap<NodeExecutionId, BTreeSet<TimerId>>,
     retries: BTreeMap<TimerId, RetryProjection>,
     retry_by_attempt: BTreeMap<AttemptId, TimerId>,
     branches: BTreeMap<BranchId, BranchProjection>,
+    branch_by_fork_port: BTreeMap<(NodeExecutionId, PortId), BranchId>,
+    branch_ids_by_fork_execution: BTreeMap<NodeExecutionId, BTreeSet<BranchId>>,
+    active_branch_ids: BTreeSet<BranchId>,
+    cancelling_branch_ids: BTreeSet<BranchId>,
+    active_scope_ownership: BTreeMap<ScopeReference, u64>,
+    active_structured_children_by_execution: BTreeMap<NodeExecutionId, u32>,
     branch_owner: BTreeMap<NodeExecutionId, BranchId>,
     branch_routes: BTreeMap<NodeExecutionId, PortId>,
     joins: BTreeMap<NodeExecutionId, JoinProjection>,
     iterations: BTreeMap<IterationId, IterationProjection>,
+    active_iteration_ids: BTreeSet<IterationId>,
     latest_iteration: BTreeMap<NodeExecutionId, IterationId>,
     repeat_continuations: BTreeMap<NodeExecutionId, RepeatContinuationProjection>,
     repeat_decision_ids: BTreeSet<RepeatDecisionId>,
     repeat_terminations: BTreeMap<NodeExecutionId, RepeatTermination>,
     signals: BTreeMap<SignalId, SignalProjection>,
+    pending_broadcast_signals: BTreeSet<(RunSequence, SignalId)>,
+    pending_one_shot_signals:
+        BTreeMap<(SignalTypeId, Option<CorrelationKey>), BTreeSet<(RunSequence, SignalId)>>,
+    signal_duplicate_commands: BTreeSet<CommandId>,
     waits: BTreeMap<NodeExecutionId, WaitProjection>,
+    pending_wait_execution_ids: BTreeSet<NodeExecutionId>,
+    pending_signal_waits:
+        BTreeMap<(SignalTypeId, Option<CorrelationKey>), BTreeSet<NodeExecutionId>>,
     subworkflows: BTreeMap<SubworkflowId, SubworkflowProjection>,
+    active_subworkflow_ids: BTreeSet<SubworkflowId>,
+    active_attached_subworkflow_ids: BTreeSet<SubworkflowId>,
     child_runs: BTreeSet<RunId>,
     artifacts: BTreeMap<ArtifactId, ArtifactMetadata>,
     reconciliation: ReconciliationProjection,
     pending_pin: Option<ReconciliationPlanId>,
     reconciliation_cancellations: BTreeMap<NodeExecutionId, ReconciliationCancellationProjection>,
+    pending_reconciliation_restarts:
+        BTreeMap<(NodeId, ScopeReference), NodeExecutionId>,
     reconciliation_remediations: BTreeMap<NodeExecutionId, ReconciliationRemediationProjection>,
     decision_ids: BTreeSet<ReconciliationDecisionId>,
     recovery_decisions: BTreeMap<ReconciliationDecisionId, (AttemptId, AuthorityDecision)>,
@@ -2561,26 +2659,159 @@ impl RunProjection {
         self.cancellation.as_ref()
     }
 
+    /// Durable explicit-terminal drain intent, when present.
+    #[must_use]
+    pub const fn termination(&self) -> Option<&RunTerminationIntent> {
+        self.termination.as_ref()
+    }
+
     /// All logical node executions keyed by stable identity.
     #[must_use]
     pub const fn node_executions(&self) -> &BTreeMap<NodeExecutionId, NodeExecutionProjection> {
         &self.node_executions
     }
 
-    /// Every execution of one stable semantic node in creation order.
+    /// Logical executions that have not reached a closed terminal/removed state.
+    #[must_use]
+    pub(crate) const fn active_execution_ids(&self) -> &BTreeSet<NodeExecutionId> {
+        &self.active_execution_ids
+    }
+
+    /// Direct structured branch that owns an execution, when present.
+    #[must_use]
+    pub fn branch_for_execution(
+        &self,
+        execution: &NodeExecutionId,
+    ) -> Option<&BranchProjection> {
+        self.branch_owner
+            .get(execution)
+            .and_then(|branch| self.branches.get(branch))
+    }
+
+    /// Currently eligible logical executions, without historical terminal entries.
+    #[must_use]
+    pub const fn eligible_execution_ids(&self) -> &BTreeSet<NodeExecutionId> {
+        &self.eligible_executions
+    }
+
+    /// Successful executions whose prospective successors have not been examined.
+    #[must_use]
+    pub const fn pending_successor_execution_ids(&self) -> &BTreeSet<NodeExecutionId> {
+        &self.pending_successor_executions
+    }
+
+    /// Branch identities that still own active or cancelling structured work.
+    #[must_use]
+    pub const fn active_branch_ids(&self) -> &BTreeSet<BranchId> {
+        &self.active_branch_ids
+    }
+
+    /// Active branch identities with durable cancellation intent.
+    #[must_use]
+    pub(crate) const fn cancelling_branch_ids(&self) -> &BTreeSet<BranchId> {
+        &self.cancelling_branch_ids
+    }
+
+    /// Immutable attempts whose truth still owns scheduling or recovery work.
+    #[must_use]
+    pub(crate) const fn active_attempt_ids(&self) -> &BTreeSet<AttemptId> {
+        &self.active_attempt_ids
+    }
+
+    /// Pending timers owned directly by one logical execution.
+    #[must_use]
+    pub(crate) fn pending_timers_for_execution(
+        &self,
+        execution: &NodeExecutionId,
+    ) -> impl Iterator<Item = &TimerId> {
+        self.pending_timers_by_execution
+            .get(execution)
+            .into_iter()
+            .flat_map(BTreeSet::iter)
+    }
+
+    /// Attached/detached child records whose child terminal fact is not yet observed.
+    #[must_use]
+    pub(crate) const fn active_subworkflow_ids(&self) -> &BTreeSet<SubworkflowId> {
+        &self.active_subworkflow_ids
+    }
+
+    /// Exact node/scope restart tokens keyed for bounded deterministic paging.
+    #[must_use]
+    pub(crate) const fn pending_reconciliation_restarts(
+        &self,
+    ) -> &BTreeMap<(NodeId, ScopeReference), NodeExecutionId> {
+        &self.pending_reconciliation_restarts
+    }
+
+    /// Returns whether any durable run-owned work or required restart remains open.
+    #[must_use]
+    pub(crate) fn has_active_owned_work(&self) -> bool {
+        !self.active_execution_ids.is_empty()
+            || !self.active_attempt_ids.is_empty()
+            || !self.active_lease_by_attempt.is_empty()
+            || !self.active_branch_ids.is_empty()
+            || !self.active_iteration_ids.is_empty()
+            || !self.pending_timer_ids.is_empty()
+            || !self.pending_wait_execution_ids.is_empty()
+            || !self.active_attached_subworkflow_ids.is_empty()
+            || self.reconciliation.is_active()
+            || !self.pending_reconciliation_restarts.is_empty()
+            || self.pending_pin.is_some()
+            || !self.reserved_executions.is_empty()
+    }
+
+    /// Exact active lease for an attempt, without scanning historical leases.
+    #[must_use]
+    pub(crate) fn active_lease_for_attempt(
+        &self,
+        attempt: &AttemptId,
+    ) -> Option<&LeaseProjection> {
+        self.active_lease_by_attempt
+            .get(attempt)
+            .and_then(|lease| self.leases.get(lease))
+    }
+
+    /// Every execution of one stable semantic node in stable identity order.
     pub fn executions_for_node<'a>(
         &'a self,
         node: &'a NodeId,
     ) -> impl Iterator<Item = &'a NodeExecutionProjection> + 'a {
-        self.node_executions
-            .values()
-            .filter(move |execution| execution.node() == node)
+        self.execution_ids_by_node
+            .get(node)
+            .into_iter()
+            .flat_map(BTreeSet::iter)
+            .filter_map(|execution| self.node_executions.get(execution))
+    }
+
+    /// Latest execution of a node in one scope or any descendant scope.
+    #[must_use]
+    pub(crate) fn latest_descendant_execution(
+        &self,
+        scope: &ScopeReference,
+        node: &NodeId,
+    ) -> Option<&NodeExecutionProjection> {
+        self.latest_descendant_execution_by_scope_node
+            .get(&(scope.clone(), node.clone()))
+            .and_then(|execution| self.node_executions.get(execution))
     }
 
     /// All immutable attempts keyed by identity.
     #[must_use]
     pub const fn attempts(&self) -> &BTreeMap<AttemptId, NodeAttemptProjection> {
         &self.attempts
+    }
+
+    /// Exact immutable workflow revision that governed one scheduled attempt.
+    ///
+    /// Returns `None` for an unknown attempt or a retry identity whose backoff
+    /// timer has not yet admitted a durable executor request.
+    #[must_use]
+    pub fn revision_for_attempt(&self, attempt: &AttemptId) -> Option<&RevisionId> {
+        self.attempts
+            .get(attempt)
+            .and_then(NodeAttemptProjection::scheduled_sequence)
+            .and_then(|sequence| self.revision_at(sequence))
     }
 
     /// Attempts with uncertain or explicitly retained external truth.
@@ -2612,6 +2843,30 @@ impl RunProjection {
     #[must_use]
     pub const fn branches(&self) -> &BTreeMap<BranchId, BranchProjection> {
         &self.branches
+    }
+
+    /// Exact branch previously expanded for one fork execution/port pair.
+    #[must_use]
+    pub(crate) fn branch_for_fork_port(
+        &self,
+        fork: &NodeExecutionId,
+        port: &PortId,
+    ) -> Option<&BranchProjection> {
+        self.branch_by_fork_port
+            .get(&(fork.clone(), port.clone()))
+            .and_then(|branch| self.branches.get(branch))
+    }
+
+    /// Branches owned by one immutable fork occurrence.
+    pub(crate) fn branches_for_fork<'a>(
+        &'a self,
+        fork: &'a NodeExecutionId,
+    ) -> impl Iterator<Item = &'a BranchProjection> + 'a {
+        self.branch_ids_by_fork_execution
+            .get(fork)
+            .into_iter()
+            .flat_map(BTreeSet::iter)
+            .filter_map(|branch| self.branches.get(branch))
     }
 
     /// Frozen branch/router port selections keyed by routing execution.
@@ -2652,6 +2907,36 @@ impl RunProjection {
         &self.signals
     }
 
+    /// Ordered broadcast receipts whose bounded wait-catalog scan is incomplete.
+    pub(crate) const fn pending_broadcast_signals(
+        &self,
+    ) -> &BTreeSet<(RunSequence, SignalId)> {
+        &self.pending_broadcast_signals
+    }
+
+    /// Earliest pending wait compatible with one exact signal identity.
+    pub(crate) fn earliest_pending_signal_wait(
+        &self,
+        signal_type: &SignalTypeId,
+        correlation: Option<&CorrelationKey>,
+    ) -> Option<&NodeExecutionId> {
+        self.pending_signal_waits
+            .get(&(signal_type.clone(), correlation.cloned()))
+            .and_then(BTreeSet::first)
+    }
+
+    /// Earliest durable queued one-shot signal compatible with one wait.
+    pub(crate) fn earliest_pending_one_shot_signal(
+        &self,
+        condition: &WaitCondition,
+    ) -> Option<&SignalId> {
+        let key = signal_match_key(condition)?;
+        self.pending_one_shot_signals
+            .get(&key)
+            .and_then(BTreeSet::first)
+            .map(|(_, signal)| signal)
+    }
+
     /// All registered wait conditions keyed by execution.
     #[must_use]
     pub const fn waits(&self) -> &BTreeMap<NodeExecutionId, WaitProjection> {
@@ -2662,6 +2947,53 @@ impl RunProjection {
     #[must_use]
     pub const fn subworkflows(&self) -> &BTreeMap<SubworkflowId, SubworkflowProjection> {
         &self.subworkflows
+    }
+
+    /// Returns whether an execution still owns live structured runtime state.
+    ///
+    /// Structured nodes deliberately remain `Eligible` while their durable
+    /// wait, child, iteration, or branch frontier is active. Callers must not
+    /// mistake that executor-oriented state for "never started".
+    #[must_use]
+    pub fn execution_has_active_structured_ownership(&self, execution: &NodeExecutionId) -> bool {
+        self.waits
+            .get(execution)
+            .is_some_and(WaitProjection::is_pending)
+            || self.pending_timers_by_execution.contains_key(execution)
+            || self
+                .active_structured_children_by_execution
+                .contains_key(execution)
+            || self.joins.contains_key(execution)
+            || self
+                .branch_owner
+                .get(execution)
+                .is_some_and(|branch| self.active_branch_ids.contains(branch))
+    }
+
+    /// Returns whether a structured child aggregate must drain before its owner.
+    #[must_use]
+    pub(crate) fn execution_has_active_child_ownership(
+        &self,
+        execution: &NodeExecutionId,
+    ) -> bool {
+        self.active_structured_children_by_execution
+            .contains_key(execution)
+    }
+
+    /// Returns whether a branch scope still contains live nested structured ownership.
+    ///
+    /// Direct child completion is insufficient for a nested fork because the fork
+    /// execution becomes terminal before its child branches and join frontier do.
+    pub(crate) fn branch_has_active_descendant_ownership(&self, branch: &BranchId) -> bool {
+        let Some(owner) = self.branches.get(branch) else {
+            return false;
+        };
+        // The branch itself owns one token at its isolated scope. Every active
+        // execution, nested branch, or pending reconciliation replacement below
+        // that scope contributes another token propagated through its ancestors.
+        self.active_scope_ownership
+            .get(owner.scope.reference())
+            .is_some_and(|count| *count > 1)
     }
 
     /// Published artifact metadata and causal provenance keyed by logical artifact ID.
@@ -2946,6 +3278,18 @@ impl RunProjection {
                         "revision pin differs from its immutable plan",
                     ));
                 }
+                let completed_to_reconsider: Vec<_> = recorded
+                    .items
+                    .iter()
+                    .filter_map(|item| item.execution.as_ref())
+                    .filter(|execution| {
+                        self.node_executions.get(*execution).is_some_and(|execution| {
+                            execution.state
+                                == NodeExecutionState::Terminal(NodeOutcome::Succeeded)
+                        })
+                    })
+                    .cloned()
+                    .collect();
                 self.revision = Some(revision.clone());
                 self.revision_digest = Some(revision_digest.clone());
                 self.pins.push(RevisionPin {
@@ -2954,6 +3298,8 @@ impl RunProjection {
                     effective_sequence: sequence,
                     plan: Some(plan.clone()),
                 });
+                self.pending_successor_executions
+                    .extend(completed_to_reconsider);
                 self.pending_pin = None;
             }
             RunEventKind::RunStarted => {
@@ -2992,6 +3338,23 @@ impl RunProjection {
                 });
                 self.lifecycle = RunLifecycle::Cancelling;
             }
+            RunEventKind::RunTerminationRequested { outcome, reason } => {
+                if self.lifecycle != RunLifecycle::Running
+                    || self.cancellation.is_some()
+                    || self.termination.is_some()
+                    || *outcome != RunOutcome::Failed
+                {
+                    return Err(invalid_at(
+                        event,
+                        "run termination intent must be one first explicit failed drain on a running run",
+                    ));
+                }
+                self.termination = Some(RunTerminationIntent {
+                    outcome: *outcome,
+                    reason: reason.clone(),
+                    sequence,
+                });
+            }
             RunEventKind::RunTerminal {
                 outcome,
                 outputs,
@@ -3011,6 +3374,23 @@ impl RunProjection {
                     return Err(invalid_at(
                         event,
                         "cancelled outcome requires durable cancellation intent",
+                    ));
+                }
+                if self.lifecycle == RunLifecycle::Cancelling && *outcome != RunOutcome::Cancelled {
+                    return Err(invalid_at(
+                        event,
+                        "durable cancellation intent requires a cancelled run outcome",
+                    ));
+                }
+                if self.cancellation.is_none()
+                    && self.termination.as_ref().is_some_and(|termination| {
+                        *outcome != termination.outcome
+                            || reason.as_ref() != Some(&termination.reason)
+                    })
+                {
+                    return Err(invalid_at(
+                        event,
+                        "run terminal outcome contradicts its durable explicit-terminal drain",
                     ));
                 }
                 if self.lifecycle == RunLifecycle::Created && *outcome != RunOutcome::Cancelled {
@@ -3067,6 +3447,19 @@ impl RunProjection {
                         outputs: Vec::new(),
                     },
                 );
+                self.execution_ids_by_node
+                    .entry(node.clone())
+                    .or_default()
+                    .insert(execution.clone());
+                self.eligible_executions.insert(execution.clone());
+                self.activate_execution(execution, event)?;
+                if self
+                    .pending_reconciliation_restarts
+                    .remove(&(node.clone(), scope.clone()))
+                    .is_some()
+                {
+                    self.adjust_scope_ownership(scope, false, event)?;
+                }
             }
             RunEventKind::NodeExecutionCancelledBeforeDispatch { execution, reason } => {
                 let execution_view = self.execution(execution, event)?;
@@ -3090,6 +3483,8 @@ impl RunProjection {
                     sequence,
                 });
                 execution_view.state = NodeExecutionState::CancelledBeforeDispatch;
+                self.eligible_executions.remove(execution);
+                self.deactivate_execution(execution, event)?;
             }
             RunEventKind::NodeExecutionCancellationRequested {
                 execution,
@@ -3196,6 +3591,22 @@ impl RunProjection {
                             "retry attempt is not ready for this execution",
                         ));
                     }
+                    let previous_request = execution_view
+                        .attempts
+                        .iter()
+                        .rev()
+                        .nth(1)
+                        .and_then(|previous| self.attempts.get(previous))
+                        .and_then(NodeAttemptProjection::request)
+                        .ok_or_else(|| {
+                            invalid_at(event, "retry has no prior persisted invocation request")
+                        })?;
+                    if !same_logical_invocation_request(previous_request, request) {
+                        return Err(invalid_at(
+                            event,
+                            "retry changed immutable capability, provider, input, or extension facts",
+                        ));
+                    }
                     let timer = self
                         .retry_by_attempt
                         .get(attempt)
@@ -3213,11 +3624,14 @@ impl RunProjection {
                 attempt_view.invocation = Some(invocation.clone());
                 attempt_view.idempotency_key = idempotency_key.clone();
                 attempt_view.request = Some(request.clone());
+                attempt_view.scheduled_sequence = Some(sequence);
                 attempt_view.state = AttemptState::Scheduled;
+                self.active_attempt_ids.insert(attempt.clone());
                 self.node_executions
                     .get_mut(execution)
                     .ok_or_else(|| invalid_at(event, "unknown node execution"))?
                     .state = NodeExecutionState::Scheduled(attempt.clone());
+                self.eligible_executions.remove(execution);
                 self.invocations.insert(invocation.clone());
             }
             RunEventKind::CapabilityResolved {
@@ -3247,12 +3661,19 @@ impl RunProjection {
                             .get(previous_position)
                             .and_then(|previous| self.attempts.get(previous))
                             .is_some_and(|previous| {
-                                previous.side_effect.as_ref().is_none_or(|classification| {
-                                    classification.side_effect != SideEffectClass::IdempotentWrite
-                                        || previous.capability.as_ref().is_some_and(|capability| {
-                                            capability.snapshot == *snapshot
-                                        })
-                                })
+                                let requires_stable_snapshot = previous.state
+                                    == AttemptState::Uncertain
+                                    || previous.side_effect.as_ref().is_some_and(
+                                        |classification| {
+                                            classification.side_effect
+                                                == SideEffectClass::IdempotentWrite
+                                        },
+                                    );
+                                !requires_stable_snapshot
+                                    || previous
+                                        .capability
+                                        .as_ref()
+                                        .is_some_and(|capability| capability.snapshot == *snapshot)
                             })
                     })
                 });
@@ -3388,6 +3809,16 @@ impl RunProjection {
                         state: LeaseState::Active,
                     },
                 );
+                if self
+                    .active_lease_by_attempt
+                    .insert(attempt.clone(), lease.clone())
+                    .is_some()
+                {
+                    return Err(invalid_at(
+                        event,
+                        "lease grant replaced an active attempt lease",
+                    ));
+                }
                 let attempt_view = self
                     .attempts
                     .get_mut(attempt)
@@ -3418,18 +3849,63 @@ impl RunProjection {
             } => {
                 let lease_view = self
                     .leases
-                    .get_mut(lease)
+                    .get(lease)
                     .ok_or_else(|| invalid_at(event, "expiry references an unknown lease"))?;
+                let lease_attempt = lease_view.attempt.clone();
+                let attempt_view = self.attempt(&lease_attempt, event)?;
+                let retry_safe = attempt_view
+                    .side_effect
+                    .as_ref()
+                    .is_some_and(|classification| {
+                        matches!(
+                            classification.side_effect,
+                            SideEffectClass::None | SideEffectClass::ReadOnly
+                        ) || (classification.side_effect == SideEffectClass::IdempotentWrite
+                            && classification.idempotency != IdempotencyBehavior::Unsupported
+                            && classification.idempotency_key.is_some())
+                    });
+                let classification_valid = match classification {
+                    RecoveryClassification::NotStarted => {
+                        attempt_view.state == AttemptState::Leased
+                    }
+                    RecoveryClassification::Retryable => {
+                        retry_safe
+                            && matches!(
+                                attempt_view.state,
+                                AttemptState::Leased | AttemptState::Running
+                            )
+                    }
+                    RecoveryClassification::Uncertain => {
+                        !retry_safe
+                            && matches!(
+                                attempt_view.state,
+                                AttemptState::Leased | AttemptState::Running
+                            )
+                    }
+                    RecoveryClassification::LeaseStillValid
+                    | RecoveryClassification::TerminalObserved => false,
+                };
                 if !lease_view.is_active()
                     || event.occurred_at() < lease_view.expires_at
-                    || *classification == RecoveryClassification::LeaseStillValid
+                    || !classification_valid
                 {
                     return Err(invalid_at(
                         event,
-                        "lease expiry is early, duplicate, or classified still valid",
+                        "lease expiry is early, duplicate, or contradicts immutable attempt facts",
                     ));
                 }
-                lease_view.state = LeaseState::Expired(*classification);
+                self.leases
+                    .get_mut(lease)
+                    .ok_or_else(|| invalid_at(event, "unknown lease"))?
+                    .state = LeaseState::Expired(*classification);
+                if self.active_lease_by_attempt.remove(&lease_attempt).as_ref()
+                    != Some(lease)
+                {
+                    return Err(invalid_at(
+                        event,
+                        "lease expiry disagrees with the active attempt lease",
+                    ));
+                }
             }
             RunEventKind::NodeReLeased {
                 previous_lease,
@@ -3453,11 +3929,51 @@ impl RunProjection {
                         return Err(invalid_at(event, "only an expired lease may be superseded"));
                     }
                 };
+                let execution = prior.execution.clone();
+                let attempt_view = self.attempt(attempt, event)?;
+                let execution_view = self.execution(&execution, event)?;
+                let retry_safe = attempt_view
+                    .side_effect
+                    .as_ref()
+                    .is_some_and(|classification| {
+                        matches!(
+                            classification.side_effect,
+                            SideEffectClass::None | SideEffectClass::ReadOnly
+                        ) || (classification.side_effect == SideEffectClass::IdempotentWrite
+                            && classification.idempotency != IdempotencyBehavior::Unsupported
+                            && classification.idempotency_key.is_some())
+                    });
+                let state_is_releasable = match classification {
+                    RecoveryClassification::NotStarted => {
+                        attempt_view.state == AttemptState::Leased
+                    }
+                    RecoveryClassification::Retryable => {
+                        retry_safe
+                            && matches!(
+                                attempt_view.state,
+                                AttemptState::Leased | AttemptState::Running
+                            )
+                    }
+                    RecoveryClassification::LeaseStillValid
+                    | RecoveryClassification::Uncertain
+                    | RecoveryClassification::TerminalObserved => false,
+                };
+                let exact_recovery = attempt_view.recovery.last().is_some_and(|observation| {
+                    observation.lease.as_ref() == Some(previous_lease)
+                        && observation.classification == classification
+                });
                 if prior.attempt != *attempt
+                    || attempt_view.leases.last() != Some(previous_lease)
+                    || execution_view.attempts.last() != Some(attempt)
+                    || execution_view.cancellation.is_some()
                     || !matches!(
-                        classification,
-                        RecoveryClassification::NotStarted | RecoveryClassification::Retryable
+                        execution_view.state,
+                        NodeExecutionState::Scheduled(ref active)
+                            | NodeExecutionState::Running(ref active)
+                            if active == attempt
                     )
+                    || !state_is_releasable
+                    || !exact_recovery
                     || self.active_lease_for_attempt(attempt).is_some()
                 {
                     return Err(invalid_at(
@@ -3465,7 +3981,6 @@ impl RunProjection {
                         "attempt is not safely eligible for re-lease",
                     ));
                 }
-                let execution = prior.execution.clone();
                 self.leases
                     .get_mut(previous_lease)
                     .ok_or_else(|| invalid_at(event, "unknown prior lease"))?
@@ -3474,19 +3989,33 @@ impl RunProjection {
                     lease.clone(),
                     LeaseProjection {
                         lease: lease.clone(),
-                        execution,
+                        execution: execution.clone(),
                         attempt: attempt.clone(),
                         worker: worker.clone(),
                         expires_at: *expires_at,
                         state: LeaseState::Active,
                     },
                 );
+                if self
+                    .active_lease_by_attempt
+                    .insert(attempt.clone(), lease.clone())
+                    .is_some()
+                {
+                    return Err(invalid_at(
+                        event,
+                        "replacement lease displaced an active attempt lease",
+                    ));
+                }
                 let attempt_view = self
                     .attempts
                     .get_mut(attempt)
                     .ok_or_else(|| invalid_at(event, "unknown attempt"))?;
                 attempt_view.leases.push(lease.clone());
                 attempt_view.state = AttemptState::Leased;
+                self.node_executions
+                    .get_mut(&execution)
+                    .ok_or_else(|| invalid_at(event, "unknown execution"))?
+                    .state = NodeExecutionState::Scheduled(attempt.clone());
             }
             RunEventKind::NodeStarted {
                 execution,
@@ -3604,6 +4133,7 @@ impl RunProjection {
                     || attempt_view.state != AttemptState::Running
                     || !attempt_view.expects_report_sequence(*report_sequence)
                     || value.scope() != &execution_view.scope
+                    || self.workspace_values.contains(value)
                     || attempt_view
                         .outputs
                         .iter()
@@ -3647,6 +4177,7 @@ impl RunProjection {
                     || execution_view.mode != NodeExecutionMode::Runtime
                     || !execution_view.attempts.is_empty()
                     || value.scope() != &execution_view.scope
+                    || self.workspace_values.contains(value)
                     || execution_view
                         .outputs
                         .iter()
@@ -3706,6 +4237,59 @@ impl RunProjection {
                     .ok_or_else(|| invalid_at(event, "unknown execution"))?;
                 execution_view.deterministic_terminal = Some(terminal);
                 execution_view.state = NodeExecutionState::Terminal(*outcome);
+                self.eligible_executions.remove(execution);
+                self.deactivate_execution(execution, event)?;
+                if *outcome == NodeOutcome::Succeeded {
+                    self.pending_successor_executions.insert(execution.clone());
+                }
+            }
+            RunEventKind::NodePreDispatchFailed {
+                execution,
+                error_class,
+                detail,
+            } => {
+                let execution_view = self.execution(execution, event)?;
+                if execution_view.state != NodeExecutionState::Eligible
+                    || execution_view.mode != NodeExecutionMode::Executor
+                    || !execution_view.attempts.is_empty()
+                    || execution_view.cancellation.is_some()
+                    || execution_view.deterministic_terminal.is_some()
+                {
+                    return Err(invalid_at(
+                        event,
+                        "pre-dispatch failure requires an attempt-free eligible executor execution",
+                    ));
+                }
+                let terminal = DeterministicNodeTerminalProjection {
+                    outcome: NodeOutcome::Failed,
+                    error_class: Some(*error_class),
+                    detail: detail.clone(),
+                    sequence,
+                };
+                let execution_view = self
+                    .node_executions
+                    .get_mut(execution)
+                    .ok_or_else(|| invalid_at(event, "unknown execution"))?;
+                execution_view.deterministic_terminal = Some(terminal);
+                execution_view.state = NodeExecutionState::Terminal(NodeOutcome::Failed);
+                self.eligible_executions.remove(execution);
+                self.deactivate_execution(execution, event)?;
+            }
+            RunEventKind::StructuredSuccessorScanCompleted { execution } => {
+                if self
+                    .node_executions
+                    .get(execution)
+                    .is_none_or(|execution| {
+                        execution.state
+                            != NodeExecutionState::Terminal(NodeOutcome::Succeeded)
+                    })
+                    || !self.pending_successor_executions.remove(execution)
+                {
+                    return Err(invalid_at(
+                        event,
+                        "successor scan marker must consume one pending successful execution",
+                    ));
+                }
             }
             RunEventKind::NodeTerminal {
                 execution,
@@ -3726,8 +4310,11 @@ impl RunProjection {
                 if attempt_view.execution != *execution
                     || !matches!(
                         attempt_view.state,
-                        AttemptState::Scheduled | AttemptState::Leased | AttemptState::Running
+                        AttemptState::Leased | AttemptState::Running
                     )
+                    || attempt_view.capability.is_none()
+                    || attempt_view.side_effect.is_none()
+                    || attempt_view.leases.is_empty()
                     || !attempt_view.expects_report_sequence(*report_sequence)
                     || failure_shape != error_class.is_some()
                     || (*outcome == NodeOutcome::Cancelled && !cancellation_matches)
@@ -3737,6 +4324,53 @@ impl RunProjection {
                         "node terminal fact is duplicate, mismatched, or malformed",
                     ));
                 }
+                let safely_covered_uncertain = {
+                    let current_request = attempt_view.request.as_ref();
+                    let current_capability = attempt_view.capability.as_ref();
+                    let current_side_effect = attempt_view.side_effect.as_ref();
+                    self.node_executions
+                        .get(execution)
+                        .into_iter()
+                        .flat_map(|execution| execution.attempts.iter())
+                        .take_while(|candidate| *candidate != attempt)
+                        .filter_map(|candidate| {
+                            let prior = self.attempts.get(candidate)?;
+                            let prior_side_effect = prior.side_effect.as_ref()?;
+                            let retry_safe = matches!(
+                                prior_side_effect.side_effect,
+                                SideEffectClass::None | SideEffectClass::ReadOnly
+                            ) || (prior_side_effect.side_effect
+                                == SideEffectClass::IdempotentWrite
+                                && prior_side_effect.idempotency
+                                    != IdempotencyBehavior::Unsupported
+                                && prior_side_effect.idempotency_key.is_some());
+                            let terminal_covers = *outcome == NodeOutcome::Succeeded
+                                || matches!(
+                                    prior_side_effect.side_effect,
+                                    SideEffectClass::None | SideEffectClass::ReadOnly
+                                );
+                            (prior.state == AttemptState::Uncertain
+                                && prior.obligation.is_some()
+                                && retry_safe
+                                && terminal_covers
+                                && prior_side_effect == current_side_effect?
+                                && prior.request.as_ref().zip(current_request).is_some_and(
+                                    |(prior, current)| {
+                                        same_logical_invocation_request(prior, current)
+                                    },
+                                )
+                                && prior.idempotency_key == attempt_view.idempotency_key
+                                && prior
+                                    .capability
+                                    .as_ref()
+                                    .zip(current_capability)
+                                    .is_some_and(|(prior, current)| {
+                                        prior.snapshot == current.snapshot
+                                    }))
+                            .then(|| candidate.clone())
+                        })
+                        .collect::<Vec<_>>()
+                };
                 let terminal = AttemptTerminal {
                     report_sequence: *report_sequence,
                     outcome: *outcome,
@@ -3755,7 +4389,29 @@ impl RunProjection {
                     .get_mut(execution)
                     .ok_or_else(|| invalid_at(event, "unknown execution"))?
                     .state = NodeExecutionState::Terminal(*outcome);
+                self.active_attempt_ids.remove(attempt);
+                self.deactivate_execution(execution, event)?;
+                if *outcome == NodeOutcome::Succeeded {
+                    self.pending_successor_executions.insert(execution.clone());
+                }
                 self.complete_attempt_leases(attempt);
+                for covered in safely_covered_uncertain {
+                    let covered_view = self
+                        .attempts
+                        .get_mut(&covered)
+                        .ok_or_else(|| invalid_at(event, "superseded attempt is missing"))?;
+                    covered_view.state = if *outcome == NodeOutcome::Cancelled {
+                        AttemptState::UncertainAbandonedByCancellation {
+                            cancelled_retry: attempt.clone(),
+                        }
+                    } else {
+                        AttemptState::UncertainSupersededByRetry {
+                            covering_attempt: attempt.clone(),
+                        }
+                    };
+                    self.active_attempt_ids.remove(&covered);
+                    self.complete_attempt_leases(&covered);
+                }
             }
             RunEventKind::NodeRetryScheduled {
                 execution,
@@ -3777,16 +4433,37 @@ impl RunProjection {
                     ));
                 }
                 let previous = self.attempt(previous_attempt, event)?;
+                let retry_safe = previous.side_effect.as_ref().is_some_and(|classification| {
+                    matches!(
+                        classification.side_effect,
+                        SideEffectClass::None | SideEffectClass::ReadOnly
+                    ) || (classification.side_effect == SideEffectClass::IdempotentWrite
+                        && classification.idempotency != IdempotencyBehavior::Unsupported
+                        && classification.idempotency_key.is_some())
+                });
                 let retryable_terminal = matches!(
                     previous.state,
                     AttemptState::Terminal(NodeOutcome::Failed | NodeOutcome::Rejected)
-                );
+                ) && previous
+                    .terminal
+                    .as_ref()
+                    .is_some_and(|terminal| terminal.error_class == Some(*error_class))
+                    && retry_safe;
+                let retryable_uncertain = previous.state == AttemptState::Uncertain
+                    && previous.obligation.as_ref().is_some_and(|obligation| {
+                        obligation.side_effect
+                            == previous
+                                .side_effect
+                                .as_ref()
+                                .map_or(SideEffectClass::Unknown, |facts| facts.side_effect)
+                    })
+                    && retry_safe;
                 let authority_retry = previous.obligation.as_ref().is_some_and(|obligation| {
                     obligation
                         .decisions
                         .last()
                         .is_some_and(|decision| decision.outcome == AuthorityDecision::Retry)
-                });
+                }) && retry_safe;
                 let execution_view = self.execution(execution, event)?;
                 let expected_number = u32::try_from(execution_view.attempts.len())
                     .ok()
@@ -3794,7 +4471,8 @@ impl RunProjection {
                 if previous.execution != *execution
                     || execution_view.attempts.last() != Some(previous_attempt)
                     || expected_number != Some(*attempt_number)
-                    || (!retryable_terminal && !authority_retry)
+                    || *attempt_number > crate::scheduler::MAX_RETRY_ATTEMPTS
+                    || (!retryable_terminal && !retryable_uncertain && !authority_retry)
                 {
                     return Err(invalid_at(
                         event,
@@ -3810,6 +4488,7 @@ impl RunProjection {
                         AttemptState::AwaitingRetryTimer,
                     ),
                 );
+                self.active_attempt_ids.insert(next_attempt.clone());
                 self.node_executions
                     .get_mut(execution)
                     .ok_or_else(|| invalid_at(event, "unknown execution"))?
@@ -3831,6 +4510,11 @@ impl RunProjection {
                         cancellation: None,
                     },
                 );
+                self.pending_timer_ids.insert(timer.clone());
+                self.pending_timers_by_execution
+                    .entry(execution.clone())
+                    .or_default()
+                    .insert(timer.clone());
                 self.retries.insert(
                     timer.clone(),
                     RetryProjection {
@@ -3847,6 +4531,9 @@ impl RunProjection {
                 );
                 self.retry_by_attempt
                     .insert(next_attempt.clone(), timer.clone());
+                if retryable_uncertain {
+                    self.complete_attempt_leases(previous_attempt);
+                }
             }
             RunEventKind::ExternalOutcomeUncertain {
                 attempt,
@@ -3891,6 +4578,7 @@ impl RunProjection {
                     .get_mut(&execution)
                     .ok_or_else(|| invalid_at(event, "unknown execution"))?
                     .state = NodeExecutionState::Uncertain(attempt.clone());
+                self.complete_attempt_leases(attempt);
             }
             RunEventKind::ExternalOutcomeRetained {
                 attempt,
@@ -3944,9 +4632,9 @@ impl RunProjection {
             } => {
                 let owner_scope = self.execution(fork_execution, event)?.scope.clone();
                 if self.branches.contains_key(branch)
-                    || self.branches.values().any(|candidate| {
-                        candidate.fork_execution == *fork_execution && candidate.port == *port
-                    })
+                    || self
+                        .branch_by_fork_port
+                        .contains_key(&(fork_execution.clone(), port.clone()))
                     || !matches!(scope.kind(), ScopeKind::Branch { branch: identity } if identity == branch)
                     || scope.parent() != Some(&owner_scope)
                 {
@@ -3969,6 +4657,17 @@ impl RunProjection {
                         outputs: Vec::new(),
                     },
                 );
+                self.branch_by_fork_port.insert(
+                    (fork_execution.clone(), port.clone()),
+                    branch.clone(),
+                );
+                self.branch_ids_by_fork_execution
+                    .entry(fork_execution.clone())
+                    .or_default()
+                    .insert(branch.clone());
+                self.active_branch_ids.insert(branch.clone());
+                self.adjust_scope_ownership(scope.reference(), true, event)?;
+                self.adjust_structured_child_count(fork_execution, true, event)?;
             }
             RunEventKind::BranchRouteSelected {
                 execution,
@@ -4017,6 +4716,7 @@ impl RunProjection {
                 }
                 branch_view.state = BranchState::Cancelling;
                 branch_view.cancellation_reason = Some(reason.clone());
+                self.cancelling_branch_ids.insert(branch.clone());
             }
             RunEventKind::BranchTerminal {
                 branch,
@@ -4029,11 +4729,7 @@ impl RunProjection {
                 if !branch_view.is_active()
                     || (*outcome == RunOutcome::Cancelled
                         && branch_view.state != BranchState::Cancelling)
-                    || branch_view.children.iter().any(|child| {
-                        self.node_executions
-                            .get(child)
-                            .is_none_or(|execution| !execution.is_completed())
-                    })
+                    || self.branch_has_active_descendant_ownership(branch)
                 {
                     return Err(invalid_at(
                         event,
@@ -4050,12 +4746,18 @@ impl RunProjection {
                         ));
                     }
                 }
+                let branch_scope = branch_view.scope.reference().clone();
+                let fork_execution = branch_view.fork_execution.clone();
                 let branch_view = self
                     .branches
                     .get_mut(branch)
                     .ok_or_else(|| invalid_at(event, "unknown branch"))?;
                 branch_view.state = BranchState::Completed(*outcome);
                 branch_view.outputs = outputs.clone();
+                self.active_branch_ids.remove(branch);
+                self.cancelling_branch_ids.remove(branch);
+                self.adjust_scope_ownership(&branch_scope, false, event)?;
+                self.adjust_structured_child_count(&fork_execution, false, event)?;
             }
             RunEventKind::JoinSatisfied {
                 execution,
@@ -4136,12 +4838,11 @@ impl RunProjection {
                         ));
                     }
                 }
-                let owned: BTreeSet<_> = self
-                    .branches
-                    .values()
-                    .filter(|branch| branch.fork_execution == fork_execution)
-                    .map(|branch| branch.branch.clone())
-                    .collect();
+                let owned = self
+                    .branch_ids_by_fork_execution
+                    .get(&fork_execution)
+                    .cloned()
+                    .unwrap_or_default();
                 let named: BTreeSet<_> = branches
                     .iter()
                     .map(|result| result.branch.clone())
@@ -4189,10 +4890,27 @@ impl RunProjection {
                     }
                 }
                 for retained in retained_branches {
+                    let scope = self
+                        .branches
+                        .get(retained)
+                        .ok_or_else(|| invalid_at(event, "unknown branch"))?
+                        .scope
+                        .reference()
+                        .clone();
+                    let fork_execution = self
+                        .branches
+                        .get(retained)
+                        .ok_or_else(|| invalid_at(event, "unknown branch"))?
+                        .fork_execution
+                        .clone();
                     self.branches
                         .get_mut(retained)
                         .ok_or_else(|| invalid_at(event, "unknown branch"))?
                         .state = BranchState::Retained;
+                    self.active_branch_ids.remove(retained);
+                    self.cancelling_branch_ids.remove(retained);
+                    self.adjust_scope_ownership(&scope, false, event)?;
+                    self.adjust_structured_child_count(&fork_execution, false, event)?;
                 }
                 self.joins.insert(
                     execution.clone(),
@@ -4266,6 +4984,8 @@ impl RunProjection {
                         ));
                     }
                     previous_view.state = IterationState::Completed(result);
+                    self.active_iteration_ids.remove(&previous);
+                    self.adjust_structured_child_count(repeat_execution, false, event)?;
                 }
                 self.register_child_scope(scope, event)?;
                 self.iterations.insert(
@@ -4278,6 +4998,8 @@ impl RunProjection {
                         state: IterationState::Active,
                     },
                 );
+                self.active_iteration_ids.insert(iteration.clone());
+                self.adjust_structured_child_count(repeat_execution, true, event)?;
                 self.latest_iteration
                     .insert(repeat_execution.clone(), iteration.clone());
             }
@@ -4524,11 +5246,28 @@ impl RunProjection {
                         invalid_at(event, "repeat termination references an unknown iteration")
                     })?;
                     let result = match iteration_view.state {
-                        IterationState::ConditionRecorded(result) => result,
+                        IterationState::ConditionRecorded(result)
+                            if *termination
+                                != RepeatTerminationReason::ConditionEvaluationFailed =>
+                        {
+                            result
+                        }
+                        IterationState::Active
+                            if *termination
+                                == RepeatTerminationReason::ConditionEvaluationFailed =>
+                        {
+                            false
+                        }
                         IterationState::Active | IterationState::Completed(_) => {
                             return Err(invalid_at(
                                 event,
                                 "repeat termination requires a frozen frontier condition",
+                            ));
+                        }
+                        IterationState::ConditionRecorded(_) => {
+                            return Err(invalid_at(
+                                event,
+                                "condition-evaluation failure cannot follow a recorded condition",
                             ));
                         }
                     };
@@ -4539,10 +5278,16 @@ impl RunProjection {
                         ));
                     }
                     iteration_view.state = IterationState::Completed(result);
-                } else if *termination == RepeatTerminationReason::ConditionFalse {
+                    self.active_iteration_ids.remove(iteration);
+                    self.adjust_structured_child_count(repeat_execution, false, event)?;
+                } else if matches!(
+                    termination,
+                    RepeatTerminationReason::ConditionFalse
+                        | RepeatTerminationReason::ConditionEvaluationFailed
+                ) {
                     return Err(invalid_at(
                         event,
-                        "condition-false termination requires an iteration",
+                        "condition termination requires an iteration",
                     ));
                 }
                 self.repeat_terminations.insert(
@@ -4585,6 +5330,13 @@ impl RunProjection {
                         cancellation: None,
                     },
                 );
+                self.pending_timer_ids.insert(timer.clone());
+                if let Some(execution) = execution {
+                    self.pending_timers_by_execution
+                        .entry(execution.clone())
+                        .or_default()
+                        .insert(timer.clone());
+                }
             }
             RunEventKind::TimerFired { timer, observed_at } => {
                 let timer_view = self
@@ -4597,9 +5349,11 @@ impl RunProjection {
                         "timer fired twice or before its deadline",
                     ));
                 }
+                let purpose = timer_view.purpose.clone();
                 timer_view.state = TimerState::Fired {
                     observed_at: *observed_at,
                 };
+                self.pending_timer_ids.remove(timer);
                 if let Some(retry) = self.retries.get_mut(timer) {
                     retry.state = RetryState::Ready;
                     self.attempts
@@ -4607,6 +5361,7 @@ impl RunProjection {
                         .ok_or_else(|| invalid_at(event, "retry timer has no reserved attempt"))?
                         .state = AttemptState::ReadyToSchedule;
                 }
+                self.remove_pending_timer_owner(timer, &purpose, event)?;
             }
             RunEventKind::TimerCancelled { timer, reason } => {
                 let timer_view = self.timers.get(timer).ok_or_else(|| {
@@ -4653,10 +5408,12 @@ impl RunProjection {
                     reason: reason.clone(),
                     sequence,
                 });
+                self.pending_timer_ids.remove(timer);
+                self.remove_pending_timer_owner(timer, &purpose, event)?;
                 if let TimerPurpose::Retry { attempt } = purpose {
                     let retry = self
                         .retries
-                        .get_mut(timer)
+                        .get(timer)
                         .ok_or_else(|| invalid_at(event, "retry timer has no retry decision"))?;
                     if retry.next_attempt != attempt || retry.state != RetryState::Waiting {
                         return Err(invalid_at(
@@ -4664,15 +5421,48 @@ impl RunProjection {
                             "retry timer cancellation contradicts its retry decision",
                         ));
                     }
-                    retry.state = RetryState::Cancelled;
+                    let retry_execution = retry.execution.clone();
+                    let harmless_uncertain = self
+                        .node_executions
+                        .get(&retry_execution)
+                        .into_iter()
+                        .flat_map(|execution| execution.attempts.iter())
+                        .filter_map(|candidate| {
+                            let prior = self.attempts.get(candidate)?;
+                            (prior.state == AttemptState::Uncertain
+                                && prior.side_effect.as_ref().is_some_and(|facts| {
+                                    matches!(
+                                        facts.side_effect,
+                                        SideEffectClass::None | SideEffectClass::ReadOnly
+                                    )
+                                }))
+                            .then(|| candidate.clone())
+                        })
+                        .collect::<Vec<_>>();
+                    self.retries
+                        .get_mut(timer)
+                        .ok_or_else(|| invalid_at(event, "retry timer has no retry decision"))?
+                        .state = RetryState::Cancelled;
                     self.attempts
                         .get_mut(&attempt)
                         .ok_or_else(|| invalid_at(event, "retry timer has no reserved attempt"))?
                         .state = AttemptState::CancelledBeforeDispatch;
+                    self.active_attempt_ids.remove(&attempt);
                     self.node_executions
-                        .get_mut(&retry.execution)
+                        .get_mut(&retry_execution)
                         .ok_or_else(|| invalid_at(event, "retry has no owning execution"))?
                         .state = NodeExecutionState::Terminal(NodeOutcome::Cancelled);
+                    self.deactivate_execution(&retry_execution, event)?;
+                    for prior in harmless_uncertain {
+                        self.attempts
+                            .get_mut(&prior)
+                            .ok_or_else(|| invalid_at(event, "uncertain prior attempt is missing"))?
+                            .state = AttemptState::UncertainAbandonedByCancellation {
+                            cancelled_retry: attempt.clone(),
+                        };
+                        self.active_attempt_ids.remove(&prior);
+                        self.complete_attempt_leases(&prior);
+                    }
                 }
             }
             RunEventKind::WaitRegistered {
@@ -4708,6 +5498,7 @@ impl RunProjection {
                         cancellation: None,
                     },
                 );
+                self.pending_wait_execution_ids.insert(execution.clone());
             }
             RunEventKind::WaitSatisfied { execution, cause } => {
                 let wait = self
@@ -4724,6 +5515,7 @@ impl RunProjection {
                     .get_mut(execution)
                     .ok_or_else(|| invalid_at(event, "unknown wait"))?
                     .satisfaction = Some(cause.clone());
+                self.pending_wait_execution_ids.remove(execution);
             }
             RunEventKind::WaitCancelled { execution, reason } => {
                 let wait = self.waits.get(execution).ok_or_else(|| {
@@ -4745,9 +5537,10 @@ impl RunProjection {
                     .get_mut(execution)
                     .ok_or_else(|| invalid_at(event, "unknown wait"))?
                     .cancellation = Some(WaitCancellationProjection {
-                    reason: reason.clone(),
-                    sequence,
-                });
+                        reason: reason.clone(),
+                        sequence,
+                    });
+                self.pending_wait_execution_ids.remove(execution);
             }
             RunEventKind::SignalReceived {
                 signal,
@@ -4769,23 +5562,109 @@ impl RunProjection {
                         payload: payload.clone(),
                         received_sequence: sequence,
                         consumed_by: BTreeSet::new(),
+                        broadcast_scan_through: None,
+                        broadcast_scan_complete: false,
                         duplicate_commands: Vec::new(),
                     },
                 );
+                if *mode == SignalDeliveryMode::Broadcast {
+                    self.pending_broadcast_signals
+                        .insert((sequence, signal.clone()));
+                }
+            }
+            RunEventKind::SignalBroadcastScanAdvanced {
+                signal,
+                through_execution,
+                complete,
+            } => {
+                let signal_view = self.signals.get(signal).ok_or_else(|| {
+                    invalid_at(event, "broadcast scan references an unknown signal")
+                })?;
+                if signal_view.mode != SignalDeliveryMode::Broadcast
+                    || signal_view.broadcast_scan_complete
+                {
+                    return Err(invalid_at(
+                        event,
+                        "broadcast scan requires an incomplete broadcast signal",
+                    ));
+                }
+                let previous = signal_view.broadcast_scan_through.as_ref();
+                let cursor_valid = match (previous, through_execution.as_ref()) {
+                    (None, None) => *complete,
+                    (None, Some(next)) => self.waits.contains_key(next),
+                    (Some(_), None) => false,
+                    (Some(previous), Some(next)) => {
+                        self.waits.contains_key(next)
+                            && (next > previous || (*complete && next == previous))
+                    }
+                };
+                if !cursor_valid {
+                    return Err(invalid_at(
+                        event,
+                        "broadcast scan cursor did not advance monotonically through known waits",
+                    ));
+                }
+                let lower = previous
+                    .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded);
+                let upper = if *complete {
+                    std::ops::Bound::Unbounded
+                } else {
+                    std::ops::Bound::Included(through_execution.as_ref().ok_or_else(|| {
+                        invalid_at(event, "incomplete broadcast scan has no cursor")
+                    })?)
+                };
+                let mut scanned = 0_u32;
+                for (_, wait) in self.waits.range((lower, upper)) {
+                    scanned = scanned.saturating_add(1);
+                    if scanned > MAX_PAGE_SIZE {
+                        return Err(invalid_at(
+                            event,
+                            "one broadcast scan event exceeds the durable wait-page bound",
+                        ));
+                    }
+                    let eligible = wait.is_pending()
+                        && wait.registered_sequence() < signal_view.received_sequence
+                        && !signal_view.consumed_by.contains(wait.execution())
+                        && wait_signal_projection_matches(
+                            wait.condition(),
+                            &signal_view.signal_type,
+                            signal_view.correlation.as_ref(),
+                            &self.timers,
+                        );
+                    if eligible {
+                        return Err(invalid_at(
+                            event,
+                            "broadcast scan cannot advance past an eligible unconsumed wait",
+                        ));
+                    }
+                }
+                let signal_view = self.signals.get_mut(signal).ok_or_else(|| {
+                    invalid_at(event, "broadcast scan references an unknown signal")
+                })?;
+                signal_view.broadcast_scan_through = through_execution.clone();
+                signal_view.broadcast_scan_complete = *complete;
+                if *complete {
+                    self.pending_broadcast_signals
+                        .remove(&(signal_view.received_sequence, signal.clone()));
+                }
             }
             RunEventKind::SignalDeduplicated {
                 signal,
                 duplicate_command,
             } => {
+                if self
+                    .signals
+                    .values()
+                    .any(|received| received.duplicate_commands.contains(duplicate_command))
+                {
+                    return Err(invalid_at(
+                        event,
+                        "duplicate signal command identity was already recorded",
+                    ));
+                }
                 let signal_view = self.signals.get_mut(signal).ok_or_else(|| {
                     invalid_at(event, "deduplication references an unknown signal")
                 })?;
-                if signal_view.duplicate_commands.contains(duplicate_command) {
-                    return Err(invalid_at(
-                        event,
-                        "duplicate signal observation was already recorded",
-                    ));
-                }
                 signal_view
                     .duplicate_commands
                     .push(duplicate_command.clone());
@@ -4908,6 +5787,12 @@ impl RunProjection {
                         imports: Vec::new(),
                     },
                 );
+                self.active_subworkflow_ids.insert(subworkflow.clone());
+                if *ownership == SubworkflowOwnership::Attached {
+                    self.active_attached_subworkflow_ids
+                        .insert(subworkflow.clone());
+                }
+                self.adjust_structured_child_count(parent_execution, true, event)?;
             }
             RunEventKind::SubworkflowTerminal {
                 subworkflow,
@@ -4937,12 +5822,16 @@ impl RunProjection {
                         ));
                     }
                 }
+                let parent_execution = child.parent_execution.clone();
                 let child = self
                     .subworkflows
                     .get_mut(subworkflow)
                     .ok_or_else(|| invalid_at(event, "unknown subworkflow"))?;
                 child.state = SubworkflowState::Terminal(*outcome);
                 child.outputs = outputs.clone();
+                self.active_subworkflow_ids.remove(subworkflow);
+                self.active_attached_subworkflow_ids.remove(subworkflow);
+                self.adjust_structured_child_count(&parent_execution, false, event)?;
             }
             RunEventKind::SubworkflowOutputImported {
                 subworkflow,
@@ -5184,12 +6073,16 @@ impl RunProjection {
                     && plan_view.applied_sequence.is_none()
                     && plan_view.items.iter().any(|item| {
                         item.execution.as_ref() == Some(execution)
-                            && item.action == ReconciliationAction::RemoveUnstarted
+                            && (item.action == ReconciliationAction::RemoveUnstarted
+                                || item.action == ReconciliationAction::UseNewOnNextInvocation
+                                    && item.classification
+                                        == ReconciliationClassification::ChangedPending)
                     });
                 let execution_view = self.execution(execution, event)?;
                 if !authorized
                     || execution_view.state != NodeExecutionState::Eligible
                     || !execution_view.attempts.is_empty()
+                    || self.execution_has_active_structured_ownership(execution)
                 {
                     return Err(invalid_at(
                         event,
@@ -5200,6 +6093,8 @@ impl RunProjection {
                     .get_mut(execution)
                     .ok_or_else(|| invalid_at(event, "unknown execution"))?
                     .state = NodeExecutionState::RemovedProspectively(plan.clone());
+                self.eligible_executions.remove(execution);
+                self.deactivate_execution(execution, event)?;
             }
             RunEventKind::ReconciliationCancellationRequested {
                 plan,
@@ -5221,6 +6116,7 @@ impl RunProjection {
                 let attempt_view = self.attempt(attempt, event)?;
                 if !authorized
                     || self.reconciliation_cancellations.contains_key(execution)
+                    || execution_view.cancellation.is_some()
                     || attempt_view.execution != *execution
                     || execution_view.attempts.last() != Some(attempt)
                     || !matches!(
@@ -5243,6 +6139,25 @@ impl RunProjection {
                         sequence,
                     },
                 );
+                self.node_executions
+                    .get_mut(execution)
+                    .ok_or_else(|| invalid_at(event, "unknown reconciliation execution"))?
+                    .cancellation = Some(NodeExecutionCancellationProjection {
+                    attempt: Some(attempt.clone()),
+                    reason: reason.clone(),
+                    sequence,
+                });
+                let source = self.execution(execution, event)?;
+                let restart_scope = source.scope.clone();
+                let restart_key = (source.node.clone(), restart_scope.clone());
+                if self
+                    .pending_reconciliation_restarts
+                    .insert(restart_key, execution.clone())
+                    .is_some()
+                {
+                    return Err(invalid_at(event, "reconciliation restart token is duplicate"));
+                }
+                self.adjust_scope_ownership(&restart_scope, true, event)?;
             }
             RunEventKind::ReconciliationRemediationCreated {
                 plan,
@@ -5299,6 +6214,12 @@ impl RunProjection {
                         outputs: Vec::new(),
                     },
                 );
+                self.execution_ids_by_node
+                    .entry(node.clone())
+                    .or_default()
+                    .insert(execution.clone());
+                self.eligible_executions.insert(execution.clone());
+                self.activate_execution(execution, event)?;
                 self.reconciliation_remediations.insert(
                     execution.clone(),
                     ReconciliationRemediationProjection {
@@ -5347,13 +6268,24 @@ impl RunProjection {
                     .any(|item| item.action == ReconciliationAction::RejectRetrospectiveRewrite);
                 let actions_enacted = plan_view.items.iter().all(|item| match item.action {
                     ReconciliationAction::RemoveUnstarted => {
-                        item.execution.as_ref().is_some_and(|execution| {
+                        item.execution.as_ref().is_none_or(|execution| {
                             self.node_executions
                                 .get(execution)
                                 .is_some_and(|execution| {
                                     execution.state
                                         == NodeExecutionState::RemovedProspectively(plan.clone())
                                 })
+                        })
+                    }
+                    ReconciliationAction::UseNewOnNextInvocation
+                        if item.classification
+                            == ReconciliationClassification::ChangedPending =>
+                    {
+                        item.execution.as_ref().is_none_or(|execution| {
+                            self.node_executions.get(execution).is_some_and(|execution| {
+                                execution.state
+                                    == NodeExecutionState::RemovedProspectively(plan.clone())
+                            })
                         })
                     }
                     ReconciliationAction::CancelAndRestart => {
@@ -5501,16 +6433,17 @@ impl RunProjection {
                     }
                     RecoveryClassification::Retryable => {
                         retry_safe
-                            && matches!(
-                                attempt_view.state,
-                                AttemptState::Leased | AttemptState::Running
-                            )
-                            && lease_view.is_some_and(|lease| {
-                                matches!(
-                                    lease.state,
-                                    LeaseState::Expired(RecoveryClassification::Retryable)
-                                )
-                            })
+                            && (attempt_view.is_unresolved()
+                                && lease_view.is_none()
+                                || matches!(
+                                    attempt_view.state,
+                                    AttemptState::Leased | AttemptState::Running
+                                ) && lease_view.is_some_and(|lease| {
+                                    matches!(
+                                        lease.state,
+                                        LeaseState::Expired(RecoveryClassification::Retryable)
+                                    )
+                                }))
                     }
                     RecoveryClassification::Uncertain => {
                         attempt_view.is_unresolved()
@@ -5564,7 +6497,11 @@ impl RunProjection {
                         | AuthorityDecision::Compensate
                         | AuthorityDecision::ResolveSucceeded
                         | AuthorityDecision::ResolveFailed
-                ) || !self.decision_ids.insert(decision.clone())
+                ) || matches!(
+                    outcome,
+                    AuthorityDecision::ResolveSucceeded | AuthorityDecision::ResolveFailed
+                ) && evidence.is_empty()
+                    || !self.decision_ids.insert(decision.clone())
                 {
                     return Err(invalid_at(
                         event,
@@ -5599,10 +6536,15 @@ impl RunProjection {
                 if let Some(outcome) = resolved {
                     attempt_view.state = AttemptState::Resolved(outcome);
                     attempt_view.obligation = None;
+                    self.active_attempt_ids.remove(attempt);
                     self.node_executions
                         .get_mut(&execution)
                         .ok_or_else(|| invalid_at(event, "unknown execution"))?
                         .state = NodeExecutionState::Terminal(outcome);
+                    self.deactivate_execution(&execution, event)?;
+                    if outcome == NodeOutcome::Succeeded {
+                        self.pending_successor_executions.insert(execution.clone());
+                    }
                     self.complete_attempt_leases(attempt);
                 }
                 self.recovery_decisions
@@ -5651,6 +6593,12 @@ impl RunProjection {
                         outputs: Vec::new(),
                     },
                 );
+                self.execution_ids_by_node
+                    .entry(node.clone())
+                    .or_default()
+                    .insert(execution.clone());
+                self.eligible_executions.insert(execution.clone());
+                self.activate_execution(execution, event)?;
                 self.remediations.insert(
                     execution.clone(),
                     RemediationProjection {
@@ -5671,6 +6619,7 @@ impl RunProjection {
             | RunEventKind::RunPaused { .. }
             | RunEventKind::RunResumed { .. }
             | RunEventKind::RunCancellationRequested { .. }
+            | RunEventKind::RunTerminationRequested { .. }
             | RunEventKind::RunTerminal { .. }
             | RunEventKind::NodeBecameEligible { .. }
             | RunEventKind::NodeExecutionCancelledBeforeDispatch { .. }
@@ -5689,6 +6638,8 @@ impl RunProjection {
             | RunEventKind::NodeOutputPublished { .. }
             | RunEventKind::DeterministicOutputPublished { .. }
             | RunEventKind::DeterministicNodeTerminal { .. }
+            | RunEventKind::NodePreDispatchFailed { .. }
+            | RunEventKind::StructuredSuccessorScanCompleted { .. }
             | RunEventKind::NodeTerminal { .. }
             | RunEventKind::NodeRetryScheduled { .. }
             | RunEventKind::ExternalOutcomeUncertain { .. }
@@ -5760,7 +6711,11 @@ impl RunProjection {
         Ok(())
     }
 
-    fn scope_descends_from(&self, scope: &ScopeReference, ancestor: &ScopeReference) -> bool {
+    pub(crate) fn scope_descends_from(
+        &self,
+        scope: &ScopeReference,
+        ancestor: &ScopeReference,
+    ) -> bool {
         let mut current = Some(scope);
         let mut remaining = self.scopes.len().saturating_add(1);
         while let Some(reference) = current {
@@ -5913,14 +6868,9 @@ impl RunProjection {
         }
     }
 
-    fn active_lease_for_attempt(&self, attempt: &AttemptId) -> Option<&LeaseProjection> {
-        self.leases
-            .values()
-            .find(|lease| lease.attempt == *attempt && lease.is_active())
-    }
-
     fn has_execution_cancellation_source(&self, execution: &NodeExecutionId) -> bool {
         self.cancellation.is_some()
+            || self.termination.is_some()
             || self
                 .branch_owner
                 .get(execution)
@@ -5934,30 +6884,7 @@ impl RunProjection {
     }
 
     fn ensure_terminal_quiescent(&self, event: &RunEventEnvelope) -> Result<(), RuntimeError> {
-        let outstanding = self
-            .node_executions
-            .values()
-            .any(|execution| !execution.is_completed())
-            || self.attempts.values().any(|attempt| {
-                !matches!(
-                    attempt.state,
-                    AttemptState::Terminal(_)
-                        | AttemptState::Resolved(_)
-                        | AttemptState::CancelledBeforeDispatch
-                )
-            })
-            || self.leases.values().any(LeaseProjection::is_active)
-            || self.branches.values().any(BranchProjection::is_active)
-            || self.iterations.values().any(IterationProjection::is_active)
-            || self.timers.values().any(TimerProjection::is_pending)
-            || self.retries.values().any(RetryProjection::is_pending)
-            || self.waits.values().any(WaitProjection::is_pending)
-            || self.subworkflows.values().any(|child| {
-                child.ownership == SubworkflowOwnership::Attached && child.is_active()
-            })
-            || self.reconciliation.is_active()
-            || self.pending_pin.is_some()
-            || !self.reserved_executions.is_empty();
+        let outstanding = self.has_active_owned_work();
         if outstanding {
             return Err(invalid_at(
                 event,
@@ -5967,13 +6894,147 @@ impl RunProjection {
         Ok(())
     }
 
+    fn adjust_scope_ownership(
+        &mut self,
+        scope: &ScopeReference,
+        add: bool,
+        event: &RunEventEnvelope,
+    ) -> Result<(), RuntimeError> {
+        let mut current = Some(scope.clone());
+        while let Some(reference) = current {
+            let parent = self
+                .scopes
+                .get(&reference)
+                .and_then(WorkspaceScope::parent)
+                .cloned();
+            if add {
+                let count = self
+                    .active_scope_ownership
+                    .entry(reference.clone())
+                    .or_default();
+                *count = count
+                    .checked_add(1)
+                    .ok_or_else(|| invalid_at(event, "active scope ownership overflow"))?;
+            } else {
+                let count = self
+                    .active_scope_ownership
+                    .get_mut(&reference)
+                    .ok_or_else(|| invalid_at(event, "active scope ownership underflow"))?;
+                *count = count
+                    .checked_sub(1)
+                    .ok_or_else(|| invalid_at(event, "active scope ownership underflow"))?;
+                if *count == 0 {
+                    self.active_scope_ownership.remove(&reference);
+                }
+            }
+            current = parent;
+        }
+        Ok(())
+    }
+
+    fn activate_execution(
+        &mut self,
+        execution: &NodeExecutionId,
+        event: &RunEventEnvelope,
+    ) -> Result<(), RuntimeError> {
+        let scope = self.execution(execution, event)?.scope.clone();
+        if !self.active_execution_ids.insert(execution.clone()) {
+            return Err(invalid_at(event, "execution was already active"));
+        }
+        let execution_view = self.execution(execution, event)?;
+        let node = execution_view.node.clone();
+        let mut current = Some(scope.clone());
+        while let Some(reference) = current {
+            let parent = self
+                .scopes
+                .get(&reference)
+                .and_then(WorkspaceScope::parent)
+                .cloned();
+            self.latest_descendant_execution_by_scope_node
+                .insert((reference, node.clone()), execution.clone());
+            current = parent;
+        }
+        self.adjust_scope_ownership(&scope, true, event)
+    }
+
+    fn deactivate_execution(
+        &mut self,
+        execution: &NodeExecutionId,
+        event: &RunEventEnvelope,
+    ) -> Result<(), RuntimeError> {
+        let scope = self.execution(execution, event)?.scope.clone();
+        if !self.active_execution_ids.remove(execution) {
+            return Err(invalid_at(event, "execution was not active"));
+        }
+        self.adjust_scope_ownership(&scope, false, event)
+    }
+
+    fn adjust_structured_child_count(
+        &mut self,
+        execution: &NodeExecutionId,
+        add: bool,
+        event: &RunEventEnvelope,
+    ) -> Result<(), RuntimeError> {
+        if add {
+            let count = self
+                .active_structured_children_by_execution
+                .entry(execution.clone())
+                .or_default();
+            *count = count
+                .checked_add(1)
+                .ok_or_else(|| invalid_at(event, "structured child ownership overflow"))?;
+        } else {
+            let count = self
+                .active_structured_children_by_execution
+                .get_mut(execution)
+                .ok_or_else(|| invalid_at(event, "structured child ownership underflow"))?;
+            *count = count
+                .checked_sub(1)
+                .ok_or_else(|| invalid_at(event, "structured child ownership underflow"))?;
+            if *count == 0 {
+                self.active_structured_children_by_execution
+                    .remove(execution);
+            }
+        }
+        Ok(())
+    }
+
+    fn remove_pending_timer_owner(
+        &mut self,
+        timer: &TimerId,
+        purpose: &TimerPurpose,
+        event: &RunEventEnvelope,
+    ) -> Result<(), RuntimeError> {
+        let owner = match purpose {
+            TimerPurpose::Wait {
+                execution: Some(execution),
+            } => Some(execution.clone()),
+            TimerPurpose::Retry { attempt } => self
+                .attempts
+                .get(attempt)
+                .map(|attempt| attempt.execution.clone()),
+            TimerPurpose::Wait { execution: None } => None,
+        };
+        if let Some(owner) = owner {
+            let timers = self
+                .pending_timers_by_execution
+                .get_mut(&owner)
+                .ok_or_else(|| invalid_at(event, "pending timer owner index is absent"))?;
+            if !timers.remove(timer) {
+                return Err(invalid_at(event, "pending timer owner index disagrees"));
+            }
+            if timers.is_empty() {
+                self.pending_timers_by_execution.remove(&owner);
+            }
+        }
+        Ok(())
+    }
+
     fn complete_attempt_leases(&mut self, attempt: &AttemptId) {
-        for lease in self
-            .leases
-            .values_mut()
-            .filter(|lease| lease.attempt == *attempt && lease.is_active())
-        {
-            lease.state = LeaseState::Completed;
+        if let Some(lease) = self.active_lease_by_attempt.remove(attempt) {
+            if let Some(lease) = self.leases.get_mut(&lease) {
+                lease.state = LeaseState::Completed;
+            }
         }
     }
 
@@ -6013,7 +7074,16 @@ impl RunProjection {
         Ok(())
     }
 
-    fn revision_at(&self, sequence: RunSequence) -> Option<&RevisionId> {
+    /// Returns the exact immutable revision governing a durable event sequence.
+    ///
+    /// The value is absent before run creation or beyond the projected journal
+    /// head. Attempt provenance uses its recorded scheduling sequence here rather
+    /// than assuming the run's current prospective pin.
+    #[must_use]
+    pub fn revision_at(&self, sequence: RunSequence) -> Option<&RevisionId> {
+        if sequence == RunSequence::ZERO || sequence > self.sequence {
+            return None;
+        }
         self.pins
             .iter()
             .rev()
@@ -6072,6 +7142,7 @@ fn new_attempt(
         invocation: None,
         idempotency_key: None,
         request: None,
+        scheduled_sequence: None,
         state,
         capability: None,
         side_effect: None,
@@ -6087,10 +7158,42 @@ fn new_attempt(
     }
 }
 
+fn same_logical_invocation_request(left: &InvocationRequest, right: &InvocationRequest) -> bool {
+    left.capability() == right.capability()
+        && left.operation() == right.operation()
+        && left.provider_profile() == right.provider_profile()
+        && left.inputs() == right.inputs()
+        && left.extensions() == right.extensions()
+}
+
 fn wait_condition_timer(condition: &WaitCondition) -> Option<&TimerId> {
     match condition {
         WaitCondition::Timer { timer } | WaitCondition::SignalOrTimer { timer, .. } => Some(timer),
         WaitCondition::Signal { .. } => None,
+    }
+}
+
+fn wait_signal_projection_matches(
+    condition: &WaitCondition,
+    signal_type: &SignalTypeId,
+    correlation: Option<&CorrelationKey>,
+    timers: &BTreeMap<TimerId, TimerProjection>,
+) -> bool {
+    match condition {
+        WaitCondition::Signal {
+            signal_type: expected,
+            correlation: expected_correlation,
+        } => expected == signal_type && expected_correlation.as_ref() == correlation,
+        WaitCondition::SignalOrTimer {
+            timer,
+            signal_type: expected,
+            correlation: expected_correlation,
+        } => {
+            expected == signal_type
+                && expected_correlation.as_ref() == correlation
+                && timers.get(timer).is_some_and(TimerProjection::is_pending)
+        }
+        WaitCondition::Timer { .. } => false,
     }
 }
 
@@ -6157,8 +7260,8 @@ mod tests {
 
     use milkdrift_capability::{
         AdmissionConstraints, CapabilityCategory, CapabilityId, CapabilityRequirement,
-        DescriptorBuilder, IdempotencyKey, Locality, OperationId, ProviderProfileRef,
-        ResolvedCapabilitySnapshotDocument,
+        DescriptorBuilder, IdempotencyKey, Locality, OperationContract, OperationId,
+        ProviderProfileRef, ResolvedCapabilitySnapshotDocument,
     };
     use milkdrift_persistence::{EventId, ReconciliationClassification};
     use milkdrift_workspace::ScopeId;
@@ -6266,6 +7369,56 @@ mod tests {
     }
 
     #[test]
+    fn cancelling_lifecycle_rejects_non_cancelled_run_terminal_facts() -> TestResult {
+        let fixture = fixture("cancellation-terminal-guard")?;
+        let mut projection = RunProjection::replay(&[
+            created(&fixture, 1)?,
+            envelope(2, &fixture.run, RunEventKind::RunStarted)?,
+            envelope(
+                3,
+                &fixture.run,
+                RunEventKind::RunCancellationRequested {
+                    reason: Reason::new("operator cancelled")?,
+                    evidence: Vec::new(),
+                },
+            )?,
+        ])?;
+        for outcome in [RunOutcome::Succeeded, RunOutcome::Failed] {
+            let before = projection.clone();
+            assert!(
+                projection
+                    .apply(&envelope(
+                        4,
+                        &fixture.run,
+                        RunEventKind::RunTerminal {
+                            outcome,
+                            outputs: Vec::new(),
+                            artifacts: Vec::new(),
+                            reason: None,
+                        },
+                    )?)
+                    .is_err()
+            );
+            assert_eq!(projection, before);
+        }
+        projection.apply(&envelope(
+            4,
+            &fixture.run,
+            RunEventKind::RunTerminal {
+                outcome: RunOutcome::Cancelled,
+                outputs: Vec::new(),
+                artifacts: Vec::new(),
+                reason: Some(Reason::new("operator cancelled")?),
+            },
+        )?)?;
+        assert_eq!(
+            projection.lifecycle(),
+            RunLifecycle::Terminal(RunOutcome::Cancelled)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn rejects_gaps_wrong_runs_and_illegal_transitions_atomically() -> TestResult {
         let primary = fixture("invalid")?;
         let other = fixture("other")?;
@@ -6311,8 +7464,6 @@ mod tests {
         let fixture = fixture("structured")?;
         let fork = NodeExecutionId::new("execution-fork")?;
         let child = NodeExecutionId::new("execution-branch-child")?;
-        let child_attempt = AttemptId::new("attempt-branch-child")?;
-        let child_invocation = InvocationId::new("invocation-branch-child")?;
         let join = NodeExecutionId::new("execution-join")?;
         let repeat = NodeExecutionId::new("execution-repeat")?;
         let wait_timer = NodeExecutionId::new("execution-wait-timer")?;
@@ -6321,6 +7472,11 @@ mod tests {
         let branch = BranchId::new("branch-a")?;
         let branch_scope =
             WorkspaceScope::branch(ScopeId::new("branch-scope")?, &fixture.root, branch.clone())?;
+        let branch_output = WorkspaceValueReference::new(
+            branch_scope.reference().clone(),
+            milkdrift_workspace::ValueKey::new("result")?,
+            milkdrift_workspace::ValueVersion::FIRST,
+        );
         let iteration = IterationId::new("iteration-1")?;
         let iteration_scope = WorkspaceScope::iteration(
             ScopeId::new("iteration-scope")?,
@@ -6351,7 +7507,7 @@ mod tests {
                     scope: branch_scope.clone(),
                 },
             )?,
-            eligible(
+            runtime_eligible(
                 5,
                 &fixture,
                 "branch-child",
@@ -6369,22 +7525,17 @@ mod tests {
             envelope(
                 7,
                 &fixture.run,
-                RunEventKind::NodeScheduled {
-                    node: NodeId::new("branch-child")?,
+                RunEventKind::DeterministicOutputPublished {
                     execution: NodeExecutionId::new("execution-branch-child")?,
-                    attempt: child_attempt.clone(),
-                    invocation: child_invocation.clone(),
-                    idempotency_key: None,
-                    request: invocation_request(&child_invocation, None)?,
+                    value: branch_output,
+                    artifact: None,
                 },
             )?,
             envelope(
                 8,
                 &fixture.run,
-                RunEventKind::NodeTerminal {
+                RunEventKind::DeterministicNodeTerminal {
                     execution: NodeExecutionId::new("execution-branch-child")?,
-                    attempt: child_attempt,
-                    report_sequence: 1,
                     outcome: NodeOutcome::Succeeded,
                     error_class: None,
                     detail: None,
@@ -6729,6 +7880,61 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn signal_deduplication_command_identity_cannot_name_two_signals() -> TestResult {
+        let fixture = fixture("signal-dedup-command")?;
+        let first = SignalId::new("signal-first")?;
+        let second = SignalId::new("signal-second")?;
+        let duplicate_command = CommandId::new("command-duplicate-delivery")?;
+        let mut projection = RunProjection::replay(&[
+            created(&fixture, 1)?,
+            envelope(2, &fixture.run, RunEventKind::RunStarted)?,
+            envelope(
+                3,
+                &fixture.run,
+                RunEventKind::SignalReceived {
+                    signal: first.clone(),
+                    signal_type: SignalTypeId::new("example.first")?,
+                    correlation: None,
+                    mode: SignalDeliveryMode::OneShot,
+                    payload: BoundedJson::new(serde_json::json!({"value": 1}))?,
+                },
+            )?,
+            envelope(
+                4,
+                &fixture.run,
+                RunEventKind::SignalReceived {
+                    signal: second.clone(),
+                    signal_type: SignalTypeId::new("example.second")?,
+                    correlation: None,
+                    mode: SignalDeliveryMode::OneShot,
+                    payload: BoundedJson::new(serde_json::json!({"value": 2}))?,
+                },
+            )?,
+            envelope(
+                5,
+                &fixture.run,
+                RunEventKind::SignalDeduplicated {
+                    signal: first,
+                    duplicate_command: duplicate_command.clone(),
+                },
+            )?,
+        ])?;
+
+        let before = projection.clone();
+        let contradictory = envelope(
+            6,
+            &fixture.run,
+            RunEventKind::SignalDeduplicated {
+                signal: second,
+                duplicate_command,
+            },
+        )?;
+        assert!(projection.apply(&contradictory).is_err());
+        assert_eq!(projection, before);
+        Ok(())
+    }
+
     fn eligible(
         sequence: u64,
         fixture: &Fixture,
@@ -6800,6 +8006,44 @@ mod tests {
         .operations(std::collections::BTreeMap::from([(
             operation.clone(),
             base.body().operation_contract().clone(),
+        )]))
+        .build()?;
+        Ok(ResolvedCapabilitySnapshot::from_descriptor(
+            &descriptor,
+            &operation,
+        )?)
+    }
+
+    fn resolved_snapshot_with_side_effect(
+        descriptor_revision: u64,
+        side_effect: SideEffectClass,
+        idempotency: IdempotencyBehavior,
+    ) -> Result<ResolvedCapabilitySnapshot, Box<dyn Error>> {
+        let base = ResolvedCapabilitySnapshotDocument::from_json(include_bytes!(
+            "../../capability/tests/fixtures/resolved-capability-snapshot-v1.json"
+        ))?;
+        let operation = base.body().operation().clone();
+        let contract = base.body().operation_contract();
+        let operation_contract = OperationContract::new(
+            contract.input().clone(),
+            contract.output().clone(),
+            contract.streaming().clone(),
+            contract.cancellation(),
+            idempotency,
+            side_effect,
+            contract.features().clone(),
+        )?;
+        let descriptor = DescriptorBuilder::new(
+            base.body().capability().clone(),
+            descriptor_revision,
+            CapabilityCategory::Tool,
+            AdmissionConstraints::new(1, 1)?,
+            Locality::Remote,
+        )
+        .provider_profile(base.body().provider_profile().cloned())
+        .operations(std::collections::BTreeMap::from([(
+            operation.clone(),
+            operation_contract,
         )]))
         .build()?;
         Ok(ResolvedCapabilitySnapshot::from_descriptor(
@@ -7212,6 +8456,293 @@ mod tests {
     }
 
     #[test]
+    fn reconciliation_removal_without_a_created_execution_is_an_enacted_noop() -> TestResult {
+        let fixture = fixture("reconciliation-uncreated-removal")?;
+        let reconciliation = ReconciliationId::new("reconciliation-remove")?;
+        let plan = ReconciliationPlanId::new("plan-remove")?;
+        let removed_node = NodeId::new("removed-before-eligibility")?;
+        let next_revision = revision('b')?;
+        let next_digest = digest('2')?;
+        let projection = RunProjection::replay(&[
+            created(&fixture, 1)?,
+            envelope(2, &fixture.run, RunEventKind::RunStarted)?,
+            envelope(
+                3,
+                &fixture.run,
+                RunEventKind::RevisionAdoptionRequested {
+                    reconciliation: reconciliation.clone(),
+                    from_revision: fixture.revision.clone(),
+                    to_revision: next_revision.clone(),
+                    policy: ReconciliationPolicy::RemoveUnstartedOnly,
+                },
+            )?,
+            envelope(
+                4,
+                &fixture.run,
+                RunEventKind::ReconciliationPlanRecorded {
+                    reconciliation,
+                    plan: plan.clone(),
+                    from_revision: fixture.revision.clone(),
+                    to_revision: next_revision.clone(),
+                    based_on_sequence: RunSequence::new(2),
+                    items: vec![ReconciliationItem {
+                        node: Some(removed_node),
+                        execution: None,
+                        classification: ReconciliationClassification::RemovedPending,
+                        action: ReconciliationAction::RemoveUnstarted,
+                        reason: Reason::new("node never became eligible")?,
+                    }],
+                },
+            )?,
+            envelope(
+                5,
+                &fixture.run,
+                RunEventKind::ReconciliationApplied {
+                    plan: plan.clone(),
+                    from_revision: fixture.revision.clone(),
+                    to_revision: next_revision.clone(),
+                    based_on_sequence: RunSequence::new(4),
+                },
+            )?,
+            envelope(
+                6,
+                &fixture.run,
+                RunEventKind::RevisionPinned {
+                    previous: fixture.revision,
+                    revision: next_revision.clone(),
+                    revision_digest: next_digest,
+                    plan,
+                },
+            )?,
+        ])?;
+
+        assert_eq!(projection.revision(), Some(&next_revision));
+        assert!(projection.node_executions().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn reconciliation_removal_rejects_eligible_execution_with_live_wait_ownership() -> TestResult {
+        let fixture = fixture("reconciliation-live-wait-removal")?;
+        let execution = NodeExecutionId::new("execution-live-wait")?;
+        let timer = TimerId::new("timer-live-wait")?;
+        let reconciliation = ReconciliationId::new("reconciliation-live-wait")?;
+        let plan = ReconciliationPlanId::new("plan-live-wait")?;
+        let next_revision = revision('b')?;
+        let mut projection = RunProjection::replay(&[
+            created(&fixture, 1)?,
+            envelope(2, &fixture.run, RunEventKind::RunStarted)?,
+            runtime_eligible(3, &fixture, "wait", &execution, fixture.root.reference())?,
+            envelope(
+                4,
+                &fixture.run,
+                RunEventKind::TimerRegistered {
+                    timer: timer.clone(),
+                    execution: Some(execution.clone()),
+                    fire_at: TimestampMillis::new(10_000),
+                },
+            )?,
+            envelope(
+                5,
+                &fixture.run,
+                RunEventKind::WaitRegistered {
+                    execution: execution.clone(),
+                    condition: WaitCondition::Timer { timer },
+                },
+            )?,
+            envelope(
+                6,
+                &fixture.run,
+                RunEventKind::RevisionAdoptionRequested {
+                    reconciliation: reconciliation.clone(),
+                    from_revision: fixture.revision.clone(),
+                    to_revision: next_revision.clone(),
+                    policy: ReconciliationPolicy::RemoveUnstartedOnly,
+                },
+            )?,
+            envelope(
+                7,
+                &fixture.run,
+                RunEventKind::ReconciliationPlanRecorded {
+                    reconciliation,
+                    plan: plan.clone(),
+                    from_revision: fixture.revision.clone(),
+                    to_revision: next_revision,
+                    based_on_sequence: RunSequence::new(5),
+                    items: vec![ReconciliationItem {
+                        node: Some(NodeId::new("wait")?),
+                        execution: Some(execution.clone()),
+                        classification: ReconciliationClassification::RemovedPending,
+                        action: ReconciliationAction::RemoveUnstarted,
+                        reason: Reason::new("maliciously treated a live wait as unstarted")?,
+                    }],
+                },
+            )?,
+        ])?;
+        assert!(projection.execution_has_active_structured_ownership(&execution));
+        let before = projection.clone();
+        assert!(
+            projection
+                .apply(&envelope(
+                    8,
+                    &fixture.run,
+                    RunEventKind::ReconciliationExecutionRemoved { plan, execution },
+                )?)
+                .is_err()
+        );
+        assert_eq!(projection, before);
+        Ok(())
+    }
+
+    #[test]
+    fn reconciliation_cancellation_is_execution_cancellation_authority() -> TestResult {
+        let fixture = fixture("reconciliation-cancellation")?;
+        let execution = NodeExecutionId::new("execution-active")?;
+        let attempt = AttemptId::new("attempt-active")?;
+        let invocation = InvocationId::new("invocation-active")?;
+        let reconciliation = ReconciliationId::new("reconciliation-cancel")?;
+        let plan = ReconciliationPlanId::new("plan-cancel")?;
+        let next_revision = revision('b')?;
+        let next_digest = digest('2')?;
+        let reason = Reason::new("cancel safely for prospective restart")?;
+        let mut projection = RunProjection::replay(&[
+            created(&fixture, 1)?,
+            envelope(2, &fixture.run, RunEventKind::RunStarted)?,
+            eligible(3, &fixture, "task", &execution, fixture.root.reference())?,
+            envelope(
+                4,
+                &fixture.run,
+                RunEventKind::NodeScheduled {
+                    node: NodeId::new("task")?,
+                    execution: execution.clone(),
+                    attempt: attempt.clone(),
+                    invocation: invocation.clone(),
+                    idempotency_key: None,
+                    request: invocation_request(&invocation, None)?,
+                },
+            )?,
+            envelope(
+                5,
+                &fixture.run,
+                RunEventKind::CapabilityResolved {
+                    execution: execution.clone(),
+                    attempt: attempt.clone(),
+                    requirement: CapabilityRequirement::new(OperationId::new("tool.publish")?)
+                        .provider_profile(ProviderProfileRef::new("publisher-prod")?),
+                    snapshot: resolved_snapshot_with_side_effect(
+                        7,
+                        SideEffectClass::None,
+                        IdempotencyBehavior::Unsupported,
+                    )?,
+                },
+            )?,
+            envelope(
+                6,
+                &fixture.run,
+                RunEventKind::SideEffectClassified {
+                    attempt: attempt.clone(),
+                    side_effect: SideEffectClass::None,
+                    idempotency: IdempotencyBehavior::Unsupported,
+                    idempotency_key: None,
+                },
+            )?,
+            envelope(
+                7,
+                &fixture.run,
+                RunEventKind::LeaseGranted {
+                    lease: LeaseId::new("lease-active")?,
+                    execution: execution.clone(),
+                    attempt: attempt.clone(),
+                    worker: WorkerId::new("worker-active")?,
+                    expires_at: TimestampMillis::new(10_000),
+                },
+            )?,
+            envelope(
+                8,
+                &fixture.run,
+                RunEventKind::RevisionAdoptionRequested {
+                    reconciliation: reconciliation.clone(),
+                    from_revision: fixture.revision.clone(),
+                    to_revision: next_revision.clone(),
+                    policy: ReconciliationPolicy::CancelAndRestartSafeWork,
+                },
+            )?,
+            envelope(
+                9,
+                &fixture.run,
+                RunEventKind::ReconciliationPlanRecorded {
+                    reconciliation,
+                    plan: plan.clone(),
+                    from_revision: fixture.revision.clone(),
+                    to_revision: next_revision.clone(),
+                    based_on_sequence: RunSequence::new(7),
+                    items: vec![ReconciliationItem {
+                        node: Some(NodeId::new("task")?),
+                        execution: Some(execution.clone()),
+                        classification: ReconciliationClassification::ChangedActive,
+                        action: ReconciliationAction::CancelAndRestart,
+                        reason: reason.clone(),
+                    }],
+                },
+            )?,
+            envelope(
+                10,
+                &fixture.run,
+                RunEventKind::ReconciliationCancellationRequested {
+                    plan: plan.clone(),
+                    execution: execution.clone(),
+                    attempt: attempt.clone(),
+                    reason: reason.clone(),
+                },
+            )?,
+            envelope(
+                11,
+                &fixture.run,
+                RunEventKind::ReconciliationApplied {
+                    plan: plan.clone(),
+                    from_revision: fixture.revision.clone(),
+                    to_revision: next_revision.clone(),
+                    based_on_sequence: RunSequence::new(10),
+                },
+            )?,
+            envelope(
+                12,
+                &fixture.run,
+                RunEventKind::RevisionPinned {
+                    previous: fixture.revision.clone(),
+                    revision: next_revision,
+                    revision_digest: next_digest,
+                    plan,
+                },
+            )?,
+        ])?;
+
+        let cancellation = projection.node_executions()[&execution]
+            .cancellation()
+            .ok_or("reconciliation cancellation was not projected on the execution")?;
+        assert_eq!(cancellation.attempt(), Some(&attempt));
+        assert_eq!(cancellation.reason(), &reason);
+
+        projection.apply(&envelope(
+            13,
+            &fixture.run,
+            RunEventKind::NodeTerminal {
+                execution: execution.clone(),
+                attempt,
+                report_sequence: 1,
+                outcome: NodeOutcome::Cancelled,
+                error_class: None,
+                detail: None,
+            },
+        )?)?;
+        assert_eq!(
+            projection.node_executions()[&execution].state(),
+            &NodeExecutionState::Terminal(NodeOutcome::Cancelled)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn projects_attempt_free_deterministic_terminal_and_rejects_fabricated_attempts() -> TestResult
     {
         let fixture = fixture("deterministic-terminal")?;
@@ -7371,6 +8902,19 @@ mod tests {
                 .map(InvocationRequest::invocation),
             Some(&invocation)
         );
+        assert_eq!(
+            projection.attempts()[&attempt].scheduled_sequence(),
+            Some(RunSequence::new(4))
+        );
+        assert_eq!(
+            projection.revision_for_attempt(&attempt),
+            Some(&fixture.revision)
+        );
+        assert_eq!(
+            projection.revision_at(RunSequence::new(4)),
+            Some(&fixture.revision)
+        );
+        assert_eq!(projection.revision_at(RunSequence::new(5)), None);
         let snapshot_document = ResolvedCapabilitySnapshotDocument::from_json(include_bytes!(
             "../../capability/tests/fixtures/resolved-capability-snapshot-v1.json"
         ))?;
@@ -7443,6 +8987,17 @@ mod tests {
             envelope(
                 7,
                 &fixture.run,
+                RunEventKind::LeaseGranted {
+                    lease: LeaseId::new("lease-first")?,
+                    execution: execution.clone(),
+                    attempt: first_attempt.clone(),
+                    worker: WorkerId::new("worker-first")?,
+                    expires_at: TimestampMillis::new(10_000),
+                },
+            )?,
+            envelope(
+                8,
+                &fixture.run,
                 RunEventKind::NodeTerminal {
                     execution: execution.clone(),
                     attempt: first_attempt.clone(),
@@ -7453,7 +9008,7 @@ mod tests {
                 },
             )?,
             envelope(
-                8,
+                9,
                 &fixture.run,
                 RunEventKind::NodeRetryScheduled {
                     execution: execution.clone(),
@@ -7467,7 +9022,7 @@ mod tests {
                 },
             )?,
             envelope(
-                9,
+                10,
                 &fixture.run,
                 RunEventKind::TimerFired {
                     timer,
@@ -7476,9 +9031,37 @@ mod tests {
             )?,
         ])?;
 
+        let mut mutated_request_projection = projection.clone();
+        let mutated_request = InvocationRequest::new(
+            second_invocation.clone(),
+            CapabilityId::new("publisher-primary")?,
+            OperationId::new("tool.publish")?,
+            Some(ProviderProfileRef::new("publisher-prod")?),
+            Some(stable_key.clone()),
+            Vec::new(),
+            std::collections::BTreeMap::from([(
+                milkdrift_capability::ExtensionKey::new("org.milkdrift/retry-mutation")?,
+                BoundedJson::new(serde_json::json!({"changed": true}))?,
+            )]),
+        )?;
+        let mutated_request = envelope(
+            11,
+            &fixture.run,
+            RunEventKind::NodeScheduled {
+                node: NodeId::new("task")?,
+                execution: execution.clone(),
+                attempt: second_attempt.clone(),
+                invocation: second_invocation.clone(),
+                idempotency_key: Some(stable_key.clone()),
+                request: mutated_request,
+            },
+        )?;
+        assert!(mutated_request_projection.apply(&mutated_request).is_err());
+        assert_eq!(mutated_request_projection.sequence(), RunSequence::new(10));
+
         let mut rotated_snapshot_projection = projection.clone();
         rotated_snapshot_projection.apply(&envelope(
-            10,
+            11,
             &fixture.run,
             RunEventKind::NodeScheduled {
                 node: NodeId::new("task")?,
@@ -7490,7 +9073,7 @@ mod tests {
             },
         )?)?;
         let rotated_snapshot = envelope(
-            11,
+            12,
             &fixture.run,
             RunEventKind::CapabilityResolved {
                 execution: execution.clone(),
@@ -7507,7 +9090,7 @@ mod tests {
 
         let mut rotated_key_projection = projection;
         rotated_key_projection.apply(&envelope(
-            10,
+            11,
             &fixture.run,
             RunEventKind::NodeScheduled {
                 node: NodeId::new("task")?,
@@ -7519,7 +9102,7 @@ mod tests {
             },
         )?)?;
         rotated_key_projection.apply(&envelope(
-            11,
+            12,
             &fixture.run,
             RunEventKind::CapabilityResolved {
                 execution,
@@ -7529,7 +9112,7 @@ mod tests {
             },
         )?)?;
         let rotated_classification = envelope(
-            12,
+            13,
             &fixture.run,
             RunEventKind::SideEffectClassified {
                 attempt: second_attempt,
@@ -7543,7 +9126,193 @@ mod tests {
                 .apply(&rotated_classification)
                 .is_err()
         );
-        assert_eq!(rotated_key_projection.sequence(), RunSequence::new(11));
+        assert_eq!(rotated_key_projection.sequence(), RunSequence::new(12));
+        Ok(())
+    }
+
+    #[test]
+    fn automatic_retries_require_safe_side_effects_and_the_exact_failure_class() -> TestResult {
+        let safe_fixture = fixture("retry-error-class")?;
+        let safe_execution = NodeExecutionId::new("execution-safe")?;
+        let safe_attempt = AttemptId::new("attempt-safe")?;
+        let safe_invocation = InvocationId::new("invocation-safe")?;
+        let stable_key = IdempotencyKey::new("stable-safe-key")?;
+        let requirement = CapabilityRequirement::new(OperationId::new("tool.publish")?)
+            .provider_profile(ProviderProfileRef::new("publisher-prod")?);
+        let mut safe_projection = RunProjection::replay(&[
+            created(&safe_fixture, 1)?,
+            envelope(2, &safe_fixture.run, RunEventKind::RunStarted)?,
+            eligible(
+                3,
+                &safe_fixture,
+                "safe",
+                &safe_execution,
+                safe_fixture.root.reference(),
+            )?,
+            envelope(
+                4,
+                &safe_fixture.run,
+                RunEventKind::NodeScheduled {
+                    node: NodeId::new("safe")?,
+                    execution: safe_execution.clone(),
+                    attempt: safe_attempt.clone(),
+                    invocation: safe_invocation.clone(),
+                    idempotency_key: Some(stable_key.clone()),
+                    request: invocation_request(&safe_invocation, Some(stable_key.clone()))?,
+                },
+            )?,
+            envelope(
+                5,
+                &safe_fixture.run,
+                RunEventKind::CapabilityResolved {
+                    execution: safe_execution.clone(),
+                    attempt: safe_attempt.clone(),
+                    requirement: requirement.clone(),
+                    snapshot: resolved_snapshot_at(7)?,
+                },
+            )?,
+            envelope(
+                6,
+                &safe_fixture.run,
+                RunEventKind::SideEffectClassified {
+                    attempt: safe_attempt.clone(),
+                    side_effect: SideEffectClass::IdempotentWrite,
+                    idempotency: IdempotencyBehavior::ProviderProfileScoped,
+                    idempotency_key: Some(stable_key),
+                },
+            )?,
+            envelope(
+                7,
+                &safe_fixture.run,
+                RunEventKind::LeaseGranted {
+                    lease: LeaseId::new("lease-safe")?,
+                    execution: safe_execution.clone(),
+                    attempt: safe_attempt.clone(),
+                    worker: WorkerId::new("worker-safe")?,
+                    expires_at: TimestampMillis::new(10_000),
+                },
+            )?,
+            envelope(
+                8,
+                &safe_fixture.run,
+                RunEventKind::NodeTerminal {
+                    execution: safe_execution.clone(),
+                    attempt: safe_attempt.clone(),
+                    report_sequence: 1,
+                    outcome: NodeOutcome::Failed,
+                    error_class: Some(ErrorClass::Provider),
+                    detail: None,
+                },
+            )?,
+        ])?;
+        let substituted_class = envelope(
+            9,
+            &safe_fixture.run,
+            RunEventKind::NodeRetryScheduled {
+                execution: safe_execution,
+                previous_attempt: safe_attempt,
+                next_attempt: AttemptId::new("attempt-safe-next")?,
+                attempt_number: 2,
+                timer: TimerId::new("timer-safe-next")?,
+                fire_at: TimestampMillis::new(900),
+                error_class: ErrorClass::Transport,
+                reason: Reason::new("must not substitute the durable failure class")?,
+            },
+        )?;
+        assert!(safe_projection.apply(&substituted_class).is_err());
+        assert_eq!(safe_projection.sequence(), RunSequence::new(8));
+
+        let unsafe_fixture = fixture("retry-unsafe-write")?;
+        let unsafe_execution = NodeExecutionId::new("execution-unsafe")?;
+        let unsafe_attempt = AttemptId::new("attempt-unsafe")?;
+        let unsafe_invocation = InvocationId::new("invocation-unsafe")?;
+        let unsafe_snapshot = resolved_snapshot_with_side_effect(
+            8,
+            SideEffectClass::NonIdempotentWrite,
+            IdempotencyBehavior::Unsupported,
+        )?;
+        let mut unsafe_projection = RunProjection::replay(&[
+            created(&unsafe_fixture, 1)?,
+            envelope(2, &unsafe_fixture.run, RunEventKind::RunStarted)?,
+            eligible(
+                3,
+                &unsafe_fixture,
+                "unsafe",
+                &unsafe_execution,
+                unsafe_fixture.root.reference(),
+            )?,
+            envelope(
+                4,
+                &unsafe_fixture.run,
+                RunEventKind::NodeScheduled {
+                    node: NodeId::new("unsafe")?,
+                    execution: unsafe_execution.clone(),
+                    attempt: unsafe_attempt.clone(),
+                    invocation: unsafe_invocation.clone(),
+                    idempotency_key: None,
+                    request: invocation_request(&unsafe_invocation, None)?,
+                },
+            )?,
+            envelope(
+                5,
+                &unsafe_fixture.run,
+                RunEventKind::CapabilityResolved {
+                    execution: unsafe_execution.clone(),
+                    attempt: unsafe_attempt.clone(),
+                    requirement,
+                    snapshot: unsafe_snapshot,
+                },
+            )?,
+            envelope(
+                6,
+                &unsafe_fixture.run,
+                RunEventKind::SideEffectClassified {
+                    attempt: unsafe_attempt.clone(),
+                    side_effect: SideEffectClass::NonIdempotentWrite,
+                    idempotency: IdempotencyBehavior::Unsupported,
+                    idempotency_key: None,
+                },
+            )?,
+            envelope(
+                7,
+                &unsafe_fixture.run,
+                RunEventKind::LeaseGranted {
+                    lease: LeaseId::new("lease-unsafe")?,
+                    execution: unsafe_execution.clone(),
+                    attempt: unsafe_attempt.clone(),
+                    worker: WorkerId::new("worker-unsafe")?,
+                    expires_at: TimestampMillis::new(10_000),
+                },
+            )?,
+            envelope(
+                8,
+                &unsafe_fixture.run,
+                RunEventKind::NodeTerminal {
+                    execution: unsafe_execution.clone(),
+                    attempt: unsafe_attempt.clone(),
+                    report_sequence: 1,
+                    outcome: NodeOutcome::Failed,
+                    error_class: Some(ErrorClass::Provider),
+                    detail: None,
+                },
+            )?,
+        ])?;
+        let unsafe_retry = envelope(
+            9,
+            &unsafe_fixture.run,
+            RunEventKind::NodeRetryScheduled {
+                execution: unsafe_execution,
+                previous_attempt: unsafe_attempt,
+                next_attempt: AttemptId::new("attempt-unsafe-next")?,
+                attempt_number: 2,
+                timer: TimerId::new("timer-unsafe-next")?,
+                fire_at: TimestampMillis::new(900),
+                error_class: ErrorClass::Provider,
+                reason: Reason::new("unsafe writes require recovery authority")?,
+            },
+        )?;
+        assert!(unsafe_projection.apply(&unsafe_retry).is_err());
+        assert_eq!(unsafe_projection.sequence(), RunSequence::new(8));
         Ok(())
     }
 
@@ -7699,7 +9468,7 @@ mod tests {
         let fixture = fixture("report-sequence")?;
         let execution = NodeExecutionId::new("execution-task")?;
         let attempt = AttemptId::new("attempt-task")?;
-        let mut projection = RunProjection::replay(&[
+        let dispatch_facts = [
             created(&fixture, 1)?,
             envelope(2, &fixture.run, RunEventKind::RunStarted)?,
             eligible(3, &fixture, "task", &execution, fixture.root.reference())?,
@@ -7715,11 +9484,65 @@ mod tests {
                     request: invocation_request(&InvocationId::new("invocation-task")?, None)?,
                 },
             )?,
-        ])?;
+            envelope(
+                5,
+                &fixture.run,
+                RunEventKind::CapabilityResolved {
+                    execution: execution.clone(),
+                    attempt: attempt.clone(),
+                    requirement: CapabilityRequirement::new(OperationId::new("tool.publish")?)
+                        .provider_profile(ProviderProfileRef::new("publisher-prod")?),
+                    snapshot: resolved_snapshot_with_side_effect(
+                        7,
+                        SideEffectClass::None,
+                        IdempotencyBehavior::Unsupported,
+                    )?,
+                },
+            )?,
+            envelope(
+                6,
+                &fixture.run,
+                RunEventKind::SideEffectClassified {
+                    attempt: attempt.clone(),
+                    side_effect: SideEffectClass::None,
+                    idempotency: IdempotencyBehavior::Unsupported,
+                    idempotency_key: None,
+                },
+            )?,
+            envelope(
+                7,
+                &fixture.run,
+                RunEventKind::LeaseGranted {
+                    lease: LeaseId::new("lease-task")?,
+                    execution: execution.clone(),
+                    attempt: attempt.clone(),
+                    worker: WorkerId::new("worker-task")?,
+                    expires_at: TimestampMillis::new(10_000),
+                },
+            )?,
+        ];
+        let mut projection = RunProjection::replay(&dispatch_facts[..4])?;
+        let bare_terminal = envelope(
+            5,
+            &fixture.run,
+            RunEventKind::NodeTerminal {
+                execution: execution.clone(),
+                attempt: attempt.clone(),
+                report_sequence: 1,
+                outcome: NodeOutcome::Succeeded,
+                error_class: None,
+                detail: None,
+            },
+        )?;
+        assert!(projection.apply(&bare_terminal).is_err());
+        assert_eq!(projection.sequence(), RunSequence::new(4));
+        for fact in &dispatch_facts[4..] {
+            projection.apply(fact)?;
+        }
         assert!(
             projection
                 .apply(&envelope(
-                    5,
+                    8,
                     &fixture.run,
                     RunEventKind::NodeTerminal {
                         execution: execution.clone(),
@@ -7733,7 +9556,7 @@ mod tests {
                 .is_err()
         );
         projection.apply(&envelope(
-            5,
+            8,
             &fixture.run,
             RunEventKind::NodeTerminal {
                 execution: execution.clone(),
@@ -7751,7 +9574,7 @@ mod tests {
         assert!(
             projection
                 .apply(&envelope(
-                    6,
+                    9,
                     &fixture.run,
                     RunEventKind::NodeTerminal {
                         execution,

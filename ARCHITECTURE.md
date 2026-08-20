@@ -71,7 +71,7 @@ Context is selected from graph causality, declared inputs, chosen artifacts, sco
 
 ## 10. Durable persistence and crash recovery
 
-The persistence boundary appends checksummed, versioned events transactionally with command idempotency, workspace/accounting changes, and recovery indexes. Durable timers, signals, leases, cancellation requests, and uncertain invocations survive process restarts. Startup verifies journal integrity, rebuilds or checks projections, reclaims expired leases, and resumes only from persisted state. A crash between external effect and acknowledgement becomes an explicit uncertain/reconciliation case governed by idempotency and side-effect facts, never guessed success.
+The persistence boundary appends checksummed, versioned events transactionally with command idempotency, workspace/accounting changes, and recovery indexes. Durable timers, signals, leases, cancellation requests, and uncertain invocations survive process restarts. `RuntimeService::new` verifies storage-schema compatibility; it does not itself run recovery. The owning host must gate admission, finish bounded integrity/index checks, and explicitly invoke bounded recovery before accepting new work. A future daemon owns that lifecycle. A crash between external effect and acknowledgement becomes an explicit uncertain/reconciliation case governed by idempotency and side-effect facts, never guessed success.
 
 Storage engines are adapters. No database type enters blueprint or capability semantics. Compatibility fixtures cover old on-disk data, recovery tests inject truncation/reordering/duplicate delivery/failed fsync boundaries where the selected backend permits, and migrations are restartable.
 

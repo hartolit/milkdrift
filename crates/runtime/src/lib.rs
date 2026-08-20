@@ -34,7 +34,6 @@ pub use executor::{
     MAX_REPORTS_PER_DISPATCH, ResolvedCapability, TaskExecutor,
 };
 pub use projection::*;
-pub use query::load_complete_history;
 pub use reconciliation::{
     HistoricalExecutionState, NodeHistory, ReconciliationPlan, plan_reconciliation,
     validate_plan_is_fresh,

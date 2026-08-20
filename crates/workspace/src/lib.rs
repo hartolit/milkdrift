@@ -45,13 +45,14 @@ mod value;
 
 pub use artifact::{
     ArtifactMetadata, ArtifactProvenance, ArtifactReference, ArtifactRetention,
-    ArtifactSensitivity, CausalReference, ContentDigest, MediaType, RetentionDeadline,
+    ArtifactSensitivity, CausalReference, ContentDigest, MAX_MEDIA_TYPE_BYTES, MediaType,
+    RetentionDeadline,
 };
 pub use budget::{WorkspaceBudget, WorkspaceUsage};
 pub use error::WorkspaceError;
 pub use identity::{
-    ArtifactId, BranchId, CausalId, IterationId, RunId, ScopeId, SubworkflowId, ValueKey,
-    ValueVersion,
+    ArtifactId, BranchId, CausalId, IterationId, MAX_EXTENDED_ID_BYTES, MAX_STANDARD_ID_BYTES,
+    RunId, ScopeId, SubworkflowId, ValueKey, ValueVersion,
 };
 pub use scope::{MAX_SCOPE_DEPTH, ScopeKind, ScopeLineage, ScopeReference, WorkspaceScope};
 pub use value::{ValueOrigin, WorkspaceValue, WorkspaceValueEntry, WorkspaceValueReference};

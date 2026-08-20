@@ -444,6 +444,16 @@ impl RunCommandDocument {
                         .to_owned(),
                 ));
             }
+            RunCommand::ResolveExternalWork {
+                action:
+                    ExternalWorkAction::ResolveSucceeded | ExternalWorkAction::ResolveFailed,
+                ..
+            } if self.evidence.is_empty() => {
+                return Err(RuntimeError::InvalidCommand(
+                    "resolving uncertain external work as succeeded or failed requires durable evidence"
+                        .to_owned(),
+                ));
+            }
             _ => {}
         }
         let _ = self.to_canonical_json()?;

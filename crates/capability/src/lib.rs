@@ -30,6 +30,7 @@ pub use identity::{
 pub use invocation::{
     ArtifactReference, CancellationAcknowledgement, CancellationRequest, ErrorClass,
     InputReference, InvocationEvent, InvocationEventKind, InvocationFailure, InvocationRequest,
-    InvocationTerminal, InvocationValueReference, TerminalStatus, UsageObservation,
+    InvocationTerminal, InvocationValueReference, MAX_DURABLE_REFERENCE_BYTES, TerminalStatus,
+    UsageObservation,
 };
 pub use resolved::ResolvedCapabilitySnapshot;

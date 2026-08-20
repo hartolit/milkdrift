@@ -226,6 +226,7 @@ dependencies = [
  "milkdrift-redb-store",
  "milkdrift-workspace",
  "proptest",
+ "redb",
  "serde",
  "serde_json",
  "tempfile",

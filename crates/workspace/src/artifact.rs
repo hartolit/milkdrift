@@ -7,7 +7,8 @@ use crate::{ArtifactId, CausalId, RunId, ValueKey, WorkspaceError, WorkspaceValu
 
 const BLAKE3_DIGEST_BYTES: usize = 32;
 const BLAKE3_HEX_BYTES: usize = BLAKE3_DIGEST_BYTES * 2;
-const MAX_MEDIA_TYPE_BYTES: usize = 255;
+/// Maximum bytes in one canonical artifact media type.
+pub const MAX_MEDIA_TYPE_BYTES: usize = 255;
 const MAX_CAUSAL_REFERENCES: usize = 128;
 
 /// Canonical 256-bit BLAKE3 content digest.

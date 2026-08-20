@@ -8,7 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 blake3.workspace = true
-milkdrift-capability = { path = "../capability" }
+milkdrift-capability = { version = "=0.1.0", path = "../capability" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

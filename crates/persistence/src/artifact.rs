@@ -8,6 +8,9 @@ use crate::{
     bounded::MAX_ARTIFACT_CHUNK_BYTES,
 };
 
+/// Maximum opaque key bytes retained by one resumable orphan-cleanup cursor.
+pub const MAX_ORPHAN_CLEANUP_CURSOR_KEY_BYTES: usize = 512;
+
 /// Request to begin one bounded, content-addressed artifact publication.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -217,8 +220,69 @@ pub struct ArtifactReadChunk {
     pub end_of_artifact: bool,
 }
 
+/// Closed filesystem candidate family traversed by orphan cleanup.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum OrphanCleanupFamily {
+    /// Writable publication sessions ordered by their durable age-index key.
+    WritablePublications,
+    /// Unowned temporary publication files.
+    TemporaryFiles,
+    /// Content-addressed blobs lacking every durable owner/reference.
+    ContentFiles,
+}
+
+/// Stable exclusive resume point for one bounded orphan-cleanup cycle.
+///
+/// The key is adapter-defined and opaque to callers. The cursor is bound to the
+/// exact age threshold so advancing that threshold cannot silently skip a file
+/// that was too young on an earlier page.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OrphanCleanupCursor {
+    family: OrphanCleanupFamily,
+    after_key: Vec<u8>,
+    created_before: TimestampMillis,
+}
+
+impl OrphanCleanupCursor {
+    /// Constructs a validated exclusive cleanup resume point.
+    pub fn new(
+        family: OrphanCleanupFamily,
+        after_key: Vec<u8>,
+        created_before: TimestampMillis,
+    ) -> Result<Self, PersistenceError> {
+        if after_key.is_empty() || after_key.len() > MAX_ORPHAN_CLEANUP_CURSOR_KEY_BYTES {
+            return Err(PersistenceError::InvalidCursor(format!(
+                "orphan-cleanup cursor key must contain 1..={MAX_ORPHAN_CLEANUP_CURSOR_KEY_BYTES} bytes"
+            )));
+        }
+        Ok(Self {
+            family,
+            after_key,
+            created_before,
+        })
+    }
+
+    /// Filesystem candidate family containing the exclusive resume key.
+    #[must_use]
+    pub const fn family(&self) -> OrphanCleanupFamily {
+        self.family
+    }
+
+    /// Opaque adapter-defined exclusive resume key.
+    #[must_use]
+    pub fn after_key(&self) -> &[u8] {
+        &self.after_key
+    }
+
+    /// Exact age threshold to which this cleanup cycle is bound.
+    #[must_use]
+    pub const fn created_before(&self) -> TimestampMillis {
+        self.created_before
+    }
+}
+
 /// Bounded request for safe orphan cleanup.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OrphanCleanupRequest {
     /// Boundary-clock observation used for age/retention decisions.
     pub observed_at: TimestampMillis,
@@ -226,10 +290,12 @@ pub struct OrphanCleanupRequest {
     pub created_before: TimestampMillis,
     /// Maximum candidates examined/deleted in one call.
     pub limit: PageSize,
+    /// Exclusive cursor from the prior page of this exact age-threshold cycle.
+    pub cursor: Option<OrphanCleanupCursor>,
 }
 
 /// Report from safe artifact cleanup.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct OrphanCleanupResult {
     /// Temporary publication streams removed.
     pub temporary_publications_removed: u32,
@@ -237,6 +303,8 @@ pub struct OrphanCleanupResult {
     pub unreferenced_blobs_removed: u32,
     /// Bytes reclaimed.
     pub bytes_reclaimed: u64,
+    /// Exclusive resume point for the next bounded page; absent when exhausted.
+    pub next_cursor: Option<OrphanCleanupCursor>,
 }
 
 /// Narrow synchronous, streaming, content-addressed artifact port.
@@ -313,5 +381,37 @@ pub fn authorize_artifact_read(
         Err(PersistenceError::ArtifactAccessDenied(
             "explicit authority is required to read non-public artifact content".to_owned(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn orphan_cleanup_cursor_is_bounded_and_threshold_bound() -> Result<(), PersistenceError> {
+        let threshold = TimestampMillis::new(500);
+        assert!(
+            OrphanCleanupCursor::new(OrphanCleanupFamily::TemporaryFiles, Vec::new(), threshold,)
+                .is_err()
+        );
+        assert!(
+            OrphanCleanupCursor::new(
+                OrphanCleanupFamily::ContentFiles,
+                vec![0; MAX_ORPHAN_CLEANUP_CURSOR_KEY_BYTES + 1],
+                threshold,
+            )
+            .is_err()
+        );
+
+        let cursor = OrphanCleanupCursor::new(
+            OrphanCleanupFamily::ContentFiles,
+            vec![0, 0xff, b'/'],
+            threshold,
+        )?;
+        assert_eq!(cursor.family(), OrphanCleanupFamily::ContentFiles);
+        assert_eq!(cursor.after_key(), &[0, 0xff, b'/']);
+        assert_eq!(cursor.created_before(), threshold);
+        Ok(())
     }
 }

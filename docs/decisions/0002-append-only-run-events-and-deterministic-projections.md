@@ -11,9 +11,9 @@ Runs must survive restart, accept duplicated commands safely, and remain explain
 
 Each run is one append-only aggregate with a single monotonically increasing sequence. A versioned command carries an idempotency identity, actor, exact aggregate, optimistic sequence guard, boundary-supplied timestamp, bounded intent, reason, and evidence. The runtime reads and projects the exact history, validates the command, and atomically commits closed schema-v1 event facts plus the durable command result and discoverability changes.
 
-Only the runtime translates commands and authenticated worker reports into events. Workers never append arbitrary facts. Event envelopes have stable event identities, explicit schema versions, sequence numbers, bounded bodies, and integrity digests. Unknown versions, gaps, duplicates, and malformed history are errors rather than empty state.
+Only the runtime translates commands and authenticated worker reports into events. Workers never append arbitrary facts. Event envelopes have stable event identities, explicit schema versions, sequence numbers, bounded bodies, and integrity digests. Unknown versions, gaps, duplicates, and malformed history are errors rather than empty state. Exact command-result reads and idempotent replay validate the authoritative journal head, so a surviving result cannot turn missing or lowered history into success.
 
-Run projections are pure folds over ordered events. Replay does not read clocks, identifiers, registries, providers, files, databases, networks, or mutable globals. Snapshots are optional checked accelerators naming the exact covered sequence and digest; the journal remains authoritative.
+Run projections are pure folds over ordered events. The runtime verifies and folds exact history through fixed-size resumable pages rather than materializing an unbounded event vector. Replay does not read clocks, identifiers, registries, providers, files, databases, networks, or mutable globals. Snapshots are optional checked accelerators naming the exact covered sequence and digest; the journal remains authoritative.
 
 ## Rejected alternatives
 

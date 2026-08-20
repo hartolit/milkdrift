@@ -26,13 +26,15 @@ mod revision;
 mod snapshot;
 
 pub use admin::{
-    IntegrityScanRequest, IntegrityScanResult, STORAGE_SCHEMA_VERSION_V1, StorageAdmin,
+    IntegrityScanCursor, IntegrityScanFamily, IntegrityScanRequest, IntegrityScanResult,
+    MAX_INTEGRITY_SCAN_CURSOR_KEY_BYTES, STORAGE_SCHEMA_VERSION_V1, StorageAdmin,
     StorageComponentHealth, StorageHealth, StorageHealthStatus, StorageSchemaCompatibility,
     StorageSchemaInfo,
 };
 pub use artifact::{
     ArtifactReadAuthority, ArtifactReadChunk, ArtifactReadRequest, ArtifactStore,
     ArtifactWriteProgress, BeginArtifactOutcome, BeginArtifactPublication, CommitArtifactOutcome,
+    MAX_ORPHAN_CLEANUP_CURSOR_KEY_BYTES, OrphanCleanupCursor, OrphanCleanupFamily,
     OrphanCleanupRequest, OrphanCleanupResult, authorize_artifact_read,
 };
 pub use bounded::{
@@ -59,14 +61,15 @@ pub use identity::{
     SnapshotId, TimerId, TimestampMillis, WorkerId,
 };
 pub use journal::{
-    AtomicRunCommitOutcome, AtomicRunCommitRequest, COMMAND_RESULT_SCHEMA_VERSION_V1,
-    CommandDisposition, CommandReceipt, CommandResultDocument, EventCursor, EventPage,
-    EventPageQuery, IndexedRunState, LeaseIndexEntry, LeaseIndexMutation,
+    ActiveLeaseSnapshot, AtomicRunCommitOutcome, AtomicRunCommitRequest,
+    COMMAND_RESULT_SCHEMA_VERSION_V1, CommandDisposition, CommandReceipt, CommandResultDocument,
+    EventCursor, EventPage, EventPageQuery, IndexedRunState, LeaseIndexEntry, LeaseIndexMutation,
     MAX_COMMAND_DOCUMENT_BYTES, MAX_COMMAND_RESULT_DOCUMENT_BYTES, MAX_INDEX_MUTATIONS_PER_COMMIT,
-    MAX_REQUIRED_ARTIFACTS_PER_COMMIT, MAX_WORKSPACE_MUTATIONS_PER_COMMIT, RunIndexUpdate,
-    RunJournal, RunQueryStore, RunSummaryCursor, RunSummaryFilter, RunSummaryIndex, RunSummaryPage,
-    RunSummaryPageQuery, RunnableCursor, RunnableIndexEntry, RunnableIndexMutation, RunnablePage,
-    TimerIndexEntry, TimerIndexMutation, WorkspaceAccounting, WorkspaceMutation, WorkspaceStore,
+    MAX_REQUIRED_ARTIFACTS_PER_COMMIT, MAX_VALUE_PROVENANCE_DEPTH,
+    MAX_WORKSPACE_MUTATIONS_PER_COMMIT, RunIndexUpdate, RunJournal, RunQueryStore,
+    RunSummaryCursor, RunSummaryFilter, RunSummaryIndex, RunSummaryPage, RunSummaryPageQuery,
+    RunnableCursor, RunnableIndexEntry, RunnableIndexMutation, RunnablePage, TimerIndexEntry,
+    TimerIndexMutation, WorkspaceAccounting, WorkspaceMutation, WorkspaceStore,
 };
 pub use revision::{ImmutableRevisionPut, RevisionStore, RevisionSummary};
 pub use snapshot::{

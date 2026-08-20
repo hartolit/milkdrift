@@ -77,6 +77,40 @@ pub(crate) fn prefix_end(mut prefix: Vec<u8>) -> Option<Vec<u8>> {
     None
 }
 
+pub(crate) fn decode_components(
+    encoded: &[u8],
+    expected: usize,
+) -> Result<Vec<&str>, PersistenceError> {
+    let mut offset = 0_usize;
+    let mut decoded = Vec::with_capacity(expected);
+    for _ in 0..expected {
+        let length_end = offset
+            .checked_add(COMPONENT_LENGTH_BYTES)
+            .ok_or_else(|| bounds("compound key offset overflow"))?;
+        let length_bytes: [u8; COMPONENT_LENGTH_BYTES] = encoded
+            .get(offset..length_end)
+            .ok_or_else(|| bounds("compound key has a truncated component length"))?
+            .try_into()
+            .map_err(|_| bounds("compound key component length is malformed"))?;
+        let length = usize::try_from(u32::from_be_bytes(length_bytes))
+            .map_err(|_| bounds("compound key component length cannot be represented"))?;
+        let value_end = length_end
+            .checked_add(length)
+            .ok_or_else(|| bounds("compound key component end overflow"))?;
+        let value = encoded
+            .get(length_end..value_end)
+            .ok_or_else(|| bounds("compound key has a truncated component"))?;
+        decoded.push(std::str::from_utf8(value).map_err(|_| {
+            PersistenceError::Corruption("compound key component is not valid UTF-8".to_owned())
+        })?);
+        offset = value_end;
+    }
+    if offset != encoded.len() {
+        return Err(bounds("compound key contains trailing bytes"));
+    }
+    Ok(decoded)
+}
+
 pub(crate) fn ordered_timestamp(
     timestamp_millis: u64,
     identity: &str,
@@ -123,6 +157,17 @@ mod tests {
         let lower = run_sequence("run", RunSequence::new(255))?;
         let higher = run_sequence("run", RunSequence::new(256))?;
         assert!(lower < higher);
+        Ok(())
+    }
+
+    #[test]
+    fn compound_components_round_trip_exactly() -> Result<(), PersistenceError> {
+        let encoded = components(&["first", "second", "third"])?;
+        assert_eq!(
+            decode_components(&encoded, 3)?,
+            vec!["first", "second", "third"]
+        );
+        assert!(decode_components(&encoded, 2).is_err());
         Ok(())
     }
 }

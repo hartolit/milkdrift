@@ -18,6 +18,7 @@ mod revision;
 mod schema;
 mod snapshot;
 mod store;
+mod trie;
 
 pub use fault::{FaultInjector, FaultPoint, injected_failure};
 pub use store::{RedbStore, RedbStoreConfig};

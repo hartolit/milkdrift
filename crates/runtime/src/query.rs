@@ -105,69 +105,14 @@ pub(crate) fn load_bounded_history<S: RunQueryStore + ?Sized>(
     )
 }
 
-/// Reads a complete authoritative history through bounded resumable pages.
-///
-/// Every page is verified by persistence. This helper additionally checks that the
-/// cursor advances and the assembled result reaches the read transaction's observed
-/// head; malformed or changing history is never interpreted as an empty run.
-pub fn load_complete_history<S: RunQueryStore + ?Sized>(
-    store: &S,
-    run: &RunId,
-) -> Result<Vec<RunEventEnvelope>, RuntimeError> {
-    let limit = PageSize::new(1_000)?;
-    let mut cursor = None;
-    let mut events = Vec::new();
-    let mut last_observed_head = None;
-    loop {
-        let page = store.events(&EventPageQuery::new(run.clone(), cursor.clone(), limit)?)?;
-        if let Some(previous) = last_observed_head {
-            if previous != page.observed_head {
-                return Err(RuntimeError::InvalidHistory(
-                    "journal head changed during a complete-history read; retry from sequence one"
-                        .to_owned(),
-                ));
-            }
-        }
-        last_observed_head = Some(page.observed_head);
-        let previous_len = events.len();
-        events.extend(page.events);
-        match page.next {
-            Some(next) => {
-                if events.len() == previous_len
-                    || cursor
-                        .as_ref()
-                        .is_some_and(|prior: &milkdrift_persistence::EventCursor| {
-                            next.next_sequence <= prior.next_sequence
-                        })
-                {
-                    return Err(RuntimeError::InvalidHistory(
-                        "event pagination cursor did not advance".to_owned(),
-                    ));
-                }
-                cursor = Some(next);
-            }
-            None => break,
-        }
-    }
-    let observed = last_observed_head.unwrap_or(RunSequence::ZERO);
-    let assembled = events
-        .last()
-        .map_or(RunSequence::ZERO, RunEventEnvelope::sequence);
-    if assembled != observed {
-        return Err(RuntimeError::InvalidHistory(format!(
-            "assembled history ended at {assembled}, but storage observed head {observed}"
-        )));
-    }
-    Ok(events)
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
     use milkdrift_persistence::{
-        EventCursor, EventPage, LeaseIndexEntry, PersistenceError, RunEventKind, RunSummaryIndex,
-        RunSummaryPage, RunSummaryPageQuery, TimerIndexEntry, TimestampMillis,
+        ActiveLeaseSnapshot, EventCursor, EventPage, IntegrityDigest, LeaseIndexEntry,
+        PersistenceError, RunEventKind, RunSummaryIndex, RunSummaryPage, RunSummaryPageQuery,
+        TimerIndexEntry, TimestampMillis,
     };
 
     use super::*;
@@ -258,8 +203,11 @@ mod tests {
         fn active_leases(
             &self,
             _limit: PageSize,
-        ) -> Result<Vec<LeaseIndexEntry>, PersistenceError> {
-            Ok(Vec::new())
+        ) -> Result<ActiveLeaseSnapshot, PersistenceError> {
+            Ok(ActiveLeaseSnapshot {
+                entries: Vec::new(),
+                witness: IntegrityDigest::hash(b"empty test lease catalog"),
+            })
         }
 
         fn due_timers(

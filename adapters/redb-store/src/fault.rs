@@ -6,6 +6,14 @@ use milkdrift_persistence::{PersistenceError, StorageFailureClass};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum FaultPoint {
+    /// After schema rows are prepared, immediately before the initializing commit.
+    BeforeSchemaCommit,
+    /// Immediately after the schema-initialization transaction commits.
+    AfterSchemaCommit,
+    /// After a historical format is fully validated, before its migration commit.
+    BeforeMigrationCommit,
+    /// Immediately after an internal-document migration commits.
+    AfterMigrationCommit,
     /// Immediately before committing a command transaction.
     BeforeCommandCommit,
     /// Immediately after redb has committed a command transaction.
@@ -26,6 +34,14 @@ pub enum FaultPoint {
     BeforeArtifactBeginCommit,
     /// Immediately after the publication session transaction commits.
     AfterArtifactBeginCommit,
+    /// After durable pending-temp intent, before creating and syncing the file.
+    BeforeArtifactTempCreate,
+    /// After the new empty temp file and its directory are durably synchronized.
+    AfterArtifactTempCreate,
+    /// Before committing the pending-to-ready temp-inventory transition.
+    BeforeArtifactTempReadyCommit,
+    /// After the pending-to-ready temp-inventory transition commits.
+    AfterArtifactTempReadyCommit,
     /// Before appending a validated artifact chunk to its temporary stream.
     BeforeArtifactChunkWrite,
     /// After an appended artifact chunk has been synchronized to durable storage.
@@ -34,6 +50,10 @@ pub enum FaultPoint {
     BeforeArtifactRename,
     /// After artifact rename and directory sync, before metadata commit.
     AfterArtifactRename,
+    /// Before committing durable final-content-path intent ahead of rename.
+    BeforeArtifactContentIntentCommit,
+    /// After final-content-path intent commits and before rename may proceed.
+    AfterArtifactContentIntentCommit,
     /// Immediately before artifact metadata transaction commit.
     BeforeArtifactMetadataCommit,
     /// Immediately after artifact metadata transaction commit.
@@ -54,6 +74,14 @@ pub enum FaultPoint {
     BeforeArtifactCleanupDelete,
     /// After deleting and synchronizing one unowned artifact file during cleanup.
     AfterArtifactCleanupDelete,
+    /// Before committing removal of a durably deleted path-inventory leaf.
+    BeforeArtifactPathFinalizeCommit,
+    /// After removal of a durably deleted path-inventory leaf commits.
+    AfterArtifactPathFinalizeCommit,
+    /// Before committing an authenticated delete guard ahead of filesystem unlink.
+    BeforeArtifactPathDeleteIntentCommit,
+    /// After an authenticated delete guard commits and before filesystem unlink.
+    AfterArtifactPathDeleteIntentCommit,
 }
 
 /// Synchronous test hook. Production configuration defaults to a no-op hook.

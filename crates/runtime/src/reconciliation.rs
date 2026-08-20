@@ -224,6 +224,7 @@ pub fn plan_reconciliation(
                 ReconciliationClassification::IncompatibleInterfaceOrSubworkflow,
                 None,
                 policy,
+                false,
             ),
             reason: Reason::new(
                 "workflow interface changed and cannot reinterpret this run's existing inputs or outputs",
@@ -242,7 +243,20 @@ pub fn plan_reconciliation(
     for node in identities {
         let old_node = old.semantic().nodes().get(&node);
         let new_node = new.semantic().nodes().get(&node);
-        let mut executions = history.get(&node).cloned().unwrap_or_default();
+        // A node added to the immediately prospective revision is a new occurrence
+        // even when an older, already removed revision used the same stable NodeId.
+        let histories = if old_node.is_none() && new_node.is_some() {
+            &[][..]
+        } else {
+            history.get(&node).map_or(&[][..], Vec::as_slice)
+        };
+        let additional_items = histories.len().max(1);
+        if items.len().saturating_add(additional_items) > MAX_RECONCILIATION_PLAN_ITEMS {
+            return Err(RuntimeError::Reconciliation(format!(
+                "reconciliation plan exceeds {MAX_RECONCILIATION_PLAN_ITEMS} items"
+            )));
+        }
+        let mut executions = histories.to_vec();
         executions.sort_by(|left, right| {
             left.created_sequence
                 .cmp(&right.created_sequence)
@@ -269,7 +283,7 @@ pub fn plan_reconciliation(
                 node: Some(node),
                 execution: None,
                 classification,
-                action: action_for(classification, None, policy),
+                action: action_for(classification, None, policy, new_node.is_some()),
                 reason: Reason::new(rationale)?,
             });
         } else {
@@ -290,7 +304,7 @@ pub fn plan_reconciliation(
                     node: Some(node.clone()),
                     execution: Some(execution.execution.clone()),
                     classification,
-                    action: action_for(classification, Some(execution), policy),
+                    action: action_for(classification, Some(execution), policy, new_node.is_some()),
                     reason: Reason::new(rationale)?,
                 });
             }
@@ -428,6 +442,7 @@ fn action_for(
     classification: ReconciliationClassification,
     history: Option<&NodeHistory>,
     policy: ReconciliationPolicy,
+    target_exists: bool,
 ) -> ReconciliationAction {
     use ReconciliationAction as Action;
     use ReconciliationClassification as Classification;
@@ -442,28 +457,35 @@ fn action_for(
         Classification::ChangedActive => match policy {
             ReconciliationPolicy::FinishCurrentThenAdopt => Action::UseNewOnNextInvocation,
             ReconciliationPolicy::CancelAndRestartSafeWork
-                if history.is_some_and(|history| {
-                    matches!(
-                        history.state,
-                        HistoricalExecutionState::Active {
-                            cancellation_safe: true,
-                            side_effect: SideEffectClass::None | SideEffectClass::ReadOnly,
-                        }
-                    )
-                }) =>
+                if target_exists
+                    && history.is_some_and(|history| {
+                        matches!(
+                            history.state,
+                            HistoricalExecutionState::Active {
+                                cancellation_safe: true,
+                                side_effect: SideEffectClass::None | SideEffectClass::ReadOnly,
+                            }
+                        )
+                    }) =>
             {
                 Action::CancelAndRestart
             }
-            ReconciliationPolicy::CompensateOrRemediate => Action::CompensateOrRemediate,
+            ReconciliationPolicy::CompensateOrRemediate if target_exists => {
+                Action::CompensateOrRemediate
+            }
             ReconciliationPolicy::RequireAuthority => Action::RequireAuthority,
             ReconciliationPolicy::CancelAndRestartSafeWork
+            | ReconciliationPolicy::CompensateOrRemediate
             | ReconciliationPolicy::RemoveUnstartedOnly => Action::RejectRetrospectiveRewrite,
         },
         Classification::CompletedOrUncertainSideEffects => match policy {
-            ReconciliationPolicy::CompensateOrRemediate => Action::CompensateOrRemediate,
+            ReconciliationPolicy::CompensateOrRemediate if target_exists => {
+                Action::CompensateOrRemediate
+            }
             ReconciliationPolicy::RequireAuthority => Action::RequireAuthority,
             ReconciliationPolicy::FinishCurrentThenAdopt
             | ReconciliationPolicy::CancelAndRestartSafeWork
+            | ReconciliationPolicy::CompensateOrRemediate
             | ReconciliationPolicy::RemoveUnstartedOnly => Action::RejectRetrospectiveRewrite,
         },
         Classification::StartedDescendantDependencyChanged
@@ -506,7 +528,10 @@ pub(crate) const fn reconciliation_action_is_valid(
                 )
             }
             ReconciliationPolicy::CompensateOrRemediate => {
-                matches!(action, Action::CompensateOrRemediate)
+                matches!(
+                    action,
+                    Action::CompensateOrRemediate | Action::RejectRetrospectiveRewrite
+                )
             }
             ReconciliationPolicy::RemoveUnstartedOnly => {
                 matches!(action, Action::RejectRetrospectiveRewrite)
@@ -517,7 +542,10 @@ pub(crate) const fn reconciliation_action_is_valid(
         },
         Classification::CompletedOrUncertainSideEffects => match policy {
             ReconciliationPolicy::CompensateOrRemediate => {
-                matches!(action, Action::CompensateOrRemediate)
+                matches!(
+                    action,
+                    Action::CompensateOrRemediate | Action::RejectRetrospectiveRewrite
+                )
             }
             ReconciliationPolicy::RequireAuthority => {
                 matches!(action, Action::RequireAuthority)
@@ -828,7 +856,7 @@ mod tests {
                     },
                     C::RequiresAuthority => A::RequireAuthority,
                 };
-                let actual = action_for(classification, Some(&safe_active), policy);
+                let actual = action_for(classification, Some(&safe_active), policy, true);
                 assert_eq!(actual, expected, "{classification:?} under {policy:?}");
                 assert!(reconciliation_action_is_valid(
                     classification,
@@ -851,10 +879,40 @@ mod tests {
             action_for(
                 C::ChangedActive,
                 Some(&unsafe_active),
-                P::CancelAndRestartSafeWork
+                P::CancelAndRestartSafeWork,
+                true,
             ),
             A::RejectRetrospectiveRewrite
         );
+        assert_eq!(
+            action_for(
+                C::ChangedActive,
+                Some(&safe_active),
+                P::CancelAndRestartSafeWork,
+                false,
+            ),
+            A::RejectRetrospectiveRewrite
+        );
+        for classification in [C::ChangedActive, C::CompletedOrUncertainSideEffects] {
+            assert_eq!(
+                action_for(
+                    classification,
+                    Some(&safe_active),
+                    P::CompensateOrRemediate,
+                    false,
+                ),
+                A::RejectRetrospectiveRewrite
+            );
+            assert_eq!(
+                action_for(
+                    classification,
+                    Some(&safe_active),
+                    P::RequireAuthority,
+                    false,
+                ),
+                A::RequireAuthority
+            );
+        }
         assert!(!reconciliation_action_is_valid(
             C::RemovedPending,
             A::Preserve,

@@ -5,11 +5,12 @@ use thiserror::Error;
 
 use crate::{
     BindingSource, Condition, ConditionOperand, EdgeKind, JoinPolicy, Node, NodeId, NodeKind,
-    SemanticBlueprint,
+    ReducerStrategy, SemanticBlueprint,
     model::{MAX_EDGES, MAX_NODES},
 };
 
 const MAX_DIAGNOSTICS: usize = 256;
+const MAX_BRANCH_RESULT_REFERENCES: usize = 256;
 
 /// Stable machine-readable blueprint invariant code.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
@@ -437,7 +438,30 @@ fn validate_edges_and_bindings(semantic: &SemanticBlueprint, diagnostics: &mut V
                     ),
                 );
             }
-            if port.binding().is_some() && !incoming.is_empty() {
+            let binding_uses_exact_node_dependency = match port.binding() {
+                Some(BindingSource::NodeOutput {
+                    node: source_node,
+                    port: source_port,
+                    ..
+                }) => {
+                    !incoming.is_empty()
+                        && incoming.iter().all(|edge| {
+                            edge.source_node() == source_node && edge.source_port() == source_port
+                        })
+                }
+                Some(
+                    BindingSource::Literal { .. }
+                    | BindingSource::WorkflowInput { .. }
+                    | BindingSource::WorkspaceValue { .. }
+                    | BindingSource::Artifact { .. }
+                    | BindingSource::SubworkflowParameter { .. },
+                )
+                | None => false,
+            };
+            if port.binding().is_some()
+                && !incoming.is_empty()
+                && !binding_uses_exact_node_dependency
+            {
                 push(
                     diagnostics,
                     Diagnostic::new(
@@ -453,6 +477,7 @@ fn validate_edges_and_bindings(semantic: &SemanticBlueprint, diagnostics: &mut V
                     node_id,
                     port_id,
                     port.schema(),
+                    port.is_required(),
                     binding,
                     diagnostics,
                 );
@@ -466,6 +491,7 @@ fn validate_binding(
     node_id: &NodeId,
     port_id: &crate::PortId,
     target_schema: &crate::SchemaRef,
+    target_required: bool,
     binding: &BindingSource,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -473,7 +499,18 @@ fn validate_binding(
     match binding {
         BindingSource::WorkflowInput { field } | BindingSource::SubworkflowParameter { field } => {
             match semantic.interface().inputs().get(field) {
-                Some(input) if input.schema().compatible_with(target_schema) => {}
+                Some(input) if input.schema().compatible_with(target_schema) => {
+                    if target_required && !input.is_required() {
+                        push(
+                            diagnostics,
+                            Diagnostic::new(
+                                DiagnosticCode::MissingInput,
+                                location,
+                                "a required node input cannot bind an optional workflow input",
+                            ),
+                        );
+                    }
+                }
                 Some(_) => push(
                     diagnostics,
                     Diagnostic::new(
@@ -729,6 +766,21 @@ fn validate_control_topology(semantic: &SemanticBlueprint, diagnostics: &mut Vec
                         ),
                     );
                 }
+                if config.fallback().is_none()
+                    && !config
+                        .arms()
+                        .values()
+                        .any(|condition| matches!(condition, Condition::Constant { value: true }))
+                {
+                    push(
+                        diagnostics,
+                        Diagnostic::new(
+                            DiagnosticCode::InvalidNodeConfiguration,
+                            format!("nodes.{node_id}.branch.fallback"),
+                            "a branch without a statically exhaustive true arm requires a fallback",
+                        ),
+                    );
+                }
             }
             NodeKind::Fork { config } => {
                 if config.branches() != node.control_outputs() || !each_once {
@@ -789,6 +841,13 @@ fn validate_control_topology(semantic: &SemanticBlueprint, diagnostics: &mut Vec
 
 fn validate_fork_join(semantic: &SemanticBlueprint, diagnostics: &mut Vec<Diagnostic>) {
     let adjacency = control_adjacency(semantic);
+    let mut joins_per_fork = BTreeMap::<NodeId, usize>::new();
+    for node in semantic.nodes().values() {
+        if let NodeKind::Join { config } = node.kind() {
+            let count = joins_per_fork.entry(config.fork().clone()).or_default();
+            *count = count.saturating_add(1);
+        }
+    }
     for (join_id, node) in semantic.nodes() {
         let NodeKind::Join { config } = node.kind() else {
             continue;
@@ -815,6 +874,16 @@ fn validate_fork_join(semantic: &SemanticBlueprint, diagnostics: &mut Vec<Diagno
             );
             continue;
         };
+        if joins_per_fork.get(config.fork()).copied().unwrap_or_default() != 1 {
+            push(
+                diagnostics,
+                Diagnostic::new(
+                    DiagnosticCode::InvalidForkJoin,
+                    format!("nodes.{join_id}.join.fork"),
+                    "a fork must have at most one owning join",
+                ),
+            );
+        }
         let incoming_sources: BTreeSet<_> = semantic
             .edges()
             .values()
@@ -836,6 +905,33 @@ fn validate_fork_join(semantic: &SemanticBlueprint, diagnostics: &mut Vec<Diagno
                     .any(|source| reachable.contains(source))
             })
             .count();
+        let mut pre_join_nodes = BTreeSet::new();
+        for start in &branch_starts {
+            pre_join_nodes.extend(reachable_from(start, &adjacency, Some(join_id)));
+        }
+        pre_join_nodes.remove(join_id);
+        let escaping_results: BTreeSet<_> = semantic
+            .edges()
+            .values()
+            .filter(|edge| {
+                edge.kind() == EdgeKind::Data
+                    && pre_join_nodes.contains(edge.source_node())
+                    && !pre_join_nodes.contains(edge.target_node())
+            })
+            .map(|edge| (edge.source_node().clone(), edge.source_port().clone()))
+            .collect();
+        if escaping_results.len() > MAX_BRANCH_RESULT_REFERENCES {
+            push(
+                diagnostics,
+                Diagnostic::new(
+                    DiagnosticCode::BoundsExceeded,
+                    format!("nodes.{join_id}.join.results"),
+                    format!(
+                        "fork branches may export at most {MAX_BRANCH_RESULT_REFERENCES} distinct data source ports"
+                    ),
+                ),
+            );
+        }
         if incoming_sources.is_empty() || covered != branch_starts.len() {
             push(
                 diagnostics,
@@ -920,6 +1016,16 @@ fn validate_reducers_and_subworkflows(
                             && edge.target_port() == config.input_port()
                     })
                     .count();
+                let distinct_incoming: BTreeSet<_> = semantic
+                    .edges()
+                    .values()
+                    .filter(|edge| {
+                        edge.kind() == EdgeKind::Data
+                            && edge.target_node() == node_id
+                            && edge.target_port() == config.input_port()
+                    })
+                    .map(|edge| (edge.source_node().clone(), edge.source_port().clone()))
+                    .collect();
                 if !port.schema().compatible_with(config.item_schema())
                     || incoming < usize::from(config.minimum_items())
                 {
@@ -929,6 +1035,20 @@ fn validate_reducers_and_subworkflows(
                             DiagnosticCode::ReducerMismatch,
                             format!("nodes.{node_id}.reducer"),
                             "reducer item schema or minimum input count does not match data edges",
+                        ),
+                    );
+                }
+                if matches!(config.strategy(), ReducerStrategy::Collect)
+                    && distinct_incoming.len() > MAX_BRANCH_RESULT_REFERENCES
+                {
+                    push(
+                        diagnostics,
+                        Diagnostic::new(
+                            DiagnosticCode::BoundsExceeded,
+                            format!("nodes.{node_id}.reducer.input_port"),
+                            format!(
+                                "a deterministic collect reducer may accept at most {MAX_BRANCH_RESULT_REFERENCES} distinct data source ports"
+                            ),
                         ),
                     );
                 }
@@ -956,7 +1076,10 @@ fn validate_subworkflow_ports(
             .is_some_and(|port_id| {
                 node.data_inputs()
                     .get(&port_id)
-                    .is_some_and(|port| port.schema().compatible_with(expected.schema()))
+                    .is_some_and(|port| {
+                        port.schema().compatible_with(expected.schema())
+                            && (!expected.is_required() || port.is_required())
+                    })
             })
     });
     let outputs_match = interface.outputs().iter().all(|(field, expected)| {
@@ -974,7 +1097,7 @@ fn validate_subworkflow_ports(
             Diagnostic::new(
                 DiagnosticCode::IncompatibleSubworkflow,
                 format!("nodes.{node_id}.subworkflow.interface"),
-                "node data ports must cover the pinned subworkflow interface with exact schemas",
+                "node data ports must cover the pinned subworkflow interface with exact schemas and required child inputs must use required parent ports",
             ),
         );
     }

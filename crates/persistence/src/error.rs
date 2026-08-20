@@ -113,6 +113,14 @@ pub enum PersistenceError {
         /// Conflicting workspace/run accounting domain.
         run: RunId,
     },
+    /// The active-lease catalog changed after runtime admission was calculated.
+    #[error("lease catalog conflict: expected {expected}, actual {actual}")]
+    LeaseCatalogConflict {
+        /// Opaque catalog root observed by the runtime.
+        expected: IntegrityDigest,
+        /// Authoritative catalog root inside the lease-grant transaction.
+        actual: IntegrityDigest,
+    },
     /// Sensitive artifact content was requested without an explicit authority proof.
     #[error("artifact access denied: {0}")]
     ArtifactAccessDenied(String),

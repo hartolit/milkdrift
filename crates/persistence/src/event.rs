@@ -5,8 +5,9 @@ use milkdrift_capability::{
     ResolvedCapabilitySnapshot, SideEffectClass,
 };
 use milkdrift_workspace::{
-    ArtifactMetadata, ArtifactReference, BranchId, CausalReference, IterationId, RunId,
-    ScopeReference, SubworkflowId, WorkspaceBudget, WorkspaceScope, WorkspaceValueReference,
+    ArtifactId, ArtifactMetadata, ArtifactReference, BranchId, CausalReference,
+    ContentDigest as ArtifactContentDigest, IterationId, MediaType, RunId, ScopeReference,
+    SubworkflowId, WorkspaceBudget, WorkspaceScope, WorkspaceValueReference,
 };
 use serde::{Deserialize, Serialize};
 
@@ -88,6 +89,8 @@ pub enum JoinRule {
 pub enum RepeatTerminationReason {
     /// The recorded condition evaluated to false.
     ConditionFalse,
+    /// Immutable inputs could not be evaluated under the declared condition.
+    ConditionEvaluationFailed,
     /// Maximum iteration count was reached.
     MaximumIterations,
     /// A time, cost, resource, or revision budget was exhausted.
@@ -407,6 +410,14 @@ pub enum RunEventKind {
         /// Evidence/authority references.
         evidence: Vec<EvidenceReference>,
     },
+    /// An explicit terminal selected a non-cancellation outcome and began a
+    /// structured drain of already-owned work.
+    RunTerminationRequested {
+        /// Desired terminal outcome once every owned scope is quiescent.
+        outcome: RunOutcome,
+        /// Why structured draining began.
+        reason: Reason,
+    },
     /// A run reached a truthful terminal boundary.
     RunTerminal {
         /// Semantic outcome.
@@ -590,6 +601,22 @@ pub enum RunEventKind {
         error_class: Option<ErrorClass>,
         /// Bounded deterministic result/failure detail.
         detail: Option<BoundedDetail>,
+    },
+    /// An executor-owned node failed before any attempt or lease was created because
+    /// its immutable invocation inputs could not be materialized within the durable
+    /// request/event contract.
+    NodePreDispatchFailed {
+        /// Owning logical execution.
+        execution: NodeExecutionId,
+        /// Truthful immutable request/materialization failure classification.
+        error_class: ErrorClass,
+        /// Bounded deterministic failure detail.
+        detail: Option<BoundedDetail>,
+    },
+    /// Runtime successor planning durably examined one successful execution.
+    StructuredSuccessorScanCompleted {
+        /// Successful execution whose current-revision outgoing routes were examined.
+        execution: NodeExecutionId,
     },
     /// An immutable attempt reached a known terminal outcome.
     NodeTerminal {
@@ -818,6 +845,18 @@ pub enum RunEventKind {
         /// Bounded typed payload.
         payload: BoundedJson,
     },
+    /// A bounded internal pass advanced through the ordered broadcast-wait catalog.
+    ///
+    /// The cursor is durable so a large or mostly incompatible wait catalog cannot
+    /// force one command/tick to rescan or retain the whole fanout in memory.
+    SignalBroadcastScanAdvanced {
+        /// Broadcast signal being drained.
+        signal: SignalId,
+        /// Last ordered wait execution examined, absent only for an empty catalog.
+        through_execution: Option<NodeExecutionId>,
+        /// Whether the scan reached the end of the current eligible catalog.
+        complete: bool,
+    },
     /// A duplicate delivery was observed without consuming twice.
     SignalDeduplicated {
         /// Duplicate signal identity.
@@ -1020,29 +1059,41 @@ pub enum RunEventKind {
 }
 
 impl RunEventKind {
-    pub(crate) fn referenced_artifacts(&self) -> Vec<&ArtifactReference> {
+    /// Derives every complete content-addressed artifact reference retained by this fact.
+    ///
+    /// The atomic journal uses this as the sole event-side ownership source. Executor
+    /// requests may carry provider-neutral artifact references, but durable history
+    /// requires their media type and exact size so verification and workspace accounting
+    /// cannot be bypassed by a direct blueprint artifact binding.
+    pub fn required_artifacts(&self) -> Result<Vec<ArtifactReference>, PersistenceError> {
         match self {
-            Self::RunTerminal { artifacts, .. } => artifacts.iter().collect(),
+            Self::RunTerminal { artifacts, .. } => Ok(artifacts.clone()),
+            Self::NodeScheduled { request, .. } => request
+                .inputs()
+                .iter()
+                .filter_map(|input| input.value().artifact())
+                .map(workspace_artifact_reference)
+                .collect(),
             Self::NodeOutputPublished {
                 artifact: Some(reference),
                 ..
-            } => vec![reference],
+            } => Ok(vec![reference.clone()]),
             Self::DeterministicOutputPublished {
                 artifact: Some(reference),
                 ..
-            } => vec![reference],
+            } => Ok(vec![reference.clone()]),
             Self::ArtifactPublished { metadata } => {
-                let mut references = vec![metadata.reference()];
+                let mut references = vec![metadata.reference().clone()];
                 for causal in std::iter::once(metadata.provenance().producer())
                     .chain(metadata.provenance().causes())
                 {
                     if let CausalReference::Artifact { reference } = causal {
-                        references.push(reference);
+                        references.push(reference.clone());
                     }
                 }
-                references
+                Ok(references)
             }
-            _ => Vec::new(),
+            _ => Ok(Vec::new()),
         }
     }
 
@@ -1132,6 +1183,34 @@ impl RunEventKind {
                         "terminal output and artifact references must be distinct".to_owned(),
                     ));
                 }
+            }
+            Self::RunTerminationRequested { outcome, .. }
+                if *outcome != RunOutcome::Failed =>
+            {
+                return Err(PersistenceError::InvalidDocument(
+                    "internal run termination currently supports only an explicit failed outcome"
+                        .to_owned(),
+                ));
+            }
+            Self::SignalBroadcastScanAdvanced {
+                through_execution: None,
+                complete: false,
+                ..
+            } => {
+                return Err(PersistenceError::InvalidDocument(
+                    "an incomplete broadcast scan must advance through one wait execution"
+                        .to_owned(),
+                ));
+            }
+            Self::RecoveryDecisionRecorded {
+                outcome: AuthorityDecision::ResolveSucceeded | AuthorityDecision::ResolveFailed,
+                evidence,
+                ..
+            } if evidence.is_empty() => {
+                return Err(PersistenceError::InvalidDocument(
+                    "terminal external-work resolution requires at least one evidence reference"
+                        .to_owned(),
+                ));
             }
             Self::RunPaused { evidence, .. }
             | Self::RunResumed { evidence, .. }
@@ -1366,6 +1445,9 @@ impl RunEventKind {
             }
             _ => {}
         }
+        // Validate provider-neutral artifact references even before a commit request
+        // derives its exact ownership/accounting set.
+        let _ = self.required_artifacts()?;
         self.validate_workspace_run(run)?;
         Ok(())
     }
@@ -1423,5 +1505,113 @@ impl RunEventKind {
                     .to_owned(),
             ))
         }
+    }
+}
+
+fn workspace_artifact_reference(
+    reference: &milkdrift_capability::ArtifactReference,
+) -> Result<ArtifactReference, PersistenceError> {
+    let media_type = reference.media_type().ok_or_else(|| {
+        PersistenceError::InvalidDocument(
+            "scheduled artifact input requires an exact media type".to_owned(),
+        )
+    })?;
+    let size_bytes = reference.size_bytes().ok_or_else(|| {
+        PersistenceError::InvalidDocument(
+            "scheduled artifact input requires an exact byte size".to_owned(),
+        )
+    })?;
+    let artifact = ArtifactId::new(reference.identity()).map_err(|error| {
+        PersistenceError::InvalidDocument(format!(
+            "scheduled artifact input has an invalid identity: {error}"
+        ))
+    })?;
+    let digest = ArtifactContentDigest::from_hex(reference.digest()).map_err(|error| {
+        PersistenceError::InvalidDocument(format!(
+            "scheduled artifact input has an invalid digest: {error}"
+        ))
+    })?;
+    let media_type = MediaType::new(media_type).map_err(|error| {
+        PersistenceError::InvalidDocument(format!(
+            "scheduled artifact input has an invalid media type: {error}"
+        ))
+    })?;
+    Ok(ArtifactReference::new(
+        artifact, digest, media_type, size_bytes,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use milkdrift_capability::{
+        ArtifactReference as CapabilityArtifactReference, CapabilityId, InputReference,
+        InvocationValueReference, OperationId,
+    };
+
+    use super::*;
+
+    fn scheduled_with_artifact(
+        media_type: Option<String>,
+        size_bytes: Option<u64>,
+    ) -> Result<RunEventKind, Box<dyn std::error::Error>> {
+        let invocation = InvocationId::new("invocation-artifact")?;
+        let input = InputReference::new(
+            "source",
+            InvocationValueReference::Artifact {
+                reference: CapabilityArtifactReference::new(
+                    "artifact-source",
+                    "a".repeat(64),
+                    media_type,
+                    size_bytes,
+                )?,
+            },
+        )?;
+        let request = InvocationRequest::new(
+            invocation.clone(),
+            CapabilityId::new("artifact-consumer")?,
+            OperationId::new("artifact.consume")?,
+            None,
+            None,
+            vec![input],
+            BTreeMap::new(),
+        )?;
+        Ok(RunEventKind::NodeScheduled {
+            node: NodeId::new("consume")?,
+            execution: NodeExecutionId::new("execution-consume")?,
+            attempt: AttemptId::new("attempt-consume")?,
+            invocation,
+            idempotency_key: None,
+            request,
+        })
+    }
+
+    #[test]
+    fn scheduled_artifact_inputs_are_exact_atomic_ownership_requirements()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let artifacts =
+            scheduled_with_artifact(Some("application/octet-stream".to_owned()), Some(7))?
+                .required_artifacts()?;
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].artifact().as_str(), "artifact-source");
+        assert_eq!(artifacts[0].digest().to_hex(), "a".repeat(64));
+        assert_eq!(
+            artifacts[0].media_type().as_str(),
+            "application/octet-stream"
+        );
+        assert_eq!(artifacts[0].size_bytes(), 7);
+
+        assert!(
+            scheduled_with_artifact(None, Some(7))?
+                .required_artifacts()
+                .is_err()
+        );
+        assert!(
+            scheduled_with_artifact(Some("application/octet-stream".to_owned()), None)?
+                .required_artifacts()
+                .is_err()
+        );
+        Ok(())
     }
 }

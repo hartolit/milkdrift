@@ -13,7 +13,12 @@ const MAX_LABELS: usize = 64;
 
 /// Broad stable category used for discovery without closing the operation namespace.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case", tag = "type", content = "identity")]
+#[serde(
+    rename_all = "snake_case",
+    tag = "type",
+    content = "identity",
+    deny_unknown_fields
+)]
 pub enum CapabilityCategory {
     /// Generative or analytical model operation.
     Model,
@@ -279,6 +284,7 @@ impl OperationContract {
             }
             feature.validate()?;
         }
+        validate_side_effect_idempotency(side_effect, idempotency)?;
         Ok(Self {
             input,
             output,
@@ -348,8 +354,23 @@ impl OperationContract {
             }
             feature.validate()?;
         }
+        validate_side_effect_idempotency(self.side_effect, self.idempotency)?;
         Ok(())
     }
+}
+
+fn validate_side_effect_idempotency(
+    side_effect: SideEffectClass,
+    idempotency: IdempotencyBehavior,
+) -> Result<(), ContractError> {
+    if side_effect == SideEffectClass::IdempotentWrite
+        && idempotency == IdempotencyBehavior::Unsupported
+    {
+        return Err(ContractError::InvalidContract(
+            "an idempotent-write operation must advertise an idempotency-key scope".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// Immutable concurrency and admission limits.

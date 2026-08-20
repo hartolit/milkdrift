@@ -8,18 +8,19 @@ rust-version.workspace = true
 
 [dependencies]
 blake3.workspace = true
-milkdrift-blueprint = { path = "../blueprint" }
-milkdrift-capability = { path = "../capability" }
-milkdrift-persistence = { path = "../persistence" }
-milkdrift-workspace = { path = "../workspace" }
+milkdrift-blueprint = { version = "=0.1.0", path = "../blueprint" }
+milkdrift-capability = { version = "=0.1.0", path = "../capability" }
+milkdrift-persistence = { version = "=0.1.0", path = "../persistence" }
+milkdrift-workspace = { version = "=0.1.0", path = "../workspace" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-milkdrift-redb-store = { path = "../../adapters/redb-store" }
+milkdrift-redb-store = { version = "=0.1.0", path = "../../adapters/redb-store" }
 proptest.workspace = true
+redb = "=2.6.3"
 tempfile = "3.21.0"
 
 [lints]

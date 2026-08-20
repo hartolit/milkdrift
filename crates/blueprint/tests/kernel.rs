@@ -11,7 +11,9 @@ use milkdrift_blueprint::{
     RepeatTermination, RevisionId, SchemaRef, TerminalOutcome, WorkflowId, WorkflowInterface,
     node_configuration_fingerprint, node_dependency_fingerprint,
 };
-use milkdrift_capability::{CapabilityRequirement, OperationId, SchemaId};
+use milkdrift_capability::{
+    CapabilityRequirement, MAX_DURABLE_REFERENCE_BYTES, OperationId, SchemaId,
+};
 use proptest::prelude::*;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -26,6 +28,39 @@ fn port(value: &str) -> Result<PortId, milkdrift_blueprint::IdentityError> {
 
 fn schema() -> TestResult<SchemaRef> {
     Ok(SchemaRef::new(SchemaId::new("milkdrift.value")?, 1)?)
+}
+
+#[test]
+fn durable_binding_references_share_the_capability_boundary() -> TestResult {
+    let maximum = "r".repeat(MAX_DURABLE_REFERENCE_BYTES);
+    DataPort::input(
+        schema()?,
+        true,
+        Some(BindingSource::WorkspaceValue {
+            reference: maximum.clone(),
+            contract: schema()?,
+        }),
+    )?;
+    DataPort::input(
+        schema()?,
+        true,
+        Some(BindingSource::Artifact {
+            reference: maximum,
+            contract: schema()?,
+        }),
+    )?;
+    assert!(
+        DataPort::input(
+            schema()?,
+            true,
+            Some(BindingSource::WorkspaceValue {
+                reference: "r".repeat(MAX_DURABLE_REFERENCE_BYTES + 1),
+                contract: schema()?,
+            }),
+        )
+        .is_err()
+    );
+    Ok(())
 }
 
 fn empty_interface() -> Result<WorkflowInterface, milkdrift_blueprint::ModelError> {
@@ -708,6 +743,35 @@ fn hostile_depth_path_and_future_version_are_rejected() -> TestResult {
     assert!(
         BlueprintRevisionDocument::from_json(br#"{"schema_version":1,"schema_version":1}"#)
             .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn tagged_core_values_reject_unknown_fields() -> TestResult {
+    assert!(
+        serde_json::from_value::<PathSegment>(serde_json::json!({
+            "type": "field",
+            "value": "answer",
+            "surprise": true
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<JoinPolicy>(serde_json::json!({
+            "type": "quorum",
+            "quorum": 2,
+            "surprise": true
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<ReducerStrategy>(serde_json::json!({
+            "type": "capability",
+            "operation": "tool.reduce",
+            "surprise": true
+        }))
+        .is_err()
     );
     Ok(())
 }

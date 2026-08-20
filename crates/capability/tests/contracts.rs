@@ -139,6 +139,25 @@ fn invocation_inputs_are_references_or_bounded_values() -> Result<(), Box<dyn st
 }
 
 #[test]
+fn idempotent_write_contracts_require_an_external_key_scope()
+-> Result<(), Box<dyn std::error::Error>> {
+    assert!(matches!(
+        OperationContract::new(
+            schema("write.input")?,
+            schema("write.output")?,
+            BTreeSet::from([StreamingMode::None]),
+            CancellationBehavior::BestEffort,
+            IdempotencyBehavior::Unsupported,
+            SideEffectClass::IdempotentWrite,
+            BTreeMap::new(),
+        ),
+        Err(ContractError::InvalidContract(reason))
+            if reason.contains("idempotency-key scope")
+    ));
+    Ok(())
+}
+
+#[test]
 fn unsupported_version_and_hostile_bounds_fail_clearly() -> Result<(), Box<dyn std::error::Error>> {
     let future = br#"{"schema_version":2,"descriptor":{}}"#;
     assert!(matches!(
@@ -159,6 +178,14 @@ fn unsupported_version_and_hostile_bounds_fail_clearly() -> Result<(), Box<dyn s
     );
     assert!(ExtensionKey::new("not-namespaced").is_err());
     assert!(CapabilityId::new("contains a space").is_err());
+    assert!(
+        serde_json::from_value::<CapabilityCategory>(json!({
+            "type": "custom",
+            "identity": "org.example/custom",
+            "surprise": true
+        }))
+        .is_err()
+    );
     Ok(())
 }
 
