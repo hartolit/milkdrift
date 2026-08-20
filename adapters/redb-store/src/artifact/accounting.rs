@@ -9,7 +9,8 @@ use super::{
         remove_artifact_path,
     },
     publication::{
-        artifact_catalog_payload, decode_publication, persist_publication_catalog,
+        artifact_catalog_payload, decode_publication, persist_artifact_digest_catalog,
+        persist_publication_catalog, validated_artifact_digest_in_transaction,
         validated_artifact_metadata_in_transaction,
     },
 };
@@ -369,7 +370,8 @@ pub(crate) fn upgrade_artifact_accounting(
                 "legacy artifact digest key disagrees with its metadata",
             ));
         }
-        if current_digest.as_deref() == Some(components[0]) {
+        let digest_was_known = current_digest.as_deref() == Some(components[0]);
+        if digest_was_known {
             if current_size != document.reference().size_bytes() {
                 return Err(error::corruption(
                     "legacy artifacts disagree on the size of one digest",
@@ -411,6 +413,12 @@ pub(crate) fn upgrade_artifact_accounting(
                 "legacy artifact catalog contains a duplicate authenticated artifact",
             ));
         }
+        persist_artifact_digest_catalog(
+            write,
+            document.reference().digest(),
+            document.reference().size_bytes(),
+            digest_was_known,
+        )?;
     }
     drop(by_digest);
     drop(manifest);
@@ -755,37 +763,23 @@ pub(crate) fn commit_artifact_metadata(
     }
     let digest = record.metadata.reference().digest().to_hex();
     let digest_key = codec::pair(&digest, record.metadata.reference().artifact().as_str())?;
-    let digest_was_known = {
-        let by_digest = write.open_table(ARTIFACTS_BY_DIGEST).map_err(error::redb)?;
-        let prefix = codec::component(&digest)?;
-        let end = codec::prefix_end(prefix.clone())
-            .ok_or_else(|| error::corruption("artifact digest prefix has no range end"))?;
-        let existing = by_digest
-            .range(prefix.as_slice()..end.as_slice())
-            .map_err(error::redb)?
-            .next()
-            .transpose()
-            .map_err(error::redb)?;
-        if let Some((_, bytes)) = existing {
-            let existing: ArtifactMetadata = json::decode(bytes.value(), "artifact metadata")?;
-            if existing.reference().digest() != record.metadata.reference().digest()
-                || existing.reference().size_bytes() != record.metadata.reference().size_bytes()
-            {
-                return Err(error::corruption(
-                    "one artifact digest is associated with contradictory content sizes",
-                ));
-            }
-            true
-        } else {
-            false
-        }
-    };
+    let digest_was_known = validated_artifact_digest_in_transaction(
+        write,
+        record.metadata.reference().digest(),
+        record.metadata.reference().size_bytes(),
+    )?;
     {
         let mut by_digest = write.open_table(ARTIFACTS_BY_DIGEST).map_err(error::redb)?;
         by_digest
             .insert(digest_key.as_slice(), metadata_bytes.as_slice())
             .map_err(error::redb)?;
     }
+    persist_artifact_digest_catalog(
+        write,
+        record.metadata.reference().digest(),
+        record.metadata.reference().size_bytes(),
+        digest_was_known,
+    )?;
     {
         let bytes = json::encode(&record.metadata, "artifact manifest")?;
         let mut manifest = write.open_table(ARTIFACT_MANIFEST).map_err(error::redb)?;

@@ -2,7 +2,6 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use milkdrift_persistence::{
@@ -125,6 +124,9 @@ mod accounting;
 mod cleanup;
 mod path;
 mod publication;
+
+pub(crate) use path::decode_artifact_path_entry;
+pub(crate) use publication::validate_artifact_catalog_leaf;
 
 pub(crate) use accounting::{
     materialize_legacy_writable_workspace_domains, persist_artifact_reference_occurrence,

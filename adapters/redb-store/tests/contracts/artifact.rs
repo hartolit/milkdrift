@@ -1,4 +1,52 @@
 use super::*;
+
+#[derive(Debug)]
+struct FixedArtifactClock(TimestampMillis);
+
+impl ArtifactClock for FixedArtifactClock {
+    fn now(&self) -> Result<TimestampMillis, PersistenceError> {
+        Ok(self.0)
+    }
+}
+
+#[test]
+fn artifact_cleanup_uses_the_injected_publication_clock() -> Result<(), Box<dyn std::error::Error>>
+{
+    let directory = TempDir::new()?;
+    let created_at = TimestampMillis::new(50);
+    let store = RedbStore::open_with_config(
+        RedbStoreConfig::new(directory.path())
+            .with_artifact_clock(Arc::new(FixedArtifactClock(created_at))),
+    )?;
+    let bytes = b"clocked artifact publication";
+    let request = BeginArtifactPublication::new(
+        ArtifactPublicationId::new("publication-clock")?,
+        RunId::new("run-clock")?,
+        artifact_metadata("artifact-clock", bytes, ArtifactSensitivity::Public)?,
+        WorkspaceBudget::new(0, 0, 0, 1, 1024, 1024)?,
+        WorkspaceUsage::EMPTY,
+    )?;
+    store.begin_publication(&request)?;
+    store.write_chunk(&request.publication, 0, &bytes[..1])?;
+
+    let retained = store.cleanup_orphans(OrphanCleanupRequest {
+        observed_at: TimestampMillis::new(100),
+        created_before: created_at,
+        limit: PageSize::new(10)?,
+        cursor: None,
+    })?;
+    assert_eq!(retained.temporary_publications_removed, 0);
+    assert_eq!(store.begin_publication(&request)?.next_offset(), Some(1));
+
+    let removed = store.cleanup_orphans(OrphanCleanupRequest {
+        observed_at: TimestampMillis::new(100),
+        created_before: TimestampMillis::new(51),
+        limit: PageSize::new(10)?,
+        cursor: None,
+    })?;
+    assert_eq!(removed.temporary_publications_removed, 1);
+    Ok(())
+}
 #[test]
 fn artifact_begin_and_chunk_fault_boundaries_resume_exact_durable_offsets()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -262,15 +310,31 @@ fn cleanup_file_delete_fault_boundaries_are_restart_safe() -> Result<(), Box<dyn
     .enumerate()
     {
         let directory = TempDir::new()?;
+        let bytes = format!("cleanup-delete-boundary-{index}").into_bytes();
+        let request = BeginArtifactPublication::new(
+            ArtifactPublicationId::new(format!("publication-cleanup-delete-{index}"))?,
+            RunId::new(format!("run-cleanup-delete-{index}"))?,
+            artifact_metadata(
+                &format!("artifact-cleanup-delete-{index}"),
+                &bytes,
+                ArtifactSensitivity::Public,
+            )?,
+            WorkspaceBudget::new(0, 0, 0, 1, 1024, 1024)?,
+            WorkspaceUsage::EMPTY,
+        )?;
+        {
+            let store = RedbStore::open(directory.path())?;
+            store.begin_publication(&request)?;
+            store.write_chunk(&request.publication, 0, &bytes[..1])?;
+        }
         let store = RedbStore::open_with_config(
             RedbStoreConfig::new(directory.path())
                 .with_fault_injector(Arc::new(FailOnce::new(point))),
         )?;
-        let orphan = directory
-            .path()
-            .join("artifacts/.tmp")
-            .join(format!("orphan-{index}.part"));
-        std::fs::write(&orphan, b"orphan")?;
+        let orphan = std::fs::read_dir(directory.path().join("artifacts/.tmp"))?
+            .next()
+            .ok_or("publication did not create a temporary artifact")??
+            .path();
         let request = OrphanCleanupRequest {
             observed_at: TimestampMillis::new(u64::MAX),
             created_before: TimestampMillis::new(u64::MAX - 1),
@@ -323,7 +387,7 @@ fn orphan_cleanup_cursors_visit_every_family_without_starvation()
     store.write_chunk(&referenced_request.publication, 0, referenced_bytes)?;
     store.commit_publication(&referenced_request.publication)?;
 
-    for index in 0..3 {
+    for index in 0..7 {
         let bytes = format!("abandoned-publication-{index}").into_bytes();
         let metadata = artifact_metadata(
             &format!("artifact-abandoned-{index}"),
@@ -340,22 +404,30 @@ fn orphan_cleanup_cursors_visit_every_family_without_starvation()
         store.begin_publication(&request)?;
         store.write_chunk(&request.publication, 0, &bytes[..1])?;
     }
-
+    drop(store);
     for index in 0..4 {
-        std::fs::write(
-            directory
-                .path()
-                .join("artifacts/.tmp")
-                .join(format!("unowned-{index}.part")),
-            format!("temporary-{index}"),
-        )?;
         let bytes = format!("unowned-content-{index}").into_bytes();
-        let digest = ContentDigest::for_bytes(&bytes).to_hex();
-        let shard = directory.path().join("artifacts").join(&digest[..2]);
-        std::fs::create_dir_all(&shard)?;
-        std::fs::write(shard.join(&digest[2..]), bytes)?;
+        let request = BeginArtifactPublication::new(
+            ArtifactPublicationId::new(format!("publication-unowned-content-{index}"))?,
+            RunId::new(format!("run-unowned-content-{index}"))?,
+            artifact_metadata(
+                &format!("artifact-unowned-content-{index}"),
+                &bytes,
+                ArtifactSensitivity::Public,
+            )?,
+            artifact_budget.clone(),
+            WorkspaceUsage::EMPTY,
+        )?;
+        let crashing = RedbStore::open_with_config(
+            RedbStoreConfig::new(directory.path())
+                .with_fault_injector(Arc::new(FailOnce::new(FaultPoint::AfterArtifactRename))),
+        )?;
+        crashing.begin_publication(&request)?;
+        crashing.write_chunk(&request.publication, 0, &bytes)?;
+        assert!(crashing.commit_publication(&request.publication).is_err());
     }
 
+    let store = RedbStore::open(directory.path())?;
     let observed_at = TimestampMillis::new(u64::MAX);
     let created_before = TimestampMillis::new(u64::MAX - 1);
     let mut page = store.cleanup_orphans(OrphanCleanupRequest {
@@ -614,14 +686,55 @@ fn artifact_publication_resumes_deduplicates_verifies_and_cleans_orphans()
     assert_eq!(chunk.bytes, content);
     assert!(chunk.end_of_artifact);
 
-    let temp_orphan = directory.path().join("artifacts/.tmp/orphan.part");
-    std::fs::write(&temp_orphan, b"orphan")?;
+    let temp_bytes = b"abandoned-temporary-publication";
+    let temp_request = BeginArtifactPublication::new(
+        ArtifactPublicationId::new("publication-cleanup-temporary")?,
+        RunId::new("run-cleanup-temporary")?,
+        artifact_metadata(
+            "artifact-cleanup-temporary",
+            temp_bytes,
+            ArtifactSensitivity::Public,
+        )?,
+        WorkspaceBudget::new(0, 0, 0, 1, 1024, 1024)?,
+        WorkspaceUsage::EMPTY,
+    )?;
+    store.begin_publication(&temp_request)?;
+    store.write_chunk(&temp_request.publication, 0, &temp_bytes[..1])?;
+    drop(store);
+
     let orphan_bytes = b"unreferenced";
-    let orphan_digest = ContentDigest::for_bytes(orphan_bytes).to_hex();
-    let orphan_directory = directory.path().join("artifacts").join(&orphan_digest[..2]);
-    std::fs::create_dir_all(&orphan_directory)?;
-    let orphan_path = orphan_directory.join(&orphan_digest[2..]);
-    std::fs::write(&orphan_path, orphan_bytes)?;
+    let orphan_metadata = artifact_metadata(
+        "artifact-cleanup-content",
+        orphan_bytes,
+        ArtifactSensitivity::Public,
+    )?;
+    let orphan_request = BeginArtifactPublication::new(
+        ArtifactPublicationId::new("publication-cleanup-content")?,
+        RunId::new("run-cleanup-content")?,
+        orphan_metadata.clone(),
+        WorkspaceBudget::new(0, 0, 0, 1, 1024, 1024)?,
+        WorkspaceUsage::EMPTY,
+    )?;
+    let crashing = RedbStore::open_with_config(
+        RedbStoreConfig::new(directory.path())
+            .with_fault_injector(Arc::new(FailOnce::new(FaultPoint::AfterArtifactRename))),
+    )?;
+    crashing.begin_publication(&orphan_request)?;
+    crashing.write_chunk(&orphan_request.publication, 0, orphan_bytes)?;
+    assert!(
+        crashing
+            .commit_publication(&orphan_request.publication)
+            .is_err()
+    );
+    drop(crashing);
+
+    let orphan_digest = orphan_metadata.reference().digest().to_hex();
+    let orphan_path = directory
+        .path()
+        .join("artifacts")
+        .join(&orphan_digest[..2])
+        .join(&orphan_digest[2..]);
+    let store = RedbStore::open(directory.path())?;
     let cleanup = store.cleanup_orphans(OrphanCleanupRequest {
         observed_at: TimestampMillis::new(u64::MAX),
         created_before: TimestampMillis::new(u64::MAX - 1),
@@ -630,7 +743,6 @@ fn artifact_publication_resumes_deduplicates_verifies_and_cleans_orphans()
     })?;
     assert_eq!(cleanup.temporary_publications_removed, 1);
     assert_eq!(cleanup.unreferenced_blobs_removed, 1);
-    assert!(!temp_orphan.exists());
     assert!(!orphan_path.exists());
     assert!(store.is_committed(metadata.reference())?);
 

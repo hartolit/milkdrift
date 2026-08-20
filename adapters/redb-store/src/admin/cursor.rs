@@ -200,6 +200,59 @@ pub(crate) fn make_index_cursor(
     )
 }
 
+pub(crate) fn make_authenticated_catalog_cursor(
+    family: Option<crate::trie::CatalogFamily>,
+    path: Option<[u8; 32]>,
+    verify_artifact_content: bool,
+    anchor: [u8; 32],
+) -> Result<IntegrityScanCursor, PersistenceError> {
+    let mut opaque = Vec::with_capacity(33);
+    opaque.push(family.map_or(0, crate::trie::CatalogFamily::id));
+    if let Some(path) = path {
+        opaque.extend_from_slice(&path);
+    }
+    make_integrity_cursor(
+        IntegrityScanFamily::AuthenticatedCatalogs,
+        &opaque,
+        verify_artifact_content,
+        anchor,
+    )
+}
+
+pub(crate) fn authenticated_catalog_cursor_position(
+    cursor: Option<&IntegrityScanCursor>,
+) -> Result<(Option<crate::trie::CatalogFamily>, Option<[u8; 32]>), PersistenceError> {
+    let Some(cursor) = cursor else {
+        return Ok((None, None));
+    };
+    let (_, state) = integrity_cursor_state(cursor)?;
+    let Some((&family_id, path)) = state.split_first() else {
+        return Err(PersistenceError::InvalidCursor(
+            "authenticated-catalog cursor has no family".to_owned(),
+        ));
+    };
+    if family_id == 0 {
+        return if path.is_empty() {
+            Ok((None, None))
+        } else {
+            Err(PersistenceError::InvalidCursor(
+                "authenticated-catalog start cursor has trailing bytes".to_owned(),
+            ))
+        };
+    }
+    let family = crate::trie::CatalogFamily::from_id(family_id).ok_or_else(|| {
+        PersistenceError::InvalidCursor(
+            "authenticated-catalog cursor names an unknown family".to_owned(),
+        )
+    })?;
+    let path: [u8; 32] = path.try_into().map_err(|_| {
+        PersistenceError::InvalidCursor(
+            "authenticated-catalog cursor path must contain exactly 32 bytes".to_owned(),
+        )
+    })?;
+    Ok((Some(family), Some(path)))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn scan_binary_bytes_phase(
     phase: u8,
@@ -497,6 +550,16 @@ pub(crate) fn validate_integrity_cursor(
             .map_err(error::redb)?
             .is_some(),
         IntegrityScanFamily::Indexes => index_integrity_cursor_exists(read, cursor)?,
+        IntegrityScanFamily::AuthenticatedCatalogs => {
+            let (family, path) = authenticated_catalog_cursor_position(Some(cursor))?;
+            match (family, path) {
+                (None, None) => true,
+                (Some(family), Some(path)) => {
+                    crate::trie::leaf_at_path(read, family, path)?.is_some()
+                }
+                _ => false,
+            }
+        }
     };
     if !exists {
         return Err(PersistenceError::InvalidCursor(

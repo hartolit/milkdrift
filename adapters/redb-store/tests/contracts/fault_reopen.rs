@@ -274,7 +274,7 @@ fn malformed_stored_event_is_classified_as_corruption() -> Result<(), Box<dyn st
     drop(database);
     let store = RedbStore::open(directory.path())?;
     let error = store.events(&EventPageQuery::new(run, None, PageSize::new(1)?)?);
-    assert!(matches!(error, Err(PersistenceError::Corruption(_))));
+    assert_storage_corruption(error);
     Ok(())
 }
 
@@ -433,7 +433,9 @@ fn missing_or_lowered_journal_heads_are_never_interpreted_as_empty()
     write.commit()?;
     drop(database);
     let store = RedbStore::open(missing_event_directory.path())?;
-    assert_storage_corruption(store.head(first.receipt.run()));
+    // RUN_HEADS remains the sole bounded sequence authority. Exact history reads,
+    // command replay, and new commits must still refuse the missing interior fact.
+    assert_eq!(store.head(first.receipt.run())?, RunSequence::new(2));
     assert!(matches!(
         store.command_result(first.receipt.run(), first.receipt.command()),
         Err(PersistenceError::Storage {
@@ -554,6 +556,12 @@ fn enveloped_v1_store_backfills_discovery_accounting_atomically()
         TableDefinition::new("milkdrift.v1.integrity.trie_nodes");
     const ARTIFACT_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
         TableDefinition::new("milkdrift.v1.artifacts.accounting");
+    const EVENT_HISTORY_DIGESTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.runs.event_history_digests");
+    const RUN_HISTORY_ACCUMULATORS: TableDefinition<'static, &'static str, &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.runs.history_accumulators");
+    const RUNNABLE_RUN_HEADS: TableDefinition<'static, &'static str, &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.discovery.runnable_run_heads");
 
     let directory = TempDir::new()?;
     {
@@ -601,6 +609,27 @@ fn enveloped_v1_store_backfills_discovery_accounting_atomically()
         for key in keys {
             drop(nodes.remove(key.as_slice())?);
         }
+        drop(nodes);
+        for definition in [EVENT_HISTORY_DIGESTS] {
+            let mut table = write.open_table(definition)?;
+            let keys = table
+                .iter()?
+                .map(|row| row.map(|(key, _)| key.value().to_vec()))
+                .collect::<Result<Vec<_>, _>>()?;
+            for key in keys {
+                drop(table.remove(key.as_slice())?);
+            }
+        }
+        for definition in [RUN_HISTORY_ACCUMULATORS, RUNNABLE_RUN_HEADS] {
+            let mut table = write.open_table(definition)?;
+            let keys = table
+                .iter()?
+                .map(|row| row.map(|(key, _)| key.value().to_owned()))
+                .collect::<Result<Vec<_>, _>>()?;
+            for key in keys {
+                drop(table.remove(key.as_str())?);
+            }
+        }
     }
     write.commit()?;
     drop(database);
@@ -633,9 +662,12 @@ fn enveloped_v1_store_backfills_discovery_accounting_atomically()
         3
     );
     let accounting = read.open_table(DISCOVERY_ACCOUNTING)?;
-    assert!(accounting.get("active_index_counts")?.is_some());
+    assert_eq!(accounting.len()?, 0);
     let value_accounting = read.open_table(WORKSPACE_VALUE_ACCOUNTING)?;
-    assert!(value_accounting.get("")?.is_some());
-    assert_eq!(value_accounting.len()?, 4);
+    assert_eq!(value_accounting.len()?, 0);
+    let roots = read.open_table(INTEGRITY_ROOTS)?;
+    assert_eq!(roots.len()?, 1);
+    let runnable_heads = read.open_table(RUNNABLE_RUN_HEADS)?;
+    assert_eq!(runnable_heads.len()?, 1);
     Ok(())
 }

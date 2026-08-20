@@ -33,7 +33,7 @@ use milkdrift_persistence::{
     WorkspaceMutation, WorkspaceStore, history_digest,
 };
 use milkdrift_redb_store::{
-    FaultInjector, FaultPoint, RedbStore, RedbStoreConfig, injected_failure,
+    ArtifactClock, FaultInjector, FaultPoint, RedbStore, RedbStoreConfig, injected_failure,
 };
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactRetention, ArtifactSensitivity,

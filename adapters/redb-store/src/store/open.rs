@@ -51,6 +51,7 @@ impl RedbStore {
             max_total_artifact_bytes: config.max_total_artifact_bytes,
             max_read_bytes: config.max_read_bytes,
             faults: config.faults,
+            artifact_clock: config.artifact_clock,
             artifact_serialization: Mutex::new(()),
         })
     }

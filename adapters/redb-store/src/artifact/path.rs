@@ -271,14 +271,6 @@ pub(crate) fn remove_artifact_delete_guard(
     Ok(())
 }
 
-pub(crate) fn now_millis() -> Result<u64, PersistenceError> {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|cause| error::corruption(format!("system clock precedes epoch: {cause}")))?;
-    u64::try_from(duration.as_millis())
-        .map_err(|_| error::corruption("system timestamp exceeds u64 milliseconds"))
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TempInventoryState {
     Pending,

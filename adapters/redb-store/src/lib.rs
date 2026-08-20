@@ -21,4 +21,4 @@ mod store;
 mod trie;
 
 pub use fault::{FaultInjector, FaultPoint, injected_failure};
-pub use store::{RedbStore, RedbStoreConfig};
+pub use store::{ArtifactClock, RedbStore, RedbStoreConfig, SystemArtifactClock};

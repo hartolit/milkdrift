@@ -4,7 +4,7 @@ use super::{
         integrity_cursor_state, integrity_cursor_str, make_integrity_cursor, push_failure,
         scan_index_sample, validate_integrity_cursor,
     },
-    integrity::scan_index_integrity,
+    integrity::{scan_authenticated_catalog_integrity, scan_index_integrity},
 };
 impl StorageAdmin for RedbStore {
     fn schema_info(&self) -> Result<StorageSchemaInfo, PersistenceError> {
@@ -300,6 +300,22 @@ impl StorageAdmin for RedbStore {
             scan_index_integrity(
                 &read,
                 if start_family == IntegrityScanFamily::Indexes {
+                    request.cursor.as_ref()
+                } else {
+                    None
+                },
+                maximum,
+                request.verify_artifact_content,
+                anchor,
+                &mut result,
+                &mut last_cursor,
+                &mut more_remaining,
+            )?;
+        }
+        if !more_remaining && start_family <= IntegrityScanFamily::AuthenticatedCatalogs {
+            scan_authenticated_catalog_integrity(
+                &read,
+                if start_family == IntegrityScanFamily::AuthenticatedCatalogs {
                     request.cursor.as_ref()
                 } else {
                     None

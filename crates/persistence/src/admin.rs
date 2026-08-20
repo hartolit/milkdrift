@@ -67,7 +67,8 @@ pub struct StorageHealth {
 /// Closed durable-record family traversed by an integrity scan.
 ///
 /// The ordering is part of the cursor contract: revisions precede run events,
-/// which precede artifact metadata/content and finally derived-index consistency.
+/// which precede artifact metadata/content, derived-index consistency, and finally
+/// the authenticated catalogs that prove physical membership and absence.
 /// Adapter-specific table identities do not cross this boundary.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum IntegrityScanFamily {
@@ -79,6 +80,8 @@ pub enum IntegrityScanFamily {
     Artifacts,
     /// Authoritative run heads and rebuildable discovery/accounting indexes.
     Indexes,
+    /// Root-bound authenticated membership catalogs and their physical documents.
+    AuthenticatedCatalogs,
 }
 
 /// Stable exclusive resume point for one bounded integrity scan.

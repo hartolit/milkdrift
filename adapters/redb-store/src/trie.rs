@@ -92,6 +92,14 @@ impl CatalogFamily {
     const fn index(self) -> usize {
         self as usize - 1
     }
+
+    pub(crate) fn from_id(id: u8) -> Option<Self> {
+        Self::ALL.iter().copied().find(|family| *family as u8 == id)
+    }
+
+    pub(crate) const fn id(self) -> u8 {
+        self as u8
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -364,6 +372,32 @@ pub(crate) fn page(
     drop(roots);
     let nodes = read.open_table(INTEGRITY_TRIE_NODES).map_err(error::redb)?;
     page_from_root(&nodes, family, root, after, limit)
+}
+
+pub(crate) fn leaf_at_path(
+    read: &redb::ReadTransaction,
+    family: CatalogFamily,
+    path: [u8; HASH_BYTES],
+) -> Result<Option<TrieLeaf>, PersistenceError> {
+    let roots = read.open_table(INTEGRITY_ROOTS).map_err(error::redb)?;
+    let root = load_roots(&roots)?.root(family)?;
+    drop(roots);
+    let nodes = read.open_table(INTEGRITY_TRIE_NODES).map_err(error::redb)?;
+    let empty = empty_hashes(family);
+    let previous = predecessor_path(path);
+    let candidate = successor(&nodes, family, root, &empty, previous)?;
+    Ok(candidate.filter(|leaf| leaf.path == path))
+}
+
+fn predecessor_path(mut path: [u8; HASH_BYTES]) -> Option<[u8; HASH_BYTES]> {
+    for index in (0..path.len()).rev() {
+        if path[index] != 0 {
+            path[index] -= 1;
+            path[index + 1..].fill(u8::MAX);
+            return Some(path);
+        }
+    }
+    None
 }
 
 pub(crate) fn page_in_transaction(

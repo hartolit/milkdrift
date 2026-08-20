@@ -6,6 +6,27 @@ pub(crate) const DEFAULT_MAX_ARTIFACT_BYTES: u64 = 1_073_741_824;
 pub(crate) const DEFAULT_MAX_TOTAL_ARTIFACT_BYTES: u64 = 10_737_418_240;
 pub(crate) const DEFAULT_MAX_READ_BYTES: u64 = 1_073_741_824;
 
+/// Injected boundary clock for artifact-publication facts that control cleanup.
+pub trait ArtifactClock: Send + Sync {
+    /// Returns the timestamp durably recorded for a newly accepted publication.
+    fn now(&self) -> Result<TimestampMillis, PersistenceError>;
+}
+
+/// Production artifact clock backed by the host system clock.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SystemArtifactClock;
+
+impl ArtifactClock for SystemArtifactClock {
+    fn now(&self) -> Result<TimestampMillis, PersistenceError> {
+        let duration = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|cause| error::corruption(format!("system clock precedes epoch: {cause}")))?;
+        let millis = u64::try_from(duration.as_millis())
+            .map_err(|_| error::corruption("system timestamp exceeds u64 milliseconds"))?;
+        Ok(TimestampMillis::new(millis))
+    }
+}
+
 /// Bounded local-store configuration.
 pub struct RedbStoreConfig {
     pub(crate) root: PathBuf,
@@ -13,6 +34,7 @@ pub struct RedbStoreConfig {
     pub(crate) max_total_artifact_bytes: u64,
     pub(crate) max_read_bytes: u64,
     pub(crate) faults: Arc<dyn FaultInjector>,
+    pub(crate) artifact_clock: Arc<dyn ArtifactClock>,
 }
 
 impl fmt::Debug for RedbStoreConfig {
@@ -37,6 +59,7 @@ impl RedbStoreConfig {
             max_total_artifact_bytes: DEFAULT_MAX_TOTAL_ARTIFACT_BYTES,
             max_read_bytes: DEFAULT_MAX_READ_BYTES,
             faults: no_faults(),
+            artifact_clock: Arc::new(SystemArtifactClock),
         }
     }
 
@@ -60,6 +83,13 @@ impl RedbStoreConfig {
         self.faults = faults;
         self
     }
+
+    /// Installs the deterministic clock used for accepted publication timestamps.
+    #[must_use]
+    pub fn with_artifact_clock(mut self, clock: Arc<dyn ArtifactClock>) -> Self {
+        self.artifact_clock = clock;
+        self
+    }
 }
 
 /// Production local persistence and content-addressed artifact owner.
@@ -75,5 +105,6 @@ pub struct RedbStore {
     pub(crate) max_total_artifact_bytes: u64,
     pub(crate) max_read_bytes: u64,
     pub(crate) faults: Arc<dyn FaultInjector>,
+    pub(crate) artifact_clock: Arc<dyn ArtifactClock>,
     pub(crate) artifact_serialization: Mutex<()>,
 }

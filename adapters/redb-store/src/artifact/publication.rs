@@ -11,7 +11,7 @@ use super::{
     },
     path::{
         ArtifactPathKind, artifact_delete_guard_exists, artifact_path_entry, content_intent_state,
-        ensure_temp_inventory_ready, now_millis, open_regular_for_append, open_regular_for_read,
+        ensure_temp_inventory_ready, open_regular_for_append, open_regular_for_read,
         publication_age_key, publication_length_or_published, publication_temp_name,
         put_artifact_path, require_content_intent, require_temp_inventory_ready, sync_directory,
         verify_blob,
@@ -184,7 +184,7 @@ impl ArtifactStore for RedbStore {
             }
         }
 
-        let created_at_millis = now_millis()?;
+        let created_at_millis = self.artifact_clock.now()?.get();
         let record = PublicationRecord::from_request(request, created_at_millis);
         let bytes = json::encode(&record, "artifact publication")?;
         let transaction_result = (|| {
@@ -448,19 +448,11 @@ impl ArtifactStore for RedbStore {
 
         let digest_was_cataloged = {
             let read = self.database().begin_write().map_err(error::redb)?;
-            let digest = record.metadata.reference().digest().to_hex();
-            let prefix = codec::component(&digest)?;
-            let end = codec::prefix_end(prefix.clone())
-                .ok_or_else(|| error::corruption("artifact digest prefix has no range end"))?;
-            let cataloged = read
-                .open_table(ARTIFACTS_BY_DIGEST)
-                .map_err(error::redb)?
-                .range(prefix.as_slice()..end.as_slice())
-                .map_err(error::redb)?
-                .next()
-                .transpose()
-                .map_err(error::redb)?
-                .is_some();
+            let cataloged = validated_artifact_digest_in_transaction(
+                &read,
+                record.metadata.reference().digest(),
+                record.metadata.reference().size_bytes(),
+            )?;
             require_content_intent(&read, &record)?;
             cataloged
         };
@@ -989,6 +981,179 @@ pub(crate) fn artifact_catalog_payload(
 ) -> Result<[u8; 32], PersistenceError> {
     let bytes = json::encode(metadata, "artifact metadata")?;
     Ok(trie::digest_payload(CatalogFamily::Artifact, &bytes))
+}
+
+fn artifact_digest_catalog_logical_key(digest: ContentDigest) -> Vec<u8> {
+    let mut key = b"\0content-digest\0".to_vec();
+    key.extend_from_slice(digest.to_hex().as_bytes());
+    key
+}
+
+pub(crate) fn validate_artifact_catalog_leaf(
+    read: &redb::ReadTransaction,
+    leaf: &trie::TrieLeaf,
+) -> Result<(), PersistenceError> {
+    let family = CatalogFamily::Artifact;
+    if leaf.path != trie::hashed_path(family, &leaf.logical_key) {
+        return Err(error::corruption(
+            "artifact catalog path disagrees with its logical identity",
+        ));
+    }
+    if let Some(digest_hex) = leaf.logical_key.strip_prefix(b"\0content-digest\0") {
+        let digest_hex = std::str::from_utf8(digest_hex)
+            .map_err(|_| error::corruption("artifact content catalog digest is not UTF-8"))?;
+        let digest = ContentDigest::from_hex(digest_hex).map_err(|cause| {
+            error::corruption(format!(
+                "artifact content catalog digest is invalid: {cause}"
+            ))
+        })?;
+        let prefix = codec::component(digest_hex)?;
+        let end = codec::prefix_end(prefix.clone())
+            .ok_or_else(|| error::corruption("artifact digest prefix has no range end"))?;
+        let by_digest = read.open_table(ARTIFACTS_BY_DIGEST).map_err(error::redb)?;
+        let indexed = by_digest
+            .range(prefix.as_slice()..end.as_slice())
+            .map_err(error::redb)?
+            .next()
+            .transpose()
+            .map_err(error::redb)?
+            .ok_or_else(|| {
+                error::corruption("authenticated artifact content has no digest-index row")
+            })?;
+        let metadata: ArtifactMetadata = json::decode(indexed.1.value(), "artifact metadata")?;
+        if metadata.reference().digest() != digest
+            || leaf.payload_digest
+                != artifact_digest_catalog_payload(digest, metadata.reference().size_bytes())?
+        {
+            return Err(error::corruption(
+                "authenticated artifact content disagrees with its digest index",
+            ));
+        }
+        return Ok(());
+    }
+
+    let artifact_text = std::str::from_utf8(&leaf.logical_key)
+        .map_err(|_| error::corruption("artifact catalog identity is not UTF-8"))?;
+    let artifact = ArtifactId::new(artifact_text).map_err(|cause| {
+        error::corruption(format!("artifact catalog identity is invalid: {cause}"))
+    })?;
+    let metadata = read
+        .open_table(ARTIFACT_METADATA)
+        .map_err(error::redb)?
+        .get(artifact.as_str())
+        .map_err(error::redb)?
+        .map(|bytes| json::decode::<ArtifactMetadata>(bytes.value(), "artifact metadata"))
+        .transpose()?
+        .ok_or_else(|| error::corruption("authenticated artifact has no metadata row"))?;
+    let manifest = read
+        .open_table(ARTIFACT_MANIFEST)
+        .map_err(error::redb)?
+        .get(artifact.as_str())
+        .map_err(error::redb)?
+        .map(|bytes| json::decode::<ArtifactMetadata>(bytes.value(), "artifact manifest"))
+        .transpose()?
+        .ok_or_else(|| error::corruption("authenticated artifact has no manifest row"))?;
+    let digest_key = codec::pair(&metadata.reference().digest().to_hex(), artifact.as_str())?;
+    let indexed = read
+        .open_table(ARTIFACTS_BY_DIGEST)
+        .map_err(error::redb)?
+        .get(digest_key.as_slice())
+        .map_err(error::redb)?
+        .map(|bytes| json::decode::<ArtifactMetadata>(bytes.value(), "artifact metadata"))
+        .transpose()?
+        .ok_or_else(|| error::corruption("authenticated artifact has no digest-index row"))?;
+    if metadata != manifest
+        || metadata != indexed
+        || metadata.reference().artifact() != &artifact
+        || leaf.payload_digest != artifact_catalog_payload(&metadata)?
+    {
+        return Err(error::corruption(
+            "authenticated artifact catalog rows disagree",
+        ));
+    }
+    Ok(())
+}
+
+fn artifact_digest_catalog_payload(
+    digest: ContentDigest,
+    size_bytes: u64,
+) -> Result<[u8; 32], PersistenceError> {
+    let size = size_bytes.to_string();
+    let bytes = codec::components(&[&digest.to_hex(), &size])?;
+    Ok(trie::digest_payload(CatalogFamily::Artifact, &bytes))
+}
+
+pub(crate) fn validated_artifact_digest_in_transaction(
+    write: &redb::WriteTransaction,
+    digest: ContentDigest,
+    size_bytes: u64,
+) -> Result<bool, PersistenceError> {
+    let family = CatalogFamily::Artifact;
+    let logical_key = artifact_digest_catalog_logical_key(digest);
+    let witness = trie::verify_member_in_transaction(
+        write,
+        family,
+        trie::hashed_path(family, &logical_key),
+        &logical_key,
+    )?;
+    let digest_hex = digest.to_hex();
+    let prefix = codec::component(&digest_hex)?;
+    let end = codec::prefix_end(prefix.clone())
+        .ok_or_else(|| error::corruption("artifact digest prefix has no range end"))?;
+    let by_digest = write.open_table(ARTIFACTS_BY_DIGEST).map_err(error::redb)?;
+    let indexed = by_digest
+        .range(prefix.as_slice()..end.as_slice())
+        .map_err(error::redb)?
+        .next()
+        .transpose()
+        .map_err(error::redb)?
+        .map(|(_, bytes)| json::decode::<ArtifactMetadata>(bytes.value(), "artifact metadata"))
+        .transpose()?;
+    let expected = artifact_digest_catalog_payload(digest, size_bytes)?;
+    match (indexed, witness) {
+        (None, None) => Ok(false),
+        (Some(metadata), Some(authenticated))
+            if metadata.reference().digest() == digest
+                && metadata.reference().size_bytes() == size_bytes
+                && authenticated == expected =>
+        {
+            Ok(true)
+        }
+        (Some(_), Some(_)) => Err(error::corruption(
+            "artifact digest index disagrees with its authenticated content membership",
+        )),
+        (None, Some(_)) => Err(error::corruption(
+            "authenticated artifact content is missing from its digest index",
+        )),
+        (Some(_), None) => Err(error::corruption(
+            "artifact digest index is absent from its authenticated content catalog",
+        )),
+    }
+}
+
+pub(crate) fn persist_artifact_digest_catalog(
+    write: &redb::WriteTransaction,
+    digest: ContentDigest,
+    size_bytes: u64,
+    previously_known: bool,
+) -> Result<(), PersistenceError> {
+    let family = CatalogFamily::Artifact;
+    let logical_key = artifact_digest_catalog_logical_key(digest);
+    let expected = artifact_digest_catalog_payload(digest, size_bytes)?;
+    let replaced = trie::put(
+        write,
+        family,
+        trie::hashed_path(family, &logical_key),
+        &logical_key,
+        expected,
+    )?;
+    match (previously_known, replaced) {
+        (false, None) => Ok(()),
+        (true, Some(previous)) if previous == expected => Ok(()),
+        _ => Err(error::corruption(
+            "artifact content membership changed outside its authoritative transaction",
+        )),
+    }
 }
 
 pub(crate) fn publication_catalog_path(publication: &ArtifactPublicationId) -> [u8; 32] {

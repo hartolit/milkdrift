@@ -1,7 +1,8 @@
 use super::cursor::{
-    index_cursor_position, make_artifact_digest_cursor, make_integrity_cursor,
-    parse_artifact_digest_cursor, push_failure, scan_binary_bytes_phase, scan_string_bytes_phase,
-    scan_string_string_phase, scan_string_u8_phase, scan_string_u64_phase,
+    authenticated_catalog_cursor_position, index_cursor_position, make_artifact_digest_cursor,
+    make_authenticated_catalog_cursor, make_integrity_cursor, parse_artifact_digest_cursor,
+    push_failure, scan_binary_bytes_phase, scan_string_bytes_phase, scan_string_string_phase,
+    scan_string_u8_phase, scan_string_u64_phase,
 };
 use super::*;
 #[allow(clippy::too_many_arguments)]
@@ -806,6 +807,387 @@ pub(crate) fn scan_index_integrity(
             Ok(())
         },
     )?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn scan_authenticated_catalog_integrity(
+    read: &redb::ReadTransaction,
+    cursor: Option<&IntegrityScanCursor>,
+    maximum: u64,
+    verify_artifact_content: bool,
+    anchor: [u8; 32],
+    result: &mut IntegrityScanResult,
+    last_cursor: &mut Option<IntegrityScanCursor>,
+    more_remaining: &mut bool,
+) -> Result<(), PersistenceError> {
+    let (start_family, start_path) = authenticated_catalog_cursor_position(cursor)?;
+    if result.documents_checked == maximum {
+        *last_cursor = Some(make_authenticated_catalog_cursor(
+            start_family,
+            start_path,
+            verify_artifact_content,
+            anchor,
+        )?);
+        *more_remaining = true;
+        return Ok(());
+    }
+    let start_id = start_family.map_or(0, crate::trie::CatalogFamily::id);
+    for family in crate::trie::CatalogFamily::ALL
+        .into_iter()
+        .filter(|family| family.id() >= start_id)
+    {
+        let after = (Some(family) == start_family)
+            .then_some(start_path)
+            .flatten();
+        let remaining = maximum.saturating_sub(result.documents_checked);
+        if remaining == 0 {
+            *last_cursor = Some(make_authenticated_catalog_cursor(
+                Some(family),
+                after,
+                verify_artifact_content,
+                anchor,
+            )?);
+            *more_remaining = true;
+            return Ok(());
+        }
+        let limit = usize::try_from(remaining).map_err(|_| PersistenceError::Bounds {
+            location: "integrity_scan.authenticated_catalogs",
+            reason: "remaining page size cannot be represented on this platform".to_owned(),
+        })?;
+        let page = crate::trie::page(read, family, None, after, limit)?;
+        for leaf in page.leaves {
+            result.documents_checked = result.documents_checked.saturating_add(1);
+            *last_cursor = Some(make_authenticated_catalog_cursor(
+                Some(family),
+                Some(leaf.path),
+                verify_artifact_content,
+                anchor,
+            )?);
+            if let Err(cause) = validate_authenticated_catalog_leaf(read, family, &leaf) {
+                push_failure(result, "authenticated_catalog", &cause.to_string())?;
+            }
+        }
+        if page.next_path.is_some() {
+            *more_remaining = true;
+            return Ok(());
+        }
+        if result.documents_checked == maximum
+            && family
+                != *crate::trie::CatalogFamily::ALL.last().ok_or_else(|| {
+                    error::corruption("authenticated catalog family list is empty")
+                })?
+        {
+            *more_remaining = true;
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
+fn validate_authenticated_catalog_leaf(
+    read: &redb::ReadTransaction,
+    family: crate::trie::CatalogFamily,
+    leaf: &crate::trie::TrieLeaf,
+) -> Result<(), PersistenceError> {
+    use crate::trie::CatalogFamily;
+    match family {
+        CatalogFamily::RunMembership => {
+            let _ = crate::journal::validate_run_membership_leaf(read, leaf)?;
+            Ok(())
+        }
+        CatalogFamily::NonterminalRun => {
+            let _ = crate::journal::validate_nonterminal_membership_leaf(read, leaf)?;
+            Ok(())
+        }
+        CatalogFamily::Artifact => crate::artifact::validate_artifact_catalog_leaf(read, leaf),
+        CatalogFamily::ArtifactPath => {
+            let _ = crate::artifact::decode_artifact_path_entry(leaf)?;
+            Ok(())
+        }
+        CatalogFamily::ArtifactDeleteGuard => validate_catalog_only_leaf(family, leaf),
+        CatalogFamily::RunnableBucket => validate_runnable_bucket_leaf(read, leaf),
+        CatalogFamily::RunnableRunHead => {
+            let _ = crate::journal::validate_runnable_head_leaf(read, leaf)?;
+            Ok(())
+        }
+        CatalogFamily::WorkspaceDomain => validate_workspace_domain_leaf(read, leaf),
+        CatalogFamily::SnapshotLatest => {
+            validate_string_scalar_leaf(read, SNAPSHOT_LATEST, family, leaf, "snapshot latest")
+        }
+        CatalogFamily::RevisionIdentity => {
+            validate_string_document_leaf(read, REVISIONS, family, leaf, "revision identity")
+        }
+        CatalogFamily::ArtifactPublication => validate_string_document_leaf(
+            read,
+            ARTIFACT_PUBLICATIONS,
+            family,
+            leaf,
+            "artifact publication",
+        ),
+        CatalogFamily::HistoryAccumulator => validate_string_document_leaf(
+            read,
+            RUN_HISTORY_ACCUMULATORS,
+            family,
+            leaf,
+            "history accumulator",
+        ),
+        CatalogFamily::RevisionContent => validate_binary_document_leaf(
+            read,
+            REVISIONS_BY_DIGEST,
+            family,
+            leaf,
+            "revision content",
+        ),
+        CatalogFamily::Event => {
+            let bytes = binary_catalog_document(read, RUN_EVENTS, leaf, "run event")?;
+            let event = milkdrift_persistence::RunEventEnvelope::from_json(&bytes)?;
+            crate::journal::validate_event_catalog(
+                read,
+                event.run_id(),
+                event.sequence(),
+                &leaf.logical_key,
+                &bytes,
+            )
+        }
+        CatalogFamily::Command => {
+            validate_binary_document_leaf(read, COMMAND_RESULTS, family, leaf, "command")
+        }
+        CatalogFamily::RunnableIdentity | CatalogFamily::RunnableBucketEntry => {
+            validate_binary_document_leaf(read, RUNNABLE_ENTRIES, family, leaf, "runnable identity")
+        }
+        CatalogFamily::RunnableOrdered => {
+            validate_binary_document_leaf(read, RUNNABLE_INDEX, family, leaf, "runnable ordered")
+        }
+        CatalogFamily::TimerIdentity => {
+            validate_binary_document_leaf(read, TIMER_ENTRIES, family, leaf, "timer identity")
+        }
+        CatalogFamily::TimerOrdered => {
+            validate_binary_document_leaf(read, TIMER_INDEX, family, leaf, "timer ordered")
+        }
+        CatalogFamily::LeaseIdentity => {
+            validate_binary_document_leaf(read, LEASE_ENTRIES, family, leaf, "lease identity")
+        }
+        CatalogFamily::LeaseOrdered => {
+            validate_binary_document_leaf(read, LEASE_INDEX, family, leaf, "lease ordered")
+        }
+        CatalogFamily::WorkspaceScope => {
+            validate_binary_document_leaf(read, SCOPES, family, leaf, "workspace scope")
+        }
+        CatalogFamily::WorkspaceValue => {
+            validate_binary_document_leaf(read, VALUES, family, leaf, "workspace value")
+        }
+        CatalogFamily::WorkspaceValueHead => validate_binary_document_leaf(
+            read,
+            WORKSPACE_VALUE_HEADS,
+            family,
+            leaf,
+            "workspace value head",
+        ),
+        CatalogFamily::RunArtifactOwnership => validate_binary_document_leaf(
+            read,
+            RUN_ARTIFACT_OWNERSHIP,
+            family,
+            leaf,
+            "run artifact ownership",
+        ),
+        CatalogFamily::EventHistoryCheckpoint => validate_binary_document_leaf(
+            read,
+            EVENT_HISTORY_DIGESTS,
+            family,
+            leaf,
+            "event history checkpoint",
+        ),
+        CatalogFamily::SnapshotIdentity | CatalogFamily::SnapshotOrdered => {
+            validate_binary_document_leaf(read, SNAPSHOTS, family, leaf, "snapshot")
+        }
+        CatalogFamily::ArtifactReferenceOccurrence => validate_binary_document_leaf(
+            read,
+            ARTIFACT_REFERENCES,
+            family,
+            leaf,
+            "artifact reference occurrence",
+        ),
+    }
+}
+
+fn binary_catalog_document(
+    read: &redb::ReadTransaction,
+    table: redb::TableDefinition<'static, &'static [u8], &'static [u8]>,
+    leaf: &crate::trie::TrieLeaf,
+    label: &str,
+) -> Result<Vec<u8>, PersistenceError> {
+    read.open_table(table)
+        .map_err(error::redb)?
+        .get(leaf.logical_key.as_slice())
+        .map_err(error::redb)?
+        .map(|bytes| bytes.value().to_vec())
+        .ok_or_else(|| error::corruption(format!("authenticated {label} row is missing")))
+}
+
+fn validate_binary_document_leaf(
+    read: &redb::ReadTransaction,
+    table: redb::TableDefinition<'static, &'static [u8], &'static [u8]>,
+    family: crate::trie::CatalogFamily,
+    leaf: &crate::trie::TrieLeaf,
+    label: &str,
+) -> Result<(), PersistenceError> {
+    let bytes = binary_catalog_document(read, table, leaf, label)?;
+    if leaf.payload_digest != crate::trie::digest_payload(family, &bytes) {
+        return Err(error::corruption(format!(
+            "authenticated {label} payload disagrees with its physical row"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_string_document_leaf(
+    read: &redb::ReadTransaction,
+    table: redb::TableDefinition<'static, &'static str, &'static [u8]>,
+    family: crate::trie::CatalogFamily,
+    leaf: &crate::trie::TrieLeaf,
+    label: &str,
+) -> Result<(), PersistenceError> {
+    let key = std::str::from_utf8(&leaf.logical_key)
+        .map_err(|_| error::corruption(format!("authenticated {label} key is not UTF-8")))?;
+    let bytes = read
+        .open_table(table)
+        .map_err(error::redb)?
+        .get(key)
+        .map_err(error::redb)?
+        .map(|bytes| bytes.value().to_vec())
+        .ok_or_else(|| error::corruption(format!("authenticated {label} row is missing")))?;
+    if leaf.payload_digest != crate::trie::digest_payload(family, &bytes) {
+        return Err(error::corruption(format!(
+            "authenticated {label} payload disagrees with its physical row"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_string_scalar_leaf(
+    read: &redb::ReadTransaction,
+    table: redb::TableDefinition<'static, &'static str, &'static str>,
+    family: crate::trie::CatalogFamily,
+    leaf: &crate::trie::TrieLeaf,
+    label: &str,
+) -> Result<(), PersistenceError> {
+    let key = std::str::from_utf8(&leaf.logical_key)
+        .map_err(|_| error::corruption(format!("authenticated {label} key is not UTF-8")))?;
+    let value = read
+        .open_table(table)
+        .map_err(error::redb)?
+        .get(key)
+        .map_err(error::redb)?
+        .map(|value| value.value().to_owned())
+        .ok_or_else(|| error::corruption(format!("authenticated {label} row is missing")))?;
+    if leaf.payload_digest != crate::trie::digest_payload(family, value.as_bytes()) {
+        return Err(error::corruption(format!(
+            "authenticated {label} payload disagrees with its physical row"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_catalog_only_leaf(
+    family: crate::trie::CatalogFamily,
+    leaf: &crate::trie::TrieLeaf,
+) -> Result<(), PersistenceError> {
+    if leaf.path != crate::trie::hashed_path(family, &leaf.logical_key)
+        || leaf.payload_digest != crate::trie::digest_payload(family, &leaf.logical_key)
+    {
+        return Err(error::corruption(
+            "authenticated catalog-only leaf is malformed",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_workspace_domain_leaf(
+    read: &redb::ReadTransaction,
+    leaf: &crate::trie::TrieLeaf,
+) -> Result<(), PersistenceError> {
+    let run_text = std::str::from_utf8(&leaf.logical_key)
+        .map_err(|_| error::corruption("workspace domain key is not UTF-8"))?;
+    let run = RunId::new(run_text)
+        .map_err(|cause| error::corruption(format!("workspace domain key is invalid: {cause}")))?;
+    if leaf.path != crate::journal::workspace_domain_path(&run) {
+        return Err(error::corruption(
+            "workspace domain path disagrees with its run identity",
+        ));
+    }
+    let budget = read
+        .open_table(WORKSPACE_BUDGETS)
+        .map_err(error::redb)?
+        .get(run.as_str())
+        .map_err(error::redb)?
+        .map(|bytes| json::decode::<WorkspaceBudget>(bytes.value(), "workspace budget"))
+        .transpose()?
+        .ok_or_else(|| error::corruption("authenticated workspace domain has no budget"))?;
+    let usage = read
+        .open_table(WORKSPACE_USAGE)
+        .map_err(error::redb)?
+        .get(run.as_str())
+        .map_err(error::redb)?
+        .map(|bytes| json::decode::<WorkspaceUsage>(bytes.value(), "workspace usage"))
+        .transpose()?
+        .ok_or_else(|| error::corruption("authenticated workspace domain has no usage"))?;
+    budget.validate_usage(&usage).map_err(|cause| {
+        error::corruption(format!(
+            "workspace domain usage exceeds its budget: {cause}"
+        ))
+    })?;
+    if leaf.payload_digest != crate::journal::workspace_domain_payload(&budget, usage)? {
+        return Err(error::corruption(
+            "workspace domain leaf disagrees with its budget and usage",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_runnable_bucket_leaf(
+    read: &redb::ReadTransaction,
+    leaf: &crate::trie::TrieLeaf,
+) -> Result<(), PersistenceError> {
+    use crate::trie::CatalogFamily;
+    let family = CatalogFamily::RunnableBucket;
+    let components = codec::decode_components(&leaf.logical_key, 2)?;
+    let run = RunId::new(components[0]).map_err(|cause| {
+        error::corruption(format!("runnable bucket run identity is invalid: {cause}"))
+    })?;
+    let eligible_at = components[1].parse::<u64>().map_err(|cause| {
+        error::corruption(format!("runnable bucket timestamp is invalid: {cause}"))
+    })?;
+    if leaf.path
+        != crate::journal::runnable_bucket_path(
+            &run,
+            TimestampMillis::new(eligible_at),
+            &leaf.logical_key,
+        )?
+        || leaf.payload_digest != crate::trie::digest_payload(family, &leaf.logical_key)
+    {
+        return Err(error::corruption(
+            "runnable bucket leaf disagrees with its identity",
+        ));
+    }
+    let entry_family = CatalogFamily::RunnableBucketEntry;
+    let group = crate::journal::runnable_group(entry_family, &leaf.logical_key);
+    let page = crate::trie::page(
+        read,
+        entry_family,
+        None,
+        crate::journal::first_path_in_group(group),
+        1,
+    )?;
+    if page
+        .leaves
+        .first()
+        .is_none_or(|entry| entry.path[..16] != group)
+    {
+        return Err(error::corruption(
+            "authenticated runnable bucket has no runnable entry",
+        ));
+    }
     Ok(())
 }
 

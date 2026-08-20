@@ -5,10 +5,11 @@ use milkdrift_capability::BoundedJson;
 use milkdrift_persistence::{
     ActorRef, ArtifactPublicationId, ArtifactStore, AtomicRunCommitRequest, BeginArtifactOutcome,
     BeginArtifactPublication, CommandDisposition, CommandId, CommandReceipt, CommandResultDocument,
-    EventId, IndexedRunState, OrphanCleanupRequest, PageSize, PersistenceError, RevisionStore,
-    RunEventEnvelope, RunEventKind, RunIndexUpdate, RunJournal, RunSequence, RunSummaryIndex,
-    SnapshotDocument, SnapshotId, SnapshotStore, StorageAdmin, StorageFailureClass,
-    StorageHealthStatus, TimestampMillis, WorkspaceAccounting, WorkspaceStore, history_digest,
+    EventId, IndexedRunState, IntegrityScanRequest, OrphanCleanupRequest, PageSize,
+    PersistenceError, RevisionStore, RunEventEnvelope, RunEventKind, RunIndexUpdate, RunJournal,
+    RunSequence, RunSummaryIndex, SnapshotDocument, SnapshotId, SnapshotStore, StorageAdmin,
+    StorageFailureClass, StorageHealthStatus, TimestampMillis, WorkspaceAccounting, WorkspaceStore,
+    history_digest,
 };
 use milkdrift_redb_store::{RedbStore, RedbStoreConfig};
 use milkdrift_workspace::{
@@ -73,6 +74,27 @@ fn assert_corruption<T: std::fmt::Debug>(result: Result<T, PersistenceError>) {
         ),
         "expected corruption, got {result:?}"
     );
+}
+
+fn exhaustive_integrity_failure_count(store: &RedbStore) -> Result<usize, PersistenceError> {
+    let mut cursor = None;
+    let mut failures = 0_usize;
+    for _ in 0..10_000 {
+        let page = store.scan_integrity(IntegrityScanRequest {
+            limit: PageSize::new(7)?,
+            verify_artifact_content: false,
+            cursor,
+        })?;
+        failures = failures.saturating_add(page.failures.len());
+        let Some(next) = page.next_cursor else {
+            return Ok(failures);
+        };
+        cursor = Some(next);
+    }
+    Err(PersistenceError::Bounds {
+        location: "integrity_regression.exhaustive_scan",
+        reason: "integrity scan did not exhaust within 10,000 bounded pages".to_owned(),
+    })
 }
 
 fn revision_id() -> Result<RevisionId, PersistenceError> {
@@ -363,7 +385,7 @@ fn deleted_artifact_reference_rows_cannot_reopen_double_charging()
 }
 
 #[test]
-fn artifact_only_usage_requires_workspace_value_accounting()
+fn artifact_only_usage_requires_an_authenticated_workspace_domain()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = TempDir::new()?;
     let budget = WorkspaceBudget::new(0, 0, 0, 3, 64, 64)?;
@@ -383,8 +405,8 @@ fn artifact_only_usage_requires_workspace_value_accounting()
     let database = Database::open(directory.path().join("milkdrift.redb"))?;
     let write = database.begin_write()?;
     {
-        let mut accounting = write.open_table(WORKSPACE_VALUE_ACCOUNTING)?;
-        assert!(accounting.remove(first.run.as_str())?.is_some());
+        let mut usage = write.open_table(WORKSPACE_USAGE)?;
+        assert!(usage.remove(first.run.as_str())?.is_some());
     }
     write.commit()?;
     drop(database);
@@ -445,6 +467,11 @@ fn artifact_and_revision_primary_digest_pairs_fail_closed_after_deletion()
         drop(database);
         let store = RedbStore::open(directory.path())?;
         assert_corruption(store.is_committed(request.metadata.reference()));
+        assert!(exhaustive_integrity_failure_count(&store)? > 0);
+        assert_eq!(
+            store.health(TimestampMillis::new(30))?.status,
+            StorageHealthStatus::Degraded
+        );
     }
 
     for delete_primary in [true, false] {
@@ -476,7 +503,64 @@ fn artifact_and_revision_primary_digest_pairs_fail_closed_after_deletion()
         drop(database);
         let store = RedbStore::open(directory.path())?;
         assert_corruption(store.revision(revision.id()));
+        assert!(exhaustive_integrity_failure_count(&store)? > 0);
+        assert_eq!(
+            store.health(TimestampMillis::new(30))?.status,
+            StorageHealthStatus::Degraded
+        );
     }
+    Ok(())
+}
+
+#[test]
+fn missing_digest_index_cannot_turn_existing_content_into_a_second_charge()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = TempDir::new()?;
+    let budget = WorkspaceBudget::new(0, 0, 0, 2, 64, 64)?;
+    let first = publication_request(
+        "artifact-digest-first",
+        "publication-digest-first",
+        "run-digest-first",
+        b"shared-content",
+        budget.clone(),
+        WorkspaceUsage::EMPTY,
+    )?;
+    {
+        let store = RedbStore::open(directory.path())?;
+        publish(&store, &first, b"shared-content")?;
+    }
+
+    let database = Database::open(directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut by_digest = write.open_table(ARTIFACTS_BY_DIGEST)?;
+        let key = by_digest
+            .iter()?
+            .next()
+            .transpose()?
+            .ok_or("artifact digest index is empty")?
+            .0
+            .value()
+            .to_vec();
+        assert!(by_digest.remove(key.as_slice())?.is_some());
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = RedbStore::open(directory.path())?;
+    let second = publication_request(
+        "artifact-digest-second",
+        "publication-digest-second",
+        "run-digest-second",
+        b"shared-content",
+        budget,
+        WorkspaceUsage::EMPTY,
+    )?;
+    store.begin_publication(&second)?;
+    store.write_chunk(&second.publication, 0, b"shared-content")?;
+    assert_corruption(store.commit_publication(&second.publication));
+    assert_corruption(store.is_committed(first.metadata.reference()));
+    assert!(!store.is_committed(second.metadata.reference())?);
     Ok(())
 }
 

@@ -278,24 +278,17 @@ fn summary_and_nonterminal_cursors_advance_by_last_scanned_head()
         .workflow = WorkflowId::new("workflow-match")?;
     store.commit_command(&matching)?;
 
-    let filter = RunSummaryFilter {
+    let empty_filter = RunSummaryFilter {
         state: None,
-        workflow: Some(WorkflowId::new("workflow-match")?),
+        workflow: Some(WorkflowId::new("workflow-empty")?),
     };
     let first = store.run_summaries(&RunSummaryPageQuery {
-        filter: filter.clone(),
+        filter: empty_filter.clone(),
         cursor: None,
         limit: PageSize::new(1)?,
     })?;
     assert!(first.runs.is_empty());
     assert!(first.next.is_some());
-    let second = store.run_summaries(&RunSummaryPageQuery {
-        filter: filter.clone(),
-        cursor: first.next.clone(),
-        limit: PageSize::new(1)?,
-    })?;
-    assert_eq!(second.runs.len(), 1);
-    assert_eq!(second.runs[0].run, matching_run);
     assert!(matches!(
         store.run_summaries(&RunSummaryPageQuery {
             filter: RunSummaryFilter {
@@ -307,6 +300,27 @@ fn summary_and_nonterminal_cursors_advance_by_last_scanned_head()
         }),
         Err(PersistenceError::InvalidCursor(_))
     ));
+
+    let filter = RunSummaryFilter {
+        state: None,
+        workflow: Some(WorkflowId::new("workflow-match")?),
+    };
+    let mut cursor = None;
+    let mut matches = Vec::new();
+    loop {
+        let page = store.run_summaries(&RunSummaryPageQuery {
+            filter: filter.clone(),
+            cursor,
+            limit: PageSize::new(1)?,
+        })?;
+        matches.extend(page.runs);
+        let Some(next) = page.next else {
+            break;
+        };
+        cursor = Some(next);
+    }
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].run, matching_run);
 
     let terminal_directory = TempDir::new()?;
     let terminal_store = RedbStore::open(terminal_directory.path())?;
@@ -332,12 +346,9 @@ fn summary_and_nonterminal_cursors_advance_by_last_scanned_head()
         "start",
     )?)?;
     let terminal_page = terminal_store.nonterminal_run_page(None, PageSize::new(2)?)?;
-    assert!(terminal_page.runs.is_empty());
-    assert!(terminal_page.next.is_some());
-    let active_page =
-        terminal_store.nonterminal_run_page(terminal_page.next.as_ref(), PageSize::new(2)?)?;
-    assert_eq!(active_page.runs.len(), 1);
-    assert_eq!(active_page.runs[0].run.as_str(), "run-terminal-z-active");
+    assert_eq!(terminal_page.runs.len(), 1);
+    assert_eq!(terminal_page.runs[0].run.as_str(), "run-terminal-z-active");
+    assert!(terminal_page.next.is_none());
     Ok(())
 }
 

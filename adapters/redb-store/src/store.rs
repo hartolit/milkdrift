@@ -8,7 +8,7 @@ use std::{
 
 use milkdrift_persistence::{
     ArtifactPublicationId, PersistenceError, RevisionSummary, RunEventEnvelope, RunEventKind,
-    StorageFailureClass,
+    StorageFailureClass, TimestampMillis,
 };
 use milkdrift_workspace::{ArtifactMetadata, ArtifactReference, WorkspaceUsage};
 use redb::{Database, ReadableTable, ReadableTableMetadata};
@@ -39,7 +39,7 @@ mod open;
 mod schema;
 
 pub(crate) use config::{ARTIFACT_DIRECTORY, DATABASE_FILENAME, TEMP_DIRECTORY};
-pub use config::{RedbStore, RedbStoreConfig};
+pub use config::{ArtifactClock, RedbStore, RedbStoreConfig, SystemArtifactClock};
 pub(crate) use filesystem::{
     ensure_regular_file_or_absent, prepare_owned_directory, sync_owned_directory,
 };
