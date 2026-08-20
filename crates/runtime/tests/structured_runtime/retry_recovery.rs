@@ -1,0 +1,903 @@
+//! Retry recovery integration scenarios.
+
+use super::*;
+
+#[test]
+fn crash_after_durable_lease_recovers_only_after_expiry_and_retries_once() -> TestResult {
+    let directory = TempDir::new()?;
+    let revision = task_revision("workflow-crash-after-lease")?;
+    let run = RunId::new("run-crash-after-lease")?;
+
+    {
+        let store = Arc::new(RedbStore::open(directory.path())?);
+        store.put_revision(&revision)?;
+        let executor = Arc::new(PanickingExecutor {
+            resolver: DeterministicExecutor::new(test_descriptor()?),
+        });
+        let runtime = recovery_service(
+            store.clone(),
+            Arc::new(ManualClock::new(NOW)),
+            executor,
+            "crash-after-lease",
+        )?;
+        let root_scope =
+            WorkspaceScope::run_root(run.clone(), ScopeId::new("scope-crash-after-lease")?);
+        let create = runtime.command(
+            run.clone(),
+            ActorRef::new("human:structured-runtime-test")?,
+            store.head(&run)?,
+            Reason::new("create crash-boundary run")?,
+            Vec::new(),
+            RunCommand::CreateRun {
+                workflow: revision.semantic().workflow().clone(),
+                revision: revision.id().clone(),
+                root_scope,
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?;
+        assert_eq!(
+            runtime.handle_command(&create)?.result().disposition(),
+            CommandDisposition::Accepted
+        );
+        let start = runtime.command(
+            run.clone(),
+            ActorRef::new("human:structured-runtime-test")?,
+            store.head(&run)?,
+            Reason::new("start crash-boundary run")?,
+            Vec::new(),
+            RunCommand::StartRun,
+        )?;
+        runtime.handle_command(&start)?;
+
+        let crash = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.tick()));
+        assert!(
+            crash.is_err(),
+            "panicking executor did not simulate a crash"
+        );
+        let stranded = runtime.projection(&run)?;
+        assert_eq!(stranded.attempts().len(), 1);
+        assert_eq!(
+            stranded
+                .attempts()
+                .values()
+                .next()
+                .map(|attempt| attempt.state()),
+            Some(&AttemptState::Leased)
+        );
+        assert_eq!(stranded.leases().len(), 1);
+        assert!(stranded.leases().values().all(|lease| lease.is_active()));
+        let history = runtime.history(&run)?;
+        assert_eq!(
+            history
+                .iter()
+                .filter(|event| matches!(event.kind(), RunEventKind::NodeScheduled { .. }))
+                .count(),
+            1
+        );
+        assert!(
+            !history
+                .iter()
+                .any(|event| matches!(event.kind(), RunEventKind::NodeStarted { .. }))
+        );
+    }
+
+    {
+        let store = Arc::new(RedbStore::open(directory.path())?);
+        let runtime = recovery_service(
+            store,
+            Arc::new(ManualClock::new(NOW + 50)),
+            Arc::new(DeterministicExecutor::new(test_descriptor()?)),
+            "recover-before-expiry",
+        )?;
+        let recovery = runtime.recover()?;
+        assert_eq!(recovery.runs_examined, 1);
+        assert_eq!(recovery.expired_leases, 0);
+        assert_eq!(recovery.retryable, 0);
+        let preserved = runtime.projection(&run)?;
+        assert_eq!(preserved.attempts().len(), 1);
+        assert!(
+            preserved
+                .attempts()
+                .values()
+                .next()
+                .is_some_and(|attempt| attempt.recovery().is_empty()),
+            "healthy unexpired leases must not grow recovery history"
+        );
+        assert!(preserved.leases().values().all(|lease| lease.is_active()));
+        let tick = runtime.tick()?;
+        assert_eq!(tick.dispatched, 0);
+        assert_eq!(tick.completed, 0);
+        assert_eq!(runtime.projection(&run)?.attempts().len(), 1);
+    }
+
+    {
+        let store = Arc::new(RedbStore::open(directory.path())?);
+        let recovery_clock = Arc::new(ManualClock::new(NOW + 101));
+        let runtime = recovery_service(
+            store,
+            recovery_clock.clone(),
+            Arc::new(DeterministicExecutor::new(test_descriptor()?)),
+            "recover-after-expiry",
+        )?;
+        let recovery = runtime.recover()?;
+        assert_eq!(recovery.runs_examined, 1);
+        assert_eq!(recovery.expired_leases, 1);
+        assert_eq!(recovery.retryable, 1);
+        let retry_pending = runtime.projection(&run)?;
+        assert_eq!(retry_pending.attempts().len(), 2);
+        assert!(retry_pending.leases().values().any(|lease| matches!(
+            lease.state(),
+            LeaseState::Expired(RecoveryClassification::Retryable)
+        )));
+        assert!(
+            retry_pending
+                .attempts()
+                .values()
+                .any(|attempt| attempt.state() == &AttemptState::AwaitingRetryTimer)
+        );
+
+        let before_backoff = runtime.tick()?;
+        assert_eq!(before_backoff.dispatched, 0);
+        assert_eq!(before_backoff.completed, 0);
+        let _ = recovery_clock.advance(1)?;
+        let tick = runtime.tick()?;
+        assert_eq!(tick.dispatched, 1);
+        assert_eq!(tick.completed, 1);
+        let completed = runtime.projection(&run)?;
+        assert_eq!(
+            completed.lifecycle(),
+            RunLifecycle::Terminal(RunOutcome::Succeeded)
+        );
+        assert_eq!(completed.attempts().len(), 2);
+        let first = completed
+            .attempts()
+            .values()
+            .find(|attempt| attempt.attempt_number() == 1)
+            .ok_or("first crash-boundary attempt is absent")?;
+        let second = completed
+            .attempts()
+            .values()
+            .find(|attempt| attempt.attempt_number() == 2)
+            .ok_or("recovery retry attempt is absent")?;
+        assert_eq!(
+            first.state(),
+            &AttemptState::UncertainSupersededByRetry {
+                covering_attempt: second.attempt().clone(),
+            }
+        );
+        assert!(first.terminal().is_none());
+        assert!(first.obligation().is_some());
+        let attempt_numbers: BTreeSet<_> = completed
+            .attempts()
+            .values()
+            .map(|attempt| attempt.attempt_number())
+            .collect();
+        assert_eq!(attempt_numbers, BTreeSet::from([1, 2]));
+        let history = runtime.history(&run)?;
+        assert_eq!(
+            history
+                .iter()
+                .filter(|event| matches!(event.kind(), RunEventKind::NodeScheduled { .. }))
+                .count(),
+            2
+        );
+        assert_eq!(
+            history
+                .iter()
+                .filter(|event| matches!(event.kind(), RunEventKind::NodeStarted { .. }))
+                .count(),
+            1,
+            "only the post-recovery retry may receive a start acknowledgement"
+        );
+        assert!(!history.iter().any(|event| matches!(
+            event.kind(),
+            RunEventKind::NodeTerminal {
+                attempt,
+                outcome: NodeOutcome::Failed,
+                ..
+            } if attempt == first.attempt()
+        )));
+    }
+    Ok(())
+}
+
+#[test]
+fn idempotent_boundary_error_retries_exact_request_and_keeps_first_attempt_truthful() -> TestResult
+{
+    let directory = TempDir::new()?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let clock = Arc::new(ManualClock::new(NOW));
+    let executor = Arc::new(BoundaryFailingExecutor::new(
+        descriptor_with_model_side_effect("idempotent_write")?,
+        1,
+    ));
+    let runtime = RuntimeService::new(
+        store.clone(),
+        executor.clone(),
+        clock.clone(),
+        Arc::new(SequentialIdGenerator::new("idempotent-boundary-retry", 1)?),
+        RuntimeConfig::new(
+            WorkerId::new("worker-idempotent-boundary-retry")?,
+            ActorRef::new("controller:idempotent-boundary-retry")?,
+            30_000,
+            32,
+            SchedulerLimits::new(8, 4, 2, 4)?,
+            RetryPolicy::new(2, vec![ErrorClass::Adapter], 1, 1_000, 0)?,
+        )?,
+    )?;
+    let revision = task_revision("workflow-idempotent-boundary-retry")?;
+    let run = RunId::new("run-idempotent-boundary-retry")?;
+    store.put_revision(&revision)?;
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::CreateRun {
+                workflow: revision.semantic().workflow().clone(),
+                revision: revision.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    run.clone(),
+                    ScopeId::new("scope-idempotent-boundary-retry")?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?,
+        CommandDisposition::Accepted
+    );
+
+    let first_tick = runtime.tick()?;
+    assert_eq!(first_tick.dispatched, 1);
+    assert_eq!(first_tick.completed, 0);
+    assert_eq!(first_tick.uncertain, 1);
+    let pending = runtime.projection(&run)?;
+    assert_eq!(pending.unresolved_attempts().count(), 1);
+    assert!(
+        pending
+            .attempts()
+            .values()
+            .all(|attempt| attempt.terminal().is_none())
+    );
+    assert!(
+        runtime
+            .history(&run)?
+            .iter()
+            .any(|event| matches!(event.kind(), RunEventKind::ExternalOutcomeUncertain { .. }))
+    );
+    assert!(!runtime.history(&run)?.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::NodeTerminal {
+            outcome: NodeOutcome::Failed,
+            ..
+        }
+    )));
+
+    clock.advance(1)?;
+    let retry_tick = runtime.tick()?;
+    assert_eq!(retry_tick.dispatched, 1);
+    assert_eq!(retry_tick.completed, 1);
+    let projection = runtime.projection(&run)?;
+    assert_eq!(
+        projection.lifecycle(),
+        RunLifecycle::Terminal(RunOutcome::Succeeded)
+    );
+    let first = projection
+        .attempts()
+        .values()
+        .find(|attempt| attempt.attempt_number() == 1)
+        .ok_or("first idempotent attempt is absent")?;
+    let second = projection
+        .attempts()
+        .values()
+        .find(|attempt| attempt.attempt_number() == 2)
+        .ok_or("second idempotent attempt is absent")?;
+    assert_eq!(
+        first.state(),
+        &AttemptState::UncertainSupersededByRetry {
+            covering_attempt: second.attempt().clone(),
+        }
+    );
+    assert!(first.terminal().is_none());
+    assert!(first.obligation().is_some());
+    assert_eq!(projection.unresolved_attempts().count(), 0);
+
+    let dispatches = executor.dispatches()?;
+    assert_eq!(dispatches.len(), 2);
+    assert_eq!(
+        dispatches[0].request().idempotency_key(),
+        dispatches[1].request().idempotency_key()
+    );
+    assert!(dispatches[0].request().idempotency_key().is_some());
+    assert_eq!(
+        dispatches[0].resolution().snapshot(),
+        dispatches[1].resolution().snapshot()
+    );
+    assert_eq!(
+        dispatches[0].request().capability(),
+        dispatches[1].request().capability()
+    );
+    assert_eq!(
+        dispatches[0].request().operation(),
+        dispatches[1].request().operation()
+    );
+    assert_eq!(
+        dispatches[0].request().inputs(),
+        dispatches[1].request().inputs()
+    );
+    assert_eq!(
+        dispatches[0].request().extensions(),
+        dispatches[1].request().extensions()
+    );
+    Ok(())
+}
+
+#[test]
+fn uncertainty_survives_transient_retry_id_failure_and_recovery_retries_later() -> TestResult {
+    let directory = TempDir::new()?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let clock = Arc::new(ManualClock::new(NOW));
+    let executor = Arc::new(BoundaryFailingExecutor::new(test_descriptor()?, 1));
+    let runtime = RuntimeService::new(
+        store.clone(),
+        executor,
+        clock.clone(),
+        Arc::new(TransientAttemptIdGenerator::new("transient-retry-id", 1)?),
+        RuntimeConfig::new(
+            WorkerId::new("worker-transient-retry-id")?,
+            ActorRef::new("controller:transient-retry-id")?,
+            30_000,
+            32,
+            SchedulerLimits::new(8, 4, 2, 4)?,
+            RetryPolicy::new(
+                2,
+                vec![ErrorClass::Adapter, ErrorClass::Transport],
+                1,
+                1_000,
+                0,
+            )?,
+        )?,
+    )?;
+    let revision = task_revision("workflow-transient-retry-id")?;
+    let run = RunId::new("run-transient-retry-id")?;
+    store.put_revision(&revision)?;
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::CreateRun {
+                workflow: revision.semantic().workflow().clone(),
+                revision: revision.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    run.clone(),
+                    ScopeId::new("scope-transient-retry-id")?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?,
+        CommandDisposition::Accepted
+    );
+
+    let first_tick = runtime.tick()?;
+    assert_eq!(first_tick.uncertain, 1);
+    let uncertain = runtime.projection(&run)?;
+    assert_eq!(uncertain.unresolved_attempts().count(), 1);
+    assert!(uncertain.retries().is_empty());
+    let history = runtime.history(&run)?;
+    assert!(
+        history
+            .iter()
+            .any(|event| matches!(event.kind(), RunEventKind::ExternalOutcomeUncertain { .. }))
+    );
+    assert!(
+        !history
+            .iter()
+            .any(|event| matches!(event.kind(), RunEventKind::NodeRetryScheduled { .. }))
+    );
+
+    let recovered = runtime.recover()?;
+    assert_eq!(recovered.retryable, 1);
+    let pending = runtime.projection(&run)?;
+    assert_eq!(pending.retries().len(), 1);
+    assert_eq!(pending.unresolved_attempts().count(), 1);
+    clock.advance(1)?;
+    assert_eq!(runtime.tick()?.completed, 1);
+    let completed = runtime.projection(&run)?;
+    assert_eq!(
+        completed.lifecycle(),
+        RunLifecycle::Terminal(RunOutcome::Succeeded)
+    );
+    assert_eq!(completed.unresolved_attempts().count(), 0);
+    Ok(())
+}
+
+#[test]
+fn uncertainty_is_committed_when_retry_deadline_overflows() -> TestResult {
+    let directory = TempDir::new()?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let clock = Arc::new(ManualClock::new(u64::MAX - 10));
+    let executor = Arc::new(BoundaryFailingExecutor::new(test_descriptor()?, 1));
+    let runtime = RuntimeService::new(
+        store.clone(),
+        executor,
+        clock,
+        Arc::new(SequentialIdGenerator::new("retry-time-overflow", 1)?),
+        RuntimeConfig::new(
+            WorkerId::new("worker-retry-time-overflow")?,
+            ActorRef::new("controller:retry-time-overflow")?,
+            1,
+            32,
+            SchedulerLimits::new(8, 4, 2, 4)?,
+            RetryPolicy::new(2, vec![ErrorClass::Adapter], 100, 100, 0)?,
+        )?,
+    )?;
+    let revision = task_revision("workflow-retry-time-overflow")?;
+    let run = RunId::new("run-retry-time-overflow")?;
+    store.put_revision(&revision)?;
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::CreateRun {
+                workflow: revision.semantic().workflow().clone(),
+                revision: revision.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    run.clone(),
+                    ScopeId::new("scope-retry-time-overflow")?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?,
+        CommandDisposition::Accepted
+    );
+
+    assert_eq!(runtime.tick()?.uncertain, 1);
+    let projection = runtime.projection(&run)?;
+    assert_eq!(projection.unresolved_attempts().count(), 1);
+    assert!(projection.retries().is_empty());
+    let history = runtime.history(&run)?;
+    assert!(
+        history
+            .iter()
+            .any(|event| matches!(event.kind(), RunEventKind::ExternalOutcomeUncertain { .. }))
+    );
+    assert!(
+        !history
+            .iter()
+            .any(|event| matches!(event.kind(), RunEventKind::NodeRetryScheduled { .. }))
+    );
+    Ok(())
+}
+
+#[test]
+fn concurrent_runtime_services_cannot_oversubscribe_one_global_lease_slot() -> TestResult {
+    let directory = TempDir::new()?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let clock = Arc::new(ManualClock::new(NOW));
+    let executor = Arc::new(AdmissionRaceExecutor::new(test_descriptor()?));
+    let make_runtime = |suffix: &str| -> TestResult<Arc<RuntimeService>> {
+        Ok(Arc::new(RuntimeService::new(
+            store.clone(),
+            executor.clone(),
+            clock.clone(),
+            Arc::new(SequentialIdGenerator::new(
+                format!("cross-service-{suffix}"),
+                1,
+            )?),
+            RuntimeConfig::new(
+                WorkerId::new(format!("worker-cross-service-{suffix}"))?,
+                ActorRef::new(format!("controller:cross-service-{suffix}"))?,
+                30_000,
+                1,
+                SchedulerLimits::new(1, 1, 1, 1)?,
+                RetryPolicy::new(1, Vec::new(), 1, 1_000, 0)?,
+            )?,
+        )?))
+    };
+    let first_runtime = make_runtime("first")?;
+    let second_runtime = make_runtime("second")?;
+    let revision = task_revision("workflow-cross-service-admission")?;
+    store.put_revision(&revision)?;
+
+    let first_run = RunId::new("run-z-cross-service")?;
+    assert_eq!(
+        submit_command(
+            first_runtime.as_ref(),
+            store.as_ref(),
+            &first_run,
+            RunCommand::CreateRun {
+                workflow: revision.semantic().workflow().clone(),
+                revision: revision.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    first_run.clone(),
+                    ScopeId::new("scope-z-cross-service")?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        submit_command(
+            first_runtime.as_ref(),
+            store.as_ref(),
+            &first_run,
+            RunCommand::StartRun,
+        )?,
+        CommandDisposition::Accepted
+    );
+    let first_tick_runtime = first_runtime.clone();
+    let first_tick = std::thread::spawn(move || {
+        first_tick_runtime
+            .tick()
+            .map_err(|error| format!("first cross-service tick failed: {error}"))
+    });
+    executor.wait_for_resolvers(1)?;
+
+    let second_run = RunId::new("run-a-cross-service")?;
+    assert_eq!(
+        submit_command(
+            second_runtime.as_ref(),
+            store.as_ref(),
+            &second_run,
+            RunCommand::CreateRun {
+                workflow: revision.semantic().workflow().clone(),
+                revision: revision.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    second_run.clone(),
+                    ScopeId::new("scope-a-cross-service")?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        submit_command(
+            second_runtime.as_ref(),
+            store.as_ref(),
+            &second_run,
+            RunCommand::StartRun,
+        )?,
+        CommandDisposition::Accepted
+    );
+    let second_tick_runtime = second_runtime.clone();
+    let second_tick = std::thread::spawn(move || {
+        second_tick_runtime
+            .tick()
+            .map_err(|error| format!("second cross-service tick failed: {error}"))
+    });
+    executor.wait_for_resolvers(2)?;
+    executor.wait_for_execute(1)?;
+    assert_eq!(
+        store.active_leases(PageSize::new(2)?)?.entries.len(),
+        1,
+        "two runtime services both committed against one global slot"
+    );
+    executor.release()?;
+    let first_result = first_tick
+        .join()
+        .map_err(|_| "first cross-service scheduler thread panicked")??;
+    let second_result = second_tick
+        .join()
+        .map_err(|_| "second cross-service scheduler thread panicked")??;
+    assert_eq!(
+        first_result.dispatched + second_result.dispatched,
+        1,
+        "stale admission witness allowed two dispatches"
+    );
+    assert_eq!(first_result.completed + second_result.completed, 1);
+    assert_eq!(first_result.deferred + second_result.deferred, 1);
+    let granted = first_runtime
+        .history(&first_run)?
+        .into_iter()
+        .chain(second_runtime.history(&second_run)?)
+        .filter(|event| matches!(event.kind(), RunEventKind::LeaseGranted { .. }))
+        .count();
+    assert_eq!(granted, 1);
+
+    for _ in 0..4 {
+        if first_runtime.projection(&first_run)?.is_completed()
+            && first_runtime.projection(&second_run)?.is_completed()
+        {
+            break;
+        }
+        first_runtime.tick()?;
+    }
+    assert!(first_runtime.projection(&first_run)?.is_completed());
+    assert!(first_runtime.projection(&second_run)?.is_completed());
+    Ok(())
+}
+
+#[test]
+fn harmless_uncertain_attempt_is_covered_by_exact_terminal_failure_retry() -> TestResult {
+    let directory = TempDir::new()?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let clock = Arc::new(ManualClock::new(NOW));
+    let executor = Arc::new(BoundaryFailingExecutor::new(test_descriptor()?, 1));
+    executor.set_script(
+        OperationId::new("model.generate")?,
+        vec![InvocationEventKind::Terminal {
+            terminal: failed_terminal()?,
+        }],
+    )?;
+    let runtime = RuntimeService::new(
+        store.clone(),
+        executor,
+        clock.clone(),
+        Arc::new(SequentialIdGenerator::new("harmless-failure-retry", 1)?),
+        RuntimeConfig::new(
+            WorkerId::new("worker-harmless-failure-retry")?,
+            ActorRef::new("controller:harmless-failure-retry")?,
+            30_000,
+            32,
+            SchedulerLimits::new(8, 4, 2, 4)?,
+            RetryPolicy::new(2, vec![ErrorClass::Adapter], 1, 1_000, 0)?,
+        )?,
+    )?;
+    let revision = task_revision("workflow-harmless-failure-retry")?;
+    let run = RunId::new("run-harmless-failure-retry")?;
+    store.put_revision(&revision)?;
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::CreateRun {
+                workflow: revision.semantic().workflow().clone(),
+                revision: revision.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    run.clone(),
+                    ScopeId::new("scope-harmless-failure-retry")?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?,
+        CommandDisposition::Accepted
+    );
+    runtime.tick()?;
+    clock.advance(1)?;
+    runtime.tick()?;
+    let projection = runtime.projection(&run)?;
+    assert_eq!(
+        projection.lifecycle(),
+        RunLifecycle::Terminal(RunOutcome::Failed)
+    );
+    let first = projection
+        .attempts()
+        .values()
+        .find(|attempt| attempt.attempt_number() == 1)
+        .ok_or("harmless uncertain attempt is absent")?;
+    let retry = projection
+        .attempts()
+        .values()
+        .find(|attempt| attempt.attempt_number() == 2)
+        .ok_or("terminal failure retry is absent")?;
+    assert_eq!(
+        first.state(),
+        &AttemptState::UncertainSupersededByRetry {
+            covering_attempt: retry.attempt().clone(),
+        }
+    );
+    assert!(first.terminal().is_none());
+    assert!(first.obligation().is_some());
+    assert_eq!(retry.state(), &AttemptState::Terminal(NodeOutcome::Failed));
+    assert_eq!(projection.unresolved_attempts().count(), 0);
+    Ok(())
+}
+
+#[test]
+fn exhausted_idempotent_boundary_retries_remain_uncertain_without_fabricated_failure() -> TestResult
+{
+    let directory = TempDir::new()?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let clock = Arc::new(ManualClock::new(NOW));
+    let executor = Arc::new(BoundaryFailingExecutor::new(
+        descriptor_with_model_side_effect("idempotent_write")?,
+        2,
+    ));
+    let runtime = RuntimeService::new(
+        store.clone(),
+        executor,
+        clock.clone(),
+        Arc::new(SequentialIdGenerator::new(
+            "idempotent-boundary-exhausted",
+            1,
+        )?),
+        RuntimeConfig::new(
+            WorkerId::new("worker-idempotent-boundary-exhausted")?,
+            ActorRef::new("controller:idempotent-boundary-exhausted")?,
+            30_000,
+            32,
+            SchedulerLimits::new(8, 4, 2, 4)?,
+            RetryPolicy::new(2, vec![ErrorClass::Adapter], 1, 1_000, 0)?,
+        )?,
+    )?;
+    let revision = task_revision("workflow-idempotent-boundary-exhausted")?;
+    let run = RunId::new("run-idempotent-boundary-exhausted")?;
+    store.put_revision(&revision)?;
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::CreateRun {
+                workflow: revision.semantic().workflow().clone(),
+                revision: revision.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    run.clone(),
+                    ScopeId::new("scope-idempotent-boundary-exhausted")?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?,
+        CommandDisposition::Accepted
+    );
+    runtime.tick()?;
+    clock.advance(1)?;
+    runtime.tick()?;
+    let projection = runtime.projection(&run)?;
+    assert_eq!(projection.lifecycle(), RunLifecycle::Running);
+    assert_eq!(projection.attempts().len(), 2);
+    assert_eq!(projection.unresolved_attempts().count(), 2);
+    assert!(
+        projection
+            .attempts()
+            .values()
+            .all(|attempt| attempt.state() == &AttemptState::Uncertain)
+    );
+    assert!(
+        !runtime
+            .history(&run)?
+            .iter()
+            .any(|event| matches!(event.kind(), RunEventKind::NodeTerminal { .. }))
+    );
+    Ok(())
+}
+
+#[test]
+fn active_retry_cancellation_only_closes_harmless_prior_uncertainty() -> TestResult {
+    for (suffix, side_effect, closes) in [
+        ("none", "none", true),
+        ("idempotent", "idempotent_write", false),
+    ] {
+        let directory = TempDir::new()?;
+        let store = Arc::new(RedbStore::open(directory.path())?);
+        let clock = Arc::new(ManualClock::new(NOW));
+        let executor = Arc::new(BoundaryThenBlockingExecutor::new(
+            descriptor_with_model_side_effect(side_effect)?,
+        ));
+        let runtime = Arc::new(RuntimeService::new(
+            store.clone(),
+            executor.clone(),
+            clock.clone(),
+            Arc::new(SequentialIdGenerator::new(
+                format!("active-retry-cancel-{suffix}"),
+                1,
+            )?),
+            RuntimeConfig::new(
+                WorkerId::new(format!("worker-active-retry-cancel-{suffix}"))?,
+                ActorRef::new(format!("controller:active-retry-cancel-{suffix}"))?,
+                30_000,
+                32,
+                SchedulerLimits::new(8, 4, 2, 4)?,
+                RetryPolicy::new(2, vec![ErrorClass::Adapter], 1, 1_000, 0)?,
+            )?,
+        )?);
+        let revision = task_revision(&format!("workflow-active-retry-cancel-{suffix}"))?;
+        let run = RunId::new(format!("run-active-retry-cancel-{suffix}"))?;
+        store.put_revision(&revision)?;
+        assert_eq!(
+            submit_command(
+                runtime.as_ref(),
+                store.as_ref(),
+                &run,
+                RunCommand::CreateRun {
+                    workflow: revision.semantic().workflow().clone(),
+                    revision: revision.id().clone(),
+                    root_scope: WorkspaceScope::run_root(
+                        run.clone(),
+                        ScopeId::new(format!("scope-active-retry-cancel-{suffix}"))?,
+                    ),
+                    workspace_budget: generous_budget()?,
+                    inputs: Vec::new(),
+                },
+            )?,
+            CommandDisposition::Accepted
+        );
+        assert_eq!(
+            submit_command(runtime.as_ref(), store.as_ref(), &run, RunCommand::StartRun,)?,
+            CommandDisposition::Accepted
+        );
+        runtime.tick()?;
+        clock.advance(1)?;
+        let retry_runtime = runtime.clone();
+        let retry = std::thread::spawn(move || {
+            retry_runtime
+                .tick()
+                .map_err(|error| format!("active retry tick failed: {error}"))
+        });
+        executor.wait_until_entered()?;
+        assert_eq!(
+            submit_command(
+                runtime.as_ref(),
+                store.as_ref(),
+                &run,
+                RunCommand::RequestCancellation,
+            )?,
+            CommandDisposition::Accepted
+        );
+        runtime.tick()?;
+        assert_eq!(executor.cancellation_requests.load(Ordering::SeqCst), 1);
+        executor.release()?;
+        retry
+            .join()
+            .map_err(|_| "active retry dispatch thread panicked")??;
+        for _ in 0..4 {
+            if runtime.projection(&run)?.is_completed() {
+                break;
+            }
+            runtime.tick()?;
+        }
+        let projection = runtime.projection(&run)?;
+        let first = projection
+            .attempts()
+            .values()
+            .find(|attempt| attempt.attempt_number() == 1)
+            .ok_or("uncertain first attempt is absent")?;
+        let retry_attempt = projection
+            .attempts()
+            .values()
+            .find(|attempt| attempt.attempt_number() == 2)
+            .ok_or("cancelled retry attempt is absent")?;
+        if closes {
+            assert_eq!(
+                first.state(),
+                &AttemptState::UncertainAbandonedByCancellation {
+                    cancelled_retry: retry_attempt.attempt().clone(),
+                }
+            );
+            assert_eq!(projection.unresolved_attempts().count(), 0);
+            assert_eq!(
+                projection.lifecycle(),
+                RunLifecycle::Terminal(RunOutcome::Cancelled)
+            );
+        } else {
+            assert_eq!(first.state(), &AttemptState::Uncertain);
+            assert_eq!(projection.unresolved_attempts().count(), 1);
+            assert_eq!(projection.lifecycle(), RunLifecycle::Cancelling);
+        }
+        assert!(first.terminal().is_none());
+        assert!(first.obligation().is_some());
+    }
+    Ok(())
+}

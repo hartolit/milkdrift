@@ -1099,13 +1099,12 @@ impl EventPageQuery {
         cursor: Option<EventCursor>,
         limit: PageSize,
     ) -> Result<Self, PersistenceError> {
-        if let Some(cursor) = &cursor {
-            if cursor.run != run || cursor.next_sequence == RunSequence::ZERO {
-                return Err(PersistenceError::InvalidCursor(
-                    "event cursor must belong to the query run and name a non-zero sequence"
-                        .to_owned(),
-                ));
-            }
+        if let Some(cursor) = &cursor
+            && (cursor.run != run || cursor.next_sequence == RunSequence::ZERO)
+        {
+            return Err(PersistenceError::InvalidCursor(
+                "event cursor must belong to the query run and name a non-zero sequence".to_owned(),
+            ));
         }
         Ok(Self { run, cursor, limit })
     }

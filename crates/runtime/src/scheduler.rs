@@ -720,14 +720,14 @@ mod tests {
                      eligible_at: u64,
                      priority|
          -> Result<_, Box<dyn std::error::Error>> {
-                Ok(RunnableIndexEntry {
-                    run: RunId::new(run)?,
-                    execution: NodeExecutionId::new(execution)?,
-                    eligible_at: TimestampMillis::new(eligible_at),
-                    priority,
-                    through_sequence: RunSequence::FIRST,
-                })
-            };
+            Ok(RunnableIndexEntry {
+                run: RunId::new(run)?,
+                execution: NodeExecutionId::new(execution)?,
+                eligible_at: TimestampMillis::new(eligible_at),
+                priority,
+                through_sequence: RunSequence::FIRST,
+            })
+        };
         let selected = select_fair_runnable(
             [
                 entry("run-a", "execution-a-old", 1, 1)?,

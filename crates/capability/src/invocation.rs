@@ -207,19 +207,18 @@ impl InvocationValueReference {
         if let Self::Artifact { reference } = self {
             reference.validate()?;
         }
-        if let Self::WorkspaceValue { identity, version } = self {
-            if identity.is_empty()
+        if let Self::WorkspaceValue { identity, version } = self
+            && (identity.is_empty()
                 || identity.len() > MAX_DURABLE_REFERENCE_BYTES
                 || version.is_empty()
-                || version.len() > MAX_DURABLE_REFERENCE_BYTES
-            {
-                return Err(ContractError::Bounds {
-                    location: "workspace_value".to_owned(),
-                    reason: format!(
-                        "identity and version must contain 1 to {MAX_DURABLE_REFERENCE_BYTES} bytes"
-                    ),
-                });
-            }
+                || version.len() > MAX_DURABLE_REFERENCE_BYTES)
+        {
+            return Err(ContractError::Bounds {
+                location: "workspace_value".to_owned(),
+                reason: format!(
+                    "identity and version must contain 1 to {MAX_DURABLE_REFERENCE_BYTES} bytes"
+                ),
+            });
         }
         Ok(())
     }
@@ -666,12 +665,12 @@ impl UsageObservation {
                 "usage cost and currency must be supplied together".to_owned(),
             ));
         }
-        if let Some(currency) = &self.currency {
-            if currency.len() != 3 || !currency.bytes().all(|byte| byte.is_ascii_uppercase()) {
-                return Err(ContractError::InvalidContract(
-                    "usage currency must be a three-letter uppercase ISO code".to_owned(),
-                ));
-            }
+        if let Some(currency) = &self.currency
+            && (currency.len() != 3 || !currency.bytes().all(|byte| byte.is_ascii_uppercase()))
+        {
+            return Err(ContractError::InvalidContract(
+                "usage currency must be a three-letter uppercase ISO code".to_owned(),
+            ));
         }
         validate_extensions(&self.extensions)
     }

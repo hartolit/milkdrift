@@ -33,7 +33,22 @@ pub use executor::{
     DeterministicExecutor, ExecutionDispatch, ExecutionReportBatch, ExecutorError,
     MAX_REPORTS_PER_DISPATCH, ResolvedCapability, TaskExecutor,
 };
-pub use projection::*;
+pub use projection::{
+    AttemptState, AttemptTerminal, BranchProjection, BranchState, CapabilityResolution,
+    DeterministicNodeTerminalProjection, ExternalOutcomeObligation, IterationProjection,
+    IterationState, JoinProjection, LeaseProjection, LeaseState, NodeAttemptProjection,
+    NodeExecutionCancellationProjection, NodeExecutionProjection, NodeExecutionState,
+    ProgressObservation, PublishedNodeOutput, ReconciliationCancellationProjection,
+    ReconciliationDecision, ReconciliationPlanProjection, ReconciliationProjection,
+    ReconciliationRemediationProjection, ReconciliationRequestProjection,
+    ReconciliationRequestState, RecoveryDecision, RecoveryObservation, RecoveryProjection,
+    RemediationProjection, RepeatContinuationDecisionProjection, RepeatContinuationProjection,
+    RepeatContinuationRequestProjection, RepeatTermination, ResourceUsage, RetainedExternalOutcome,
+    RetryProjection, RetryState, RevisionPin, RunCancellation, RunLifecycle, RunProjection,
+    RunTerminalProjection, RunTerminationIntent, SideEffectClassification, SignalProjection,
+    SubworkflowOutputImport, SubworkflowProjection, SubworkflowState, TimerCancellationProjection,
+    TimerProjection, TimerPurpose, TimerState, WaitCancellationProjection, WaitProjection,
+};
 pub use reconciliation::{
     HistoricalExecutionState, NodeHistory, ReconciliationPlan, plan_reconciliation,
     validate_plan_is_fresh,

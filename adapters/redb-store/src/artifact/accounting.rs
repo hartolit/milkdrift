@@ -1,0 +1,926 @@
+use super::*;
+use super::{
+    cleanup::{
+        remove_publication_age_index, remove_temporary_manifest,
+        validate_writable_publication_indexes,
+    },
+    path::{
+        ArtifactPathKind, artifact_path_entry, publication_temp_name, put_artifact_path,
+        remove_artifact_path,
+    },
+    publication::{
+        artifact_catalog_payload, decode_publication, persist_publication_catalog,
+        validated_artifact_metadata_in_transaction,
+    },
+};
+pub(crate) fn validate_artifact_catalog(
+    write: &redb::WriteTransaction,
+) -> Result<ArtifactAccountingRecord, PersistenceError> {
+    let accounting = write.open_table(ARTIFACT_ACCOUNTING).map_err(error::redb)?;
+    if accounting.len().map_err(error::redb)? != 1 {
+        return Err(error::corruption(
+            "artifact accounting must contain exactly one checked document",
+        ));
+    }
+    let stored = accounting
+        .get(GLOBAL_ARTIFACT_BYTES_KEY)
+        .map_err(error::redb)?
+        .ok_or_else(|| error::corruption("artifact accounting document is missing"))?;
+    let stored: ArtifactAccountingRecord = json::decode(stored.value(), "artifact accounting")?;
+    if stored.schema_version != ARTIFACT_ACCOUNTING_SCHEMA_VERSION {
+        return Err(PersistenceError::UnsupportedVersion {
+            document: "artifact_accounting",
+            found: stored.schema_version,
+            supported: ARTIFACT_ACCOUNTING_SCHEMA_VERSION,
+        });
+    }
+    crate::trie::validate_roots_in_transaction(write)?;
+    Ok(stored)
+}
+
+pub(crate) fn validated_run_artifact_reference_in_transaction(
+    write: &redb::WriteTransaction,
+    run: &RunId,
+    reference: &ArtifactReference,
+) -> Result<bool, PersistenceError> {
+    validate_artifact_catalog(write)?;
+    let indexed = indexed_run_artifact_reference(write, run, reference)?;
+    let authoritative = manifested_run_artifact_reference(write, run, reference)?;
+    if indexed != authoritative {
+        return Err(error::corruption(format!(
+            "artifact-reference index disagrees with authoritative ownership for run {run} and artifact {}",
+            reference.artifact()
+        )));
+    }
+    Ok(authoritative)
+}
+
+pub(crate) fn indexed_run_artifact_reference(
+    write: &redb::WriteTransaction,
+    run: &RunId,
+    reference: &ArtifactReference,
+) -> Result<bool, PersistenceError> {
+    let digest = reference.digest().to_hex();
+    let prefix = codec::components(&[&digest, reference.artifact().as_str(), run.as_str()])?;
+    let end = codec::prefix_end(prefix.clone())
+        .ok_or_else(|| error::corruption("artifact-reference prefix has no range end"))?;
+    let table = write.open_table(ARTIFACT_REFERENCES).map_err(error::redb)?;
+    let item = table
+        .range(prefix.as_slice()..end.as_slice())
+        .map_err(error::redb)?
+        .next()
+        .transpose()
+        .map_err(error::redb)?;
+    if let Some((key, bytes)) = item {
+        let key = key.value().to_vec();
+        let bytes = bytes.value().to_vec();
+        let family = CatalogFamily::ArtifactReferenceOccurrence;
+        let witness = trie::verify_member_in_transaction(
+            write,
+            family,
+            trie::hashed_path(family, &key),
+            &key,
+        )?;
+        if witness != Some(trie::digest_payload(family, &bytes)) {
+            return Err(error::corruption(
+                "artifact-reference occurrence disagrees with its authenticated catalog",
+            ));
+        }
+        let stored: ArtifactReference = json::decode(&bytes, "artifact reference")?;
+        if &stored != reference {
+            return Err(error::corruption(
+                "artifact-reference index prefix contradicts its stored document",
+            ));
+        }
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+pub(crate) fn manifested_run_artifact_reference(
+    write: &redb::WriteTransaction,
+    run: &RunId,
+    reference: &ArtifactReference,
+) -> Result<bool, PersistenceError> {
+    let digest = reference.digest().to_hex();
+    let key = codec::components(&[run.as_str(), &digest, reference.artifact().as_str()])?;
+    let ownership = write
+        .open_table(RUN_ARTIFACT_OWNERSHIP)
+        .map_err(error::redb)?;
+    let stored = ownership
+        .get(key.as_slice())
+        .map_err(error::redb)?
+        .map(|bytes| json::decode::<ArtifactReference>(bytes.value(), "run artifact ownership"))
+        .transpose()?;
+    drop(ownership);
+    let family = CatalogFamily::RunArtifactOwnership;
+    let witness =
+        trie::verify_member_in_transaction(write, family, trie::hashed_path(family, &key), &key)?;
+    match (stored, witness) {
+        (None, None) => Ok(false),
+        (Some(stored), Some(witness)) if &stored == reference => {
+            let bytes = json::encode(&stored, "run artifact ownership")?;
+            if witness != trie::digest_payload(family, &bytes) {
+                return Err(error::corruption(
+                    "run artifact ownership disagrees with its authenticated catalog",
+                ));
+            }
+            Ok(true)
+        }
+        (Some(_), Some(_)) => Err(error::corruption(
+            "run artifact-ownership key contradicts its stored document",
+        )),
+        _ => Err(error::corruption(
+            "run artifact ownership and authenticated catalog are incomplete",
+        )),
+    }
+}
+
+pub(crate) fn persist_artifact_reference_occurrence(
+    write: &redb::WriteTransaction,
+    key: &[u8],
+    reference: &ArtifactReference,
+) -> Result<(), PersistenceError> {
+    let bytes = json::encode(reference, "artifact reference")?;
+    let prior = write
+        .open_table(ARTIFACT_REFERENCES)
+        .map_err(error::redb)?
+        .get(key)
+        .map_err(error::redb)?
+        .map(|stored| stored.value().to_vec());
+    if prior.is_some() {
+        return Err(error::corruption(
+            "artifact reference occurrence already exists before its authoritative append",
+        ));
+    }
+    write
+        .open_table(ARTIFACT_REFERENCES)
+        .map_err(error::redb)?
+        .insert(key, bytes.as_slice())
+        .map_err(error::redb)?;
+    let family = CatalogFamily::ArtifactReferenceOccurrence;
+    if trie::put(
+        write,
+        family,
+        trie::hashed_path(family, key),
+        key,
+        trie::digest_payload(family, &bytes),
+    )?
+    .is_some()
+    {
+        return Err(error::corruption(
+            "artifact reference occurrence catalog already contains the new identity",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn persist_run_artifact_ownership(
+    write: &redb::WriteTransaction,
+    run: &RunId,
+    reference: &ArtifactReference,
+) -> Result<(), PersistenceError> {
+    let digest = reference.digest().to_hex();
+    let key = codec::components(&[run.as_str(), &digest, reference.artifact().as_str()])?;
+    let bytes = json::encode(reference, "run artifact ownership")?;
+    let previous = {
+        let table = write
+            .open_table(RUN_ARTIFACT_OWNERSHIP)
+            .map_err(error::redb)?;
+        table
+            .get(key.as_slice())
+            .map_err(error::redb)?
+            .map(|stored| stored.value().to_vec())
+    };
+    let family = CatalogFamily::RunArtifactOwnership;
+    let prior_witness =
+        trie::verify_member_in_transaction(write, family, trie::hashed_path(family, &key), &key)?;
+    match (previous.as_deref(), prior_witness) {
+        (Some(stored), Some(witness)) => {
+            let decoded: ArtifactReference = json::decode(stored, "run artifact ownership")?;
+            if decoded != *reference || witness != trie::digest_payload(family, stored) {
+                return Err(error::corruption(
+                    "existing run artifact ownership disagrees with its catalog",
+                ));
+            }
+            return Ok(());
+        }
+        (None, None) => {}
+        _ => {
+            return Err(error::corruption(
+                "run artifact ownership and authenticated catalog are incomplete",
+            ));
+        }
+    }
+    write
+        .open_table(RUN_ARTIFACT_OWNERSHIP)
+        .map_err(error::redb)?
+        .insert(key.as_slice(), bytes.as_slice())
+        .map_err(error::redb)?;
+    if trie::put(
+        write,
+        family,
+        trie::hashed_path(family, &key),
+        &key,
+        trie::digest_payload(family, &bytes),
+    )?
+    .is_some()
+    {
+        return Err(error::corruption(
+            "run artifact ownership catalog already contains the new identity",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) const fn usage_covers(current: WorkspaceUsage, historical: WorkspaceUsage) -> bool {
+    current.value_versions() >= historical.value_versions()
+        && current.inline_bytes() >= historical.inline_bytes()
+        && current.artifacts() >= historical.artifacts()
+        && current.artifact_bytes() >= historical.artifact_bytes()
+}
+
+pub(crate) fn materialize_legacy_writable_workspace_domains(
+    write: &redb::WriteTransaction,
+) -> Result<(), PersistenceError> {
+    let publications = write
+        .open_table(ARTIFACT_PUBLICATIONS)
+        .map_err(error::redb)?;
+    let mut usages = write.open_table(WORKSPACE_USAGE).map_err(error::redb)?;
+    for item in publications.iter().map_err(error::redb)? {
+        let (key, bytes) = item.map_err(error::redb)?;
+        let record = decode_publication(bytes.value())?;
+        if record.publication.as_str() != key.value() {
+            return Err(error::corruption(
+                "legacy artifact publication key disagrees with its document",
+            ));
+        }
+        let budgets = write
+            .open_table(crate::schema::WORKSPACE_BUDGETS)
+            .map_err(error::redb)?;
+        let budget_bytes = budgets
+            .get(record.run.as_str())
+            .map_err(error::redb)?
+            .ok_or_else(|| {
+                error::corruption("legacy artifact publication is missing its workspace budget")
+            })?;
+        let budget: milkdrift_workspace::WorkspaceBudget =
+            json::decode(budget_bytes.value(), "workspace budget")?;
+        if budget != record.budget {
+            return Err(error::corruption(
+                "legacy artifact publication budget disagrees with its workspace domain",
+            ));
+        }
+        let actual = usages
+            .get(record.run.as_str())
+            .map_err(error::redb)?
+            .map(|bytes| json::decode::<WorkspaceUsage>(bytes.value(), "workspace usage"))
+            .transpose()?;
+        let expected = match record.state {
+            PublicationState::Writable => {
+                validate_writable_publication_indexes(write, &record)?;
+                record.expected_usage
+            }
+            PublicationState::Committed { .. } => record.resulting_usage,
+            PublicationState::Released => {
+                return Err(error::corruption(
+                    "legacy storage unexpectedly contains a released publication tombstone",
+                ));
+            }
+        };
+        match actual {
+            Some(actual)
+                if matches!(record.state, PublicationState::Writable) && actual == expected => {}
+            Some(actual)
+                if matches!(record.state, PublicationState::Committed { .. })
+                    && usage_covers(actual, expected) => {}
+            None if matches!(record.state, PublicationState::Writable)
+                && expected == WorkspaceUsage::EMPTY =>
+            {
+                let bytes = json::encode(&WorkspaceUsage::EMPTY, "workspace usage")?;
+                usages
+                    .insert(record.run.as_str(), bytes.as_slice())
+                    .map_err(error::redb)?;
+            }
+            Some(_) => {
+                return Err(error::corruption(
+                    "legacy artifact publication usage disagrees with its state",
+                ));
+            }
+            None => {
+                return Err(error::corruption(
+                    "legacy artifact publication is missing workspace usage",
+                ));
+            }
+        }
+    }
+    drop(usages);
+    drop(publications);
+
+    let budgets = write
+        .open_table(crate::schema::WORKSPACE_BUDGETS)
+        .map_err(error::redb)?;
+    let usages = write.open_table(WORKSPACE_USAGE).map_err(error::redb)?;
+    for item in budgets.iter().map_err(error::redb)? {
+        let (run, _) = item.map_err(error::redb)?;
+        if usages.get(run.value()).map_err(error::redb)?.is_none() {
+            return Err(error::corruption(
+                "legacy workspace budget has no usage domain or writable publication",
+            ));
+        }
+    }
+    for item in usages.iter().map_err(error::redb)? {
+        let (run, _) = item.map_err(error::redb)?;
+        if budgets.get(run.value()).map_err(error::redb)?.is_none() {
+            return Err(error::corruption(
+                "legacy workspace usage has no immutable budget",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn upgrade_artifact_accounting(
+    write: &redb::WriteTransaction,
+) -> Result<(), PersistenceError> {
+    let metadata = write.open_table(ARTIFACT_METADATA).map_err(error::redb)?;
+    let manifest = write.open_table(ARTIFACT_MANIFEST).map_err(error::redb)?;
+    let by_digest = write.open_table(ARTIFACTS_BY_DIGEST).map_err(error::redb)?;
+    let artifact_count = metadata.len().map_err(error::redb)?;
+    if manifest.len().map_err(error::redb)? != artifact_count
+        || by_digest.len().map_err(error::redb)? != artifact_count
+    {
+        return Err(error::corruption(
+            "legacy artifact catalog tables have different cardinality",
+        ));
+    }
+    let mut current_digest: Option<String> = None;
+    let mut current_size = 0_u64;
+    let mut committed_content_bytes = 0_u64;
+    for item in by_digest.iter().map_err(error::redb)? {
+        let (key, bytes) = item.map_err(error::redb)?;
+        let components = codec::decode_components(key.value(), 2)?;
+        let document: ArtifactMetadata = json::decode(bytes.value(), "artifact metadata")?;
+        if components[0] != document.reference().digest().to_hex()
+            || components[1] != document.reference().artifact().as_str()
+        {
+            return Err(error::corruption(
+                "legacy artifact digest key disagrees with its metadata",
+            ));
+        }
+        if current_digest.as_deref() == Some(components[0]) {
+            if current_size != document.reference().size_bytes() {
+                return Err(error::corruption(
+                    "legacy artifacts disagree on the size of one digest",
+                ));
+            }
+        } else {
+            committed_content_bytes = committed_content_bytes
+                .checked_add(document.reference().size_bytes())
+                .ok_or_else(|| error::corruption("legacy artifact byte count overflowed"))?;
+            current_digest = Some(components[0].to_owned());
+            current_size = document.reference().size_bytes();
+        }
+        let primary = metadata
+            .get(document.reference().artifact().as_str())
+            .map_err(error::redb)?
+            .ok_or_else(|| error::corruption("legacy artifact digest row has no primary row"))?;
+        let manifested = manifest
+            .get(document.reference().artifact().as_str())
+            .map_err(error::redb)?
+            .ok_or_else(|| error::corruption("legacy artifact digest row has no manifest"))?;
+        if json::decode::<ArtifactMetadata>(primary.value(), "artifact metadata")? != document
+            || json::decode::<ArtifactMetadata>(manifested.value(), "artifact manifest")?
+                != document
+        {
+            return Err(error::corruption("legacy artifact catalog rows disagree"));
+        }
+        let family = CatalogFamily::Artifact;
+        let logical_key = document.reference().artifact().as_str().as_bytes();
+        if trie::put(
+            write,
+            family,
+            trie::hashed_path(family, logical_key),
+            logical_key,
+            artifact_catalog_payload(&document)?,
+        )?
+        .is_some()
+        {
+            return Err(error::corruption(
+                "legacy artifact catalog contains a duplicate authenticated artifact",
+            ));
+        }
+    }
+    drop(by_digest);
+    drop(manifest);
+    drop(metadata);
+
+    let publications = write
+        .open_table(ARTIFACT_PUBLICATIONS)
+        .map_err(error::redb)?;
+    let mut writable_publication_count = 0_u64;
+    let mut committed_publication_count = 0_u64;
+    for item in publications.iter().map_err(error::redb)? {
+        let (key, bytes) = item.map_err(error::redb)?;
+        let record = decode_publication(bytes.value())?;
+        if record.publication.as_str() != key.value() {
+            return Err(error::corruption(
+                "legacy artifact publication key disagrees with its document",
+            ));
+        }
+        persist_publication_catalog(write, &record, None)?;
+        match record.state {
+            PublicationState::Writable => {
+                validate_writable_publication_indexes(write, &record)?;
+                put_artifact_path(
+                    write,
+                    &artifact_path_entry(&record, ArtifactPathKind::TempReady)?,
+                    None,
+                )?;
+                writable_publication_count = writable_publication_count
+                    .checked_add(1)
+                    .ok_or_else(|| error::corruption("writable publication count overflowed"))?;
+            }
+            PublicationState::Committed { .. } => {
+                validate_legacy_committed_publication(write, &record)?;
+                committed_publication_count = committed_publication_count
+                    .checked_add(1)
+                    .ok_or_else(|| error::corruption("committed publication count overflowed"))?;
+            }
+            PublicationState::Released => {
+                return Err(error::corruption(
+                    "legacy storage unexpectedly contains a released publication tombstone",
+                ));
+            }
+        }
+    }
+    if committed_publication_count != artifact_count {
+        return Err(error::corruption(
+            "legacy committed publications disagree with artifact catalog cardinality",
+        ));
+    }
+    drop(publications);
+    let references = write.open_table(ARTIFACT_REFERENCES).map_err(error::redb)?;
+    for item in references.iter().map_err(error::redb)? {
+        let (key, bytes) = item.map_err(error::redb)?;
+        let components = match codec::decode_components(key.value(), 4) {
+            Ok(components) => components,
+            Err(_) => {
+                let components = codec::decode_components(key.value(), 5)?;
+                if components[3] != "publication" {
+                    return Err(error::corruption(
+                        "legacy artifact occurrence has an unknown five-part identity",
+                    ));
+                }
+                components
+            }
+        };
+        let reference: ArtifactReference = json::decode(bytes.value(), "artifact reference")?;
+        if components[0] != reference.digest().to_hex()
+            || components[1] != reference.artifact().as_str()
+        {
+            return Err(error::corruption(
+                "legacy artifact occurrence key disagrees with its reference",
+            ));
+        }
+        let metadata = {
+            let table = write.open_table(ARTIFACT_METADATA).map_err(error::redb)?;
+            table
+                .get(reference.artifact().as_str())
+                .map_err(error::redb)?
+                .map(|stored| stored.value().to_vec())
+                .ok_or_else(|| error::corruption("legacy artifact occurrence has no metadata"))?
+        };
+        let metadata: ArtifactMetadata = json::decode(&metadata, "artifact metadata")?;
+        if metadata.reference() != &reference {
+            return Err(error::corruption(
+                "legacy artifact occurrence disagrees with artifact metadata",
+            ));
+        }
+        let ownership_key = codec::components(&[
+            components[2],
+            &reference.digest().to_hex(),
+            reference.artifact().as_str(),
+        ])?;
+        let ownership = {
+            let table = write
+                .open_table(RUN_ARTIFACT_OWNERSHIP)
+                .map_err(error::redb)?;
+            table
+                .get(ownership_key.as_slice())
+                .map_err(error::redb)?
+                .map(|stored| stored.value().to_vec())
+                .ok_or_else(|| {
+                    error::corruption("legacy artifact occurrence has no run ownership")
+                })?
+        };
+        if json::decode::<ArtifactReference>(&ownership, "run artifact ownership")? != reference {
+            return Err(error::corruption(
+                "legacy artifact occurrence disagrees with run ownership",
+            ));
+        }
+        let family = CatalogFamily::ArtifactReferenceOccurrence;
+        if trie::put(
+            write,
+            family,
+            trie::hashed_path(family, key.value()),
+            key.value(),
+            trie::digest_payload(family, bytes.value()),
+        )?
+        .is_some()
+        {
+            return Err(error::corruption(
+                "legacy artifact occurrence catalog contains a duplicate identity",
+            ));
+        }
+    }
+    drop(references);
+    let ownership = write
+        .open_table(RUN_ARTIFACT_OWNERSHIP)
+        .map_err(error::redb)?;
+    for item in ownership.iter().map_err(error::redb)? {
+        let (key, bytes) = item.map_err(error::redb)?;
+        let components = codec::decode_components(key.value(), 3)?;
+        let reference: ArtifactReference = json::decode(bytes.value(), "run artifact ownership")?;
+        if components[1] != reference.digest().to_hex()
+            || components[2] != reference.artifact().as_str()
+        {
+            return Err(error::corruption(
+                "legacy run artifact ownership key disagrees with its reference",
+            ));
+        }
+        let occurrence_prefix = codec::components(&[components[1], components[2], components[0]])?;
+        let end = codec::prefix_end(occurrence_prefix.clone()).ok_or_else(|| {
+            error::corruption("legacy artifact occurrence prefix has no range end")
+        })?;
+        if write
+            .open_table(ARTIFACT_REFERENCES)
+            .map_err(error::redb)?
+            .range(occurrence_prefix.as_slice()..end.as_slice())
+            .map_err(error::redb)?
+            .next()
+            .transpose()
+            .map_err(error::redb)?
+            .is_none()
+        {
+            return Err(error::corruption(
+                "legacy run artifact ownership has no reference occurrence",
+            ));
+        }
+        let family = CatalogFamily::RunArtifactOwnership;
+        if trie::put(
+            write,
+            family,
+            trie::hashed_path(family, key.value()),
+            key.value(),
+            trie::digest_payload(family, bytes.value()),
+        )?
+        .is_some()
+        {
+            return Err(error::corruption(
+                "legacy run artifact ownership catalog contains a duplicate identity",
+            ));
+        }
+    }
+    drop(ownership);
+    let mut accounting = write.open_table(ARTIFACT_ACCOUNTING).map_err(error::redb)?;
+    if let Some(bytes) = accounting
+        .get(GLOBAL_ARTIFACT_BYTES_KEY)
+        .map_err(error::redb)?
+    {
+        let legacy: LegacyArtifactAccountingDocument =
+            json::decode(bytes.value(), "artifact accounting")?;
+        let (schema_version, stored_content_bytes) = match legacy {
+            LegacyArtifactAccountingDocument::V1(record) => {
+                (record.schema_version, record.committed_content_bytes)
+            }
+            LegacyArtifactAccountingDocument::V2(record) => {
+                if record.artifact_count != artifact_count
+                    || record.reference_occurrence_count
+                        != write
+                            .open_table(ARTIFACT_REFERENCES)
+                            .map_err(error::redb)?
+                            .len()
+                            .map_err(error::redb)?
+                    || record.writable_publication_count != writable_publication_count
+                    || record.committed_publication_count != committed_publication_count
+                {
+                    return Err(error::corruption(
+                        "legacy artifact integrity counters disagree with their tables",
+                    ));
+                }
+                (record.schema_version, record.committed_content_bytes)
+            }
+        };
+        if !matches!(schema_version, 1 | 2) || stored_content_bytes != committed_content_bytes {
+            return Err(error::corruption(
+                "legacy artifact accounting disagrees with committed content",
+            ));
+        }
+    } else if committed_content_bytes != 0 {
+        return Err(error::corruption(
+            "legacy committed artifacts have no aggregate accounting",
+        ));
+    }
+    if accounting.len().map_err(error::redb)? > 1 {
+        return Err(error::corruption(
+            "legacy artifact accounting contains unknown rows",
+        ));
+    }
+    let upgraded = ArtifactAccountingRecord {
+        schema_version: ARTIFACT_ACCOUNTING_SCHEMA_VERSION,
+        committed_content_bytes,
+    };
+    let bytes = json::encode(&upgraded, "artifact accounting")?;
+    accounting
+        .insert(GLOBAL_ARTIFACT_BYTES_KEY, bytes.as_slice())
+        .map_err(error::redb)?;
+    Ok(())
+}
+
+pub(crate) fn validate_legacy_committed_publication(
+    write: &redb::WriteTransaction,
+    record: &PublicationRecord,
+) -> Result<(), PersistenceError> {
+    let artifact = record.metadata.reference().artifact();
+    let digest = record.metadata.reference().digest().to_hex();
+    {
+        let metadata = write.open_table(ARTIFACT_METADATA).map_err(error::redb)?;
+        let stored = metadata
+            .get(artifact.as_str())
+            .map_err(error::redb)?
+            .ok_or_else(|| error::corruption("committed publication has no artifact metadata"))?;
+        if json::decode::<ArtifactMetadata>(stored.value(), "artifact metadata")? != record.metadata
+        {
+            return Err(error::corruption(
+                "committed publication disagrees with artifact metadata",
+            ));
+        }
+    }
+
+    let occurrence_key = codec::components(&[
+        &digest,
+        artifact.as_str(),
+        record.run.as_str(),
+        "publication",
+        record.publication.as_str(),
+    ])?;
+    {
+        let occurrences = write.open_table(ARTIFACT_REFERENCES).map_err(error::redb)?;
+        let occurrence = occurrences
+            .get(occurrence_key.as_slice())
+            .map_err(error::redb)?
+            .ok_or_else(|| {
+                error::corruption("committed publication has no reference occurrence")
+            })?;
+        if json::decode::<ArtifactReference>(occurrence.value(), "artifact reference")?
+            != *record.metadata.reference()
+        {
+            return Err(error::corruption(
+                "committed publication reference occurrence disagrees with its metadata",
+            ));
+        }
+    }
+
+    let ownership_key = codec::components(&[record.run.as_str(), &digest, artifact.as_str()])?;
+    let ownership = write
+        .open_table(RUN_ARTIFACT_OWNERSHIP)
+        .map_err(error::redb)?;
+    let owned = ownership
+        .get(ownership_key.as_slice())
+        .map_err(error::redb)?
+        .ok_or_else(|| error::corruption("committed publication has no run ownership"))?;
+    if json::decode::<ArtifactReference>(owned.value(), "run artifact ownership")?
+        != *record.metadata.reference()
+    {
+        return Err(error::corruption(
+            "committed publication ownership disagrees with its metadata",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn commit_artifact_metadata(
+    store: &RedbStore,
+    write: &redb::WriteTransaction,
+    record: &mut PublicationRecord,
+    content_deduplicated: bool,
+) -> Result<(), PersistenceError> {
+    let mut artifact_accounting = validate_artifact_catalog(write)?;
+    let previous_publication_bytes = json::encode(record, "artifact publication")?;
+    let publication_family = CatalogFamily::ArtifactPublication;
+    let previous_publication =
+        trie::digest_payload(publication_family, &previous_publication_bytes);
+    let previous_artifact =
+        validated_artifact_metadata_in_transaction(write, record.metadata.reference().artifact())?;
+    if previous_artifact
+        .as_ref()
+        .is_some_and(|metadata| metadata != &record.metadata)
+    {
+        return Err(PersistenceError::ImmutableConflict {
+            entity: "artifact",
+            identity: record.metadata.reference().artifact().to_string(),
+        });
+    }
+    let current_content_bytes = artifact_accounting.committed_content_bytes;
+    crate::journal::advance_workspace_global_usage_in_transaction(
+        write,
+        &record.run,
+        record.expected_usage,
+        record.resulting_usage,
+    )?;
+    let metadata_bytes = json::encode(&record.metadata, "artifact metadata")?;
+    {
+        let mut metadata = write.open_table(ARTIFACT_METADATA).map_err(error::redb)?;
+        if let Some(existing) = metadata
+            .get(record.metadata.reference().artifact().as_str())
+            .map_err(error::redb)?
+        {
+            let existing: ArtifactMetadata = json::decode(existing.value(), "artifact metadata")?;
+            if existing != record.metadata {
+                return Err(PersistenceError::ImmutableConflict {
+                    entity: "artifact",
+                    identity: record.metadata.reference().artifact().to_string(),
+                });
+            }
+        } else {
+            metadata
+                .insert(
+                    record.metadata.reference().artifact().as_str(),
+                    metadata_bytes.as_slice(),
+                )
+                .map_err(error::redb)?;
+        }
+    }
+    let digest = record.metadata.reference().digest().to_hex();
+    let digest_key = codec::pair(&digest, record.metadata.reference().artifact().as_str())?;
+    let digest_was_known = {
+        let by_digest = write.open_table(ARTIFACTS_BY_DIGEST).map_err(error::redb)?;
+        let prefix = codec::component(&digest)?;
+        let end = codec::prefix_end(prefix.clone())
+            .ok_or_else(|| error::corruption("artifact digest prefix has no range end"))?;
+        let existing = by_digest
+            .range(prefix.as_slice()..end.as_slice())
+            .map_err(error::redb)?
+            .next()
+            .transpose()
+            .map_err(error::redb)?;
+        if let Some((_, bytes)) = existing {
+            let existing: ArtifactMetadata = json::decode(bytes.value(), "artifact metadata")?;
+            if existing.reference().digest() != record.metadata.reference().digest()
+                || existing.reference().size_bytes() != record.metadata.reference().size_bytes()
+            {
+                return Err(error::corruption(
+                    "one artifact digest is associated with contradictory content sizes",
+                ));
+            }
+            true
+        } else {
+            false
+        }
+    };
+    {
+        let mut by_digest = write.open_table(ARTIFACTS_BY_DIGEST).map_err(error::redb)?;
+        by_digest
+            .insert(digest_key.as_slice(), metadata_bytes.as_slice())
+            .map_err(error::redb)?;
+    }
+    {
+        let bytes = json::encode(&record.metadata, "artifact manifest")?;
+        let mut manifest = write.open_table(ARTIFACT_MANIFEST).map_err(error::redb)?;
+        if let Some(existing) = manifest
+            .get(record.metadata.reference().artifact().as_str())
+            .map_err(error::redb)?
+        {
+            let existing: ArtifactMetadata = json::decode(existing.value(), "artifact manifest")?;
+            if existing != record.metadata {
+                return Err(error::corruption(
+                    "artifact manifest conflicts with committed metadata",
+                ));
+            }
+        } else {
+            manifest
+                .insert(
+                    record.metadata.reference().artifact().as_str(),
+                    bytes.as_slice(),
+                )
+                .map_err(error::redb)?;
+        }
+    }
+    {
+        let family = CatalogFamily::Artifact;
+        let logical_key = record.metadata.reference().artifact().as_str().as_bytes();
+        let replaced = trie::put(
+            write,
+            family,
+            trie::hashed_path(family, logical_key),
+            logical_key,
+            artifact_catalog_payload(&record.metadata)?,
+        )?;
+        let expected = previous_artifact
+            .as_ref()
+            .map(artifact_catalog_payload)
+            .transpose()?;
+        if replaced != expected {
+            return Err(error::corruption(
+                "artifact catalog changed outside its authoritative transaction",
+            ));
+        }
+    }
+    let resulting_content_bytes = if digest_was_known {
+        current_content_bytes
+    } else {
+        current_content_bytes
+            .checked_add(record.metadata.reference().size_bytes())
+            .ok_or_else(|| PersistenceError::Storage {
+                class: StorageFailureClass::ResourceExhausted,
+                message: "global artifact-byte accounting overflow".to_owned(),
+            })?
+    };
+    if resulting_content_bytes > store.max_total_artifact_bytes {
+        return Err(PersistenceError::Storage {
+            class: StorageFailureClass::ResourceExhausted,
+            message: "global artifact-byte limit exceeded".to_owned(),
+        });
+    }
+    {
+        artifact_accounting.committed_content_bytes = resulting_content_bytes;
+        let bytes = json::encode(&artifact_accounting, "artifact accounting")?;
+        let mut accounting = write.open_table(ARTIFACT_ACCOUNTING).map_err(error::redb)?;
+        accounting
+            .insert(GLOBAL_ARTIFACT_BYTES_KEY, bytes.as_slice())
+            .map_err(error::redb)?;
+    }
+    {
+        let usage_bytes = json::encode(&record.resulting_usage, "workspace usage")?;
+        let mut usage = write.open_table(WORKSPACE_USAGE).map_err(error::redb)?;
+        usage
+            .insert(record.run.as_str(), usage_bytes.as_slice())
+            .map_err(error::redb)?;
+    }
+    crate::journal::persist_workspace_value_usage_accounting_in_transaction(
+        write,
+        &record.run,
+        record.resulting_usage,
+    )?;
+    {
+        let key = codec::components(&[
+            &digest,
+            record.metadata.reference().artifact().as_str(),
+            record.run.as_str(),
+            "publication",
+            record.publication.as_str(),
+        ])?;
+        persist_artifact_reference_occurrence(write, &key, record.metadata.reference())?;
+    }
+    persist_run_artifact_ownership(write, &record.run, record.metadata.reference())?;
+    remove_publication_age_index(write, record)?;
+    record.state = PublicationState::Committed {
+        content_deduplicated,
+    };
+    let record_bytes = json::encode(record, "artifact publication")?;
+    {
+        let mut publications = write
+            .open_table(ARTIFACT_PUBLICATIONS)
+            .map_err(error::redb)?;
+        publications
+            .insert(record.publication.as_str(), record_bytes.as_slice())
+            .map_err(error::redb)?;
+    }
+    persist_publication_catalog(write, record, Some(previous_publication))?;
+    {
+        let mut reservations = write
+            .open_table(ARTIFACT_RESERVATIONS)
+            .map_err(error::redb)?;
+        let _removed = reservations
+            .remove(record.run.as_str())
+            .map_err(error::redb)?;
+    }
+    {
+        let temp_name = publication_temp_name(&record.publication);
+        let mut owners = write
+            .open_table(ARTIFACT_TEMP_OWNERS)
+            .map_err(error::redb)?;
+        let removed = owners.remove(temp_name.as_str()).map_err(error::redb)?;
+        drop(removed);
+        drop(owners);
+        remove_temporary_manifest(write, &temp_name, &record.publication)?;
+    }
+    {
+        let key = codec::pair(&digest, record.publication.as_str())?;
+        let mut digest_reservations = write
+            .open_table(ARTIFACT_DIGEST_RESERVATIONS)
+            .map_err(error::redb)?;
+        let _removed = digest_reservations
+            .remove(key.as_slice())
+            .map_err(error::redb)?;
+    }
+    remove_artifact_path(
+        write,
+        &artifact_path_entry(record, ArtifactPathKind::ContentIntent)?,
+    )?;
+    validate_artifact_catalog(write)?;
+    crate::journal::validate_workspace_value_accounting_in_transaction(write)?;
+    Ok(())
+}

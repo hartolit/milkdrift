@@ -7,8 +7,9 @@ use redb::{ReadableTable, ReadableTableMetadata};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    RedbStore, codec, error, json,
+    RedbStore, codec, error,
     fault::FaultPoint,
+    json,
     schema::{
         EVENT_HISTORY_DIGESTS, RUN_EVENTS, RUN_HEADS, RUN_HISTORY_ACCUMULATORS, SNAPSHOT_LATEST,
         SNAPSHOTS,
@@ -60,122 +61,6 @@ fn snapshot_latest_path(run: &RunId) -> [u8; 32] {
         crate::trie::CatalogFamily::SnapshotLatest,
         run.as_str().as_bytes(),
     )
-}
-
-pub(crate) fn validate_catalog_leaf(
-    read: &redb::ReadTransaction,
-    family: crate::trie::CatalogFamily,
-    leaf: &crate::trie::TrieLeaf,
-) -> Result<(), PersistenceError> {
-    match family {
-        crate::trie::CatalogFamily::HistoryAccumulator => {
-            let run = std::str::from_utf8(&leaf.logical_key)
-                .map_err(|_| error::corruption("history accumulator identity is not UTF-8"))?;
-            let bytes = read
-                .open_table(RUN_HISTORY_ACCUMULATORS)
-                .map_err(error::redb)?
-                .get(run)
-                .map_err(error::redb)?
-                .ok_or_else(|| error::corruption("history accumulator catalog is dangling"))?
-                .value()
-                .to_vec();
-            let accumulator: HistoryAccumulator = json::decode(&bytes, "history accumulator")?;
-            accumulator.validate()?;
-            if accumulator.run.as_str() != run
-                || leaf.path != crate::trie::hashed_path(family, &leaf.logical_key)
-                || leaf.payload_digest != crate::trie::digest_payload(family, &bytes)
-            {
-                return Err(error::corruption(
-                    "history accumulator leaf disagrees with its document",
-                ));
-            }
-            Ok(())
-        }
-        crate::trie::CatalogFamily::EventHistoryCheckpoint => {
-            let bytes = read
-                .open_table(EVENT_HISTORY_DIGESTS)
-                .map_err(error::redb)?
-                .get(leaf.logical_key.as_slice())
-                .map_err(error::redb)?
-                .ok_or_else(|| error::corruption("history checkpoint catalog is dangling"))?
-                .value()
-                .to_vec();
-            let checkpoint: HistoryCheckpoint =
-                json::decode(&bytes, "event history checkpoint")?;
-            let expected_key = codec::run_sequence(
-                checkpoint.run.as_str(),
-                checkpoint.sequence,
-            )?;
-            if expected_key != leaf.logical_key
-                || leaf.path
-                    != history_checkpoint_path(
-                        &checkpoint.run,
-                        checkpoint.sequence,
-                        &expected_key,
-                    )?
-                || leaf.payload_digest != crate::trie::digest_payload(family, &bytes)
-            {
-                return Err(error::corruption(
-                    "history checkpoint leaf disagrees with its document",
-                ));
-            }
-            Ok(())
-        }
-        crate::trie::CatalogFamily::SnapshotIdentity
-        | crate::trie::CatalogFamily::SnapshotOrdered => {
-            let document = read
-                .open_table(SNAPSHOTS)
-                .map_err(error::redb)?
-                .get(leaf.logical_key.as_slice())
-                .map_err(error::redb)?
-                .ok_or_else(|| error::corruption("snapshot catalog leaf is dangling"))?
-                .value()
-                .to_vec();
-            let snapshot = decode_stored_snapshot(&document)?;
-            let expected_key = codec::pair(snapshot.run().as_str(), snapshot.snapshot().as_str())?;
-            let expected_path = if family == crate::trie::CatalogFamily::SnapshotIdentity {
-                snapshot_identity_path(&expected_key)
-            } else {
-                snapshot_ordered_path(&snapshot, &expected_key)?
-            };
-            if expected_key != leaf.logical_key
-                || expected_path != leaf.path
-                || leaf.payload_digest != crate::trie::digest_payload(family, &document)
-            {
-                return Err(error::corruption(
-                    "snapshot catalog leaf disagrees with its document",
-                ));
-            }
-            Ok(())
-        }
-        crate::trie::CatalogFamily::SnapshotLatest => {
-            let run_text = std::str::from_utf8(&leaf.logical_key)
-                .map_err(|_| error::corruption("snapshot latest identity is not UTF-8"))?;
-            let run = RunId::new(run_text).map_err(|cause| {
-                error::corruption(format!("invalid snapshot latest run identity: {cause}"))
-            })?;
-            let snapshot = read
-                .open_table(SNAPSHOT_LATEST)
-                .map_err(error::redb)?
-                .get(run.as_str())
-                .map_err(error::redb)?
-                .ok_or_else(|| error::corruption("snapshot latest catalog is dangling"))?
-                .value()
-                .to_owned();
-            if leaf.path != snapshot_latest_path(&run)
-                || leaf.payload_digest
-                    != crate::trie::digest_payload(family, snapshot.as_bytes())
-            {
-                return Err(error::corruption(
-                    "snapshot latest leaf disagrees with its pointer",
-                ));
-            }
-            Ok(())
-        }
-        _ => Err(error::corruption(
-            "snapshot catalog validator received another family's leaf",
-        )),
-    }
 }
 
 fn snapshot_group_predecessor(run: &RunId) -> Option<[u8; 32]> {
@@ -345,7 +230,10 @@ impl HistoryAccumulator {
         Ok(())
     }
 
-    fn append_event(&mut self, event: &RunEventEnvelope) -> Result<IntegrityDigest, PersistenceError> {
+    fn append_event(
+        &mut self,
+        event: &RunEventEnvelope,
+    ) -> Result<IntegrityDigest, PersistenceError> {
         if event.run_id() != &self.run || event.sequence() != self.through_sequence.next()? {
             return Err(error::corruption(
                 "history accumulator received a noncontiguous event",
@@ -369,12 +257,12 @@ impl HistoryAccumulator {
 
         while !input.is_empty() {
             if self.pending.len() == blake3::CHUNK_LEN {
-                let offset = self
-                    .completed_chunks
-                    .checked_mul(u64::try_from(blake3::CHUNK_LEN).map_err(|_| {
-                        error::corruption("BLAKE3 chunk length does not fit u64")
-                    })?)
-                    .ok_or_else(|| error::corruption("history byte offset overflowed"))?;
+                let offset =
+                    self.completed_chunks
+                        .checked_mul(u64::try_from(blake3::CHUNK_LEN).map_err(|_| {
+                            error::corruption("BLAKE3 chunk length does not fit u64")
+                        })?)
+                        .ok_or_else(|| error::corruption("history byte offset overflowed"))?;
                 let mut hasher = blake3::Hasher::new();
                 hasher.set_input_offset(offset);
                 hasher.update(&self.pending);
@@ -419,9 +307,10 @@ impl HistoryAccumulator {
         } else {
             let offset = self
                 .completed_chunks
-                .checked_mul(u64::try_from(blake3::CHUNK_LEN).map_err(|_| {
-                    error::corruption("BLAKE3 chunk length does not fit u64")
-                })?)
+                .checked_mul(
+                    u64::try_from(blake3::CHUNK_LEN)
+                        .map_err(|_| error::corruption("BLAKE3 chunk length does not fit u64"))?,
+                )
                 .ok_or_else(|| error::corruption("history byte offset overflowed"))?;
             let mut hasher = blake3::Hasher::new();
             hasher.set_input_offset(offset);
@@ -475,17 +364,14 @@ pub(crate) fn append_history_checkpoint(
             run.as_str().as_bytes(),
         )?;
         match (stored, witness) {
-            (None, None) if event.sequence() == RunSequence::FIRST => {
-                HistoryAccumulator::new(run)?
-            }
+            (None, None) if event.sequence() == RunSequence::FIRST => HistoryAccumulator::new(run)?,
             (Some(bytes), Some(payload)) => {
                 if payload != crate::trie::digest_payload(accumulator_family, &bytes) {
                     return Err(error::corruption(
                         "history accumulator document disagrees with its authenticated leaf",
                     ));
                 }
-                let accumulator: HistoryAccumulator =
-                    json::decode(&bytes, "history accumulator")?;
+                let accumulator: HistoryAccumulator = json::decode(&bytes, "history accumulator")?;
                 accumulator.validate()?;
                 accumulator
             }
@@ -681,7 +567,9 @@ pub(crate) fn migrate_snapshot_catalogs(
                 error::corruption(format!("legacy snapshot run identity is invalid: {cause}"))
             })?;
             let snapshot_id = SnapshotId::new(snapshot_id.value()).map_err(|cause| {
-                error::corruption(format!("legacy snapshot latest identity is invalid: {cause}"))
+                error::corruption(format!(
+                    "legacy snapshot latest identity is invalid: {cause}"
+                ))
             })?;
             let key = codec::pair(run.as_str(), snapshot_id.as_str())?;
             let document = snapshots
@@ -798,7 +686,9 @@ fn persist_migrated_snapshot_latest(
     }
     .ok_or_else(|| error::corruption("legacy snapshot run has no latest pointer"))?;
     let _previous = SnapshotId::new(previous).map_err(|cause| {
-        error::corruption(format!("legacy snapshot latest identity is invalid: {cause}"))
+        error::corruption(format!(
+            "legacy snapshot latest identity is invalid: {cause}"
+        ))
     })?;
     {
         let mut latest = write.open_table(SNAPSHOT_LATEST).map_err(error::redb)?;
@@ -1101,26 +991,20 @@ impl SnapshotStore for RedbStore {
             let mut snapshots = write.open_table(SNAPSHOTS).map_err(error::redb)?;
             let _removed = snapshots.remove(key.as_slice()).map_err(error::redb)?;
         }
-        if let (Some(_target), Some(target_path)) = (target.as_ref(), target_path) {
-            if crate::trie::remove(
-                &write,
-                identity_family,
-                snapshot_identity_path(&key),
-                &key,
-            )?
-            .is_none()
+        if let (Some(_target), Some(target_path)) = (target.as_ref(), target_path)
+            && (crate::trie::remove(&write, identity_family, snapshot_identity_path(&key), &key)?
+                .is_none()
                 || crate::trie::remove(
                     &write,
                     crate::trie::CatalogFamily::SnapshotOrdered,
                     target_path,
                     &key,
                 )?
-                .is_none()
-            {
-                return Err(error::corruption(
-                    "discarded snapshot was absent from an authenticated catalog",
-                ));
-            }
+                .is_none())
+        {
+            return Err(error::corruption(
+                "discarded snapshot was absent from an authenticated catalog",
+            ));
         }
         if previous_latest
             .as_ref()
@@ -1285,12 +1169,7 @@ fn newest_snapshot_for_run(
             "snapshot key does not match its verified document",
         ));
     }
-    validate_snapshot_catalog_in_transaction(
-        write,
-        &candidate,
-        &leaf.logical_key,
-        &document,
-    )?;
+    validate_snapshot_catalog_in_transaction(write, &candidate, &leaf.logical_key, &document)?;
     Ok(Some(candidate))
 }
 

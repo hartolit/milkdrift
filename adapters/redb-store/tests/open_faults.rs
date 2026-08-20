@@ -94,7 +94,7 @@ fn clear_binary_table(
     Ok(())
 }
 
-fn internal_envelope(family: &str, payload: &[u8]) -> Vec<u8> {
+fn internal_envelope(family: &str, payload: &[u8]) -> Result<Vec<u8>, serde_json::Error> {
     const DOMAIN: &[u8] = b"milkdrift.redb.internal-document.v1\0";
     let mut hasher = blake3::Hasher::new();
     hasher.update(DOMAIN);
@@ -102,7 +102,7 @@ fn internal_envelope(family: &str, payload: &[u8]) -> Vec<u8> {
     hasher.update(family.as_bytes());
     hasher.update(&(payload.len() as u64).to_be_bytes());
     hasher.update(payload);
-    let family_json = serde_json::to_string(family).expect("static family serializes");
+    let family_json = serde_json::to_string(family)?;
     let mut encoded = format!(
         "{{\"schema_version\":1,\"family\":{family_json},\"checksum\":\"{}\",\"payload\":",
         hasher.finalize().to_hex()
@@ -110,7 +110,7 @@ fn internal_envelope(family: &str, payload: &[u8]) -> Vec<u8> {
     .into_bytes();
     encoded.extend_from_slice(payload);
     encoded.push(b'}');
-    encoded
+    Ok(encoded)
 }
 
 fn downgrade_empty_current_store_to_v2(
@@ -137,7 +137,7 @@ fn downgrade_empty_current_store_to_v2(
         let bytes = internal_envelope(
             "workspace value accounting",
             br#"{"schema_version":1,"value_versions":0,"inline_bytes":0}"#,
-        );
+        )?;
         accounting.insert("", bytes.as_slice())?;
     }
     {
@@ -145,7 +145,7 @@ fn downgrade_empty_current_store_to_v2(
         let bytes = internal_envelope(
             "artifact accounting",
             br#"{"schema_version":1,"committed_content_bytes":0}"#,
-        );
+        )?;
         accounting.insert("artifact_content_bytes", bytes.as_slice())?;
     }
     write.commit()?;

@@ -1184,9 +1184,7 @@ impl RunEventKind {
                     ));
                 }
             }
-            Self::RunTerminationRequested { outcome, .. }
-                if *outcome != RunOutcome::Failed =>
-            {
+            Self::RunTerminationRequested { outcome, .. } if *outcome != RunOutcome::Failed => {
                 return Err(PersistenceError::InvalidDocument(
                     "internal run termination currently supports only an explicit failed outcome"
                         .to_owned(),

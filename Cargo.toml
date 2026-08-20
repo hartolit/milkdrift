@@ -13,7 +13,7 @@ members = [
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/hartolit/milkdrift"
-rust-version = "1.85"
+rust-version = "1.95"
 
 [workspace.dependencies]
 blake3 = "1.8.2"

@@ -173,10 +173,10 @@ The logical map is the long-lived ownership reference. Its exact current physica
 | `blueprint/revision` | `milkdrift-blueprint::revision` |
 | `blueprint/mutation` | `milkdrift-blueprint::mutation` |
 | `runtime/scheduler` | `milkdrift-runtime::scheduler` and runtime controller admission/index decisions |
-| `runtime/execution` | `milkdrift-runtime::{command,executor,engine,projection}` |
-| `runtime/structured-concurrency` | Blueprint definitions, `milkdrift-runtime::{engine,projection}`, and `milkdrift-workspace::scope` |
-| `runtime/reconciliation` | `milkdrift-runtime::reconciliation` plus persistence-owned plan event documents |
-| `runtime/recovery` | `milkdrift-runtime::{engine,query,projection}` and recovery indexes in the redb adapter |
+| `runtime/execution` | `milkdrift-runtime::{command,executor}` plus the `engine::{command_planning,completion,dispatch,scheduling,state,support,workspace}` and `projection::{apply_core,helpers,node,run}` modules |
+| `runtime/structured-concurrency` | Blueprint definitions, `milkdrift-runtime::engine::structured`, `milkdrift-runtime::projection::{apply_structured,structured}`, and `milkdrift-workspace::scope` |
+| `runtime/reconciliation` | `milkdrift-runtime::reconciliation`, `engine::reconciliation`, `projection::{apply_reconciliation,reconciliation}`, and persistence-owned plan event documents |
+| `runtime/recovery` | `milkdrift-runtime::{query,engine::recovery,projection::replay}` and recovery indexes in the redb adapter |
 | `capability/contracts` | `milkdrift-capability::{descriptor,invocation,document,identity,bounded}` |
 | `capability/registry` | Deterministic test boundary only; live Pass 3 registry remains unimplemented |
 | `capability/resolution` | Pure requirement matching and exact immutable snapshots in `milkdrift-capability`; live policy selection remains Pass 3 |
@@ -184,14 +184,14 @@ The logical map is the long-lived ownership reference. Its exact current physica
 | `workspace/artifacts` | Metadata/contracts in `milkdrift-workspace` and durable bytes in `milkdrift-redb-store` |
 | `workspace/branches` | `milkdrift-workspace::scope` plus runtime branch/iteration/subworkflow projections |
 | `persistence/events` | `milkdrift-persistence::{event,document}` with schema-v1 golden fixtures |
-| `persistence/journal` | Narrow `milkdrift-persistence` ports implemented by `milkdrift-redb-store` |
+| `persistence/journal` | Narrow `milkdrift-persistence` ports implemented by `milkdrift-redb-store::journal::{append,discovery,queries,workspace}` |
 | `persistence/projections` | Pure `milkdrift-runtime::projection`; optional checked snapshots are persistence documents |
 | `peer/protocol` | Not implemented |
 | `peer/capability-advertisement` | Generic descriptor contract exists; peer protocol/advertisement is not implemented |
 | `adapters/model` | Not implemented |
 | `adapters/process` | Not implemented |
-| `adapters/filesystem` | Content-addressed artifact ownership in `milkdrift-redb-store` |
-| `adapters/redb` | `milkdrift-redb-store` transactional local durable adapter |
+| `adapters/filesystem` | Content-addressed artifact ownership in `milkdrift-redb-store::artifact::{accounting,cleanup,path,publication}` |
+| `adapters/redb` | The transactional local adapter, split across `milkdrift-redb-store::{admin,journal,store}` facades and their private child modules |
 | `adapters/peer-transport` | Not implemented |
 | `apps/desktop-iced` | Not implemented |
 | `apps/daemon` | Not implemented |

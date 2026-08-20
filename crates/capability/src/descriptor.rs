@@ -500,12 +500,12 @@ impl ResourceObservations {
                 "estimated cost and currency must be supplied together".to_owned(),
             ));
         }
-        if let Some(currency) = &self.currency {
-            if currency.len() != 3 || !currency.bytes().all(|byte| byte.is_ascii_uppercase()) {
-                return Err(ContractError::InvalidContract(
-                    "currency must be a three-letter uppercase ISO code".to_owned(),
-                ));
-            }
+        if let Some(currency) = &self.currency
+            && (currency.len() != 3 || !currency.bytes().all(|byte| byte.is_ascii_uppercase()))
+        {
+            return Err(ContractError::InvalidContract(
+                "currency must be a three-letter uppercase ISO code".to_owned(),
+            ));
         }
         Ok(())
     }
@@ -644,15 +644,15 @@ impl CapabilityDescriptor {
     #[must_use]
     pub fn matches(&self, requirement: &CapabilityRequirement) -> RequirementMatch {
         let mut reasons = Vec::new();
-        if let Some(exact) = &requirement.exact_capability {
-            if exact != &self.identity {
-                reasons.push("capability_identity".to_owned());
-            }
+        if let Some(exact) = &requirement.exact_capability
+            && exact != &self.identity
+        {
+            reasons.push("capability_identity".to_owned());
         }
-        if let Some(profile) = &requirement.provider_profile {
-            if self.provider_profile.as_ref() != Some(profile) {
-                reasons.push("provider_profile".to_owned());
-            }
+        if let Some(profile) = &requirement.provider_profile
+            && self.provider_profile.as_ref() != Some(profile)
+        {
+            reasons.push("provider_profile".to_owned());
         }
         if !requirement.categories.is_empty() && !requirement.categories.contains(&self.category) {
             reasons.push("category".to_owned());
@@ -667,10 +667,10 @@ impl CapabilityDescriptor {
                 {
                     reasons.push("features".to_owned());
                 }
-                if let Some(streaming) = requirement.streaming {
-                    if !operation.streaming.contains(&streaming) {
-                        reasons.push("streaming".to_owned());
-                    }
+                if let Some(streaming) = requirement.streaming
+                    && !operation.streaming.contains(&streaming)
+                {
+                    reasons.push("streaming".to_owned());
                 }
                 if requirement.cancellation_required
                     && operation.cancellation == CancellationBehavior::Unsupported

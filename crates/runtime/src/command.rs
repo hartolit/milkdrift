@@ -445,8 +445,7 @@ impl RunCommandDocument {
                 ));
             }
             RunCommand::ResolveExternalWork {
-                action:
-                    ExternalWorkAction::ResolveSucceeded | ExternalWorkAction::ResolveFailed,
+                action: ExternalWorkAction::ResolveSucceeded | ExternalWorkAction::ResolveFailed,
                 ..
             } if self.evidence.is_empty() => {
                 return Err(RuntimeError::InvalidCommand(

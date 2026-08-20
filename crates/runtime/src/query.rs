@@ -28,13 +28,13 @@ where
     let mut folded_through = RunSequence::ZERO;
     loop {
         let page = store.events(&EventPageQuery::new(run.clone(), cursor.clone(), limit)?)?;
-        if let Some(previous) = observed_head {
-            if previous != page.observed_head {
-                return Err(RuntimeError::InvalidHistory(
-                    "journal head changed during a complete-history fold; retry from sequence one"
-                        .to_owned(),
-                ));
-            }
+        if let Some(previous) = observed_head
+            && previous != page.observed_head
+        {
+            return Err(RuntimeError::InvalidHistory(
+                "journal head changed during a complete-history fold; retry from sequence one"
+                    .to_owned(),
+            ));
         }
         observed_head = Some(page.observed_head);
         let page_was_empty = page.events.is_empty();
@@ -200,10 +200,7 @@ mod tests {
             })
         }
 
-        fn active_leases(
-            &self,
-            _limit: PageSize,
-        ) -> Result<ActiveLeaseSnapshot, PersistenceError> {
+        fn active_leases(&self, _limit: PageSize) -> Result<ActiveLeaseSnapshot, PersistenceError> {
             Ok(ActiveLeaseSnapshot {
                 entries: Vec::new(),
                 witness: IntegrityDigest::hash(b"empty test lease catalog"),

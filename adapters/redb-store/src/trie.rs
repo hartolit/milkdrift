@@ -393,24 +393,6 @@ pub(crate) fn page_in_transaction(
     page_from_root(&nodes, family, root, after, limit)
 }
 
-pub(crate) fn predecessor(
-    read: &redb::ReadTransaction,
-    family: CatalogFamily,
-    expected_root: Option<[u8; HASH_BYTES]>,
-    before: [u8; HASH_BYTES],
-) -> Result<Option<TrieLeaf>, PersistenceError> {
-    let roots = read.open_table(INTEGRITY_ROOTS).map_err(error::redb)?;
-    let root = load_roots(&roots)?.root(family)?;
-    if expected_root.is_some_and(|expected| expected != root) {
-        return Err(PersistenceError::InvalidCursor(
-            "authenticated catalog root changed since the previous lookup".to_owned(),
-        ));
-    }
-    drop(roots);
-    let nodes = read.open_table(INTEGRITY_TRIE_NODES).map_err(error::redb)?;
-    predecessor_from_root(&nodes, family, root, before)
-}
-
 pub(crate) fn predecessor_in_transaction(
     write: &redb::WriteTransaction,
     family: CatalogFamily,
@@ -710,8 +692,12 @@ where
     }
     for depth in (0..branches.len()).rev() {
         let current = nibble(&after, depth);
-        for candidate in current + 1..RADIX {
-            let child = branches[depth][candidate];
+        for (candidate, child) in branches[depth]
+            .iter()
+            .copied()
+            .enumerate()
+            .skip(current + 1)
+        {
             if child != empty[depth + 1] {
                 let mut prefix = after;
                 set_nibble(&mut prefix, depth, candidate);
@@ -1024,7 +1010,7 @@ fn node_key(family: CatalogFamily, depth: usize, path: &[u8; HASH_BYTES]) -> [u8
 
 const fn nibble(path: &[u8; HASH_BYTES], depth: usize) -> usize {
     let byte = path[depth / 2];
-    if depth % 2 == 0 {
+    if depth.is_multiple_of(2) {
         (byte >> 4) as usize
     } else {
         (byte & 0x0f) as usize
@@ -1033,7 +1019,7 @@ const fn nibble(path: &[u8; HASH_BYTES], depth: usize) -> usize {
 
 fn set_nibble(path: &mut [u8; HASH_BYTES], depth: usize, value: usize) {
     let byte = &mut path[depth / 2];
-    if depth % 2 == 0 {
+    if depth.is_multiple_of(2) {
         *byte = (*byte & 0x0f) | ((value as u8) << 4);
     } else {
         *byte = (*byte & 0xf0) | value as u8;
@@ -1045,7 +1031,7 @@ fn clear_after(path: &mut [u8; HASH_BYTES], depth: usize) {
         return;
     }
     let full_bytes = depth / 2;
-    if depth % 2 == 0 {
+    if depth.is_multiple_of(2) {
         path[full_bytes..].fill(0);
     } else {
         path[full_bytes] &= 0xf0;
@@ -1058,7 +1044,7 @@ fn fill_after(path: &mut [u8; HASH_BYTES], depth: usize) {
         return;
     }
     let full_bytes = depth / 2;
-    if depth % 2 == 0 {
+    if depth.is_multiple_of(2) {
         path[full_bytes..].fill(u8::MAX);
     } else {
         path[full_bytes] |= 0x0f;

@@ -4,7 +4,8 @@ This document owns current implementation facts and limitations.
 
 ## Implemented
 
-- A stable Rust 2024 workspace with six safe-Rust packages and a curated lint/dependency policy.
+- A Rust 1.95.0, edition-2024 workspace with six safe-Rust packages and a curated lint/dependency policy.
+- Runtime projection/engine and redb journal/artifact/admin/store responsibilities are split into real child modules with narrow facades; their integration and contract tests are grouped by behavior rather than kept in monolithic files.
 - Private-invariant, bounded identities and versioned canonical JSON envelopes for capability descriptors and invocation contracts, including one shared bound large enough for every canonical workspace/artifact reference.
 - Honest capability feature, cancellation, idempotency, side-effect, admission, locality, trust-zone, usage, and error representations; idempotent writes require an advertised external key scope, and mutable observations remain separate from immutable descriptors.
 - Private immutable blueprint revisions with deterministic semantic digests, explicit ancestry, optimistic base checks, and atomic mutation batches.

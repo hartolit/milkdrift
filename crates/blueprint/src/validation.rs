@@ -603,10 +603,9 @@ fn dependency_adjacency(semantic: &SemanticBlueprint) -> BTreeMap<NodeId, BTreeS
     for edge in semantic.edges().values() {
         if semantic.nodes().contains_key(edge.source_node())
             && semantic.nodes().contains_key(edge.target_node())
+            && let Some(targets) = adjacency.get_mut(edge.source_node())
         {
-            if let Some(targets) = adjacency.get_mut(edge.source_node()) {
-                targets.insert(edge.target_node().clone());
-            }
+            targets.insert(edge.target_node().clone());
         }
     }
     adjacency
@@ -874,7 +873,12 @@ fn validate_fork_join(semantic: &SemanticBlueprint, diagnostics: &mut Vec<Diagno
             );
             continue;
         };
-        if joins_per_fork.get(config.fork()).copied().unwrap_or_default() != 1 {
+        if joins_per_fork
+            .get(config.fork())
+            .copied()
+            .unwrap_or_default()
+            != 1
+        {
             push(
                 diagnostics,
                 Diagnostic::new(
@@ -1074,12 +1078,10 @@ fn validate_subworkflow_ports(
         crate::PortId::new(field.as_str())
             .ok()
             .is_some_and(|port_id| {
-                node.data_inputs()
-                    .get(&port_id)
-                    .is_some_and(|port| {
-                        port.schema().compatible_with(expected.schema())
-                            && (!expected.is_required() || port.is_required())
-                    })
+                node.data_inputs().get(&port_id).is_some_and(|port| {
+                    port.schema().compatible_with(expected.schema())
+                        && (!expected.is_required() || port.is_required())
+                })
             })
     });
     let outputs_match = interface.outputs().iter().all(|(field, expected)| {

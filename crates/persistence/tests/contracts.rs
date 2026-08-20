@@ -928,7 +928,8 @@ fn integrity_digest_has_one_canonical_spelling() {
 }
 
 #[test]
-fn explicit_failure_drain_is_additive_schema_v1_history() -> Result<(), Box<dyn std::error::Error>> {
+fn explicit_failure_drain_is_additive_schema_v1_history() -> Result<(), Box<dyn std::error::Error>>
+{
     let run = RunId::new("run-explicit-failure-drain")?;
     let event = RunEventEnvelope::new(
         EventId::new("event-explicit-failure-drain")?,
