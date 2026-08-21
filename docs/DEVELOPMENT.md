@@ -23,3 +23,22 @@ domain responsibilities must be split into real Rust child modules; `include!` a
 facade-wide wildcard re-exports are not substitutes for module boundaries. Production
 files approaching 2,000 lines require an explicit cohesion review, and integration
 tests should be grouped by behavior with shared support kept separate.
+
+## Storage-boundary stress tests
+
+The ordinary workspace test suite excludes tests whose fixture intentionally crosses a
+large persistence bound and therefore performs thousands of authenticated redb index
+mutations. The manual and weekly `stress` workflow retains this end-to-end evidence. Run
+it locally in release mode rather than making every local and pull-request test pay its
+cost:
+
+```sh
+cargo test --release \
+  -p milkdrift-runtime \
+  --test structured_runtime \
+  lifecycle::more_than_index_mutation_limit_inactive_identities_do_not_block_commits \
+  -- --ignored --exact --nocapture
+```
+
+Do not mark a hanging or nondeterministic test ignored; correct the lifecycle or coordination
+defect instead.

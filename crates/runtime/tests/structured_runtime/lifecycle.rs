@@ -736,6 +736,79 @@ fn shutdown_closes_admission_and_cancellation_explicitly_drains_wait_ownership()
 }
 
 #[test]
+fn startup_recovery_finishes_with_an_unexpired_active_lease() -> TestResult {
+    let directory = TempDir::new()?;
+    let identity = "startup-valid-active-lease";
+    let (store, clock, runtime) = runtime_with_executor_at(
+        directory.path(),
+        identity,
+        identity,
+        NOW,
+        8,
+        Arc::new(DeterministicExecutor::new(test_descriptor()?)),
+    )?;
+    let revision = task_revision("workflow-startup-valid-active-lease")?;
+    let run = RunId::new("run-startup-valid-active-lease")?;
+    store.put_revision(&revision)?;
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::CreateRun {
+                workflow: revision.semantic().workflow().clone(),
+                revision: revision.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    run.clone(),
+                    ScopeId::new("scope-startup-valid-active-lease")?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(runtime.scheduler_tick()?.dispatched, 1);
+    let actions = runtime.claim_effects(PageSize::new(1)?)?;
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(actions.first(), Some(EffectAction::Execute(_))));
+    let projection = runtime.projection(&run)?;
+    assert!(projection.attempts().values().any(|attempt| {
+        attempt.state() == &AttemptState::Running
+            && projection.leases().values().any(|lease| {
+                lease.is_active()
+                    && lease.attempt() == attempt.attempt()
+                    && lease.expires_at() > TimestampMillis::new(NOW)
+            })
+    }));
+    drop(projection);
+    drop(actions);
+    drop(runtime);
+    drop(clock);
+    drop(store);
+
+    let (_store, _clock, reopened) = runtime_with_executor_at(
+        directory.path(),
+        "startup-valid-active-lease-reopen",
+        identity,
+        NOW,
+        8,
+        Arc::new(DeterministicExecutor::new(test_descriptor()?)),
+    )?;
+    assert_eq!(
+        reopened.startup_state(),
+        RuntimeStartupState::RecoveryCompleted
+    );
+    assert!(reopened.is_accepting_admission());
+    Ok(())
+}
+
+#[test]
+#[ignore = "expensive authenticated-storage boundary regression; run explicitly"]
 fn more_than_index_mutation_limit_inactive_identities_do_not_block_commits() -> TestResult {
     let harness = Harness::new("large-inactive-index-history")?;
     let revision = signal_revision("workflow-large-inactive-index-history")?;

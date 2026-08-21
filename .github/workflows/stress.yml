@@ -1,0 +1,30 @@
+name: stress
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stress-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  runtime-storage-boundaries:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # pinned commit
+        with:
+          toolchain: 1.95.0
+      - name: Run authenticated-storage boundary regression
+        run: >-
+          cargo test --release
+          -p milkdrift-runtime
+          --test structured_runtime
+          lifecycle::more_than_index_mutation_limit_inactive_identities_do_not_block_commits
+          -- --ignored --exact --nocapture

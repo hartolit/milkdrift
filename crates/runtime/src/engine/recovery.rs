@@ -1,9 +1,9 @@
 //! Restart recovery, graceful cancellation propagation, and admission accounting.
 
 use super::support::{
-    CommandPlan, bounded_projection_set, cancellation_reason_for_branch,
-    cancellation_reason_for_execution, checked_increment, recovery_classification, recovery_reason,
-    run_drain_reason, unresolved_retry_error_class,
+    CommandPlan, bounded_projection_set, bounded_projection_sweep_set,
+    cancellation_reason_for_branch, cancellation_reason_for_execution, checked_increment,
+    recovery_classification, recovery_reason, run_drain_reason, unresolved_retry_error_class,
 };
 use super::{RecoveryResult, RuntimeService, STRUCTURED_EVENT_SOFT_LIMIT};
 use crate::projection::{BranchState, NodeExecutionState, SubworkflowState};
@@ -48,19 +48,29 @@ impl RuntimeService {
         let limit = PageSize::new(u32::from(self.config.maximum_tick_items))?;
         let mut result = RecoveryResult::default();
         let mut remaining = usize::from(self.config.maximum_tick_items);
-        for summary in self.next_nonterminal_page(&self.recovery_cursor, limit, "recovery")? {
+        let summaries = self.next_nonterminal_page(&self.recovery_cursor, limit, "recovery")?;
+        let summary_count = summaries.len();
+        for (summary_index, summary) in summaries.into_iter().enumerate() {
             if remaining == 0 {
                 break;
             }
             let projection = self.projection(&summary.run)?;
             result.runs_examined = result.runs_examined.saturating_add(1);
-            let scanned = bounded_projection_set(
+            // Reserve one attempt visit for every later run in the already-advanced
+            // persistence page. Without this reservation, one run can consume the
+            // whole attempt budget while the page cursor skips unvisited summaries.
+            let later_runs = summary_count.saturating_sub(summary_index.saturating_add(1));
+            let reserved_for_later = later_runs.min(remaining.saturating_sub(1));
+            let scan_limit = remaining.saturating_sub(reserved_for_later);
+            let mut scan_remaining = scan_limit;
+            let scanned = bounded_projection_sweep_set(
                 &summary.run,
                 projection.active_attempt_ids(),
                 &self.recovery_attempt_cursors,
-                &mut remaining,
-                "recovery attempt scan cursor",
+                &mut scan_remaining,
+                "recovery attempt sweep cursor",
             )?;
+            remaining = remaining.saturating_sub(scan_limit.saturating_sub(scan_remaining));
             let actionable: Vec<_> = scanned
                 .iter()
                 .filter_map(|attempt| projection.attempts().get(attempt))

@@ -393,9 +393,10 @@ impl RuntimeService {
     }
 
     fn recover_startup_to_completion(&self) -> Result<(), RuntimeError> {
+        let mut previous_incomplete_state = None;
         loop {
             let _ = self.recover()?;
-            let page_complete = self
+            let page_cursor = self
                 .recovery_cursor
                 .lock()
                 .map_err(|_error| {
@@ -403,8 +404,8 @@ impl RuntimeService {
                         "runtime recovery pagination cursor lock is poisoned".to_owned(),
                     )
                 })?
-                .is_none();
-            let attempts_complete = self
+                .clone();
+            let attempt_cursors = self
                 .recovery_attempt_cursors
                 .lock()
                 .map_err(|_error| {
@@ -412,10 +413,17 @@ impl RuntimeService {
                         "runtime recovery attempt cursor lock is poisoned".to_owned(),
                     )
                 })?
-                .is_empty();
-            if page_complete && attempts_complete {
+                .clone();
+            if page_cursor.is_none() && attempt_cursors.is_empty() {
                 return Ok(());
             }
+            let incomplete_state = (page_cursor, attempt_cursors);
+            if previous_incomplete_state.as_ref() == Some(&incomplete_state) {
+                return Err(RuntimeError::Scheduling(
+                    "startup recovery cursors made no bounded progress".to_owned(),
+                ));
+            }
+            previous_incomplete_state = Some(incomplete_state);
         }
     }
 
