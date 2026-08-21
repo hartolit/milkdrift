@@ -953,6 +953,7 @@ fn validate_authenticated_catalog_leaf(
             RUNNABLE_INDEX,
             CatalogFamily::RunnableIdentity,
             CatalogFamily::RunnableOrdered,
+            "runnable index",
             "runnable",
             |entry| codec::pair(entry.run.as_str(), entry.execution.as_str()),
             crate::journal::runnable_order_key,
@@ -968,6 +969,7 @@ fn validate_authenticated_catalog_leaf(
             TIMER_INDEX,
             CatalogFamily::TimerIdentity,
             CatalogFamily::TimerOrdered,
+            "timer index",
             "timer",
             |entry| codec::pair(entry.run.as_str(), entry.timer.as_str()),
             crate::journal::timer_order_key,
@@ -983,6 +985,7 @@ fn validate_authenticated_catalog_leaf(
             LEASE_INDEX,
             CatalogFamily::LeaseIdentity,
             CatalogFamily::LeaseOrdered,
+            "lease index",
             "lease",
             |entry| codec::pair(entry.run.as_str(), entry.lease.as_str()),
             crate::journal::lease_order_key,
@@ -1228,6 +1231,7 @@ fn validate_ordered_discovery_leaf<T>(
     ordered_definition: redb::TableDefinition<'static, &'static [u8], &'static [u8]>,
     identity_family: crate::trie::CatalogFamily,
     ordered_family: crate::trie::CatalogFamily,
+    document_family: &'static str,
     label: &'static str,
     identity_key: fn(&T) -> Result<Vec<u8>, PersistenceError>,
     order_key: fn(&T) -> Result<Vec<u8>, PersistenceError>,
@@ -1247,7 +1251,7 @@ where
         })?
         .value()
         .to_vec();
-    let entry: T = json::decode(&bytes, label)?;
+    let entry: T = json::decode(&bytes, document_family)?;
     let expected_identity = identity_key(&entry)?;
     if leaf.logical_key != expected_identity {
         return Err(error::corruption(format!(
