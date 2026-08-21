@@ -301,12 +301,12 @@ fn missing_or_lowered_journal_heads_are_never_interpreted_as_empty()
     let write = database.begin_write()?;
     {
         let mut heads = write.open_table(HEADS)?;
-        let _removed = heads.remove(missing.receipt.run().as_str())?;
+        let _removed = heads.remove(missing.receipt().run().as_str())?;
     }
     write.commit()?;
     drop(database);
     let store = RedbStore::open(missing_directory.path())?;
-    let missing_head = store.head(missing.receipt.run());
+    let missing_head = store.head(missing.receipt().run());
     assert!(
         matches!(
             missing_head,
@@ -319,7 +319,7 @@ fn missing_or_lowered_journal_heads_are_never_interpreted_as_empty()
     );
     assert!(matches!(
         store.events(&EventPageQuery::new(
-            missing.receipt.run().clone(),
+            missing.receipt().run().clone(),
             None,
             PageSize::new(1)?,
         )?),
@@ -329,7 +329,7 @@ fn missing_or_lowered_journal_heads_are_never_interpreted_as_empty()
         })
     ));
     assert!(matches!(
-        store.command_result(missing.receipt.run(), missing.receipt.command()),
+        store.command_result(missing.receipt().run(), missing.receipt().command()),
         Err(PersistenceError::Storage {
             class: StorageFailureClass::Corruption,
             ..
@@ -352,7 +352,7 @@ fn missing_or_lowered_journal_heads_are_never_interpreted_as_empty()
         "start",
     )?;
     let second = accepted_followup_request(
-        first.receipt.run().clone(),
+        first.receipt().run().clone(),
         "command-beyond-head",
         "event-beyond-head",
     )?;
@@ -365,13 +365,13 @@ fn missing_or_lowered_journal_heads_are_never_interpreted_as_empty()
     let write = database.begin_write()?;
     {
         let mut heads = write.open_table(HEADS)?;
-        heads.insert(first.receipt.run().as_str(), RunSequence::FIRST.get())?;
+        heads.insert(first.receipt().run().as_str(), RunSequence::FIRST.get())?;
     }
     write.commit()?;
     drop(database);
     let store = RedbStore::open(lowered_directory.path())?;
     assert!(matches!(
-        store.head(first.receipt.run()),
+        store.head(first.receipt().run()),
         Err(PersistenceError::Storage {
             class: StorageFailureClass::Corruption,
             ..
@@ -379,7 +379,7 @@ fn missing_or_lowered_journal_heads_are_never_interpreted_as_empty()
     ));
     assert!(matches!(
         store.events(&EventPageQuery::new(
-            first.receipt.run().clone(),
+            first.receipt().run().clone(),
             None,
             PageSize::new(1)?,
         )?),
@@ -389,7 +389,7 @@ fn missing_or_lowered_journal_heads_are_never_interpreted_as_empty()
         })
     ));
     assert!(matches!(
-        store.command_result(second.receipt.run(), second.receipt.command()),
+        store.command_result(second.receipt().run(), second.receipt().command()),
         Err(PersistenceError::Storage {
             class: StorageFailureClass::Corruption,
             ..
@@ -411,7 +411,7 @@ fn missing_or_lowered_journal_heads_are_never_interpreted_as_empty()
         "start",
     )?;
     let second = accepted_followup_request(
-        first.receipt.run().clone(),
+        first.receipt().run().clone(),
         "command-after-missing-event",
         "event-head-remains",
     )?;
@@ -425,8 +425,8 @@ fn missing_or_lowered_journal_heads_are_never_interpreted_as_empty()
     {
         let mut events = write.open_table(EVENTS)?;
         let mut key = Vec::new();
-        key.extend_from_slice(&(first.receipt.run().as_str().len() as u32).to_be_bytes());
-        key.extend_from_slice(first.receipt.run().as_str().as_bytes());
+        key.extend_from_slice(&(first.receipt().run().as_str().len() as u32).to_be_bytes());
+        key.extend_from_slice(first.receipt().run().as_str().as_bytes());
         key.extend_from_slice(&RunSequence::FIRST.get().to_be_bytes());
         let _removed = events.remove(key.as_slice())?;
     }
@@ -435,9 +435,9 @@ fn missing_or_lowered_journal_heads_are_never_interpreted_as_empty()
     let store = RedbStore::open(missing_event_directory.path())?;
     // RUN_HEADS remains the sole bounded sequence authority. Exact history reads,
     // command replay, and new commits must still refuse the missing interior fact.
-    assert_eq!(store.head(first.receipt.run())?, RunSequence::new(2));
+    assert_eq!(store.head(first.receipt().run())?, RunSequence::new(2));
     assert!(matches!(
-        store.command_result(first.receipt.run(), first.receipt.command()),
+        store.command_result(first.receipt().run(), first.receipt().command()),
         Err(PersistenceError::Storage {
             class: StorageFailureClass::Corruption,
             ..

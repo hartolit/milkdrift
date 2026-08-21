@@ -306,11 +306,7 @@ impl TaskExecutor for BoundaryThenBlockingExecutor {
             Vec::new(),
             None,
             None,
-            dispatch
-                .resolution()
-                .snapshot()
-                .operation_contract()
-                .side_effect(),
+            dispatch.resolution().operation_contract().side_effect(),
         )?;
         let event = InvocationEvent::new(
             dispatch.request().invocation().clone(),
@@ -438,6 +434,11 @@ impl BlockingExecutor {
             .lock()
             .map_err(|_| "blocking operation lock poisoned")? = operation;
         Ok(())
+    }
+
+    fn has_entered(&self) -> TestResult<bool> {
+        let (lock, _) = &self.entered;
+        Ok(*lock.lock().map_err(|_| "entered lock poisoned")?)
     }
 
     fn wait_until_entered(&self) -> TestResult {

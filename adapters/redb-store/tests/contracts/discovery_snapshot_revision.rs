@@ -106,7 +106,7 @@ fn deleted_discovery_and_lease_rows_refuse_recovery_and_admission()
     let write = database.begin_write()?;
     {
         let mut nonterminal = write.open_table(NONTERMINAL)?;
-        let _removed = nonterminal.remove(recovery.receipt.run().as_str())?;
+        let _removed = nonterminal.remove(recovery.receipt().run().as_str())?;
     }
     write.commit()?;
     drop(database);

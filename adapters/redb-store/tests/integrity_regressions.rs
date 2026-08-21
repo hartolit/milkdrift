@@ -3,7 +3,7 @@
 use milkdrift_blueprint::{BlueprintRevisionDocument, RevisionId, WorkflowId};
 use milkdrift_capability::BoundedJson;
 use milkdrift_persistence::{
-    ActorRef, ArtifactPublicationId, ArtifactStore, AtomicRunCommitRequest, BeginArtifactOutcome,
+    ActorRef, ArtifactPublicationId, ArtifactStore, AtomicRunCommitRequest,
     BeginArtifactPublication, CommandDisposition, CommandId, CommandReceipt, CommandResultDocument,
     EventId, IndexedRunState, IntegrityScanRequest, OrphanCleanupRequest, PageSize,
     PersistenceError, RevisionStore, RunEventEnvelope, RunEventKind, RunIndexUpdate, RunJournal,

@@ -8,7 +8,7 @@ fn startup_keeps_admission_closed_until_integrity_and_recovery_complete() -> Tes
     let store = Arc::new(RedbStore::open(directory.path())?);
     let runtime = RuntimeService::open_closed(
         store,
-        Arc::new(DeterministicExecutor::new(test_descriptor()?)?),
+        Arc::new(DeterministicExecutor::new(test_descriptor()?)),
         Arc::new(ManualClock::new(NOW)),
         Arc::new(SequentialIdGenerator::new("startup-gate", 1)?),
         RuntimeConfig::new(
@@ -122,7 +122,7 @@ fn terminal_observed_after_lease_expiry_is_preserved_as_late_evidence() -> TestR
     let clock = Arc::new(ManualClock::new(NOW));
     let runtime = RuntimeService::new(
         store.clone(),
-        Arc::new(DeterministicExecutor::new(test_descriptor()?)?),
+        Arc::new(DeterministicExecutor::new(test_descriptor()?)),
         clock.clone(),
         Arc::new(SequentialIdGenerator::new("late-terminal", 1)?),
         RuntimeConfig::new(
