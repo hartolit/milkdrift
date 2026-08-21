@@ -84,39 +84,33 @@ pub(crate) fn scan_index_integrity(
     if let Err(cause) = crate::trie::validate_roots(read) {
         push_failure(result, "authenticated_catalog", &cause.to_string())?;
     }
-    for (family, table, label) in [
+    for (family, label) in [
         (
             crate::trie::CatalogFamily::RunnableIdentity,
-            &runnable_identities,
             "runnable_identity_catalog",
         ),
         (
             crate::trie::CatalogFamily::RunnableOrdered,
-            &runnable_ordered,
             "runnable_ordered_catalog",
         ),
         (
             crate::trie::CatalogFamily::TimerIdentity,
-            &timer_identities,
             "timer_identity_catalog",
         ),
         (
             crate::trie::CatalogFamily::TimerOrdered,
-            &timer_ordered,
             "timer_ordered_catalog",
         ),
         (
             crate::trie::CatalogFamily::LeaseIdentity,
-            &lease_identities,
             "lease_identity_catalog",
         ),
         (
             crate::trie::CatalogFamily::LeaseOrdered,
-            &lease_ordered,
             "lease_ordered_catalog",
         ),
     ] {
-        if let Err(cause) = validate_catalog_prefix(read, family, table, 4) {
+        if let Err(cause) = validate_authenticated_catalog_prefix(read, family, 4) {
             push_failure(result, label, &cause.to_string())?;
         }
     }
@@ -952,21 +946,48 @@ fn validate_authenticated_catalog_leaf(
         CatalogFamily::RunnableIdentity | CatalogFamily::RunnableBucketEntry => {
             validate_binary_document_leaf(read, RUNNABLE_ENTRIES, family, leaf, "runnable identity")
         }
-        CatalogFamily::RunnableOrdered => {
-            validate_binary_document_leaf(read, RUNNABLE_INDEX, family, leaf, "runnable ordered")
-        }
+        CatalogFamily::RunnableOrdered => validate_ordered_discovery_leaf::<RunnableIndexEntry>(
+            read,
+            leaf,
+            RUNNABLE_ENTRIES,
+            RUNNABLE_INDEX,
+            CatalogFamily::RunnableIdentity,
+            CatalogFamily::RunnableOrdered,
+            "runnable",
+            |entry| codec::pair(entry.run.as_str(), entry.execution.as_str()),
+            crate::journal::runnable_order_key,
+            crate::journal::runnable_catalog_ordered_path,
+        ),
         CatalogFamily::TimerIdentity => {
             validate_binary_document_leaf(read, TIMER_ENTRIES, family, leaf, "timer identity")
         }
-        CatalogFamily::TimerOrdered => {
-            validate_binary_document_leaf(read, TIMER_INDEX, family, leaf, "timer ordered")
-        }
+        CatalogFamily::TimerOrdered => validate_ordered_discovery_leaf::<TimerIndexEntry>(
+            read,
+            leaf,
+            TIMER_ENTRIES,
+            TIMER_INDEX,
+            CatalogFamily::TimerIdentity,
+            CatalogFamily::TimerOrdered,
+            "timer",
+            |entry| codec::pair(entry.run.as_str(), entry.timer.as_str()),
+            crate::journal::timer_order_key,
+            crate::journal::timer_catalog_ordered_path,
+        ),
         CatalogFamily::LeaseIdentity => {
             validate_binary_document_leaf(read, LEASE_ENTRIES, family, leaf, "lease identity")
         }
-        CatalogFamily::LeaseOrdered => {
-            validate_binary_document_leaf(read, LEASE_INDEX, family, leaf, "lease ordered")
-        }
+        CatalogFamily::LeaseOrdered => validate_ordered_discovery_leaf::<LeaseIndexEntry>(
+            read,
+            leaf,
+            LEASE_ENTRIES,
+            LEASE_INDEX,
+            CatalogFamily::LeaseIdentity,
+            CatalogFamily::LeaseOrdered,
+            "lease",
+            |entry| codec::pair(entry.run.as_str(), entry.lease.as_str()),
+            crate::journal::lease_order_key,
+            crate::journal::lease_catalog_ordered_path,
+        ),
         CatalogFamily::WorkspaceScope => {
             validate_binary_document_leaf(read, SCOPES, family, leaf, "workspace scope")
         }
@@ -1187,26 +1208,89 @@ fn validate_runnable_bucket_leaf(
     Ok(())
 }
 
-pub(crate) fn validate_catalog_prefix<T>(
+fn validate_authenticated_catalog_prefix(
     read: &redb::ReadTransaction,
     family: crate::trie::CatalogFamily,
-    table: &T,
     limit: usize,
-) -> Result<(), PersistenceError>
-where
-    T: redb::ReadableTable<&'static [u8], &'static [u8]>,
-{
+) -> Result<(), PersistenceError> {
     let page = crate::trie::page(read, family, None, None, limit)?;
     for leaf in page.leaves {
-        let bytes = table
-            .get(leaf.logical_key.as_slice())
-            .map_err(error::redb)?
-            .ok_or_else(|| error::corruption("authenticated catalog leaf is dangling"))?;
-        if leaf.payload_digest != crate::trie::digest_payload(family, bytes.value()) {
-            return Err(error::corruption(
-                "authenticated catalog payload disagrees with its physical row",
-            ));
-        }
+        validate_authenticated_catalog_leaf(read, family, &leaf)?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_ordered_discovery_leaf<T>(
+    read: &redb::ReadTransaction,
+    leaf: &crate::trie::TrieLeaf,
+    identity_definition: redb::TableDefinition<'static, &'static [u8], &'static [u8]>,
+    ordered_definition: redb::TableDefinition<'static, &'static [u8], &'static [u8]>,
+    identity_family: crate::trie::CatalogFamily,
+    ordered_family: crate::trie::CatalogFamily,
+    label: &'static str,
+    identity_key: fn(&T) -> Result<Vec<u8>, PersistenceError>,
+    order_key: fn(&T) -> Result<Vec<u8>, PersistenceError>,
+    ordered_path: fn(&[u8], &T) -> Result<[u8; 32], PersistenceError>,
+) -> Result<(), PersistenceError>
+where
+    T: for<'de> serde::Deserialize<'de>,
+{
+    let identities = read.open_table(identity_definition).map_err(error::redb)?;
+    let bytes = identities
+        .get(leaf.logical_key.as_slice())
+        .map_err(error::redb)?
+        .ok_or_else(|| {
+            error::corruption(format!(
+                "authenticated {label} ordered catalog names a missing identity row"
+            ))
+        })?
+        .value()
+        .to_vec();
+    let entry: T = json::decode(&bytes, label)?;
+    let expected_identity = identity_key(&entry)?;
+    if leaf.logical_key != expected_identity {
+        return Err(error::corruption(format!(
+            "authenticated {label} ordered catalog identity disagrees with its document"
+        )));
+    }
+    if leaf.path != ordered_path(&expected_identity, &entry)? {
+        return Err(error::corruption(format!(
+            "authenticated {label} ordered catalog path disagrees with its document"
+        )));
+    }
+    if leaf.payload_digest != crate::trie::digest_payload(ordered_family, &bytes) {
+        return Err(error::corruption(format!(
+            "authenticated {label} ordered catalog payload disagrees with its identity row"
+        )));
+    }
+
+    let ordered_key = order_key(&entry)?;
+    let ordered = read.open_table(ordered_definition).map_err(error::redb)?;
+    let ordered_bytes = ordered
+        .get(ordered_key.as_slice())
+        .map_err(error::redb)?
+        .ok_or_else(|| {
+            error::corruption(format!(
+                "authenticated {label} ordered catalog is missing its ordered row"
+            ))
+        })?;
+    if ordered_bytes.value() != bytes.as_slice() {
+        return Err(error::corruption(format!(
+            "authenticated {label} ordered row disagrees with its identity row"
+        )));
+    }
+
+    let identity_witness = crate::trie::verify_member(
+        read,
+        identity_family,
+        crate::trie::hashed_path(identity_family, &expected_identity),
+        &expected_identity,
+    )?;
+    if identity_witness != Some(crate::trie::digest_payload(identity_family, &bytes)) {
+        return Err(error::corruption(format!(
+            "authenticated {label} ordered catalog has no matching authenticated identity"
+        )));
     }
     Ok(())
 }

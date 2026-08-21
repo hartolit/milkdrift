@@ -170,6 +170,58 @@ fn deleted_discovery_and_lease_rows_refuse_recovery_and_admission()
     Ok(())
 }
 
+fn assert_complete_integrity_scan_is_clean(
+    store: &RedbStore,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut cursor = None;
+    for _ in 0..10_000 {
+        let page = store.scan_integrity(IntegrityScanRequest {
+            limit: PageSize::new(7)?,
+            verify_artifact_content: false,
+            cursor,
+        })?;
+        assert!(
+            page.failures.is_empty(),
+            "intact discovery indexes failed integrity validation: {:?}",
+            page.failures
+        );
+        let Some(next) = page.next_cursor else {
+            return Ok(());
+        };
+        cursor = Some(next);
+    }
+    Err("integrity scan did not exhaust within 10,000 bounded pages".into())
+}
+
+#[test]
+fn intact_ordered_discovery_catalogs_pass_integrity_and_reopen()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (kind, suffix) in [
+        (DiscoveryIndexKind::Runnable, "healthy-runnable"),
+        (DiscoveryIndexKind::Timer, "healthy-timer"),
+        (DiscoveryIndexKind::Lease, "healthy-lease"),
+    ] {
+        let directory = TempDir::new()?;
+        {
+            let store = RedbStore::open(directory.path())?;
+            store.commit_command(&accepted_request_with_discovery_index(kind, suffix)?)?;
+            assert_eq!(
+                store.health(TimestampMillis::new(20))?.status,
+                StorageHealthStatus::Healthy
+            );
+            assert_complete_integrity_scan_is_clean(&store)?;
+        }
+
+        let reopened = RedbStore::open(directory.path())?;
+        assert_eq!(
+            reopened.health(TimestampMillis::new(21))?.status,
+            StorageHealthStatus::Healthy
+        );
+        assert_complete_integrity_scan_is_clean(&reopened)?;
+    }
+    Ok(())
+}
+
 fn assert_symmetric_discovery_pair_deletion_is_corruption(
     kind: DiscoveryIndexKind,
     suffix: &str,
