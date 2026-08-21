@@ -9,10 +9,11 @@ use crate::RuntimeError;
 use super::helpers::{ensure_unique, invalid_at, new_attempt, same_logical_invocation_request};
 use super::node::{
     AttemptState, AttemptTerminal, CapabilityResolution, DeterministicNodeTerminalProjection,
-    ExternalOutcomeObligation, LeaseProjection, LeaseState, NodeAttemptProjection,
-    NodeExecutionCancellationProjection, NodeExecutionProjection, NodeExecutionState,
-    ProgressObservation, PublishedNodeOutput, RetainedExternalOutcome, RetryProjection, RetryState,
-    SideEffectClassification, TimerProjection, TimerPurpose, TimerState,
+    ExternalOutcomeObligation, LateTerminalEvidence, LeaseProjection, LeaseState,
+    NodeAttemptProjection, NodeExecutionCancellationProjection, NodeExecutionProjection,
+    NodeExecutionState, ProgressObservation, PublishedNodeOutput, RetainedExternalOutcome,
+    RetryProjection, RetryState, SideEffectClassification, TimerProjection, TimerPurpose,
+    TimerState,
 };
 use super::run::{
     RevisionPin, RunCancellation, RunLifecycle, RunProjection, RunTerminalProjection,
@@ -1403,6 +1404,51 @@ impl RunProjection {
                     .ok_or_else(|| invalid_at(event, "unknown execution"))?
                     .state = NodeExecutionState::Uncertain(attempt.clone());
                 self.complete_attempt_leases(attempt);
+            }
+            RunEventKind::LateTerminalEvidenceRecorded {
+                attempt,
+                worker,
+                report_sequence,
+                terminal,
+            } => {
+                let attempt_view = self.attempt(attempt, event)?;
+                let obligation = attempt_view.obligation.as_ref().ok_or_else(|| {
+                    invalid_at(
+                        event,
+                        "late terminal evidence requires an uncertainty obligation",
+                    )
+                })?;
+                let classified = attempt_view.side_effect.as_ref().ok_or_else(|| {
+                    invalid_at(
+                        event,
+                        "late terminal evidence lacks side-effect classification",
+                    )
+                })?;
+                let historically_owned = attempt_view.leases.iter().any(|lease| {
+                    self.leases
+                        .get(lease)
+                        .is_some_and(|lease_view| lease_view.worker() == worker)
+                });
+                if attempt_view.terminal.is_some()
+                    || attempt_view.late_terminal_evidence.is_some()
+                    || *report_sequence < obligation.report_sequence
+                    || terminal.side_effect() > classified.side_effect
+                    || !historically_owned
+                {
+                    return Err(invalid_at(
+                        event,
+                        "late terminal evidence contradicts attempt ownership or existing terminal facts",
+                    ));
+                }
+                self.attempts
+                    .get_mut(attempt)
+                    .ok_or_else(|| invalid_at(event, "unknown attempt"))?
+                    .late_terminal_evidence = Some(LateTerminalEvidence {
+                    report_sequence: *report_sequence,
+                    terminal: terminal.clone(),
+                    worker: worker.clone(),
+                    sequence,
+                });
             }
             RunEventKind::ExternalOutcomeRetained {
                 attempt,

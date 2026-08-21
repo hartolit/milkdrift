@@ -200,6 +200,10 @@ impl RuntimeService {
                 *action,
                 remediation_node.as_ref(),
             ),
+            RunCommand::SystemTransition { .. } => Err(RuntimeError::InvalidCommand(
+                "system transitions are runtime-owned and cannot be submitted externally"
+                    .to_owned(),
+            )),
             RunCommand::WorkerReport { worker, report } => {
                 self.plan_worker_report(document, projection, worker, report)
             }
@@ -556,12 +560,24 @@ impl RuntimeService {
                 }))
             }
             WorkerReport::Invocation { attempt, report } => {
-                let attempt_view = self.worker_attempt(projection, worker, attempt)?;
+                let attempt_view = self.historically_owned_attempt(projection, worker, attempt)?;
                 if attempt_view.invocation() != Some(report.invocation()) {
                     return Err(RuntimeError::InvalidTransition(
                         "invocation report correlation does not match the attempt".to_owned(),
                     ));
                 }
+                if let InvocationEventKind::Terminal { terminal } = report.kind()
+                    && !self.worker_owns_active_lease(projection, worker, attempt)
+                {
+                    return self.plan_late_terminal_report(
+                        projection,
+                        worker,
+                        attempt,
+                        report.sequence(),
+                        terminal,
+                    );
+                }
+                let _ = self.worker_attempt(projection, worker, attempt)?;
                 self.plan_invocation_report(document, projection, attempt, report)
             }
             WorkerReport::Cancellation {
@@ -598,10 +614,54 @@ impl RuntimeService {
                 report_sequence,
                 terminal,
             } => {
-                let _ = self.worker_attempt(projection, worker, attempt)?;
+                let _ = self.historically_owned_attempt(projection, worker, attempt)?;
+                if !self.worker_owns_active_lease(projection, worker, attempt) {
+                    return self.plan_late_terminal_report(
+                        projection,
+                        worker,
+                        attempt,
+                        *report_sequence,
+                        terminal,
+                    );
+                }
                 self.plan_terminal_report(document, projection, attempt, *report_sequence, terminal)
             }
         }
+    }
+
+    fn worker_owns_active_lease(
+        &self,
+        projection: &RunProjection,
+        worker: &WorkerId,
+        attempt: &AttemptId,
+    ) -> bool {
+        projection.leases().values().any(|lease| {
+            lease.attempt() == attempt && lease.worker() == worker && lease.is_active()
+        })
+    }
+
+    fn historically_owned_attempt<'a>(
+        &self,
+        projection: &'a RunProjection,
+        worker: &WorkerId,
+        attempt: &AttemptId,
+    ) -> Result<&'a crate::projection::NodeAttemptProjection, RuntimeError> {
+        let attempt_view = projection
+            .attempts()
+            .get(attempt)
+            .ok_or_else(|| RuntimeError::InvalidTransition(format!("unknown attempt {attempt}")))?;
+        let historically_owned = attempt_view.leases().iter().any(|lease| {
+            projection
+                .leases()
+                .get(lease)
+                .is_some_and(|lease_view| lease_view.worker() == worker)
+        });
+        if !historically_owned {
+            return Err(RuntimeError::InvalidTransition(
+                "worker never owned a durable lease for the attempt".to_owned(),
+            ));
+        }
+        Ok(attempt_view)
     }
 
     fn worker_attempt<'a>(
@@ -614,10 +674,7 @@ impl RuntimeService {
             .attempts()
             .get(attempt)
             .ok_or_else(|| RuntimeError::InvalidTransition(format!("unknown attempt {attempt}")))?;
-        let owned = projection.leases().values().any(|lease| {
-            lease.attempt() == attempt && lease.worker() == worker && lease.is_active()
-        });
-        if !owned {
+        if !self.worker_owns_active_lease(projection, worker, attempt) {
             return Err(RuntimeError::InvalidTransition(
                 "worker does not own an active lease for the attempt".to_owned(),
             ));
@@ -742,6 +799,58 @@ impl RuntimeService {
         plan.workspace.push(WorkspaceMutation::PutValue { entry });
         plan.required_artifacts.insert(artifact);
         Ok(plan)
+    }
+
+    fn plan_late_terminal_report(
+        &self,
+        projection: &RunProjection,
+        worker: &WorkerId,
+        attempt: &AttemptId,
+        report_sequence: u64,
+        terminal: &InvocationTerminal,
+    ) -> Result<CommandPlan, RuntimeError> {
+        let attempt_view = self.historically_owned_attempt(projection, worker, attempt)?;
+        let obligation = attempt_view.obligation().ok_or_else(|| {
+            RuntimeError::InvalidTransition(
+                "late terminal evidence is accepted only for an uncertain external outcome"
+                    .to_owned(),
+            )
+        })?;
+        if attempt_view.terminal().is_some() || attempt_view.late_terminal_evidence().is_some() {
+            return Err(RuntimeError::InvalidTransition(
+                "attempt already has terminal evidence".to_owned(),
+            ));
+        }
+        if report_sequence < obligation.report_sequence() {
+            return Err(RuntimeError::InvalidTransition(format!(
+                "late terminal report sequence must be at least {}",
+                obligation.report_sequence()
+            )));
+        }
+        if terminal.status() == TerminalStatus::Uncertain {
+            return Err(RuntimeError::InvalidTransition(
+                "late evidence must establish a known terminal observation".to_owned(),
+            ));
+        }
+        let classified = attempt_view.side_effect().ok_or_else(|| {
+            RuntimeError::InvalidHistory(
+                "late terminal attempt has no side-effect classification".to_owned(),
+            )
+        })?;
+        if terminal.side_effect() > classified.side_effect() {
+            return Err(RuntimeError::InvalidTransition(
+                "late terminal observation exceeds the frozen side-effect classification"
+                    .to_owned(),
+            ));
+        }
+        Ok(CommandPlan::one(
+            RunEventKind::LateTerminalEvidenceRecorded {
+                attempt: attempt.clone(),
+                worker: worker.clone(),
+                report_sequence,
+                terminal: terminal.clone(),
+            },
+        ))
     }
 
     fn plan_terminal_report(
@@ -1087,7 +1196,21 @@ impl RuntimeService {
             result,
             indexes,
         )?;
-        Ok(self.store.commit_command(&request)?)
+        let should_checkpoint =
+            self.should_checkpoint_projection(projection.sequence(), &candidate);
+        let outcome = self.store.commit_command(&request)?;
+        if should_checkpoint
+            && matches!(&outcome, AtomicRunCommitOutcome::Committed(_))
+            && let Err(error) = self.persist_projection_snapshot(document.run_id(), &candidate)
+        {
+            warn!(
+                run = %document.run_id(),
+                sequence = candidate.sequence().get(),
+                reason = %error,
+                "optional projection checkpoint could not be persisted"
+            );
+        }
+        Ok(outcome)
     }
 
     pub(super) fn commit_rejected(

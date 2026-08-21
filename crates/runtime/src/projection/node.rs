@@ -1,7 +1,9 @@
+use serde::{Deserialize, Serialize};
+
 use milkdrift_blueprint::NodeId;
 use milkdrift_capability::{
     CancellationAcknowledgement, ErrorClass, IdempotencyBehavior, IdempotencyKey, InvocationId,
-    InvocationRequest, ResolvedCapabilitySnapshot, SideEffectClass,
+    InvocationRequest, InvocationTerminal, ResolvedCapabilitySnapshot, SideEffectClass,
 };
 use milkdrift_persistence::{
     AttemptId, AttemptUsage, BoundedDetail, EvidenceReference, LeaseId, NodeExecutionId,
@@ -13,7 +15,7 @@ use milkdrift_workspace::{ArtifactReference, ScopeReference, WorkspaceValueRefer
 use super::reconciliation::{RecoveryDecision, RecoveryObservation};
 
 /// Dynamic state of one logical node execution.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum NodeExecutionState {
     /// Eligible but not yet scheduled.
     Eligible,
@@ -34,7 +36,7 @@ pub enum NodeExecutionState {
 }
 
 /// Durable execution-local cancellation fact.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct NodeExecutionCancellationProjection {
     pub(super) attempt: Option<AttemptId>,
     pub(super) reason: Reason,
@@ -63,7 +65,7 @@ impl NodeExecutionCancellationProjection {
 
 /// Terminal fact for an attempt-free execution, including deterministic runtime
 /// work and immutable executor request failures before dispatch.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct DeterministicNodeTerminalProjection {
     pub(super) outcome: NodeOutcome,
     pub(super) error_class: Option<ErrorClass>,
@@ -98,7 +100,7 @@ impl DeterministicNodeTerminalProjection {
 }
 
 /// Projected state of one stable logical node execution.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct NodeExecutionProjection {
     pub(super) execution: NodeExecutionId,
     pub(super) node: NodeId,
@@ -213,7 +215,7 @@ impl NodeExecutionProjection {
 }
 
 /// Dynamic state of one immutable attempt.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum AttemptState {
     /// Retry identity is reserved but its timer has not fired.
     AwaitingRetryTimer,
@@ -250,7 +252,7 @@ pub enum AttemptState {
 }
 
 /// Exact capability facts frozen for an attempt.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct CapabilityResolution {
     pub(super) requirement: milkdrift_capability::CapabilityRequirement,
     pub(super) snapshot: ResolvedCapabilitySnapshot,
@@ -271,7 +273,7 @@ impl CapabilityResolution {
 }
 
 /// Side-effect and external-idempotency facts frozen before dispatch.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct SideEffectClassification {
     pub(super) side_effect: SideEffectClass,
     pub(super) idempotency: IdempotencyBehavior,
@@ -299,7 +301,7 @@ impl SideEffectClassification {
 }
 
 /// One bounded monotonic executor progress observation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ProgressObservation {
     pub(super) report_sequence: u64,
     pub(super) detail: BoundedDetail,
@@ -334,7 +336,7 @@ impl ProgressObservation {
 }
 
 /// One immutable workspace output publication.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct PublishedNodeOutput {
     pub(super) report_sequence: Option<u64>,
     pub(super) value: WorkspaceValueReference,
@@ -369,7 +371,7 @@ impl PublishedNodeOutput {
 }
 
 /// Known terminal result of one immutable attempt.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct AttemptTerminal {
     pub(super) report_sequence: u64,
     pub(super) outcome: NodeOutcome,
@@ -410,8 +412,46 @@ impl AttemptTerminal {
     }
 }
 
+/// Known terminal evidence received after active worker ownership ended.
+///
+/// The observation remains separate from [`AttemptTerminal`] so replay never
+/// rewrites an earlier uncertainty classification or a later retry result.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct LateTerminalEvidence {
+    pub(super) report_sequence: u64,
+    pub(super) terminal: InvocationTerminal,
+    pub(super) worker: WorkerId,
+    pub(super) sequence: RunSequence,
+}
+
+impl LateTerminalEvidence {
+    /// Original executor-local report sequence.
+    #[must_use]
+    pub const fn report_sequence(&self) -> u64 {
+        self.report_sequence
+    }
+
+    /// Provider-neutral terminal observation.
+    #[must_use]
+    pub const fn terminal(&self) -> &InvocationTerminal {
+        &self.terminal
+    }
+
+    /// Worker that historically owned the attempt.
+    #[must_use]
+    pub const fn worker(&self) -> &WorkerId {
+        &self.worker
+    }
+
+    /// Durable event sequence at which the evidence was recorded.
+    #[must_use]
+    pub const fn sequence(&self) -> RunSequence {
+        self.sequence
+    }
+}
+
 /// Current unresolved external-outcome obligation for an attempt.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ExternalOutcomeObligation {
     pub(super) report_sequence: u64,
     pub(super) side_effect: SideEffectClass,
@@ -467,7 +507,7 @@ impl ExternalOutcomeObligation {
 }
 
 /// Explicit fact retaining uncertain external work.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct RetainedExternalOutcome {
     pub(super) decision: ReconciliationDecisionId,
     pub(super) reason: Reason,
@@ -495,7 +535,7 @@ impl RetainedExternalOutcome {
 }
 
 /// Complete read model for one immutable attempt.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct NodeAttemptProjection {
     pub(super) attempt: AttemptId,
     pub(super) execution: NodeExecutionId,
@@ -514,6 +554,7 @@ pub struct NodeAttemptProjection {
     pub(super) cancellation_acknowledgements: Vec<CancellationAcknowledgement>,
     pub(super) outputs: Vec<PublishedNodeOutput>,
     pub(super) terminal: Option<AttemptTerminal>,
+    pub(super) late_terminal_evidence: Option<LateTerminalEvidence>,
     pub(super) obligation: Option<ExternalOutcomeObligation>,
     pub(super) recovery: Vec<RecoveryObservation>,
 }
@@ -625,6 +666,12 @@ impl NodeAttemptProjection {
         self.terminal.as_ref()
     }
 
+    /// Terminal evidence received only after active lease ownership ended.
+    #[must_use]
+    pub const fn late_terminal_evidence(&self) -> Option<&LateTerminalEvidence> {
+        self.late_terminal_evidence.as_ref()
+    }
+
     /// Durable external-outcome record, including one later covered by a safe retry.
     #[must_use]
     pub const fn obligation(&self) -> Option<&ExternalOutcomeObligation> {
@@ -683,7 +730,7 @@ impl NodeAttemptProjection {
 }
 
 /// State of a durable lease.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum LeaseState {
     /// Lease remains the active ownership fact.
     Active,
@@ -696,7 +743,7 @@ pub enum LeaseState {
 }
 
 /// Read model for one immutable worker lease.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct LeaseProjection {
     pub(super) lease: LeaseId,
     pub(super) execution: NodeExecutionId,
@@ -757,7 +804,7 @@ impl LeaseProjection {
 }
 
 /// Origin and state of a durable timer.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum TimerPurpose {
     /// General workflow wait, optionally attached to a node execution.
     Wait {
@@ -772,7 +819,7 @@ pub enum TimerPurpose {
 }
 
 /// State of a durable timer.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum TimerState {
     /// Registered and not yet fired.
     Pending,
@@ -786,7 +833,7 @@ pub enum TimerState {
 }
 
 /// Durable cancellation fact for a timer.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct TimerCancellationProjection {
     pub(super) reason: Reason,
     pub(super) sequence: RunSequence,
@@ -807,7 +854,7 @@ impl TimerCancellationProjection {
 }
 
 /// Durable timer read model.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct TimerProjection {
     pub(super) timer: TimerId,
     pub(super) purpose: TimerPurpose,
@@ -861,7 +908,7 @@ impl TimerProjection {
 }
 
 /// Current retry admission state.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum RetryState {
     /// Backoff timer has not fired.
     Waiting,
@@ -874,7 +921,7 @@ pub enum RetryState {
 }
 
 /// Immutable retry decision and its current admission state.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct RetryProjection {
     pub(super) execution: NodeExecutionId,
     pub(super) previous_attempt: AttemptId,

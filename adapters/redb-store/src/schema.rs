@@ -44,10 +44,6 @@ pub(crate) const LEASE_ENTRIES: TableDefinition<'static, &'static [u8], &'static
     TableDefinition::new("milkdrift.v1.discovery.leases_by_identity");
 pub(crate) const LEASE_INDEX: TableDefinition<'static, &'static [u8], &'static [u8]> =
     TableDefinition::new("milkdrift.v1.discovery.leases");
-pub(crate) const DISCOVERY_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.discovery.accounting");
-pub(crate) const INTEGRITY_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.integrity.accounting");
 pub(crate) const INTEGRITY_ROOTS: TableDefinition<'static, &'static str, &'static [u8]> =
     TableDefinition::new("milkdrift.v1.integrity.roots");
 pub(crate) const INTEGRITY_TRIE_NODES: TableDefinition<'static, &'static [u8], &'static [u8]> =
@@ -95,5 +91,3 @@ pub(crate) const WORKSPACE_USAGE: TableDefinition<'static, &'static str, &'stati
     TableDefinition::new("milkdrift.v1.workspace.usage");
 pub(crate) const WORKSPACE_BUDGETS: TableDefinition<'static, &'static str, &'static [u8]> =
     TableDefinition::new("milkdrift.v1.workspace.budgets");
-pub(crate) const WORKSPACE_VALUE_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.workspace.value_accounting");

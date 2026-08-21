@@ -90,54 +90,6 @@ pub(crate) fn decode<T: DeserializeOwned + Serialize>(
     Ok(decoded.payload)
 }
 
-/// Converts one exact legacy canonical JSON value into the current envelope.
-///
-/// This is used only by the atomic document-format migration performed before a
-/// store becomes available for ordinary reads or writes.
-pub(crate) fn migrate_legacy(
-    bytes: &[u8],
-    family: &'static str,
-) -> Result<Vec<u8>, PersistenceError> {
-    if bytes.len() > MAX_INTERNAL_DOCUMENT_BYTES {
-        return Err(PersistenceError::Corruption(format!(
-            "legacy stored {family} exceeds {MAX_INTERNAL_DOCUMENT_BYTES} bytes"
-        )));
-    }
-    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|cause| {
-        PersistenceError::Corruption(format!(
-            "legacy stored {family} failed decoding during migration: {cause}"
-        ))
-    })?;
-    if value.as_object().is_some_and(|object| {
-        object.contains_key("schema_version")
-            && object.contains_key("family")
-            && object.contains_key("checksum")
-            && object.contains_key("payload")
-    }) {
-        return Err(PersistenceError::Corruption(format!(
-            "stored {family} is already enveloped but the document-format marker is missing"
-        )));
-    }
-    let checksum = checksum(family, bytes);
-    let family = serde_json::to_string(family).map_err(|cause| {
-        PersistenceError::Corruption(format!(
-            "legacy stored {family} family could not be encoded: {cause}"
-        ))
-    })?;
-    let mut migrated = format!(
-        "{{\"schema_version\":{INTERNAL_DOCUMENT_SCHEMA_VERSION},\"family\":{family},\"checksum\":\"{checksum}\",\"payload\":"
-    )
-    .into_bytes();
-    migrated.extend_from_slice(bytes);
-    migrated.push(b'}');
-    if migrated.len() > MAX_INTERNAL_DOCUMENT_BYTES {
-        return Err(PersistenceError::Corruption(format!(
-            "migrated stored document exceeds {MAX_INTERNAL_DOCUMENT_BYTES} bytes"
-        )));
-    }
-    Ok(migrated)
-}
-
 fn canonical_payload<T: Serialize>(
     value: &T,
     family: &'static str,
@@ -168,18 +120,12 @@ fn checksum(family: &str, payload: &[u8]) -> String {
 mod tests {
     use serde::{Deserialize, Serialize};
 
-    use super::{decode, encode, migrate_legacy};
+    use super::{decode, encode};
 
     #[derive(Debug, Eq, PartialEq, Deserialize, Serialize)]
     struct Example {
         first: u32,
         second: u32,
-    }
-
-    #[derive(Debug, Eq, PartialEq, Deserialize, Serialize)]
-    struct Nonalphabetic {
-        zebra: u32,
-        alpha: u32,
     }
 
     #[test]
@@ -199,13 +145,6 @@ mod tests {
         assert!(decode::<Example>(&tampered, "example").is_err());
 
         assert!(decode::<Example>(br#"{"first":1,"second":2}"#, "example").is_err());
-        let migrated = migrate_legacy(br#"{"first":1,"second":2}"#, "example")?;
-        assert_eq!(decode::<Example>(&migrated, "example")?, value);
-        let nonalphabetic = migrate_legacy(br#"{"zebra":2,"alpha":1}"#, "nonalphabetic")?;
-        assert_eq!(
-            decode::<Nonalphabetic>(&nonalphabetic, "nonalphabetic")?,
-            Nonalphabetic { zebra: 2, alpha: 1 }
-        );
         Ok(())
     }
 }

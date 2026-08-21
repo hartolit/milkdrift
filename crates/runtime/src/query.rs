@@ -1,20 +1,31 @@
 use milkdrift_persistence::{
-    EventPageQuery, MAX_PAGE_SIZE, PageSize, RunEventEnvelope, RunQueryStore, RunSequence,
+    EventCursor, EventPageQuery, MAX_PAGE_SIZE, PageSize, RunEventEnvelope, RunQueryStore,
+    RunSequence, SnapshotLoad, SnapshotStore,
 };
 use milkdrift_workspace::RunId;
+use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use crate::{RunProjection, RuntimeError};
 
-/// Folds authoritative history through fixed-size pages without retaining prior pages.
+pub(crate) const RUN_PROJECTION_SNAPSHOT_SCHEMA_V1: u32 = 1;
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectionSnapshotPayload {
+    schema_version: u32,
+    projection: RunProjection,
+}
+
+/// Folds one authoritative history range against the head observed by the first read.
 ///
-/// The store verifies each page. This helper additionally pins the observed head for
-/// the duration of the logical read, proves every continuation cursor advances exactly
-/// beyond the page tail, and proves the fold reached that head. The accumulator is the
-/// only state whose size may grow with history; runtime callers use a projection or a
-/// bounded scalar/set rather than an event vector.
-pub(crate) fn fold_complete_history<S, T, F>(
+/// Concurrent appends after that read are intentionally ignored; callers receive a
+/// consistent prefix instead of restarting from sequence one. Every page must remain
+/// contiguous and may never regress behind the pinned head.
+pub(crate) fn fold_history_from<S, T, F>(
     store: &S,
     run: &RunId,
+    covered_through: RunSequence,
     mut accumulator: T,
     mut fold: F,
 ) -> Result<T, RuntimeError>
@@ -23,44 +34,97 @@ where
     F: FnMut(&mut T, &RunEventEnvelope) -> Result<(), RuntimeError>,
 {
     let limit = PageSize::new(MAX_PAGE_SIZE)?;
-    let mut cursor = None;
-    let mut observed_head = None;
-    let mut folded_through = RunSequence::ZERO;
+    let mut cursor = if covered_through == RunSequence::ZERO {
+        None
+    } else {
+        Some(EventCursor {
+            run: run.clone(),
+            next_sequence: covered_through.next()?,
+        })
+    };
+    let mut pinned_head = None;
+    let mut folded_through = covered_through;
+    let mut expected = if covered_through == RunSequence::ZERO {
+        RunSequence::FIRST
+    } else {
+        covered_through.next()?
+    };
+
     loop {
         let page = store.events(&EventPageQuery::new(run.clone(), cursor.clone(), limit)?)?;
-        if let Some(previous) = observed_head
-            && previous != page.observed_head
-        {
+        let head = *pinned_head.get_or_insert(page.observed_head);
+        if page.observed_head < head {
             return Err(RuntimeError::InvalidHistory(
-                "journal head changed during a complete-history fold; retry from sequence one"
-                    .to_owned(),
+                "journal head regressed during a pinned history fold".to_owned(),
             ));
         }
-        observed_head = Some(page.observed_head);
-        let page_was_empty = page.events.is_empty();
+        if covered_through > head {
+            return Err(RuntimeError::InvalidHistory(format!(
+                "projection checkpoint covers {covered_through}, beyond observed journal head {head}"
+            )));
+        }
+        if folded_through == head {
+            return Ok(accumulator);
+        }
+        if page.events.is_empty() {
+            return Err(RuntimeError::InvalidHistory(format!(
+                "history page was empty before pinned head {head} was reached"
+            )));
+        }
+
+        let mut physical_tail = None;
         for event in &page.events {
+            if event.sequence() != expected {
+                return Err(RuntimeError::InvalidHistory(format!(
+                    "history page expected sequence {expected}, found {}",
+                    event.sequence()
+                )));
+            }
+            physical_tail = Some(event.sequence());
+            expected = expected.next()?;
+            if event.sequence() > head {
+                break;
+            }
             fold(&mut accumulator, event)?;
             folded_through = event.sequence();
-        }
-        match page.next {
-            Some(next) => {
-                if page_was_empty || next.next_sequence != folded_through.next()? {
-                    return Err(RuntimeError::InvalidHistory(
-                        "event pagination cursor did not advance beyond the page tail".to_owned(),
-                    ));
-                }
-                cursor = Some(next);
+            if folded_through == head {
+                return Ok(accumulator);
             }
-            None => break,
         }
+
+        let next = page.next.ok_or_else(|| {
+            RuntimeError::InvalidHistory(format!(
+                "history pagination ended at {folded_through} before pinned head {head}"
+            ))
+        })?;
+        let expected_next = physical_tail
+            .ok_or_else(|| {
+                RuntimeError::InvalidHistory(
+                    "non-empty history page had no physical tail".to_owned(),
+                )
+            })?
+            .next()?;
+        if next.next_sequence != expected_next {
+            return Err(RuntimeError::InvalidHistory(
+                "event pagination cursor did not advance beyond the page tail".to_owned(),
+            ));
+        }
+        cursor = Some(next);
     }
-    let observed = observed_head.unwrap_or(RunSequence::ZERO);
-    if folded_through != observed {
-        return Err(RuntimeError::InvalidHistory(format!(
-            "folded history ended at {folded_through}, but storage observed head {observed}"
-        )));
-    }
-    Ok(accumulator)
+}
+
+/// Folds complete authoritative history without retaining prior pages.
+pub(crate) fn fold_complete_history<S, T, F>(
+    store: &S,
+    run: &RunId,
+    accumulator: T,
+    fold: F,
+) -> Result<T, RuntimeError>
+where
+    S: RunQueryStore + ?Sized,
+    F: FnMut(&mut T, &RunEventEnvelope) -> Result<(), RuntimeError>,
+{
+    fold_history_from(store, run, RunSequence::ZERO, accumulator, fold)
 }
 
 /// Projects complete authoritative history while retaining only projection state and
@@ -74,11 +138,103 @@ pub(crate) fn project_complete_history<S: RunQueryStore + ?Sized>(
     })
 }
 
+fn discard_optional_snapshot<S: SnapshotStore + ?Sized>(
+    store: &S,
+    run: &RunId,
+    snapshot: &milkdrift_persistence::SnapshotId,
+    reason: &str,
+) {
+    if let Err(error) = store.discard_snapshot(run, snapshot) {
+        warn!(
+            run = %run,
+            snapshot = %snapshot,
+            reason = %error,
+            rejection = reason,
+            "invalid optional projection snapshot could not be discarded"
+        );
+    }
+}
+
+/// Loads a verified runtime checkpoint and replays only the authoritative tail.
+/// Invalid or unsupported optional snapshots are discarded best-effort and never repair
+/// or block authoritative history replay.
+pub(crate) fn project_from_latest_snapshot<S>(
+    store: &S,
+    run: &RunId,
+) -> Result<RunProjection, RuntimeError>
+where
+    S: RunQueryStore + SnapshotStore + ?Sized,
+{
+    let snapshot = match store.latest_snapshot(run)? {
+        SnapshotLoad::Absent => return project_complete_history(store, run),
+        SnapshotLoad::Rejected { snapshot, reason } => {
+            if let Some(snapshot) = snapshot {
+                discard_optional_snapshot(store, run, &snapshot, reason.as_str());
+            }
+            warn!(run = %run, reason = %reason.as_str(), "rejected snapshot ignored");
+            return project_complete_history(store, run);
+        }
+        SnapshotLoad::Verified(snapshot) => snapshot,
+    };
+
+    if snapshot.projection_schema() != RUN_PROJECTION_SNAPSHOT_SCHEMA_V1 {
+        discard_optional_snapshot(
+            store,
+            run,
+            snapshot.snapshot(),
+            "unsupported runtime projection schema",
+        );
+        return project_complete_history(store, run);
+    }
+    let payload: ProjectionSnapshotPayload = match serde_json::from_slice(snapshot.payload()) {
+        Ok(payload) => payload,
+        Err(error) => {
+            warn!(run = %run, snapshot = %snapshot.snapshot(), reason = %error, "projection snapshot payload rejected");
+            discard_optional_snapshot(
+                store,
+                run,
+                snapshot.snapshot(),
+                "projection snapshot payload is not valid JSON",
+            );
+            return project_complete_history(store, run);
+        }
+    };
+    if payload.schema_version != RUN_PROJECTION_SNAPSHOT_SCHEMA_V1
+        || payload.projection.run_id() != Some(run)
+        || payload.projection.sequence() != snapshot.covered_sequence()
+        || payload.projection.history_compacted_through() != snapshot.covered_sequence()
+    {
+        discard_optional_snapshot(
+            store,
+            run,
+            snapshot.snapshot(),
+            "projection snapshot identity or compaction boundary is inconsistent",
+        );
+        return project_complete_history(store, run);
+    }
+
+    fold_history_from(
+        store,
+        run,
+        snapshot.covered_sequence(),
+        payload.projection,
+        |projection, event| projection.apply_replayed(event),
+    )
+}
+
+pub(crate) fn encode_projection_snapshot(
+    projection: &RunProjection,
+) -> Result<Vec<u8>, RuntimeError> {
+    Ok(serde_json::to_vec(&ProjectionSnapshotPayload {
+        schema_version: RUN_PROJECTION_SNAPSHOT_SCHEMA_V1,
+        projection: projection.compacted_for_snapshot(),
+    })?)
+}
+
 /// Materializes at most `maximum` events for diagnostics and bounded tests.
 ///
-/// Runtime decision paths must use [`fold_complete_history`] or
-/// [`project_complete_history`]. This helper never grows beyond the caller's validated
-/// [`PageSize`] bound and returns an explicit bounds error instead of truncating.
+/// Runtime decision paths must use a projection fold. This helper never grows beyond
+/// the caller's validated [`PageSize`] bound and returns an explicit bounds error.
 pub(crate) fn load_bounded_history<S: RunQueryStore + ?Sized>(
     store: &S,
     run: &RunId,
@@ -107,13 +263,21 @@ pub(crate) fn load_bounded_history<S: RunQueryStore + ?Sized>(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
-
-    use milkdrift_persistence::{
-        ActiveLeaseSnapshot, EventCursor, EventPage, IntegrityDigest, LeaseIndexEntry,
-        PersistenceError, RunEventKind, RunSummaryIndex, RunSummaryPage, RunSummaryPageQuery,
-        TimerIndexEntry, TimestampMillis,
+    use std::{
+        error::Error,
+        sync::{
+            Mutex,
+            atomic::{AtomicU32, AtomicUsize, Ordering},
+        },
     };
+
+    use milkdrift_blueprint::{ContentDigest, RevisionId, WorkflowId};
+    use milkdrift_persistence::{
+        ActiveLeaseSnapshot, EventCursor, EventId, EventPage, IntegrityDigest, LeaseIndexEntry,
+        PersistenceError, RunEventKind, RunSummaryIndex, RunSummaryPage, RunSummaryPageQuery,
+        SnapshotDocument, SnapshotId, TimerIndexEntry, TimestampMillis, history_digest,
+    };
+    use milkdrift_workspace::{ScopeId, WorkspaceBudget, WorkspaceScope};
 
     use super::*;
 
@@ -122,6 +286,64 @@ mod tests {
         events: Vec<RunEventEnvelope>,
         largest_page_request: AtomicU32,
         page_reads: AtomicUsize,
+        grow_head_after_first_page: bool,
+        snapshot: Mutex<SnapshotLoad>,
+        discard_snapshot_error: bool,
+    }
+
+    impl SnapshotStore for PagedStore {
+        fn history_digest(
+            &self,
+            run: &RunId,
+            through: RunSequence,
+        ) -> Result<IntegrityDigest, PersistenceError> {
+            if run != &self.run || through == RunSequence::ZERO {
+                return Err(PersistenceError::InvalidDocument(
+                    "test snapshot digest request is outside the configured run".to_owned(),
+                ));
+            }
+            let end = usize::try_from(through.get()).map_err(|_| PersistenceError::Bounds {
+                location: "test.snapshot_history",
+                reason: "sequence exceeds usize".to_owned(),
+            })?;
+            history_digest(self.events.get(..end).ok_or_else(|| {
+                PersistenceError::InvalidDocument(
+                    "test snapshot digest request exceeds history".to_owned(),
+                )
+            })?)
+        }
+
+        fn put_snapshot(&self, snapshot: &SnapshotDocument) -> Result<(), PersistenceError> {
+            *self.snapshot.lock().map_err(|_| {
+                PersistenceError::InvalidDocument("test snapshot lock is poisoned".to_owned())
+            })? = SnapshotLoad::Verified(snapshot.clone());
+            Ok(())
+        }
+
+        fn latest_snapshot(&self, _run: &RunId) -> Result<SnapshotLoad, PersistenceError> {
+            self.snapshot
+                .lock()
+                .map_err(|_| {
+                    PersistenceError::InvalidDocument("test snapshot lock is poisoned".to_owned())
+                })
+                .map(|snapshot| snapshot.clone())
+        }
+
+        fn discard_snapshot(
+            &self,
+            _run: &RunId,
+            _snapshot: &SnapshotId,
+        ) -> Result<(), PersistenceError> {
+            if self.discard_snapshot_error {
+                return Err(PersistenceError::InvalidDocument(
+                    "simulated snapshot cleanup failure".to_owned(),
+                ));
+            }
+            *self.snapshot.lock().map_err(|_| {
+                PersistenceError::InvalidDocument("test snapshot lock is poisoned".to_owned())
+            })? = SnapshotLoad::Absent;
+            Ok(())
+        }
     }
 
     impl RunQueryStore for PagedStore {
@@ -133,7 +355,12 @@ mod tests {
             }
             self.largest_page_request
                 .fetch_max(query.limit.get(), Ordering::SeqCst);
-            self.page_reads.fetch_add(1, Ordering::SeqCst);
+            let read_index = self.page_reads.fetch_add(1, Ordering::SeqCst);
+            let effective_len = if self.grow_head_after_first_page && read_index == 0 {
+                self.events.len().saturating_sub(1)
+            } else {
+                self.events.len()
+            };
             let start = query
                 .cursor
                 .as_ref()
@@ -144,15 +371,15 @@ mod tests {
             })?;
             let end = start
                 .saturating_add(query.limit.get() as usize)
-                .min(self.events.len());
-            let next = (end < self.events.len()).then(|| EventCursor {
+                .min(effective_len);
+            let next = (end < effective_len).then(|| EventCursor {
                 run: self.run.clone(),
                 next_sequence: RunSequence::new(end as u64 + 1),
             });
             Ok(EventPage {
                 events: self.events[start..end].to_vec(),
                 next,
-                observed_head: RunSequence::new(self.events.len() as u64),
+                observed_head: RunSequence::new(effective_len as u64),
             })
         }
 
@@ -243,6 +470,9 @@ mod tests {
             events,
             largest_page_request: AtomicU32::new(0),
             page_reads: AtomicUsize::new(0),
+            grow_head_after_first_page: false,
+            snapshot: Mutex::new(SnapshotLoad::Absent),
+            discard_snapshot_error: false,
         };
 
         let count = fold_complete_history(&store, &run, 0_usize, |count, _event| {
@@ -259,6 +489,145 @@ mod tests {
                 location: "runtime.bounded_history",
                 ..
             }))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn complete_history_fold_pins_the_first_observed_head_during_concurrent_append()
+    -> Result<(), RuntimeError> {
+        let run = RunId::new("run-pinned-fold")
+            .map_err(|error| RuntimeError::InvalidHistory(error.to_string()))?;
+        let mut events = Vec::new();
+        for sequence in 1..=2_502_u64 {
+            events.push(RunEventEnvelope::new(
+                milkdrift_persistence::EventId::new(format!("pinned-event-{sequence}"))?,
+                run.clone(),
+                RunSequence::new(sequence),
+                TimestampMillis::new(sequence),
+                RunEventKind::RunStarted,
+            )?);
+        }
+        let store = PagedStore {
+            run: run.clone(),
+            events,
+            largest_page_request: AtomicU32::new(0),
+            page_reads: AtomicUsize::new(0),
+            grow_head_after_first_page: true,
+            snapshot: Mutex::new(SnapshotLoad::Absent),
+            discard_snapshot_error: false,
+        };
+
+        let count = fold_complete_history(&store, &run, 0_usize, |count, _event| {
+            *count = count.saturating_add(1);
+            Ok(())
+        })?;
+
+        assert_eq!(count, 2_501);
+        assert_eq!(store.page_reads.load(Ordering::SeqCst), 3);
+        Ok(())
+    }
+
+    fn snapshot_history_fixture(
+        name: &str,
+    ) -> Result<(RunId, Vec<RunEventEnvelope>), Box<dyn Error>> {
+        let run = RunId::new(format!("run-{name}"))?;
+        let workflow = WorkflowId::new(format!("workflow-{name}"))?;
+        let revision: RevisionId = serde_json::from_str(&format!("\"rev_{}\"", "a".repeat(64)))?;
+        let revision_digest: ContentDigest =
+            serde_json::from_str(&format!("\"b3_{}\"", "1".repeat(64)))?;
+        let root_scope = WorkspaceScope::run_root(run.clone(), ScopeId::new("root")?);
+        let budget = WorkspaceBudget::new(100, 10_000, 100_000, 100, 100_000, 1_000_000)?;
+        let created = RunEventEnvelope::new(
+            EventId::new(format!("event-{name}-created"))?,
+            run.clone(),
+            RunSequence::FIRST,
+            TimestampMillis::new(1),
+            RunEventKind::RunCreated {
+                workflow,
+                revision,
+                revision_digest,
+                root_scope,
+                workspace_budget: budget,
+                inputs: Vec::new(),
+            },
+        )?;
+        let started = RunEventEnvelope::new(
+            EventId::new(format!("event-{name}-started"))?,
+            run.clone(),
+            RunSequence::new(2),
+            TimestampMillis::new(2),
+            RunEventKind::RunStarted,
+        )?;
+        Ok((run, vec![created, started]))
+    }
+
+    #[test]
+    fn compatible_snapshot_replays_only_the_authoritative_tail() -> Result<(), Box<dyn Error>> {
+        let (run, events) = snapshot_history_fixture("snapshot-tail")?;
+        let mut prefix = RunProjection::new();
+        prefix.apply_replayed(&events[0])?;
+        let snapshot = SnapshotDocument::new(
+            SnapshotId::new("snapshot-query-tail")?,
+            run.clone(),
+            RunSequence::FIRST,
+            history_digest(&events[..1])?,
+            RUN_PROJECTION_SNAPSHOT_SCHEMA_V1,
+            encode_projection_snapshot(&prefix)?,
+        )?;
+        let store = PagedStore {
+            run: run.clone(),
+            events,
+            largest_page_request: AtomicU32::new(0),
+            page_reads: AtomicUsize::new(0),
+            grow_head_after_first_page: false,
+            snapshot: Mutex::new(SnapshotLoad::Verified(snapshot)),
+            discard_snapshot_error: false,
+        };
+
+        let projected = project_from_latest_snapshot(&store, &run)?;
+
+        assert_eq!(projected.sequence(), RunSequence::new(2));
+        assert_eq!(projected.history_compacted_through(), RunSequence::FIRST);
+        assert!(matches!(
+            projected.lifecycle(),
+            crate::RunLifecycle::Running
+        ));
+        assert_eq!(store.page_reads.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_optional_snapshot_never_blocks_authoritative_replay_when_cleanup_fails()
+    -> Result<(), Box<dyn Error>> {
+        let (run, events) = snapshot_history_fixture("snapshot-fallback")?;
+        let mut prefix = RunProjection::new();
+        prefix.apply_replayed(&events[0])?;
+        let snapshot = SnapshotDocument::new(
+            SnapshotId::new("snapshot-query-fallback")?,
+            run.clone(),
+            RunSequence::FIRST,
+            history_digest(&events[..1])?,
+            999,
+            encode_projection_snapshot(&prefix)?,
+        )?;
+        let store = PagedStore {
+            run: run.clone(),
+            events,
+            largest_page_request: AtomicU32::new(0),
+            page_reads: AtomicUsize::new(0),
+            grow_head_after_first_page: false,
+            snapshot: Mutex::new(SnapshotLoad::Verified(snapshot)),
+            discard_snapshot_error: true,
+        };
+
+        let projected = project_from_latest_snapshot(&store, &run)?;
+
+        assert_eq!(projected.sequence(), RunSequence::new(2));
+        assert_eq!(projected.history_compacted_through(), RunSequence::ZERO);
+        assert!(matches!(
+            projected.lifecycle(),
+            crate::RunLifecycle::Running
         ));
         Ok(())
     }

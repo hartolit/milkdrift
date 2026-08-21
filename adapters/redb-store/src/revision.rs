@@ -281,16 +281,6 @@ fn insert_revision_catalog(
     Ok(())
 }
 
-pub(crate) fn migrate_revision_catalog(
-    write: &redb::WriteTransaction,
-    revision: &BlueprintRevision,
-    document: &[u8],
-    digest_key: &[u8],
-    summary: &[u8],
-) -> Result<(), PersistenceError> {
-    insert_revision_catalog(write, revision, document, digest_key, summary)
-}
-
 fn validate_revision_catalog_in_transaction(
     write: &redb::WriteTransaction,
     revision: &RevisionId,

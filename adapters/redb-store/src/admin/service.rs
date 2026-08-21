@@ -30,37 +30,6 @@ impl StorageAdmin for RedbStore {
         })
     }
 
-    fn migrate_to_current(
-        &self,
-        expected_from: u32,
-    ) -> Result<StorageSchemaInfo, PersistenceError> {
-        let info = self.schema_info()?;
-        if info.stored_version != expected_from {
-            return Err(PersistenceError::InvalidDocument(format!(
-                "migration expected schema {expected_from}, found {}",
-                info.stored_version
-            )));
-        }
-        match info.compatibility {
-            StorageSchemaCompatibility::Current => Ok(info),
-            StorageSchemaCompatibility::FutureUnsupported => {
-                Err(PersistenceError::UnsupportedVersion {
-                    document: "storage",
-                    found: info.stored_version,
-                    supported: info.current_version,
-                })
-            }
-            StorageSchemaCompatibility::MigrationRequired => {
-                // Schema v1 is the first physical schema. There is no implicit v0
-                // table guessing and therefore no supported older migration yet.
-                Err(PersistenceError::MigrationRequired {
-                    found: info.stored_version,
-                    target: info.current_version,
-                })
-            }
-        }
-    }
-
     fn health(&self, observed_at: TimestampMillis) -> Result<StorageHealth, PersistenceError> {
         let schema = self.schema_info()?;
         let scan = self.scan_integrity(IntegrityScanRequest {

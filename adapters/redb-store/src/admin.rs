@@ -25,7 +25,6 @@ use milkdrift_workspace::{
     ArtifactMetadata, ArtifactReference, RunId, ScopeId, ScopeKind, WorkspaceBudget,
     WorkspaceScope, WorkspaceUsage, WorkspaceValueEntry,
 };
-const GLOBAL_ARTIFACT_BYTES_KEY: &str = "artifact_content_bytes";
 
 mod cursor;
 mod integrity;

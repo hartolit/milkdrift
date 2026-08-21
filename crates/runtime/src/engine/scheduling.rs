@@ -6,7 +6,7 @@ use super::support::{
 };
 use super::{RuntimeService, SchedulerTickResult};
 use crate::projection::{BranchState, NodeExecutionState, RunLifecycle, SubworkflowState};
-use crate::{RunCommand, RunCommandDocument, RuntimeError, select_fair_runnable};
+use crate::{RunCommand, RunCommandDocument, RuntimeError, SystemTransition, select_fair_runnable};
 use milkdrift_blueprint::NodeKind;
 use milkdrift_persistence::{
     CommandDisposition, NodeOutcome, PageSize, Reason, RunEventKind, RunSequence, RunSummaryCursor,
@@ -160,13 +160,8 @@ impl RuntimeService {
                 continue;
             }
             match self.dispatch_runnable(&entry, now) {
-                Ok(DispatchOutcome::Completed) => {
+                Ok(DispatchOutcome::Dispatched) => {
                     result.dispatched = result.dispatched.saturating_add(1);
-                    result.completed = result.completed.saturating_add(1);
-                }
-                Ok(DispatchOutcome::Uncertain) => {
-                    result.dispatched = result.dispatched.saturating_add(1);
-                    result.uncertain = result.uncertain.saturating_add(1);
                 }
                 Ok(DispatchOutcome::Deferred) => {
                     result.deferred = result.deferred.saturating_add(1);
@@ -188,9 +183,14 @@ impl RuntimeService {
         Ok(result)
     }
 
-    /// Short alias useful to simple synchronous hosts.
+    /// Compatibility driver for simple synchronous hosts and existing embeddings.
+    ///
+    /// This combines one nonblocking scheduler pass with one caller-owned blocking effect
+    /// pass. Production daemons should call [`Self::scheduler_tick`] and
+    /// [`Self::claim_effects`] independently so a long-running capability cannot occupy
+    /// scheduler ownership.
     pub fn tick(&self) -> Result<SchedulerTickResult, RuntimeError> {
-        self.scheduler_tick()
+        self.drive_once()
     }
 
     fn drive_structured_runs(
@@ -229,8 +229,7 @@ impl RuntimeService {
                 let _ = self.commit_internal_plan(
                     &summary.run,
                     now,
-                    "drive_bounded_structured_progress",
-                    None,
+                    SystemTransition::DriveStructuredProgress,
                     plan,
                 )?;
             }
@@ -317,8 +316,7 @@ impl RuntimeService {
                 let _ = self.commit_internal_plan(
                     &summary.run,
                     now,
-                    "restart_reconciled_execution_after_confirmed_cancellation",
-                    None,
+                    SystemTransition::RestartReconciledExecution,
                     plan,
                 )?;
             }
@@ -534,8 +532,7 @@ impl RuntimeService {
                 let _ = self.commit_internal_plan(
                     &summary.run,
                     now,
-                    "observe_child_terminal_and_import_outputs",
-                    None,
+                    SystemTransition::ObserveChildTerminal,
                     plan,
                 )?;
             }

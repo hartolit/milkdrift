@@ -22,14 +22,14 @@ fn journal_reopens_and_idempotency_conflicts_without_duplicate_events()
         ));
     }
     let store = RedbStore::open(directory.path())?;
-    assert_eq!(store.head(request.receipt.run())?, RunSequence::FIRST);
+    assert_eq!(store.head(request.receipt().run())?, RunSequence::FIRST);
     let page = store.events(&EventPageQuery::new(
-        request.receipt.run().clone(),
+        request.receipt().run().clone(),
         None,
         PageSize::new(10)?,
     )?)?;
     assert_eq!(page.events.len(), 1);
-    assert_eq!(page.events[0].event_id(), request.events[0].event_id());
+    assert_eq!(page.events[0].event_id(), request.events()[0].event_id());
     Ok(())
 }
 
@@ -184,18 +184,25 @@ fn runnable_pages_advance_across_future_rows_and_removed_anchors()
         anchor_store.runnable_page(TimestampMillis::new(10), None, PageSize::new(1)?)?;
     assert_eq!(first_page.entries.len(), 1);
     assert_eq!(first_page.entries[0].run, first_run);
-    let mut removal = accepted_followup_request(
+    let removal = accepted_followup_request(
         first_run.clone(),
         "command-remove-anchor",
         "event-remove-anchor",
     )?;
-    removal
-        .indexes
-        .runnable
-        .push(RunnableIndexMutation::Remove {
-            run: first_run,
-            execution: first_execution,
-        });
+    let mut runnable = removal.indexes().runnable().to_vec();
+    runnable.push(RunnableIndexMutation::Remove {
+        run: first_run,
+        execution: first_execution,
+    });
+    let removal = rebuild_request_with_indexes(
+        &removal,
+        RunIndexUpdate::new(
+            removal.indexes().summary().cloned(),
+            runnable,
+            removal.indexes().timers().to_vec(),
+            removal.indexes().leases().to_vec(),
+        ),
+    )?;
     anchor_store.commit_command(&removal)?;
     let second_page = anchor_store.runnable_page(
         TimestampMillis::new(20),
@@ -249,33 +256,51 @@ fn summary_and_nonterminal_cursors_advance_by_last_scanned_head()
     let directory = TempDir::new()?;
     let store = RedbStore::open(directory.path())?;
     for ordinal in 0..10 {
-        let mut request = accepted_request(
+        let request = accepted_request(
             &format!("run-filter-{ordinal:02}"),
             &format!("command-filter-{ordinal:02}"),
             &format!("event-filter-{ordinal:02}"),
             "start",
         )?;
-        request
-            .indexes
-            .summary
-            .as_mut()
-            .ok_or("summary missing")?
-            .workflow = WorkflowId::new("workflow-nonmatch")?;
+        let mut summary = request
+            .indexes()
+            .summary()
+            .cloned()
+            .ok_or("summary missing")?;
+        summary.workflow = WorkflowId::new("workflow-nonmatch")?;
+        let request = rebuild_request_with_indexes(
+            &request,
+            RunIndexUpdate::new(
+                Some(summary),
+                request.indexes().runnable().to_vec(),
+                request.indexes().timers().to_vec(),
+                request.indexes().leases().to_vec(),
+            ),
+        )?;
         store.commit_command(&request)?;
     }
     let matching_run = RunId::new("run-filter-z-match")?;
-    let mut matching = accepted_request(
+    let matching = accepted_request(
         matching_run.as_str(),
         "command-filter-match",
         "event-filter-match",
         "start",
     )?;
-    matching
-        .indexes
-        .summary
-        .as_mut()
-        .ok_or("summary missing")?
-        .workflow = WorkflowId::new("workflow-match")?;
+    let mut summary = matching
+        .indexes()
+        .summary()
+        .cloned()
+        .ok_or("summary missing")?;
+    summary.workflow = WorkflowId::new("workflow-match")?;
+    let matching = rebuild_request_with_indexes(
+        &matching,
+        RunIndexUpdate::new(
+            Some(summary),
+            matching.indexes().runnable().to_vec(),
+            matching.indexes().timers().to_vec(),
+            matching.indexes().leases().to_vec(),
+        ),
+    )?;
     store.commit_command(&matching)?;
 
     let empty_filter = RunSummaryFilter {
@@ -325,18 +350,27 @@ fn summary_and_nonterminal_cursors_advance_by_last_scanned_head()
     let terminal_directory = TempDir::new()?;
     let terminal_store = RedbStore::open(terminal_directory.path())?;
     for ordinal in 0..3 {
-        let mut request = accepted_request(
+        let request = accepted_request(
             &format!("run-terminal-{ordinal}"),
             &format!("command-terminal-{ordinal}"),
             &format!("event-terminal-{ordinal}"),
             "start",
         )?;
-        request
-            .indexes
-            .summary
-            .as_mut()
-            .ok_or("summary missing")?
-            .state = IndexedRunState::Terminal;
+        let mut summary = request
+            .indexes()
+            .summary()
+            .cloned()
+            .ok_or("summary missing")?;
+        summary.state = IndexedRunState::Terminal;
+        let request = rebuild_request_with_indexes(
+            &request,
+            RunIndexUpdate::new(
+                Some(summary),
+                request.indexes().runnable().to_vec(),
+                request.indexes().timers().to_vec(),
+                request.indexes().leases().to_vec(),
+            ),
+        )?;
         terminal_store.commit_command(&request)?;
     }
     terminal_store.commit_command(&accepted_request(
@@ -495,7 +529,7 @@ fn durable_workspace_imports_require_an_exact_cross_run_source_without_ancestry(
         Err(PersistenceError::InvalidDocument(_))
     ));
     assert_eq!(
-        store.head(altered_request.receipt.run())?,
+        store.head(altered_request.receipt().run())?,
         RunSequence::ZERO
     );
 
@@ -550,7 +584,7 @@ fn durable_workspace_imports_require_an_exact_cross_run_source_without_ancestry(
         })
     ));
     assert_eq!(
-        store.head(missing_request.receipt.run())?,
+        store.head(missing_request.receipt().run())?,
         RunSequence::ZERO
     );
     Ok(())
@@ -729,10 +763,10 @@ fn durable_workspace_inheritance_preserves_exact_ancestor_content()
         Err(PersistenceError::InvalidDocument(reason))
             if reason.contains("preserve its exact ancestor content")
     ));
-    assert_eq!(store.head(request.receipt.run())?, RunSequence::ZERO);
+    assert_eq!(store.head(request.receipt().run())?, RunSequence::ZERO);
     assert!(
         store
-            .scope(request.receipt.run(), root.reference().scope())?
+            .scope(request.receipt().run(), root.reference().scope())?
             .is_none()
     );
     Ok(())
@@ -1190,17 +1224,18 @@ fn durable_workspace_rejects_scope_lineages_beyond_the_contract_bound()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = TempDir::new()?;
     let store = RedbStore::open(directory.path())?;
-    let mut request = accepted_request(
+    let request = accepted_request(
         "run-scope-depth",
         "command-scope-depth",
         "event-scope-depth",
         "start",
     )?;
     let root = WorkspaceScope::run_root(
-        request.receipt.run().clone(),
+        request.receipt().run().clone(),
         ScopeId::new("scope-depth-root")?,
     );
-    request.workspace.push(WorkspaceMutation::CreateScope {
+    let mut workspace = request.workspace().to_vec();
+    workspace.push(WorkspaceMutation::CreateScope {
         scope: root.clone(),
     });
     let mut parent = root;
@@ -1210,7 +1245,7 @@ fn durable_workspace_rejects_scope_lineages_beyond_the_contract_bound()
             &parent,
             BranchId::new(format!("branch-depth-{depth}"))?,
         )?;
-        request.workspace.push(WorkspaceMutation::CreateScope {
+        workspace.push(WorkspaceMutation::CreateScope {
             scope: child.clone(),
         });
         parent = child;
@@ -1220,18 +1255,24 @@ fn durable_workspace_rejects_scope_lineages_beyond_the_contract_bound()
         &parent,
         BranchId::new("branch-depth-overflow")?,
     )?;
-    request
-        .workspace
-        .push(WorkspaceMutation::CreateScope { scope: too_deep });
-    assert!(matches!(
-        store.commit_command(&request),
-        Err(PersistenceError::InvalidDocument(_))
-    ));
-    assert_eq!(store.head(request.receipt.run())?, RunSequence::ZERO);
+    workspace.push(WorkspaceMutation::CreateScope { scope: too_deep });
+    let invalid = AtomicRunCommitRequest::new(
+        request.receipt().clone(),
+        request.events().to_vec(),
+        workspace,
+        request.workspace_accounting().cloned(),
+        request.required_artifacts().to_vec(),
+        request.newly_referenced_artifacts().to_vec(),
+        request.expected_lease_catalog().cloned(),
+        request.result().clone(),
+        request.indexes().clone(),
+    );
+    assert!(matches!(invalid, Err(PersistenceError::InvalidDocument(_))));
+    assert_eq!(store.head(request.receipt().run())?, RunSequence::ZERO);
     let root_scope_id = ScopeId::new("scope-depth-root")?;
     assert!(
         store
-            .scope(request.receipt.run(), &root_scope_id)?
+            .scope(request.receipt().run(), &root_scope_id)?
             .is_none()
     );
     Ok(())

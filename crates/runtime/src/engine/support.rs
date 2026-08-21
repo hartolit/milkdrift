@@ -25,8 +25,7 @@ use std::sync::Mutex;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum DispatchOutcome {
-    Completed,
-    Uncertain,
+    Dispatched,
     Deferred,
     PreDispatchFailed,
 }
@@ -749,6 +748,7 @@ pub(super) fn command_kind_name(command: &RunCommand) -> &'static str {
         RunCommand::ApplyReconciliation { .. } => "apply_reconciliation",
         RunCommand::DecideRepeatContinuation { .. } => "decide_repeat_continuation",
         RunCommand::ResolveExternalWork { .. } => "resolve_external_work",
+        RunCommand::SystemTransition { transition } => transition.label(),
         RunCommand::WorkerReport { .. } => "worker_report",
     }
 }
@@ -793,6 +793,7 @@ pub(super) fn event_kind_name(event: &RunEventKind) -> &'static str {
         RunEventKind::NodeTerminal { .. } => "node_terminal",
         RunEventKind::NodeRetryScheduled { .. } => "node_retry_scheduled",
         RunEventKind::ExternalOutcomeUncertain { .. } => "external_outcome_uncertain",
+        RunEventKind::LateTerminalEvidenceRecorded { .. } => "late_terminal_evidence_recorded",
         RunEventKind::ExternalOutcomeRetained { .. } => "external_outcome_retained",
         RunEventKind::ArtifactPublished { .. } => "artifact_published",
         RunEventKind::BranchScopeCreated { .. } => "branch_scope_created",

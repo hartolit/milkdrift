@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_persistence::{
     ActorRef, AttemptId, AuthorityDecision, EvidenceReference, LeaseId, NodeExecutionId,
@@ -9,7 +11,7 @@ use milkdrift_persistence::{
 use milkdrift_workspace::ScopeReference;
 
 /// State of one revision-adoption request.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum ReconciliationRequestState {
     /// Request exists but has no immutable plan yet.
     Requested,
@@ -24,7 +26,7 @@ pub enum ReconciliationRequestState {
 }
 
 /// One prospective revision-adoption request.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ReconciliationRequestProjection {
     pub(super) reconciliation: ReconciliationId,
     pub(super) from_revision: RevisionId,
@@ -100,7 +102,7 @@ impl ReconciliationRequestProjection {
 }
 
 /// One recorded authority decision over an immutable reconciliation plan.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ReconciliationDecision {
     pub(super) decision: ReconciliationDecisionId,
     pub(super) actor: ActorRef,
@@ -149,7 +151,7 @@ impl ReconciliationDecision {
 }
 
 /// Immutable prospective reconciliation plan.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ReconciliationPlanProjection {
     pub(super) reconciliation: ReconciliationId,
     pub(super) plan: ReconciliationPlanId,
@@ -231,9 +233,11 @@ impl ReconciliationPlanProjection {
 }
 
 /// Complete revision-reconciliation read model.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ReconciliationProjection {
+    #[serde(with = "super::serde_map")]
     pub(super) requests: BTreeMap<ReconciliationId, ReconciliationRequestProjection>,
+    #[serde(with = "super::serde_map")]
     pub(super) plans: BTreeMap<ReconciliationPlanId, ReconciliationPlanProjection>,
     pub(super) current_request: Option<ReconciliationId>,
 }
@@ -268,7 +272,7 @@ impl ReconciliationProjection {
 }
 
 /// One recovery classification attached to an attempt.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct RecoveryObservation {
     pub(super) lease: Option<LeaseId>,
     pub(super) classification: RecoveryClassification,
@@ -303,7 +307,7 @@ impl RecoveryObservation {
 }
 
 /// Operator/controller decision over uncertain or retained work.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct RecoveryDecision {
     pub(super) decision: ReconciliationDecisionId,
     pub(super) actor: ActorRef,
@@ -352,7 +356,7 @@ impl RecoveryDecision {
 }
 
 /// One recovery-controller pass over an exact durable head.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct RecoveryProjection {
     pub(super) controller: WorkerId,
     pub(super) through_sequence: RunSequence,
@@ -387,7 +391,7 @@ impl RecoveryProjection {
 }
 
 /// Attempt-local cancellation intent authorized by an immutable reconciliation plan.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ReconciliationCancellationProjection {
     pub(super) plan: ReconciliationPlanId,
     pub(super) execution: NodeExecutionId,
@@ -429,7 +433,7 @@ impl ReconciliationCancellationProjection {
 }
 
 /// Plan-created remediation execution preserving its exact source truth.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ReconciliationRemediationProjection {
     pub(super) plan: ReconciliationPlanId,
     pub(super) source_execution: NodeExecutionId,
@@ -492,7 +496,7 @@ impl ReconciliationRemediationProjection {
 }
 
 /// Authority-created remediation relationship preserving the source attempt.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct RemediationProjection {
     pub(super) source_attempt: AttemptId,
     pub(super) execution: NodeExecutionId,

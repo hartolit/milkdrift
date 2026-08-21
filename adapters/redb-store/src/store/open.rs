@@ -34,7 +34,7 @@ impl RedbStore {
             initialize_schema(&database, config.faults.as_ref())?;
             sync_owned_directory(&config.root)?;
         } else {
-            validate_schema(&database, config.faults.as_ref())?;
+            validate_schema(&database)?;
         }
 
         let artifact_root = config.root.join(ARTIFACT_DIRECTORY);

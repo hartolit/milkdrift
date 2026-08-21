@@ -151,8 +151,8 @@ fn atomic_commit_rejects_noncontiguous_and_mismatched_result()
         BoundedJson::new(json!({"accepted": true}))?,
     )?;
     let revision = revision_id()?;
-    let indexes = RunIndexUpdate {
-        summary: Some(RunSummaryIndex {
+    let indexes = RunIndexUpdate::new(
+        Some(RunSummaryIndex {
             run,
             workflow: WorkflowId::new("workflow-001")?,
             revision,
@@ -160,8 +160,10 @@ fn atomic_commit_rejects_noncontiguous_and_mismatched_result()
             through_sequence: RunSequence::new(2),
             updated_at: TimestampMillis::new(1),
         }),
-        ..RunIndexUpdate::default()
-    };
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
     let budget = WorkspaceBudget::new(10, 1024, 4096, 10, 1024, 4096)?;
     let accounting = WorkspaceAccounting {
         budget,
@@ -226,8 +228,8 @@ fn valid_acceptance_and_rejection_documents_preserve_one_sequence_authority()
         Vec::new(),
         None,
         result,
-        RunIndexUpdate {
-            summary: Some(RunSummaryIndex {
+        RunIndexUpdate::new(
+            Some(RunSummaryIndex {
                 run,
                 workflow: WorkflowId::new("workflow-valid")?,
                 revision: revision_id()?,
@@ -235,26 +237,32 @@ fn valid_acceptance_and_rejection_documents_preserve_one_sequence_authority()
                 through_sequence: RunSequence::FIRST,
                 updated_at: TimestampMillis::new(10),
             }),
-            ..RunIndexUpdate::default()
-        },
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
     )?;
     let execution = NodeExecutionId::new("execution-duplicate-index")?;
     let duplicate = RunnableIndexMutation::Remove {
-        run: request.receipt.run().clone(),
+        run: request.receipt().run().clone(),
         execution,
     };
-    let mut duplicate_indexes = request.indexes.clone();
-    duplicate_indexes.runnable = vec![duplicate.clone(), duplicate];
+    let duplicate_indexes = RunIndexUpdate::new(
+        request.indexes().summary().cloned(),
+        vec![duplicate.clone(), duplicate],
+        request.indexes().timers().to_vec(),
+        request.indexes().leases().to_vec(),
+    );
     assert!(matches!(
         AtomicRunCommitRequest::new(
-            request.receipt.clone(),
-            request.events.clone(),
-            request.workspace.clone(),
-            request.workspace_accounting.clone(),
-            request.required_artifacts.clone(),
-            request.newly_referenced_artifacts.clone(),
-            request.expected_lease_catalog.clone(),
-            request.result.clone(),
+            request.receipt().clone(),
+            request.events().to_vec(),
+            request.workspace().to_vec(),
+            request.workspace_accounting().cloned(),
+            request.required_artifacts().to_vec(),
+            request.newly_referenced_artifacts().to_vec(),
+            request.expected_lease_catalog().cloned(),
+            request.result().clone(),
             duplicate_indexes,
         ),
         Err(PersistenceError::InvalidDocument(_))
@@ -342,8 +350,8 @@ fn signal_deduplication_fact_is_bound_to_its_atomic_command()
         Vec::new(),
         None,
         result,
-        RunIndexUpdate {
-            summary: Some(RunSummaryIndex {
+        RunIndexUpdate::new(
+            Some(RunSummaryIndex {
                 run,
                 workflow: WorkflowId::new("workflow-signal")?,
                 revision: revision_id()?,
@@ -351,8 +359,10 @@ fn signal_deduplication_fact_is_bound_to_its_atomic_command()
                 through_sequence: RunSequence::FIRST,
                 updated_at: TimestampMillis::new(10),
             }),
-            ..RunIndexUpdate::default()
-        },
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
     );
     assert!(matches!(request, Err(PersistenceError::InvalidDocument(_))));
     Ok(())
@@ -429,8 +439,8 @@ fn atomic_workspace_mutations_exactly_materialize_subworkflow_facts()
         Vec::new(),
         None,
         result,
-        RunIndexUpdate {
-            summary: Some(RunSummaryIndex {
+        RunIndexUpdate::new(
+            Some(RunSummaryIndex {
                 run,
                 workflow: WorkflowId::new("workflow-subworkflow")?,
                 revision: revision_id()?,
@@ -438,8 +448,10 @@ fn atomic_workspace_mutations_exactly_materialize_subworkflow_facts()
                 through_sequence: RunSequence::FIRST,
                 updated_at: TimestampMillis::new(10),
             }),
-            ..RunIndexUpdate::default()
-        },
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
     )?;
 
     let hidden = WorkspaceValueEntry::initial(
@@ -447,19 +459,19 @@ fn atomic_workspace_mutations_exactly_materialize_subworkflow_facts()
         ValueKey::new("hidden")?,
         WorkspaceValue::Json(BoundedJson::new(json!({"hidden": true}))?),
     );
-    let mut hidden_workspace = request.workspace.clone();
+    let mut hidden_workspace = request.workspace().to_vec();
     hidden_workspace.push(WorkspaceMutation::PutValue { entry: hidden });
     assert!(matches!(
         AtomicRunCommitRequest::new(
-            request.receipt,
-            request.events,
+            request.receipt().clone(),
+            request.events().to_vec(),
             hidden_workspace,
-            request.workspace_accounting,
-            request.required_artifacts,
-            request.newly_referenced_artifacts,
-            request.expected_lease_catalog,
-            request.result,
-            request.indexes,
+            request.workspace_accounting().cloned(),
+            request.required_artifacts().to_vec(),
+            request.newly_referenced_artifacts().to_vec(),
+            request.expected_lease_catalog().cloned(),
+            request.result().clone(),
+            request.indexes().clone(),
         ),
         Err(PersistenceError::InvalidDocument(_))
     ));
@@ -964,5 +976,36 @@ fn explicit_failure_drain_is_additive_schema_v1_history() -> Result<(), Box<dyn 
             Err(PersistenceError::InvalidDocument(_))
         ));
     }
+    Ok(())
+}
+
+#[test]
+fn semantic_command_fingerprint_excludes_retry_delivery_metadata()
+-> Result<(), Box<dyn std::error::Error>> {
+    let command = CommandId::new("semantic-redelivery")?;
+    let run = RunId::new("run-semantic-redelivery")?;
+    let actor = ActorRef::new("actor-semantic-redelivery")?;
+    let intent = br#"{"command":"pause","schema_version":1}"#.to_vec();
+    let first = CommandReceipt::new_idempotent(
+        command.clone(),
+        run.clone(),
+        actor.clone(),
+        RunSequence::new(1),
+        TimestampMillis::new(10),
+        br#"{"expected_sequence":1,"issued_at":10}"#.to_vec(),
+        intent.clone(),
+    )?;
+    let retry = CommandReceipt::new_idempotent(
+        command,
+        run,
+        actor,
+        RunSequence::new(9),
+        TimestampMillis::new(20),
+        br#"{"expected_sequence":9,"issued_at":20}"#.to_vec(),
+        intent,
+    )?;
+    assert_eq!(first.fingerprint(), retry.fingerprint());
+    assert_ne!(first.expected_sequence(), retry.expected_sequence());
+    assert_ne!(first.submitted_at(), retry.submitted_at());
     Ok(())
 }

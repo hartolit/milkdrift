@@ -10,10 +10,6 @@ pub enum FaultPoint {
     BeforeSchemaCommit,
     /// Immediately after the schema-initialization transaction commits.
     AfterSchemaCommit,
-    /// After a historical format is fully validated, before its migration commit.
-    BeforeMigrationCommit,
-    /// Immediately after an internal-document migration commits.
-    AfterMigrationCommit,
     /// Immediately before committing a command transaction.
     BeforeCommandCommit,
     /// Immediately after redb has committed a command transaction.

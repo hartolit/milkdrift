@@ -160,8 +160,8 @@ impl WorkflowInterface {
         inputs: impl IntoIterator<Item = (FieldId, InterfaceField)>,
         outputs: impl IntoIterator<Item = (FieldId, InterfaceField)>,
     ) -> Result<Self, ModelError> {
-        let inputs: BTreeMap<_, _> = inputs.into_iter().collect();
-        let outputs: BTreeMap<_, _> = outputs.into_iter().collect();
+        let inputs = collect_interface_fields("interface.inputs", inputs)?;
+        let outputs = collect_interface_fields("interface.outputs", outputs)?;
         if inputs.len() > MAX_INTERFACE_FIELDS || outputs.len() > MAX_INTERFACE_FIELDS {
             return Err(ModelError::new(
                 "interface",
@@ -182,6 +182,28 @@ impl WorkflowInterface {
     pub const fn outputs(&self) -> &BTreeMap<FieldId, InterfaceField> {
         &self.outputs
     }
+}
+
+fn collect_interface_fields(
+    location: &'static str,
+    fields: impl IntoIterator<Item = (FieldId, InterfaceField)>,
+) -> Result<BTreeMap<FieldId, InterfaceField>, ModelError> {
+    let mut collected = BTreeMap::new();
+    for (field, definition) in fields {
+        if collected.insert(field.clone(), definition).is_some() {
+            return Err(ModelError::new(
+                location,
+                format!("duplicate interface field `{field}`"),
+            ));
+        }
+        if collected.len() > MAX_INTERFACE_FIELDS {
+            return Err(ModelError::new(
+                location,
+                format!("at most {MAX_INTERFACE_FIELDS} fields are allowed"),
+            ));
+        }
+    }
+    Ok(collected)
 }
 
 /// Bounded descriptive metadata excluded from execution state but included in semantic identity.

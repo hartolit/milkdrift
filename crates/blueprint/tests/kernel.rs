@@ -886,3 +886,43 @@ fn blueprint_golden_fixture_is_exact_and_canonical() -> TestResult {
 
 // Compile-time type distinction is part of the public API contract.
 fn _revision_is_not_a_workflow(_: RevisionId) {}
+
+#[test]
+fn workflow_interface_rejects_duplicate_input_fields() -> Result<(), Box<dyn std::error::Error>> {
+    let field = FieldId::new("source")?;
+    let schema = schema()?;
+    let Err(error) = WorkflowInterface::new(
+        [
+            (
+                field.clone(),
+                milkdrift_blueprint::InterfaceField::required(schema.clone()),
+            ),
+            (field, milkdrift_blueprint::InterfaceField::optional(schema)),
+        ],
+        [],
+    ) else {
+        return Err("duplicate inputs must not be silently overwritten".into());
+    };
+    assert!(error.to_string().contains("duplicate interface field"));
+    Ok(())
+}
+
+#[test]
+fn workflow_interface_rejects_duplicate_output_fields() -> Result<(), Box<dyn std::error::Error>> {
+    let field = FieldId::new("result")?;
+    let schema = schema()?;
+    let Err(error) = WorkflowInterface::new(
+        [],
+        [
+            (
+                field.clone(),
+                milkdrift_blueprint::InterfaceField::required(schema.clone()),
+            ),
+            (field, milkdrift_blueprint::InterfaceField::optional(schema)),
+        ],
+    ) else {
+        return Err("duplicate outputs must not be silently overwritten".into());
+    };
+    assert!(error.to_string().contains("duplicate interface field"));
+    Ok(())
+}

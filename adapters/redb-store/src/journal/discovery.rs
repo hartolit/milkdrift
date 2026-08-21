@@ -10,7 +10,7 @@ pub(crate) fn apply_indexes(
     write: &redb::WriteTransaction,
     request: &AtomicRunCommitRequest,
 ) -> Result<(), PersistenceError> {
-    let Some(summary) = &request.indexes.summary else {
+    let Some(summary) = request.indexes().summary() else {
         return Ok(());
     };
     let summary_bytes = json::encode(summary, "run summary")?;
@@ -26,9 +26,9 @@ pub(crate) fn apply_indexes(
         previous
     };
     transition_nonterminal_membership(write, summary, &summary_bytes, previous.as_deref())?;
-    apply_runnable_mutations(write, &request.indexes.runnable)?;
-    apply_timer_mutations(write, &request.indexes.timers)?;
-    apply_lease_mutations(write, &request.indexes.leases)?;
+    apply_runnable_mutations(write, request.indexes().runnable())?;
+    apply_timer_mutations(write, request.indexes().timers())?;
+    apply_lease_mutations(write, request.indexes().leases())?;
     Ok(())
 }
 
@@ -802,89 +802,6 @@ pub(crate) fn first_runnable_for_run(
     )?))
 }
 
-pub(crate) fn migrate_runnable_run_heads(
-    write: &redb::WriteTransaction,
-) -> Result<(), PersistenceError> {
-    let heads = write.open_table(RUNNABLE_RUN_HEADS).map_err(error::redb)?;
-    if heads.len().map_err(error::redb)? != 0 {
-        return Err(error::corruption(
-            "legacy storage unexpectedly contains runnable run heads",
-        ));
-    }
-    drop(heads);
-    let entries = write.open_table(RUNNABLE_ENTRIES).map_err(error::redb)?;
-    let mut current_run: Option<RunId> = None;
-    let mut best: Option<RunnableIndexEntry> = None;
-    for item in entries.iter().map_err(error::redb)? {
-        let (identity, bytes) = item.map_err(error::redb)?;
-        let entry: RunnableIndexEntry = json::decode(bytes.value(), "runnable index")?;
-        if current_run.as_ref().is_some_and(|run| run != &entry.run) {
-            let run = current_run
-                .as_ref()
-                .ok_or_else(|| error::corruption("legacy runnable run tracker is empty"))?;
-            let selected = best
-                .as_ref()
-                .ok_or_else(|| error::corruption("legacy runnable run has no selected head"))?;
-            persist_migrated_runnable_head(write, run, selected)?;
-            best = None;
-        }
-        current_run = Some(entry.run.clone());
-        insert_runnable_bucket_entry(write, identity.value(), &entry, bytes.value())?;
-        if best
-            .as_ref()
-            .is_none_or(|selected| runnable_precedes(&entry, selected))
-        {
-            best = Some(entry);
-        }
-    }
-    if let Some(run) = &current_run {
-        let selected = best
-            .as_ref()
-            .ok_or_else(|| error::corruption("legacy runnable run has no selected head"))?;
-        persist_migrated_runnable_head(write, run, selected)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn persist_migrated_runnable_head(
-    write: &redb::WriteTransaction,
-    run: &RunId,
-    selected: &RunnableIndexEntry,
-) -> Result<(), PersistenceError> {
-    if selected.run != *run {
-        return Err(error::corruption(
-            "legacy runnable head belongs to another run",
-        ));
-    }
-    let bytes = json::encode(selected, "runnable run head")?;
-    if write
-        .open_table(RUNNABLE_RUN_HEADS)
-        .map_err(error::redb)?
-        .insert(run.as_str(), bytes.as_slice())
-        .map_err(error::redb)?
-        .is_some()
-    {
-        return Err(error::corruption(
-            "legacy runnable head migration replaced an existing row",
-        ));
-    }
-    let family = crate::trie::CatalogFamily::RunnableRunHead;
-    if crate::trie::put(
-        write,
-        family,
-        runnable_head_path(run),
-        run.as_str().as_bytes(),
-        crate::trie::digest_payload(family, &bytes),
-    )?
-    .is_some()
-    {
-        return Err(error::corruption(
-            "legacy runnable head migration replaced an authenticated leaf",
-        ));
-    }
-    Ok(())
-}
-
 pub(crate) fn runnable_catalog_ordered_path(
     identity: &[u8],
     entry: &RunnableIndexEntry,
@@ -1221,16 +1138,16 @@ pub(crate) fn record_artifact_references(
     request: &AtomicRunCommitRequest,
 ) -> Result<(), PersistenceError> {
     crate::artifact::validate_artifact_catalog(write)?;
-    for reference in &request.required_artifacts {
+    for reference in request.required_artifacts() {
         let digest = reference.digest().to_hex();
         let key = codec::components(&[
             &digest,
             reference.artifact().as_str(),
-            request.receipt.run().as_str(),
-            request.receipt.command().as_str(),
+            request.receipt().run().as_str(),
+            request.receipt().command().as_str(),
         ])?;
         crate::artifact::persist_artifact_reference_occurrence(write, &key, reference)?;
-        crate::artifact::persist_run_artifact_ownership(write, request.receipt.run(), reference)?;
+        crate::artifact::persist_run_artifact_ownership(write, request.receipt().run(), reference)?;
     }
     crate::artifact::validate_artifact_catalog(write)?;
     Ok(())
@@ -1411,17 +1328,6 @@ pub(crate) fn validate_runnable_head_leaf(
         ));
     }
     Ok(entry)
-}
-
-pub(crate) fn runnable_precedes(
-    candidate: &RunnableIndexEntry,
-    selected: &RunnableIndexEntry,
-) -> bool {
-    candidate.eligible_at < selected.eligible_at
-        || (candidate.eligible_at == selected.eligible_at
-            && (candidate.priority > selected.priority
-                || (candidate.priority == selected.priority
-                    && candidate.execution < selected.execution)))
 }
 
 #[allow(clippy::too_many_arguments)] // Closed table/key functions keep one verifier shared.

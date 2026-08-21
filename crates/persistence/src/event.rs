@@ -1,8 +1,8 @@
 use milkdrift_blueprint::{ContentDigest, NodeId, PortId, RevisionId, WorkflowId};
 use milkdrift_capability::{
     BoundedJson, CancellationAcknowledgement, CapabilityRequirement, ErrorClass,
-    IdempotencyBehavior, IdempotencyKey, InvocationId, InvocationRequest,
-    ResolvedCapabilitySnapshot, SideEffectClass,
+    IdempotencyBehavior, IdempotencyKey, InvocationId, InvocationRequest, InvocationTerminal,
+    ResolvedCapabilitySnapshot, SideEffectClass, TerminalStatus,
 };
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactReference, BranchId, CausalReference,
@@ -665,6 +665,21 @@ pub enum RunEventKind {
         /// Supporting references, never arbitrary evidence bytes.
         evidence: Vec<EvidenceReference>,
     },
+    /// A terminal observation arrived after active lease ownership was lost.
+    ///
+    /// This is evidence only. It never rewrites an uncertainty decision or a later
+    /// retry result; explicit recovery authority decides how the evidence affects
+    /// logical workflow state.
+    LateTerminalEvidenceRecorded {
+        /// Owning immutable attempt.
+        attempt: AttemptId,
+        /// Worker that historically owned a lease for the attempt.
+        worker: WorkerId,
+        /// Original executor-local report sequence.
+        report_sequence: u64,
+        /// Provider-neutral terminal observation.
+        terminal: InvocationTerminal,
+    },
     /// External work was explicitly retained rather than silently retried.
     ExternalOutcomeRetained {
         /// Owning attempt.
@@ -1112,6 +1127,9 @@ impl RunEventKind {
             } | Self::ExternalOutcomeUncertain {
                 report_sequence: 0,
                 ..
+            } | Self::LateTerminalEvidenceRecorded {
+                report_sequence: 0,
+                ..
             }
         ) {
             return Err(PersistenceError::InvalidDocument(
@@ -1306,6 +1324,13 @@ impl RunEventKind {
             } if completed_units.is_some_and(|completed| completed > *total) => {
                 return Err(PersistenceError::InvalidDocument(
                     "completed progress units exceed total units".to_owned(),
+                ));
+            }
+            Self::LateTerminalEvidenceRecorded { terminal, .. }
+                if terminal.status() == TerminalStatus::Uncertain =>
+            {
+                return Err(PersistenceError::InvalidDocument(
+                    "late terminal evidence must add a known terminal observation".to_owned(),
                 ));
             }
             Self::NodeRetryScheduled {

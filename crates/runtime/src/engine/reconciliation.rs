@@ -5,7 +5,7 @@ use super::support::{
     CommandPlan, node_execution_mode, reconciliation_history, unresolved_retry_error_class,
 };
 use crate::projection::RunProjection;
-use crate::query::fold_complete_history;
+use crate::query::fold_history_from;
 use crate::{ExternalWorkAction, RunCommandDocument, RuntimeError, plan_reconciliation};
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_persistence::{
@@ -145,30 +145,33 @@ impl RuntimeService {
                 "revision pin moved after the plan was created".to_owned(),
             ));
         }
-        fold_complete_history(self.store.as_ref(), run, (), |_unit, event| {
-            if event.sequence() <= plan_view.based_on_sequence() {
-                return Ok(());
-            }
-            let allowed = match event.kind() {
-                RunEventKind::RevisionAdoptionRequested { reconciliation, .. }
-                | RunEventKind::ReconciliationPlanRecorded { reconciliation, .. } => {
-                    reconciliation == plan_view.reconciliation()
+        fold_history_from(
+            self.store.as_ref(),
+            run,
+            plan_view.based_on_sequence(),
+            (),
+            |_unit, event| {
+                let allowed = match event.kind() {
+                    RunEventKind::RevisionAdoptionRequested { reconciliation, .. }
+                    | RunEventKind::ReconciliationPlanRecorded { reconciliation, .. } => {
+                        reconciliation == plan_view.reconciliation()
+                    }
+                    RunEventKind::ReconciliationDecisionRecorded {
+                        plan: event_plan, ..
+                    } => event_plan == plan,
+                    _ => false,
+                };
+                if allowed {
+                    Ok(())
+                } else {
+                    Err(RuntimeError::Reconciliation(format!(
+                        "plan became stale at event {} sequence {}",
+                        event.event_id(),
+                        event.sequence()
+                    )))
                 }
-                RunEventKind::ReconciliationDecisionRecorded {
-                    plan: event_plan, ..
-                } => event_plan == plan,
-                _ => false,
-            };
-            if allowed {
-                Ok(())
-            } else {
-                Err(RuntimeError::Reconciliation(format!(
-                    "plan became stale at event {} sequence {}",
-                    event.event_id(),
-                    event.sequence()
-                )))
-            }
-        })?;
+            },
+        )?;
         let next = self.load_validated_revision(plan_view.to_revision(), projection.workflow())?;
         let mut result = CommandPlan::default();
         for item in plan_view.items() {

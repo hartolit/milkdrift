@@ -140,8 +140,8 @@ fn accepted_request(
         Vec::new(),
         None,
         result,
-        RunIndexUpdate {
-            summary: Some(RunSummaryIndex {
+        RunIndexUpdate::new(
+            Some(RunSummaryIndex {
                 run,
                 workflow: WorkflowId::new("workflow-test")?,
                 revision: revision_id()?,
@@ -149,8 +149,10 @@ fn accepted_request(
                 through_sequence: RunSequence::FIRST,
                 updated_at: TimestampMillis::new(10),
             }),
-            ..RunIndexUpdate::default()
-        },
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
     )?)
 }
 
@@ -199,8 +201,8 @@ fn accepted_followup_request(
         Vec::new(),
         None,
         result,
-        RunIndexUpdate {
-            summary: Some(RunSummaryIndex {
+        RunIndexUpdate::new(
+            Some(RunSummaryIndex {
                 run,
                 workflow: WorkflowId::new("workflow-test")?,
                 revision: revision_id()?,
@@ -208,8 +210,10 @@ fn accepted_followup_request(
                 through_sequence: sequence,
                 updated_at: TimestampMillis::new(11),
             }),
-            ..RunIndexUpdate::default()
-        },
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
     )?)
 }
 
@@ -265,8 +269,8 @@ fn accepted_workspace_request(
         Vec::new(),
         None,
         result,
-        RunIndexUpdate {
-            summary: Some(RunSummaryIndex {
+        RunIndexUpdate::new(
+            Some(RunSummaryIndex {
                 run,
                 workflow: WorkflowId::new("workflow-test")?,
                 revision: revision_id()?,
@@ -274,8 +278,10 @@ fn accepted_workspace_request(
                 through_sequence: resulting_sequence,
                 updated_at: TimestampMillis::new(10),
             }),
-            ..RunIndexUpdate::default()
-        },
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
     )?)
 }
 
@@ -341,8 +347,8 @@ fn accepted_workspace_followup_request(
         Vec::new(),
         None,
         result,
-        RunIndexUpdate {
-            summary: Some(RunSummaryIndex {
+        RunIndexUpdate::new(
+            Some(RunSummaryIndex {
                 run,
                 workflow: WorkflowId::new("workflow-test")?,
                 revision: revision_id()?,
@@ -350,8 +356,10 @@ fn accepted_workspace_followup_request(
                 through_sequence: resulting_sequence,
                 updated_at: TimestampMillis::new(11),
             }),
-            ..RunIndexUpdate::default()
-        },
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
     )?)
 }
 
@@ -370,6 +378,23 @@ fn run_created_kind(
     })
 }
 
+fn rebuild_request_with_indexes(
+    request: &AtomicRunCommitRequest,
+    indexes: RunIndexUpdate,
+) -> Result<AtomicRunCommitRequest, PersistenceError> {
+    AtomicRunCommitRequest::new(
+        request.receipt().clone(),
+        request.events().to_vec(),
+        request.workspace().to_vec(),
+        request.workspace_accounting().cloned(),
+        request.required_artifacts().to_vec(),
+        request.newly_referenced_artifacts().to_vec(),
+        request.expected_lease_catalog().cloned(),
+        request.result().clone(),
+        indexes,
+    )
+}
+
 fn accepted_request_with_runnable(
     run: &str,
     command: &str,
@@ -377,22 +402,16 @@ fn accepted_request_with_runnable(
     entries: Vec<RunnableIndexEntry>,
 ) -> Result<AtomicRunCommitRequest, Box<dyn std::error::Error>> {
     let request = accepted_request(run, command, event, "start")?;
-    let mut indexes = request.indexes.clone();
-    indexes.runnable = entries
-        .into_iter()
-        .map(|entry| RunnableIndexMutation::Upsert { entry })
-        .collect();
-    Ok(AtomicRunCommitRequest::new(
-        request.receipt,
-        request.events,
-        request.workspace,
-        request.workspace_accounting,
-        request.required_artifacts,
-        request.newly_referenced_artifacts,
-        request.expected_lease_catalog,
-        request.result,
-        indexes,
-    )?)
+    let indexes = RunIndexUpdate::new(
+        request.indexes().summary().cloned(),
+        entries
+            .into_iter()
+            .map(|entry| RunnableIndexMutation::Upsert { entry })
+            .collect(),
+        request.indexes().timers().to_vec(),
+        request.indexes().leases().to_vec(),
+    );
+    Ok(rebuild_request_with_indexes(&request, indexes)?)
 }
 
 fn accepted_request_with_lease(
@@ -402,19 +421,13 @@ fn accepted_request_with_lease(
     entry: LeaseIndexEntry,
 ) -> Result<AtomicRunCommitRequest, Box<dyn std::error::Error>> {
     let request = accepted_request(run, command, event, "start")?;
-    let mut indexes = request.indexes.clone();
-    indexes.leases = vec![LeaseIndexMutation::Upsert { entry }];
-    Ok(AtomicRunCommitRequest::new(
-        request.receipt,
-        request.events,
-        request.workspace,
-        request.workspace_accounting,
-        request.required_artifacts,
-        request.newly_referenced_artifacts,
-        request.expected_lease_catalog,
-        request.result,
-        indexes,
-    )?)
+    let indexes = RunIndexUpdate::new(
+        request.indexes().summary().cloned(),
+        request.indexes().runnable().to_vec(),
+        request.indexes().timers().to_vec(),
+        vec![LeaseIndexMutation::Upsert { entry }],
+    );
+    Ok(rebuild_request_with_indexes(&request, indexes)?)
 }
 
 #[derive(Clone, Copy)]
@@ -432,54 +445,46 @@ fn accepted_request_with_discovery_index(
     let command = format!("command-discovery-{suffix}");
     let event = format!("event-discovery-{suffix}");
     let request = accepted_request(&run_text, &command, &event, "start")?;
-    let run = request.receipt.run().clone();
-    let mut indexes = request.indexes.clone();
+    let run = request.receipt().run().clone();
+    let mut runnable = request.indexes().runnable().to_vec();
+    let mut timers = request.indexes().timers().to_vec();
+    let mut leases = request.indexes().leases().to_vec();
     match kind {
-        DiscoveryIndexKind::Runnable => {
-            indexes.runnable.push(RunnableIndexMutation::Upsert {
-                entry: RunnableIndexEntry {
-                    run,
-                    execution: NodeExecutionId::new(format!("execution-{suffix}"))?,
-                    eligible_at: TimestampMillis::new(10),
-                    priority: 1,
-                    through_sequence: RunSequence::FIRST,
-                },
-            });
-        }
-        DiscoveryIndexKind::Timer => {
-            indexes.timers.push(TimerIndexMutation::Upsert {
-                entry: TimerIndexEntry {
-                    run,
-                    timer: TimerId::new(format!("timer-{suffix}"))?,
-                    fire_at: TimestampMillis::new(10),
-                    through_sequence: RunSequence::FIRST,
-                },
-            });
-        }
-        DiscoveryIndexKind::Lease => {
-            indexes.leases.push(LeaseIndexMutation::Upsert {
-                entry: LeaseIndexEntry {
-                    run,
-                    lease: LeaseId::new(format!("lease-{suffix}"))?,
-                    attempt: AttemptId::new(format!("attempt-{suffix}"))?,
-                    worker: WorkerId::new("worker-discovery")?,
-                    expires_at: TimestampMillis::new(10),
-                    through_sequence: RunSequence::FIRST,
-                },
-            });
-        }
+        DiscoveryIndexKind::Runnable => runnable.push(RunnableIndexMutation::Upsert {
+            entry: RunnableIndexEntry {
+                run,
+                execution: NodeExecutionId::new(format!("execution-{suffix}"))?,
+                eligible_at: TimestampMillis::new(10),
+                priority: 1,
+                through_sequence: RunSequence::FIRST,
+            },
+        }),
+        DiscoveryIndexKind::Timer => timers.push(TimerIndexMutation::Upsert {
+            entry: TimerIndexEntry {
+                run,
+                timer: TimerId::new(format!("timer-{suffix}"))?,
+                fire_at: TimestampMillis::new(10),
+                through_sequence: RunSequence::FIRST,
+            },
+        }),
+        DiscoveryIndexKind::Lease => leases.push(LeaseIndexMutation::Upsert {
+            entry: LeaseIndexEntry {
+                run,
+                lease: LeaseId::new(format!("lease-{suffix}"))?,
+                attempt: AttemptId::new(format!("attempt-{suffix}"))?,
+                worker: WorkerId::new("worker-discovery")?,
+                expires_at: TimestampMillis::new(10),
+                through_sequence: RunSequence::FIRST,
+            },
+        }),
     }
-    Ok(AtomicRunCommitRequest::new(
-        request.receipt,
-        request.events,
-        request.workspace,
-        request.workspace_accounting,
-        request.required_artifacts,
-        request.newly_referenced_artifacts,
-        request.expected_lease_catalog,
-        request.result,
-        indexes,
-    )?)
+    let indexes = RunIndexUpdate::new(
+        request.indexes().summary().cloned(),
+        runnable,
+        timers,
+        leases,
+    );
+    Ok(rebuild_request_with_indexes(&request, indexes)?)
 }
 
 struct FailOnce {

@@ -31,7 +31,7 @@ use crate::{
 
 const PUBLICATION_SCHEMA_VERSION: u32 = 1;
 const ARTIFACT_ACCOUNTING_SCHEMA_VERSION: u32 = 3;
-const GLOBAL_ARTIFACT_BYTES_KEY: &str = "artifact_content_bytes";
+pub(crate) const GLOBAL_ARTIFACT_BYTES_KEY: &str = "artifact_content_bytes";
 const MAX_CHUNK_BYTES: usize = milkdrift_persistence::MAX_ARTIFACT_CHUNK_BYTES;
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -70,31 +70,6 @@ impl ArtifactAccountingRecord {
     };
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct LegacyArtifactAccountingRecord {
-    schema_version: u32,
-    committed_content_bytes: u64,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct LegacyArtifactAccountingRecordV2 {
-    schema_version: u32,
-    artifact_count: u64,
-    committed_content_bytes: u64,
-    reference_occurrence_count: u64,
-    writable_publication_count: u64,
-    committed_publication_count: u64,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(untagged)]
-enum LegacyArtifactAccountingDocument {
-    V2(LegacyArtifactAccountingRecordV2),
-    V1(LegacyArtifactAccountingRecord),
-}
-
 impl PublicationRecord {
     fn from_request(request: &BeginArtifactPublication, created_at_millis: u64) -> Self {
         Self {
@@ -129,8 +104,7 @@ pub(crate) use path::decode_artifact_path_entry;
 pub(crate) use publication::validate_artifact_catalog_leaf;
 
 pub(crate) use accounting::{
-    materialize_legacy_writable_workspace_domains, persist_artifact_reference_occurrence,
-    persist_run_artifact_ownership, upgrade_artifact_accounting, validate_artifact_catalog,
-    validated_run_artifact_reference_in_transaction,
+    persist_artifact_reference_occurrence, persist_run_artifact_ownership,
+    validate_artifact_catalog, validated_run_artifact_reference_in_transaction,
 };
 pub(crate) use path::verify_blob;

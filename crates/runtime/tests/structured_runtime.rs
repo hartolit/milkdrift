@@ -36,11 +36,11 @@ use milkdrift_persistence::{
 };
 use milkdrift_redb_store::RedbStore;
 use milkdrift_runtime::{
-    AttemptState, BranchState, DeterministicExecutor, ExecutionDispatch, ExecutionReportBatch,
-    ExecutorError, IdGenerator, IterationState, LeaseState, ManualClock, NodeExecutionState,
-    ResolvedCapability, RetryPolicy, RunCommand, RunLifecycle, RuntimeConfig, RuntimeError,
-    RuntimeService, SchedulerLimits, SequentialIdGenerator, SubworkflowState, TaskExecutor,
-    WorkerReport,
+    AttemptState, BranchState, DeterministicExecutor, EffectAction, ExecutionDispatch,
+    ExecutionReportBatch, ExecutorError, IdGenerator, IterationState, LeaseState, ManualClock,
+    NodeExecutionState, ResolvedCapability, RetryPolicy, RunCommand, RunLifecycle, RuntimeConfig,
+    RuntimeError, RuntimeService, RuntimeStartupState, SchedulerLimits, SequentialIdGenerator,
+    SubworkflowState, TaskExecutor, WorkerReport,
 };
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactRetention, ArtifactSensitivity,
@@ -244,6 +244,11 @@ impl BoundaryThenBlockingExecutor {
             released: (Mutex::new(false), Condvar::new()),
             cancellation_requests: AtomicUsize::new(0),
         }
+    }
+
+    fn has_entered(&self) -> TestResult<bool> {
+        let (lock, _) = &self.entered;
+        Ok(*lock.lock().map_err(|_| "entered lock poisoned")?)
     }
 
     fn wait_until_entered(&self) -> TestResult {

@@ -76,7 +76,7 @@ pub struct ExecutionDispatch {
     attempt: AttemptId,
     lease: LeaseId,
     lease_expires_at: TimestampMillis,
-    resolution: ResolvedCapability,
+    resolution: ResolvedCapabilitySnapshot,
     request: InvocationRequest,
 }
 
@@ -94,7 +94,34 @@ impl ExecutionDispatch {
         resolution: ResolvedCapability,
         request: InvocationRequest,
     ) -> Result<Self, ExecutorError> {
-        let snapshot = resolution.snapshot();
+        let snapshot = resolution.snapshot().clone();
+        Self::from_snapshot(
+            run,
+            revision,
+            node,
+            execution,
+            attempt,
+            lease,
+            lease_expires_at,
+            snapshot,
+            request,
+        )
+    }
+
+    /// Reconstructs a dispatch from the exact durable capability snapshot.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_snapshot(
+        run: RunId,
+        revision: RevisionId,
+        node: NodeId,
+        execution: NodeExecutionId,
+        attempt: AttemptId,
+        lease: LeaseId,
+        lease_expires_at: TimestampMillis,
+        resolution: ResolvedCapabilitySnapshot,
+        request: InvocationRequest,
+    ) -> Result<Self, ExecutorError> {
+        let snapshot = &resolution;
         if request.capability() != snapshot.capability()
             || request.operation() != snapshot.operation()
             || request.provider_profile() != snapshot.provider_profile()
@@ -176,7 +203,7 @@ impl ExecutionDispatch {
 
     /// Exact capability resolution.
     #[must_use]
-    pub const fn resolution(&self) -> &ResolvedCapability {
+    pub const fn resolution(&self) -> &ResolvedCapabilitySnapshot {
         &self.resolution
     }
 
@@ -185,6 +212,51 @@ impl ExecutionDispatch {
     pub const fn request(&self) -> &InvocationRequest {
         &self.request
     }
+}
+
+/// Exact cancellation effect claimed from durable run state.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CancellationDispatch {
+    run: RunId,
+    attempt: AttemptId,
+    request: CancellationRequest,
+}
+
+impl CancellationDispatch {
+    pub(crate) fn new(run: RunId, attempt: AttemptId, request: CancellationRequest) -> Self {
+        Self {
+            run,
+            attempt,
+            request,
+        }
+    }
+
+    /// Owning run.
+    #[must_use]
+    pub const fn run(&self) -> &RunId {
+        &self.run
+    }
+
+    /// Exact attempt whose invocation receives cancellation.
+    #[must_use]
+    pub const fn attempt(&self) -> &AttemptId {
+        &self.attempt
+    }
+
+    /// Provider-neutral cancellation request.
+    #[must_use]
+    pub const fn request(&self) -> &CancellationRequest {
+        &self.request
+    }
+}
+
+/// One durably claimed external action for a caller-owned effect host.
+#[derive(Clone, Debug, PartialEq)]
+pub enum EffectAction {
+    /// Execute one immutable invocation.
+    Execute(Box<ExecutionDispatch>),
+    /// Submit one cancellation request.
+    Cancel(CancellationDispatch),
 }
 
 /// Validated, bounded executor reports for one invocation.
@@ -239,6 +311,33 @@ impl ExecutionReportBatch {
     }
 }
 
+/// Durable result of submitting one executor observation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ObservationDisposition {
+    /// The observation advanced authoritative run state.
+    Applied,
+    /// An exact previously committed observation was returned idempotently.
+    Replayed,
+    /// A terminal observation arrived after ownership became uncertain and was kept as evidence.
+    LateEvidence,
+}
+
+/// Incremental durable observation boundary supplied to long-running executors.
+///
+/// Calls may apply storage backpressure. A successful return means the observation is
+/// already durable; adapters must not treat merely writing to an in-memory channel as
+/// completion.
+pub trait ExecutionReporter: Send + Sync {
+    /// Persists one exactly correlated invocation observation.
+    fn invocation(&self, report: InvocationEvent) -> Result<ObservationDisposition, ExecutorError>;
+
+    /// Persists a policy-bounded lease extension while the invocation is still alive.
+    ///
+    /// The runtime chooses the new expiry from its trusted boundary clock and lease policy;
+    /// an adapter cannot pin ownership arbitrarily far into the future.
+    fn heartbeat(&self) -> Result<ObservationDisposition, ExecutorError>;
+}
+
 /// Narrow object-safe boundary implemented by Pass 3 registries/adapters.
 pub trait TaskExecutor: Send + Sync {
     /// Deterministically resolves an exact immutable descriptor and operation snapshot.
@@ -247,8 +346,35 @@ pub trait TaskExecutor: Send + Sync {
         requirement: &CapabilityRequirement,
     ) -> Result<ResolvedCapability, ExecutorError>;
 
-    /// Executes only after the caller durably records schedule and lease ownership.
-    fn execute(&self, dispatch: &ExecutionDispatch) -> Result<ExecutionReportBatch, ExecutorError>;
+    /// Compatibility hook for bounded synchronous executors.
+    ///
+    /// Long-running adapters should implement [`Self::execute_streaming`]. This method
+    /// is never invoked by a scheduler tick.
+    fn execute(
+        &self,
+        _dispatch: &ExecutionDispatch,
+    ) -> Result<ExecutionReportBatch, ExecutorError> {
+        Err(ExecutorError::Boundary(
+            "executor implements neither streaming nor bounded execution".to_owned(),
+        ))
+    }
+
+    /// Executes after immutable request, resolution, side-effect, and lease facts are durable.
+    ///
+    /// The caller owns the effect-host thread/task. The runtime itself never spawns hidden
+    /// work. The default implementation adapts a bounded legacy batch into independently
+    /// durable observations.
+    fn execute_streaming(
+        &self,
+        dispatch: &ExecutionDispatch,
+        reporter: &dyn ExecutionReporter,
+    ) -> Result<(), ExecutorError> {
+        let reports = self.execute(dispatch)?;
+        for report in reports.reports() {
+            let _ = reporter.invocation(report.clone())?;
+        }
+        Ok(())
+    }
 
     /// Requests cancellation without implying a terminal outcome.
     fn cancel(

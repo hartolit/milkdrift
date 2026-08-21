@@ -165,13 +165,6 @@ pub trait StorageAdmin: Send + Sync {
     /// Returns physical schema compatibility. A future version must not be opened as v1.
     fn schema_info(&self) -> Result<StorageSchemaInfo, PersistenceError>;
 
-    /// Explicitly migrates a supported older schema to the current exact version.
-    ///
-    /// The implementation verifies `expected_from`, applies each migration atomically
-    /// or with durable restart markers, and refuses unknown future schemas.
-    fn migrate_to_current(&self, expected_from: u32)
-    -> Result<StorageSchemaInfo, PersistenceError>;
-
     /// Returns bounded health information without mutating/repairing durable history.
     fn health(&self, observed_at: TimestampMillis) -> Result<StorageHealth, PersistenceError>;
 

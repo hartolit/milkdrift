@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 
+use serde::{Deserialize, Serialize};
+
 use milkdrift_blueprint::{PortId, RevisionId};
 use milkdrift_capability::BoundedJson;
 use milkdrift_persistence::{
@@ -13,7 +15,7 @@ use milkdrift_workspace::{
 };
 
 /// Current state of a structured branch scope.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum BranchState {
     /// Branch may still acquire or complete owned children.
     Active,
@@ -26,7 +28,7 @@ pub enum BranchState {
 }
 
 /// Structured branch scope and ownership read model.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct BranchProjection {
     pub(super) branch: BranchId,
     pub(super) fork_execution: NodeExecutionId,
@@ -104,7 +106,7 @@ impl BranchProjection {
 }
 
 /// Immutable satisfied join result.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct JoinProjection {
     pub(super) execution: NodeExecutionId,
     pub(super) rule: JoinRule,
@@ -146,7 +148,7 @@ impl JoinProjection {
 }
 
 /// Current state of one isolated repeat iteration.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum IterationState {
     /// Body/condition may still progress.
     Active,
@@ -157,7 +159,7 @@ pub enum IterationState {
 }
 
 /// Isolated repeat-iteration scope read model.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct IterationProjection {
     pub(super) iteration: IterationId,
     pub(super) repeat_execution: NodeExecutionId,
@@ -211,7 +213,7 @@ impl IterationProjection {
 }
 
 /// One immutable request for authority at an exact repeat boundary.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct RepeatContinuationRequestProjection {
     pub(super) frontier_iteration: IterationId,
     pub(super) initial_iteration_limit: u32,
@@ -253,7 +255,7 @@ impl RepeatContinuationRequestProjection {
 }
 
 /// One immutable authority decision at a repeat continuation boundary.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct RepeatContinuationDecisionProjection {
     pub(super) decision: RepeatDecisionId,
     pub(super) actor: ActorRef,
@@ -309,7 +311,7 @@ impl RepeatContinuationDecisionProjection {
 }
 
 /// Bounded continuation authority state for one repeat execution.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct RepeatContinuationProjection {
     pub(super) repeat_execution: NodeExecutionId,
     pub(super) initial_iteration_limit: u32,
@@ -382,7 +384,7 @@ impl RepeatContinuationProjection {
 }
 
 /// Terminal state of one explicit repeat execution.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct RepeatTermination {
     pub(super) repeat_execution: NodeExecutionId,
     pub(super) termination: RepeatTerminationReason,
@@ -417,7 +419,7 @@ impl RepeatTermination {
 }
 
 /// Current state of a parent-linked child subworkflow.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum SubworkflowState {
     /// Child remains live.
     Active,
@@ -428,7 +430,7 @@ pub enum SubworkflowState {
 }
 
 /// One explicit immutable child-output import into the parent run.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct SubworkflowOutputImport {
     pub(super) child_value: WorkspaceValueReference,
     pub(super) parent_value: WorkspaceValueReference,
@@ -456,7 +458,7 @@ impl SubworkflowOutputImport {
 }
 
 /// Parent-local child-subworkflow read model.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct SubworkflowProjection {
     pub(super) subworkflow: SubworkflowId,
     pub(super) parent_execution: NodeExecutionId,
@@ -555,7 +557,7 @@ impl SubworkflowProjection {
 }
 
 /// Durable signal and its exact consumption history.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct SignalProjection {
     pub(super) signal: SignalId,
     pub(super) signal_type: SignalTypeId,
@@ -644,7 +646,7 @@ impl SignalProjection {
 }
 
 /// Exact state of a durable wait node.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct WaitProjection {
     pub(super) execution: NodeExecutionId,
     pub(super) condition: WaitCondition,
@@ -654,7 +656,7 @@ pub struct WaitProjection {
 }
 
 /// Durable cancellation fact for a wait.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct WaitCancellationProjection {
     pub(super) reason: Reason,
     pub(super) sequence: RunSequence,

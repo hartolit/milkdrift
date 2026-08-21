@@ -295,6 +295,17 @@ pub enum SnapshotLoad {
 
 /// Optional snapshot optimization port.
 pub trait SnapshotStore: Send + Sync {
+    /// Returns the authenticated digest of one exact authoritative event prefix.
+    ///
+    /// Adapters should use their append-time accumulator/checkpoint rather than
+    /// replaying the prefix. The digest is an input to a runtime-owned snapshot;
+    /// authoritative events remain the sole source of truth.
+    fn history_digest(
+        &self,
+        run: &RunId,
+        through: RunSequence,
+    ) -> Result<IntegrityDigest, PersistenceError>;
+
     /// Stores an immutable snapshot and advances the latest pointer atomically.
     ///
     /// Implementations verify `covered_sequence` is not beyond the journal head and

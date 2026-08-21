@@ -22,38 +22,16 @@ use tempfile::TempDir;
 
 const ARTIFACT_METADATA: TableDefinition<'static, &'static str, &'static [u8]> =
     TableDefinition::new("milkdrift.v1.artifacts.metadata_by_id");
-const ARTIFACT_MANIFEST: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.artifacts.authoritative_manifest");
-const ARTIFACT_PUBLICATIONS: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.artifacts.publications");
 const ARTIFACTS_BY_DIGEST: TableDefinition<'static, &'static [u8], &'static [u8]> =
     TableDefinition::new("milkdrift.v1.artifacts.by_digest_and_id");
 const ARTIFACT_REFERENCES: TableDefinition<'static, &'static [u8], &'static [u8]> =
     TableDefinition::new("milkdrift.v1.artifacts.references");
 const ARTIFACT_TEMP_OWNERS: TableDefinition<'static, &'static str, &'static str> =
     TableDefinition::new("milkdrift.v1.artifacts.temp_owners");
-const ARTIFACT_TEMP_MANIFEST: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.artifacts.authoritative_temp_manifest");
-const RUN_ARTIFACT_OWNERSHIP: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.artifacts.ownership_by_run");
 const ARTIFACT_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
     TableDefinition::new("milkdrift.v1.artifacts.accounting");
 const WORKSPACE_USAGE: TableDefinition<'static, &'static str, &'static [u8]> =
     TableDefinition::new("milkdrift.v1.workspace.usage");
-const WORKSPACE_BUDGETS: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.workspace.budgets");
-const DISCOVERY_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.discovery.accounting");
-const WORKSPACE_VALUE_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.workspace.value_accounting");
-const INTEGRITY_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.integrity.accounting");
-const INTEGRITY_ROOTS: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.integrity.roots");
-const INTEGRITY_NODES: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.integrity.trie_nodes");
-const METADATA: TableDefinition<'static, &'static str, u64> =
-    TableDefinition::new("milkdrift.v1.metadata");
 const REVISIONS: TableDefinition<'static, &'static str, &'static [u8]> =
     TableDefinition::new("milkdrift.v1.revisions.by_id");
 const REVISIONS_BY_DIGEST: TableDefinition<'static, &'static [u8], &'static [u8]> =
@@ -99,87 +77,6 @@ fn exhaustive_integrity_failure_count(store: &RedbStore) -> Result<usize, Persis
 
 fn revision_id() -> Result<RevisionId, PersistenceError> {
     serde_json::from_value(json!(format!("rev_{}", "0".repeat(64)))).map_err(PersistenceError::Json)
-}
-
-fn legacy_payload(envelope: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    const MARKER: &[u8] = b",\"payload\":";
-    let start = envelope
-        .windows(MARKER.len())
-        .position(|window| window == MARKER)
-        .map(|position| position + MARKER.len())
-        .ok_or("internal document envelope has no payload")?;
-    let end = envelope
-        .len()
-        .checked_sub(1)
-        .filter(|end| envelope.get(*end) == Some(&b'}'))
-        .ok_or("internal document envelope has no closing object")?;
-    Ok(envelope[start..end].to_vec())
-}
-
-fn downgrade_string_documents(
-    write: &redb::WriteTransaction,
-    definition: TableDefinition<'static, &'static str, &'static [u8]>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut table = write.open_table(definition)?;
-    let rows = table
-        .iter()?
-        .map(|item| {
-            let (key, value) = item?;
-            Ok((key.value().to_owned(), legacy_payload(value.value())?))
-        })
-        .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
-    for (key, value) in rows {
-        table.insert(key.as_str(), value.as_slice())?;
-    }
-    Ok(())
-}
-
-fn downgrade_binary_documents(
-    write: &redb::WriteTransaction,
-    definition: TableDefinition<'static, &'static [u8], &'static [u8]>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut table = write.open_table(definition)?;
-    let rows = table
-        .iter()?
-        .map(|item| {
-            let (key, value) = item?;
-            Ok((key.value().to_vec(), legacy_payload(value.value())?))
-        })
-        .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
-    for (key, value) in rows {
-        table.insert(key.as_slice(), value.as_slice())?;
-    }
-    Ok(())
-}
-
-fn clear_string_documents(
-    write: &redb::WriteTransaction,
-    definition: TableDefinition<'static, &'static str, &'static [u8]>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut table = write.open_table(definition)?;
-    let keys = table
-        .iter()?
-        .map(|item| item.map(|(key, _)| key.value().to_owned()))
-        .collect::<Result<Vec<_>, _>>()?;
-    for key in keys {
-        let _ = table.remove(key.as_str())?;
-    }
-    Ok(())
-}
-
-fn clear_binary_documents(
-    write: &redb::WriteTransaction,
-    definition: TableDefinition<'static, &'static [u8], &'static [u8]>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut table = write.open_table(definition)?;
-    let keys = table
-        .iter()?
-        .map(|item| item.map(|(key, _)| key.value().to_vec()))
-        .collect::<Result<Vec<_>, _>>()?;
-    for key in keys {
-        let _ = table.remove(key.as_slice())?;
-    }
-    Ok(())
 }
 
 fn artifact_metadata(
@@ -278,8 +175,8 @@ fn double_charge_request(
         vec![publication.metadata.reference().clone()],
         None,
         result,
-        RunIndexUpdate {
-            summary: Some(RunSummaryIndex {
+        RunIndexUpdate::new(
+            Some(RunSummaryIndex {
                 run: publication.run.clone(),
                 workflow: WorkflowId::new("workflow-integrity")?,
                 revision: revision_id()?,
@@ -287,8 +184,10 @@ fn double_charge_request(
                 through_sequence: RunSequence::FIRST,
                 updated_at: TimestampMillis::new(20),
             }),
-            ..RunIndexUpdate::default()
-        },
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
     )?)
 }
 
@@ -332,8 +231,8 @@ fn start_request(run: &str) -> Result<AtomicRunCommitRequest, Box<dyn std::error
         Vec::new(),
         None,
         result,
-        RunIndexUpdate {
-            summary: Some(RunSummaryIndex {
+        RunIndexUpdate::new(
+            Some(RunSummaryIndex {
                 run,
                 workflow: WorkflowId::new("workflow-integrity")?,
                 revision: revision_id()?,
@@ -341,8 +240,10 @@ fn start_request(run: &str) -> Result<AtomicRunCommitRequest, Box<dyn std::error
                 through_sequence: RunSequence::FIRST,
                 updated_at: TimestampMillis::new(10),
             }),
-            ..RunIndexUpdate::default()
-        },
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
     )?)
 }
 
@@ -612,89 +513,6 @@ fn missing_temp_owner_cannot_delete_a_live_writable_publication()
 }
 
 #[test]
-fn legacy_physical_v1_artifact_publication_backfills_integrity_documents_on_reopen()
--> Result<(), Box<dyn std::error::Error>> {
-    let directory = TempDir::new()?;
-    let request = publication_request(
-        "artifact-legacy",
-        "publication-legacy",
-        "run-legacy",
-        b"legacy",
-        WorkspaceBudget::new(0, 0, 0, 2, 64, 64)?,
-        WorkspaceUsage::EMPTY,
-    )?;
-    {
-        let store = RedbStore::open_with_config(
-            RedbStoreConfig::new(directory.path()).with_artifact_limits(10, 10, 64),
-        )?;
-        publish(&store, &request, b"legacy")?;
-    }
-
-    let database = Database::open(directory.path().join("milkdrift.redb"))?;
-    let write = database.begin_write()?;
-    downgrade_string_documents(&write, ARTIFACT_METADATA)?;
-    downgrade_string_documents(&write, ARTIFACT_PUBLICATIONS)?;
-    downgrade_binary_documents(&write, ARTIFACTS_BY_DIGEST)?;
-    downgrade_binary_documents(&write, ARTIFACT_REFERENCES)?;
-    downgrade_string_documents(&write, WORKSPACE_USAGE)?;
-    downgrade_string_documents(&write, WORKSPACE_BUDGETS)?;
-    clear_string_documents(&write, ARTIFACT_MANIFEST)?;
-    clear_string_documents(&write, ARTIFACT_TEMP_MANIFEST)?;
-    clear_binary_documents(&write, RUN_ARTIFACT_OWNERSHIP)?;
-    clear_string_documents(&write, ARTIFACT_ACCOUNTING)?;
-    clear_string_documents(&write, DISCOVERY_ACCOUNTING)?;
-    clear_string_documents(&write, WORKSPACE_VALUE_ACCOUNTING)?;
-    clear_string_documents(&write, INTEGRITY_ACCOUNTING)?;
-    clear_string_documents(&write, INTEGRITY_ROOTS)?;
-    clear_binary_documents(&write, INTEGRITY_NODES)?;
-    {
-        let mut metadata = write.open_table(METADATA)?;
-        let _ = metadata.remove("internal_document_format_version")?;
-        metadata.insert("artifact_content_bytes", 6)?;
-    }
-    write.commit()?;
-    drop(database);
-
-    let store = RedbStore::open_with_config(
-        RedbStoreConfig::new(directory.path()).with_artifact_limits(10, 10, 64),
-    )
-    .map_err(|cause| format!("legacy reopen failed: {cause}"))?;
-    assert!(
-        store
-            .is_committed(request.metadata.reference())
-            .map_err(|cause| format!("legacy committed lookup failed: {cause}"))?
-    );
-    assert!(store.is_referenced_by_run(&request.run, request.metadata.reference())?);
-    assert_eq!(
-        store.workspace_usage(&request.run)?,
-        request.resulting_usage
-    );
-    assert!(matches!(
-        store.begin_publication(&request)?,
-        BeginArtifactOutcome::AlreadyCommitted(_)
-    ));
-
-    let second = publication_request(
-        "artifact-after-legacy",
-        "publication-after-legacy",
-        "run-after-legacy",
-        b"abcde",
-        WorkspaceBudget::new(0, 0, 0, 2, 64, 64)?,
-        WorkspaceUsage::EMPTY,
-    )?;
-    store.begin_publication(&second)?;
-    store.write_chunk(&second.publication, 0, b"abcde")?;
-    assert!(matches!(
-        store.commit_publication(&second.publication),
-        Err(PersistenceError::Storage {
-            class: StorageFailureClass::ResourceExhausted,
-            ..
-        })
-    ));
-    Ok(())
-}
-
-#[test]
 fn aggregate_artifact_counter_deletion_lowering_and_real_limit_are_fail_closed()
 -> Result<(), Box<dyn std::error::Error>> {
     for lower_instead_of_delete in [false, true] {
@@ -794,9 +612,9 @@ fn snapshot_pointer_deletion_and_lowered_journal_head_are_corruption()
             } else {
                 "snapshot-head"
             })?,
-            request.receipt.run().clone(),
+            request.receipt().run().clone(),
             RunSequence::FIRST,
-            history_digest(&request.events)?,
+            history_digest(request.events())?,
             1,
             b"projection".to_vec(),
         )?;
@@ -809,15 +627,15 @@ fn snapshot_pointer_deletion_and_lowered_journal_head_are_corruption()
         let write = database.begin_write()?;
         if delete_pointer {
             let mut latest = write.open_table(SNAPSHOT_LATEST)?;
-            let _ = latest.remove(request.receipt.run().as_str())?;
+            let _ = latest.remove(request.receipt().run().as_str())?;
         } else {
             let mut heads = write.open_table(RUN_HEADS)?;
-            heads.insert(request.receipt.run().as_str(), 0)?;
+            heads.insert(request.receipt().run().as_str(), 0)?;
         }
         write.commit()?;
         drop(database);
         let store = RedbStore::open(directory.path())?;
-        assert_corruption(store.latest_snapshot(request.receipt.run()));
+        assert_corruption(store.latest_snapshot(request.receipt().run()));
         if !delete_pointer {
             assert_corruption(store.put_snapshot(&snapshot));
         }

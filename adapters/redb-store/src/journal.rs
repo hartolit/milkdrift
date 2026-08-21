@@ -27,8 +27,7 @@ use crate::{
         ARTIFACT_METADATA, ARTIFACT_RESERVATIONS, COMMAND_RESULTS, EVENT_CHECKSUMS, LEASE_ENTRIES,
         LEASE_INDEX, NONTERMINAL_RUNS, ROOT_SCOPES, RUN_EVENTS, RUN_HEADS, RUN_SUMMARIES,
         RUNNABLE_ENTRIES, RUNNABLE_INDEX, RUNNABLE_RUN_HEADS, SCOPES, TIMER_ENTRIES, TIMER_INDEX,
-        VALUES, WORKSPACE_BUDGETS, WORKSPACE_USAGE, WORKSPACE_VALUE_ACCOUNTING,
-        WORKSPACE_VALUE_HEADS,
+        VALUES, WORKSPACE_BUDGETS, WORKSPACE_USAGE, WORKSPACE_VALUE_HEADS,
     },
 };
 
@@ -38,24 +37,20 @@ mod queries;
 mod workspace;
 
 pub(crate) use append::{
-    advance_workspace_global_usage_in_transaction, event_catalog_path,
-    migrate_nonterminal_membership, persist_run_membership,
+    advance_workspace_global_usage_in_transaction,
     persist_workspace_value_usage_accounting_in_transaction, validate_event_catalog,
     validate_nonterminal_membership_leaf, validate_or_initialize_workspace_domain,
     validate_run_history_membership, validate_run_history_membership_in_transaction,
     validate_run_membership_leaf, validate_stored_command_record,
-    validate_workspace_domain_in_transaction, validate_workspace_value_accounting,
-    validate_workspace_value_accounting_in_transaction, workspace_domain_path,
-    workspace_domain_payload,
+    validate_workspace_domain_in_transaction, workspace_domain_path, workspace_domain_payload,
 };
 pub(crate) use discovery::{
-    first_path_in_group, lease_catalog_ordered_path, lease_order_key, migrate_runnable_run_heads,
-    runnable_bucket_path, runnable_catalog_identity_path, runnable_catalog_ordered_path,
+    first_path_in_group, lease_catalog_ordered_path, lease_order_key, runnable_bucket_path,
     runnable_group, runnable_order_key, timer_catalog_ordered_path, timer_order_key,
     validate_runnable_head_leaf,
 };
 pub(crate) use queries::{validated_run_head, validated_run_head_in_transaction};
 pub(crate) use workspace::{
-    migrate_workspace_catalogs, validate_owning_workspace_scope,
-    validate_workspace_value_provenance, validated_workspace_domain, workspace_value_key,
+    validate_owning_workspace_scope, validate_workspace_value_provenance,
+    validated_workspace_domain, workspace_value_key,
 };

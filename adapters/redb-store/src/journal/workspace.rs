@@ -1,7 +1,7 @@
 use super::*;
 use super::{
     append::{
-        persist_workspace_domain, predecessor_path, run_membership_path, run_membership_payload,
+        predecessor_path, run_membership_path, run_membership_payload,
         validate_nonterminal_membership_in_transaction, workspace_domain_path,
         workspace_domain_payload,
     },
@@ -11,12 +11,12 @@ pub(crate) fn apply_workspace(
     write: &redb::WriteTransaction,
     request: &AtomicRunCommitRequest,
 ) -> Result<(), PersistenceError> {
-    validate_workspace_value_accounting_in_transaction(write)?;
+    crate::trie::validate_roots_in_transaction(write)?;
     let mut scopes = write.open_table(SCOPES).map_err(error::redb)?;
     let mut roots = write.open_table(ROOT_SCOPES).map_err(error::redb)?;
     let mut values = write.open_table(VALUES).map_err(error::redb)?;
 
-    for mutation in &request.workspace {
+    for mutation in request.workspace() {
         match mutation {
             WorkspaceMutation::CreateScope { scope } => {
                 put_scope(write, &mut scopes, &mut roots, scope)?;
@@ -26,7 +26,7 @@ pub(crate) fn apply_workspace(
             }
         }
     }
-    let Some(accounting) = &request.workspace_accounting else {
+    let Some(accounting) = request.workspace_accounting() else {
         return Ok(());
     };
     let value_delta = accounting
@@ -36,7 +36,7 @@ pub(crate) fn apply_workspace(
         .ok_or_else(|| error::corruption("workspace value accounting moved backwards"))?;
     let mutation_count = u64::try_from(
         request
-            .workspace
+            .workspace()
             .iter()
             .filter(|mutation| matches!(mutation, WorkspaceMutation::PutValue { .. }))
             .count(),
@@ -674,211 +674,6 @@ pub(crate) fn put_value(
     Ok(())
 }
 
-pub(crate) fn migrate_workspace_catalogs(
-    write: &redb::WriteTransaction,
-) -> Result<(), PersistenceError> {
-    crate::trie::validate_roots_in_transaction(write)?;
-    {
-        let heads = write
-            .open_table(WORKSPACE_VALUE_HEADS)
-            .map_err(error::redb)?;
-        if heads.len().map_err(error::redb)? != 0 {
-            return Err(error::corruption(
-                "legacy storage unexpectedly contains workspace value heads",
-            ));
-        }
-    }
-
-    let budgets = write.open_table(WORKSPACE_BUDGETS).map_err(error::redb)?;
-    let usages = write.open_table(WORKSPACE_USAGE).map_err(error::redb)?;
-    let mut expected_versions = 0_u64;
-    let mut expected_inline_bytes = 0_u64;
-    for item in budgets.iter().map_err(error::redb)? {
-        let (run_key, budget_bytes) = item.map_err(error::redb)?;
-        let run = RunId::new(run_key.value()).map_err(|cause| {
-            error::corruption(format!("invalid legacy workspace-domain identity: {cause}"))
-        })?;
-        let budget: milkdrift_workspace::WorkspaceBudget =
-            json::decode(budget_bytes.value(), "workspace budget")?;
-        let usage_bytes = usages
-            .get(run.as_str())
-            .map_err(error::redb)?
-            .ok_or_else(|| error::corruption("legacy workspace budget has no usage document"))?;
-        let usage: WorkspaceUsage = json::decode(usage_bytes.value(), "workspace usage")?;
-        budget.validate_usage(&usage).map_err(|cause| {
-            error::corruption(format!(
-                "legacy workspace usage exceeds its budget: {cause}"
-            ))
-        })?;
-        expected_versions = expected_versions
-            .checked_add(usage.value_versions())
-            .ok_or_else(|| error::corruption("legacy workspace value total overflowed"))?;
-        expected_inline_bytes = expected_inline_bytes
-            .checked_add(usage.inline_bytes())
-            .ok_or_else(|| error::corruption("legacy workspace byte total overflowed"))?;
-        persist_workspace_domain(write, &run, &budget, usage, None)?;
-    }
-    for item in usages.iter().map_err(error::redb)? {
-        let (run, _) = item.map_err(error::redb)?;
-        if budgets.get(run.value()).map_err(error::redb)?.is_none() {
-            return Err(error::corruption(
-                "legacy workspace usage has no immutable budget",
-            ));
-        }
-    }
-    drop(usages);
-    drop(budgets);
-
-    let scopes = write.open_table(SCOPES).map_err(error::redb)?;
-    let roots = write.open_table(ROOT_SCOPES).map_err(error::redb)?;
-    for item in scopes.iter().map_err(error::redb)? {
-        let (key, bytes) = item.map_err(error::redb)?;
-        let scope: WorkspaceScope = json::decode(bytes.value(), "workspace scope")?;
-        let expected_key = codec::pair(
-            scope.reference().run().as_str(),
-            scope.reference().scope().as_str(),
-        )?;
-        if key.value() != expected_key.as_slice() {
-            return Err(error::corruption(
-                "legacy workspace-scope key disagrees with its document",
-            ));
-        }
-        let family = crate::trie::CatalogFamily::WorkspaceScope;
-        if crate::trie::put(
-            write,
-            family,
-            workspace_scope_catalog_path(scope.reference(), key.value())?,
-            key.value(),
-            crate::trie::digest_payload(family, bytes.value()),
-        )?
-        .is_some()
-        {
-            return Err(error::corruption(
-                "legacy workspace scope duplicates an authenticated catalog leaf",
-            ));
-        }
-    }
-    for item in scopes.iter().map_err(error::redb)? {
-        let (_, bytes) = item.map_err(error::redb)?;
-        let scope: WorkspaceScope = json::decode(bytes.value(), "workspace scope")?;
-        validate_scope_catalog_lineage_in_transaction(write, &scopes, &roots, scope.reference())?;
-    }
-
-    let values = write.open_table(VALUES).map_err(error::redb)?;
-    let mut observed_versions = 0_u64;
-    let mut observed_inline_bytes = 0_u64;
-    let mut current_run: Option<RunId> = None;
-    let mut current_versions = 0_u64;
-    let mut current_inline_bytes = 0_u64;
-    for item in values.iter().map_err(error::redb)? {
-        let (key, bytes) = item.map_err(error::redb)?;
-        let entry: WorkspaceValueEntry = json::decode(bytes.value(), "workspace value")?;
-        let expected_key = workspace_value_key(entry.reference())?;
-        if key.value() != expected_key.as_slice() {
-            return Err(error::corruption(
-                "legacy workspace-value key disagrees with its document",
-            ));
-        }
-        let run = entry.reference().scope().run();
-        if current_run.as_ref().is_some_and(|current| current != run) {
-            validate_migrated_value_usage(
-                write,
-                current_run.as_ref().ok_or_else(|| {
-                    error::corruption("legacy workspace value run tracker is empty")
-                })?,
-                current_versions,
-                current_inline_bytes,
-            )?;
-            current_versions = 0;
-            current_inline_bytes = 0;
-        }
-        current_run = Some(run.clone());
-        current_versions = current_versions
-            .checked_add(1)
-            .ok_or_else(|| error::corruption("legacy per-run value count overflowed"))?;
-        observed_versions = observed_versions
-            .checked_add(1)
-            .ok_or_else(|| error::corruption("legacy workspace value count overflowed"))?;
-        if let Some(inline) = entry.value().as_json() {
-            let inline_bytes = u64::try_from(
-                serde_json::to_vec(inline)
-                    .map_err(|cause| {
-                        error::corruption(format!(
-                            "legacy inline workspace value cannot be encoded: {cause}"
-                        ))
-                    })?
-                    .len(),
-            )
-            .map_err(|_| error::corruption("legacy inline workspace value exceeds u64"))?;
-            current_inline_bytes = current_inline_bytes
-                .checked_add(inline_bytes)
-                .ok_or_else(|| error::corruption("legacy per-run inline bytes overflowed"))?;
-            observed_inline_bytes = observed_inline_bytes
-                .checked_add(inline_bytes)
-                .ok_or_else(|| error::corruption("legacy workspace inline bytes overflowed"))?;
-        }
-        validate_owning_workspace_scope(&scopes, &roots, entry.reference().scope())?;
-        let family = crate::trie::CatalogFamily::WorkspaceValue;
-        if crate::trie::put(
-            write,
-            family,
-            crate::trie::hashed_path(family, key.value()),
-            key.value(),
-            crate::trie::digest_payload(family, bytes.value()),
-        )?
-        .is_some()
-        {
-            return Err(error::corruption(
-                "legacy workspace value duplicates an authenticated catalog leaf",
-            ));
-        }
-        update_workspace_value_head(write, entry.reference(), key.value(), bytes.value())?;
-    }
-    if let Some(run) = &current_run {
-        validate_migrated_value_usage(write, run, current_versions, current_inline_bytes)?;
-    }
-    if observed_versions != expected_versions || observed_inline_bytes != expected_inline_bytes {
-        return Err(error::corruption(
-            "legacy workspace values disagree with aggregate usage",
-        ));
-    }
-    for item in values.iter().map_err(error::redb)? {
-        let (_, bytes) = item.map_err(error::redb)?;
-        let entry: WorkspaceValueEntry = json::decode(bytes.value(), "workspace value")?;
-        validate_workspace_value_provenance(&values, &scopes, &roots, &entry, false)?;
-        validate_scope_catalog_lineage_in_transaction(
-            write,
-            &scopes,
-            &roots,
-            entry.reference().scope(),
-        )?;
-        validate_workspace_value_catalog_provenance_in_transaction(
-            write, &values, &scopes, &roots, &entry, false,
-        )?;
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_migrated_value_usage(
-    write: &redb::WriteTransaction,
-    run: &RunId,
-    value_versions: u64,
-    inline_bytes: u64,
-) -> Result<(), PersistenceError> {
-    let usages = write.open_table(WORKSPACE_USAGE).map_err(error::redb)?;
-    let usage = usages
-        .get(run.as_str())
-        .map_err(error::redb)?
-        .ok_or_else(|| error::corruption("legacy workspace value has no usage domain"))?;
-    let usage: WorkspaceUsage = json::decode(usage.value(), "workspace usage")?;
-    if usage.value_versions() != value_versions || usage.inline_bytes() != inline_bytes {
-        return Err(error::corruption(
-            "legacy per-run workspace values disagree with durable usage",
-        ));
-    }
-    Ok(())
-}
-
 pub(crate) fn load_provenance_value(
     values: &impl redb::ReadableTable<&'static [u8], &'static [u8]>,
     reference: &WorkspaceValueReference,
@@ -1126,7 +921,7 @@ pub(crate) fn validated_workspace_domain(
     read: &redb::ReadTransaction,
     run: &RunId,
 ) -> Result<Option<WorkspaceUsage>, PersistenceError> {
-    validate_workspace_value_accounting(read)?;
+    crate::trie::validate_roots(read)?;
     let budget: Option<milkdrift_workspace::WorkspaceBudget> = {
         let budgets = read.open_table(WORKSPACE_BUDGETS).map_err(error::redb)?;
         budgets
@@ -1198,7 +993,7 @@ impl WorkspaceStore for RedbStore {
         let key = codec::pair(run.as_str(), scope.as_str())?;
         let reference = ScopeReference::new(run.clone(), scope.clone());
         let read = self.database().begin_read().map_err(error::redb)?;
-        validate_workspace_value_accounting(&read)?;
+        crate::trie::validate_roots(&read)?;
         let heads = read.open_table(RUN_HEADS).map_err(error::redb)?;
         let events = read.open_table(RUN_EVENTS).map_err(error::redb)?;
         let head = validated_run_head(&heads, &events, run)?;
@@ -1255,7 +1050,7 @@ impl WorkspaceStore for RedbStore {
     ) -> Result<Option<WorkspaceValueEntry>, PersistenceError> {
         let key = workspace_value_key(reference)?;
         let read = self.database().begin_read().map_err(error::redb)?;
-        validate_workspace_value_accounting(&read)?;
+        crate::trie::validate_roots(&read)?;
         let heads = read.open_table(RUN_HEADS).map_err(error::redb)?;
         let events = read.open_table(RUN_EVENTS).map_err(error::redb)?;
         let head = validated_run_head(&heads, &events, reference.scope().run())?;
@@ -1394,7 +1189,7 @@ impl WorkspaceStore for RedbStore {
         leaf: &ScopeReference,
     ) -> Result<Vec<WorkspaceScope>, PersistenceError> {
         let read = self.database().begin_read().map_err(error::redb)?;
-        validate_workspace_value_accounting(&read)?;
+        crate::trie::validate_roots(&read)?;
         require_run_history_membership(&read, leaf.run())?;
         let table = read.open_table(SCOPES).map_err(error::redb)?;
         let roots = read.open_table(ROOT_SCOPES).map_err(error::redb)?;

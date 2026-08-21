@@ -3,6 +3,229 @@
 use super::*;
 
 #[test]
+fn startup_keeps_admission_closed_until_integrity_and_recovery_complete() -> TestResult {
+    let directory = TempDir::new()?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let runtime = RuntimeService::open_closed(
+        store,
+        Arc::new(DeterministicExecutor::new(test_descriptor()?)?),
+        Arc::new(ManualClock::new(NOW)),
+        Arc::new(SequentialIdGenerator::new("startup-gate", 1)?),
+        RuntimeConfig::new(
+            WorkerId::new("worker-startup-gate")?,
+            ActorRef::new("controller:startup-gate")?,
+            30_000,
+            8,
+            SchedulerLimits::new(8, 4, 2, 4)?,
+            RetryPolicy::new(1, Vec::new(), 10, 1_000, 0)?,
+        )?,
+    )?;
+
+    assert_eq!(runtime.startup_state(), RuntimeStartupState::OpenedClosed);
+    assert!(!runtime.is_accepting_admission());
+    assert!(runtime.resume_admission().is_err());
+
+    runtime.initialize_startup()?;
+    assert_eq!(
+        runtime.startup_state(),
+        RuntimeStartupState::RecoveryCompleted
+    );
+    assert!(runtime.is_accepting_admission());
+
+    runtime.begin_shutdown();
+    assert!(!runtime.is_accepting_admission());
+    runtime.resume_admission()?;
+    assert!(runtime.is_accepting_admission());
+    Ok(())
+}
+
+#[test]
+fn scheduler_commits_dispatch_without_entering_long_running_executor() -> TestResult {
+    let directory = TempDir::new()?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let executor = Arc::new(BlockingExecutor::new(test_descriptor()?)?);
+    let runtime = Arc::new(RuntimeService::new(
+        store.clone(),
+        executor.clone(),
+        Arc::new(ManualClock::new(NOW)),
+        Arc::new(SequentialIdGenerator::new("nonblocking-scheduler", 1)?),
+        RuntimeConfig::new(
+            WorkerId::new("worker-nonblocking-scheduler")?,
+            ActorRef::new("controller:nonblocking-scheduler")?,
+            30_000,
+            8,
+            SchedulerLimits::new(8, 4, 2, 4)?,
+            RetryPolicy::new(1, Vec::new(), 10, 1_000, 0)?,
+        )?,
+    )?);
+    let revision = task_revision("workflow-nonblocking-scheduler")?;
+    let run = RunId::new("run-nonblocking-scheduler")?;
+    store.put_revision(&revision)?;
+    submit_command(
+        &runtime,
+        &store,
+        &run,
+        RunCommand::CreateRun {
+            workflow: revision.semantic().workflow().clone(),
+            revision: revision.id().clone(),
+            root_scope: WorkspaceScope::run_root(
+                run.clone(),
+                ScopeId::new("scope-nonblocking-scheduler")?,
+            ),
+            workspace_budget: generous_budget()?,
+            inputs: Vec::new(),
+        },
+    )?;
+    submit_command(&runtime, &store, &run, RunCommand::StartRun)?;
+    block_first_runnable_operation(&store, &runtime, &run, &executor)?;
+
+    let tick = runtime.scheduler_tick()?;
+    assert_eq!(tick.dispatched, 1);
+    assert!(!executor.has_entered()?);
+
+    let actions = runtime.claim_effects(PageSize::new(1)?)?;
+    assert_eq!(actions.len(), 1);
+    let action = actions
+        .into_iter()
+        .next()
+        .ok_or("claimed effect is absent")?;
+    let effect_runtime = runtime.clone();
+    let effect = std::thread::spawn(move || {
+        effect_runtime
+            .execute_effect(&action)
+            .map_err(|error| error.to_string())
+    });
+    executor.wait_until_entered()?;
+
+    let projection = runtime.projection(&run)?;
+    assert!(
+        projection
+            .attempts()
+            .values()
+            .any(|attempt| { attempt.state() == &AttemptState::Running })
+    );
+    assert_eq!(runtime.scheduler_tick()?.dispatched, 0);
+
+    executor.release()?;
+    effect
+        .join()
+        .map_err(|_| "effect worker panicked")?
+        .map_err(|error| format!("effect execution failed: {error}"))?;
+    assert!(runtime.projection(&run)?.is_completed());
+    Ok(())
+}
+
+#[test]
+fn terminal_observed_after_lease_expiry_is_preserved_as_late_evidence() -> TestResult {
+    let directory = TempDir::new()?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let clock = Arc::new(ManualClock::new(NOW));
+    let runtime = RuntimeService::new(
+        store.clone(),
+        Arc::new(DeterministicExecutor::new(test_descriptor()?)?),
+        clock.clone(),
+        Arc::new(SequentialIdGenerator::new("late-terminal", 1)?),
+        RuntimeConfig::new(
+            WorkerId::new("worker-late-terminal")?,
+            ActorRef::new("controller:late-terminal")?,
+            100,
+            8,
+            SchedulerLimits::new(8, 4, 2, 4)?,
+            RetryPolicy::new(1, Vec::new(), 10, 1_000, 0)?,
+        )?,
+    )?;
+    let revision = task_revision("workflow-late-terminal")?;
+    let run = RunId::new("run-late-terminal")?;
+    store.put_revision(&revision)?;
+    submit_command(
+        &runtime,
+        store.as_ref(),
+        &run,
+        RunCommand::CreateRun {
+            workflow: revision.semantic().workflow().clone(),
+            revision: revision.id().clone(),
+            root_scope: WorkspaceScope::run_root(run.clone(), ScopeId::new("scope-late-terminal")?),
+            workspace_budget: generous_budget()?,
+            inputs: Vec::new(),
+        },
+    )?;
+    submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?;
+    assert_eq!(runtime.scheduler_tick()?.dispatched, 1);
+    let action = runtime
+        .claim_effects(PageSize::new(1)?)?
+        .into_iter()
+        .next()
+        .ok_or("expected one claimed effect")?;
+    let dispatch = match action {
+        EffectAction::Execute(dispatch) => dispatch,
+        EffectAction::Cancel(_) => return Err("expected execution effect".into()),
+    };
+
+    clock.advance(101)?;
+    let recovery = runtime.recover()?;
+    assert_eq!(recovery.expired_leases, 1);
+    let uncertain = runtime.projection(&run)?;
+    let attempt = uncertain
+        .attempts()
+        .get(dispatch.attempt())
+        .ok_or("claimed attempt is absent")?;
+    assert_eq!(attempt.state(), &AttemptState::Uncertain);
+    let report_sequence = attempt
+        .obligation()
+        .ok_or("uncertainty obligation is absent")?
+        .report_sequence();
+
+    let terminal = InvocationTerminal::new(
+        TerminalStatus::Success,
+        Vec::new(),
+        None,
+        None,
+        SideEffectClass::None,
+    )?;
+    let report = InvocationEvent::new(
+        dispatch.request().invocation().clone(),
+        report_sequence,
+        InvocationEventKind::Terminal { terminal },
+    )?;
+    let command = runtime.command(
+        run.clone(),
+        ActorRef::new("controller:late-terminal")?,
+        store.head(&run)?,
+        Reason::new("late executor terminal evidence")?,
+        Vec::new(),
+        RunCommand::WorkerReport {
+            worker: WorkerId::new("worker-late-terminal")?,
+            report: WorkerReport::Invocation {
+                attempt: dispatch.attempt().clone(),
+                report,
+            },
+        },
+    )?;
+    assert_eq!(
+        runtime.handle_command(&command)?.result().disposition(),
+        CommandDisposition::Accepted
+    );
+
+    let projection = runtime.projection(&run)?;
+    let attempt = projection
+        .attempts()
+        .get(dispatch.attempt())
+        .ok_or("claimed attempt is absent after evidence")?;
+    assert_eq!(attempt.state(), &AttemptState::Uncertain);
+    assert!(attempt.terminal().is_none());
+    let evidence = attempt
+        .late_terminal_evidence()
+        .ok_or("late terminal evidence was not retained")?;
+    assert_eq!(evidence.report_sequence(), report_sequence);
+    assert_eq!(evidence.terminal().status(), TerminalStatus::Success);
+    assert!(runtime.history(&run)?.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::LateTerminalEvidenceRecorded { .. }
+    )));
+    Ok(())
+}
+
+#[test]
 fn explicit_terminal_waits_for_an_already_dispatched_any_join_loser() -> TestResult {
     let directory = TempDir::new()?;
     let store = Arc::new(RedbStore::open(directory.path())?);
@@ -471,7 +694,7 @@ fn shutdown_closes_admission_and_cancellation_explicitly_drains_wait_ownership()
         RunLifecycle::Created
     );
 
-    harness.runtime.resume_admission();
+    harness.runtime.resume_admission()?;
     assert_eq!(
         harness.command(&run, RunCommand::StartRun)?,
         CommandDisposition::Accepted
@@ -609,8 +832,8 @@ fn more_than_index_mutation_limit_inactive_identities_do_not_block_commits() -> 
             Vec::new(),
             None,
             result,
-            RunIndexUpdate {
-                summary: Some(RunSummaryIndex {
+            RunIndexUpdate::new(
+                Some(RunSummaryIndex {
                     run: run.clone(),
                     workflow: revision.semantic().workflow().clone(),
                     revision: revision.id().clone(),
@@ -618,8 +841,10 @@ fn more_than_index_mutation_limit_inactive_identities_do_not_block_commits() -> 
                     through_sequence: sequence,
                     updated_at: TimestampMillis::new(NOW),
                 }),
-                ..RunIndexUpdate::default()
-            },
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
         )?)?;
         created = created.saturating_add(batch_size);
         batch_number = batch_number.saturating_add(1);

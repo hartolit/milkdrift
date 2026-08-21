@@ -120,10 +120,6 @@ pub(crate) fn scan_index_integrity(
             push_failure(result, label, &cause.to_string())?;
         }
     }
-    if let Err(cause) = crate::journal::validate_workspace_value_accounting(read) {
-        push_failure(result, "workspace_value_accounting", &cause.to_string())?;
-    }
-
     scan_string_u64_phase(
         HEADS,
         start_phase,
@@ -761,7 +757,7 @@ pub(crate) fn scan_index_integrity(
         more_remaining,
         "artifact_indexes",
         |key, bytes| {
-            if key != GLOBAL_ARTIFACT_BYTES_KEY {
+            if key != crate::artifact::GLOBAL_ARTIFACT_BYTES_KEY {
                 return Err(error::corruption(
                     "artifact accounting contains an unknown record",
                 ));
@@ -1384,7 +1380,7 @@ pub(crate) fn scan_artifact_digest_phase(
     }
     if !*more_remaining {
         let stored = accounting
-            .get(GLOBAL_ARTIFACT_BYTES_KEY)
+            .get(crate::artifact::GLOBAL_ARTIFACT_BYTES_KEY)
             .map_err(error::redb)?
             .map(|bytes| {
                 json::decode::<crate::artifact::ArtifactAccountingRecord>(

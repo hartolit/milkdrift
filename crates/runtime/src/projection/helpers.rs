@@ -525,6 +525,7 @@ pub(super) fn new_attempt(
         cancellation_acknowledgements: Vec::new(),
         outputs: Vec::new(),
         terminal: None,
+        late_terminal_evidence: None,
         obligation: None,
         recovery: Vec::new(),
     }

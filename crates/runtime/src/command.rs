@@ -7,8 +7,9 @@ use milkdrift_capability::{
 };
 use milkdrift_persistence::{
     ActorRef, AttemptId, AuthorityDecision, CommandId, CommandReceipt, CorrelationKey,
-    EvidenceReference, LeaseId, MAX_REPEAT_CONTINUATION_ADDITIONAL_ITERATIONS, NodeExecutionId,
-    Reason, ReconciliationDecisionId, ReconciliationId, ReconciliationPlanId, ReconciliationPolicy,
+    EvidenceReference, LeaseId, MAX_COMMAND_DOCUMENT_BYTES,
+    MAX_REPEAT_CONTINUATION_ADDITIONAL_ITERATIONS, NodeExecutionId, Reason,
+    ReconciliationDecisionId, ReconciliationId, ReconciliationPlanId, ReconciliationPolicy,
     RepeatContinuationDecision, RepeatDecisionId, RunSequence, SignalDeliveryMode, SignalId,
     SignalTypeId, TimerId, TimestampMillis, WorkerId,
 };
@@ -22,7 +23,6 @@ use crate::RuntimeError;
 pub const RUN_COMMAND_SCHEMA_VERSION_V1: u32 = 1;
 /// Maximum events/references carried directly by one command.
 pub const MAX_COMMAND_ITEMS: usize = 512;
-const MAX_COMMAND_BYTES: usize = 262_144;
 
 /// Explicit operator/controller action for retained or uncertain external work.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -88,6 +88,58 @@ pub enum WorkerReport {
         /// Terminal observation.
         terminal: InvocationTerminal,
     },
+}
+
+/// Exact runtime-owned cause of one internal transition plan.
+///
+/// These values are durable audit facts. They are not accepted through the external
+/// command planner; only trusted runtime services may commit them after deriving the
+/// corresponding event family from authoritative state.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+pub enum SystemTransition {
+    /// A runnable execution was admitted and leased to one worker.
+    ScheduleAndLease {
+        /// Immutable attempt receiving the lease.
+        attempt: AttemptId,
+    },
+    /// A previously entered external boundary lost a provable terminal result.
+    DispatchOutcomeUncertain {
+        /// Affected immutable attempt.
+        attempt: AttemptId,
+    },
+    /// A deterministic immutable request failed before external dispatch.
+    TerminalizePreDispatchFailure {
+        /// Logical execution terminalized by the runtime.
+        execution: NodeExecutionId,
+    },
+    /// The runtime advanced deterministic structured-control state.
+    DriveStructuredProgress,
+    /// A cancelled execution was restarted under an applied prospective revision.
+    RestartReconciledExecution,
+    /// A terminal child workflow was observed and its declared outputs were imported.
+    ObserveChildTerminal,
+    /// Nonterminal durable state was classified after startup or lease expiry.
+    RecoverNonterminalRun,
+    /// Durable cancellation intent was propagated through structured children.
+    PropagateStructuredCancellation,
+}
+
+impl SystemTransition {
+    /// Stable audit label used by tracing and command results.
+    #[must_use]
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::ScheduleAndLease { .. } => "schedule_and_lease",
+            Self::DispatchOutcomeUncertain { .. } => "dispatch_outcome_uncertain",
+            Self::TerminalizePreDispatchFailure { .. } => "terminalize_pre_dispatch_failure",
+            Self::DriveStructuredProgress => "drive_structured_progress",
+            Self::RestartReconciledExecution => "restart_reconciled_execution",
+            Self::ObserveChildTerminal => "observe_child_terminal",
+            Self::RecoverNonterminalRun => "recover_nonterminal_run",
+            Self::PropagateStructuredCancellation => "propagate_structured_cancellation",
+        }
+    }
 }
 
 /// Closed version-one set of requested run transitions.
@@ -178,6 +230,13 @@ pub enum RunCommand {
         /// Exact remediation target, present only for compensation/remediation.
         remediation_node: Option<NodeId>,
     },
+    /// Runtime-owned internal transition cause.
+    ///
+    /// External callers cannot submit this variant through the command planner.
+    SystemTransition {
+        /// Exact closed system transition.
+        transition: SystemTransition,
+    },
     /// Authenticated internal worker report; runtime remains the transition owner.
     WorkerReport {
         /// Exact worker/controller identity.
@@ -214,6 +273,14 @@ struct RunCommandDocumentWire {
     reason: Reason,
     evidence: Vec<EvidenceReference>,
     command: RunCommand,
+}
+
+#[derive(Serialize)]
+struct RunCommandIntent<'a> {
+    schema_version: u32,
+    reason: &'a Reason,
+    evidence: &'a [EvidenceReference],
+    command: &'a RunCommand,
 }
 
 impl RunCommandDocument {
@@ -305,9 +372,9 @@ impl RunCommandDocument {
 
     /// Bounds-checks and rejects unsupported future command schemas.
     pub fn from_json(bytes: &[u8]) -> Result<Self, RuntimeError> {
-        if bytes.len() > MAX_COMMAND_BYTES {
+        if bytes.len() > MAX_COMMAND_DOCUMENT_BYTES {
             return Err(RuntimeError::InvalidCommand(format!(
-                "command document exceeds {MAX_COMMAND_BYTES} bytes"
+                "command document exceeds {MAX_COMMAND_DOCUMENT_BYTES} bytes"
             )));
         }
         reject_duplicate_json_keys(bytes)?;
@@ -341,15 +408,26 @@ impl RunCommandDocument {
         Ok(document)
     }
 
-    /// Creates the persistence-owned receipt from exact canonical bytes.
+    /// Creates the persistence-owned receipt from exact audit bytes and semantic intent.
+    ///
+    /// Optimistic sequence and delivery timestamp remain in the retained document but are
+    /// deliberately excluded from the idempotency fingerprint, allowing safe redelivery of
+    /// the same command after an ordinary aggregate-head race.
     pub fn receipt(&self) -> Result<CommandReceipt, RuntimeError> {
-        Ok(CommandReceipt::new(
+        let intent = RunCommandIntent {
+            schema_version: self.schema_version,
+            reason: &self.reason,
+            evidence: &self.evidence,
+            command: &self.command,
+        };
+        Ok(CommandReceipt::new_idempotent(
             self.command_id.clone(),
             self.run_id.clone(),
             self.actor.clone(),
             self.expected_sequence,
             self.issued_at,
             self.to_canonical_json()?,
+            canonical_json(&intent)?,
         )?)
     }
 
@@ -555,9 +633,9 @@ fn canonical_json<T: Serialize>(value: &T) -> Result<Vec<u8>, RuntimeError> {
     let mut value = serde_json::to_value(value)?;
     sort_json(&mut value);
     let bytes = serde_json::to_vec(&value)?;
-    if bytes.len() > MAX_COMMAND_BYTES {
+    if bytes.len() > MAX_COMMAND_DOCUMENT_BYTES {
         return Err(RuntimeError::InvalidCommand(format!(
-            "command document exceeds {MAX_COMMAND_BYTES} bytes"
+            "command document exceeds {MAX_COMMAND_DOCUMENT_BYTES} bytes"
         )));
     }
     Ok(bytes)

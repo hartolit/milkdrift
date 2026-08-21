@@ -314,10 +314,7 @@ fn idempotent_boundary_error_retries_exact_request_and_keeps_first_attempt_truth
         dispatches[1].request().idempotency_key()
     );
     assert!(dispatches[0].request().idempotency_key().is_some());
-    assert_eq!(
-        dispatches[0].resolution().snapshot(),
-        dispatches[1].resolution().snapshot()
-    );
+    assert_eq!(dispatches[0].resolution(), dispatches[1].resolution());
     assert_eq!(
         dispatches[0].request().capability(),
         dispatches[1].request().capability()

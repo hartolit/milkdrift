@@ -30,11 +30,11 @@ fn revision_lookup_and_integrity_scan_detect_physical_key_mismatches()
         let mut revisions = write.open_table(REVISIONS)?;
         revisions.insert(wrong_revision.as_str(), revision_bytes.as_slice())?;
         let mut events = write.open_table(EVENTS)?;
-        let event_bytes = request.events[0].to_canonical_json()?;
+        let event_bytes = request.events()[0].to_canonical_json()?;
         let mut wrong_event_key = Vec::new();
         wrong_event_key
-            .extend_from_slice(&(request.receipt.run().as_str().len() as u32).to_be_bytes());
-        wrong_event_key.extend_from_slice(request.receipt.run().as_str().as_bytes());
+            .extend_from_slice(&(request.receipt().run().as_str().len() as u32).to_be_bytes());
+        wrong_event_key.extend_from_slice(request.receipt().run().as_str().as_bytes());
         wrong_event_key.extend_from_slice(&2_u64.to_be_bytes());
         events.insert(wrong_event_key.as_slice(), event_bytes.as_slice())?;
     }
@@ -277,9 +277,9 @@ fn verified_snapshot_survives_reopen() -> Result<(), Box<dyn std::error::Error>>
     )?;
     let snapshot = SnapshotDocument::new(
         SnapshotId::new("snapshot-one")?,
-        request.receipt.run().clone(),
+        request.receipt().run().clone(),
         RunSequence::FIRST,
-        history_digest(&request.events)?,
+        history_digest(request.events())?,
         1,
         br#"{"projection":"stable"}"#.to_vec(),
     )?;
@@ -288,13 +288,13 @@ fn verified_snapshot_survives_reopen() -> Result<(), Box<dyn std::error::Error>>
         store.commit_command(&request)?;
         store.put_snapshot(&snapshot)?;
         assert_eq!(
-            store.latest_snapshot(request.receipt.run())?,
+            store.latest_snapshot(request.receipt().run())?,
             SnapshotLoad::Verified(snapshot.clone())
         );
     }
     let store = RedbStore::open(directory.path())?;
     assert_eq!(
-        store.latest_snapshot(request.receipt.run())?,
+        store.latest_snapshot(request.receipt().run())?,
         SnapshotLoad::Verified(snapshot)
     );
     Ok(())

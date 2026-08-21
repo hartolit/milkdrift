@@ -93,24 +93,24 @@ impl RuntimeService {
         } else {
             IndexedRunState::Active
         };
-        let mut update = RunIndexUpdate {
-            summary: Some(RunSummaryIndex {
-                run: run.clone(),
-                workflow: workflow.clone(),
-                revision: revision_id.clone(),
-                state,
-                through_sequence: through,
-                updated_at,
-            }),
-            ..RunIndexUpdate::default()
+        let summary = RunSummaryIndex {
+            run: run.clone(),
+            workflow: workflow.clone(),
+            revision: revision_id.clone(),
+            state,
+            through_sequence: through,
+            updated_at,
         };
+        let mut runnable_mutations = Vec::new();
+        let mut timer_mutations = Vec::new();
+        let mut lease_mutations = Vec::new();
 
         let old_runnable = self.runnable_executions(old)?;
         for (execution, eligible_at) in &runnable {
             if old_runnable.get(execution) == Some(eligible_at) {
                 continue;
             }
-            update.runnable.push(RunnableIndexMutation::Upsert {
+            runnable_mutations.push(RunnableIndexMutation::Upsert {
                 entry: RunnableIndexEntry {
                     run: run.clone(),
                     execution: execution.clone(),
@@ -124,7 +124,7 @@ impl RuntimeService {
             .keys()
             .filter(|execution| !runnable.contains_key(*execution))
         {
-            update.runnable.push(RunnableIndexMutation::Remove {
+            runnable_mutations.push(RunnableIndexMutation::Remove {
                 run: run.clone(),
                 execution: execution.clone(),
             });
@@ -146,7 +146,7 @@ impl RuntimeService {
             if old_timers.get(timer) == Some(fire_at) {
                 continue;
             }
-            update.timers.push(TimerIndexMutation::Upsert {
+            timer_mutations.push(TimerIndexMutation::Upsert {
                 entry: TimerIndexEntry {
                     run: run.clone(),
                     timer: timer.clone(),
@@ -159,7 +159,7 @@ impl RuntimeService {
             .keys()
             .filter(|timer| !new_timers.contains_key(*timer))
         {
-            update.timers.push(TimerIndexMutation::Remove {
+            timer_mutations.push(TimerIndexMutation::Remove {
                 run: run.clone(),
                 timer: timer.clone(),
             });
@@ -189,7 +189,7 @@ impl RuntimeService {
             }) {
                 continue;
             }
-            update.leases.push(LeaseIndexMutation::Upsert {
+            lease_mutations.push(LeaseIndexMutation::Upsert {
                 entry: LeaseIndexEntry {
                     run: run.clone(),
                     lease: lease.clone(),
@@ -201,12 +201,17 @@ impl RuntimeService {
             });
         }
         for lease in old_leases.difference(&new_leases) {
-            update.leases.push(LeaseIndexMutation::Remove {
+            lease_mutations.push(LeaseIndexMutation::Remove {
                 run: run.clone(),
                 lease: lease.clone(),
             });
         }
-        Ok(update)
+        Ok(RunIndexUpdate::new(
+            Some(summary),
+            runnable_mutations,
+            timer_mutations,
+            lease_mutations,
+        ))
     }
 
     pub(super) fn current_revision(

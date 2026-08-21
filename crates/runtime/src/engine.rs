@@ -8,29 +8,34 @@ use std::{
     collections::BTreeMap,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
     },
 };
 
 use milkdrift_blueprint::NodeId;
 use milkdrift_persistence::{
     ActorRef, ArtifactStore, AtomicRunCommitOutcome, AttemptId, CommandResultDocument,
-    MAX_PAGE_SIZE, NodeExecutionId, PageSize, PersistenceError, Reason, RepeatContinuationDecision,
-    RevisionStore, RunEventEnvelope, RunJournal, RunQueryStore, RunSequence, RunSummaryCursor,
-    RunnableCursor, SnapshotStore, StorageAdmin, StorageHealth, StorageSchemaCompatibility,
-    TimestampMillis, WorkerId, WorkspaceStore,
+    IntegrityScanRequest, MAX_PAGE_SIZE, NodeExecutionId, PageSize, PersistenceError, Reason,
+    RepeatContinuationDecision, RevisionStore, RunEventEnvelope, RunJournal, RunQueryStore,
+    RunSequence, RunSummaryCursor, RunnableCursor, SnapshotDocument, SnapshotId, SnapshotStore,
+    StorageAdmin, StorageHealth, StorageSchemaCompatibility, TimestampMillis, WorkerId,
+    WorkspaceStore,
 };
 use milkdrift_workspace::{BranchId, RunId, ScopeReference, SubworkflowId};
 use tracing::{debug, info, info_span, warn};
 
 use crate::projection::RunProjection;
-use crate::query::{load_bounded_history, project_complete_history};
+use crate::query::{
+    RUN_PROJECTION_SNAPSHOT_SCHEMA_V1, encode_projection_snapshot, load_bounded_history,
+    project_from_latest_snapshot,
+};
 use crate::{
     BoundaryClock, IdGenerator, RetryPolicy, RunCommand, RunCommandDocument, RuntimeError,
     SchedulerLimits, TaskExecutor,
 };
 
 const STRUCTURED_EVENT_SOFT_LIMIT: usize = milkdrift_persistence::MAX_EVENTS_PER_COMMIT - 192;
+const PROJECTION_SNAPSHOT_INTERVAL_EVENTS: u64 = 128;
 // Invocation requests larger than half an event document are rejected before any
 // attempt/lease fact is committed. The remaining half covers the enclosing event,
 // every maximum-length durable identity, and future schema-v1-compatible fields.
@@ -58,6 +63,32 @@ impl<T> RuntimeStore for T where
         + ArtifactStore
         + StorageAdmin
 {
+}
+
+/// Startup progress for a runtime handle.
+///
+/// Admission is a separate reversible gate. A runtime may be fully recovered but
+/// temporarily closed for shutdown; it may never be reopened before reaching
+/// [`Self::RecoveryCompleted`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum RuntimeStartupState {
+    /// The storage schema is current, but integrity and restart recovery have not run.
+    OpenedClosed = 0,
+    /// A complete read-only integrity scan succeeded.
+    IntegrityVerified = 1,
+    /// Nonterminal runs were recovered to a bounded fixed point.
+    RecoveryCompleted = 2,
+}
+
+impl RuntimeStartupState {
+    fn from_u8(value: u8) -> Self {
+        match value {
+            0 => Self::OpenedClosed,
+            1 => Self::IntegrityVerified,
+            _ => Self::RecoveryCompleted,
+        }
+    }
 }
 
 /// Bounded scheduler and recovery policy owned by one service instance.
@@ -148,6 +179,23 @@ pub struct SchedulerTickResult {
     pub uncertain: u32,
 }
 
+/// Bounded observations from one explicit external-effect host call.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct EffectTickResult {
+    /// Durable effects claimed from already committed leases/cancellation intents.
+    pub claimed: u32,
+    /// Invocation and heartbeat observations durably incorporated.
+    pub observations: u32,
+    /// Invocations whose terminal observation became durable.
+    pub completed: u32,
+    /// Invocations retained because the external boundary returned without a terminal fact.
+    pub uncertain: u32,
+    /// Cancellation requests durably acknowledged.
+    pub cancellations: u32,
+    /// Cancellation requests whose adapter boundary failed and remain eligible for redelivery.
+    pub cancellation_deferred: u32,
+}
+
 /// Bounded observations from one explicit restart-recovery call.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RecoveryResult {
@@ -168,6 +216,8 @@ pub struct RuntimeHealth {
     pub observed_at: TimestampMillis,
     /// Whether this process currently admits create/start/resume/dispatch work.
     pub accepting_admission: bool,
+    /// Completed startup gate. Admission cannot be reopened before recovery completes.
+    pub startup_state: RuntimeStartupState,
     /// Configured worker/controller identity.
     pub worker: WorkerId,
     /// Durable adapter health and schema facts.
@@ -186,6 +236,8 @@ pub struct RuntimeService {
     ids: Arc<dyn IdGenerator>,
     config: RuntimeConfig,
     accepting_admission: AtomicBool,
+    startup_state: AtomicU8,
+    startup_gate: Mutex<()>,
     scheduler_gate: Mutex<()>,
     runnable_cursor: Mutex<Option<RunnableCursor>>,
     recovery_cursor: Mutex<Option<RunSummaryCursor>>,
@@ -201,7 +253,7 @@ pub struct RuntimeService {
     cancellation_branch_cursors: Mutex<BTreeMap<RunId, BranchId>>,
     cancellation_subworkflow_cursors: Mutex<BTreeMap<RunId, SubworkflowId>>,
     cancellation_execution_cursors: Mutex<BTreeMap<RunId, NodeExecutionId>>,
-    cancellation_attempt_cursors: Mutex<BTreeMap<RunId, AttemptId>>,
+    effect_claim_gate: Mutex<()>,
     structured_scan_budget_active: AtomicBool,
     structured_scan_budget: AtomicUsize,
 }
@@ -209,6 +261,7 @@ pub struct RuntimeService {
 mod command_planning;
 mod completion;
 mod dispatch;
+mod effects;
 mod reconciliation;
 mod recovery;
 mod scheduling;
@@ -217,11 +270,33 @@ mod structured;
 mod support;
 mod workspace;
 
+pub use effects::EffectExecutionResult;
 use support::{command_kind_name, durable_rejection};
 
 impl RuntimeService {
-    /// Opens a headless service after refusing non-current physical storage schemas.
+    /// Opens, integrity-checks, recovers, and only then admits work.
+    ///
+    /// Hosts that need to expose startup progress may call [`Self::open_closed`] and
+    /// [`Self::initialize_startup`] explicitly. No constructor returns an admitting
+    /// handle before both gates complete.
     pub fn new(
+        store: Arc<dyn RuntimeStore>,
+        executor: Arc<dyn TaskExecutor>,
+        clock: Arc<dyn BoundaryClock>,
+        ids: Arc<dyn IdGenerator>,
+        config: RuntimeConfig,
+    ) -> Result<Self, RuntimeError> {
+        let service = Self::open_closed(store, executor, clock, ids, config)?;
+        service.initialize_startup()?;
+        Ok(service)
+    }
+
+    /// Opens a schema-compatible runtime with admission closed.
+    ///
+    /// This is the only intentionally uninitialized constructor. The returned
+    /// handle may serve health/startup queries, but create/start/resume/dispatch
+    /// work remains rejected until [`Self::initialize_startup`] succeeds.
+    pub fn open_closed(
         store: Arc<dyn RuntimeStore>,
         executor: Arc<dyn TaskExecutor>,
         clock: Arc<dyn BoundaryClock>,
@@ -253,7 +328,9 @@ impl RuntimeService {
             clock,
             ids,
             config,
-            accepting_admission: AtomicBool::new(true),
+            accepting_admission: AtomicBool::new(false),
+            startup_state: AtomicU8::new(RuntimeStartupState::OpenedClosed as u8),
+            startup_gate: Mutex::new(()),
             scheduler_gate: Mutex::new(()),
             runnable_cursor: Mutex::new(None),
             recovery_cursor: Mutex::new(None),
@@ -269,10 +346,118 @@ impl RuntimeService {
             cancellation_branch_cursors: Mutex::new(BTreeMap::new()),
             cancellation_subworkflow_cursors: Mutex::new(BTreeMap::new()),
             cancellation_execution_cursors: Mutex::new(BTreeMap::new()),
-            cancellation_attempt_cursors: Mutex::new(BTreeMap::new()),
+            effect_claim_gate: Mutex::new(()),
             structured_scan_budget_active: AtomicBool::new(false),
             structured_scan_budget: AtomicUsize::new(0),
         })
+    }
+
+    fn verify_complete_integrity(&self) -> Result<(), RuntimeError> {
+        let limit = PageSize::new(MAX_PAGE_SIZE)?;
+        let mut cursor = None;
+        loop {
+            let result = self.store.scan_integrity(IntegrityScanRequest {
+                limit,
+                verify_artifact_content: true,
+                cursor: cursor.clone(),
+            })?;
+            if !result.failures.is_empty() {
+                let details = result
+                    .failures
+                    .iter()
+                    .take(8)
+                    .map(|failure| {
+                        format!(
+                            "{}: {}",
+                            failure.component.as_str(),
+                            failure.detail.as_str()
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                return Err(RuntimeError::InvalidHistory(format!(
+                    "startup integrity verification found {} failure(s): {details}",
+                    result.failures.len()
+                )));
+            }
+            let Some(next) = result.next_cursor else {
+                return Ok(());
+            };
+            if cursor.as_ref() == Some(&next) {
+                return Err(RuntimeError::InvalidHistory(
+                    "startup integrity cursor did not advance".to_owned(),
+                ));
+            }
+            cursor = Some(next);
+        }
+    }
+
+    fn recover_startup_to_completion(&self) -> Result<(), RuntimeError> {
+        loop {
+            let _ = self.recover()?;
+            let page_complete = self
+                .recovery_cursor
+                .lock()
+                .map_err(|_error| {
+                    RuntimeError::Scheduling(
+                        "runtime recovery pagination cursor lock is poisoned".to_owned(),
+                    )
+                })?
+                .is_none();
+            let attempts_complete = self
+                .recovery_attempt_cursors
+                .lock()
+                .map_err(|_error| {
+                    RuntimeError::Scheduling(
+                        "runtime recovery attempt cursor lock is poisoned".to_owned(),
+                    )
+                })?
+                .is_empty();
+            if page_complete && attempts_complete {
+                return Ok(());
+            }
+        }
+    }
+
+    pub(super) fn should_checkpoint_projection(
+        &self,
+        previous: RunSequence,
+        current: &RunProjection,
+    ) -> bool {
+        current.sequence().get() / PROJECTION_SNAPSHOT_INTERVAL_EVENTS
+            > previous.get() / PROJECTION_SNAPSHOT_INTERVAL_EVENTS
+            || current.lifecycle().is_completed()
+    }
+
+    pub(super) fn persist_projection_snapshot(
+        &self,
+        run: &RunId,
+        projection: &RunProjection,
+    ) -> Result<(), RuntimeError> {
+        if projection.sequence() == RunSequence::ZERO || projection.run_id() != Some(run) {
+            return Err(RuntimeError::InvalidHistory(
+                "projection snapshot requires a non-empty matching aggregate".to_owned(),
+            ));
+        }
+        let payload = encode_projection_snapshot(projection)?;
+        let history_digest = self.store.history_digest(run, projection.sequence())?;
+        let mut identity = blake3::Hasher::new();
+        identity.update(b"milkdrift.runtime-projection-snapshot.v1\0");
+        identity.update(run.as_str().as_bytes());
+        identity.update(&projection.sequence().get().to_be_bytes());
+        let snapshot = SnapshotId::new(format!(
+            "projection-{}",
+            &identity.finalize().to_hex().as_str()[..32]
+        ))?;
+        self.store.put_snapshot(&SnapshotDocument::new(
+            snapshot,
+            run.clone(),
+            projection.sequence(),
+            history_digest,
+            RUN_PROJECTION_SNAPSHOT_SCHEMA_V1,
+            payload,
+        )?)?;
+        Ok(())
     }
 
     /// Builds a complete command using the injected clock and identity boundary.
@@ -297,9 +482,10 @@ impl RuntimeService {
         )
     }
 
-    /// Reads and purely replays the complete authoritative run history.
+    /// Loads the latest verified operational checkpoint and replays only its
+    /// authoritative tail. Complete history remains available from the journal.
     pub fn projection(&self, run: &RunId) -> Result<RunProjection, RuntimeError> {
-        project_complete_history(self.store.as_ref(), run)
+        project_from_latest_snapshot(self.store.as_ref(), run)
     }
 
     /// Reads at most one persistence page of checksummed history for diagnostics/tests.
@@ -316,9 +502,50 @@ impl RuntimeService {
         self.accepting_admission.store(false, Ordering::SeqCst);
     }
 
-    /// Re-opens admission after the owner has completed restart/recovery coordination.
-    pub fn resume_admission(&self) {
+    /// Runs complete integrity verification and restart recovery before admission.
+    ///
+    /// The operation is idempotent. A failure leaves admission closed and preserves
+    /// the last successfully completed startup stage for an explicit retry.
+    pub fn initialize_startup(&self) -> Result<(), RuntimeError> {
+        let _guard = self.startup_gate.lock().map_err(|_error| {
+            RuntimeError::Scheduling("runtime startup coordination lock is poisoned".to_owned())
+        })?;
+        self.accepting_admission.store(false, Ordering::SeqCst);
+
+        if self.startup_state() == RuntimeStartupState::OpenedClosed {
+            self.verify_complete_integrity()?;
+            self.startup_state.store(
+                RuntimeStartupState::IntegrityVerified as u8,
+                Ordering::SeqCst,
+            );
+        }
+        if self.startup_state() == RuntimeStartupState::IntegrityVerified {
+            self.recover_startup_to_completion()?;
+            self.startup_state.store(
+                RuntimeStartupState::RecoveryCompleted as u8,
+                Ordering::SeqCst,
+            );
+        }
         self.accepting_admission.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// Re-opens admission only after integrity and restart recovery completed.
+    pub fn resume_admission(&self) -> Result<(), RuntimeError> {
+        if self.startup_state() != RuntimeStartupState::RecoveryCompleted {
+            return Err(RuntimeError::Scheduling(
+                "runtime admission cannot open before integrity verification and recovery complete"
+                    .to_owned(),
+            ));
+        }
+        self.accepting_admission.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// Last successfully completed startup stage.
+    #[must_use]
+    pub fn startup_state(&self) -> RuntimeStartupState {
+        RuntimeStartupState::from_u8(self.startup_state.load(Ordering::SeqCst))
     }
 
     /// Current in-process admission gate; durable run state remains authoritative.
@@ -333,6 +560,7 @@ impl RuntimeService {
         Ok(RuntimeHealth {
             observed_at,
             accepting_admission: self.is_accepting_admission(),
+            startup_state: self.startup_state(),
             worker: self.config.worker.clone(),
             storage: self.store.health(observed_at)?,
         })
@@ -376,7 +604,7 @@ impl RuntimeService {
             });
         }
 
-        let projection = project_complete_history(self.store.as_ref(), command.run_id())?;
+        let projection = self.projection(command.run_id())?;
         if projection.sequence() != command.expected_sequence() {
             return Err(PersistenceError::SequenceConflict {
                 run: command.run_id().clone(),

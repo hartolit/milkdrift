@@ -439,7 +439,7 @@ impl ArtifactStore for RedbStore {
         let final_path = self.content_path(record.metadata.reference().digest());
         let final_parent = final_path
             .parent()
-            .ok_or_else(|| crate::store::internal("artifact path has no parent"))?;
+            .ok_or_else(|| crate::error::internal("artifact path has no parent"))?;
         let parent_existed = final_parent.exists();
         crate::store::prepare_owned_directory(final_parent, "artifact digest shard")?;
         if !parent_existed {

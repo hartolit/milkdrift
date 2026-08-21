@@ -3,7 +3,7 @@ use milkdrift_persistence::{
     SnapshotDocument, SnapshotId, SnapshotLoad, SnapshotStore,
 };
 use milkdrift_workspace::RunId;
-use redb::{ReadableTable, ReadableTableMetadata};
+use redb::ReadableTable;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -555,165 +555,26 @@ fn validated_history_checkpoint(
     Ok(decode_history_checkpoint(stored, run, through)?.digest)
 }
 
-pub(crate) fn migrate_snapshot_catalogs(
-    write: &redb::WriteTransaction,
-) -> Result<(), PersistenceError> {
-    let snapshots = write.open_table(SNAPSHOTS).map_err(error::redb)?;
-    {
-        let latest = write.open_table(SNAPSHOT_LATEST).map_err(error::redb)?;
-        for item in latest.iter().map_err(error::redb)? {
-            let (run, snapshot_id) = item.map_err(error::redb)?;
-            let run = RunId::new(run.value()).map_err(|cause| {
-                error::corruption(format!("legacy snapshot run identity is invalid: {cause}"))
-            })?;
-            let snapshot_id = SnapshotId::new(snapshot_id.value()).map_err(|cause| {
-                error::corruption(format!(
-                    "legacy snapshot latest identity is invalid: {cause}"
-                ))
-            })?;
-            let key = codec::pair(run.as_str(), snapshot_id.as_str())?;
-            let document = snapshots
-                .get(key.as_slice())
-                .map_err(error::redb)?
-                .ok_or_else(|| error::corruption("legacy snapshot latest pointer is dangling"))?;
-            let snapshot = decode_stored_snapshot(document.value())?;
-            if snapshot.run() != &run || snapshot.snapshot() != &snapshot_id {
-                return Err(error::corruption(
-                    "legacy snapshot latest pointer disagrees with its document",
-                ));
-            }
-        }
-    }
-    let mut current: Option<(RunId, [u8; 32], SnapshotId)> = None;
-    let mut run_groups = 0_u64;
-    for item in snapshots.iter().map_err(error::redb)? {
-        let (key, bytes) = item.map_err(error::redb)?;
-        let key = key.value().to_vec();
-        let document = bytes.value().to_vec();
-        let snapshot = decode_stored_snapshot(&document)?;
-        let expected_key = codec::pair(snapshot.run().as_str(), snapshot.snapshot().as_str())?;
-        if key != expected_key {
-            return Err(error::corruption(
-                "legacy snapshot key disagrees with its verified document",
-            ));
-        }
-        if history_digest_write(write, snapshot.run(), snapshot.covered_sequence())?
-            != *snapshot.history_digest()
-        {
-            return Err(error::corruption(
-                "legacy snapshot digest disagrees with its authenticated history checkpoint",
-            ));
-        }
-        for (family, path) in [
-            (
-                crate::trie::CatalogFamily::SnapshotIdentity,
-                snapshot_identity_path(&key),
-            ),
-            (
-                crate::trie::CatalogFamily::SnapshotOrdered,
-                snapshot_ordered_path(&snapshot, &key)?,
-            ),
-        ] {
-            if crate::trie::put(
-                write,
-                family,
-                path,
-                &key,
-                crate::trie::digest_payload(family, &document),
-            )?
-            .is_some()
-            {
-                return Err(error::corruption(
-                    "legacy snapshot catalog contains a duplicate leaf",
-                ));
-            }
-        }
-        let ordered_path = snapshot_ordered_path(&snapshot, &key)?;
-        match current.as_mut() {
-            Some((run, best_path, best_id)) if run == snapshot.run() => {
-                if ordered_path > *best_path {
-                    *best_path = ordered_path;
-                    *best_id = snapshot.snapshot().clone();
-                }
-            }
-            Some((run, _, best_id)) => {
-                persist_migrated_snapshot_latest(write, run, best_id)?;
-                run_groups = run_groups
-                    .checked_add(1)
-                    .ok_or_else(|| error::corruption("snapshot run group count overflowed"))?;
-                current = Some((
-                    snapshot.run().clone(),
-                    ordered_path,
-                    snapshot.snapshot().clone(),
-                ));
-            }
-            None => {
-                current = Some((
-                    snapshot.run().clone(),
-                    ordered_path,
-                    snapshot.snapshot().clone(),
-                ));
-            }
-        }
-    }
-    if let Some((run, _, best_id)) = current.as_ref() {
-        persist_migrated_snapshot_latest(write, run, best_id)?;
-        run_groups = run_groups
-            .checked_add(1)
-            .ok_or_else(|| error::corruption("snapshot run group count overflowed"))?;
-    }
-    drop(snapshots);
-    let latest = write.open_table(SNAPSHOT_LATEST).map_err(error::redb)?;
-    if latest.len().map_err(error::redb)? != run_groups {
-        return Err(error::corruption(
-            "legacy snapshot latest index and snapshot run groups disagree",
-        ));
-    }
-    Ok(())
-}
-
-fn persist_migrated_snapshot_latest(
-    write: &redb::WriteTransaction,
-    run: &RunId,
-    canonical_latest: &SnapshotId,
-) -> Result<(), PersistenceError> {
-    let previous = {
-        let latest = write.open_table(SNAPSHOT_LATEST).map_err(error::redb)?;
-        latest
-            .get(run.as_str())
-            .map_err(error::redb)?
-            .map(|value| value.value().to_owned())
-    }
-    .ok_or_else(|| error::corruption("legacy snapshot run has no latest pointer"))?;
-    let _previous = SnapshotId::new(previous).map_err(|cause| {
-        error::corruption(format!(
-            "legacy snapshot latest identity is invalid: {cause}"
-        ))
-    })?;
-    {
-        let mut latest = write.open_table(SNAPSHOT_LATEST).map_err(error::redb)?;
-        latest
-            .insert(run.as_str(), canonical_latest.as_str())
-            .map_err(error::redb)?;
-    }
-    let family = crate::trie::CatalogFamily::SnapshotLatest;
-    if crate::trie::put(
-        write,
-        family,
-        snapshot_latest_path(run),
-        run.as_str().as_bytes(),
-        crate::trie::digest_payload(family, canonical_latest.as_str().as_bytes()),
-    )?
-    .is_some()
-    {
-        return Err(error::corruption(
-            "legacy snapshot latest catalog contains a duplicate leaf",
-        ));
-    }
-    Ok(())
-}
-
 impl SnapshotStore for RedbStore {
+    fn history_digest(
+        &self,
+        run: &RunId,
+        through: RunSequence,
+    ) -> Result<IntegrityDigest, PersistenceError> {
+        let read = self.database().begin_read().map_err(error::redb)?;
+        let head = {
+            let heads = read.open_table(RUN_HEADS).map_err(error::redb)?;
+            let events = read.open_table(RUN_EVENTS).map_err(error::redb)?;
+            crate::journal::validated_run_head(&heads, &events, run)?
+        };
+        if through == RunSequence::ZERO || through > head {
+            return Err(PersistenceError::InvalidDocument(format!(
+                "history digest sequence {through} is outside run {run} head {head}"
+            )));
+        }
+        history_digest_read(&read, run, through)
+    }
+
     #[tracing::instrument(
         name = "milkdrift.redb_store.put_snapshot",
         skip_all,
@@ -908,7 +769,6 @@ impl SnapshotStore for RedbStore {
         drop(snapshots);
         let snapshot = match decode_stored_snapshot(&document) {
             Ok(snapshot) => snapshot,
-            Err(cause @ PersistenceError::UnsupportedVersion { .. }) => return Err(cause),
             Err(cause) => return rejected(Some(snapshot_id), cause.to_string()),
         };
         if snapshot.run() != run || snapshot.snapshot() != &snapshot_id {

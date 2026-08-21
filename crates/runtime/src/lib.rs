@@ -22,25 +22,26 @@ pub use boundary::{
 };
 pub use command::{
     ExternalWorkAction, MAX_COMMAND_ITEMS, RUN_COMMAND_SCHEMA_VERSION_V1, RunCommand,
-    RunCommandDocument, WorkerReport,
+    RunCommandDocument, SystemTransition, WorkerReport,
 };
 pub use engine::{
-    CommandExecution, RecoveryResult, RuntimeConfig, RuntimeHealth, RuntimeService, RuntimeStore,
-    SchedulerTickResult,
+    CommandExecution, EffectExecutionResult, EffectTickResult, RecoveryResult, RuntimeConfig,
+    RuntimeHealth, RuntimeService, RuntimeStartupState, RuntimeStore, SchedulerTickResult,
 };
 pub use error::RuntimeError;
 pub use executor::{
-    DeterministicExecutor, ExecutionDispatch, ExecutionReportBatch, ExecutorError,
-    MAX_REPORTS_PER_DISPATCH, ResolvedCapability, TaskExecutor,
+    CancellationDispatch, DeterministicExecutor, EffectAction, ExecutionDispatch,
+    ExecutionReportBatch, ExecutionReporter, ExecutorError, MAX_REPORTS_PER_DISPATCH,
+    ObservationDisposition, ResolvedCapability, TaskExecutor,
 };
 pub use projection::{
     AttemptState, AttemptTerminal, BranchProjection, BranchState, CapabilityResolution,
     DeterministicNodeTerminalProjection, ExternalOutcomeObligation, IterationProjection,
-    IterationState, JoinProjection, LeaseProjection, LeaseState, NodeAttemptProjection,
-    NodeExecutionCancellationProjection, NodeExecutionProjection, NodeExecutionState,
-    ProgressObservation, PublishedNodeOutput, ReconciliationCancellationProjection,
-    ReconciliationDecision, ReconciliationPlanProjection, ReconciliationProjection,
-    ReconciliationRemediationProjection, ReconciliationRequestProjection,
+    IterationState, JoinProjection, LateTerminalEvidence, LeaseProjection, LeaseState,
+    NodeAttemptProjection, NodeExecutionCancellationProjection, NodeExecutionProjection,
+    NodeExecutionState, ProgressObservation, PublishedNodeOutput,
+    ReconciliationCancellationProjection, ReconciliationDecision, ReconciliationPlanProjection,
+    ReconciliationProjection, ReconciliationRemediationProjection, ReconciliationRequestProjection,
     ReconciliationRequestState, RecoveryDecision, RecoveryObservation, RecoveryProjection,
     RemediationProjection, RepeatContinuationDecisionProjection, RepeatContinuationProjection,
     RepeatContinuationRequestProjection, RepeatTermination, ResourceUsage, RetainedExternalOutcome,

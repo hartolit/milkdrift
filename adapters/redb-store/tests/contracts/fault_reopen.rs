@@ -87,10 +87,10 @@ fn command_fault_boundaries_are_atomic_and_replayable() -> Result<(), Box<dyn st
     )?;
     let request = accepted_request("run-before", "command-before", "event-before", "start")?;
     assert!(before.commit_command(&request).is_err());
-    assert_eq!(before.head(request.receipt.run())?, RunSequence::ZERO);
+    assert_eq!(before.head(request.receipt().run())?, RunSequence::ZERO);
     assert!(
         before
-            .command_result(request.receipt.run(), request.receipt.command())?
+            .command_result(request.receipt().run(), request.receipt().command())?
             .is_none()
     );
 
@@ -101,7 +101,7 @@ fn command_fault_boundaries_are_atomic_and_replayable() -> Result<(), Box<dyn st
     )?;
     let request = accepted_request("run-after", "command-after", "event-after", "start")?;
     assert!(after.commit_command(&request).is_err());
-    assert_eq!(after.head(request.receipt.run())?, RunSequence::FIRST);
+    assert_eq!(after.head(request.receipt().run())?, RunSequence::FIRST);
     assert!(matches!(
         after.commit_command(&request)?,
         AtomicRunCommitOutcome::Replayed(_)
@@ -160,9 +160,9 @@ fn snapshot_put_and_discard_fault_boundaries_reopen_safely()
         )?;
         let snapshot = SnapshotDocument::new(
             SnapshotId::new(format!("snapshot-put-{index}"))?,
-            request.receipt.run().clone(),
+            request.receipt().run().clone(),
             RunSequence::FIRST,
-            history_digest(&request.events)?,
+            history_digest(request.events())?,
             1,
             b"projection".to_vec(),
         )?;
@@ -177,18 +177,18 @@ fn snapshot_put_and_discard_fault_boundaries_reopen_safely()
         let reopened = RedbStore::open(directory.path())?;
         if point == FaultPoint::BeforeSnapshotCommit {
             assert_eq!(
-                reopened.latest_snapshot(request.receipt.run())?,
+                reopened.latest_snapshot(request.receipt().run())?,
                 SnapshotLoad::Absent
             );
         } else {
             assert_eq!(
-                reopened.latest_snapshot(request.receipt.run())?,
+                reopened.latest_snapshot(request.receipt().run())?,
                 SnapshotLoad::Verified(snapshot.clone())
             );
         }
         reopened.put_snapshot(&snapshot)?;
         assert_eq!(
-            reopened.latest_snapshot(request.receipt.run())?,
+            reopened.latest_snapshot(request.receipt().run())?,
             SnapshotLoad::Verified(snapshot)
         );
     }
@@ -209,9 +209,9 @@ fn snapshot_put_and_discard_fault_boundaries_reopen_safely()
         )?;
         let snapshot = SnapshotDocument::new(
             SnapshotId::new(format!("snapshot-discard-{index}"))?,
-            request.receipt.run().clone(),
+            request.receipt().run().clone(),
             RunSequence::FIRST,
-            history_digest(&request.events)?,
+            history_digest(request.events())?,
             1,
             b"projection".to_vec(),
         )?;
@@ -223,7 +223,7 @@ fn snapshot_put_and_discard_fault_boundaries_reopen_safely()
         store.put_snapshot(&snapshot)?;
         assert!(
             store
-                .discard_snapshot(request.receipt.run(), snapshot.snapshot())
+                .discard_snapshot(request.receipt().run(), snapshot.snapshot())
                 .is_err()
         );
         drop(store);
@@ -231,18 +231,18 @@ fn snapshot_put_and_discard_fault_boundaries_reopen_safely()
         let reopened = RedbStore::open(directory.path())?;
         if point == FaultPoint::BeforeSnapshotDiscardCommit {
             assert_eq!(
-                reopened.latest_snapshot(request.receipt.run())?,
+                reopened.latest_snapshot(request.receipt().run())?,
                 SnapshotLoad::Verified(snapshot.clone())
             );
         } else {
             assert_eq!(
-                reopened.latest_snapshot(request.receipt.run())?,
+                reopened.latest_snapshot(request.receipt().run())?,
                 SnapshotLoad::Absent
             );
         }
-        reopened.discard_snapshot(request.receipt.run(), snapshot.snapshot())?;
+        reopened.discard_snapshot(request.receipt().run(), snapshot.snapshot())?;
         assert_eq!(
-            reopened.latest_snapshot(request.receipt.run())?,
+            reopened.latest_snapshot(request.receipt().run())?,
             SnapshotLoad::Absent
         );
     }
@@ -255,7 +255,7 @@ fn malformed_stored_event_is_classified_as_corruption() -> Result<(), Box<dyn st
         TableDefinition::new("milkdrift.v1.runs.events");
     let directory = TempDir::new()?;
     let request = accepted_request("run-corrupt", "command-corrupt", "event-corrupt", "start")?;
-    let run = request.receipt.run().clone();
+    let run = request.receipt().run().clone();
     {
         let store = RedbStore::open(directory.path())?;
         store.commit_command(&request)?;
@@ -478,13 +478,13 @@ fn missing_summary_usage_or_budget_rows_are_classified_as_corruption()
     let write = database.begin_write()?;
     {
         let mut summaries = write.open_table(SUMMARIES)?;
-        let _removed = summaries.remove(summary_request.receipt.run().as_str())?;
+        let _removed = summaries.remove(summary_request.receipt().run().as_str())?;
     }
     write.commit()?;
     drop(database);
     let store = RedbStore::open(summary_directory.path())?;
     assert!(matches!(
-        store.run_summary(summary_request.receipt.run()),
+        store.run_summary(summary_request.receipt().run()),
         Err(PersistenceError::Storage {
             class: StorageFailureClass::Corruption,
             ..
@@ -508,7 +508,7 @@ fn missing_summary_usage_or_budget_rows_are_classified_as_corruption()
         let write = database.begin_write()?;
         {
             let mut rows = write.open_table(table)?;
-            let _removed = rows.remove(request.receipt.run().as_str())?;
+            let _removed = rows.remove(request.receipt().run().as_str())?;
         }
         write.commit()?;
         drop(database);
@@ -516,7 +516,7 @@ fn missing_summary_usage_or_budget_rows_are_classified_as_corruption()
         let store = RedbStore::open(directory.path())?;
         if suffix == "usage" {
             assert!(matches!(
-                store.workspace_usage(request.receipt.run()),
+                store.workspace_usage(request.receipt().run()),
                 Err(PersistenceError::Storage {
                     class: StorageFailureClass::Corruption,
                     ..
@@ -524,7 +524,7 @@ fn missing_summary_usage_or_budget_rows_are_classified_as_corruption()
             ));
         }
         let followup = accepted_followup_request(
-            request.receipt.run().clone(),
+            request.receipt().run().clone(),
             &format!("command-after-missing-{suffix}"),
             &format!("event-after-missing-{suffix}"),
         )?;
@@ -536,138 +536,5 @@ fn missing_summary_usage_or_budget_rows_are_classified_as_corruption()
             })
         ));
     }
-    Ok(())
-}
-
-#[test]
-fn enveloped_v1_store_backfills_discovery_accounting_atomically()
--> Result<(), Box<dyn std::error::Error>> {
-    const METADATA: TableDefinition<'static, &'static str, u64> =
-        TableDefinition::new("milkdrift.v1.metadata");
-    const DISCOVERY_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
-        TableDefinition::new("milkdrift.v1.discovery.accounting");
-    const WORKSPACE_VALUE_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
-        TableDefinition::new("milkdrift.v1.workspace.value_accounting");
-    const INTEGRITY_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
-        TableDefinition::new("milkdrift.v1.integrity.accounting");
-    const INTEGRITY_ROOTS: TableDefinition<'static, &'static str, &'static [u8]> =
-        TableDefinition::new("milkdrift.v1.integrity.roots");
-    const INTEGRITY_NODES: TableDefinition<'static, &'static [u8], &'static [u8]> =
-        TableDefinition::new("milkdrift.v1.integrity.trie_nodes");
-    const ARTIFACT_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
-        TableDefinition::new("milkdrift.v1.artifacts.accounting");
-    const EVENT_HISTORY_DIGESTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
-        TableDefinition::new("milkdrift.v1.runs.event_history_digests");
-    const RUN_HISTORY_ACCUMULATORS: TableDefinition<'static, &'static str, &'static [u8]> =
-        TableDefinition::new("milkdrift.v1.runs.history_accumulators");
-    const RUNNABLE_RUN_HEADS: TableDefinition<'static, &'static str, &'static [u8]> =
-        TableDefinition::new("milkdrift.v1.discovery.runnable_run_heads");
-
-    let directory = TempDir::new()?;
-    {
-        let store = RedbStore::open(directory.path())?;
-        for (kind, suffix) in [
-            (DiscoveryIndexKind::Runnable, "migrate-runnable"),
-            (DiscoveryIndexKind::Timer, "migrate-timer"),
-            (DiscoveryIndexKind::Lease, "migrate-lease"),
-        ] {
-            store.commit_command(&accepted_request_with_discovery_index(kind, suffix)?)?;
-        }
-    }
-    let database = Database::open(directory.path().join("milkdrift.redb"))?;
-    let write = database.begin_write()?;
-    {
-        let mut metadata = write.open_table(METADATA)?;
-        metadata.insert("internal_document_format_version", 1)?;
-        let mut accounting = write.open_table(DISCOVERY_ACCOUNTING)?;
-        drop(accounting.remove("active_index_counts")?);
-        drop(accounting);
-        let mut value_accounting = write.open_table(WORKSPACE_VALUE_ACCOUNTING)?;
-        let keys = value_accounting
-            .iter()?
-            .map(|row| row.map(|(key, _)| key.value().to_owned()))
-            .collect::<Result<Vec<_>, _>>()?;
-        for key in keys {
-            drop(value_accounting.remove(key.as_str())?);
-        }
-        drop(value_accounting);
-        for definition in [INTEGRITY_ACCOUNTING, INTEGRITY_ROOTS, ARTIFACT_ACCOUNTING] {
-            let mut table = write.open_table(definition)?;
-            let keys = table
-                .iter()?
-                .map(|row| row.map(|(key, _)| key.value().to_owned()))
-                .collect::<Result<Vec<_>, _>>()?;
-            for key in keys {
-                drop(table.remove(key.as_str())?);
-            }
-        }
-        let mut nodes = write.open_table(INTEGRITY_NODES)?;
-        let keys = nodes
-            .iter()?
-            .map(|row| row.map(|(key, _)| key.value().to_vec()))
-            .collect::<Result<Vec<_>, _>>()?;
-        for key in keys {
-            drop(nodes.remove(key.as_slice())?);
-        }
-        drop(nodes);
-        for definition in [EVENT_HISTORY_DIGESTS] {
-            let mut table = write.open_table(definition)?;
-            let keys = table
-                .iter()?
-                .map(|row| row.map(|(key, _)| key.value().to_vec()))
-                .collect::<Result<Vec<_>, _>>()?;
-            for key in keys {
-                drop(table.remove(key.as_slice())?);
-            }
-        }
-        for definition in [RUN_HISTORY_ACCUMULATORS, RUNNABLE_RUN_HEADS] {
-            let mut table = write.open_table(definition)?;
-            let keys = table
-                .iter()?
-                .map(|row| row.map(|(key, _)| key.value().to_owned()))
-                .collect::<Result<Vec<_>, _>>()?;
-            for key in keys {
-                drop(table.remove(key.as_str())?);
-            }
-        }
-    }
-    write.commit()?;
-    drop(database);
-
-    {
-        let store = RedbStore::open(directory.path())?;
-        assert_eq!(
-            store
-                .runnable_page(TimestampMillis::new(10), None, PageSize::new(10)?)?
-                .entries
-                .len(),
-            1
-        );
-        assert_eq!(
-            store
-                .due_timers(TimestampMillis::new(10), PageSize::new(10)?)?
-                .len(),
-            1
-        );
-        assert_eq!(store.active_leases(PageSize::new(10)?)?.entries.len(), 1);
-    }
-    let database = Database::open(directory.path().join("milkdrift.redb"))?;
-    let read = database.begin_read()?;
-    let metadata = read.open_table(METADATA)?;
-    assert_eq!(
-        metadata
-            .get("internal_document_format_version")?
-            .ok_or("internal document format marker is absent")?
-            .value(),
-        3
-    );
-    let accounting = read.open_table(DISCOVERY_ACCOUNTING)?;
-    assert_eq!(accounting.len()?, 0);
-    let value_accounting = read.open_table(WORKSPACE_VALUE_ACCOUNTING)?;
-    assert_eq!(value_accounting.len()?, 0);
-    let roots = read.open_table(INTEGRITY_ROOTS)?;
-    assert_eq!(roots.len()?, 1);
-    let runnable_heads = read.open_table(RUNNABLE_RUN_HEADS)?;
-    assert_eq!(runnable_heads.len()?, 1);
     Ok(())
 }

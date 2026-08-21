@@ -38,6 +38,36 @@ impl RunProjection {
         Self::default()
     }
 
+    /// Creates the bounded operational checkpoint retained by snapshot storage.
+    ///
+    /// Complete event history remains queryable from the journal. High-frequency
+    /// observations that are irrelevant to future transition legality are reduced to
+    /// their latest value so checkpoint size follows active workflow state rather than
+    /// raw streaming volume.
+    pub(crate) fn compacted_for_snapshot(&self) -> Self {
+        let mut compacted = self.clone();
+        compacted.history_compacted_through = compacted.sequence;
+        compacted.event_ids.clear();
+        for attempt in compacted.attempts.values_mut() {
+            if attempt.progress.len() > 1 {
+                let latest = attempt.progress.pop();
+                attempt.progress.clear();
+                attempt.progress.extend(latest);
+            }
+            if attempt.cancellation_acknowledgements.len() > 1 {
+                let latest = attempt.cancellation_acknowledgements.pop();
+                attempt.cancellation_acknowledgements.clear();
+                attempt.cancellation_acknowledgements.extend(latest);
+            }
+            if attempt.recovery.len() > 1 {
+                let latest = attempt.recovery.pop();
+                attempt.recovery.clear();
+                attempt.recovery.extend(latest);
+            }
+        }
+        compacted
+    }
+
     /// Replays a complete ordered history without consulting any external state.
     pub fn replay(events: &[RunEventEnvelope]) -> Result<Self, RuntimeError> {
         let mut projection = Self::new();
@@ -70,6 +100,16 @@ impl RunProjection {
     #[must_use]
     pub const fn sequence(&self) -> RunSequence {
         self.sequence
+    }
+
+    /// Last sequence whose verbose historical detail was compacted into operational state.
+    ///
+    /// The append-only journal remains the source of truth for timeline/audit queries. A
+    /// non-zero value tells callers not to interpret high-frequency observation collections
+    /// as complete history before this boundary.
+    #[must_use]
+    pub const fn history_compacted_through(&self) -> RunSequence {
+        self.history_compacted_through
     }
 
     /// Aggregate identity, absent only for empty history.

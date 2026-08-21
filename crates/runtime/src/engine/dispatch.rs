@@ -8,18 +8,15 @@ use super::{CommandExecution, MAX_DURABLE_INVOCATION_REQUEST_BYTES, RuntimeServi
 use crate::projection::{
     AttemptState, BranchState, NodeExecutionState, RunLifecycle, RunProjection,
 };
-use crate::query::project_complete_history;
-use crate::{
-    AdmissionRequest, ExecutionDispatch, RunCommand, RunCommandDocument, RuntimeError, WorkerReport,
-};
+use crate::{AdmissionRequest, RunCommand, RunCommandDocument, RuntimeError, SystemTransition};
 use milkdrift_blueprint::{BlueprintRevision, Node, NodeKind, ReducerStrategy};
 use milkdrift_capability::{
-    BoundedJson, ErrorClass, IdempotencyBehavior, IdempotencyKey, InputReference, InvocationEvent,
-    InvocationId, InvocationRequest, SideEffectClass,
+    BoundedJson, ErrorClass, IdempotencyBehavior, IdempotencyKey, InputReference, InvocationId,
+    InvocationRequest, SideEffectClass,
 };
 use milkdrift_persistence::{
-    AtomicRunCommitOutcome, AttemptId, BoundedDetail, CommandDisposition, LeaseId, NodeExecutionId,
-    PersistenceError, Reason, RunEventKind, RunnableIndexEntry, TimestampMillis,
+    AtomicRunCommitOutcome, BoundedDetail, NodeExecutionId, PersistenceError, Reason, RunEventKind,
+    RunnableIndexEntry, TimestampMillis,
 };
 use milkdrift_workspace::{RunId, ScopeKind, ScopeReference};
 use std::collections::BTreeMap;
@@ -37,7 +34,7 @@ impl RuntimeService {
         let scheduler_guard = self.scheduler_gate.lock().map_err(|_error| {
             RuntimeError::Scheduling("runtime scheduler coordination lock is poisoned".to_owned())
         })?;
-        let projection = project_complete_history(self.store.as_ref(), &entry.run)?;
+        let projection = self.projection(&entry.run)?;
         if projection.sequence() < entry.through_sequence
             || projection.lifecycle() != RunLifecycle::Running
         {
@@ -121,10 +118,6 @@ impl RuntimeService {
             | NodeExecutionState::RemovedProspectively(_)
             | NodeExecutionState::Terminal(_) => return Ok(DispatchOutcome::Deferred),
         };
-        let attempt_number = projection
-            .attempts()
-            .get(&attempt)
-            .map_or(1, |attempt| attempt.attempt_number());
         let invocation = self.next_invocation_id()?;
         let idempotency_key = match contract.idempotency() {
             IdempotencyBehavior::Unsupported => None,
@@ -203,17 +196,6 @@ impl RuntimeService {
         }
         let lease = self.next_lease_id()?;
         let expires_at = checked_timestamp_add(now, self.config.lease_duration_ms)?;
-        let dispatch = ExecutionDispatch::new(
-            entry.run.clone(),
-            revision.id().clone(),
-            node.id().clone(),
-            execution.execution().clone(),
-            attempt.clone(),
-            lease.clone(),
-            expires_at,
-            resolution.clone(),
-            request.clone(),
-        )?;
         let schedule = CommandPlan {
             events: vec![
                 RunEventKind::NodeScheduled {
@@ -250,8 +232,9 @@ impl RuntimeService {
         match self.commit_internal_plan(
             &entry.run,
             now,
-            "schedule_and_lease",
-            Some(&attempt),
+            SystemTransition::ScheduleAndLease {
+                attempt: attempt.clone(),
+            },
             schedule,
         ) {
             Ok(_) => {}
@@ -270,64 +253,9 @@ impl RuntimeService {
             attempt = %attempt,
             invocation = %invocation,
             lease = %lease,
-            "durable lease committed before executor dispatch"
+            "durable lease committed for caller-owned effect execution"
         );
-        let reports = match self.executor.execute(&dispatch) {
-            Ok(reports) => reports,
-            Err(error) => {
-                let mut plan = CommandPlan::one(RunEventKind::ExternalOutcomeUncertain {
-                    attempt: attempt.clone(),
-                    report_sequence: 1,
-                    side_effect: contract.side_effect(),
-                    reason: Reason::new("executor boundary failed after durable dispatch")?,
-                    evidence: Vec::new(),
-                });
-                if self.config.retry_policy.permits_automatic_retry(
-                    attempt_number,
-                    ErrorClass::Adapter,
-                    true,
-                    contract.side_effect(),
-                    contract.idempotency(),
-                    idempotency_key.as_ref(),
-                ) {
-                    match self.build_retry_event(
-                        execution.execution(),
-                        &attempt,
-                        attempt_number,
-                        now,
-                        ErrorClass::Adapter,
-                        None,
-                        "automatic retry admitted after an uncertain executor boundary",
-                    ) {
-                        Ok(retry) => plan.events.push(retry),
-                        Err(retry_error) => warn!(
-                            attempt = %attempt,
-                            reason = %retry_error,
-                            "executor uncertainty retained without an unavailable retry timer"
-                        ),
-                    }
-                }
-                self.commit_internal_plan(
-                    &entry.run,
-                    now,
-                    "dispatch_uncertain",
-                    Some(&attempt),
-                    plan,
-                )?;
-                warn!(
-                    attempt = %attempt,
-                    reason = %error,
-                    "executor failure retained as uncertain"
-                );
-                return Ok(DispatchOutcome::Uncertain);
-            }
-        };
-
-        self.submit_worker_start(&entry.run, now, &lease, &attempt)?;
-        for report in reports.reports() {
-            self.submit_worker_invocation(&entry.run, now, &attempt, report.clone())?;
-        }
-        Ok(DispatchOutcome::Completed)
+        Ok(DispatchOutcome::Dispatched)
     }
 
     fn commit_pre_dispatch_failure(
@@ -345,8 +273,9 @@ impl RuntimeService {
         let _ = self.commit_internal_plan(
             run,
             occurred_at,
-            "terminalize_immutable_pre_dispatch_failure",
-            None,
+            SystemTransition::TerminalizePreDispatchFailure {
+                execution: execution.clone(),
+            },
             plan,
         )?;
         Ok(())
@@ -476,27 +405,20 @@ impl RuntimeService {
         &self,
         run: &RunId,
         occurred_at: TimestampMillis,
-        action: &'static str,
-        subject_attempt: Option<&AttemptId>,
+        transition: SystemTransition,
         plan: CommandPlan,
     ) -> Result<CommandExecution, RuntimeError> {
-        let projection = project_complete_history(self.store.as_ref(), run)?;
-        let marker = match subject_attempt {
-            Some(attempt) => attempt.clone(),
-            None => self.next_attempt_id()?,
-        };
+        let projection = self.projection(run)?;
+        let reason = Reason::new(format!("internal runtime action: {}", transition.label()))?;
         let document = RunCommandDocument::new(
             self.next_command_id()?,
             run.clone(),
             self.config.internal_actor.clone(),
             projection.sequence(),
             occurred_at,
-            Reason::new(format!("internal runtime action: {action}"))?,
+            reason,
             Vec::new(),
-            RunCommand::WorkerReport {
-                worker: self.config.worker.clone(),
-                report: WorkerReport::Started { attempt: marker },
-            },
+            RunCommand::SystemTransition { transition },
         )?;
         let receipt = document.receipt()?;
         let outcome = self.commit_accepted(&document, receipt, projection, plan)?;
@@ -505,64 +427,5 @@ impl RuntimeService {
             AtomicRunCommitOutcome::Replayed(value) => (value, true),
         };
         Ok(CommandExecution { result, replayed })
-    }
-
-    fn submit_worker_start(
-        &self,
-        run: &RunId,
-        now: TimestampMillis,
-        lease: &LeaseId,
-        attempt: &AttemptId,
-    ) -> Result<(), RuntimeError> {
-        let command = RunCommandDocument::new(
-            self.next_command_id()?,
-            run.clone(),
-            self.config.internal_actor.clone(),
-            self.store.head(run)?,
-            now,
-            Reason::new("synchronous executor accepted its durable lease")?,
-            Vec::new(),
-            RunCommand::WorkerReport {
-                worker: self.config.worker.clone(),
-                report: WorkerReport::LeaseAccepted {
-                    lease: lease.clone(),
-                    attempt: attempt.clone(),
-                },
-            },
-        )?;
-        let _ = self.handle_command(&command)?;
-        Ok(())
-    }
-
-    fn submit_worker_invocation(
-        &self,
-        run: &RunId,
-        now: TimestampMillis,
-        attempt: &AttemptId,
-        report: InvocationEvent,
-    ) -> Result<(), RuntimeError> {
-        let command = RunCommandDocument::new(
-            self.next_command_id()?,
-            run.clone(),
-            self.config.internal_actor.clone(),
-            self.store.head(run)?,
-            now,
-            Reason::new("synchronous executor supplied a bounded invocation report")?,
-            Vec::new(),
-            RunCommand::WorkerReport {
-                worker: self.config.worker.clone(),
-                report: WorkerReport::Invocation {
-                    attempt: attempt.clone(),
-                    report,
-                },
-            },
-        )?;
-        let execution = self.handle_command(&command)?;
-        if execution.result().disposition() == CommandDisposition::Rejected {
-            return Err(RuntimeError::InvalidTransition(
-                "executor report was durably rejected".to_owned(),
-            ));
-        }
-        Ok(())
     }
 }

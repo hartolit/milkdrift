@@ -72,16 +72,6 @@ pub(crate) fn initialize_schema(
     {
         let _table = write.open_table(LEASE_INDEX).map_err(error::redb)?;
     }
-    {
-        let _table = write
-            .open_table(DISCOVERY_ACCOUNTING)
-            .map_err(error::redb)?;
-    }
-    {
-        let _table = write
-            .open_table(INTEGRITY_ACCOUNTING)
-            .map_err(error::redb)?;
-    }
     crate::trie::initialize(&write)?;
     {
         let _table = write.open_table(SNAPSHOTS).map_err(error::redb)?;
@@ -101,11 +91,6 @@ pub(crate) fn initialize_schema(
     {
         let _table = write
             .open_table(WORKSPACE_VALUE_HEADS)
-            .map_err(error::redb)?;
-    }
-    {
-        let _table = write
-            .open_table(WORKSPACE_VALUE_ACCOUNTING)
             .map_err(error::redb)?;
     }
     {
@@ -162,7 +147,7 @@ pub(crate) fn initialize_schema(
             "artifact accounting",
         )?;
         table
-            .insert(LEGACY_GLOBAL_ARTIFACT_BYTES_KEY, bytes.as_slice())
+            .insert(crate::artifact::GLOBAL_ARTIFACT_BYTES_KEY, bytes.as_slice())
             .map_err(error::redb)?;
     }
     {
@@ -176,10 +161,7 @@ pub(crate) fn initialize_schema(
     faults.check(crate::fault::FaultPoint::AfterSchemaCommit)
 }
 
-pub(crate) fn validate_schema(
-    database: &Database,
-    faults: &dyn FaultInjector,
-) -> Result<(), PersistenceError> {
+pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceError> {
     let read = database.begin_read().map_err(error::redb)?;
     let (found, internal_document_format) = {
         let table = read.open_table(METADATA).map_err(error::redb)?;
@@ -203,23 +185,22 @@ pub(crate) fn validate_schema(
         });
     }
     if found < STORAGE_SCHEMA_VERSION {
-        return Err(PersistenceError::MigrationRequired {
-            found: found as u32,
-            target: STORAGE_SCHEMA_VERSION as u32,
+        return Err(PersistenceError::UnsupportedVersion {
+            document: "storage",
+            found: u32::try_from(found).unwrap_or(u32::MAX),
+            supported: STORAGE_SCHEMA_VERSION as u32,
+        });
+    }
+    let internal_document_format = internal_document_format
+        .ok_or_else(|| error::corruption("redb internal document format marker is missing"))?;
+    if internal_document_format != INTERNAL_DOCUMENT_FORMAT_VERSION {
+        return Err(PersistenceError::UnsupportedVersion {
+            document: "redb internal document envelope",
+            found: u32::try_from(internal_document_format).unwrap_or(u32::MAX),
+            supported: INTERNAL_DOCUMENT_FORMAT_VERSION as u32,
         });
     }
     drop(read);
-    match internal_document_format {
-        Some(found) if found > INTERNAL_DOCUMENT_FORMAT_VERSION => {
-            return Err(PersistenceError::UnsupportedVersion {
-                document: "redb internal document envelope",
-                found: u32::try_from(found).unwrap_or(u32::MAX),
-                supported: INTERNAL_DOCUMENT_FORMAT_VERSION as u32,
-            });
-        }
-        Some(found) if found == INTERNAL_DOCUMENT_FORMAT_VERSION => {}
-        Some(_) | None => migrate_internal_documents(database, faults)?,
-    }
 
     let read = database.begin_read().map_err(error::redb)?;
 
@@ -279,22 +260,6 @@ pub(crate) fn validate_schema(
     {
         let _table = read.open_table(LEASE_INDEX).map_err(error::redb)?;
     }
-    {
-        let table = read.open_table(DISCOVERY_ACCOUNTING).map_err(error::redb)?;
-        if table.len().map_err(error::redb)? != 0 {
-            return Err(error::corruption(
-                "deprecated discovery accounting must be empty in current storage",
-            ));
-        }
-    }
-    {
-        let table = read.open_table(INTEGRITY_ACCOUNTING).map_err(error::redb)?;
-        if table.len().map_err(error::redb)? != 0 {
-            return Err(error::corruption(
-                "deprecated integrity accounting must be empty in current storage",
-            ));
-        }
-    }
     crate::trie::validate_roots(&read)?;
     {
         let _table = read.open_table(SNAPSHOTS).map_err(error::redb)?;
@@ -315,16 +280,6 @@ pub(crate) fn validate_schema(
         let _table = read
             .open_table(WORKSPACE_VALUE_HEADS)
             .map_err(error::redb)?;
-    }
-    {
-        let table = read
-            .open_table(WORKSPACE_VALUE_ACCOUNTING)
-            .map_err(error::redb)?;
-        if table.len().map_err(error::redb)? != 0 {
-            return Err(error::corruption(
-                "deprecated workspace integrity accounting must be empty in current storage",
-            ));
-        }
     }
     {
         let _table = read.open_table(ARTIFACT_METADATA).map_err(error::redb)?;

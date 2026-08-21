@@ -44,34 +44,18 @@ impl RunJournal for RedbStore {
         name = "milkdrift.redb_store.commit_command",
         skip_all,
         fields(
-            run = %request.receipt.run(),
-            command = %request.receipt.command(),
-            expected_sequence = request.receipt.expected_sequence().get(),
-            event_count = request.events.len()
+            run = %request.receipt().run(),
+            command = %request.receipt().command(),
+            expected_sequence = request.receipt().expected_sequence().get(),
+            event_count = request.events().len()
         )
     )]
     fn commit_command(
         &self,
         request: &AtomicRunCommitRequest,
     ) -> Result<AtomicRunCommitOutcome, PersistenceError> {
-        let verified_request = AtomicRunCommitRequest::new(
-            request.receipt.clone(),
-            request.events.clone(),
-            request.workspace.clone(),
-            request.workspace_accounting.clone(),
-            request.required_artifacts.clone(),
-            request.newly_referenced_artifacts.clone(),
-            request.expected_lease_catalog.clone(),
-            request.result.clone(),
-            request.indexes.clone(),
-        )?;
-        if &verified_request != request {
-            return Err(PersistenceError::InvalidDocument(
-                "atomic run commit is not canonical".to_owned(),
-            ));
-        }
-        if let Some(accounting) = &request.workspace_accounting {
-            for event in &request.events {
+        if let Some(accounting) = request.workspace_accounting() {
+            for event in request.events() {
                 if let RunEventKind::RunCreated {
                     workspace_budget, ..
                 } = event.kind()
@@ -85,23 +69,23 @@ impl RunJournal for RedbStore {
             }
         }
         let command_key = codec::pair(
-            request.receipt.run().as_str(),
-            request.receipt.command().as_str(),
+            request.receipt().run().as_str(),
+            request.receipt().command().as_str(),
         )?;
         let command_bytes = encode_command_record(request)?;
         let write = self.database().begin_write().map_err(error::redb)?;
         crate::trie::validate_roots_in_transaction(&write)?;
         crate::artifact::validate_artifact_catalog(&write)?;
-        validate_workspace_value_accounting_in_transaction(&write)?;
+        crate::trie::validate_roots_in_transaction(&write)?;
 
         let actual_head = {
             let heads = write.open_table(RUN_HEADS).map_err(error::redb)?;
             let events = write.open_table(RUN_EVENTS).map_err(error::redb)?;
-            validated_run_head(&heads, &events, request.receipt.run())?
+            validated_run_head(&heads, &events, request.receipt().run())?
         };
         let previous_membership = validate_run_history_membership_in_transaction(
             &write,
-            request.receipt.run(),
+            request.receipt().run(),
             actual_head,
         )?;
 
@@ -113,8 +97,8 @@ impl RunJournal for RedbStore {
                 let stored_bytes = stored.value().to_vec();
                 validate_command_catalog_in_transaction(&write, &command_key, Some(&stored_bytes))?;
                 let stored = decode_command_record(&stored_bytes)?;
-                if stored.run != *request.receipt.run()
-                    || stored.command != *request.receipt.command()
+                if stored.run != *request.receipt().run()
+                    || stored.command != *request.receipt().command()
                 {
                     return Err(error::corruption(
                         "command-result key does not match its stored identities",
@@ -126,26 +110,26 @@ impl RunJournal for RedbStore {
                 drop(checksums);
                 drop(events);
                 validate_command_event_catalog_in_transaction(&write, &stored)?;
-                if stored.fingerprint == *request.receipt.fingerprint() {
+                if stored.fingerprint == *request.receipt().fingerprint() {
                     return Ok(AtomicRunCommitOutcome::Replayed(stored.result));
                 }
                 return Err(PersistenceError::IdempotencyConflict {
-                    run: request.receipt.run().clone(),
-                    command: request.receipt.command().clone(),
+                    run: request.receipt().run().clone(),
+                    command: request.receipt().command().clone(),
                     existing: stored.fingerprint,
-                    supplied: request.receipt.fingerprint().clone(),
+                    supplied: request.receipt().fingerprint().clone(),
                 });
             }
         }
         validate_command_catalog_in_transaction(&write, &command_key, None)?;
-        if actual_head != request.receipt.expected_sequence() {
+        if actual_head != request.receipt().expected_sequence() {
             return Err(PersistenceError::SequenceConflict {
-                run: request.receipt.run().clone(),
-                expected: request.receipt.expected_sequence(),
+                run: request.receipt().run().clone(),
+                expected: request.receipt().expected_sequence(),
                 actual: actual_head,
             });
         }
-        if let Some(expected) = &request.expected_lease_catalog {
+        if let Some(expected) = request.expected_lease_catalog() {
             let root = crate::trie::family_root_in_transaction(
                 &write,
                 crate::trie::CatalogFamily::LeaseIdentity,
@@ -159,7 +143,7 @@ impl RunJournal for RedbStore {
             }
         }
 
-        validate_required_artifacts(self, &write, &request.required_artifacts)?;
+        validate_required_artifacts(self, &write, request.required_artifacts())?;
         validate_artifact_accounting_references(&write, request)?;
         validate_workspace_accounting(&write, request)?;
         append_events(&write, request)?;
@@ -187,29 +171,29 @@ impl RunJournal for RedbStore {
                 "new command unexpectedly replaced an authenticated catalog leaf",
             ));
         }
-        if !request.events.is_empty() {
+        if !request.events().is_empty() {
             let mut heads = write.open_table(RUN_HEADS).map_err(error::redb)?;
             heads
                 .insert(
-                    request.receipt.run().as_str(),
-                    request.result.resulting_sequence().get(),
+                    request.receipt().run().as_str(),
+                    request.result().resulting_sequence().get(),
                 )
                 .map_err(error::redb)?;
             persist_run_membership(
                 &write,
-                request.receipt.run(),
-                request.result.resulting_sequence(),
+                request.receipt().run(),
+                request.result().resulting_sequence(),
                 previous_membership,
             )?;
         }
         persist_workspace_accounting(&write, request)?;
-        validate_workspace_value_accounting_in_transaction(&write)?;
+        crate::trie::validate_roots_in_transaction(&write)?;
         crate::trie::validate_roots_in_transaction(&write)?;
 
         self.faults.check(FaultPoint::BeforeCommandCommit)?;
         write.commit().map_err(error::redb)?;
         self.faults.check(FaultPoint::AfterCommandCommit)?;
-        Ok(AtomicRunCommitOutcome::Committed(request.result.clone()))
+        Ok(AtomicRunCommitOutcome::Committed(request.result().clone()))
     }
 
     fn head(&self, run: &RunId) -> Result<RunSequence, PersistenceError> {
@@ -260,14 +244,14 @@ pub(crate) fn encode_command_record(
     json::encode(
         &StoredCommandRecord {
             schema_version: COMMAND_RECORD_SCHEMA_VERSION,
-            command: request.receipt.command(),
-            run: request.receipt.run(),
-            actor: request.receipt.actor(),
-            expected_sequence: request.receipt.expected_sequence(),
-            submitted_at: request.receipt.submitted_at(),
-            canonical_document: request.receipt.canonical_document(),
-            fingerprint: request.receipt.fingerprint(),
-            result: &request.result,
+            command: request.receipt().command(),
+            run: request.receipt().run(),
+            actor: request.receipt().actor(),
+            expected_sequence: request.receipt().expected_sequence(),
+            submitted_at: request.receipt().submitted_at(),
+            canonical_document: request.receipt().canonical_document(),
+            fingerprint: request.receipt().fingerprint(),
+            result: request.result(),
         },
         "command record",
     )
@@ -658,60 +642,6 @@ pub(crate) fn validate_nonterminal_membership_in_transaction(
     }
 }
 
-pub(crate) fn migrate_nonterminal_membership(
-    write: &redb::WriteTransaction,
-    run: &RunId,
-    head: RunSequence,
-) -> Result<(), PersistenceError> {
-    let summaries = write.open_table(RUN_SUMMARIES).map_err(error::redb)?;
-    let bytes = summaries
-        .get(run.as_str())
-        .map_err(error::redb)?
-        .ok_or_else(|| error::corruption("legacy run is missing its summary"))?;
-    let summary: RunSummaryIndex = json::decode(bytes.value(), "run summary")?;
-    if summary.run != *run || summary.through_sequence != head {
-        return Err(error::corruption(
-            "legacy run summary disagrees with its head or identity",
-        ));
-    }
-    let marker = write
-        .open_table(NONTERMINAL_RUNS)
-        .map_err(error::redb)?
-        .get(run.as_str())
-        .map_err(error::redb)?
-        .map(|marker| marker.value());
-    match (summary.state, marker) {
-        (IndexedRunState::Terminal, None) => Ok(()),
-        (IndexedRunState::Terminal, Some(_)) => Err(error::corruption(
-            "legacy terminal run remains in nonterminal discovery",
-        )),
-        (_, Some(1)) => {
-            let run_payload = run_membership_payload(run, head, bytes.value());
-            let family = crate::trie::CatalogFamily::NonterminalRun;
-            if crate::trie::put(
-                write,
-                family,
-                nonterminal_membership_path(run),
-                run.as_str().as_bytes(),
-                nonterminal_membership_payload(run_payload),
-            )?
-            .is_some()
-            {
-                return Err(error::corruption(
-                    "legacy nonterminal discovery contains a duplicate run",
-                ));
-            }
-            Ok(())
-        }
-        (_, Some(_)) => Err(error::corruption(
-            "legacy nonterminal discovery contains an invalid marker",
-        )),
-        (_, None) => Err(error::corruption(
-            "legacy nonterminal run is missing from discovery",
-        )),
-    }
-}
-
 pub(crate) fn validate_run_membership_witness(
     expected: Option<[u8; 32]>,
     witness: Option<[u8; 32]>,
@@ -1094,19 +1024,19 @@ pub(crate) fn validate_artifact_accounting_references(
     write: &redb::WriteTransaction,
     request: &AtomicRunCommitRequest,
 ) -> Result<(), PersistenceError> {
-    let newly_referenced: BTreeSet<_> = request.newly_referenced_artifacts.iter().collect();
-    for reference in &request.required_artifacts {
+    let newly_referenced: BTreeSet<_> = request.newly_referenced_artifacts().iter().collect();
+    for reference in request.required_artifacts() {
         let previously_referenced =
             crate::artifact::validated_run_artifact_reference_in_transaction(
                 write,
-                request.receipt.run(),
+                request.receipt().run(),
                 reference,
             )?;
         if newly_referenced.contains(reference) == previously_referenced {
             return Err(PersistenceError::InvalidDocument(format!(
                 "artifact {} must be charged exactly on its first reference by run {}",
                 reference.artifact(),
-                request.receipt.run()
+                request.receipt().run()
             )));
         }
     }
@@ -1117,16 +1047,19 @@ pub(crate) fn validate_workspace_accounting(
     write: &redb::WriteTransaction,
     request: &AtomicRunCommitRequest,
 ) -> Result<(), PersistenceError> {
-    let Some(accounting) = &request.workspace_accounting else {
+    let Some(accounting) = request.workspace_accounting() else {
         return Ok(());
     };
-    let actual =
-        validate_or_initialize_workspace_domain(write, request.receipt.run(), &accounting.budget)?;
+    let actual = validate_or_initialize_workspace_domain(
+        write,
+        request.receipt().run(),
+        &accounting.budget,
+    )?;
     let reservations = write
         .open_table(ARTIFACT_RESERVATIONS)
         .map_err(error::redb)?;
     if reservations
-        .get(request.receipt.run().as_str())
+        .get(request.receipt().run().as_str())
         .map_err(error::redb)?
         .is_some()
     {
@@ -1134,44 +1067,14 @@ pub(crate) fn validate_workspace_accounting(
             class: milkdrift_persistence::StorageFailureClass::OwnerBusy,
             message: format!(
                 "run {} has an active artifact publication",
-                request.receipt.run()
+                request.receipt().run()
             ),
         });
     }
     if actual != accounting.expected_usage {
         return Err(PersistenceError::WorkspaceUsageConflict {
-            run: request.receipt.run().clone(),
+            run: request.receipt().run().clone(),
         });
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_workspace_value_accounting(
-    read: &redb::ReadTransaction,
-) -> Result<(), PersistenceError> {
-    crate::trie::validate_roots(read)?;
-    let accounting = read
-        .open_table(WORKSPACE_VALUE_ACCOUNTING)
-        .map_err(error::redb)?;
-    if accounting.len().map_err(error::redb)? != 0 {
-        return Err(error::corruption(
-            "deprecated workspace integrity accounting must be empty in current storage",
-        ));
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_workspace_value_accounting_in_transaction(
-    write: &redb::WriteTransaction,
-) -> Result<(), PersistenceError> {
-    crate::trie::validate_roots_in_transaction(write)?;
-    let accounting = write
-        .open_table(WORKSPACE_VALUE_ACCOUNTING)
-        .map_err(error::redb)?;
-    if accounting.len().map_err(error::redb)? != 0 {
-        return Err(error::corruption(
-            "deprecated workspace integrity accounting must be empty in current storage",
-        ));
     }
     Ok(())
 }
@@ -1289,7 +1192,7 @@ pub(crate) fn persist_workspace_value_usage_accounting_in_transaction(
     run: &RunId,
     usage: WorkspaceUsage,
 ) -> Result<(), PersistenceError> {
-    validate_workspace_value_accounting_in_transaction(write)?;
+    crate::trie::validate_roots_in_transaction(write)?;
     let Some((budget, stored_usage, previous)) = workspace_domain_in_transaction(write, run)?
     else {
         return Err(error::corruption("workspace accounting domain is absent"));
@@ -1307,7 +1210,7 @@ pub(crate) fn validate_workspace_domain_in_transaction(
     run: &RunId,
     supplied: &milkdrift_workspace::WorkspaceBudget,
 ) -> Result<WorkspaceUsage, PersistenceError> {
-    validate_workspace_value_accounting_in_transaction(write)?;
+    crate::trie::validate_roots_in_transaction(write)?;
     let Some((budget, usage, _witness)) = workspace_domain_in_transaction(write, run)? else {
         return Err(error::corruption("workspace accounting domain is absent"));
     };
@@ -1330,7 +1233,7 @@ pub(crate) fn validate_or_initialize_workspace_domain(
     run: &RunId,
     supplied: &milkdrift_workspace::WorkspaceBudget,
 ) -> Result<WorkspaceUsage, PersistenceError> {
-    validate_workspace_value_accounting_in_transaction(write)?;
+    crate::trie::validate_roots_in_transaction(write)?;
     match workspace_domain_in_transaction(write, run)? {
         None => {
             supplied
@@ -1367,7 +1270,7 @@ pub(crate) fn advance_workspace_global_usage_in_transaction(
     expected: WorkspaceUsage,
     resulting: WorkspaceUsage,
 ) -> Result<(), PersistenceError> {
-    validate_workspace_value_accounting_in_transaction(write)?;
+    crate::trie::validate_roots_in_transaction(write)?;
     let Some((budget, actual, previous)) = workspace_domain_in_transaction(write, run)? else {
         return Err(error::corruption("workspace accounting domain is absent"));
     };
@@ -1386,11 +1289,11 @@ pub(crate) fn persist_workspace_accounting(
     write: &redb::WriteTransaction,
     request: &AtomicRunCommitRequest,
 ) -> Result<(), PersistenceError> {
-    let Some(accounting) = &request.workspace_accounting else {
+    let Some(accounting) = request.workspace_accounting() else {
         return Ok(());
     };
     let Some((budget, actual, previous)) =
-        workspace_domain_in_transaction(write, request.receipt.run())?
+        workspace_domain_in_transaction(write, request.receipt().run())?
     else {
         return Err(error::corruption("workspace accounting domain is absent"));
     };
@@ -1402,12 +1305,12 @@ pub(crate) fn persist_workspace_accounting(
     let bytes = json::encode(&accounting.resulting_usage, "workspace usage")?;
     let mut table = write.open_table(WORKSPACE_USAGE).map_err(error::redb)?;
     table
-        .insert(request.receipt.run().as_str(), bytes.as_slice())
+        .insert(request.receipt().run().as_str(), bytes.as_slice())
         .map_err(error::redb)?;
     drop(table);
     persist_workspace_domain(
         write,
-        request.receipt.run(),
+        request.receipt().run(),
         &budget,
         accounting.resulting_usage,
         Some(previous),
@@ -1420,7 +1323,7 @@ pub(crate) fn append_events(
 ) -> Result<(), PersistenceError> {
     let mut events = write.open_table(RUN_EVENTS).map_err(error::redb)?;
     let mut checksums = write.open_table(EVENT_CHECKSUMS).map_err(error::redb)?;
-    for event in &request.events {
+    for event in request.events() {
         let key = codec::run_sequence(event.run_id().as_str(), event.sequence())?;
         if events.get(key.as_slice()).map_err(error::redb)?.is_some() {
             return Err(error::corruption(format!(

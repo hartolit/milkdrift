@@ -7,8 +7,8 @@ use super::support::{
 };
 use super::{RecoveryResult, RuntimeService, STRUCTURED_EVENT_SOFT_LIMIT};
 use crate::projection::{BranchState, NodeExecutionState, SubworkflowState};
-use crate::{AdmissionUsage, RunCommand, RunCommandDocument, RuntimeError, WorkerReport};
-use milkdrift_capability::{CancellationRequest, ErrorClass, SideEffectClass};
+use crate::{AdmissionUsage, RuntimeError, SystemTransition};
+use milkdrift_capability::{ErrorClass, SideEffectClass};
 use milkdrift_persistence::{
     IntegrityDigest, PageSize, Reason, RecoveryClassification, RunEventKind, SubworkflowOwnership,
     TimestampMillis,
@@ -209,12 +209,10 @@ impl RuntimeService {
                     | RecoveryClassification::Uncertain => {}
                 }
             }
-            let marker = projection.attempts().keys().next().cloned();
             let _ = self.commit_internal_plan(
                 &summary.run,
                 now,
-                "recover_nonterminal_run",
-                marker.as_ref(),
+                SystemTransition::RecoverNonterminalRun,
                 plan,
             )?;
         }
@@ -414,106 +412,15 @@ impl RuntimeService {
                 }
             }
             if !propagation.events.is_empty() {
-                let marker = projection.attempts().keys().next().cloned();
                 let _ = self.commit_internal_plan(
                     &summary.run,
                     now,
-                    "propagate_structured_cancellation",
-                    marker.as_ref(),
+                    SystemTransition::PropagateStructuredCancellation,
                     propagation,
                 )?;
             }
-            if self.structured_scan_budget.load(Ordering::Acquire) == 0 {
-                continue;
-            }
-            let projection = self.projection(&summary.run)?;
-            let claimed = self.claim_structured_scan_visits(projection.active_attempt_ids().len());
-            let mut allowance = claimed;
-            let attempt_ids = bounded_projection_set(
-                &summary.run,
-                projection.active_attempt_ids(),
-                &self.cancellation_attempt_cursors,
-                &mut allowance,
-                "cancellation attempt scan cursor",
-            )?;
-            let active: Vec<_> = attempt_ids
-                .iter()
-                .filter_map(|attempt| projection.attempts().get(attempt))
-                .filter(|attempt| attempt.is_active())
-                .filter(|attempt| attempt.cancellation_acknowledgements().is_empty())
-                .filter(|attempt| {
-                    cancellation_reason_for_execution(
-                        &projection,
-                        attempt.execution(),
-                        run_drain_reason(&projection),
-                    )
-                    .is_some()
-                })
-                .filter(|attempt| {
-                    projection
-                        .active_lease_for_attempt(attempt.attempt())
-                        .is_some_and(|lease| lease.worker() == &self.config.worker)
-                })
-                .filter_map(|attempt| {
-                    let reason = cancellation_reason_for_execution(
-                        &projection,
-                        attempt.execution(),
-                        run_drain_reason(&projection),
-                    )?;
-                    attempt
-                        .invocation()
-                        .map(|invocation| (attempt.attempt().clone(), invocation.clone(), reason))
-                })
-                .collect();
-            for (attempt, invocation, reason) in active {
-                let projection = self.projection(&summary.run)?;
-                let attempt_view = projection.attempts().get(&attempt).ok_or_else(|| {
-                    RuntimeError::InvalidHistory(
-                        "active cancellation attempt disappeared".to_owned(),
-                    )
-                })?;
-                let request_sequence = attempt_view
-                    .cancellation_acknowledgements()
-                    .last()
-                    .map_or(1, |acknowledgement| {
-                        acknowledgement.request_sequence().saturating_add(1)
-                    });
-                let request = CancellationRequest::new(
-                    invocation,
-                    request_sequence,
-                    reason.as_str().to_owned(),
-                )
-                .map_err(|error| RuntimeError::InvalidTransition(error.to_string()))?;
-                let acknowledgement = match self.executor.cancel(&request) {
-                    Ok(acknowledgement) => acknowledgement,
-                    Err(error) => {
-                        warn!(
-                            run = %summary.run,
-                            attempt = %attempt,
-                            reason = %error,
-                            "executor cancellation boundary failed; lease remains recoverable"
-                        );
-                        continue;
-                    }
-                };
-                let command = RunCommandDocument::new(
-                    self.next_command_id()?,
-                    summary.run.clone(),
-                    self.config.internal_actor.clone(),
-                    self.store.head(&summary.run)?,
-                    now,
-                    Reason::new("executor acknowledged durable cancellation intent")?,
-                    Vec::new(),
-                    RunCommand::WorkerReport {
-                        worker: self.config.worker.clone(),
-                        report: WorkerReport::Cancellation {
-                            attempt,
-                            acknowledgement,
-                        },
-                    },
-                )?;
-                let _ = self.handle_command(&command)?;
-            }
+            // Adapter cancellation is an external effect. Durable cancellation intent above
+            // is claimed later by `claim_effects`; recovery never enters an adapter boundary.
         }
         Ok(())
     }

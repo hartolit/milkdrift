@@ -47,6 +47,28 @@ pub struct CommandReceipt {
     fingerprint: IntegrityDigest,
 }
 
+fn validate_canonical_command_bytes(
+    location: &'static str,
+    bytes: &[u8],
+) -> Result<(), PersistenceError> {
+    if bytes.is_empty() || bytes.len() > MAX_COMMAND_DOCUMENT_BYTES {
+        return Err(PersistenceError::Bounds {
+            location,
+            reason: format!(
+                "must contain 1..={MAX_COMMAND_DOCUMENT_BYTES} canonical document bytes"
+            ),
+        });
+    }
+    let value: serde_json::Value = serde_json::from_slice(bytes)?;
+    let canonical = crate::document::canonical_json_bytes(&value, MAX_COMMAND_DOCUMENT_BYTES)?;
+    if canonical != bytes {
+        return Err(PersistenceError::InvalidDocument(format!(
+            "{location} bytes must be canonical compact key-sorted JSON"
+        )));
+    }
+    Ok(())
+}
+
 impl CommandReceipt {
     /// Constructs a receipt from a runtime-owned canonical command document.
     pub fn new(
@@ -57,29 +79,43 @@ impl CommandReceipt {
         submitted_at: TimestampMillis,
         canonical_document: Vec<u8>,
     ) -> Result<Self, PersistenceError> {
-        if canonical_document.is_empty() || canonical_document.len() > MAX_COMMAND_DOCUMENT_BYTES {
-            return Err(PersistenceError::Bounds {
-                location: "command.document",
-                reason: format!(
-                    "must contain 1..={MAX_COMMAND_DOCUMENT_BYTES} canonical document bytes"
-                ),
-            });
-        }
-        // Require syntactically valid JSON. The runtime's versioned command document owns
-        // semantic decoding; persistence owns byte-for-byte idempotency evidence.
-        let value: serde_json::Value = serde_json::from_slice(&canonical_document)?;
-        let canonical = crate::document::canonical_json_bytes(&value, MAX_COMMAND_DOCUMENT_BYTES)?;
-        if canonical != canonical_document {
-            return Err(PersistenceError::InvalidDocument(
-                "command receipt bytes must be canonical compact key-sorted JSON".to_owned(),
-            ));
-        }
+        Self::new_idempotent(
+            command,
+            run,
+            actor,
+            expected_sequence,
+            submitted_at,
+            canonical_document.clone(),
+            canonical_document,
+        )
+    }
+
+    /// Constructs a receipt whose idempotency fingerprint is bound to a canonical semantic
+    /// intent document rather than retry-local delivery metadata.
+    ///
+    /// The complete command document is still retained for audit. Runtime callers use this
+    /// constructor so an exact command can be retried at a newer optimistic sequence or
+    /// timestamp without turning the same [`CommandId`] into a false conflict.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_idempotent(
+        command: CommandId,
+        run: RunId,
+        actor: ActorRef,
+        expected_sequence: RunSequence,
+        submitted_at: TimestampMillis,
+        canonical_document: Vec<u8>,
+        canonical_intent: Vec<u8>,
+    ) -> Result<Self, PersistenceError> {
+        validate_canonical_command_bytes("command.document", &canonical_document)?;
+        validate_canonical_command_bytes("command.intent", &canonical_intent)?;
+
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"milkdrift.command-receipt.v1\0");
+        hasher.update(b"milkdrift.command-receipt.semantic.v1\0");
         for component in [
             command.as_str().as_bytes(),
             run.as_str().as_bytes(),
             actor.as_str().as_bytes(),
+            canonical_intent.as_slice(),
         ] {
             let length = u32::try_from(component.len()).map_err(|_| PersistenceError::Bounds {
                 location: "command.receipt_component",
@@ -88,15 +124,6 @@ impl CommandReceipt {
             hasher.update(&length.to_be_bytes());
             hasher.update(component);
         }
-        hasher.update(&expected_sequence.get().to_be_bytes());
-        hasher.update(&submitted_at.get().to_be_bytes());
-        let document_length =
-            u32::try_from(canonical_document.len()).map_err(|_| PersistenceError::Bounds {
-                location: "command.document",
-                reason: "document length does not fit u32".to_owned(),
-            })?;
-        hasher.update(&document_length.to_be_bytes());
-        hasher.update(&canonical_document);
         let fingerprint = IntegrityDigest::new(format!("b3_{}", hasher.finalize()))?;
         Ok(Self {
             command,
@@ -591,13 +618,64 @@ pub enum LeaseIndexMutation {
 #[serde(deny_unknown_fields)]
 pub struct RunIndexUpdate {
     /// Required summary for any accepted event append.
-    pub summary: Option<RunSummaryIndex>,
+    summary: Option<RunSummaryIndex>,
     /// Runnable index changes.
-    pub runnable: Vec<RunnableIndexMutation>,
+    runnable: Vec<RunnableIndexMutation>,
     /// Timer index changes.
-    pub timers: Vec<TimerIndexMutation>,
+    timers: Vec<TimerIndexMutation>,
     /// Lease index changes.
-    pub leases: Vec<LeaseIndexMutation>,
+    leases: Vec<LeaseIndexMutation>,
+}
+
+impl RunIndexUpdate {
+    /// Creates one immutable rebuildable-index transition.
+    #[must_use]
+    pub fn new(
+        summary: Option<RunSummaryIndex>,
+        runnable: Vec<RunnableIndexMutation>,
+        timers: Vec<TimerIndexMutation>,
+        leases: Vec<LeaseIndexMutation>,
+    ) -> Self {
+        Self {
+            summary,
+            runnable,
+            timers,
+            leases,
+        }
+    }
+
+    /// Summary derived at the resulting journal head.
+    #[must_use]
+    pub const fn summary(&self) -> Option<&RunSummaryIndex> {
+        self.summary.as_ref()
+    }
+
+    /// Runnable-index mutations.
+    #[must_use]
+    pub fn runnable(&self) -> &[RunnableIndexMutation] {
+        &self.runnable
+    }
+
+    /// Timer-index mutations.
+    #[must_use]
+    pub fn timers(&self) -> &[TimerIndexMutation] {
+        &self.timers
+    }
+
+    /// Lease-index mutations.
+    #[must_use]
+    pub fn leases(&self) -> &[LeaseIndexMutation] {
+        &self.leases
+    }
+
+    /// Whether this update contains no summary or index mutation.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.summary.is_none()
+            && self.runnable.is_empty()
+            && self.timers.is_empty()
+            && self.leases.is_empty()
+    }
 }
 
 /// One all-or-nothing command receipt, event, workspace, result, and index commit.
@@ -610,27 +688,27 @@ pub struct RunIndexUpdate {
 #[non_exhaustive]
 pub struct AtomicRunCommitRequest {
     /// Exact receipt bytes and idempotency fingerprint.
-    pub receipt: CommandReceipt,
+    receipt: CommandReceipt,
     /// Contiguous checksummed facts, empty only for a rejected command.
-    pub events: Vec<RunEventEnvelope>,
+    events: Vec<RunEventEnvelope>,
     /// Workspace scopes/values committed atomically with history.
-    pub workspace: Vec<WorkspaceMutation>,
+    workspace: Vec<WorkspaceMutation>,
     /// Optimistic budget/accounting transition; required for accepted commits.
-    pub workspace_accounting: Option<WorkspaceAccounting>,
+    workspace_accounting: Option<WorkspaceAccounting>,
     /// Every artifact referenced by events/workspace; append must prove each is committed.
-    pub required_artifacts: Vec<ArtifactReference>,
+    required_artifacts: Vec<ArtifactReference>,
     /// Required artifacts first admitted into this run's accounting domain by this commit.
-    pub newly_referenced_artifacts: Vec<ArtifactReference>,
+    newly_referenced_artifacts: Vec<ArtifactReference>,
     /// Exact active-lease catalog observed while admitting a new durable lease.
     ///
     /// Present exactly when this commit contains a `LeaseGranted` fact. The adapter
     /// compares it atomically before the lease/index mutation so concurrent runtime
     /// services cannot both admit against the same pre-lease global usage.
-    pub expected_lease_catalog: Option<IntegrityDigest>,
+    expected_lease_catalog: Option<IntegrityDigest>,
     /// Fully durable result returned on redelivery.
-    pub result: CommandResultDocument,
+    result: CommandResultDocument,
     /// Rebuildable discovery/index changes committed atomically.
-    pub indexes: RunIndexUpdate,
+    indexes: RunIndexUpdate,
 }
 
 impl AtomicRunCommitRequest {
@@ -949,6 +1027,60 @@ impl AtomicRunCommitRequest {
             result,
             indexes,
         })
+    }
+
+    /// Validated command receipt.
+    #[must_use]
+    pub const fn receipt(&self) -> &CommandReceipt {
+        &self.receipt
+    }
+
+    /// Contiguous event append.
+    #[must_use]
+    pub fn events(&self) -> &[RunEventEnvelope] {
+        &self.events
+    }
+
+    /// Workspace mutations committed with the event append.
+    #[must_use]
+    pub fn workspace(&self) -> &[WorkspaceMutation] {
+        &self.workspace
+    }
+
+    /// Validated workspace accounting transition, when applicable.
+    #[must_use]
+    pub const fn workspace_accounting(&self) -> Option<&WorkspaceAccounting> {
+        self.workspace_accounting.as_ref()
+    }
+
+    /// Every artifact referenced by this commit.
+    #[must_use]
+    pub fn required_artifacts(&self) -> &[ArtifactReference] {
+        &self.required_artifacts
+    }
+
+    /// Artifacts newly admitted to this run's accounting domain.
+    #[must_use]
+    pub fn newly_referenced_artifacts(&self) -> &[ArtifactReference] {
+        &self.newly_referenced_artifacts
+    }
+
+    /// Active-lease catalog witness required for a lease-creating commit.
+    #[must_use]
+    pub const fn expected_lease_catalog(&self) -> Option<&IntegrityDigest> {
+        self.expected_lease_catalog.as_ref()
+    }
+
+    /// Durable command result returned on redelivery.
+    #[must_use]
+    pub const fn result(&self) -> &CommandResultDocument {
+        &self.result
+    }
+
+    /// Rebuildable derived-index transition.
+    #[must_use]
+    pub const fn indexes(&self) -> &RunIndexUpdate {
+        &self.indexes
     }
 }
 

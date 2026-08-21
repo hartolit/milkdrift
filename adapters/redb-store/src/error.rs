@@ -35,6 +35,10 @@ pub(crate) fn corruption(message: impl Into<String>) -> PersistenceError {
     storage(StorageFailureClass::Corruption, message.into())
 }
 
+pub(crate) fn internal(message: impl Into<String>) -> PersistenceError {
+    storage(StorageFailureClass::Internal, message.into())
+}
+
 fn storage(class: StorageFailureClass, message: String) -> PersistenceError {
     let message = truncate_utf8(message, MAX_STORAGE_MESSAGE_BYTES);
     PersistenceError::Storage { class, message }
