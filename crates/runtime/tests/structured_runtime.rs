@@ -246,11 +246,6 @@ impl BoundaryThenBlockingExecutor {
         }
     }
 
-    fn has_entered(&self) -> TestResult<bool> {
-        let (lock, _) = &self.entered;
-        Ok(*lock.lock().map_err(|_| "entered lock poisoned")?)
-    }
-
     fn wait_until_entered(&self) -> TestResult {
         let (lock, ready) = &self.entered;
         let entered = lock.lock().map_err(|_| "entered lock poisoned")?;

@@ -2,7 +2,7 @@ use redb::TableDefinition;
 
 pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 1;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
-pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 3;
+pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 4;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
 
 // Every durable family has a distinct, permanently named table. Keys that need

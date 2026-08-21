@@ -34,8 +34,9 @@ pub const COMMAND_RESULT_SCHEMA_VERSION_V1: u32 = 1;
 
 /// Exact canonical runtime command receipt used for durable idempotency.
 ///
-/// Persistence does not interpret runtime transitions. It retains canonical bytes and
-/// their digest so a repeated [`CommandId`] can be proven identical or conflicting.
+/// Persistence does not interpret runtime transitions. It retains the complete audit
+/// document, the canonical semantic intent, and their derived fingerprint so a repeated
+/// [`CommandId`] can be proven identical or conflicting across delivery retries.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommandReceipt {
     command: CommandId,
@@ -44,6 +45,7 @@ pub struct CommandReceipt {
     expected_sequence: RunSequence,
     submitted_at: TimestampMillis,
     canonical_document: Vec<u8>,
+    canonical_intent: Vec<u8>,
     fingerprint: IntegrityDigest,
 }
 
@@ -132,6 +134,7 @@ impl CommandReceipt {
             expected_sequence,
             submitted_at,
             canonical_document,
+            canonical_intent,
             fingerprint,
         })
     }
@@ -166,10 +169,20 @@ impl CommandReceipt {
         self.submitted_at
     }
 
-    /// Runtime-owned canonical command bytes.
+    /// Runtime-owned canonical command bytes retained as exact audit evidence.
     #[must_use]
     pub fn canonical_document(&self) -> &[u8] {
         &self.canonical_document
+    }
+
+    /// Canonical semantic intent bytes that own idempotency across delivery retries.
+    ///
+    /// These bytes are persisted separately from the complete audit document so storage
+    /// can reconstruct and validate the semantic fingerprint without interpreting runtime
+    /// fields such as the optimistic sequence or delivery timestamp.
+    #[must_use]
+    pub fn canonical_intent(&self) -> &[u8] {
+        &self.canonical_intent
     }
 
     /// Domain-separated command fingerprint.
@@ -687,7 +700,7 @@ impl RunIndexUpdate {
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct AtomicRunCommitRequest {
-    /// Exact receipt bytes and idempotency fingerprint.
+    /// Exact audit/intent bytes and idempotency fingerprint.
     receipt: CommandReceipt,
     /// Contiguous checksummed facts, empty only for a rejected command.
     events: Vec<RunEventEnvelope>,

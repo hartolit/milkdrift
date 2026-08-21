@@ -4,7 +4,7 @@ use super::{
     queries::{decode_stored_event, validated_run_head},
     workspace::apply_workspace,
 };
-const COMMAND_RECORD_SCHEMA_VERSION: u32 = 1;
+const COMMAND_RECORD_SCHEMA_VERSION: u32 = 2;
 
 pub(crate) struct RunnableHeadState {
     pub(crate) previous_bytes: Option<Vec<u8>>,
@@ -21,6 +21,7 @@ struct StoredCommandRecord<'a> {
     expected_sequence: RunSequence,
     submitted_at: TimestampMillis,
     canonical_document: &'a [u8],
+    canonical_intent: &'a [u8],
     fingerprint: &'a IntegrityDigest,
     result: &'a CommandResultDocument,
 }
@@ -35,6 +36,7 @@ pub(crate) struct OwnedCommandRecord {
     pub(crate) expected_sequence: RunSequence,
     pub(crate) submitted_at: TimestampMillis,
     pub(crate) canonical_document: Vec<u8>,
+    pub(crate) canonical_intent: Vec<u8>,
     pub(crate) fingerprint: IntegrityDigest,
     pub(crate) result: CommandResultDocument,
 }
@@ -250,6 +252,7 @@ pub(crate) fn encode_command_record(
             expected_sequence: request.receipt().expected_sequence(),
             submitted_at: request.receipt().submitted_at(),
             canonical_document: request.receipt().canonical_document(),
+            canonical_intent: request.receipt().canonical_intent(),
             fingerprint: request.receipt().fingerprint(),
             result: request.result(),
         },
@@ -266,20 +269,21 @@ pub(crate) fn decode_command_record(bytes: &[u8]) -> Result<OwnedCommandRecord, 
             supported: COMMAND_RECORD_SCHEMA_VERSION,
         });
     }
-    let receipt = CommandReceipt::new(
+    let receipt = CommandReceipt::new_idempotent(
         record.command.clone(),
         record.run.clone(),
         record.actor.clone(),
         record.expected_sequence,
         record.submitted_at,
         record.canonical_document.clone(),
+        record.canonical_intent.clone(),
     )
     .map_err(|cause| {
         PersistenceError::Corruption(format!("stored command receipt failed validation: {cause}"))
     })?;
     if receipt.fingerprint() != &record.fingerprint {
         return Err(error::corruption(
-            "stored command receipt fingerprint does not match its bytes",
+            "stored command receipt fingerprint does not match its semantic intent",
         ));
     }
     validate_command_result(&record.result)?;

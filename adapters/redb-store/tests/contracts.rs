@@ -41,7 +41,7 @@ use milkdrift_workspace::{
     WorkspaceBudget, WorkspaceScope, WorkspaceUsage, WorkspaceValue, WorkspaceValueEntry,
     WorkspaceValueReference,
 };
-use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
+use redb::{Database, ReadableTable, TableDefinition};
 use serde_json::json;
 use tempfile::TempDir;
 

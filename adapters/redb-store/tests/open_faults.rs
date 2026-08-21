@@ -106,7 +106,7 @@ fn unpublished_internal_document_formats_are_refused_without_migration()
     let write = database.begin_write()?;
     {
         let mut metadata = write.open_table(METADATA)?;
-        metadata.insert("internal_document_format_version", 2)?;
+        metadata.insert("internal_document_format_version", 3)?;
     }
     write.commit()?;
     drop(database);
@@ -115,8 +115,8 @@ fn unpublished_internal_document_formats_are_refused_without_migration()
         RedbStore::open(directory.path()),
         Err(PersistenceError::UnsupportedVersion {
             document: "redb internal document envelope",
-            found: 2,
-            supported: 3,
+            found: 3,
+            supported: 4,
         })
     ));
     Ok(())

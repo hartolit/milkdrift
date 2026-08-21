@@ -479,7 +479,8 @@ fn atomic_workspace_mutations_exactly_materialize_subworkflow_facts()
 }
 
 #[test]
-fn command_fingerprint_binds_the_complete_receipt() -> Result<(), Box<dyn std::error::Error>> {
+fn command_fingerprint_binds_identity_actor_and_semantic_document()
+-> Result<(), Box<dyn std::error::Error>> {
     let make = |actor: &str, document: &[u8]| {
         Ok::<_, Box<dyn std::error::Error>>(CommandReceipt::new(
             CommandId::new("command-fingerprint")?,
@@ -1005,6 +1006,8 @@ fn semantic_command_fingerprint_excludes_retry_delivery_metadata()
         intent,
     )?;
     assert_eq!(first.fingerprint(), retry.fingerprint());
+    assert_eq!(first.canonical_intent(), retry.canonical_intent());
+    assert_ne!(first.canonical_document(), retry.canonical_document());
     assert_ne!(first.expected_sequence(), retry.expected_sequence());
     assert_ne!(first.submitted_at(), retry.submitted_at());
     Ok(())
