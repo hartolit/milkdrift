@@ -1234,7 +1234,7 @@ fn validate_ordered_discovery_leaf<T>(
     ordered_path: fn(&[u8], &T) -> Result<[u8; 32], PersistenceError>,
 ) -> Result<(), PersistenceError>
 where
-    T: for<'de> serde::Deserialize<'de>,
+    T: for<'de> serde::Deserialize<'de> + serde::Serialize,
 {
     let identities = read.open_table(identity_definition).map_err(error::redb)?;
     let bytes = identities

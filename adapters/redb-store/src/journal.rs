@@ -46,8 +46,8 @@ pub(crate) use append::{
 };
 pub(crate) use discovery::{
     first_path_in_group, lease_catalog_ordered_path, lease_order_key, runnable_bucket_path,
-    runnable_catalog_ordered_path, runnable_group, runnable_order_key,
-    timer_catalog_ordered_path, timer_order_key, validate_runnable_head_leaf,
+    runnable_catalog_ordered_path, runnable_group, runnable_order_key, timer_catalog_ordered_path,
+    timer_order_key, validate_runnable_head_leaf,
 };
 pub(crate) use queries::{validated_run_head, validated_run_head_in_transaction};
 pub(crate) use workspace::{
