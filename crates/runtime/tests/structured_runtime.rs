@@ -27,13 +27,14 @@ use milkdrift_capability::{
 use milkdrift_persistence::{
     ActorRef, ArtifactPublicationId, ArtifactStore, AtomicRunCommitRequest, AuthorityDecision,
     BeginArtifactPublication, CommandDisposition, CommandId, CommandReceipt, CommandResultDocument,
-    EventId, IndexedRunState, MAX_INDEX_MUTATIONS_PER_COMMIT, NodeExecutionId, NodeExecutionMode,
-    NodeOutcome, PageSize, Reason, ReconciliationAction, ReconciliationClassification,
-    ReconciliationDecisionId, ReconciliationId, ReconciliationPolicy, RecoveryClassification,
-    RepeatContinuationCause, RepeatContinuationDecision, RepeatDecisionId, RepeatTerminationReason,
-    RevisionStore, RunEventEnvelope, RunEventKind, RunIndexUpdate, RunJournal, RunOutcome,
-    RunQueryStore, RunSummaryIndex, SignalDeliveryMode, SignalId, SignalTypeId, TimestampMillis,
-    WorkerId, WorkspaceAccounting, WorkspaceStore,
+    EventId, IndexedRunState, IntegrityScanRequest, MAX_INDEX_MUTATIONS_PER_COMMIT,
+    NodeExecutionId, NodeExecutionMode, NodeOutcome, PageSize, Reason, ReconciliationAction,
+    ReconciliationClassification, ReconciliationDecisionId, ReconciliationId, ReconciliationPolicy,
+    RecoveryClassification, RepeatContinuationCause, RepeatContinuationDecision, RepeatDecisionId,
+    RepeatTerminationReason, RevisionStore, RunEventEnvelope, RunEventKind, RunIndexUpdate,
+    RunJournal, RunOutcome, RunQueryStore, RunSummaryIndex, SignalDeliveryMode, SignalId,
+    SignalTypeId, SnapshotStore, StorageAdmin, TimestampMillis, WorkerId, WorkspaceAccounting,
+    WorkspaceStore,
 };
 use milkdrift_redb_store::RedbStore;
 use milkdrift_runtime::{
@@ -54,6 +55,7 @@ use serde_json::json;
 use tempfile::TempDir;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+type PersistenceResult<T> = Result<T, milkdrift_persistence::PersistenceError>;
 
 const NOW: u64 = 10_000;
 const RAW_SCOPES: TableDefinition<'static, &'static [u8], &'static [u8]> =
@@ -80,6 +82,45 @@ struct BlockingExecutor {
 
 struct PanickingExecutor {
     resolver: DeterministicExecutor,
+}
+
+struct DispatchCountingExecutor {
+    resolver: DeterministicExecutor,
+    dispatches: AtomicUsize,
+}
+
+impl DispatchCountingExecutor {
+    fn new(descriptor: CapabilityDescriptor) -> Self {
+        Self {
+            resolver: DeterministicExecutor::new(descriptor),
+            dispatches: AtomicUsize::new(0),
+        }
+    }
+
+    fn dispatches(&self) -> usize {
+        self.dispatches.load(Ordering::SeqCst)
+    }
+}
+
+impl TaskExecutor for DispatchCountingExecutor {
+    fn resolve(
+        &self,
+        requirement: &CapabilityRequirement,
+    ) -> Result<ResolvedCapability, ExecutorError> {
+        self.resolver.resolve(requirement)
+    }
+
+    fn execute(&self, dispatch: &ExecutionDispatch) -> Result<ExecutionReportBatch, ExecutorError> {
+        self.dispatches.fetch_add(1, Ordering::SeqCst);
+        self.resolver.execute(dispatch)
+    }
+
+    fn cancel(
+        &self,
+        request: &CancellationRequest,
+    ) -> Result<CancellationAcknowledgement, ExecutorError> {
+        self.resolver.cancel(request)
+    }
 }
 
 struct BoundaryFailingExecutor {
@@ -709,6 +750,37 @@ fn runtime_at(
         maximum_tick_items,
         Arc::new(DeterministicExecutor::new(test_descriptor()?)),
     )
+}
+
+fn open_closed_runtime_at(
+    root: &Path,
+    prefix: &str,
+    now: u64,
+    maximum_tick_items: u16,
+) -> TestResult<(
+    Arc<RedbStore>,
+    Arc<ManualClock>,
+    Arc<DispatchCountingExecutor>,
+    RuntimeService,
+)> {
+    let store = Arc::new(RedbStore::open(root)?);
+    let clock = Arc::new(ManualClock::new(now));
+    let executor = Arc::new(DispatchCountingExecutor::new(test_descriptor()?));
+    let runtime = RuntimeService::open_closed(
+        store.clone(),
+        executor.clone(),
+        clock.clone(),
+        Arc::new(SequentialIdGenerator::new(prefix, 1)?),
+        RuntimeConfig::new(
+            WorkerId::new(format!("worker-{prefix}"))?,
+            ActorRef::new(format!("controller:{prefix}"))?,
+            30_000,
+            maximum_tick_items,
+            SchedulerLimits::new(64, 32, 16, 32)?,
+            RetryPolicy::new(1, Vec::new(), 10, 1_000, 0)?,
+        )?,
+    )?;
+    Ok((store, clock, executor, runtime))
 }
 
 fn runtime_with_executor_at(

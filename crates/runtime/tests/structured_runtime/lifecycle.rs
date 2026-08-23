@@ -2,8 +2,393 @@
 
 use super::*;
 
+#[derive(Clone, Copy)]
+enum StartupDiscoveryFault {
+    None,
+    FailOnce,
+    Stall,
+}
+
+struct StartupProbeStore {
+    inner: Arc<RedbStore>,
+    discovery_fault: StartupDiscoveryFault,
+    discovery_calls: AtomicUsize,
+    integrity_scan_calls: AtomicUsize,
+    artifact_verification_requests: AtomicUsize,
+}
+
+impl StartupProbeStore {
+    fn new(inner: Arc<RedbStore>, discovery_fault: StartupDiscoveryFault) -> Self {
+        Self {
+            inner,
+            discovery_fault,
+            discovery_calls: AtomicUsize::new(0),
+            integrity_scan_calls: AtomicUsize::new(0),
+            artifact_verification_requests: AtomicUsize::new(0),
+        }
+    }
+
+    fn discovery_calls(&self) -> usize {
+        self.discovery_calls.load(Ordering::SeqCst)
+    }
+
+    fn integrity_scan_calls(&self) -> usize {
+        self.integrity_scan_calls.load(Ordering::SeqCst)
+    }
+
+    fn artifact_verification_requests(&self) -> usize {
+        self.artifact_verification_requests.load(Ordering::SeqCst)
+    }
+}
+
+macro_rules! forward_store_methods {
+    (
+        $(
+            fn $name:ident(
+                &self
+                $(, $argument:ident: $argument_type:ty)*
+                $(,)?
+            ) -> $return_type:ty;
+        )+
+    ) => {
+        $(
+            fn $name(&self $(, $argument: $argument_type)*) -> $return_type {
+                self.inner.$name($($argument),*)
+            }
+        )+
+    };
+}
+
+impl RevisionStore for StartupProbeStore {
+    forward_store_methods! {
+        fn put_revision(
+            &self,
+            revision: &BlueprintRevision,
+        ) -> PersistenceResult<milkdrift_persistence::ImmutableRevisionPut>;
+        fn revision(
+            &self,
+            revision: &milkdrift_blueprint::RevisionId,
+        ) -> PersistenceResult<Option<BlueprintRevision>>;
+        fn revision_summary(
+            &self,
+            revision: &milkdrift_blueprint::RevisionId,
+        ) -> PersistenceResult<Option<milkdrift_persistence::RevisionSummary>>;
+        fn revisions_by_content(
+            &self,
+            digest: &milkdrift_blueprint::ContentDigest,
+            limit: PageSize,
+        ) -> PersistenceResult<Vec<milkdrift_persistence::RevisionSummary>>;
+    }
+}
+
+impl RunJournal for StartupProbeStore {
+    forward_store_methods! {
+        fn commit_command(
+            &self,
+            request: &AtomicRunCommitRequest,
+        ) -> PersistenceResult<milkdrift_persistence::AtomicRunCommitOutcome>;
+        fn head(
+            &self,
+            run: &RunId,
+        ) -> PersistenceResult<milkdrift_persistence::RunSequence>;
+        fn command_result(
+            &self,
+            run: &RunId,
+            command: &CommandId,
+        ) -> PersistenceResult<Option<CommandResultDocument>>;
+    }
+}
+
+impl RunQueryStore for StartupProbeStore {
+    forward_store_methods! {
+        fn events(
+            &self,
+            query: &milkdrift_persistence::EventPageQuery,
+        ) -> PersistenceResult<milkdrift_persistence::EventPage>;
+        fn run_summary(
+            &self,
+            run: &RunId,
+        ) -> PersistenceResult<Option<RunSummaryIndex>>;
+        fn run_summaries(
+            &self,
+            query: &milkdrift_persistence::RunSummaryPageQuery,
+        ) -> PersistenceResult<milkdrift_persistence::RunSummaryPage>;
+        fn runnable_page(
+            &self,
+            eligible_through: TimestampMillis,
+            cursor: Option<&milkdrift_persistence::RunnableCursor>,
+            limit: PageSize,
+        ) -> PersistenceResult<milkdrift_persistence::RunnablePage>;
+        fn active_leases(
+            &self,
+            limit: PageSize,
+        ) -> PersistenceResult<milkdrift_persistence::ActiveLeaseSnapshot>;
+        fn due_timers(
+            &self,
+            due_through: TimestampMillis,
+            limit: PageSize,
+        ) -> PersistenceResult<Vec<milkdrift_persistence::TimerIndexEntry>>;
+        fn expired_leases(
+            &self,
+            expired_through: TimestampMillis,
+            limit: PageSize,
+        ) -> PersistenceResult<Vec<milkdrift_persistence::LeaseIndexEntry>>;
+    }
+
+    fn nonterminal_run_page(
+        &self,
+        cursor: Option<&milkdrift_persistence::RunSummaryCursor>,
+        limit: PageSize,
+    ) -> PersistenceResult<milkdrift_persistence::RunSummaryPage> {
+        let call = self.discovery_calls.fetch_add(1, Ordering::SeqCst);
+        match self.discovery_fault {
+            StartupDiscoveryFault::FailOnce if call == 0 => {
+                Err(milkdrift_persistence::PersistenceError::Storage {
+                    class: milkdrift_persistence::StorageFailureClass::Unavailable,
+                    message: "scripted transient nonterminal discovery failure".to_owned(),
+                })
+            }
+            StartupDiscoveryFault::Stall => {
+                let anchor = RunId::new("startup-stalled-cursor-anchor").map_err(|error| {
+                    milkdrift_persistence::PersistenceError::InvalidCursor(error.to_string())
+                })?;
+                let next = cursor.cloned().unwrap_or_else(|| {
+                    milkdrift_persistence::RunSummaryCursor::for_nonterminal(anchor)
+                });
+                Ok(milkdrift_persistence::RunSummaryPage {
+                    runs: Vec::new(),
+                    next: Some(next),
+                })
+            }
+            StartupDiscoveryFault::None | StartupDiscoveryFault::FailOnce => {
+                self.inner.nonterminal_run_page(cursor, limit)
+            }
+        }
+    }
+}
+
+impl WorkspaceStore for StartupProbeStore {
+    forward_store_methods! {
+        fn workspace_usage(
+            &self,
+            run: &RunId,
+        ) -> PersistenceResult<WorkspaceUsage>;
+        fn scope(
+            &self,
+            run: &RunId,
+            scope: &ScopeId,
+        ) -> PersistenceResult<Option<WorkspaceScope>>;
+        fn value(
+            &self,
+            reference: &WorkspaceValueReference,
+        ) -> PersistenceResult<Option<WorkspaceValueEntry>>;
+        fn latest_value(
+            &self,
+            scope: &ScopeReference,
+            key: &ValueKey,
+        ) -> PersistenceResult<Option<WorkspaceValueEntry>>;
+        fn scope_lineage(
+            &self,
+            leaf: &ScopeReference,
+        ) -> PersistenceResult<Vec<WorkspaceScope>>;
+    }
+}
+
+impl SnapshotStore for StartupProbeStore {
+    forward_store_methods! {
+        fn history_digest(
+            &self,
+            run: &RunId,
+            through: milkdrift_persistence::RunSequence,
+        ) -> PersistenceResult<milkdrift_persistence::IntegrityDigest>;
+        fn put_snapshot(
+            &self,
+            snapshot: &milkdrift_persistence::SnapshotDocument,
+        ) -> PersistenceResult<()>;
+        fn latest_snapshot(
+            &self,
+            run: &RunId,
+        ) -> PersistenceResult<milkdrift_persistence::SnapshotLoad>;
+        fn discard_snapshot(
+            &self,
+            run: &RunId,
+            snapshot: &milkdrift_persistence::SnapshotId,
+        ) -> PersistenceResult<()>;
+    }
+}
+
+impl ArtifactStore for StartupProbeStore {
+    forward_store_methods! {
+        fn begin_publication(
+            &self,
+            request: &BeginArtifactPublication,
+        ) -> PersistenceResult<milkdrift_persistence::BeginArtifactOutcome>;
+        fn write_chunk(
+            &self,
+            publication: &ArtifactPublicationId,
+            offset: u64,
+            bytes: &[u8],
+        ) -> PersistenceResult<milkdrift_persistence::ArtifactWriteProgress>;
+        fn commit_publication(
+            &self,
+            publication: &ArtifactPublicationId,
+        ) -> PersistenceResult<milkdrift_persistence::CommitArtifactOutcome>;
+        fn abort_publication(
+            &self,
+            publication: &ArtifactPublicationId,
+        ) -> PersistenceResult<()>;
+        fn metadata(
+            &self,
+            artifact: &ArtifactId,
+        ) -> PersistenceResult<Option<ArtifactMetadata>>;
+        fn is_referenced_by_run(
+            &self,
+            run: &RunId,
+            reference: &milkdrift_workspace::ArtifactReference,
+        ) -> PersistenceResult<bool>;
+        fn read_chunk(
+            &self,
+            request: &milkdrift_persistence::ArtifactReadRequest,
+        ) -> PersistenceResult<milkdrift_persistence::ArtifactReadChunk>;
+        fn cleanup_orphans(
+            &self,
+            request: milkdrift_persistence::OrphanCleanupRequest,
+        ) -> PersistenceResult<milkdrift_persistence::OrphanCleanupResult>;
+    }
+
+    fn is_committed(
+        &self,
+        reference: &milkdrift_workspace::ArtifactReference,
+    ) -> PersistenceResult<bool> {
+        self.artifact_verification_requests
+            .fetch_add(1, Ordering::SeqCst);
+        self.inner.is_committed(reference)
+    }
+}
+
+impl StorageAdmin for StartupProbeStore {
+    forward_store_methods! {
+        fn schema_info(
+            &self,
+        ) -> PersistenceResult<milkdrift_persistence::StorageSchemaInfo>;
+        fn health(
+            &self,
+            observed_at: TimestampMillis,
+        ) -> PersistenceResult<milkdrift_persistence::StorageHealth>;
+    }
+
+    fn scan_integrity(
+        &self,
+        request: IntegrityScanRequest,
+    ) -> PersistenceResult<milkdrift_persistence::IntegrityScanResult> {
+        self.integrity_scan_calls.fetch_add(1, Ordering::SeqCst);
+        if request.verify_artifact_content {
+            self.artifact_verification_requests
+                .fetch_add(1, Ordering::SeqCst);
+        }
+        self.inner.scan_integrity(request)
+    }
+}
+
+fn runtime_for_startup_probe(
+    store: Arc<StartupProbeStore>,
+    prefix: &str,
+) -> TestResult<RuntimeService> {
+    Ok(RuntimeService::open_closed(
+        store,
+        Arc::new(DeterministicExecutor::new(test_descriptor()?)),
+        Arc::new(ManualClock::new(NOW)),
+        Arc::new(SequentialIdGenerator::new(prefix, 1)?),
+        RuntimeConfig::new(
+            WorkerId::new(format!("worker-{prefix}"))?,
+            ActorRef::new(format!("controller:{prefix}"))?,
+            30_000,
+            8,
+            SchedulerLimits::new(8, 4, 2, 4)?,
+            RetryPolicy::new(1, Vec::new(), 10, 1_000, 0)?,
+        )?,
+    )?)
+}
+
 #[test]
-fn startup_keeps_admission_closed_until_integrity_and_recovery_complete() -> TestResult {
+fn startup_does_not_invoke_the_administrative_integrity_scanner() -> TestResult {
+    let directory = TempDir::new()?;
+    let probe = Arc::new(StartupProbeStore::new(
+        Arc::new(RedbStore::open(directory.path())?),
+        StartupDiscoveryFault::None,
+    ));
+    let runtime = runtime_for_startup_probe(probe.clone(), "startup-no-scrub")?;
+
+    assert_eq!(probe.integrity_scan_calls(), 0);
+    assert_eq!(probe.artifact_verification_requests(), 0);
+    runtime.initialize_startup()?;
+    assert_eq!(
+        runtime.startup_state(),
+        RuntimeStartupState::RecoveryCompleted
+    );
+    assert!(runtime.is_accepting_admission());
+    assert!(probe.discovery_calls() > 0);
+    assert_eq!(probe.integrity_scan_calls(), 0);
+    assert_eq!(probe.artifact_verification_requests(), 0);
+    Ok(())
+}
+
+#[test]
+fn startup_retry_is_idempotent_after_a_transient_discovery_failure() -> TestResult {
+    let directory = TempDir::new()?;
+    let probe = Arc::new(StartupProbeStore::new(
+        Arc::new(RedbStore::open(directory.path())?),
+        StartupDiscoveryFault::FailOnce,
+    ));
+    let runtime = runtime_for_startup_probe(probe.clone(), "startup-transient-retry")?;
+
+    let Err(error) = runtime.initialize_startup() else {
+        return Err("scripted transient startup failure was not surfaced".into());
+    };
+    assert!(matches!(
+        error,
+        RuntimeError::Persistence(milkdrift_persistence::PersistenceError::Storage {
+            class: milkdrift_persistence::StorageFailureClass::Unavailable,
+            ..
+        })
+    ));
+    assert_eq!(runtime.startup_state(), RuntimeStartupState::OpenedClosed);
+    assert!(!runtime.is_accepting_admission());
+
+    runtime.initialize_startup()?;
+    assert_eq!(
+        runtime.startup_state(),
+        RuntimeStartupState::RecoveryCompleted
+    );
+    assert!(runtime.is_accepting_admission());
+    assert_eq!(probe.discovery_calls(), 2);
+    assert_eq!(probe.integrity_scan_calls(), 0);
+    Ok(())
+}
+
+#[test]
+fn startup_rejects_a_nonadvancing_active_recovery_cursor() -> TestResult {
+    let directory = TempDir::new()?;
+    let probe = Arc::new(StartupProbeStore::new(
+        Arc::new(RedbStore::open(directory.path())?),
+        StartupDiscoveryFault::Stall,
+    ));
+    let runtime = runtime_for_startup_probe(probe.clone(), "startup-stalled-cursor")?;
+
+    let Err(error) = runtime.initialize_startup() else {
+        return Err("startup accepted a nonadvancing active-recovery cursor".into());
+    };
+    assert!(matches!(&error, RuntimeError::Scheduling(_)));
+    assert!(error.to_string().contains("no bounded progress"));
+    assert_eq!(runtime.startup_state(), RuntimeStartupState::OpenedClosed);
+    assert!(!runtime.is_accepting_admission());
+    assert!(probe.discovery_calls() >= 2);
+    assert_eq!(probe.integrity_scan_calls(), 0);
+    Ok(())
+}
+
+#[test]
+fn startup_keeps_admission_closed_until_active_recovery_completes() -> TestResult {
     let directory = TempDir::new()?;
     let store = Arc::new(RedbStore::open(directory.path())?);
     let runtime = RuntimeService::open_closed(

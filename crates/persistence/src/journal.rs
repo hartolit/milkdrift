@@ -714,9 +714,10 @@ pub struct AtomicRunCommitRequest {
     newly_referenced_artifacts: Vec<ArtifactReference>,
     /// Exact active-lease catalog observed while admitting a new durable lease.
     ///
-    /// Present exactly when this commit contains a `LeaseGranted` fact. The adapter
-    /// compares it atomically before the lease/index mutation so concurrent runtime
-    /// services cannot both admit against the same pre-lease global usage.
+    /// Present exactly when this commit contains a `LeaseGranted` or `NodeReLeased`
+    /// fact. The adapter compares it atomically before the lease/index mutation so
+    /// concurrent runtime services cannot both admit against the same pre-lease
+    /// global usage.
     expected_lease_catalog: Option<IntegrityDigest>,
     /// Fully durable result returned on redelivery.
     result: CommandResultDocument,

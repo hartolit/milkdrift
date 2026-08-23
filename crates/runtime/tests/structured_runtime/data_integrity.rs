@@ -421,15 +421,23 @@ fn deleted_optional_supplied_input_is_corruption_not_absence() -> TestResult {
         &raw_value_key(&input_reference)?,
     )?;
 
-    let (store, _clock, runtime) =
-        runtime_at(directory.path(), "deleted-optional-input-reopen", NOW, 64)?;
-    let Err(error) = runtime.tick() else {
-        return Err("scheduler treated a deleted supplied optional input as absent".into());
+    let (store, _clock, executor, runtime) =
+        open_closed_runtime_at(directory.path(), "deleted-optional-input-reopen", NOW, 64)?;
+    assert_eq!(runtime.startup_state(), RuntimeStartupState::OpenedClosed);
+    assert!(!runtime.is_accepting_admission());
+    let history = runtime.history(&run)?;
+    let Err(error) = runtime.initialize_startup() else {
+        return Err("startup treated a deleted supplied optional input as absent".into());
     };
     assert_integrity_error(&error);
+    assert!(error.to_string().contains(run.as_str()));
+    assert_eq!(runtime.startup_state(), RuntimeStartupState::OpenedClosed);
+    assert!(!runtime.is_accepting_admission());
+    assert_eq!(executor.dispatches(), 0);
     assert_eq!(store.head(&run)?, head);
+    assert_eq!(runtime.history(&run)?, history);
     let consume = NodeId::new("consume")?;
-    assert!(!runtime.history(&run)?.iter().any(|event| matches!(
+    assert!(!history.iter().any(|event| matches!(
         event.kind(),
         RunEventKind::NodeScheduled { node, .. } if node == &consume
     )));
@@ -512,15 +520,23 @@ fn deleted_required_producer_output_cannot_be_scheduled_as_an_invocation_input()
         &raw_value_key(&output_reference)?,
     )?;
 
-    let (store, _clock, runtime) =
-        runtime_at(directory.path(), "deleted-producer-output-reopen", NOW, 64)?;
-    let Err(error) = runtime.tick() else {
-        return Err("scheduler dispatched an invocation with a deleted producer output".into());
+    let (store, _clock, executor, runtime) =
+        open_closed_runtime_at(directory.path(), "deleted-producer-output-reopen", NOW, 64)?;
+    assert_eq!(runtime.startup_state(), RuntimeStartupState::OpenedClosed);
+    assert!(!runtime.is_accepting_admission());
+    let history = runtime.history(&run)?;
+    let Err(error) = runtime.initialize_startup() else {
+        return Err("startup accepted an active run with a deleted producer output".into());
     };
     assert_integrity_error(&error);
+    assert!(error.to_string().contains(run.as_str()));
+    assert_eq!(runtime.startup_state(), RuntimeStartupState::OpenedClosed);
+    assert!(!runtime.is_accepting_admission());
+    assert_eq!(executor.dispatches(), 0);
     assert_eq!(store.head(&run)?, head);
+    assert_eq!(runtime.history(&run)?, history);
     let consume = NodeId::new("consume")?;
-    assert!(!runtime.history(&run)?.iter().any(|event| matches!(
+    assert!(!history.iter().any(|event| matches!(
         event.kind(),
         RunEventKind::NodeScheduled { node, .. } if node == &consume
     )));
@@ -545,13 +561,26 @@ fn deleted_root_scope_blocks_even_an_inputless_invocation() -> TestResult {
     let directory = harness.close();
     delete_raw_row(directory.path(), RAW_SCOPES, &raw_scope_key(&root)?)?;
 
-    let (store, _clock, runtime) =
-        runtime_at(directory.path(), "deleted-root-scope-reopen", NOW, 64)?;
-    let Err(error) = runtime.tick() else {
-        return Err("scheduler dispatched work whose projected root scope was deleted".into());
+    let (store, _clock, executor, runtime) =
+        open_closed_runtime_at(directory.path(), "deleted-root-scope-reopen", NOW, 64)?;
+    assert_eq!(runtime.startup_state(), RuntimeStartupState::OpenedClosed);
+    assert!(!runtime.is_accepting_admission());
+    let history = runtime.history(&run)?;
+    let Err(error) = runtime.initialize_startup() else {
+        return Err("startup accepted an active run whose root scope was deleted".into());
     };
     assert_integrity_error(&error);
+    assert!(error.to_string().contains(run.as_str()));
+    assert_eq!(runtime.startup_state(), RuntimeStartupState::OpenedClosed);
+    assert!(!runtime.is_accepting_admission());
+    assert_eq!(executor.dispatches(), 0);
     assert_eq!(store.head(&run)?, head);
+    assert_eq!(runtime.history(&run)?, history);
+    assert!(
+        !history
+            .iter()
+            .any(|event| matches!(event.kind(), RunEventKind::NodeScheduled { .. }))
+    );
     Ok(())
 }
 
@@ -587,13 +616,94 @@ fn deleted_branch_scope_blocks_its_inputless_child_invocation() -> TestResult {
         delete_raw_row(directory.path(), RAW_SCOPES, &raw_scope_key(scope)?)?;
     }
 
-    let (store, _clock, runtime) =
-        runtime_at(directory.path(), "deleted-branch-scope-reopen", NOW, 64)?;
-    let Err(error) = runtime.tick() else {
-        return Err("scheduler dispatched work whose projected branch scope was deleted".into());
+    let (store, _clock, executor, runtime) =
+        open_closed_runtime_at(directory.path(), "deleted-branch-scope-reopen", NOW, 64)?;
+    assert_eq!(runtime.startup_state(), RuntimeStartupState::OpenedClosed);
+    assert!(!runtime.is_accepting_admission());
+    let history = runtime.history(&run)?;
+    let Err(error) = runtime.initialize_startup() else {
+        return Err("startup accepted an active run whose branch scope was deleted".into());
     };
     assert_integrity_error(&error);
+    assert!(error.to_string().contains(run.as_str()));
+    assert_eq!(runtime.startup_state(), RuntimeStartupState::OpenedClosed);
+    assert!(!runtime.is_accepting_admission());
+    assert_eq!(executor.dispatches(), 0);
     assert_eq!(store.head(&run)?, head);
+    assert_eq!(runtime.history(&run)?, history);
+    assert!(
+        !history
+            .iter()
+            .any(|event| matches!(event.kind(), RunEventKind::NodeScheduled { .. }))
+    );
+    Ok(())
+}
+
+#[test]
+fn terminal_unrelated_corruption_is_skipped_by_startup_and_found_by_explicit_scrub() -> TestResult {
+    let harness = Harness::new("terminal-corruption-boundary")?;
+    let revision = task_revision("workflow-terminal-corruption-boundary")?;
+    let run = RunId::new("run-terminal-corruption-boundary")?;
+    harness.put_revision(&revision)?;
+    harness.create_and_start(&run, &revision)?;
+    assert_eq!(harness.drive(&run, 8)?, 1);
+    let projection = harness.runtime.projection(&run)?;
+    assert!(projection.is_completed());
+    let root = projection
+        .root_scope()
+        .ok_or("terminal run root scope was not projected")?
+        .reference()
+        .clone();
+    let head = harness.store.head(&run)?;
+    let history = harness.runtime.history(&run)?;
+    let directory = harness.close();
+    delete_raw_row(directory.path(), RAW_SCOPES, &raw_scope_key(&root)?)?;
+
+    let (store, _clock, executor, runtime) = open_closed_runtime_at(
+        directory.path(),
+        "terminal-corruption-boundary-reopen",
+        NOW,
+        64,
+    )?;
+    runtime.initialize_startup()?;
+    assert_eq!(
+        runtime.startup_state(),
+        RuntimeStartupState::RecoveryCompleted
+    );
+    assert!(runtime.is_accepting_admission());
+    assert_eq!(executor.dispatches(), 0);
+    assert_eq!(store.head(&run)?, head);
+    assert_eq!(runtime.history(&run)?, history);
+
+    let Err(read_error) = store.scope(root.run(), root.scope()) else {
+        return Err("ordinary access treated a deleted terminal scope as absence".into());
+    };
+    assert!(matches!(
+        read_error,
+        milkdrift_persistence::PersistenceError::Corruption(_)
+    ));
+
+    let mut cursor = None;
+    let mut failures = 0_usize;
+    loop {
+        let result = store.scan_integrity(IntegrityScanRequest {
+            limit: PageSize::new(32)?,
+            verify_artifact_content: false,
+            cursor: cursor.clone(),
+        })?;
+        failures = failures.saturating_add(result.failures.len());
+        let Some(next) = result.next_cursor else {
+            break;
+        };
+        if cursor.as_ref() == Some(&next) {
+            return Err("explicit integrity scrub cursor did not advance".into());
+        }
+        cursor = Some(next);
+    }
+    assert!(
+        failures > 0,
+        "explicit scrub did not report terminal corruption"
+    );
     Ok(())
 }
 

@@ -30,7 +30,8 @@ pub struct StorageSchemaInfo {
 /// Stable storage health status.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StorageHealthStatus {
-    /// Schema and sampled integrity checks are healthy.
+    /// Schema and the bounded checks actually sampled are healthy. This is not a
+    /// complete historical or artifact-content integrity proof.
     Healthy,
     /// Storage remains readable but a component needs attention.
     Degraded,
@@ -168,7 +169,9 @@ pub trait StorageAdmin: Send + Sync {
     /// Returns bounded health information without mutating/repairing durable history.
     fn health(&self, observed_at: TimestampMillis) -> Result<StorageHealth, PersistenceError>;
 
-    /// Performs bounded read-only integrity verification.
+    /// Performs one bounded page of an explicit, read-only administrative scrub.
+    /// The returned cursor resumes the same authenticated root, family, and
+    /// artifact-content verification mode; callers decide whether to continue.
     fn scan_integrity(
         &self,
         request: IntegrityScanRequest,

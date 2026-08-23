@@ -8,7 +8,7 @@ fn crash_after_durable_lease_recovers_only_after_expiry_and_retries_once() -> Te
     let revision = task_revision("workflow-crash-after-lease")?;
     let run = RunId::new("run-crash-after-lease")?;
 
-    {
+    let (original_attempt, original_lease) = {
         let store = Arc::new(RedbStore::open(directory.path())?);
         store.put_revision(&revision)?;
         let runtime = recovery_service(
@@ -51,16 +51,20 @@ fn crash_after_durable_lease_recovers_only_after_expiry_and_retries_once() -> Te
         assert_eq!(scheduled.dispatched, 1);
         let stranded = runtime.projection(&run)?;
         assert_eq!(stranded.attempts().len(), 1);
-        assert_eq!(
-            stranded
-                .attempts()
-                .values()
-                .next()
-                .map(|attempt| attempt.state()),
-            Some(&AttemptState::Leased)
-        );
         assert_eq!(stranded.leases().len(), 1);
-        assert!(stranded.leases().values().all(|lease| lease.is_active()));
+        let attempt = stranded
+            .attempts()
+            .values()
+            .next()
+            .ok_or("leased crash-boundary attempt is absent")?;
+        let lease = stranded
+            .leases()
+            .values()
+            .next()
+            .ok_or("leased crash-boundary ownership is absent")?;
+        assert_eq!(attempt.state(), &AttemptState::Leased);
+        assert_eq!(lease.attempt(), attempt.attempt());
+        assert!(lease.is_active());
         let history = runtime.history(&run)?;
         assert_eq!(
             history
@@ -74,7 +78,8 @@ fn crash_after_durable_lease_recovers_only_after_expiry_and_retries_once() -> Te
                 .iter()
                 .any(|event| matches!(event.kind(), RunEventKind::NodeStarted { .. }))
         );
-    }
+        (attempt.attempt().clone(), lease.lease().clone())
+    };
 
     {
         let store = Arc::new(RedbStore::open(directory.path())?);
@@ -84,127 +89,204 @@ fn crash_after_durable_lease_recovers_only_after_expiry_and_retries_once() -> Te
             Arc::new(DeterministicExecutor::new(test_descriptor()?)),
             "recover-before-expiry",
         )?;
-        let recovery = runtime.recover()?;
-        assert_eq!(recovery.runs_examined, 1);
-        assert_eq!(recovery.expired_leases, 0);
-        assert_eq!(recovery.retryable, 0);
         let preserved = runtime.projection(&run)?;
         assert_eq!(preserved.attempts().len(), 1);
-        assert!(
+        let attempt = preserved
+            .attempts()
+            .get(&original_attempt)
+            .ok_or("unexpired leased attempt is absent")?;
+        assert_eq!(attempt.state(), &AttemptState::Leased);
+        assert!(attempt.recovery().is_empty());
+        assert_eq!(
             preserved
-                .attempts()
-                .values()
-                .next()
-                .is_some_and(|attempt| attempt.recovery().is_empty()),
-            "healthy unexpired leases must not grow recovery history"
+                .leases()
+                .get(&original_lease)
+                .map(|lease| lease.state()),
+            Some(&LeaseState::Active)
         );
-        assert!(preserved.leases().values().all(|lease| lease.is_active()));
+        let history = runtime.history(&run)?;
+        assert!(!history.iter().any(|event| matches!(
+            event.kind(),
+            RunEventKind::LeaseExpired { .. }
+                | RunEventKind::RecoveryClassified { .. }
+                | RunEventKind::NodeReLeased { .. }
+        )));
         let scheduled = runtime.scheduler_tick()?;
         assert_eq!(scheduled.dispatched, 0);
         assert_eq!(scheduled.completed, 0);
         assert!(runtime.claim_effects(PageSize::new(1)?)?.is_empty());
-        assert_eq!(runtime.projection(&run)?.attempts().len(), 1);
     }
 
     {
         let store = Arc::new(RedbStore::open(directory.path())?);
-        let recovery_clock = Arc::new(ManualClock::new(NOW + 101));
         let runtime = recovery_service(
             store,
-            recovery_clock.clone(),
+            Arc::new(ManualClock::new(NOW + 101)),
             Arc::new(DeterministicExecutor::new(test_descriptor()?)),
             "recover-after-expiry",
         )?;
-        let recovery = runtime.recover()?;
-        assert_eq!(recovery.runs_examined, 1);
-        assert_eq!(recovery.expired_leases, 1);
-        assert_eq!(recovery.retryable, 1);
-        let retry_pending = runtime.projection(&run)?;
-        assert_eq!(retry_pending.attempts().len(), 2);
-        assert!(retry_pending.leases().values().any(|lease| matches!(
-            lease.state(),
-            LeaseState::Expired(RecoveryClassification::Retryable)
-        )));
-        assert!(
-            retry_pending
-                .attempts()
-                .values()
-                .any(|attempt| attempt.state() == &AttemptState::AwaitingRetryTimer)
+        let recovered = runtime.projection(&run)?;
+        assert_eq!(recovered.attempts().len(), 1);
+        let attempt = recovered
+            .attempts()
+            .get(&original_attempt)
+            .ok_or("recovered leased attempt is absent")?;
+        assert_eq!(attempt.state(), &AttemptState::Leased);
+        assert_eq!(attempt.attempt_number(), 1);
+        assert!(attempt.terminal().is_none());
+        assert!(attempt.obligation().is_none());
+        assert_eq!(attempt.recovery().len(), 1);
+        assert_eq!(attempt.recovery()[0].lease(), Some(&original_lease));
+        assert_eq!(
+            attempt.recovery()[0].classification(),
+            RecoveryClassification::NotStarted
+        );
+        assert_eq!(attempt.leases().len(), 2);
+        let replacement_lease = attempt
+            .leases()
+            .last()
+            .ok_or("replacement lease is absent")?
+            .clone();
+        assert_ne!(replacement_lease, original_lease);
+        assert_eq!(
+            recovered
+                .leases()
+                .get(&original_lease)
+                .map(|lease| lease.state()),
+            Some(&LeaseState::Superseded(replacement_lease.clone()))
+        );
+        assert_eq!(
+            recovered
+                .leases()
+                .get(&replacement_lease)
+                .map(|lease| lease.state()),
+            Some(&LeaseState::Active)
         );
 
-        let before_backoff = runtime.scheduler_tick()?;
-        assert_eq!(before_backoff.dispatched, 0);
-        assert_eq!(before_backoff.completed, 0);
-        assert!(runtime.claim_effects(PageSize::new(1)?)?.is_empty());
-        let _ = recovery_clock.advance(1)?;
+        let history = runtime.history(&run)?;
+        assert_eq!(
+            history
+                .iter()
+                .filter(|event| matches!(
+                    event.kind(),
+                    RunEventKind::LeaseExpired {
+                        lease,
+                        classification: RecoveryClassification::NotStarted,
+                    } if lease == &original_lease
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            history
+                .iter()
+                .filter(|event| matches!(
+                    event.kind(),
+                    RunEventKind::RecoveryClassified {
+                        attempt,
+                        lease: Some(lease),
+                        classification: RecoveryClassification::NotStarted,
+                        ..
+                    } if attempt == &original_attempt && lease == &original_lease
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            history
+                .iter()
+                .filter(|event| matches!(
+                    event.kind(),
+                    RunEventKind::NodeReLeased {
+                        previous_lease,
+                        lease,
+                        attempt,
+                        ..
+                    } if previous_lease == &original_lease
+                        && lease == &replacement_lease
+                        && attempt == &original_attempt
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            history
+                .iter()
+                .filter(|event| matches!(event.kind(), RunEventKind::NodeScheduled { .. }))
+                .count(),
+            1
+        );
+        assert!(!history.iter().any(|event| matches!(
+            event.kind(),
+            RunEventKind::NodeStarted { .. }
+                | RunEventKind::NodeRetryScheduled { .. }
+                | RunEventKind::ExternalOutcomeUncertain { .. }
+        )));
+
         let scheduled = runtime.scheduler_tick()?;
-        assert_eq!(scheduled.dispatched, 1);
+        assert_eq!(scheduled.dispatched, 0);
         assert_eq!(scheduled.completed, 0);
         let actions = runtime.claim_effects(PageSize::new(1)?)?;
         assert_eq!(actions.len(), 1);
-        assert!(matches!(actions.first(), Some(EffectAction::Execute(_))));
+        let dispatch = match &actions[0] {
+            EffectAction::Execute(dispatch) => dispatch,
+            EffectAction::Cancel(_) => {
+                return Err("recovered unstarted attempt claimed cancellation".into());
+            }
+        };
+        assert_eq!(dispatch.attempt(), &original_attempt);
+        assert_eq!(dispatch.lease(), &replacement_lease);
         assert_eq!(
             runtime.execute_effect(&actions[0])?,
             EffectExecutionResult::Completed { observations: 1 }
         );
+
         let completed = runtime.projection(&run)?;
         assert_eq!(
             completed.lifecycle(),
             RunLifecycle::Terminal(RunOutcome::Succeeded)
         );
-        assert_eq!(completed.attempts().len(), 2);
-        let first = completed
+        assert_eq!(completed.attempts().len(), 1);
+        let attempt = completed
             .attempts()
-            .values()
-            .find(|attempt| attempt.attempt_number() == 1)
-            .ok_or("first crash-boundary attempt is absent")?;
-        let second = completed
-            .attempts()
-            .values()
-            .find(|attempt| attempt.attempt_number() == 2)
-            .ok_or("recovery retry attempt is absent")?;
+            .get(&original_attempt)
+            .ok_or("completed reassigned attempt is absent")?;
         assert_eq!(
-            first.state(),
-            &AttemptState::UncertainSupersededByRetry {
-                covering_attempt: second.attempt().clone(),
-            }
+            attempt.state(),
+            &AttemptState::Terminal(NodeOutcome::Succeeded)
         );
-        assert!(first.terminal().is_none());
-        assert!(first.obligation().is_some());
-        let attempt_numbers: BTreeSet<_> = completed
-            .attempts()
-            .values()
-            .map(|attempt| attempt.attempt_number())
-            .collect();
-        assert_eq!(attempt_numbers, BTreeSet::from([1, 2]));
+        assert!(attempt.terminal().is_some());
+        assert!(attempt.obligation().is_none());
+        assert_eq!(
+            completed
+                .leases()
+                .get(&replacement_lease)
+                .map(|lease| lease.state()),
+            Some(&LeaseState::Completed)
+        );
         let history = runtime.history(&run)?;
         assert_eq!(
             history
                 .iter()
                 .filter(|event| matches!(event.kind(), RunEventKind::NodeScheduled { .. }))
                 .count(),
-            2
+            1
         );
         assert_eq!(
             history
                 .iter()
-                .filter(|event| matches!(event.kind(), RunEventKind::NodeStarted { .. }))
+                .filter(|event| matches!(
+                    event.kind(),
+                    RunEventKind::NodeStarted { attempt, .. } if attempt == &original_attempt
+                ))
                 .count(),
-            1,
-            "only the post-recovery retry may receive a start acknowledgement"
+            1
         );
-        assert!(!history.iter().any(|event| matches!(
-            event.kind(),
-            RunEventKind::NodeStarted { attempt, .. } if attempt == first.attempt()
-        )));
-        assert!(!history.iter().any(|event| matches!(
-            event.kind(),
-            RunEventKind::NodeTerminal {
-                attempt,
-                outcome: NodeOutcome::Failed,
-                ..
-            } if attempt == first.attempt()
-        )));
+        assert!(
+            !history
+                .iter()
+                .any(|event| matches!(event.kind(), RunEventKind::NodeRetryScheduled { .. }))
+        );
     }
     Ok(())
 }
@@ -217,7 +299,7 @@ fn crash_after_durable_start_recovers_as_uncertain_without_duplicate_dispatch_hi
     let run = RunId::new("run-crash-after-start")?;
     let descriptor = descriptor_with_model_side_effect("non_idempotent_write")?;
 
-    let original_attempt = {
+    let (original_attempt, original_lease) = {
         let store = Arc::new(RedbStore::open(directory.path())?);
         store.put_revision(&revision)?;
         let runtime = recovery_service(
@@ -252,8 +334,10 @@ fn crash_after_durable_start_recovers_as_uncertain_without_duplicate_dispatch_hi
             .into_iter()
             .next()
             .ok_or("started crash fixture did not claim its invocation")?;
-        let attempt = match &action {
-            EffectAction::Execute(dispatch) => dispatch.attempt().clone(),
+        let (attempt, lease) = match &action {
+            EffectAction::Execute(dispatch) => {
+                (dispatch.attempt().clone(), dispatch.lease().clone())
+            }
             EffectAction::Cancel(_dispatch) => {
                 return Err(
                     "started crash fixture claimed cancellation instead of execution".into(),
@@ -307,7 +391,7 @@ fn crash_after_durable_start_recovers_as_uncertain_without_duplicate_dispatch_hi
                 .any(|event| matches!(event.kind(), RunEventKind::ExternalOutcomeUncertain { .. })),
             "process loss before boundary classification must not fabricate uncertainty in-process"
         );
-        attempt
+        (attempt, lease)
     };
 
     {
@@ -318,11 +402,6 @@ fn crash_after_durable_start_recovers_as_uncertain_without_duplicate_dispatch_hi
             Arc::new(DeterministicExecutor::new(descriptor)),
             "recover-after-start",
         )?;
-        let recovery = runtime.recover()?;
-        assert_eq!(recovery.runs_examined, 1);
-        assert_eq!(recovery.expired_leases, 1);
-        assert_eq!(recovery.retryable, 0);
-        assert_eq!(recovery.uncertain, 1);
 
         let recovered = runtime.projection(&run)?;
         assert_eq!(recovered.attempts().len(), 1);
@@ -334,14 +413,18 @@ fn crash_after_durable_start_recovers_as_uncertain_without_duplicate_dispatch_hi
         assert!(attempt.terminal().is_none());
         assert!(attempt.obligation().is_some());
         assert_eq!(attempt.recovery().len(), 1);
+        assert_eq!(attempt.recovery()[0].lease(), Some(&original_lease));
         assert_eq!(
             attempt.recovery()[0].classification(),
             RecoveryClassification::Uncertain
         );
-        assert!(recovered.leases().values().any(|lease| matches!(
-            lease.state(),
-            LeaseState::Expired(RecoveryClassification::Uncertain)
-        )));
+        assert_eq!(
+            recovered
+                .leases()
+                .get(&original_lease)
+                .map(|lease| lease.state()),
+            Some(&LeaseState::Expired(RecoveryClassification::Uncertain))
+        );
 
         let history = runtime.history(&run)?;
         assert_eq!(
@@ -363,14 +446,45 @@ fn crash_after_durable_start_recovers_as_uncertain_without_duplicate_dispatch_hi
                 .iter()
                 .filter(|event| matches!(
                     event.kind(),
-                    RunEventKind::ExternalOutcomeUncertain { .. }
+                    RunEventKind::LeaseExpired {
+                        lease,
+                        classification: RecoveryClassification::Uncertain,
+                    } if lease == &original_lease
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            history
+                .iter()
+                .filter(|event| matches!(
+                    event.kind(),
+                    RunEventKind::RecoveryClassified {
+                        attempt,
+                        lease: Some(lease),
+                        classification: RecoveryClassification::Uncertain,
+                        ..
+                    } if attempt == &original_attempt && lease == &original_lease
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            history
+                .iter()
+                .filter(|event| matches!(
+                    event.kind(),
+                    RunEventKind::ExternalOutcomeUncertain { attempt, .. }
+                        if attempt == &original_attempt
                 ))
                 .count(),
             1
         );
         assert!(!history.iter().any(|event| matches!(
             event.kind(),
-            RunEventKind::NodeRetryScheduled { .. } | RunEventKind::NodeTerminal { .. }
+            RunEventKind::NodeRetryScheduled { .. }
+                | RunEventKind::NodeReLeased { .. }
+                | RunEventKind::NodeTerminal { .. }
         )));
         assert_eq!(runtime.scheduler_tick()?.dispatched, 0);
         assert!(runtime.claim_effects(PageSize::new(1)?)?.is_empty());

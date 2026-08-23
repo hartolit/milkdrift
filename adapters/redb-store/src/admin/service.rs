@@ -65,9 +65,9 @@ impl StorageAdmin for RedbStore {
                 StorageHealthStatus::Degraded
             },
             detail: BoundedDetail::new(if scan.next_cursor.is_some() {
-                "bounded integrity sample is clean; additional records remain for a complete scan"
+                "bounded metadata sample is clean; additional records remain and artifact content was not rehashed"
             } else {
-                "bounded integrity check reached the current end of storage"
+                "bounded metadata sample reached the current end without artifact-content rehashing; this is not a complete content-integrity proof"
             })?,
         });
         components.push(StorageComponentHealth {
@@ -78,9 +78,9 @@ impl StorageAdmin for RedbStore {
                 StorageHealthStatus::Degraded
             },
             detail: BoundedDetail::new(if index_scan.next_cursor.is_some() {
-                "bounded index sample is clean; additional records remain for a complete scan"
+                "bounded index sample is clean; additional records remain and the sample is not a complete-store proof"
             } else {
-                "bounded index check reached the current end of every checked index"
+                "bounded index sample reached the current end of the checked indexes; it does not prove artifact-content integrity"
             })?,
         });
         components.extend(scan.failures);

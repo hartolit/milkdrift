@@ -753,7 +753,7 @@ pub(super) fn unresolved_retry_error_class(
 pub(super) const fn recovery_reason(classification: RecoveryClassification) -> &'static str {
     match classification {
         RecoveryClassification::NotStarted => {
-            "no executor start or active lease was observed during recovery"
+            "no executor start was observed and the expired lease may be safely reassigned"
         }
         RecoveryClassification::Retryable => {
             "the expired work is read-only, side-effect-free, or protected by durable idempotency"
