@@ -23,8 +23,8 @@ use super::{CommandExecution, EffectTickResult, RuntimeService};
 use crate::projection::{AttemptState, NodeExecutionState};
 use crate::{
     CancellationDispatch, EffectAction, ExecutionDispatch, ExecutionReporter, ExecutorError,
-    ObservationDisposition, RunCommand, RunCommandDocument, RuntimeError, SystemTransition,
-    WorkerReport,
+    MAX_REPORTS_PER_DISPATCH, ObservationDisposition, RunCommand, RunCommandDocument, RuntimeError,
+    SystemTransition, WorkerReport,
 };
 
 const MAX_OBSERVATION_COMMIT_RETRIES: usize = 16;
@@ -232,7 +232,7 @@ impl RuntimeService {
             lease: lease.clone(),
             attempt: attempt.clone(),
         };
-        let execution = self.commit_worker_report(
+        let (execution, _rejection) = self.commit_worker_report(
             run,
             stable_effect_command_id(run, attempt, &report)?,
             self.clock.now()?,
@@ -316,10 +316,17 @@ impl RuntimeService {
             })?;
         let reporter = DurableExecutionReporter::new(self, dispatch, next_sequence);
         let boundary = self.executor.execute_streaming(dispatch, &reporter);
-        let terminal_seen = reporter.terminal_seen()?;
-        let observations = reporter.observations()?;
-        if terminal_seen {
-            if let Err(error) = boundary {
+        let outcome = reporter.finish()?;
+        if outcome.terminal_seen {
+            if let Some(failure) = outcome.failure {
+                let error = failure.into_runtime_error();
+                warn!(
+                    run = %dispatch.run(),
+                    attempt = %dispatch.attempt(),
+                    reason = %error,
+                    "executor reported an error after a terminal observation was already durable"
+                );
+            } else if let Err(error) = boundary {
                 warn!(
                     run = %dispatch.run(),
                     attempt = %dispatch.attempt(),
@@ -327,18 +334,31 @@ impl RuntimeService {
                     "executor returned an error after a terminal observation was already durable"
                 );
             }
-            return Ok(EffectExecutionResult::Completed { observations });
+            return Ok(EffectExecutionResult::Completed {
+                observations: outcome.observations,
+            });
         }
-        if let Err(error) = &boundary {
-            warn!(
-                run = %dispatch.run(),
-                attempt = %dispatch.attempt(),
-                reason = %error,
-                "external effect boundary returned without a terminal observation"
-            );
+        if let Some(failure) = outcome.failure {
+            return Err(failure.into_runtime_error());
         }
-        self.record_effect_uncertainty(dispatch.run(), dispatch.attempt())?;
-        Ok(EffectExecutionResult::Uncertain { observations })
+        match boundary {
+            Ok(()) => Err(RuntimeError::Executor(ExecutorError::InvalidReports(
+                "executor returned without a terminal observation".to_owned(),
+            ))),
+            Err(ExecutorError::Boundary(reason)) => {
+                warn!(
+                    run = %dispatch.run(),
+                    attempt = %dispatch.attempt(),
+                    reason = %reason,
+                    "external effect boundary returned without a terminal observation"
+                );
+                self.record_effect_uncertainty(dispatch.run(), dispatch.attempt())?;
+                Ok(EffectExecutionResult::Uncertain {
+                    observations: outcome.observations,
+                })
+            }
+            Err(error) => Err(RuntimeError::Executor(error)),
+        }
     }
 
     fn execute_cancellation_effect(
@@ -368,13 +388,16 @@ impl RuntimeService {
             attempt: dispatch.attempt().clone(),
             acknowledgement,
         };
-        let execution = self.commit_worker_report(
+        let (execution, rejection) = self.commit_worker_report(
             dispatch.run(),
             stable_effect_command_id(dispatch.run(), dispatch.attempt(), &report)?,
             self.clock.now()?,
             Reason::new("executor acknowledged durable cancellation intent")?,
             report,
         )?;
+        if let Some(error) = rejection {
+            return Err(error);
+        }
         if execution.result().disposition() != CommandDisposition::Accepted {
             return Err(RuntimeError::Executor(ExecutorError::InvalidReports(
                 "cancellation acknowledgement was durably rejected".to_owned(),
@@ -392,7 +415,11 @@ impl RuntimeService {
         report: WorkerReport,
     ) -> Result<ObservationDisposition, RuntimeError> {
         let terminal_identity = terminal_report_identity(&report);
-        let execution = self.commit_worker_report(run, command, observed_at, reason, report)?;
+        let (execution, rejection) =
+            self.commit_worker_report(run, command, observed_at, reason, report)?;
+        if let Some(error) = rejection {
+            return Err(error);
+        }
         if execution.result().disposition() != CommandDisposition::Accepted {
             return Err(RuntimeError::Executor(ExecutorError::InvalidReports(
                 "executor observation was durably rejected".to_owned(),
@@ -422,7 +449,7 @@ impl RuntimeService {
         observed_at: TimestampMillis,
         reason: Reason,
         report: WorkerReport,
-    ) -> Result<CommandExecution, RuntimeError> {
+    ) -> Result<(CommandExecution, Option<RuntimeError>), RuntimeError> {
         for _ in 0..MAX_OBSERVATION_COMMIT_RETRIES {
             let projection = self.projection(run)?;
             let document = RunCommandDocument::new(
@@ -438,8 +465,8 @@ impl RuntimeService {
                     report: report.clone(),
                 },
             )?;
-            match self.handle_command(&document) {
-                Ok(execution) => return Ok(execution),
+            match self.handle_command_preserving_rejection(&document) {
+                Ok(outcome) => return Ok(outcome),
                 Err(RuntimeError::Persistence(PersistenceError::SequenceConflict { .. })) => {}
                 Err(error) => return Err(error),
             }
@@ -523,10 +550,85 @@ impl RuntimeService {
     }
 }
 
+enum ReportIngestionFailure {
+    Runtime(RuntimeError),
+    InvalidReports(String),
+}
+
+impl ReportIngestionFailure {
+    fn into_runtime_error(self) -> RuntimeError {
+        match self {
+            Self::Runtime(error) => error,
+            Self::InvalidReports(reason) => {
+                RuntimeError::Executor(ExecutorError::InvalidReports(reason))
+            }
+        }
+    }
+}
+
+struct ReporterOutcome {
+    terminal_seen: bool,
+    observations: u32,
+    failure: Option<ReportIngestionFailure>,
+}
+
 struct ReporterState {
     next_sequence: u64,
     terminal_seen: bool,
     observations: u32,
+    failure: Option<ReportIngestionFailure>,
+}
+
+impl ReporterState {
+    fn prior_failure(&self) -> Option<ExecutorError> {
+        self.failure.as_ref().map(|failure| match failure {
+            ReportIngestionFailure::Runtime(_error) => ExecutorError::Boundary(
+                "runtime rejected an executor observation; typed failure retained internally"
+                    .to_owned(),
+            ),
+            ReportIngestionFailure::InvalidReports(reason) => {
+                ExecutorError::InvalidReports(reason.clone())
+            }
+        })
+    }
+
+    fn reject_runtime(&mut self, error: RuntimeError) -> ExecutorError {
+        if self.failure.is_none() {
+            self.failure = Some(ReportIngestionFailure::Runtime(error));
+        }
+        ExecutorError::Boundary(
+            "runtime rejected an executor observation; typed failure retained internally"
+                .to_owned(),
+        )
+    }
+
+    fn reject_invalid_reports(&mut self, reason: impl Into<String>) -> ExecutorError {
+        let reason = reason.into();
+        if self.failure.is_none() {
+            self.failure = Some(ReportIngestionFailure::InvalidReports(reason.clone()));
+        }
+        ExecutorError::InvalidReports(reason)
+    }
+
+    fn next_observation_count(&mut self) -> Result<u32, ExecutorError> {
+        let maximum = match u32::try_from(MAX_REPORTS_PER_DISPATCH) {
+            Ok(maximum) => maximum,
+            Err(_error) => {
+                return Err(self.reject_invalid_reports(
+                    "maximum report count cannot be represented by the reporter",
+                ));
+            }
+        };
+        if self.observations >= maximum {
+            return Err(self.reject_invalid_reports(format!(
+                "an executor may submit at most {MAX_REPORTS_PER_DISPATCH} observations per dispatch"
+            )));
+        }
+        match self.observations.checked_add(1) {
+            Some(next) => Ok(next),
+            None => Err(self.reject_invalid_reports("executor observation count overflow")),
+        }
+    }
 }
 
 struct DurableExecutionReporter<'a> {
@@ -550,28 +652,20 @@ impl<'a> DurableExecutionReporter<'a> {
                 next_sequence,
                 terminal_seen: false,
                 observations: 0,
+                failure: None,
             }),
         }
     }
 
-    fn terminal_seen(&self) -> Result<bool, RuntimeError> {
-        Ok(self
-            .state
-            .lock()
-            .map_err(|_error| {
-                RuntimeError::Scheduling("execution reporter state lock is poisoned".to_owned())
-            })?
-            .terminal_seen)
-    }
-
-    fn observations(&self) -> Result<u32, RuntimeError> {
-        Ok(self
-            .state
-            .lock()
-            .map_err(|_error| {
-                RuntimeError::Scheduling("execution reporter state lock is poisoned".to_owned())
-            })?
-            .observations)
+    fn finish(&self) -> Result<ReporterOutcome, RuntimeError> {
+        let mut state = self.state.lock().map_err(|_error| {
+            RuntimeError::Scheduling("execution reporter state lock is poisoned".to_owned())
+        })?;
+        Ok(ReporterOutcome {
+            terminal_seen: state.terminal_seen,
+            observations: state.observations,
+            failure: state.failure.take(),
+        })
     }
 }
 
@@ -580,42 +674,61 @@ impl ExecutionReporter for DurableExecutionReporter<'_> {
         let mut state = self.state.lock().map_err(|_error| {
             ExecutorError::Boundary("execution reporter state lock is poisoned".to_owned())
         })?;
-        if state.terminal_seen {
-            return Err(ExecutorError::InvalidReports(
-                "no report may follow a terminal observation".to_owned(),
-            ));
+        if let Some(error) = state.prior_failure() {
+            return Err(error);
         }
-        if report.invocation() != &self.invocation || report.sequence() != state.next_sequence {
-            return Err(ExecutorError::InvalidReports(format!(
-                "invocation observations must be contiguous; expected sequence {}",
-                state.next_sequence
+        if state.terminal_seen {
+            return Err(state.reject_invalid_reports("no report may follow a terminal observation"));
+        }
+        let expected_sequence = state.next_sequence;
+        if report.invocation() != &self.invocation || report.sequence() != expected_sequence {
+            return Err(state.reject_invalid_reports(format!(
+                "invocation observations must be contiguous; expected sequence {expected_sequence}"
             )));
         }
         let terminal = report.kind().terminal().is_some();
+        let next_sequence = if terminal {
+            None
+        } else {
+            match state.next_sequence.checked_add(1) {
+                Some(next_sequence) => Some(next_sequence),
+                None => {
+                    return Err(state.reject_invalid_reports("invocation report sequence overflow"));
+                }
+            }
+        };
+        let next_observations = state.next_observation_count()?;
         let worker_report = WorkerReport::Invocation {
             attempt: self.attempt.clone(),
             report,
         };
-        let disposition = self
-            .runtime
-            .submit_effect_observation(
-                &self.run,
-                stable_effect_command_id(&self.run, &self.attempt, &worker_report)
-                    .map_err(|error| ExecutorError::Boundary(error.to_string()))?,
-                self.runtime
-                    .clock
-                    .now()
-                    .map_err(|error| ExecutorError::Boundary(error.to_string()))?,
-                Reason::new("executor supplied an incremental invocation observation")
-                    .map_err(|error| ExecutorError::Boundary(error.to_string()))?,
-                worker_report,
-            )
-            .map_err(|error| ExecutorError::Boundary(error.to_string()))?;
-        state.next_sequence = state.next_sequence.checked_add(1).ok_or_else(|| {
-            ExecutorError::InvalidReports("invocation report sequence overflow".to_owned())
-        })?;
+        let command = match stable_effect_command_id(&self.run, &self.attempt, &worker_report) {
+            Ok(command) => command,
+            Err(error) => return Err(state.reject_runtime(error)),
+        };
+        let observed_at = match self.runtime.clock.now() {
+            Ok(observed_at) => observed_at,
+            Err(error) => return Err(state.reject_runtime(error)),
+        };
+        let reason = match Reason::new("executor supplied an incremental invocation observation") {
+            Ok(reason) => reason,
+            Err(error) => return Err(state.reject_runtime(error.into())),
+        };
+        let disposition = match self.runtime.submit_effect_observation(
+            &self.run,
+            command,
+            observed_at,
+            reason,
+            worker_report,
+        ) {
+            Ok(disposition) => disposition,
+            Err(error) => return Err(state.reject_runtime(error)),
+        };
+        if let Some(next_sequence) = next_sequence {
+            state.next_sequence = next_sequence;
+        }
         state.terminal_seen = terminal;
-        state.observations = state.observations.saturating_add(1);
+        state.observations = next_observations;
         Ok(disposition)
     }
 
@@ -623,35 +736,47 @@ impl ExecutionReporter for DurableExecutionReporter<'_> {
         let mut state = self.state.lock().map_err(|_error| {
             ExecutorError::Boundary("execution reporter state lock is poisoned".to_owned())
         })?;
-        if state.terminal_seen {
-            return Err(ExecutorError::InvalidReports(
-                "a terminal invocation cannot renew its lease".to_owned(),
-            ));
+        if let Some(error) = state.prior_failure() {
+            return Err(error);
         }
-        let observed_at = self
-            .runtime
-            .clock
-            .now()
-            .map_err(|error| ExecutorError::Boundary(error.to_string()))?;
-        let expires_at = checked_timestamp_add(observed_at, self.runtime.config.lease_duration_ms)
-            .map_err(|error| ExecutorError::Boundary(error.to_string()))?;
+        if state.terminal_seen {
+            return Err(
+                state.reject_invalid_reports("a terminal invocation cannot renew its lease")
+            );
+        }
+        let next_observations = state.next_observation_count()?;
+        let observed_at = match self.runtime.clock.now() {
+            Ok(observed_at) => observed_at,
+            Err(error) => return Err(state.reject_runtime(error)),
+        };
+        let expires_at =
+            match checked_timestamp_add(observed_at, self.runtime.config.lease_duration_ms) {
+                Ok(expires_at) => expires_at,
+                Err(error) => return Err(state.reject_runtime(error)),
+            };
         let report = WorkerReport::Heartbeat {
             lease: self.lease.clone(),
             expires_at,
         };
-        let disposition = self
-            .runtime
-            .submit_effect_observation(
-                &self.run,
-                stable_effect_command_id(&self.run, &self.attempt, &report)
-                    .map_err(|error| ExecutorError::Boundary(error.to_string()))?,
-                observed_at,
-                Reason::new("executor renewed its durable lease")
-                    .map_err(|error| ExecutorError::Boundary(error.to_string()))?,
-                report,
-            )
-            .map_err(|error| ExecutorError::Boundary(error.to_string()))?;
-        state.observations = state.observations.saturating_add(1);
+        let command = match stable_effect_command_id(&self.run, &self.attempt, &report) {
+            Ok(command) => command,
+            Err(error) => return Err(state.reject_runtime(error)),
+        };
+        let reason = match Reason::new("executor renewed its durable lease") {
+            Ok(reason) => reason,
+            Err(error) => return Err(state.reject_runtime(error.into())),
+        };
+        let disposition = match self.runtime.submit_effect_observation(
+            &self.run,
+            command,
+            observed_at,
+            reason,
+            report,
+        ) {
+            Ok(disposition) => disposition,
+            Err(error) => return Err(state.reject_runtime(error)),
+        };
+        state.observations = next_observations;
         Ok(disposition)
     }
 }

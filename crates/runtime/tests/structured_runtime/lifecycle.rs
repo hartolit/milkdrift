@@ -107,11 +107,29 @@ fn scheduler_commits_dispatch_without_entering_long_running_executor() -> TestRe
     assert_eq!(runtime.scheduler_tick()?.dispatched, 0);
 
     executor.release()?;
-    effect
+    let effect_result = effect
         .join()
         .map_err(|_| "effect worker panicked")?
         .map_err(|error| format!("effect execution failed: {error}"))?;
-    assert!(runtime.projection(&run)?.is_completed());
+    assert!(matches!(
+        effect_result,
+        EffectExecutionResult::Completed { .. }
+    ));
+    let completed = runtime.projection(&run)?;
+    assert_eq!(
+        completed.lifecycle(),
+        RunLifecycle::Terminal(RunOutcome::Succeeded)
+    );
+    assert_eq!(completed.attempts().len(), 1);
+    assert_eq!(
+        completed
+            .attempts()
+            .values()
+            .next()
+            .and_then(|attempt| attempt.terminal())
+            .map(|terminal| terminal.outcome()),
+        Some(NodeOutcome::Succeeded)
+    );
     Ok(())
 }
 
@@ -636,6 +654,14 @@ fn active_invocation_cancellation_reaches_the_executor_and_is_acknowledged_durab
     let dispatch =
         std::thread::spawn(move || tick_runtime.tick().map_err(|error| error.to_string()));
     executor.wait_until_entered()?;
+    let invocation = runtime
+        .projection(&run)?
+        .attempts()
+        .values()
+        .find(|attempt| attempt.state() == &AttemptState::Running)
+        .and_then(|attempt| attempt.invocation())
+        .cloned()
+        .ok_or("active cancellation fixture has no running invocation")?;
     let cancel = runtime.command(
         run.clone(),
         ActorRef::new("human:structured-runtime-test")?,
@@ -651,6 +677,10 @@ fn active_invocation_cancellation_reaches_the_executor_and_is_acknowledged_durab
 
     runtime.tick()?;
     assert_eq!(executor.cancellation_requests.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        executor.cancellation_request_sequence(&invocation)?,
+        Some(1)
+    );
     executor.release()?;
     dispatch
         .join()
@@ -661,6 +691,16 @@ fn active_invocation_cancellation_reaches_the_executor_and_is_acknowledged_durab
     assert_eq!(
         projection.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Cancelled)
+    );
+    assert_eq!(projection.attempts().len(), 1);
+    assert_eq!(
+        projection
+            .attempts()
+            .values()
+            .next()
+            .and_then(|attempt| attempt.terminal())
+            .map(|terminal| terminal.outcome()),
+        Some(NodeOutcome::Cancelled)
     );
     let history = runtime.history(&run)?;
     assert!(history.iter().any(|event| matches!(

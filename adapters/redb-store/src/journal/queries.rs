@@ -15,27 +15,13 @@ impl RunQueryStore for RedbStore {
         let events_table = read.open_table(RUN_EVENTS).map_err(error::redb)?;
         let observed_head = validated_run_head(&heads, &events_table, &query.run)?;
         validate_run_history_membership(&read, &query.run, observed_head)?;
-        let mut next_sequence = query
-            .cursor
-            .as_ref()
-            .map_or(RunSequence::FIRST, |cursor| cursor.next_sequence);
-        if observed_head == RunSequence::ZERO {
-            if query.cursor.is_some() {
-                return Err(PersistenceError::InvalidCursor(
-                    "event cursor names an absent run".to_owned(),
-                ));
-            }
+        let Some(mut next_sequence) = query.start_sequence(observed_head)? else {
             return Ok(EventPage {
                 events: Vec::new(),
                 next: None,
                 observed_head,
             });
-        }
-        if next_sequence > observed_head {
-            return Err(PersistenceError::InvalidCursor(format!(
-                "event cursor sequence {next_sequence} is beyond observed head {observed_head}"
-            )));
-        }
+        };
         let checksum_table = read.open_table(EVENT_CHECKSUMS).map_err(error::redb)?;
         let mut events = Vec::with_capacity(query.limit.get() as usize);
         while next_sequence <= observed_head && events.len() < query.limit.get() as usize {

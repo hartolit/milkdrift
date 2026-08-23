@@ -20,8 +20,9 @@ use milkdrift_blueprint::{
 use milkdrift_capability::{
     ArtifactReference as InvocationArtifactReference, BoundedJson, CancellationAcknowledgement,
     CancellationRequest, CapabilityDescriptor, CapabilityDescriptorDocument, CapabilityRequirement,
-    ErrorClass, InvocationEvent, InvocationEventKind, InvocationFailure, InvocationTerminal,
-    InvocationValueReference, OperationId, SchemaId, SideEffectClass, TerminalStatus,
+    ErrorClass, InvocationEvent, InvocationEventKind, InvocationFailure, InvocationId,
+    InvocationTerminal, InvocationValueReference, OperationId, SchemaId, SideEffectClass,
+    TerminalStatus,
 };
 use milkdrift_persistence::{
     ActorRef, ArtifactPublicationId, ArtifactStore, AtomicRunCommitRequest, AuthorityDecision,
@@ -36,11 +37,11 @@ use milkdrift_persistence::{
 };
 use milkdrift_redb_store::RedbStore;
 use milkdrift_runtime::{
-    AttemptState, BranchState, DeterministicExecutor, EffectAction, ExecutionDispatch,
-    ExecutionReportBatch, ExecutorError, IdGenerator, IterationState, LeaseState, ManualClock,
-    NodeExecutionState, ResolvedCapability, RetryPolicy, RunCommand, RunLifecycle, RuntimeConfig,
-    RuntimeError, RuntimeService, RuntimeStartupState, SchedulerLimits, SequentialIdGenerator,
-    SubworkflowState, TaskExecutor, WorkerReport,
+    AttemptState, BranchState, DeterministicExecutor, EffectAction, EffectExecutionResult,
+    ExecutionDispatch, ExecutionReportBatch, ExecutorError, IdGenerator, IterationState,
+    LeaseState, ManualClock, NodeExecutionState, ResolvedCapability, RetryPolicy, RunCommand,
+    RunLifecycle, RuntimeConfig, RuntimeError, RuntimeService, RuntimeStartupState,
+    SchedulerLimits, SequentialIdGenerator, SubworkflowState, TaskExecutor, WorkerReport,
 };
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactRetention, ArtifactSensitivity,
@@ -74,6 +75,7 @@ struct BlockingExecutor {
     entered: (Mutex<bool>, Condvar),
     released: (Mutex<bool>, Condvar),
     cancellation_requests: AtomicUsize,
+    cancellation_sequences: Mutex<BTreeMap<InvocationId, u64>>,
 }
 
 struct PanickingExecutor {
@@ -399,9 +401,7 @@ impl TaskExecutor for PanickingExecutor {
         &self,
         _dispatch: &ExecutionDispatch,
     ) -> Result<ExecutionReportBatch, ExecutorError> {
-        std::panic::resume_unwind(Box::new(
-            "intentional crash after durable schedule and lease",
-        ))
+        std::panic::resume_unwind(Box::new("intentional crash after durable invocation start"))
     }
 
     fn cancel(
@@ -420,6 +420,7 @@ impl BlockingExecutor {
             entered: (Mutex::new(false), Condvar::new()),
             released: (Mutex::new(false), Condvar::new()),
             cancellation_requests: AtomicUsize::new(0),
+            cancellation_sequences: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -453,6 +454,15 @@ impl BlockingExecutor {
         *lock.lock().map_err(|_| "release lock poisoned")? = true;
         released.notify_all();
         Ok(())
+    }
+
+    fn cancellation_request_sequence(&self, invocation: &InvocationId) -> TestResult<Option<u64>> {
+        Ok(self
+            .cancellation_sequences
+            .lock()
+            .map_err(|_| "cancellation sequence lock poisoned")?
+            .get(invocation)
+            .copied())
     }
 }
 
@@ -488,8 +498,13 @@ impl TaskExecutor for BlockingExecutor {
                     .map_err(|_| ExecutorError::Boundary("release wait poisoned".to_owned()))?;
             }
         }
+        let cancellation_requested = self
+            .cancellation_sequences
+            .lock()
+            .map_err(|_| ExecutorError::Boundary("cancellation sequence lock poisoned".to_owned()))?
+            .contains_key(dispatch.request().invocation());
         let terminal = InvocationTerminal::new(
-            if blocked {
+            if cancellation_requested {
                 TerminalStatus::Cancelled
             } else {
                 TerminalStatus::Success
@@ -511,6 +526,10 @@ impl TaskExecutor for BlockingExecutor {
         &self,
         request: &CancellationRequest,
     ) -> Result<CancellationAcknowledgement, ExecutorError> {
+        self.cancellation_sequences
+            .lock()
+            .map_err(|_| ExecutorError::Boundary("cancellation sequence lock poisoned".to_owned()))?
+            .insert(request.invocation().clone(), request.request_sequence());
         self.cancellation_requests.fetch_add(1, Ordering::SeqCst);
         Ok(CancellationAcknowledgement::new(
             request.invocation().clone(),

@@ -348,38 +348,84 @@ mod tests {
 
     impl RunQueryStore for PagedStore {
         fn events(&self, query: &EventPageQuery) -> Result<EventPage, PersistenceError> {
-            if query.run != self.run {
-                return Err(PersistenceError::InvalidCursor(
-                    "test query used another run".to_owned(),
-                ));
-            }
             self.largest_page_request
                 .fetch_max(query.limit.get(), Ordering::SeqCst);
             let read_index = self.page_reads.fetch_add(1, Ordering::SeqCst);
-            let effective_len = if self.grow_head_after_first_page && read_index == 0 {
+            let effective_len = if query.run != self.run {
+                0
+            } else if self.grow_head_after_first_page && read_index == 0 {
                 self.events.len().saturating_sub(1)
             } else {
                 self.events.len()
             };
-            let start = query
-                .cursor
-                .as_ref()
-                .map_or(0, |cursor| cursor.next_sequence.get().saturating_sub(1));
-            let start = usize::try_from(start).map_err(|_| PersistenceError::Bounds {
+            let observed_head = RunSequence::new(u64::try_from(effective_len).map_err(|_| {
+                PersistenceError::Bounds {
+                    location: "test.event_history",
+                    reason: "event history length exceeds u64".to_owned(),
+                }
+            })?);
+            let Some(next_sequence) = query.start_sequence(observed_head)? else {
+                return Ok(EventPage {
+                    events: Vec::new(),
+                    next: None,
+                    observed_head,
+                });
+            };
+            let start_offset = next_sequence.get().checked_sub(1).ok_or_else(|| {
+                PersistenceError::InvalidCursor("event cursor named sequence zero".to_owned())
+            })?;
+            let start = usize::try_from(start_offset).map_err(|_| PersistenceError::Bounds {
                 location: "test.event_cursor",
                 reason: "cursor exceeds usize".to_owned(),
             })?;
+            let limit =
+                usize::try_from(query.limit.get()).map_err(|_| PersistenceError::Bounds {
+                    location: "test.event_page_size",
+                    reason: "page size exceeds usize".to_owned(),
+                })?;
             let end = start
-                .saturating_add(query.limit.get() as usize)
+                .checked_add(limit)
+                .ok_or_else(|| PersistenceError::Bounds {
+                    location: "test.event_page",
+                    reason: "event page end overflowed usize".to_owned(),
+                })?
                 .min(effective_len);
-            let next = (end < effective_len).then(|| EventCursor {
-                run: self.run.clone(),
-                next_sequence: RunSequence::new(end as u64 + 1),
-            });
+            let page_events = self.events.get(start..end).ok_or_else(|| {
+                PersistenceError::Corruption(
+                    "test event page range exceeds authoritative history".to_owned(),
+                )
+            })?;
+            let mut expected = next_sequence;
+            for (index, event) in page_events.iter().enumerate() {
+                if event.run_id() != &query.run || event.sequence() != expected {
+                    return Err(PersistenceError::Corruption(
+                        "test event history is not contiguous for the queried run".to_owned(),
+                    ));
+                }
+                if index + 1 < page_events.len() {
+                    expected = expected.next()?;
+                }
+            }
+            let next = if end < effective_len {
+                Some(EventCursor {
+                    run: query.run.clone(),
+                    next_sequence: page_events
+                        .last()
+                        .ok_or_else(|| {
+                            PersistenceError::Corruption(
+                                "non-terminal test event page was empty".to_owned(),
+                            )
+                        })?
+                        .sequence()
+                        .next()?,
+                })
+            } else {
+                None
+            };
             Ok(EventPage {
-                events: self.events[start..end].to_vec(),
+                events: page_events.to_vec(),
                 next,
-                observed_head: RunSequence::new(effective_len as u64),
+                observed_head,
             })
         }
 
@@ -589,6 +635,45 @@ mod tests {
 
         assert_eq!(projected.sequence(), RunSequence::new(2));
         assert_eq!(projected.history_compacted_through(), RunSequence::FIRST);
+        assert!(matches!(
+            projected.lifecycle(),
+            crate::RunLifecycle::Running
+        ));
+        assert_eq!(store.page_reads.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn compatible_snapshot_at_journal_head_loads_without_replaying_an_event()
+    -> Result<(), Box<dyn Error>> {
+        let (run, events) = snapshot_history_fixture("snapshot-at-head")?;
+        let mut complete = RunProjection::new();
+        for event in &events {
+            complete.apply_replayed(event)?;
+        }
+        let head = RunSequence::new(2);
+        let snapshot = SnapshotDocument::new(
+            SnapshotId::new("snapshot-query-at-head")?,
+            run.clone(),
+            head,
+            history_digest(&events)?,
+            RUN_PROJECTION_SNAPSHOT_SCHEMA_V1,
+            encode_projection_snapshot(&complete)?,
+        )?;
+        let store = PagedStore {
+            run: run.clone(),
+            events,
+            largest_page_request: AtomicU32::new(0),
+            page_reads: AtomicUsize::new(0),
+            grow_head_after_first_page: false,
+            snapshot: Mutex::new(SnapshotLoad::Verified(snapshot)),
+            discard_snapshot_error: false,
+        };
+
+        let projected = project_from_latest_snapshot(&store, &run)?;
+
+        assert_eq!(projected.sequence(), head);
+        assert_eq!(projected.history_compacted_through(), head);
         assert!(matches!(
             projected.lifecycle(),
             crate::RunLifecycle::Running

@@ -11,13 +11,10 @@ fn crash_after_durable_lease_recovers_only_after_expiry_and_retries_once() -> Te
     {
         let store = Arc::new(RedbStore::open(directory.path())?);
         store.put_revision(&revision)?;
-        let executor = Arc::new(PanickingExecutor {
-            resolver: DeterministicExecutor::new(test_descriptor()?),
-        });
         let runtime = recovery_service(
             store.clone(),
             Arc::new(ManualClock::new(NOW)),
-            executor,
+            Arc::new(DeterministicExecutor::new(test_descriptor()?)),
             "crash-after-lease",
         )?;
         let root_scope =
@@ -50,11 +47,8 @@ fn crash_after_durable_lease_recovers_only_after_expiry_and_retries_once() -> Te
         )?;
         runtime.handle_command(&start)?;
 
-        let crash = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.tick()));
-        assert!(
-            crash.is_err(),
-            "panicking executor did not simulate a crash"
-        );
+        let scheduled = runtime.scheduler_tick()?;
+        assert_eq!(scheduled.dispatched, 1);
         let stranded = runtime.projection(&run)?;
         assert_eq!(stranded.attempts().len(), 1);
         assert_eq!(
@@ -105,9 +99,10 @@ fn crash_after_durable_lease_recovers_only_after_expiry_and_retries_once() -> Te
             "healthy unexpired leases must not grow recovery history"
         );
         assert!(preserved.leases().values().all(|lease| lease.is_active()));
-        let tick = runtime.tick()?;
-        assert_eq!(tick.dispatched, 0);
-        assert_eq!(tick.completed, 0);
+        let scheduled = runtime.scheduler_tick()?;
+        assert_eq!(scheduled.dispatched, 0);
+        assert_eq!(scheduled.completed, 0);
+        assert!(runtime.claim_effects(PageSize::new(1)?)?.is_empty());
         assert_eq!(runtime.projection(&run)?.attempts().len(), 1);
     }
 
@@ -137,13 +132,21 @@ fn crash_after_durable_lease_recovers_only_after_expiry_and_retries_once() -> Te
                 .any(|attempt| attempt.state() == &AttemptState::AwaitingRetryTimer)
         );
 
-        let before_backoff = runtime.tick()?;
+        let before_backoff = runtime.scheduler_tick()?;
         assert_eq!(before_backoff.dispatched, 0);
         assert_eq!(before_backoff.completed, 0);
+        assert!(runtime.claim_effects(PageSize::new(1)?)?.is_empty());
         let _ = recovery_clock.advance(1)?;
-        let tick = runtime.tick()?;
-        assert_eq!(tick.dispatched, 1);
-        assert_eq!(tick.completed, 1);
+        let scheduled = runtime.scheduler_tick()?;
+        assert_eq!(scheduled.dispatched, 1);
+        assert_eq!(scheduled.completed, 0);
+        let actions = runtime.claim_effects(PageSize::new(1)?)?;
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(actions.first(), Some(EffectAction::Execute(_))));
+        assert_eq!(
+            runtime.execute_effect(&actions[0])?,
+            EffectExecutionResult::Completed { observations: 1 }
+        );
         let completed = runtime.projection(&run)?;
         assert_eq!(
             completed.lifecycle(),
@@ -192,12 +195,185 @@ fn crash_after_durable_lease_recovers_only_after_expiry_and_retries_once() -> Te
         );
         assert!(!history.iter().any(|event| matches!(
             event.kind(),
+            RunEventKind::NodeStarted { attempt, .. } if attempt == first.attempt()
+        )));
+        assert!(!history.iter().any(|event| matches!(
+            event.kind(),
             RunEventKind::NodeTerminal {
                 attempt,
                 outcome: NodeOutcome::Failed,
                 ..
             } if attempt == first.attempt()
         )));
+    }
+    Ok(())
+}
+
+#[test]
+fn crash_after_durable_start_recovers_as_uncertain_without_duplicate_dispatch_history() -> TestResult
+{
+    let directory = TempDir::new()?;
+    let revision = task_revision("workflow-crash-after-start")?;
+    let run = RunId::new("run-crash-after-start")?;
+    let descriptor = descriptor_with_model_side_effect("non_idempotent_write")?;
+
+    let original_attempt = {
+        let store = Arc::new(RedbStore::open(directory.path())?);
+        store.put_revision(&revision)?;
+        let runtime = recovery_service(
+            store.clone(),
+            Arc::new(ManualClock::new(NOW)),
+            Arc::new(PanickingExecutor {
+                resolver: DeterministicExecutor::new(descriptor.clone()),
+            }),
+            "crash-after-start",
+        )?;
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::CreateRun {
+                workflow: revision.semantic().workflow().clone(),
+                revision: revision.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    run.clone(),
+                    ScopeId::new("scope-crash-after-start")?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?;
+        submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?;
+
+        assert_eq!(runtime.scheduler_tick()?.dispatched, 1);
+        let actions = runtime.claim_effects(PageSize::new(1)?)?;
+        assert_eq!(actions.len(), 1);
+        let action = actions
+            .into_iter()
+            .next()
+            .ok_or("started crash fixture did not claim its invocation")?;
+        let attempt = match &action {
+            EffectAction::Execute(dispatch) => dispatch.attempt().clone(),
+            EffectAction::Cancel(_dispatch) => {
+                return Err(
+                    "started crash fixture claimed cancellation instead of execution".into(),
+                );
+            }
+        };
+
+        let started = runtime.projection(&run)?;
+        assert_eq!(
+            started
+                .attempts()
+                .get(&attempt)
+                .map(|attempt| attempt.state()),
+            Some(&AttemptState::Running)
+        );
+        let history = runtime.history(&run)?;
+        assert_eq!(
+            history
+                .iter()
+                .filter(|event| matches!(event.kind(), RunEventKind::NodeScheduled { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            history
+                .iter()
+                .filter(|event| matches!(event.kind(), RunEventKind::NodeStarted { .. }))
+                .count(),
+            1
+        );
+
+        let crash = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runtime.execute_effect(&action)
+        }));
+        assert!(
+            crash.is_err(),
+            "panicking executor did not fail after durable invocation start"
+        );
+        let stranded = runtime.projection(&run)?;
+        assert_eq!(
+            stranded
+                .attempts()
+                .get(&attempt)
+                .map(|attempt| attempt.state()),
+            Some(&AttemptState::Running)
+        );
+        assert!(
+            !runtime
+                .history(&run)?
+                .iter()
+                .any(|event| matches!(event.kind(), RunEventKind::ExternalOutcomeUncertain { .. })),
+            "process loss before boundary classification must not fabricate uncertainty in-process"
+        );
+        attempt
+    };
+
+    {
+        let store = Arc::new(RedbStore::open(directory.path())?);
+        let runtime = recovery_service(
+            store,
+            Arc::new(ManualClock::new(NOW + 101)),
+            Arc::new(DeterministicExecutor::new(descriptor)),
+            "recover-after-start",
+        )?;
+        let recovery = runtime.recover()?;
+        assert_eq!(recovery.runs_examined, 1);
+        assert_eq!(recovery.expired_leases, 1);
+        assert_eq!(recovery.retryable, 0);
+        assert_eq!(recovery.uncertain, 1);
+
+        let recovered = runtime.projection(&run)?;
+        assert_eq!(recovered.attempts().len(), 1);
+        let attempt = recovered
+            .attempts()
+            .get(&original_attempt)
+            .ok_or("started attempt was not retained across recovery")?;
+        assert_eq!(attempt.state(), &AttemptState::Uncertain);
+        assert!(attempt.terminal().is_none());
+        assert!(attempt.obligation().is_some());
+        assert_eq!(attempt.recovery().len(), 1);
+        assert_eq!(
+            attempt.recovery()[0].classification(),
+            RecoveryClassification::Uncertain
+        );
+        assert!(recovered.leases().values().any(|lease| matches!(
+            lease.state(),
+            LeaseState::Expired(RecoveryClassification::Uncertain)
+        )));
+
+        let history = runtime.history(&run)?;
+        assert_eq!(
+            history
+                .iter()
+                .filter(|event| matches!(event.kind(), RunEventKind::NodeScheduled { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            history
+                .iter()
+                .filter(|event| matches!(event.kind(), RunEventKind::NodeStarted { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            history
+                .iter()
+                .filter(|event| matches!(
+                    event.kind(),
+                    RunEventKind::ExternalOutcomeUncertain { .. }
+                ))
+                .count(),
+            1
+        );
+        assert!(!history.iter().any(|event| matches!(
+            event.kind(),
+            RunEventKind::NodeRetryScheduled { .. } | RunEventKind::NodeTerminal { .. }
+        )));
+        assert_eq!(runtime.scheduler_tick()?.dispatched, 0);
+        assert!(runtime.claim_effects(PageSize::new(1)?)?.is_empty());
     }
     Ok(())
 }

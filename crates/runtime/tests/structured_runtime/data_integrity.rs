@@ -119,7 +119,22 @@ fn undeclared_executor_output_is_durably_rejected_without_workspace_mutation() -
     harness.put_revision(&revision)?;
     harness.create_and_start(&run, &revision)?;
 
-    assert!(harness.runtime.tick().is_err());
+    let error = match harness.runtime.tick() {
+        Ok(result) => {
+            return Err(
+                format!("undeclared executor output unexpectedly completed: {result:?}").into(),
+            );
+        }
+        Err(error) => error,
+    };
+    assert!(
+        matches!(
+            &error,
+            RuntimeError::InvalidTransition(detail)
+                if detail.contains("not a declared data output")
+        ),
+        "deterministic report rejection lost its typed runtime error: {error}"
+    );
     let projection = harness.runtime.projection(&run)?;
     let root = projection
         .root_scope()
@@ -136,12 +151,26 @@ fn undeclared_executor_output_is_durably_rejected_without_workspace_mutation() -
             .values()
             .all(|execution| execution.outputs().is_empty())
     );
+    let history = harness.runtime.history(&run)?;
     assert!(
-        !harness
-            .runtime
-            .history(&run)?
+        !history
             .iter()
             .any(|event| matches!(event.kind(), RunEventKind::NodeOutputPublished { .. }))
+    );
+    assert!(
+        !history
+            .iter()
+            .any(|event| matches!(event.kind(), RunEventKind::ExternalOutcomeUncertain { .. }))
+    );
+    assert_eq!(harness.store.head(&run)?, projection.sequence());
+    assert_eq!(
+        u64::try_from(history.len())?,
+        projection.sequence().get(),
+        "accepted event history must remain contiguous through the durable head"
+    );
+    assert_eq!(
+        history.last().map(RunEventEnvelope::sequence),
+        Some(projection.sequence())
     );
     Ok(())
 }

@@ -1217,6 +1217,13 @@ pub trait RunJournal: Send + Sync {
 }
 
 /// Stable event page cursor; the next sequence is inclusive.
+///
+/// For an existing non-empty run whose observed head is `N`, `N + 1` is the
+/// one valid end-of-stream cursor. Reading that cursor returns an empty page,
+/// no continuation, and the same observed head. A later cursor is invalid, as
+/// is every cursor for an absent run. When `N` is the maximum sequence there is
+/// no representable end-of-stream cursor and the final ordinary page has no
+/// continuation.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EventCursor {
@@ -1253,6 +1260,50 @@ impl EventPageQuery {
         }
         Ok(Self { run, cursor, limit })
     }
+
+    /// Validates this query against one atomically observed journal head and
+    /// returns the first sequence to read.
+    ///
+    /// `Ok(None)` means the query is already at end of stream. This is returned
+    /// for an absent run without a cursor and for the exact one-past-head cursor
+    /// of an existing non-empty run. Implementations must use this method even
+    /// when callers constructed the public query fields directly, so cursor
+    /// ownership and the exact EOF rule cannot diverge between adapters.
+    pub fn start_sequence(
+        &self,
+        observed_head: RunSequence,
+    ) -> Result<Option<RunSequence>, PersistenceError> {
+        let Some(cursor) = &self.cursor else {
+            return Ok((observed_head != RunSequence::ZERO).then_some(RunSequence::FIRST));
+        };
+        if cursor.run != self.run || cursor.next_sequence == RunSequence::ZERO {
+            return Err(PersistenceError::InvalidCursor(
+                "event cursor must belong to the query run and name a non-zero sequence".to_owned(),
+            ));
+        }
+        if observed_head == RunSequence::ZERO {
+            return Err(PersistenceError::InvalidCursor(
+                "event cursor names an absent run".to_owned(),
+            ));
+        }
+        if cursor.next_sequence <= observed_head {
+            return Ok(Some(cursor.next_sequence));
+        }
+
+        let exact_eof = observed_head.next().map_err(|_| {
+            PersistenceError::InvalidCursor(
+                "the observed journal head has no representable end-of-stream cursor".to_owned(),
+            )
+        })?;
+        if cursor.next_sequence == exact_eof {
+            Ok(None)
+        } else {
+            Err(PersistenceError::InvalidCursor(format!(
+                "event cursor sequence {} is beyond exact end-of-stream position {exact_eof}",
+                cursor.next_sequence
+            )))
+        }
+    }
 }
 
 /// One ordered event page plus a resumable cursor.
@@ -1260,7 +1311,8 @@ impl EventPageQuery {
 pub struct EventPage {
     /// Strictly contiguous verified envelopes.
     pub events: Vec<RunEventEnvelope>,
-    /// Cursor for the next page, absent at the observed head.
+    /// Cursor for the next page, absent at the observed head. Reading an exact
+    /// one-past-head cursor also returns no continuation.
     pub next: Option<EventCursor>,
     /// Journal head observed during this read transaction.
     pub observed_head: RunSequence,
@@ -1355,6 +1407,11 @@ pub struct RunSummaryPage {
 /// Read-only journal and discoverability queries for runtime/recovery/control APIs.
 pub trait RunQueryStore: Send + Sync {
     /// Reads a verified contiguous event page. Malformed history is an error.
+    ///
+    /// Implementations must apply [`EventPageQuery::start_sequence`] to their
+    /// atomically observed head. In particular, the exact one-past-head cursor
+    /// of an existing non-empty run is valid EOF, later cursors are invalid,
+    /// and a cursor for an absent run is invalid.
     fn events(&self, query: &EventPageQuery) -> Result<EventPage, PersistenceError>;
 
     /// Gets one run summary.

@@ -580,6 +580,14 @@ impl RuntimeService {
         &self,
         command: &RunCommandDocument,
     ) -> Result<CommandExecution, RuntimeError> {
+        self.handle_command_preserving_rejection(command)
+            .map(|(execution, _rejection)| execution)
+    }
+
+    fn handle_command_preserving_rejection(
+        &self,
+        command: &RunCommandDocument,
+    ) -> Result<(CommandExecution, Option<RuntimeError>), RuntimeError> {
         let span = info_span!(
             "runtime.command",
             run = %command.run_id(),
@@ -606,10 +614,13 @@ impl RuntimeService {
                 resulting_sequence = prior.resulting_sequence().get(),
                 "returning durable idempotent command result"
             );
-            return Ok(CommandExecution {
-                result: prior,
-                replayed: true,
-            });
+            return Ok((
+                CommandExecution {
+                    result: prior,
+                    replayed: true,
+                },
+                None,
+            ));
         }
 
         let projection = self.projection(command.run_id())?;
@@ -629,11 +640,18 @@ impl RuntimeService {
         } else {
             self.plan_command(command, &projection)
         };
-        let outcome = match planned {
-            Ok(plan) => self.commit_accepted(command, receipt, projection, plan)?,
+        let (outcome, rejection) = match planned {
+            Ok(plan) => (
+                self.commit_accepted(command, receipt, projection, plan)?,
+                None,
+            ),
             Err(error) if durable_rejection(&error) => {
                 warn!(reason = %error, "command rejected durably");
-                self.commit_rejected(command, receipt, &error.to_string())?
+                let detail = error.to_string();
+                (
+                    self.commit_rejected(command, receipt, &detail)?,
+                    Some(error),
+                )
             }
             Err(error) => return Err(error),
         };
@@ -647,7 +665,7 @@ impl RuntimeService {
             resulting_sequence = result.resulting_sequence().get(),
             "command result is durable"
         );
-        Ok(CommandExecution { result, replayed })
+        Ok((CommandExecution { result, replayed }, rejection))
     }
 
     /// Alias emphasizing that command execution means durable transition handling,

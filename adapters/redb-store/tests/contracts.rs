@@ -4,6 +4,8 @@
 mod artifact;
 #[path = "contracts/discovery_snapshot_revision.rs"]
 mod discovery_snapshot_revision;
+#[path = "contracts/event_page.rs"]
+mod event_page;
 #[path = "contracts/fault_reopen.rs"]
 mod fault_reopen;
 #[path = "contracts/journal_workspace.rs"]
@@ -161,22 +163,45 @@ fn accepted_followup_request(
     command: &str,
     event: &str,
 ) -> Result<AtomicRunCommitRequest, Box<dyn std::error::Error>> {
-    let sequence = RunSequence::new(2);
+    accepted_sequenced_followup_request(
+        run,
+        command,
+        event,
+        RunSequence::FIRST,
+        RunSequence::new(2),
+        TimestampMillis::new(11),
+    )
+}
+
+fn accepted_sequenced_followup_request(
+    run: RunId,
+    command: &str,
+    event: &str,
+    expected_sequence: RunSequence,
+    sequence: RunSequence,
+    timestamp: TimestampMillis,
+) -> Result<AtomicRunCommitRequest, Box<dyn std::error::Error>> {
+    if expected_sequence.next()? != sequence {
+        return Err(PersistenceError::InvalidDocument(
+            "test follow-up request must append exactly one contiguous event".to_owned(),
+        )
+        .into());
+    }
     let command = CommandId::new(command)?;
     let document = br#"{"schema_version":1,"type":"followup"}"#.to_vec();
     let receipt = CommandReceipt::new(
         command.clone(),
         run.clone(),
         ActorRef::new("actor-test")?,
-        RunSequence::FIRST,
-        TimestampMillis::new(11),
+        expected_sequence,
+        timestamp,
         document,
     )?;
     let event = RunEventEnvelope::new(
         EventId::new(event)?,
         run.clone(),
         sequence,
-        TimestampMillis::new(11),
+        timestamp,
         RunEventKind::RunStarted,
     )?;
     let result = CommandResultDocument::new(
@@ -208,7 +233,7 @@ fn accepted_followup_request(
                 revision: revision_id()?,
                 state: IndexedRunState::Active,
                 through_sequence: sequence,
-                updated_at: TimestampMillis::new(11),
+                updated_at: timestamp,
             }),
             Vec::new(),
             Vec::new(),
