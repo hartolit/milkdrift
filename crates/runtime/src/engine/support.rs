@@ -11,9 +11,8 @@ use milkdrift_capability::{
 };
 use milkdrift_persistence::{
     IntegrityDigest, MAX_RECONCILIATION_PLAN_ITEMS, NodeExecutionId, NodeExecutionMode,
-    NodeOutcome, Reason, ReconciliationAction, ReconciliationClassification,
-    RecoveryClassification, RepeatContinuationCause, RunEventEnvelope, RunEventKind, RunOutcome,
-    RunSequence, TimestampMillis, WaitCondition, WorkspaceMutation,
+    NodeOutcome, Reason, RecoveryClassification, RepeatContinuationCause, RunEventEnvelope,
+    RunEventKind, RunOutcome, TimestampMillis, WaitCondition, WorkspaceMutation,
 };
 use milkdrift_workspace::{
     ArtifactReference, BranchId, RunId, ScopeKind, ScopeReference, WorkspaceScope, WorkspaceUsage,
@@ -651,50 +650,16 @@ pub(super) fn node_occurrence_exists_for_current_pin(
     node: &NodeId,
     scope: &ScopeReference,
 ) -> bool {
-    let added_after = node_current_epoch_boundary(projection, node);
-    projection.executions_for_node(node).any(|execution| {
-        execution.scope() == scope
-            && added_after.is_none_or(|boundary| execution.created_sequence() > boundary)
-    })
-}
-
-fn node_current_epoch_boundary(projection: &RunProjection, node: &NodeId) -> Option<RunSequence> {
-    node_epoch_boundary_at(projection, node, projection.sequence())
-}
-
-fn node_epoch_boundary_at(
-    projection: &RunProjection,
-    node: &NodeId,
-    through: RunSequence,
-) -> Option<RunSequence> {
-    projection.pins().iter().rev().find_map(|pin| {
-        if pin.effective_sequence() > through {
-            return None;
-        }
-        let plan = pin.plan()?;
-        projection
-            .reconciliation()
-            .plans()
-            .get(plan)?
-            .items()
-            .iter()
-            .any(|item| {
-                item.node.as_ref() == Some(node)
-                    && (item.classification == ReconciliationClassification::Added
-                        && item.execution.is_none()
-                        || item.classification == ReconciliationClassification::ChangedPending)
-                    && item.action == ReconciliationAction::UseNewOnNextInvocation
-            })
-            .then_some(pin.effective_sequence())
-    })
+    projection
+        .executions_for_node(node)
+        .any(|execution| execution.scope() == scope && execution.is_current_epoch())
 }
 
 pub(super) fn execution_is_in_current_node_epoch(
-    projection: &RunProjection,
+    _projection: &RunProjection,
     execution: &crate::projection::NodeExecutionProjection,
 ) -> bool {
-    node_current_epoch_boundary(projection, execution.node())
-        .is_none_or(|boundary| execution.created_sequence() > boundary)
+    execution.is_current_epoch()
 }
 
 pub(super) fn source_execution_is_valid_for_occurrence(
@@ -706,14 +671,16 @@ pub(super) fn source_execution_is_valid_for_occurrence(
     let target_created = projection
         .executions_for_node(target_node)
         .filter(|target| target.scope() == target_scope)
+        .filter(|target| target.is_current_epoch())
         .map(crate::projection::NodeExecutionProjection::created_sequence)
         .max();
     let Some(target_created) = target_created else {
         return false;
     };
     source.created_sequence() <= target_created
-        && node_epoch_boundary_at(projection, source.node(), target_created)
-            .is_none_or(|boundary| source.created_sequence() > boundary)
+        && source
+            .epoch_retired_sequence()
+            .is_none_or(|retired| retired > target_created)
 }
 
 pub(super) fn recovery_classification(

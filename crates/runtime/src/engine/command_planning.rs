@@ -387,6 +387,34 @@ impl RuntimeService {
                 duplicate_command: document.command_id().clone(),
             }));
         }
+        if let Some(receipt) = self.store.signal_receipt(document.run_id(), signal)? {
+            let RunEventKind::SignalReceived {
+                signal: received,
+                signal_type: received_type,
+                correlation: received_correlation,
+                mode: received_mode,
+                payload: received_payload,
+            } = receipt.kind()
+            else {
+                return Err(RuntimeError::InvalidHistory(
+                    "signal receipt lookup returned a non-receipt event".to_owned(),
+                ));
+            };
+            if received != signal
+                || received_type != signal_type
+                || received_correlation.as_ref() != correlation
+                || *received_mode != mode
+                || received_payload != payload
+            {
+                return Err(RuntimeError::InvalidTransition(
+                    "signal identity was reused with conflicting delivery facts".to_owned(),
+                ));
+            }
+            return Ok(CommandPlan::one(RunEventKind::SignalDeduplicated {
+                signal: signal.clone(),
+                duplicate_command: document.command_id().clone(),
+            }));
+        }
         let mut plan = CommandPlan::one(RunEventKind::SignalReceived {
             signal: signal.clone(),
             signal_type: signal_type.clone(),
@@ -650,12 +678,7 @@ impl RuntimeService {
             .attempts()
             .get(attempt)
             .ok_or_else(|| RuntimeError::InvalidTransition(format!("unknown attempt {attempt}")))?;
-        let historically_owned = attempt_view.leases().iter().any(|lease| {
-            projection
-                .leases()
-                .get(lease)
-                .is_some_and(|lease_view| lease_view.worker() == worker)
-        });
+        let historically_owned = attempt_view.lease_workers().contains(worker);
         if !historically_owned {
             return Err(RuntimeError::InvalidTransition(
                 "worker never owned a durable lease for the attempt".to_owned(),

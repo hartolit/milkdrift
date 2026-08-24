@@ -67,7 +67,8 @@ pub(crate) fn indexed_run_artifact_reference(
     let Some((key, bytes)) = item else {
         return Ok(false);
     };
-    let components = codec::decode_components(key.value(), 5)?;
+    let components = codec::decode_components(key.value(), 4)
+        .or_else(|_| codec::decode_components(key.value(), 5))?;
     if components[0] != digest
         || components[1] != reference.artifact().as_str()
         || components[2] != run.as_str()

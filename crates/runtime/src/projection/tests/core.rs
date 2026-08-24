@@ -784,8 +784,8 @@ fn cancellation_facts_close_attempt_free_wait_and_timer_ownership() -> TestResul
         projection.node_executions()[&execution].state(),
         &NodeExecutionState::CancelledBeforeDispatch
     );
-    assert!(projection.waits()[&execution].cancellation().is_some());
-    assert!(projection.timers()[&timer].cancellation().is_some());
+    assert!(!projection.waits().contains_key(&execution));
+    assert!(!projection.timers().contains_key(&timer));
     Ok(())
 }
 

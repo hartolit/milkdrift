@@ -35,6 +35,21 @@ A **command** asks an owning domain to change state and carries actor, authority
 
 An **event** is an immutable accepted fact appended by the durable runtime. **Projections** are disposable, versioned read models derived from ordered events. **Effects** are explicit interactions with capabilities or infrastructure. The scheduler decides desired transitions; an outbox/effect executor performs effects; adapters report observations; the runtime alone decides workflow state. Effects and their acknowledgements must be idempotently correlated so crash recovery cannot quietly duplicate non-idempotent work.
 
+Runtime history has four deliberately different owners:
+
+```text
+journal = complete immutable history
+active projection = bounded operational state
+snapshot = optional bounded recovery checkpoint
+historical read model = paged reconstruction/query
+```
+
+The active projection compacts deterministically while folding durable events. It retains current and pending transition obligations, unresolved or retained external effects, current outputs/context/provenance references, and compact retry/recovery/revision summaries. Settled progress reports, old leases, fired timers, consumed signals, superseded repeat frontiers, recovery passes, and reconciliation plans are journal-only history. Active query methods are not audit timelines; exact historical detail is read from stable-cursor journal pages. Snapshot schema changes whenever those payload semantics change, and unsupported or invalid optional snapshots are discarded in favor of authoritative replay.
+
+Compaction means removal from active operational state only. This pass never deletes run events, artifact content, artifact metadata, or output records. Retained summaries keep the stable execution/attempt/revision identities, sequence boundary, history digest, and live artifact/output references required to locate older evidence. A future Iced timeline/inspector and causal-context builder can reconstruct exact historical context on demand by paging the journal and resolving those durable references.
+
+"Bounded" is relative to semantic liveness, not a universal constant-memory claim. Projection and checkpoint size may grow with workflow shape, intentionally active branches, unresolved safety obligations, retained outputs/artifacts/context, bounded worker ownership evidence, and configured workspace limits. For fixed workflow shape and bounded active concurrency, settled event count and elapsed iterations do not by themselves increase active state.
+
 The headless runtime owns transition decisions, projections, leases, scheduling, recovery, and reconciliation through narrow persistence/execution ports. A future daemon owns their lifecycle plus secrets mediation and real effect dispatch. Clients request commands and render projections; they do not own truth.
 
 ## 5. Prospective live reconciliation
@@ -76,6 +91,8 @@ The persistence boundary appends checksummed, versioned events transactionally w
 Complete historical verification is a separate caller-owned administrative operation through resumable `StorageAdmin::scan_integrity` pages. Artifact-content verification is opt-in and bound into the continuation cursor. `health()` may report a small metadata/index sample, but a clean sample is not proof that all history or artifact content is healthy. Corruption reached while recovering a nonterminal run fails startup closed before admission; corruption isolated to unrelated terminal history is reported when that object is read or an explicit scrub reaches it.
 
 Storage engines are adapters. No database type enters blueprint or capability semantics. Compatibility fixtures cover old on-disk data, recovery tests inject truncation/reordering/duplicate delivery/failed fsync boundaries where the selected backend permits, and migrations are restartable.
+
+The runtime projection snapshot payload is currently schema v2. Projection v1 and other unsupported optional checkpoints are not migrated; they are discarded and reconstructed from the journal. A snapshot covers one exact event sequence and cumulative history-chain digest, uses deterministic serialization, and contains no lifetime event-ID collection.
 
 ## 11. Peer execution
 

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use milkdrift_blueprint::{ContentDigest, NodeId, PortId, RevisionId, WorkflowId};
 use milkdrift_capability::{
     BoundedJson, CancellationAcknowledgement, CapabilityRequirement, ErrorClass,
@@ -913,6 +915,9 @@ pub enum RunEventKind {
         outcome: RunOutcome,
         /// Exact bound outputs.
         outputs: Vec<WorkspaceValueReference>,
+        /// Child cost totals folded into the parent's bounded repeat budget summary.
+        #[serde(default)]
+        cost_micros: BTreeMap<CurrencyCode, u64>,
     },
     /// One exact child-run output was imported into an immutable parent value.
     SubworkflowOutputImported {

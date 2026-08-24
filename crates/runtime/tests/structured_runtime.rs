@@ -27,7 +27,7 @@ use milkdrift_capability::{
 use milkdrift_persistence::{
     ActorRef, ArtifactPublicationId, ArtifactStore, AtomicRunCommitRequest, AuthorityDecision,
     BeginArtifactPublication, CommandDisposition, CommandId, CommandReceipt, CommandResultDocument,
-    EventId, IndexedRunState, IntegrityScanRequest, MAX_INDEX_MUTATIONS_PER_COMMIT,
+    EventId, EventPageQuery, IndexedRunState, IntegrityScanRequest, MAX_INDEX_MUTATIONS_PER_COMMIT,
     NodeExecutionId, NodeExecutionMode, NodeOutcome, PageSize, Reason, ReconciliationAction,
     ReconciliationClassification, ReconciliationDecisionId, ReconciliationId, ReconciliationPolicy,
     RecoveryClassification, RepeatContinuationCause, RepeatContinuationDecision, RepeatDecisionId,
@@ -56,6 +56,12 @@ use tempfile::TempDir;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 type PersistenceResult<T> = Result<T, milkdrift_persistence::PersistenceError>;
+type ClosedRuntimeFixture = (
+    Arc<RedbStore>,
+    Arc<ManualClock>,
+    Arc<DispatchCountingExecutor>,
+    RuntimeService,
+);
 
 const NOW: u64 = 10_000;
 const RAW_SCOPES: TableDefinition<'static, &'static [u8], &'static [u8]> =
@@ -757,12 +763,7 @@ fn open_closed_runtime_at(
     prefix: &str,
     now: u64,
     maximum_tick_items: u16,
-) -> TestResult<(
-    Arc<RedbStore>,
-    Arc<ManualClock>,
-    Arc<DispatchCountingExecutor>,
-    RuntimeService,
-)> {
+) -> TestResult<ClosedRuntimeFixture> {
     let store = Arc::new(RedbStore::open(root)?);
     let clock = Arc::new(ManualClock::new(now));
     let executor = Arc::new(DispatchCountingExecutor::new(test_descriptor()?));

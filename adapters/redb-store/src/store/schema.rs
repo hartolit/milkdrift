@@ -18,6 +18,9 @@ pub(crate) fn initialize_schema(
         table
             .insert(LEASE_SET_REVISION_KEY, 0)
             .map_err(error::redb)?;
+        table
+            .insert(NONTERMINAL_SET_COUNT_KEY, 0)
+            .map_err(error::redb)?;
     }
     // Opening each definition records its exact key/value encoding in redb.
     {
@@ -42,6 +45,9 @@ pub(crate) fn initialize_schema(
     }
     {
         let _table = write.open_table(COMMAND_RESULTS).map_err(error::redb)?;
+    }
+    {
+        let _table = write.open_table(SIGNAL_RECEIPTS).map_err(error::redb)?;
     }
     {
         let _table = write.open_table(RUN_SUMMARIES).map_err(error::redb)?;
@@ -168,7 +174,7 @@ pub(crate) fn initialize_schema(
 
 pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceError> {
     let read = database.begin_read().map_err(error::redb)?;
-    let (found, internal_document_format, lease_set_revision) = {
+    let (found, internal_document_format, lease_set_revision, nonterminal_set_count) = {
         let table = read.open_table(METADATA).map_err(error::redb)?;
         let found = table
             .get(SCHEMA_VERSION_KEY)
@@ -183,7 +189,16 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
             .get(LEASE_SET_REVISION_KEY)
             .map_err(error::redb)?
             .map(|value| value.value());
-        (found, internal_document_format, lease_set_revision)
+        let nonterminal_set_count = table
+            .get(NONTERMINAL_SET_COUNT_KEY)
+            .map_err(error::redb)?
+            .map(|value| value.value());
+        (
+            found,
+            internal_document_format,
+            lease_set_revision,
+            nonterminal_set_count,
+        )
     };
     if found > STORAGE_SCHEMA_VERSION {
         let found = u32::try_from(found).unwrap_or(u32::MAX);
@@ -210,6 +225,7 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
         });
     }
     lease_set_revision.ok_or_else(|| error::corruption("lease-set revision is missing"))?;
+    nonterminal_set_count.ok_or_else(|| error::corruption("nonterminal-set count is missing"))?;
     drop(read);
 
     let read = database.begin_read().map_err(error::redb)?;
@@ -237,6 +253,9 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
     }
     {
         let _table = read.open_table(COMMAND_RESULTS).map_err(error::redb)?;
+    }
+    {
+        let _table = read.open_table(SIGNAL_RECEIPTS).map_err(error::redb)?;
     }
     {
         let _table = read.open_table(RUN_SUMMARIES).map_err(error::redb)?;

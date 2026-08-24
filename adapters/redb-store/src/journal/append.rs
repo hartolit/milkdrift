@@ -794,6 +794,7 @@ pub(crate) fn append_events(
     faults: &dyn crate::FaultInjector,
 ) -> Result<(), PersistenceError> {
     let mut events = write.open_table(RUN_EVENTS).map_err(error::redb)?;
+    let mut signal_receipts = write.open_table(SIGNAL_RECEIPTS).map_err(error::redb)?;
     for event in request.events() {
         let key = codec::run_sequence(event.run_id().as_str(), event.sequence())?;
         if events.get(key.as_slice()).map_err(error::redb)?.is_some() {
@@ -811,6 +812,33 @@ pub(crate) fn append_events(
             .is_some()
         {
             return Err(error::corruption("event append overwrote an existing slot"));
+        }
+        match event.kind() {
+            RunEventKind::SignalReceived { signal, .. } => {
+                let signal_key = codec::pair(event.run_id().as_str(), signal.as_str())?;
+                if signal_receipts
+                    .insert(signal_key.as_slice(), event.sequence().get())
+                    .map_err(error::redb)?
+                    .is_some()
+                {
+                    return Err(error::corruption(
+                        "signal receipt index rejected a duplicate stable identity",
+                    ));
+                }
+            }
+            RunEventKind::SignalDeduplicated { signal, .. } => {
+                let signal_key = codec::pair(event.run_id().as_str(), signal.as_str())?;
+                if signal_receipts
+                    .get(signal_key.as_slice())
+                    .map_err(error::redb)?
+                    .is_none()
+                {
+                    return Err(error::corruption(
+                        "signal deduplication has no authoritative receipt index",
+                    ));
+                }
+            }
+            _ => {}
         }
         faults.check(FaultPoint::AfterEventInsert)?;
         crate::snapshot::append_history_checkpoint(write, event)?;

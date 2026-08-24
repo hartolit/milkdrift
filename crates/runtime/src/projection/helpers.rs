@@ -519,6 +519,7 @@ pub(super) fn new_attempt(
         capability: None,
         side_effect: None,
         leases: Vec::new(),
+        lease_workers: BTreeSet::new(),
         progress: Vec::new(),
         last_report_sequence: None,
         usage: None,

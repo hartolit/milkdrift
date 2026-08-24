@@ -491,6 +491,7 @@ impl RuntimeService {
                     child_run: child_run.clone(),
                     outcome: terminal.outcome(),
                     outputs: terminal.outputs().to_vec(),
+                    cost_micros: child.resource_usage().cost_micros().clone(),
                 });
                 for child_value in terminal.outputs() {
                     let source = self.projected_workspace_value(&child, child_value, &[])?;

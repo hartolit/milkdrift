@@ -469,13 +469,21 @@ fn durable_timer_wait_fires_only_at_its_recorded_deadline() -> TestResult {
     harness.runtime.tick()?;
     let completed = harness.runtime.projection(&run)?;
     assert!(completed.is_completed());
+    assert!(completed.timers().is_empty());
+    assert!(completed.waits().is_empty());
+    let history = harness.runtime.history(&run)?;
     assert!(
-        completed
-            .timers()
-            .values()
-            .all(|timer| timer.is_completed())
+        history
+            .iter()
+            .any(|event| matches!(event.kind(), RunEventKind::TimerFired { .. }))
     );
-    assert!(completed.waits().values().all(|wait| wait.is_completed()));
+    assert!(history.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::WaitSatisfied {
+            cause: milkdrift_persistence::WaitSatisfaction::Timer { .. },
+            ..
+        }
+    )));
     Ok(())
 }
 
@@ -502,12 +510,7 @@ fn typed_signal_is_consumed_once_and_duplicate_delivery_is_a_durable_fact() -> T
         CommandDisposition::Accepted
     );
     let after_first = harness.runtime.projection(&run)?;
-    let signal_view = after_first
-        .signals()
-        .get(&signal)
-        .ok_or("signal was not projected")?;
-    assert_eq!(signal_view.consumed_by().len(), 1);
-    assert!(signal_view.duplicate_commands().is_empty());
+    assert!(!after_first.signals().contains_key(&signal));
     assert_eq!(after_first.lifecycle(), RunLifecycle::Running);
 
     assert_eq!(
@@ -515,12 +518,22 @@ fn typed_signal_is_consumed_once_and_duplicate_delivery_is_a_durable_fact() -> T
         CommandDisposition::Accepted
     );
     let after_duplicate = harness.runtime.projection(&run)?;
-    let signal_view = after_duplicate
-        .signals()
-        .get(&signal)
-        .ok_or("deduplicated signal disappeared")?;
-    assert_eq!(signal_view.consumed_by().len(), 1);
-    assert_eq!(signal_view.duplicate_commands().len(), 1);
+    assert!(!after_duplicate.signals().contains_key(&signal));
+    let history = harness.runtime.history(&run)?;
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| matches!(event.kind(), RunEventKind::SignalReceived { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| matches!(event.kind(), RunEventKind::SignalDeduplicated { .. }))
+            .count(),
+        1
+    );
 
     harness.clock.advance(50)?;
     harness.runtime.tick()?;
@@ -590,15 +603,7 @@ fn broadcast_signal_fanout_is_received_once_then_drained_in_bounded_batches() ->
         completed.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Succeeded)
     );
-    assert_eq!(
-        completed
-            .signals()
-            .get(&signal)
-            .ok_or("broadcast signal disappeared")?
-            .consumed_by()
-            .len(),
-        2
-    );
+    assert!(!completed.signals().contains_key(&signal));
     let history = harness.runtime.history(&run)?;
     assert_eq!(
         history
@@ -722,28 +727,31 @@ fn repeat_runs_each_pinned_child_in_an_isolated_scope_and_stops_at_the_bound() -
 
     let projection = harness.runtime.projection(&run)?;
     assert!(projection.is_completed());
-    assert_eq!(projection.iterations().len(), 2);
-    assert!(
-        projection
-            .iterations()
-            .values()
-            .all(|iteration| iteration.is_completed())
-    );
-    let iteration_scopes: BTreeSet<_> = projection
+    assert_eq!(projection.iterations().len(), 1);
+    let latest_iteration = projection
         .iterations()
         .values()
-        .map(|iteration| iteration.scope().reference().clone())
+        .next()
+        .ok_or("latest repeat iteration is absent")?;
+    assert_eq!(latest_iteration.iteration_number(), 2);
+    assert!(latest_iteration.is_completed());
+    let history = harness.runtime.history(&run)?;
+    let iteration_scopes: BTreeSet<_> = history
+        .iter()
+        .filter_map(|event| match event.kind() {
+            RunEventKind::RepeatIterationCreated { scope, .. } => Some(scope.reference().clone()),
+            _ => None,
+        })
         .collect();
     assert_eq!(iteration_scopes.len(), 2);
-    let iteration_parents: BTreeSet<_> = projection
-        .iterations()
-        .values()
-        .map(|iteration| {
-            assert!(matches!(
-                iteration.scope().kind(),
-                ScopeKind::Iteration { .. }
-            ));
-            iteration.scope().parent().cloned()
+    let iteration_parents: BTreeSet<_> = history
+        .iter()
+        .filter_map(|event| match event.kind() {
+            RunEventKind::RepeatIterationCreated { scope, .. } => {
+                assert!(matches!(scope.kind(), ScopeKind::Iteration { .. }));
+                scope.parent().cloned()
+            }
+            _ => None,
         })
         .collect();
     assert_eq!(iteration_parents.len(), 1, "iterations are not siblings");
@@ -756,45 +764,52 @@ fn repeat_runs_each_pinned_child_in_an_isolated_scope_and_stops_at_the_bound() -
         termination.termination(),
         RepeatTerminationReason::MaximumIterations
     );
-    assert_eq!(projection.subworkflows().len(), 2);
+    assert_eq!(projection.subworkflows().len(), 1);
     let mut imported_parent_values = BTreeSet::new();
     let mut imported_child_values = BTreeSet::new();
-    for child_link in projection.subworkflows().values() {
-        assert_eq!(
-            child_link.state(),
-            SubworkflowState::Terminal(RunOutcome::Succeeded)
-        );
-        let owner = child_link
-            .scope()
-            .parent()
-            .ok_or("repeat child scope has no iteration parent")?;
-        assert!(iteration_scopes.contains(owner));
-        assert_eq!(child_link.imports().len(), 1);
-        let imported = &child_link.imports()[0];
-        assert_eq!(
-            imported.parent_value().scope(),
-            child_link.scope().reference()
-        );
-        assert_eq!(imported.child_value().scope().run(), child_link.child_run());
-        assert!(imported_parent_values.insert(imported.parent_value().clone()));
-        assert!(imported_child_values.insert(imported.child_value().clone()));
+    for event in &history {
+        let RunEventKind::SubworkflowOutputImported {
+            subworkflow,
+            child_value,
+            parent_value,
+        } = event.kind()
+        else {
+            continue;
+        };
+        assert!(history.iter().any(|candidate| matches!(
+            candidate.kind(),
+            RunEventKind::SubworkflowCreated {
+                subworkflow: created,
+                scope,
+                ..
+            } if created == subworkflow
+                && scope.reference() == parent_value.scope()
+                && scope.parent().is_some_and(|parent| iteration_scopes.contains(parent))
+        )));
+        assert!(imported_parent_values.insert(parent_value.clone()));
+        assert!(imported_child_values.insert(child_value.clone()));
         let entry = harness
             .store
-            .value(imported.parent_value())?
+            .value(parent_value)?
             .ok_or("repeat child import is absent")?;
         assert!(matches!(
             entry.origin(),
-            ValueOrigin::Imported { source } if source == imported.child_value()
+            ValueOrigin::Imported { source } if source == child_value
         ));
-        assert!(
-            harness
-                .runtime
-                .projection(child_link.child_run())?
-                .is_completed()
-        );
     }
     assert_eq!(imported_parent_values.len(), 2);
     assert_eq!(imported_child_values.len(), 2);
+    let child_runs: BTreeSet<_> = history
+        .iter()
+        .filter_map(|event| match event.kind() {
+            RunEventKind::SubworkflowCreated { child_run, .. } => Some(child_run.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(child_runs.len(), 2);
+    for child_run in child_runs {
+        assert!(harness.runtime.projection(&child_run)?.is_completed());
+    }
     Ok(())
 }
 
@@ -890,8 +905,8 @@ fn await_approval_repeat_extends_exactly_once_then_rejection_terminates() -> Tes
     harness.drive(&run, 32)?;
     let next_boundary = harness.runtime.projection(&run)?;
     assert_eq!(next_boundary.lifecycle(), RunLifecycle::Running);
-    assert_eq!(next_boundary.iterations().len(), 3);
-    assert_eq!(next_boundary.subworkflows().len(), 3);
+    assert_eq!(next_boundary.iterations().len(), 1);
+    assert_eq!(next_boundary.subworkflows().len(), 1);
     assert!(next_boundary.repeat_terminations().is_empty());
     let continuation = next_boundary
         .repeat_continuations()
@@ -900,6 +915,16 @@ fn await_approval_repeat_extends_exactly_once_then_rejection_terminates() -> Tes
     assert!(continuation.is_pending_approval());
     assert_eq!(continuation.effective_iteration_limit(), 3);
     assert_eq!(continuation.decisions().len(), 1);
+    assert_eq!(continuation.decision_count(), 1);
+    assert_eq!(
+        harness
+            .runtime
+            .history(&run)?
+            .iter()
+            .filter(|event| matches!(event.kind(), RunEventKind::RepeatIterationCreated { .. }))
+            .count(),
+        3
+    );
 
     assert_eq!(
         harness.command(
@@ -919,14 +944,15 @@ fn await_approval_repeat_extends_exactly_once_then_rejection_terminates() -> Tes
         rejected.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Failed)
     );
-    assert_eq!(rejected.iterations().len(), 3);
-    assert_eq!(rejected.subworkflows().len(), 3);
+    assert_eq!(rejected.iterations().len(), 1);
+    assert_eq!(rejected.subworkflows().len(), 1);
     let continuation = rejected
         .repeat_continuations()
         .get(&repeat_execution)
         .ok_or("repeat lost the rejected continuation fact")?;
     assert!(continuation.is_rejected());
-    assert_eq!(continuation.decisions().len(), 2);
+    assert_eq!(continuation.decisions().len(), 1);
+    assert_eq!(continuation.decision_count(), 2);
     assert_eq!(
         rejected
             .repeat_terminations()
@@ -934,6 +960,21 @@ fn await_approval_repeat_extends_exactly_once_then_rejection_terminates() -> Tes
             .ok_or("rejected repeat has no deterministic termination")?
             .termination(),
         RepeatTerminationReason::MaximumIterations
+    );
+    let history = harness.runtime.history(&run)?;
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| matches!(event.kind(), RunEventKind::RepeatContinuationDecided { .. }))
+            .count(),
+        2
+    );
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| matches!(event.kind(), RunEventKind::SubworkflowCreated { .. }))
+            .count(),
+        3
     );
     Ok(())
 }

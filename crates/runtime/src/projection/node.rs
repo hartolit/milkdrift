@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use milkdrift_blueprint::NodeId;
+use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_capability::{
     CancellationAcknowledgement, ErrorClass, IdempotencyBehavior, IdempotencyKey, InvocationId,
     InvocationRequest, InvocationTerminal, ResolvedCapabilitySnapshot, SideEffectClass,
@@ -106,9 +106,17 @@ pub struct NodeExecutionProjection {
     pub(super) node: NodeId,
     pub(super) scope: ScopeReference,
     pub(super) mode: NodeExecutionMode,
+    /// Immutable revision governing this occurrence. Keeping it on the active
+    /// occurrence avoids retaining the run's lifetime revision-pin timeline.
+    pub(super) revision: RevisionId,
+    /// Revision-pin sequence that retired this occurrence from its node epoch.
+    /// Unchanged occurrences remain current across repins.
+    pub(super) epoch_retired_sequence: Option<RunSequence>,
     pub(super) created_sequence: RunSequence,
     pub(super) created_at: TimestampMillis,
     pub(super) attempts: Vec<AttemptId>,
+    /// Total attempts admitted for this occurrence, including compacted attempts.
+    pub(super) attempt_count: u32,
     pub(super) state: NodeExecutionState,
     pub(super) cancellation: Option<NodeExecutionCancellationProjection>,
     pub(super) deterministic_terminal: Option<DeterministicNodeTerminalProjection>,
@@ -140,6 +148,24 @@ impl NodeExecutionProjection {
         self.mode
     }
 
+    /// Immutable revision governing this execution occurrence.
+    #[must_use]
+    pub const fn revision(&self) -> &RevisionId {
+        &self.revision
+    }
+
+    /// Revision-pin sequence that retired this occurrence from its node epoch.
+    #[must_use]
+    pub const fn epoch_retired_sequence(&self) -> Option<RunSequence> {
+        self.epoch_retired_sequence
+    }
+
+    /// Whether this occurrence still belongs to its node's current epoch.
+    #[must_use]
+    pub const fn is_current_epoch(&self) -> bool {
+        self.epoch_retired_sequence.is_none()
+    }
+
     /// Sequence at which eligibility was recorded.
     #[must_use]
     pub const fn created_sequence(&self) -> RunSequence {
@@ -156,6 +182,12 @@ impl NodeExecutionProjection {
     #[must_use]
     pub fn attempts(&self) -> &[AttemptId] {
         &self.attempts
+    }
+
+    /// Total attempts admitted, including settled attempts available only in the journal.
+    #[must_use]
+    pub const fn attempt_count(&self) -> u32 {
+        self.attempt_count
     }
 
     /// Current execution state.
@@ -534,7 +566,9 @@ impl RetainedExternalOutcome {
     }
 }
 
-/// Complete read model for one immutable attempt.
+/// Active/latest operational read model for one immutable attempt.
+///
+/// Settled high-frequency history is queried from the journal.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct NodeAttemptProjection {
     pub(super) attempt: AttemptId,
@@ -548,6 +582,9 @@ pub struct NodeAttemptProjection {
     pub(super) capability: Option<CapabilityResolution>,
     pub(super) side_effect: Option<SideEffectClassification>,
     pub(super) leases: Vec<LeaseId>,
+    /// Workers that durably owned this attempt. This bounded ownership summary is
+    /// sufficient to authenticate late evidence after individual leases retire.
+    pub(super) lease_workers: std::collections::BTreeSet<WorkerId>,
     pub(super) progress: Vec<ProgressObservation>,
     pub(super) last_report_sequence: Option<u64>,
     pub(super) usage: Option<AttemptUsage>,
@@ -624,13 +661,19 @@ impl NodeAttemptProjection {
         self.side_effect.as_ref()
     }
 
-    /// Durable leases granted to this same attempt over recovery cycles.
+    /// Lease identities still required by active recovery transitions.
     #[must_use]
     pub fn leases(&self) -> &[LeaseId] {
         &self.leases
     }
 
-    /// Ordered monotonic progress reports.
+    /// Workers with durable historical ownership of this retained attempt.
+    #[must_use]
+    pub const fn lease_workers(&self) -> &std::collections::BTreeSet<WorkerId> {
+        &self.lease_workers
+    }
+
+    /// Latest monotonic progress report, when present.
     #[must_use]
     pub fn progress(&self) -> &[ProgressObservation] {
         &self.progress
@@ -648,7 +691,7 @@ impl NodeAttemptProjection {
         self.usage.as_ref()
     }
 
-    /// Ordered executor cancellation acknowledgements.
+    /// Latest executor cancellation acknowledgement, when present.
     #[must_use]
     pub fn cancellation_acknowledgements(&self) -> &[CancellationAcknowledgement] {
         &self.cancellation_acknowledgements
@@ -678,7 +721,7 @@ impl NodeAttemptProjection {
         self.obligation.as_ref()
     }
 
-    /// Durable recovery classifications for this attempt.
+    /// Latest durable recovery classification for this attempt.
     #[must_use]
     pub fn recovery(&self) -> &[RecoveryObservation] {
         &self.recovery

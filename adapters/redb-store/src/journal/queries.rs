@@ -66,6 +66,51 @@ impl RunQueryStore for RedbStore {
         })
     }
 
+    fn signal_receipt(
+        &self,
+        run: &RunId,
+        signal: &milkdrift_persistence::SignalId,
+    ) -> Result<Option<RunEventEnvelope>, PersistenceError> {
+        let read = self.database().begin_read().map_err(error::redb)?;
+        let heads = read.open_table(RUN_HEADS).map_err(error::redb)?;
+        let events = read.open_table(RUN_EVENTS).map_err(error::redb)?;
+        let observed_head = validated_run_head(&heads, &events, run)?;
+        validate_run_history_membership(&read, run, observed_head)?;
+        let receipts = read.open_table(SIGNAL_RECEIPTS).map_err(error::redb)?;
+        let key = codec::pair(run.as_str(), signal.as_str())?;
+        let Some(sequence) = receipts.get(key.as_slice()).map_err(error::redb)? else {
+            return Ok(None);
+        };
+        let sequence = RunSequence::new(sequence.value());
+        if sequence == RunSequence::ZERO || sequence > observed_head {
+            return Err(error::corruption(
+                "signal receipt index points outside authoritative history",
+            ));
+        }
+        let event_key = codec::run_sequence(run.as_str(), sequence)?;
+        let stored = events
+            .get(event_key.as_slice())
+            .map_err(error::redb)?
+            .ok_or_else(|| error::corruption("signal receipt event is absent"))?;
+        let event = decode_stored_event(stored.value())?;
+        if event.run_id() != run
+            || event.sequence() != sequence
+            || !matches!(
+                event.kind(),
+                RunEventKind::SignalReceived {
+                    signal: received,
+                    ..
+                } if received == signal
+            )
+        {
+            return Err(error::corruption(
+                "signal receipt index does not match its authoritative event",
+            ));
+        }
+        crate::snapshot::validate_history_link(&read, &event)?;
+        Ok(Some(event))
+    }
+
     fn run_summary(&self, run: &RunId) -> Result<Option<RunSummaryIndex>, PersistenceError> {
         let read = self.database().begin_read().map_err(error::redb)?;
         let table = read.open_table(RUN_SUMMARIES).map_err(error::redb)?;
@@ -180,21 +225,29 @@ impl RunQueryStore for RedbStore {
     ) -> Result<RunSummaryPage, PersistenceError> {
         let read = self.database().begin_read().map_err(error::redb)?;
         let nonterminal = read.open_table(NONTERMINAL_RUNS).map_err(error::redb)?;
+        let stored_count = read
+            .open_table(METADATA)
+            .map_err(error::redb)?
+            .get(NONTERMINAL_SET_COUNT_KEY)
+            .map_err(error::redb)?
+            .map(|count| count.value())
+            .ok_or_else(|| error::corruption("nonterminal-set count is missing"))?;
+        if nonterminal.len().map_err(error::redb)? != stored_count {
+            return Err(error::corruption(
+                "nonterminal discovery count disagrees with its durable guard",
+            ));
+        }
+        let summaries = read.open_table(RUN_SUMMARIES).map_err(error::redb)?;
+        let heads = read.open_table(RUN_HEADS).map_err(error::redb)?;
+        let events = read.open_table(RUN_EVENTS).map_err(error::redb)?;
         let lower = if let Some(cursor) = cursor {
             if !cursor.is_nonterminal() {
                 return Err(PersistenceError::InvalidCursor(
                     "run-summary cursor does not belong to nonterminal discovery".to_owned(),
                 ));
             }
-            if nonterminal
-                .get(cursor.after_run().as_str())
-                .map_err(error::redb)?
-                .is_none()
-            {
-                return Err(PersistenceError::InvalidCursor(
-                    "nonterminal cursor does not name a durable marker".to_owned(),
-                ));
-            }
+            // The exclusive lexical anchor remains stable when the previously
+            // returned run terminalizes and its derived marker is removed.
             Bound::Excluded(cursor.after_run().as_str())
         } else {
             Bound::Unbounded
@@ -218,13 +271,25 @@ impl RunQueryStore for RedbStore {
             let run = RunId::new(run_key.value()).map_err(|cause| {
                 error::corruption(format!("invalid nonterminal run identity: {cause}"))
             })?;
-            let summary = load_checked_summary(&read, &run)?;
+            let bytes = summaries
+                .get(run.as_str())
+                .map_err(error::redb)?
+                .ok_or_else(|| error::corruption("nonterminal marker names a missing summary"))?;
+            let summary: RunSummaryIndex = json::decode(bytes.value(), "run summary")?;
+            if summary.run != run {
+                return Err(error::corruption(
+                    "run-summary key does not match its document",
+                ));
+            }
+            validate_summary_head(&heads, &events, &summary)?;
+            validate_run_history_membership(&read, &run, summary.through_sequence)?;
+            validate_nonterminal_membership(&read, &summary)?;
+            last_scanned = Some(run);
             if summary.state == IndexedRunState::Terminal {
                 return Err(error::corruption(
                     "terminal run remains in nonterminal discovery",
                 ));
             }
-            last_scanned = Some(run);
             results.push(summary);
         }
         let has_more = rows.next().transpose().map_err(error::redb)?.is_some();
@@ -256,13 +321,15 @@ impl RunQueryStore for RedbStore {
             Bound::Excluded(cursor.after_run().as_str())
         });
         let page_limit = page_size_usize(limit)?;
+        const MIN_RUNNABLE_SCAN_ROWS: usize = 8;
+        let scan_limit = page_limit.max(MIN_RUNNABLE_SCAN_ROWS);
         let mut rows = heads
             .range::<&str>((lower, Bound::Unbounded))
             .map_err(error::redb)?;
         let mut results = Vec::with_capacity(page_limit);
         let mut last_scanned = None;
         let mut scanned = 0_usize;
-        while scanned < page_limit {
+        while scanned < scan_limit && results.len() < page_limit {
             let Some(row) = rows.next() else {
                 break;
             };
@@ -347,29 +414,6 @@ impl RunQueryStore for RedbStore {
             |entry: &LeaseIndexEntry| codec::pair(entry.run.as_str(), entry.lease.as_str()),
         )
     }
-}
-
-fn load_checked_summary(
-    read: &redb::ReadTransaction,
-    run: &RunId,
-) -> Result<RunSummaryIndex, PersistenceError> {
-    let summaries = read.open_table(RUN_SUMMARIES).map_err(error::redb)?;
-    let bytes = summaries
-        .get(run.as_str())
-        .map_err(error::redb)?
-        .ok_or_else(|| error::corruption("nonterminal marker names a missing summary"))?;
-    let summary: RunSummaryIndex = json::decode(bytes.value(), "run summary")?;
-    if summary.run != *run {
-        return Err(error::corruption(
-            "run-summary key does not match its document",
-        ));
-    }
-    let heads = read.open_table(RUN_HEADS).map_err(error::redb)?;
-    let events = read.open_table(RUN_EVENTS).map_err(error::redb)?;
-    validate_summary_head(&heads, &events, &summary)?;
-    validate_run_history_membership(read, run, summary.through_sequence)?;
-    validate_nonterminal_membership(read, &summary)?;
-    Ok(summary)
 }
 
 pub(crate) fn page_size_usize(limit: PageSize) -> Result<usize, PersistenceError> {

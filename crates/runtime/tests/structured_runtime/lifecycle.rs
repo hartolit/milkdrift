@@ -105,6 +105,11 @@ impl RunQueryStore for StartupProbeStore {
             &self,
             query: &milkdrift_persistence::EventPageQuery,
         ) -> PersistenceResult<milkdrift_persistence::EventPage>;
+        fn signal_receipt(
+            &self,
+            run: &RunId,
+            signal: &SignalId,
+        ) -> PersistenceResult<Option<RunEventEnvelope>>;
         fn run_summary(
             &self,
             run: &RunId,

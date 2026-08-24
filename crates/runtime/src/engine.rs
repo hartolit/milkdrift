@@ -14,18 +14,19 @@ use std::{
 
 use milkdrift_blueprint::NodeId;
 use milkdrift_persistence::{
-    ActorRef, ArtifactStore, AtomicRunCommitOutcome, AttemptId, CommandResultDocument,
-    MAX_PAGE_SIZE, NodeExecutionId, PageSize, PersistenceError, Reason, RepeatContinuationDecision,
-    RevisionStore, RunEventEnvelope, RunJournal, RunQueryStore, RunSequence, RunSummaryCursor,
-    RunnableCursor, SnapshotDocument, SnapshotId, SnapshotStore, StorageAdmin, StorageHealth,
-    StorageSchemaCompatibility, TimestampMillis, WorkerId, WorkspaceStore,
+    ActorRef, ArtifactStore, AtomicRunCommitOutcome, AttemptId, CommandResultDocument, EventPage,
+    EventPageQuery, MAX_PAGE_SIZE, NodeExecutionId, PageSize, PersistenceError, Reason,
+    RepeatContinuationDecision, RevisionStore, RunEventEnvelope, RunJournal, RunQueryStore,
+    RunSequence, RunSummaryCursor, RunnableCursor, SnapshotDocument, SnapshotId, SnapshotStore,
+    StorageAdmin, StorageHealth, StorageSchemaCompatibility, TimestampMillis, WorkerId,
+    WorkspaceStore,
 };
 use milkdrift_workspace::{BranchId, RunId, ScopeReference, SubworkflowId};
 use tracing::{debug, info, info_span, warn};
 
 use crate::projection::RunProjection;
 use crate::query::{
-    RUN_PROJECTION_SNAPSHOT_SCHEMA_V1, encode_projection_snapshot, load_bounded_history,
+    RUN_PROJECTION_SNAPSHOT_SCHEMA_V2, encode_projection_snapshot, load_bounded_history,
     project_from_latest_snapshot,
 };
 use crate::{
@@ -409,7 +410,7 @@ impl RuntimeService {
         let payload = encode_projection_snapshot(projection)?;
         let history_digest = self.store.history_digest(run, projection.sequence())?;
         let mut identity = blake3::Hasher::new();
-        identity.update(b"milkdrift.runtime-projection-snapshot.v1\0");
+        identity.update(b"milkdrift.runtime-projection-snapshot.v2\0");
         identity.update(run.as_str().as_bytes());
         identity.update(&projection.sequence().get().to_be_bytes());
         let snapshot = SnapshotId::new(format!(
@@ -421,7 +422,7 @@ impl RuntimeService {
             run.clone(),
             projection.sequence(),
             history_digest,
-            RUN_PROJECTION_SNAPSHOT_SCHEMA_V1,
+            RUN_PROJECTION_SNAPSHOT_SCHEMA_V2,
             payload,
         )?)?;
         Ok(())
@@ -455,7 +456,15 @@ impl RuntimeService {
         project_from_latest_snapshot(self.store.as_ref(), run)
     }
 
-    /// Reads at most one persistence page of checksummed history for diagnostics/tests.
+    /// Reads one stable-cursor page from the complete immutable journal history.
+    ///
+    /// Active projection collections are deliberately compact and must not be used
+    /// as an attempt, progress, signal, recovery, or reconciliation audit timeline.
+    pub fn history_page(&self, query: &EventPageQuery) -> Result<EventPage, RuntimeError> {
+        Ok(self.store.events(query)?)
+    }
+
+    /// Materializes history only when the complete run fits in one persistence page.
     ///
     /// Runtime decisions use a paged fold and never call this materializing helper.
     /// Histories above [`MAX_PAGE_SIZE`] return a bounds error rather than truncating.

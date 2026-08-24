@@ -1,14 +1,14 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use milkdrift_blueprint::{PortId, RevisionId};
 use milkdrift_capability::BoundedJson;
 use milkdrift_persistence::{
-    ActorRef, BranchResultReference, CommandId, CorrelationKey, EvidenceReference, JoinRule,
-    NodeExecutionId, Reason, RepeatContinuationCause, RepeatContinuationDecision, RepeatDecisionId,
-    RepeatTerminationReason, RunOutcome, RunSequence, SignalDeliveryMode, SignalId, SignalTypeId,
-    SubworkflowOwnership, WaitCondition, WaitSatisfaction,
+    ActorRef, BranchResultReference, CommandId, CorrelationKey, CurrencyCode, EvidenceReference,
+    JoinRule, NodeExecutionId, Reason, RepeatContinuationCause, RepeatContinuationDecision,
+    RepeatDecisionId, RepeatTerminationReason, RunOutcome, RunSequence, SignalDeliveryMode,
+    SignalId, SignalTypeId, SubworkflowOwnership, WaitCondition, WaitSatisfaction,
 };
 use milkdrift_workspace::{
     BranchId, IterationId, RunId, SubworkflowId, WorkspaceScope, WorkspaceValueReference,
@@ -319,6 +319,10 @@ pub struct RepeatContinuationProjection {
     pub(super) budget_override_iteration_limit: Option<u32>,
     pub(super) pending_approval: bool,
     pub(super) rejected: bool,
+    /// Total durable request cycles, including compacted closed cycles.
+    pub(super) request_count: u32,
+    /// Total durable decisions, including compacted closed decisions.
+    pub(super) decision_count: u32,
     pub(super) requests: Vec<RepeatContinuationRequestProjection>,
     pub(super) decisions: Vec<RepeatContinuationDecisionProjection>,
 }
@@ -360,7 +364,19 @@ impl RepeatContinuationProjection {
         self.rejected
     }
 
-    /// Ordered immutable authority requests.
+    /// Total continuation requests, including journal-only closed history.
+    #[must_use]
+    pub const fn request_count(&self) -> u32 {
+        self.request_count
+    }
+
+    /// Total continuation decisions, including journal-only closed history.
+    #[must_use]
+    pub const fn decision_count(&self) -> u32 {
+        self.decision_count
+    }
+
+    /// Latest authority request; [`Self::request_count`] includes compacted cycles.
     #[must_use]
     pub fn requests(&self) -> &[RepeatContinuationRequestProjection] {
         &self.requests
@@ -376,7 +392,7 @@ impl RepeatContinuationProjection {
         }
     }
 
-    /// Ordered immutable authority decisions.
+    /// Latest authority decision; [`Self::decision_count`] includes compacted cycles.
     #[must_use]
     pub fn decisions(&self) -> &[RepeatContinuationDecisionProjection] {
         &self.decisions
@@ -429,6 +445,35 @@ pub enum SubworkflowState {
     Terminal(RunOutcome),
 }
 
+/// Bounded aggregate of completed child usage needed by a live parent execution.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct SubworkflowUsageSummary {
+    pub(super) completed_children: u64,
+    #[serde(with = "super::serde_map")]
+    pub(super) cost_micros: BTreeMap<CurrencyCode, u64>,
+    pub(super) overflowed: bool,
+}
+
+impl SubworkflowUsageSummary {
+    /// Number of terminal child observations folded into this summary.
+    #[must_use]
+    pub const fn completed_children(&self) -> u64 {
+        self.completed_children
+    }
+
+    /// Exact accumulated child cost by currency while no overflow occurred.
+    #[must_use]
+    pub const fn cost_micros(&self) -> &BTreeMap<CurrencyCode, u64> {
+        &self.cost_micros
+    }
+
+    /// Whether an aggregate counter exceeded its durable integer domain.
+    #[must_use]
+    pub const fn overflowed(&self) -> bool {
+        self.overflowed
+    }
+}
+
 /// One explicit immutable child-output import into the parent run.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct SubworkflowOutputImport {
@@ -462,6 +507,7 @@ impl SubworkflowOutputImport {
 pub struct SubworkflowProjection {
     pub(super) subworkflow: SubworkflowId,
     pub(super) parent_execution: NodeExecutionId,
+    pub(super) created_sequence: RunSequence,
     pub(super) child_run: RunId,
     pub(super) child_revision: RevisionId,
     pub(super) scope: WorkspaceScope,
@@ -484,6 +530,12 @@ impl SubworkflowProjection {
     #[must_use]
     pub const fn parent_execution(&self) -> &NodeExecutionId {
         &self.parent_execution
+    }
+
+    /// Parent-journal sequence that created this link.
+    #[must_use]
+    pub const fn created_sequence(&self) -> RunSequence {
+        self.created_sequence
     }
 
     /// Exact child run aggregate.
@@ -556,7 +608,7 @@ impl SubworkflowProjection {
     }
 }
 
-/// Durable signal and its exact consumption history.
+/// Active durable signal delivery and its current bounded consumption state.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct SignalProjection {
     pub(super) signal: SignalId,

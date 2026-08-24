@@ -233,13 +233,7 @@ impl RuntimeService {
             .node_executions()
             .get(execution)
             .ok_or_else(|| RuntimeError::InvalidHistory("node execution is absent".to_owned()))?;
-        let revision = projection
-            .revision_at(execution_view.created_sequence())
-            .ok_or_else(|| {
-                RuntimeError::InvalidHistory(
-                    "node execution has no governing revision pin".to_owned(),
-                )
-            })?;
+        let revision = execution_view.revision();
         self.load_validated_revision(revision, projection.workflow())
     }
 
@@ -345,14 +339,7 @@ impl RuntimeService {
             {
                 continue;
             }
-            let revision_id = projection
-                .revision_at(execution.created_sequence())
-                .ok_or_else(|| {
-                    RuntimeError::InvalidHistory(
-                        "node execution has no governing revision pin".to_owned(),
-                    )
-                })?
-                .clone();
+            let revision_id = execution.revision().clone();
             if !revisions.contains_key(&revision_id) {
                 revisions.insert(
                     revision_id.clone(),

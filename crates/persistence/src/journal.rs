@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ActorRef, AttemptId, CommandId, IntegrityDigest, LeaseId, NodeExecutionId, PageSize,
-    PersistenceError, RunEventEnvelope, RunEventKind, RunSequence, TimerId, TimestampMillis,
-    WorkerId, bounded::MAX_EVENTS_PER_COMMIT,
+    PersistenceError, RunEventEnvelope, RunEventKind, RunSequence, SignalId, TimerId,
+    TimestampMillis, WorkerId, bounded::MAX_EVENTS_PER_COMMIT,
 };
 
 /// Maximum canonical runtime command bytes retained for exact idempotency evidence.
@@ -1414,6 +1414,16 @@ pub trait RunQueryStore: Send + Sync {
     /// of an existing non-empty run is valid EOF, later cursors are invalid,
     /// and a cursor for an absent run is invalid.
     fn events(&self, query: &EventPageQuery) -> Result<EventPage, PersistenceError>;
+
+    /// Finds the authoritative receipt event for one stable signal identity.
+    ///
+    /// Implementations must use a bounded journal-derived identity index so
+    /// command planning never scans a run's durable history.
+    fn signal_receipt(
+        &self,
+        run: &RunId,
+        signal: &SignalId,
+    ) -> Result<Option<RunEventEnvelope>, PersistenceError>;
 
     /// Gets one run summary.
     fn run_summary(&self, run: &RunId) -> Result<Option<RunSummaryIndex>, PersistenceError>;

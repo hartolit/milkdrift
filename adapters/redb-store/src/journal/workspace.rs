@@ -7,14 +7,17 @@ pub(crate) fn apply_workspace(
     let mut scopes = write.open_table(SCOPES).map_err(error::redb)?;
     let mut roots = write.open_table(ROOT_SCOPES).map_err(error::redb)?;
     let mut values = write.open_table(VALUES).map_err(error::redb)?;
+    let mut value_heads = write
+        .open_table(WORKSPACE_VALUE_HEADS)
+        .map_err(error::redb)?;
 
     for mutation in request.workspace() {
         match mutation {
             WorkspaceMutation::CreateScope { scope } => {
-                put_scope(write, &mut scopes, &mut roots, scope)?;
+                put_scope(&mut scopes, &mut roots, scope)?;
             }
             WorkspaceMutation::PutValue { entry } => {
-                put_value(write, &scopes, &roots, &mut values, entry)?;
+                put_value(write, &scopes, &roots, &mut values, &mut value_heads, entry)?;
             }
         }
     }
@@ -40,19 +43,19 @@ pub(crate) fn apply_workspace(
         ));
     }
     drop(values);
+    drop(value_heads);
     drop(roots);
     drop(scopes);
     Ok(())
 }
 
 pub(crate) fn ensure_workspace_run_has_no_scopes(
-    write: &redb::WriteTransaction,
+    scopes: &impl redb::ReadableTable<&'static [u8], &'static [u8]>,
     run: &RunId,
 ) -> Result<(), PersistenceError> {
     let prefix = codec::component(run.as_str())?;
     let end = codec::prefix_end(prefix.clone())
         .ok_or_else(|| error::corruption("workspace-scope run prefix has no range end"))?;
-    let scopes = write.open_table(SCOPES).map_err(error::redb)?;
     if scopes
         .range::<&[u8]>(prefix.as_slice()..end.as_slice())
         .map_err(error::redb)?
@@ -325,7 +328,8 @@ pub(crate) fn validate_workspace_value_storage_provenance(
 }
 
 pub(crate) fn update_workspace_value_head(
-    write: &redb::WriteTransaction,
+    heads: &mut Table<'_, &[u8], &[u8]>,
+    values: &Table<'_, &[u8], &[u8]>,
     reference: &WorkspaceValueReference,
     value_key: &[u8],
     value_bytes: &[u8],
@@ -336,9 +340,6 @@ pub(crate) fn update_workspace_value_head(
         reference.key().as_str(),
     )?;
     let previous_bytes = {
-        let heads = write
-            .open_table(WORKSPACE_VALUE_HEADS)
-            .map_err(error::redb)?;
         heads
             .get(head_key.as_slice())
             .map_err(error::redb)?
@@ -370,9 +371,6 @@ pub(crate) fn update_workspace_value_head(
     }
     let head_bytes = json::encode(reference, "workspace value head")?;
     {
-        let mut heads = write
-            .open_table(WORKSPACE_VALUE_HEADS)
-            .map_err(error::redb)?;
         let replaced = heads
             .insert(head_key.as_slice(), head_bytes.as_slice())
             .map_err(error::redb)?;
@@ -382,7 +380,6 @@ pub(crate) fn update_workspace_value_head(
             ));
         }
     }
-    let values = write.open_table(VALUES).map_err(error::redb)?;
     let stored = values
         .get(value_key)
         .map_err(error::redb)?
@@ -396,7 +393,6 @@ pub(crate) fn update_workspace_value_head(
 }
 
 pub(crate) fn put_scope(
-    write: &redb::WriteTransaction,
     scopes: &mut Table<'_, &[u8], &[u8]>,
     roots: &mut Table<'_, &str, &str>,
     scope: &WorkspaceScope,
@@ -411,7 +407,7 @@ pub(crate) fn put_scope(
     }
     match (scope.kind(), scope.parent()) {
         (ScopeKind::RunRoot, None) => {
-            ensure_workspace_run_has_no_scopes(write, reference.run())?;
+            ensure_workspace_run_has_no_scopes(scopes, reference.run())?;
             if roots
                 .get(reference.run().as_str())
                 .map_err(error::redb)?
@@ -453,6 +449,7 @@ pub(crate) fn put_value(
     scopes: &Table<'_, &[u8], &[u8]>,
     roots: &Table<'_, &str, &str>,
     values: &mut Table<'_, &[u8], &[u8]>,
+    value_heads: &mut Table<'_, &[u8], &[u8]>,
     entry: &WorkspaceValueEntry,
 ) -> Result<(), PersistenceError> {
     let reference = entry.reference();
@@ -485,7 +482,7 @@ pub(crate) fn put_value(
             "workspace value insert replaced an existing document",
         ));
     }
-    update_workspace_value_head(write, reference, &key, &bytes)?;
+    update_workspace_value_head(value_heads, values, reference, &key, &bytes)?;
     Ok(())
 }
 
@@ -823,6 +820,30 @@ impl WorkspaceStore for RedbStore {
         let Some(bytes) = stored else {
             return Ok(None);
         };
+        let value_head_key = codec::value_prefix(
+            reference.scope().run().as_str(),
+            reference.scope().scope().as_str(),
+            reference.key().as_str(),
+        )?;
+        let value_heads = read
+            .open_table(WORKSPACE_VALUE_HEADS)
+            .map_err(error::redb)?;
+        let head_bytes = value_heads
+            .get(value_head_key.as_slice())
+            .map_err(error::redb)?
+            .ok_or_else(|| {
+                error::corruption("workspace value exists without a latest-value head")
+            })?;
+        let latest: WorkspaceValueReference =
+            json::decode(head_bytes.value(), "workspace value head")?;
+        if latest.scope() != reference.scope()
+            || latest.key() != reference.key()
+            || latest.version() < reference.version()
+        {
+            return Err(error::corruption(
+                "workspace value lies beyond or disagrees with its latest-value head",
+            ));
+        }
         if validated_workspace_domain(&read, reference.scope().run())?.is_none() {
             return Err(error::corruption(
                 "stored workspace value has no accounting domain",

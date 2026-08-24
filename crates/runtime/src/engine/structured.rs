@@ -19,8 +19,8 @@ use milkdrift_capability::BoundedJson;
 use milkdrift_persistence::{
     BoundedDetail, CurrencyCode, MAX_REPEAT_CONTINUATION_DECISIONS, NodeExecutionId,
     NodeExecutionMode, NodeOutcome, Reason, RepeatContinuationCause, RepeatTerminationReason,
-    RunEventEnvelope, RunEventKind, RunOutcome, RunSequence, SignalDeliveryMode,
-    SubworkflowOwnership, TimestampMillis, WaitCondition, WaitSatisfaction, WorkspaceMutation,
+    RunEventEnvelope, RunEventKind, RunOutcome, SignalDeliveryMode, SubworkflowOwnership,
+    TimestampMillis, WaitCondition, WaitSatisfaction, WorkspaceMutation,
 };
 use milkdrift_workspace::{
     IterationId, RunId, ScopeReference, ValueKey, WorkspaceScope, WorkspaceValue,
@@ -1834,27 +1834,14 @@ impl RuntimeService {
             RuntimeError::InvalidHistory("repeat cost budget has no configured currency".to_owned())
         })?;
         let currency = CurrencyCode::new(configured_currency.as_str().to_owned())?;
-        let mut observed_cost = 0_u64;
-        for child in projection
-            .subworkflows()
-            .values()
-            .filter(|child| child.parent_execution() == execution)
-        {
-            if self.store.head(child.child_run())? == RunSequence::ZERO {
-                continue;
-            }
-            let child_projection = self.projection(child.child_run())?;
-            if let Some(cost) = child_projection
-                .resource_usage()
-                .cost_micros()
-                .get(&currency)
-            {
-                let Some(total) = observed_cost.checked_add(*cost) else {
-                    return Ok(RepeatBudgetStatus::AccountingOverflow);
-                };
-                observed_cost = total;
-            }
+        let usage = projection.subworkflow_usage_for_execution(execution);
+        if usage.is_some_and(|usage| usage.overflowed()) {
+            return Ok(RepeatBudgetStatus::AccountingOverflow);
         }
+        let observed_cost = usage
+            .and_then(|usage| usage.cost_micros().get(&currency))
+            .copied()
+            .unwrap_or(0);
         if observed_cost >= maximum_cost {
             Ok(RepeatBudgetStatus::Exhausted(
                 RepeatContinuationCause::CostBudget {

@@ -3,6 +3,113 @@
 use super::*;
 
 #[test]
+fn compacted_retry_history_still_blocks_retrospective_side_effect_rewrite() -> TestResult {
+    let directory = TempDir::new()?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let clock = Arc::new(ManualClock::new(NOW));
+    let executor = Arc::new(BoundaryFailingExecutor::new(
+        descriptor_with_model_side_effect("idempotent_write")?,
+        1,
+    ));
+    let runtime = RuntimeService::new(
+        store.clone(),
+        executor,
+        clock.clone(),
+        Arc::new(SequentialIdGenerator::new("reconcile-compacted-retry", 1)?),
+        RuntimeConfig::new(
+            WorkerId::new("worker-reconcile-compacted-retry")?,
+            ActorRef::new("controller:reconcile-compacted-retry")?,
+            30_000,
+            32,
+            SchedulerLimits::new(8, 4, 2, 4)?,
+            RetryPolicy::new(2, vec![ErrorClass::Adapter], 1, 1_000, 0)?,
+        )?,
+    )?;
+    let old = removable_task_revision("workflow-reconcile-compacted-retry")?;
+    let new = revision_without_completed_task(&old)?;
+    let run = RunId::new("run-reconcile-compacted-retry")?;
+    store.put_revision(&old)?;
+    store.put_revision(&new)?;
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::CreateRun {
+                workflow: old.semantic().workflow().clone(),
+                revision: old.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    run.clone(),
+                    ScopeId::new("scope-reconcile-compacted-retry")?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?,
+        CommandDisposition::Accepted
+    );
+
+    assert_eq!(runtime.tick()?.uncertain, 1);
+    clock.advance(1)?;
+    assert_eq!(runtime.tick()?.completed, 1);
+    let compacted = runtime.projection(&run)?;
+    let completed = compacted
+        .node_executions()
+        .values()
+        .find(|execution| execution.node().as_str() == "retired")
+        .ok_or("completed retry execution is absent")?;
+    assert_eq!(completed.attempt_count(), 2);
+    assert_eq!(completed.attempts().len(), 1);
+    assert_eq!(compacted.attempts().len(), 1);
+    assert_eq!(compacted.unresolved_attempts().count(), 0);
+
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::RequestRevisionAdoption {
+                reconciliation: ReconciliationId::new("reconciliation-compacted-retry")?,
+                revision: new.id().clone(),
+                policy: ReconciliationPolicy::FinishCurrentThenAdopt,
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    let planned = runtime.projection(&run)?;
+    let plan = planned
+        .reconciliation()
+        .plans()
+        .values()
+        .next()
+        .ok_or("compacted-retry reconciliation plan is absent")?;
+    assert!(plan.items().iter().any(|item| {
+        item.node
+            .as_ref()
+            .is_some_and(|node| node.as_str() == "retired")
+            && item.classification == ReconciliationClassification::CompletedOrUncertainSideEffects
+            && item.action == ReconciliationAction::RejectRetrospectiveRewrite
+    }));
+
+    let history = runtime.history(&run)?;
+    assert!(
+        history
+            .iter()
+            .any(|event| matches!(event.kind(), RunEventKind::ExternalOutcomeUncertain { .. }))
+    );
+    assert!(
+        history
+            .iter()
+            .any(|event| matches!(event.kind(), RunEventKind::NodeRetryScheduled { .. }))
+    );
+    Ok(())
+}
+
+#[test]
 fn removed_completed_history_is_inert_after_revision_adoption() -> TestResult {
     let harness = Harness::new("removed-completed-adoption")?;
     let old = removable_task_revision("workflow-removed-completed-adoption")?;

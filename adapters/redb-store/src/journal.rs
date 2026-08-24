@@ -1,16 +1,13 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    ops::Bound,
-};
+use std::{collections::BTreeSet, ops::Bound};
 
 use milkdrift_persistence::{
     ActiveLeaseSnapshot, ActorRef, AtomicRunCommitOutcome, AtomicRunCommitRequest,
     COMMAND_RESULT_SCHEMA_VERSION_V1, CommandId, CommandReceipt, CommandResultDocument,
     EventCursor, EventPage, EventPageQuery, IndexedRunState, IntegrityDigest, LeaseIndexEntry,
-    LeaseIndexMutation, MAX_VALUE_PROVENANCE_DEPTH, PageSize, PersistenceError, RunEventKind,
-    RunJournal, RunQueryStore, RunSequence, RunSummaryIndex, RunSummaryPage, RunSummaryPageQuery,
-    RunnableCursor, RunnableIndexEntry, RunnableIndexMutation, RunnablePage, TimerIndexEntry,
-    TimerIndexMutation, TimestampMillis, WorkspaceMutation, WorkspaceStore,
+    LeaseIndexMutation, MAX_VALUE_PROVENANCE_DEPTH, PageSize, PersistenceError, RunEventEnvelope,
+    RunEventKind, RunJournal, RunQueryStore, RunSequence, RunSummaryIndex, RunSummaryPage,
+    RunSummaryPageQuery, RunnableCursor, RunnableIndexEntry, RunnableIndexMutation, RunnablePage,
+    TimerIndexEntry, TimerIndexMutation, TimestampMillis, WorkspaceMutation, WorkspaceStore,
 };
 use milkdrift_workspace::{
     ArtifactReference, MAX_SCOPE_DEPTH, RunId, ScopeId, ScopeKind, ScopeReference, ValueKey,
@@ -25,9 +22,10 @@ use crate::{
     json,
     schema::{
         ARTIFACT_METADATA, ARTIFACT_RESERVATIONS, COMMAND_RESULTS, LEASE_ENTRIES, LEASE_INDEX,
-        LEASE_SET_REVISION_KEY, METADATA, NONTERMINAL_RUNS, ROOT_SCOPES, RUN_EVENTS, RUN_HEADS,
-        RUN_SUMMARIES, RUNNABLE_ENTRIES, RUNNABLE_INDEX, RUNNABLE_RUN_HEADS, SCOPES, TIMER_ENTRIES,
-        TIMER_INDEX, VALUES, WORKSPACE_BUDGETS, WORKSPACE_USAGE, WORKSPACE_VALUE_HEADS,
+        LEASE_SET_REVISION_KEY, METADATA, NONTERMINAL_RUNS, NONTERMINAL_SET_COUNT_KEY, ROOT_SCOPES,
+        RUN_EVENTS, RUN_HEADS, RUN_SUMMARIES, RUNNABLE_ENTRIES, RUNNABLE_INDEX, RUNNABLE_RUN_HEADS,
+        SCOPES, SIGNAL_RECEIPTS, TIMER_ENTRIES, TIMER_INDEX, VALUES, WORKSPACE_BUDGETS,
+        WORKSPACE_USAGE, WORKSPACE_VALUE_HEADS,
     },
 };
 

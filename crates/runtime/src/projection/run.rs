@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use milkdrift_blueprint::{ContentDigest, NodeId, PortId, RevisionId, WorkflowId};
 use milkdrift_capability::InvocationId;
 use milkdrift_persistence::{
-    AttemptId, AuthorityDecision, CurrencyCode, EventId, EvidenceReference, LeaseId,
-    NodeExecutionId, Reason, ReconciliationDecisionId, ReconciliationPlanId, RepeatDecisionId,
-    RunOutcome, RunSequence, SignalId, TimerId,
+    AttemptId, AuthorityDecision, CurrencyCode, EvidenceReference, LeaseId, NodeExecutionId,
+    Reason, ReconciliationDecisionId, ReconciliationPlanId, RunOutcome, RunSequence, SignalId,
+    TimerId,
 };
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactReference, BranchId, IterationId, RunId, ScopeReference,
@@ -24,7 +24,8 @@ use super::reconciliation::{
 };
 use super::structured::{
     BranchProjection, IterationProjection, JoinProjection, RepeatContinuationProjection,
-    RepeatTermination, SignalProjection, SubworkflowProjection, WaitProjection,
+    RepeatTermination, SignalProjection, SubworkflowProjection, SubworkflowUsageSummary,
+    WaitProjection,
 };
 
 /// Current lifecycle derived exclusively from authoritative run facts.
@@ -272,9 +273,9 @@ pub struct RunProjection {
     pub(super) sequence: RunSequence,
     /// Last authoritative sequence whose high-volume historical detail was compacted.
     ///
-    /// Zero means this projection was rebuilt from complete history in the current process.
-    /// A non-zero value means the journal remains authoritative for detail at or before this
-    /// sequence while the projection retains only state required for future transitions.
+    /// The journal remains authoritative for detail at or before this sequence while the
+    /// projection retains only state required for future transitions. A non-empty live
+    /// projection is compacted through its current sequence after every durable transition.
     pub(super) history_compacted_through: RunSequence,
     pub(super) run_id: Option<RunId>,
     pub(super) lifecycle: RunLifecycle,
@@ -288,7 +289,6 @@ pub struct RunProjection {
     #[serde(with = "super::serde_map")]
     pub(super) scopes: BTreeMap<ScopeReference, WorkspaceScope>,
     pub(super) workspace_values: BTreeSet<WorkspaceValueReference>,
-    pub(super) event_ids: BTreeSet<EventId>,
     pub(super) cancellation: Option<RunCancellation>,
     pub(super) termination: Option<RunTerminationIntent>,
     #[serde(with = "super::serde_map")]
@@ -344,7 +344,6 @@ pub struct RunProjection {
     pub(super) latest_iteration: BTreeMap<NodeExecutionId, IterationId>,
     #[serde(with = "super::serde_map")]
     pub(super) repeat_continuations: BTreeMap<NodeExecutionId, RepeatContinuationProjection>,
-    pub(super) repeat_decision_ids: BTreeSet<RepeatDecisionId>,
     #[serde(with = "super::serde_map")]
     pub(super) repeat_terminations: BTreeMap<NodeExecutionId, RepeatTermination>,
     #[serde(with = "super::serde_map")]
@@ -355,6 +354,8 @@ pub struct RunProjection {
     pub(super) pending_wait_execution_ids: BTreeSet<NodeExecutionId>,
     #[serde(with = "super::serde_map")]
     pub(super) subworkflows: BTreeMap<SubworkflowId, SubworkflowProjection>,
+    #[serde(with = "super::serde_map")]
+    pub(super) subworkflow_usage_by_execution: BTreeMap<NodeExecutionId, SubworkflowUsageSummary>,
     pub(super) active_subworkflow_ids: BTreeSet<SubworkflowId>,
     pub(super) active_attached_subworkflow_ids: BTreeSet<SubworkflowId>,
     pub(super) child_runs: BTreeSet<RunId>,
@@ -370,7 +371,6 @@ pub struct RunProjection {
     #[serde(with = "super::serde_map")]
     pub(super) reconciliation_remediations:
         BTreeMap<NodeExecutionId, ReconciliationRemediationProjection>,
-    pub(super) decision_ids: BTreeSet<ReconciliationDecisionId>,
     #[serde(with = "super::serde_map")]
     pub(super) recovery_decisions:
         BTreeMap<ReconciliationDecisionId, (AttemptId, AuthorityDecision)>,

@@ -1,10 +1,11 @@
 use redb::TableDefinition;
 
-pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 2;
+pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 3;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 5;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
 pub(crate) const LEASE_SET_REVISION_KEY: &str = "lease_set_revision";
+pub(crate) const NONTERMINAL_SET_COUNT_KEY: &str = "nonterminal_set_count";
 
 // Every durable family has a distinct, permanently named table. Keys that need
 // ordering use the closed binary encodings in `codec`; documents are canonical
@@ -29,6 +30,9 @@ pub(crate) const RUN_HISTORY_HEADS: TableDefinition<'static, &'static str, &'sta
     TableDefinition::new("milkdrift.v2.runs.history_heads");
 pub(crate) const COMMAND_RESULTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
     TableDefinition::new("milkdrift.v1.commands.results");
+// Stable signal identities are indexed back to their authoritative receipt event.
+pub(crate) const SIGNAL_RECEIPTS: TableDefinition<'static, &'static [u8], u64> =
+    TableDefinition::new("milkdrift.v1.runs.signal_receipts");
 // Derived and verifiable discoverability/index state. These rows never substitute
 // for an absent authoritative event, head, or command result.
 pub(crate) const RUN_SUMMARIES: TableDefinition<'static, &'static str, &'static [u8]> =

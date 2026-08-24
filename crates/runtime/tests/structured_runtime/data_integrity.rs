@@ -678,10 +678,17 @@ fn terminal_unrelated_corruption_is_skipped_by_startup_and_found_by_explicit_scr
     let Err(read_error) = store.scope(root.run(), root.scope()) else {
         return Err("ordinary access treated a deleted terminal scope as absence".into());
     };
-    assert!(matches!(
-        read_error,
-        milkdrift_persistence::PersistenceError::Corruption(_)
-    ));
+    assert!(
+        matches!(
+            read_error,
+            milkdrift_persistence::PersistenceError::Corruption(_)
+                | milkdrift_persistence::PersistenceError::Storage {
+                    class: milkdrift_persistence::StorageFailureClass::Corruption,
+                    ..
+                }
+        ),
+        "deleted indexed root returned {read_error:?}"
+    );
 
     let mut cursor = None;
     let mut failures = 0_usize;
@@ -1024,13 +1031,12 @@ fn changed_pending_adoption_supersedes_old_eligibility_and_runs_new_definition()
 
     let applied = harness.runtime.projection(&run)?;
     assert_eq!(applied.revision(), Some(new.id()));
-    assert_eq!(
-        applied
-            .node_executions()
-            .get(&original)
-            .map(|execution| execution.state()),
-        Some(&NodeExecutionState::RemovedProspectively(plan_id))
-    );
+    assert!(!applied.node_executions().contains_key(&original));
+    assert!(harness.runtime.history(&run)?.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::ReconciliationExecutionRemoved { plan, execution }
+            if plan == &plan_id && execution == &original
+    )));
     assert_eq!(
         applied
             .executions_for_node(&NodeId::new("work")?)
@@ -1100,19 +1106,25 @@ fn paused_runs_record_signal_and_timer_facts_without_advancing_until_resume() ->
             CommandDisposition::Accepted
         );
         let resumed = harness.runtime.projection(&run)?;
-        assert!(resumed.waits().values().any(|wait| {
-            matches!(
-                wait.condition(),
-                milkdrift_persistence::WaitCondition::Signal { .. }
-            ) && wait.is_completed()
-        }));
-        assert_eq!(
-            resumed
-                .signals()
-                .get(&signal)
-                .map(|signal| signal.consumed_by().len()),
-            Some(1)
-        );
+        assert_eq!(resumed.waits().len(), 1);
+        assert!(resumed.waits().values().all(|wait| wait.is_pending()));
+        assert!(resumed.waits().values().all(|wait| !matches!(
+            wait.condition(),
+            milkdrift_persistence::WaitCondition::Signal { .. }
+        )));
+        assert!(!resumed.signals().contains_key(&signal));
+        let history = harness.runtime.history(&run)?;
+        assert!(history.iter().any(|event| matches!(
+            event.kind(),
+            RunEventKind::SignalConsumed { signal: consumed, .. } if consumed == &signal
+        )));
+        assert!(history.iter().any(|event| matches!(
+            event.kind(),
+            RunEventKind::WaitSatisfied {
+                cause: milkdrift_persistence::WaitSatisfaction::Signal { signal: consumed },
+                ..
+            } if consumed == &signal
+        )));
     }
 
     {
@@ -1136,11 +1148,25 @@ fn paused_runs_record_signal_and_timer_facts_without_advancing_until_resume() ->
             CommandDisposition::Accepted
         );
         let resumed = harness.runtime.projection(&run)?;
-        assert!(resumed.waits().values().all(|wait| wait.is_completed()));
+        assert!(resumed.waits().is_empty());
+        assert!(resumed.timers().is_empty());
         assert_eq!(
             resumed.lifecycle(),
             RunLifecycle::Terminal(RunOutcome::Succeeded)
         );
+        let history = harness.runtime.history(&run)?;
+        assert!(
+            history
+                .iter()
+                .any(|event| matches!(event.kind(), RunEventKind::TimerFired { .. }))
+        );
+        assert!(history.iter().any(|event| matches!(
+            event.kind(),
+            RunEventKind::WaitSatisfied {
+                cause: milkdrift_persistence::WaitSatisfaction::Timer { .. },
+                ..
+            }
+        )));
     }
     Ok(())
 }

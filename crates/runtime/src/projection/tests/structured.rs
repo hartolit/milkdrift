@@ -259,6 +259,7 @@ fn projects_structured_scopes_waits_signals_and_subworkflows() -> TestResult {
                 child_run,
                 outcome: RunOutcome::Succeeded,
                 outputs: Vec::new(),
+                cost_micros: std::collections::BTreeMap::new(),
             },
         )?,
     ];
@@ -371,7 +372,7 @@ fn signals_support_queued_one_shot_and_preexisting_broadcast_waiters() -> TestRe
             },
         )?,
     ])?;
-    assert!(projection.signals()[&queued_signal].is_completed());
+    assert!(!projection.signals().contains_key(&queued_signal));
     assert!(projection.waits()[&queued_wait].is_completed());
     assert!(projection.signals()[&broadcast_signal].is_completed());
     assert!(!projection.signals()[&broadcast_signal].is_pending());
@@ -630,8 +631,10 @@ fn repeat_continuation_decisions_are_bounded_and_preserve_authority_history() ->
     assert_eq!(continuation.effective_iteration_limit(), 3);
     assert!(continuation.is_rejected());
     assert!(!continuation.is_pending_approval());
-    assert_eq!(continuation.requests().len(), 2);
-    assert_eq!(continuation.decisions().len(), 2);
+    assert_eq!(continuation.request_count(), 2);
+    assert_eq!(continuation.decision_count(), 2);
+    assert_eq!(continuation.requests().len(), 1);
+    assert_eq!(continuation.decisions().len(), 1);
     Ok(())
 }
 
@@ -1017,13 +1020,15 @@ fn repeat_continuation_request_cycles_are_hard_capped() -> TestResult {
     let mut projection = RunProjection::replay(&events)?;
     let continuation = &projection.repeat_continuations()[&repeat];
     assert_eq!(
-        continuation.requests().len(),
-        MAX_REPEAT_CONTINUATION_CYCLES
+        continuation.request_count(),
+        u32::try_from(MAX_REPEAT_CONTINUATION_CYCLES)?
     );
     assert_eq!(
-        continuation.decisions().len(),
-        MAX_REPEAT_CONTINUATION_CYCLES
+        continuation.decision_count(),
+        u32::try_from(MAX_REPEAT_CONTINUATION_CYCLES)?
     );
+    assert_eq!(continuation.requests().len(), 1);
+    assert_eq!(continuation.decisions().len(), 1);
     assert_eq!(continuation.effective_iteration_limit(), 65);
 
     let frontier = IterationId::new("iteration-over-cap")?;

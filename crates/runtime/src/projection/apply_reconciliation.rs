@@ -152,7 +152,12 @@ impl RunProjection {
                 if !matches!(
                     outcome,
                     AuthorityDecision::Approve | AuthorityDecision::Reject
-                ) || !self.decision_ids.insert(decision.clone())
+                ) || self
+                    .reconciliation
+                    .plans
+                    .values()
+                    .flat_map(|plan| plan.decisions.iter())
+                    .any(|recorded| recorded.decision == *decision)
                 {
                     return Err(invalid_at(
                         event,
@@ -334,9 +339,15 @@ impl RunProjection {
                         node: node.clone(),
                         scope: scope.clone(),
                         mode: *mode,
+                        revision: self
+                            .revision
+                            .clone()
+                            .ok_or_else(|| invalid_at(event, "remediation has no revision"))?,
+                        epoch_retired_sequence: None,
                         created_sequence: sequence,
                         created_at: event.occurred_at(),
                         attempts: Vec::new(),
+                        attempt_count: 0,
                         state: NodeExecutionState::Eligible,
                         cancellation: None,
                         deterministic_terminal: None,
@@ -483,6 +494,7 @@ impl RunProjection {
                         "recovery must name the exact journal head examined",
                     ));
                 }
+                self.recovery.clear();
                 self.recovery.push(RecoveryProjection {
                     controller: controller.clone(),
                     through_sequence: *through_sequence,
@@ -630,7 +642,15 @@ impl RunProjection {
                     outcome,
                     AuthorityDecision::ResolveSucceeded | AuthorityDecision::ResolveFailed
                 ) && evidence.is_empty()
-                    || !self.decision_ids.insert(decision.clone())
+                    || self.recovery_decisions.contains_key(decision)
+                    || self.attempts.values().any(|attempt| {
+                        attempt.obligation.as_ref().is_some_and(|obligation| {
+                            obligation
+                                .decisions
+                                .iter()
+                                .any(|recorded| recorded.decision == *decision)
+                        })
+                    })
                 {
                     return Err(invalid_at(
                         event,
@@ -713,9 +733,15 @@ impl RunProjection {
                         node: node.clone(),
                         scope: scope.clone(),
                         mode: *mode,
+                        revision: self
+                            .revision
+                            .clone()
+                            .ok_or_else(|| invalid_at(event, "remediation has no revision"))?,
+                        epoch_retired_sequence: None,
                         created_sequence: sequence,
                         created_at: event.occurred_at(),
                         attempts: Vec::new(),
+                        attempt_count: 0,
                         state: NodeExecutionState::Eligible,
                         cancellation: None,
                         deterministic_terminal: None,

@@ -28,7 +28,8 @@ use super::run::{
 };
 use super::structured::{
     BranchProjection, IterationProjection, JoinProjection, RepeatContinuationProjection,
-    RepeatTermination, SignalProjection, SubworkflowProjection, WaitProjection,
+    RepeatTermination, SignalProjection, SubworkflowProjection, SubworkflowUsageSummary,
+    WaitProjection,
 };
 
 impl RunProjection {
@@ -36,36 +37,6 @@ impl RunProjection {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Creates the bounded operational checkpoint retained by snapshot storage.
-    ///
-    /// Complete event history remains queryable from the journal. High-frequency
-    /// observations that are irrelevant to future transition legality are reduced to
-    /// their latest value so checkpoint size follows active workflow state rather than
-    /// raw streaming volume.
-    pub(crate) fn compacted_for_snapshot(&self) -> Self {
-        let mut compacted = self.clone();
-        compacted.history_compacted_through = compacted.sequence;
-        compacted.event_ids.clear();
-        for attempt in compacted.attempts.values_mut() {
-            if attempt.progress.len() > 1 {
-                let latest = attempt.progress.pop();
-                attempt.progress.clear();
-                attempt.progress.extend(latest);
-            }
-            if attempt.cancellation_acknowledgements.len() > 1 {
-                let latest = attempt.cancellation_acknowledgements.pop();
-                attempt.cancellation_acknowledgements.clear();
-                attempt.cancellation_acknowledgements.extend(latest);
-            }
-            if attempt.recovery.len() > 1 {
-                let latest = attempt.recovery.pop();
-                attempt.recovery.clear();
-                attempt.recovery.extend(latest);
-            }
-        }
-        compacted
     }
 
     /// Replays a complete ordered history without consulting any external state.
@@ -102,11 +73,10 @@ impl RunProjection {
         self.sequence
     }
 
-    /// Last sequence whose verbose historical detail was compacted into operational state.
+    /// Last sequence whose settled historical detail was compacted into operational state.
     ///
-    /// The append-only journal remains the source of truth for timeline/audit queries. A
-    /// non-zero value tells callers not to interpret high-frequency observation collections
-    /// as complete history before this boundary.
+    /// The append-only journal remains the source of truth for timeline/audit queries.
+    /// Active high-frequency collections are never a promise of complete history.
     #[must_use]
     pub const fn history_compacted_through(&self) -> RunSequence {
         self.history_compacted_through
@@ -142,7 +112,9 @@ impl RunProjection {
         self.revision_digest.as_ref()
     }
 
-    /// Complete immutable pin timeline.
+    /// Current revision pin required by active planning.
+    ///
+    /// Earlier pins are historical journal facts.
     #[must_use]
     pub fn pins(&self) -> &[RevisionPin] {
         &self.pins
@@ -166,13 +138,13 @@ impl RunProjection {
         &self.inputs
     }
 
-    /// Every durable workspace scope declared by run history.
+    /// Workspace scopes still referenced by active state or retained values.
     #[must_use]
     pub const fn scopes(&self) -> &BTreeMap<ScopeReference, WorkspaceScope> {
         &self.scopes
     }
 
-    /// Distinct immutable workspace value references carried by projected facts.
+    /// Immutable workspace value references still retained by active context/output policy.
     #[must_use]
     pub const fn workspace_values(&self) -> &BTreeSet<WorkspaceValueReference> {
         &self.workspace_values
@@ -190,10 +162,19 @@ impl RunProjection {
         self.termination.as_ref()
     }
 
-    /// All logical node executions keyed by stable identity.
+    /// Current logical executions and compact terminal occurrences keyed by identity.
     #[must_use]
     pub const fn node_executions(&self) -> &BTreeMap<NodeExecutionId, NodeExecutionProjection> {
         &self.node_executions
+    }
+
+    /// Compact terminal-child usage required by one live structured parent.
+    #[must_use]
+    pub fn subworkflow_usage_for_execution(
+        &self,
+        execution: &NodeExecutionId,
+    ) -> Option<&SubworkflowUsageSummary> {
+        self.subworkflow_usage_by_execution.get(execution)
     }
 
     /// Logical executions that have not reached a closed terminal/removed state.
@@ -314,7 +295,7 @@ impl RunProjection {
             .and_then(|execution| self.node_executions.get(execution))
     }
 
-    /// All immutable attempts keyed by identity.
+    /// Current/latest attempts and unresolved safety obligations keyed by identity.
     #[must_use]
     pub const fn attempts(&self) -> &BTreeMap<AttemptId, NodeAttemptProjection> {
         &self.attempts
@@ -328,8 +309,8 @@ impl RunProjection {
     pub fn revision_for_attempt(&self, attempt: &AttemptId) -> Option<&RevisionId> {
         self.attempts
             .get(attempt)
-            .and_then(NodeAttemptProjection::scheduled_sequence)
-            .and_then(|sequence| self.revision_at(sequence))
+            .and_then(|attempt| self.node_executions.get(attempt.execution()))
+            .map(NodeExecutionProjection::revision)
     }
 
     /// Attempts with uncertain or explicitly retained external truth.
@@ -339,25 +320,25 @@ impl RunProjection {
             .filter(|attempt| attempt.is_unresolved())
     }
 
-    /// Every durable lease, including expired, superseded, and completed records.
+    /// Active leases and the latest lease still required by recovery or late evidence.
     #[must_use]
     pub const fn leases(&self) -> &BTreeMap<LeaseId, LeaseProjection> {
         &self.leases
     }
 
-    /// Every durable timer, including fired records.
+    /// Pending timers and fired/cancelled timers still referenced by an active wait.
     #[must_use]
     pub const fn timers(&self) -> &BTreeMap<TimerId, TimerProjection> {
         &self.timers
     }
 
-    /// Every immutable retry decision keyed by its timer.
+    /// Retry decisions whose admission remains pending.
     #[must_use]
     pub const fn retries(&self) -> &BTreeMap<TimerId, RetryProjection> {
         &self.retries
     }
 
-    /// All structured branches.
+    /// Structured branches still needed by active ownership or current join facts.
     #[must_use]
     pub const fn branches(&self) -> &BTreeMap<BranchId, BranchProjection> {
         &self.branches
@@ -393,13 +374,13 @@ impl RunProjection {
         &self.branch_routes
     }
 
-    /// All satisfied joins keyed by join execution.
+    /// Current satisfied joins still needed by their execution frontier.
     #[must_use]
     pub const fn joins(&self) -> &BTreeMap<NodeExecutionId, JoinProjection> {
         &self.joins
     }
 
-    /// All isolated repeat iterations.
+    /// Active/latest repeat iteration frontiers; older iterations are journal history.
     #[must_use]
     pub const fn iterations(&self) -> &BTreeMap<IterationId, IterationProjection> {
         &self.iterations
@@ -413,13 +394,13 @@ impl RunProjection {
         &self.repeat_continuations
     }
 
-    /// All terminal repeat facts keyed by repeat execution.
+    /// Current terminal repeat summaries keyed by retained repeat execution.
     #[must_use]
     pub const fn repeat_terminations(&self) -> &BTreeMap<NodeExecutionId, RepeatTermination> {
         &self.repeat_terminations
     }
 
-    /// All received durable signals.
+    /// Unconsumed deliveries and broadcasts whose bounded scan remains incomplete.
     #[must_use]
     pub const fn signals(&self) -> &BTreeMap<SignalId, SignalProjection> {
         &self.signals
@@ -430,13 +411,13 @@ impl RunProjection {
         &self.pending_broadcast_signals
     }
 
-    /// All registered wait conditions keyed by execution.
+    /// Pending waits and compact completed waits still needed by their owning execution.
     #[must_use]
     pub const fn waits(&self) -> &BTreeMap<NodeExecutionId, WaitProjection> {
         &self.waits
     }
 
-    /// All parent-linked child subworkflows.
+    /// Active/latest parent links and output-import obligations.
     #[must_use]
     pub const fn subworkflows(&self) -> &BTreeMap<SubworkflowId, SubworkflowProjection> {
         &self.subworkflows
@@ -492,7 +473,7 @@ impl RunProjection {
         &self.artifacts
     }
 
-    /// Complete prospective revision-reconciliation read model.
+    /// Current/latest prospective revision-reconciliation state.
     #[must_use]
     pub const fn reconciliation(&self) -> &ReconciliationProjection {
         &self.reconciliation
@@ -514,7 +495,7 @@ impl RunProjection {
         &self.reconciliation_remediations
     }
 
-    /// Recovery-controller passes over exact durable heads.
+    /// Latest recovery-controller pass; older passes are paged from the journal.
     #[must_use]
     pub fn recovery(&self) -> &[RecoveryProjection] {
         &self.recovery
@@ -571,9 +552,6 @@ impl RunProjection {
                 ),
             ));
         }
-        if self.event_ids.contains(event.event_id()) {
-            return Err(invalid_at(event, "duplicate event identity"));
-        }
         match &self.run_id {
             Some(run) if run != event.run_id() => {
                 return Err(invalid_at(
@@ -603,11 +581,8 @@ impl RunProjection {
 
         self.apply_kind(event)?;
         self.mark_reconciliation_staleness(event);
-        let inserted = self.event_ids.insert(event.event_id().clone());
-        if !inserted {
-            return Err(invalid_at(event, "duplicate event identity"));
-        }
         self.sequence = event.sequence();
+        self.compact_settled_state()?;
         Ok(())
     }
 

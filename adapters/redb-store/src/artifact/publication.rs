@@ -468,6 +468,11 @@ impl ArtifactStore for RedbStore {
                 record.metadata.reference(),
                 self.max_artifact_bytes,
             )?;
+            if !digest_was_known && !content_intent_preexisted {
+                return Err(error::corruption(
+                    "artifact content exists without its durable digest index",
+                ));
+            }
             digest_was_known
         } else {
             verify_blob(

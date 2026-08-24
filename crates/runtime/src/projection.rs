@@ -41,6 +41,7 @@ pub(super) mod serde_map {
 mod apply_core;
 mod apply_reconciliation;
 mod apply_structured;
+mod compaction;
 mod helpers;
 mod node;
 mod reconciliation;

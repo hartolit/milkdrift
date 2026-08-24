@@ -257,12 +257,9 @@ fn crash_after_durable_lease_recovers_only_after_expiry_and_retries_once() -> Te
         );
         assert!(attempt.terminal().is_some());
         assert!(attempt.obligation().is_none());
-        assert_eq!(
-            completed
-                .leases()
-                .get(&replacement_lease)
-                .map(|lease| lease.state()),
-            Some(&LeaseState::Completed)
+        assert!(
+            !completed.leases().contains_key(&replacement_lease),
+            "completed lease detail belongs to journal history, not the active projection"
         );
         let history = runtime.history(&run)?;
         assert_eq!(
@@ -577,25 +574,54 @@ fn idempotent_boundary_error_retries_exact_request_and_keeps_first_attempt_truth
         projection.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Succeeded)
     );
-    let first = projection
-        .attempts()
-        .values()
-        .find(|attempt| attempt.attempt_number() == 1)
-        .ok_or("first idempotent attempt is absent")?;
     let second = projection
         .attempts()
         .values()
         .find(|attempt| attempt.attempt_number() == 2)
         .ok_or("second idempotent attempt is absent")?;
+    assert_eq!(projection.attempts().len(), 1);
     assert_eq!(
-        first.state(),
-        &AttemptState::UncertainSupersededByRetry {
-            covering_attempt: second.attempt().clone(),
-        }
+        second.state(),
+        &AttemptState::Terminal(NodeOutcome::Succeeded)
     );
-    assert!(first.terminal().is_none());
-    assert!(first.obligation().is_some());
     assert_eq!(projection.unresolved_attempts().count(), 0);
+    let second_attempt = second.attempt().clone();
+    let mut history = Vec::new();
+    let mut cursor = None;
+    let mut page_count = 0_usize;
+    loop {
+        let page = runtime.history_page(&EventPageQuery::new(
+            run.clone(),
+            cursor,
+            PageSize::new(3)?,
+        )?)?;
+        page_count = page_count.saturating_add(1);
+        history.extend(page.events);
+        let Some(next) = page.next else {
+            break;
+        };
+        cursor = Some(next);
+    }
+    assert!(
+        page_count > 1,
+        "historical evidence did not cross a page cursor"
+    );
+    let (first_attempt, covering_attempt) = history
+        .iter()
+        .find_map(|event| match event.kind() {
+            RunEventKind::NodeRetryScheduled {
+                previous_attempt,
+                next_attempt,
+                ..
+            } => Some((previous_attempt, next_attempt)),
+            _ => None,
+        })
+        .ok_or("durable retry provenance is absent")?;
+    assert_eq!(covering_attempt, &second_attempt);
+    assert!(history.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::ExternalOutcomeUncertain { attempt, .. } if attempt == first_attempt
+    )));
 
     let dispatches = executor.dispatches()?;
     assert_eq!(dispatches.len(), 2);
@@ -974,26 +1000,31 @@ fn harmless_uncertain_attempt_is_covered_by_exact_terminal_failure_retry() -> Te
         projection.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Failed)
     );
-    let first = projection
-        .attempts()
-        .values()
-        .find(|attempt| attempt.attempt_number() == 1)
-        .ok_or("harmless uncertain attempt is absent")?;
     let retry = projection
         .attempts()
         .values()
         .find(|attempt| attempt.attempt_number() == 2)
         .ok_or("terminal failure retry is absent")?;
-    assert_eq!(
-        first.state(),
-        &AttemptState::UncertainSupersededByRetry {
-            covering_attempt: retry.attempt().clone(),
-        }
-    );
-    assert!(first.terminal().is_none());
-    assert!(first.obligation().is_some());
+    assert_eq!(projection.attempts().len(), 1);
     assert_eq!(retry.state(), &AttemptState::Terminal(NodeOutcome::Failed));
     assert_eq!(projection.unresolved_attempts().count(), 0);
+    let retry_attempt = retry.attempt().clone();
+    let history = runtime.history(&run)?;
+    let first_attempt = history
+        .iter()
+        .find_map(|event| match event.kind() {
+            RunEventKind::NodeRetryScheduled {
+                previous_attempt,
+                next_attempt,
+                ..
+            } if next_attempt == &retry_attempt => Some(previous_attempt),
+            _ => None,
+        })
+        .ok_or("durable harmless retry provenance is absent")?;
+    assert!(history.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::ExternalOutcomeUncertain { attempt, .. } if attempt == first_attempt
+    )));
     Ok(())
 }
 
@@ -1156,35 +1187,36 @@ fn active_retry_cancellation_only_closes_harmless_prior_uncertainty() -> TestRes
             runtime.tick()?;
         }
         let projection = runtime.projection(&run)?;
-        let first = projection
-            .attempts()
-            .values()
-            .find(|attempt| attempt.attempt_number() == 1)
-            .ok_or("uncertain first attempt is absent")?;
         let retry_attempt = projection
             .attempts()
             .values()
             .find(|attempt| attempt.attempt_number() == 2)
             .ok_or("cancelled retry attempt is absent")?;
         if closes {
-            assert_eq!(
-                first.state(),
-                &AttemptState::UncertainAbandonedByCancellation {
-                    cancelled_retry: retry_attempt.attempt().clone(),
-                }
-            );
+            assert_eq!(projection.attempts().len(), 1);
             assert_eq!(projection.unresolved_attempts().count(), 0);
             assert_eq!(
                 projection.lifecycle(),
                 RunLifecycle::Terminal(RunOutcome::Cancelled)
             );
         } else {
+            let first = projection
+                .attempts()
+                .values()
+                .find(|attempt| attempt.attempt_number() == 1)
+                .ok_or("unresolved idempotent first attempt is absent")?;
             assert_eq!(first.state(), &AttemptState::Uncertain);
+            assert!(first.terminal().is_none());
+            assert!(first.obligation().is_some());
             assert_eq!(projection.unresolved_attempts().count(), 1);
             assert_eq!(projection.lifecycle(), RunLifecycle::Cancelling);
         }
-        assert!(first.terminal().is_none());
-        assert!(first.obligation().is_some());
+        let retry_id = retry_attempt.attempt().clone();
+        let history = runtime.history(&run)?;
+        assert!(history.iter().any(|event| matches!(
+            event.kind(),
+            RunEventKind::NodeRetryScheduled { next_attempt, .. } if next_attempt == &retry_id
+        )));
     }
     Ok(())
 }

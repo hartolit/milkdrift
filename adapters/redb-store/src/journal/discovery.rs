@@ -34,12 +34,30 @@ fn transition_nonterminal_membership(
     summary: &RunSummaryIndex,
     previous_summary_bytes: Option<&[u8]>,
 ) -> Result<(), PersistenceError> {
-    let previous_marker = write
-        .open_table(NONTERMINAL_RUNS)
+    let (previous_marker, physical_count) = {
+        let nonterminal = write.open_table(NONTERMINAL_RUNS).map_err(error::redb)?;
+        let marker = nonterminal
+            .get(summary.run.as_str())
+            .map_err(error::redb)?
+            .map(|marker| marker.value());
+        (marker, nonterminal.len().map_err(error::redb)?)
+    };
+    let stored_count = write
+        .open_table(METADATA)
         .map_err(error::redb)?
-        .get(summary.run.as_str())
+        .get(NONTERMINAL_SET_COUNT_KEY)
         .map_err(error::redb)?
-        .map(|marker| marker.value());
+        .map(|count| count.value())
+        .ok_or_else(|| error::corruption("nonterminal-set count is missing"))?;
+    if physical_count != stored_count {
+        return Err(error::corruption(
+            "nonterminal discovery count disagrees with its durable guard",
+        ));
+    }
+    let previous_nonterminal = previous_summary_bytes
+        .map(|bytes| json::decode::<RunSummaryIndex>(bytes, "run summary"))
+        .transpose()?
+        .is_some_and(|previous| previous.state != IndexedRunState::Terminal);
     match previous_summary_bytes {
         None if previous_marker.is_some() => {
             return Err(error::corruption(
@@ -79,16 +97,36 @@ fn transition_nonterminal_membership(
         nonterminal
             .remove(summary.run.as_str())
             .map_err(error::redb)?
+            .map(|marker| marker.value())
     } else {
         nonterminal
             .insert(summary.run.as_str(), 1)
             .map_err(error::redb)?
+            .map(|marker| marker.value())
     };
-    if replaced.as_ref().map(|marker| marker.value()) != previous_marker {
+    if replaced != previous_marker {
         return Err(error::corruption(
             "nonterminal marker changed outside the command transaction",
         ));
     }
+    let next_nonterminal = summary.state != IndexedRunState::Terminal;
+    let next_count = match (previous_nonterminal, next_nonterminal) {
+        (false, true) => stored_count.checked_add(1),
+        (true, false) => stored_count.checked_sub(1),
+        _ => Some(stored_count),
+    }
+    .ok_or_else(|| error::corruption("nonterminal-set count overflowed or underflowed"))?;
+    if nonterminal.len().map_err(error::redb)? != next_count {
+        return Err(error::corruption(
+            "nonterminal discovery mutation disagrees with its next durable count",
+        ));
+    }
+    drop(nonterminal);
+    write
+        .open_table(METADATA)
+        .map_err(error::redb)?
+        .insert(NONTERMINAL_SET_COUNT_KEY, next_count)
+        .map_err(error::redb)?;
     Ok(())
 }
 

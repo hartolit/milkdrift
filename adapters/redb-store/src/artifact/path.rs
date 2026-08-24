@@ -252,11 +252,10 @@ pub(crate) fn remove_artifact_delete_guard(
     identity: &str,
 ) -> Result<(), PersistenceError> {
     let key = artifact_delete_guard_key(kind, identity)?;
-    let removed = write
+    let mut guards = write
         .open_table(ARTIFACT_DELETE_GUARDS)
-        .map_err(error::redb)?
-        .remove(key.as_slice())
         .map_err(error::redb)?;
+    let removed = guards.remove(key.as_slice()).map_err(error::redb)?;
     if removed.is_none() {
         return Err(error::corruption(
             "artifact delete guard is absent at finalization",

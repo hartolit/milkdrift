@@ -580,14 +580,20 @@ pub(crate) fn index_integrity_cursor_exists(
             .get(string_key()?)
             .map_err(error::redb)
             .map(|row| row.is_some()),
-        15 => binary_cursor_exists(read, REVISIONS_BY_DIGEST, key),
-        16 => read
+        15 => read
+            .open_table(REVISIONS)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        16 => binary_cursor_exists(read, REVISIONS_BY_DIGEST, key),
+        17 => read
             .open_table(ARTIFACT_MANIFEST)
             .map_err(error::redb)?
             .get(string_key()?)
             .map_err(error::redb)
             .map(|row| row.is_some()),
-        17 => {
+        18 => {
             let (_total, _digest, _size, physical_key) = parse_artifact_digest_cursor(key)?;
             binary_cursor_exists(
                 read,
@@ -599,21 +605,21 @@ pub(crate) fn index_integrity_cursor_exists(
                 })?,
             )
         }
-        18 => binary_cursor_exists(read, ARTIFACT_REFERENCES, key),
-        19 => binary_cursor_exists(read, RUN_ARTIFACT_OWNERSHIP, key),
-        20 => read
+        19 => binary_cursor_exists(read, ARTIFACT_REFERENCES, key),
+        20 => binary_cursor_exists(read, RUN_ARTIFACT_OWNERSHIP, key),
+        21 => read
             .open_table(ARTIFACT_TEMP_MANIFEST)
             .map_err(error::redb)?
             .get(string_key()?)
             .map_err(error::redb)
             .map(|row| row.is_some()),
-        21 => read
+        22 => read
             .open_table(ARTIFACT_ACCOUNTING)
             .map_err(error::redb)?
             .get(string_key()?)
             .map_err(error::redb)
             .map(|row| row.is_some()),
-        22 => read
+        23 => read
             .open_table(ARTIFACT_TEMP_OWNERS)
             .map_err(error::redb)?
             .get(string_key()?)

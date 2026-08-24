@@ -15,6 +15,8 @@ The persisted typed plan classifies unchanged completed and active work, changed
 
 Plan creation, decisions, and application are idempotent. A plan names the exact old revision, new revision, and sequence used for planning. Application verifies that the run and revision lineage have not moved except for the plan's own decision facts. Immediate prospective actions are themselves durable facts: removing an eligible execution, requesting cancellation of an active attempt, or creating remediation work is recorded before the plan is marked applied. Adoption then appends a new pin from a recorded point forward. It never deletes, edits, or reinterprets an earlier event.
 
+After the immediate revision pin is durable, the active projection retains only the current pin and latest reconciliation request/plan summary. Each active execution carries its immutable governing revision directly, and completed/uncertain side-effect facts required to reject retrospective rewrites remain operationally visible. Superseded plans, decisions, and old pins remain exact journal history and are obtained through paged historical queries; their removal from active state cannot make completed effects rewritable.
+
 ## Rejected alternatives
 
 - Mutating the revision pinned by old events, because that rewrites provenance.

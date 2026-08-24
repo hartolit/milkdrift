@@ -126,6 +126,33 @@ impl RunQueryStore for MemoryEventStore {
         })
     }
 
+    fn signal_receipt(
+        &self,
+        run: &RunId,
+        signal: &milkdrift_persistence::SignalId,
+    ) -> Result<Option<RunEventEnvelope>, PersistenceError> {
+        if run != &self.run {
+            return Ok(None);
+        }
+        Ok(self
+            .events
+            .lock()
+            .map_err(|_| {
+                PersistenceError::InvalidDocument("memory event-store lock is poisoned".to_owned())
+            })?
+            .iter()
+            .find(|event| {
+                matches!(
+                    event.kind(),
+                    RunEventKind::SignalReceived {
+                        signal: received,
+                        ..
+                    } if received == signal
+                )
+            })
+            .cloned())
+    }
+
     fn run_summary(&self, _run: &RunId) -> Result<Option<RunSummaryIndex>, PersistenceError> {
         Ok(None)
     }

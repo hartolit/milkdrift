@@ -217,6 +217,7 @@ fn resolved_snapshot_with_side_effect(
     )?)
 }
 
+mod bounded;
 mod core;
 mod recovery;
 mod structured;

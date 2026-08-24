@@ -8,13 +8,20 @@ use tracing::warn;
 
 use crate::{RunProjection, RuntimeError};
 
-pub(crate) const RUN_PROJECTION_SNAPSHOT_SCHEMA_V1: u32 = 1;
+pub(crate) const RUN_PROJECTION_SNAPSHOT_SCHEMA_V2: u32 = 2;
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ProjectionSnapshotPayload {
     schema_version: u32,
     projection: RunProjection,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectionSnapshotPayloadRef<'a> {
+    schema_version: u32,
+    projection: &'a RunProjection,
 }
 
 /// Folds one authoritative history range against the head observed by the first read.
@@ -177,7 +184,7 @@ where
         SnapshotLoad::Verified(snapshot) => snapshot,
     };
 
-    if snapshot.projection_schema() != RUN_PROJECTION_SNAPSHOT_SCHEMA_V1 {
+    if snapshot.projection_schema() != RUN_PROJECTION_SNAPSHOT_SCHEMA_V2 {
         discard_optional_snapshot(
             store,
             run,
@@ -199,7 +206,7 @@ where
             return project_complete_history(store, run);
         }
     };
-    if payload.schema_version != RUN_PROJECTION_SNAPSHOT_SCHEMA_V1
+    if payload.schema_version != RUN_PROJECTION_SNAPSHOT_SCHEMA_V2
         || payload.projection.run_id() != Some(run)
         || payload.projection.sequence() != snapshot.covered_sequence()
         || payload.projection.history_compacted_through() != snapshot.covered_sequence()
@@ -209,6 +216,16 @@ where
             run,
             snapshot.snapshot(),
             "projection snapshot identity or compaction boundary is inconsistent",
+        );
+        return project_complete_history(store, run);
+    }
+    if let Err(error) = payload.projection.validate_compacted_state() {
+        warn!(run = %run, snapshot = %snapshot.snapshot(), reason = %error, "projection snapshot liveness references rejected");
+        discard_optional_snapshot(
+            store,
+            run,
+            snapshot.snapshot(),
+            "projection snapshot contains invalid active references",
         );
         return project_complete_history(store, run);
     }
@@ -225,9 +242,15 @@ where
 pub(crate) fn encode_projection_snapshot(
     projection: &RunProjection,
 ) -> Result<Vec<u8>, RuntimeError> {
-    Ok(serde_json::to_vec(&ProjectionSnapshotPayload {
-        schema_version: RUN_PROJECTION_SNAPSHOT_SCHEMA_V1,
-        projection: projection.compacted_for_snapshot(),
+    if projection.history_compacted_through() != projection.sequence() {
+        return Err(RuntimeError::InvalidHistory(
+            "projection snapshot requires a live-compacted projection".to_owned(),
+        ));
+    }
+    projection.validate_compacted_state()?;
+    Ok(serde_json::to_vec(&ProjectionSnapshotPayloadRef {
+        schema_version: RUN_PROJECTION_SNAPSHOT_SCHEMA_V2,
+        projection,
     })?)
 }
 
@@ -429,6 +452,29 @@ mod tests {
             })
         }
 
+        fn signal_receipt(
+            &self,
+            run: &RunId,
+            signal: &milkdrift_persistence::SignalId,
+        ) -> Result<Option<RunEventEnvelope>, PersistenceError> {
+            if run != &self.run {
+                return Ok(None);
+            }
+            Ok(self
+                .events
+                .iter()
+                .find(|event| {
+                    matches!(
+                        event.kind(),
+                        RunEventKind::SignalReceived {
+                            signal: received,
+                            ..
+                        } if received == signal
+                    )
+                })
+                .cloned())
+        }
+
         fn run_summary(&self, _run: &RunId) -> Result<Option<RunSummaryIndex>, PersistenceError> {
             Ok(None)
         }
@@ -618,7 +664,7 @@ mod tests {
             run.clone(),
             RunSequence::FIRST,
             history_digest(&events[..1])?,
-            RUN_PROJECTION_SNAPSHOT_SCHEMA_V1,
+            RUN_PROJECTION_SNAPSHOT_SCHEMA_V2,
             encode_projection_snapshot(&prefix)?,
         )?;
         let store = PagedStore {
@@ -632,14 +678,16 @@ mod tests {
         };
 
         let projected = project_from_latest_snapshot(&store, &run)?;
+        let replayed = project_complete_history(&store, &run)?;
 
         assert_eq!(projected.sequence(), RunSequence::new(2));
-        assert_eq!(projected.history_compacted_through(), RunSequence::FIRST);
+        assert_eq!(projected.history_compacted_through(), RunSequence::new(2));
         assert!(matches!(
             projected.lifecycle(),
             crate::RunLifecycle::Running
         ));
-        assert_eq!(store.page_reads.load(Ordering::SeqCst), 1);
+        assert_eq!(projected, replayed);
+        assert_eq!(store.page_reads.load(Ordering::SeqCst), 2);
         Ok(())
     }
 
@@ -657,7 +705,7 @@ mod tests {
             run.clone(),
             head,
             history_digest(&events)?,
-            RUN_PROJECTION_SNAPSHOT_SCHEMA_V1,
+            RUN_PROJECTION_SNAPSHOT_SCHEMA_V2,
             encode_projection_snapshot(&complete)?,
         )?;
         let store = PagedStore {
@@ -709,7 +757,7 @@ mod tests {
         let projected = project_from_latest_snapshot(&store, &run)?;
 
         assert_eq!(projected.sequence(), RunSequence::new(2));
-        assert_eq!(projected.history_compacted_through(), RunSequence::ZERO);
+        assert_eq!(projected.history_compacted_through(), RunSequence::new(2));
         assert!(matches!(
             projected.lifecycle(),
             crate::RunLifecycle::Running

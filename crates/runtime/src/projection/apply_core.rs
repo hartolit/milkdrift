@@ -1,7 +1,8 @@
 use milkdrift_capability::{IdempotencyBehavior, SideEffectClass};
 use milkdrift_persistence::{
-    AuthorityDecision, NodeExecutionMode, NodeOutcome, RecoveryClassification, RunEventEnvelope,
-    RunEventKind, RunOutcome,
+    AuthorityDecision, NodeExecutionMode, NodeOutcome, ReconciliationAction,
+    ReconciliationClassification, RecoveryClassification, RunEventEnvelope, RunEventKind,
+    RunOutcome,
 };
 
 use crate::RuntimeError;
@@ -68,6 +69,7 @@ impl RunProjection {
                 self.workflow = Some(workflow.clone());
                 self.revision = Some(revision.clone());
                 self.revision_digest = Some(revision_digest.clone());
+                self.pins.clear();
                 self.pins.push(RevisionPin {
                     revision: revision.clone(),
                     digest: revision_digest.clone(),
@@ -108,6 +110,18 @@ impl RunProjection {
                         "revision pin differs from its immutable plan",
                     ));
                 }
+                let retired_epoch_nodes: Vec<_> = recorded
+                    .items
+                    .iter()
+                    .filter(|item| {
+                        matches!(
+                            item.classification,
+                            ReconciliationClassification::Added
+                                | ReconciliationClassification::ChangedPending
+                        ) && item.action == ReconciliationAction::UseNewOnNextInvocation
+                    })
+                    .filter_map(|item| item.node.clone())
+                    .collect();
                 let completed_to_reconsider: Vec<_> = recorded
                     .items
                     .iter()
@@ -124,12 +138,20 @@ impl RunProjection {
                     .collect();
                 self.revision = Some(revision.clone());
                 self.revision_digest = Some(revision_digest.clone());
+                self.pins.clear();
                 self.pins.push(RevisionPin {
                     revision: revision.clone(),
                     digest: revision_digest.clone(),
                     effective_sequence: sequence,
                     plan: Some(plan.clone()),
                 });
+                for execution in self.node_executions.values_mut() {
+                    if retired_epoch_nodes.contains(&execution.node)
+                        && execution.epoch_retired_sequence.is_none()
+                    {
+                        execution.epoch_retired_sequence = Some(sequence);
+                    }
+                }
                 self.pending_successor_executions
                     .extend(completed_to_reconsider);
                 self.pending_pin = None;
@@ -270,9 +292,15 @@ impl RunProjection {
                         node: node.clone(),
                         scope: scope.clone(),
                         mode: *mode,
+                        revision: self
+                            .revision
+                            .clone()
+                            .ok_or_else(|| invalid_at(event, "node execution has no revision"))?,
+                        epoch_retired_sequence: None,
                         created_sequence: sequence,
                         created_at: event.occurred_at(),
                         attempts: Vec::new(),
+                        attempt_count: 0,
                         state: NodeExecutionState::Eligible,
                         cancellation: None,
                         deterministic_terminal: None,
@@ -385,7 +413,7 @@ impl RunProjection {
                         "a cancelled execution cannot schedule another invocation",
                     ));
                 }
-                let is_first = execution_view.attempts.is_empty();
+                let is_first = execution_view.attempt_count == 0;
                 if is_first {
                     if execution_view.state != NodeExecutionState::Eligible
                         || self.attempts.contains_key(attempt)
@@ -409,6 +437,10 @@ impl RunProjection {
                         .ok_or_else(|| invalid_at(event, "unknown node execution"))?
                         .attempts
                         .push(attempt.clone());
+                    self.node_executions
+                        .get_mut(execution)
+                        .ok_or_else(|| invalid_at(event, "unknown node execution"))?
+                        .attempt_count = 1;
                 } else {
                     let projected_attempt = self
                         .attempts
@@ -656,6 +688,7 @@ impl RunProjection {
                     .get_mut(attempt)
                     .ok_or_else(|| invalid_at(event, "unknown attempt"))?;
                 attempt_view.leases.push(lease.clone());
+                attempt_view.lease_workers.insert(worker.clone());
                 attempt_view.state = AttemptState::Leased;
             }
             RunEventKind::LeaseHeartbeatRecorded { lease, expires_at } => {
@@ -841,6 +874,7 @@ impl RunProjection {
                     .get_mut(attempt)
                     .ok_or_else(|| invalid_at(event, "unknown attempt"))?;
                 attempt_view.leases.push(lease.clone());
+                attempt_view.lease_workers.insert(worker.clone());
                 attempt_view.state = AttemptState::Leased;
                 self.node_executions
                     .get_mut(&execution)
@@ -1290,9 +1324,7 @@ impl RunProjection {
                         .is_some_and(|decision| decision.outcome == AuthorityDecision::Retry)
                 }) && retry_safe;
                 let execution_view = self.execution(execution, event)?;
-                let expected_number = u32::try_from(execution_view.attempts.len())
-                    .ok()
-                    .and_then(|count| count.checked_add(1));
+                let expected_number = execution_view.attempt_count.checked_add(1);
                 if previous.execution != *execution
                     || execution_view.attempts.last() != Some(previous_attempt)
                     || expected_number != Some(*attempt_number)
@@ -1322,7 +1354,14 @@ impl RunProjection {
                 self.node_executions
                     .get_mut(execution)
                     .ok_or_else(|| invalid_at(event, "unknown execution"))?
+                    .attempt_count = *attempt_number;
+                self.node_executions
+                    .get_mut(execution)
+                    .ok_or_else(|| invalid_at(event, "unknown execution"))?
                     .state = NodeExecutionState::RetryPending(next_attempt.clone());
+                if !self.active_execution_ids.contains(execution) {
+                    self.activate_execution(execution, event)?;
+                }
                 self.timers.insert(
                     timer.clone(),
                     TimerProjection {
@@ -1424,11 +1463,7 @@ impl RunProjection {
                         "late terminal evidence lacks side-effect classification",
                     )
                 })?;
-                let historically_owned = attempt_view.leases.iter().any(|lease| {
-                    self.leases
-                        .get(lease)
-                        .is_some_and(|lease_view| lease_view.worker() == worker)
-                });
+                let historically_owned = attempt_view.lease_workers.contains(worker);
                 if attempt_view.terminal.is_some()
                     || attempt_view.late_terminal_evidence.is_some()
                     || *report_sequence < obligation.report_sequence

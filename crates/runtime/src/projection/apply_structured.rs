@@ -472,8 +472,9 @@ impl RunProjection {
                 if let Some(continuation) = self.repeat_continuations.get_mut(repeat_execution) {
                     if continuation.pending_approval
                         || continuation.rejected
-                        || continuation.requests.len() >= MAX_REPEAT_CONTINUATION_CYCLES
-                        || continuation.requests.len() != continuation.decisions.len()
+                        || continuation.request_count
+                            >= u32::try_from(MAX_REPEAT_CONTINUATION_CYCLES).unwrap_or(u32::MAX)
+                        || continuation.request_count != continuation.decision_count
                         || continuation.initial_iteration_limit != *initial_iteration_limit
                         || continuation.effective_iteration_limit != *effective_iteration_limit
                         || continuation
@@ -488,6 +489,10 @@ impl RunProjection {
                     }
                     continuation.budget_override_iteration_limit = None;
                     continuation.pending_approval = true;
+                    continuation.request_count = continuation
+                        .request_count
+                        .checked_add(1)
+                        .ok_or_else(|| invalid_at(event, "repeat request count overflow"))?;
                     continuation.requests.push(request);
                 } else {
                     if initial_iteration_limit != effective_iteration_limit {
@@ -505,6 +510,8 @@ impl RunProjection {
                             budget_override_iteration_limit: None,
                             pending_approval: true,
                             rejected: false,
+                            request_count: 1,
+                            decision_count: 0,
                             requests: vec![request],
                             decisions: Vec::new(),
                         },
@@ -532,7 +539,11 @@ impl RunProjection {
                 if execution_view.is_completed()
                     || self.repeat_terminations.contains_key(repeat_execution)
                     || !shape_valid
-                    || self.repeat_decision_ids.contains(decision)
+                    || self
+                        .repeat_continuations
+                        .values()
+                        .flat_map(|continuation| continuation.decisions.iter())
+                        .any(|recorded| recorded.decision == *decision)
                 {
                     return Err(invalid_at(
                         event,
@@ -553,7 +564,7 @@ impl RunProjection {
                     .get(&pending_request.frontier_iteration)
                     .ok_or_else(|| invalid_at(event, "pending repeat frontier is missing"))?;
                 if continuation.rejected
-                    || continuation.requests.len() != continuation.decisions.len() + 1
+                    || continuation.request_count != continuation.decision_count + 1
                     || self.latest_iteration.get(repeat_execution)
                         != Some(&pending_request.frontier_iteration)
                     || frontier.repeat_execution != *repeat_execution
@@ -607,8 +618,11 @@ impl RunProjection {
                     continuation.budget_override_iteration_limit = None;
                 }
                 continuation.pending_approval = false;
+                continuation.decision_count = continuation
+                    .decision_count
+                    .checked_add(1)
+                    .ok_or_else(|| invalid_at(event, "repeat decision count overflow"))?;
                 continuation.decisions.push(decision_projection);
-                self.repeat_decision_ids.insert(decision.clone());
             }
             RunEventKind::RepeatTerminated {
                 repeat_execution,
@@ -1071,12 +1085,11 @@ impl RunProjection {
                         "duplicate signal command identity was already recorded",
                     ));
                 }
-                let signal_view = self.signals.get_mut(signal).ok_or_else(|| {
-                    invalid_at(event, "deduplication references an unknown signal")
-                })?;
-                signal_view
-                    .duplicate_commands
-                    .push(duplicate_command.clone());
+                if let Some(signal_view) = self.signals.get_mut(signal) {
+                    signal_view
+                        .duplicate_commands
+                        .push(duplicate_command.clone());
+                }
             }
             RunEventKind::SignalConsumed { signal, execution } => {
                 let execution_view = self.execution(execution, event)?;
@@ -1185,6 +1198,7 @@ impl RunProjection {
                     SubworkflowProjection {
                         subworkflow: subworkflow.clone(),
                         parent_execution: parent_execution.clone(),
+                        created_sequence: sequence,
                         child_run: child_run.clone(),
                         child_revision: child_revision.clone(),
                         scope: scope.clone(),
@@ -1208,6 +1222,7 @@ impl RunProjection {
                 child_run,
                 outcome,
                 outputs,
+                cost_micros,
             } => {
                 let child = self.subworkflows.get(subworkflow).ok_or_else(|| {
                     invalid_at(event, "child terminal references an unknown subworkflow")
@@ -1238,6 +1253,23 @@ impl RunProjection {
                     .ok_or_else(|| invalid_at(event, "unknown subworkflow"))?;
                 child.state = SubworkflowState::Terminal(*outcome);
                 child.outputs = outputs.clone();
+                let usage = self
+                    .subworkflow_usage_by_execution
+                    .entry(parent_execution.clone())
+                    .or_default();
+                usage.completed_children =
+                    usage.completed_children.checked_add(1).unwrap_or_else(|| {
+                        usage.overflowed = true;
+                        usage.completed_children
+                    });
+                for (currency, cost) in cost_micros {
+                    let total = usage.cost_micros.entry(currency.clone()).or_default();
+                    if let Some(next) = total.checked_add(*cost) {
+                        *total = next;
+                    } else {
+                        usage.overflowed = true;
+                    }
+                }
                 self.active_subworkflow_ids.remove(subworkflow);
                 self.active_attached_subworkflow_ids.remove(subworkflow);
                 self.adjust_structured_child_count(&parent_execution, false, event)?;

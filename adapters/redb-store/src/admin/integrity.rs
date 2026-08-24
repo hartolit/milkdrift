@@ -30,14 +30,15 @@ pub(crate) fn scan_index_integrity(
     const USAGE_PHASE: u8 = 12;
     const BUDGET_PHASE: u8 = 13;
     const ROOT_SCOPES_PHASE: u8 = 14;
-    const REVISION_DIGESTS_PHASE: u8 = 15;
-    const ARTIFACT_MANIFEST_PHASE: u8 = 16;
-    const ARTIFACT_DIGESTS_PHASE: u8 = 17;
-    const ARTIFACT_REFERENCES_PHASE: u8 = 18;
-    const ARTIFACT_OWNERSHIP_PHASE: u8 = 19;
-    const ARTIFACT_TEMP_MANIFEST_PHASE: u8 = 20;
-    const ARTIFACT_ACCOUNTING_PHASE: u8 = 21;
-    const ARTIFACT_TEMP_OWNERS_PHASE: u8 = 22;
+    const REVISION_PRIMARY_PHASE: u8 = 15;
+    const REVISION_DIGESTS_PHASE: u8 = 16;
+    const ARTIFACT_MANIFEST_PHASE: u8 = 17;
+    const ARTIFACT_DIGESTS_PHASE: u8 = 18;
+    const ARTIFACT_REFERENCES_PHASE: u8 = 19;
+    const ARTIFACT_OWNERSHIP_PHASE: u8 = 20;
+    const ARTIFACT_TEMP_MANIFEST_PHASE: u8 = 21;
+    const ARTIFACT_ACCOUNTING_PHASE: u8 = 22;
+    const ARTIFACT_TEMP_OWNERS_PHASE: u8 = 23;
 
     let (start_phase, start_key) = index_cursor_position(cursor)?;
     if last_cursor.is_none() {
@@ -508,6 +509,42 @@ pub(crate) fn scan_index_integrity(
             if crate::journal::validated_workspace_domain(read, &run)?.is_none() {
                 return Err(error::corruption(
                     "root workspace scope has no durable workspace domain",
+                ));
+            }
+            Ok(())
+        },
+    )?;
+    scan_string_bytes_phase(
+        REVISION_PRIMARY_PHASE,
+        start_phase,
+        start_key,
+        &revisions,
+        maximum,
+        verify_artifact_content,
+        result,
+        last_cursor,
+        more_remaining,
+        "revision_indexes",
+        |key, bytes| {
+            let (_document, revision) =
+                BlueprintRevisionDocument::from_json(bytes).map_err(|cause| {
+                    error::corruption(format!("stored revision failed verification: {cause}"))
+                })?;
+            if revision.id().as_str() != key {
+                return Err(error::corruption(
+                    "revision primary key does not match its checked document",
+                ));
+            }
+            let summary = RevisionSummary::from(&revision);
+            let digest_key =
+                codec::pair(summary.content_digest.as_str(), summary.revision.as_str())?;
+            let indexed = revision_digests
+                .get(digest_key.as_slice())
+                .map_err(error::redb)?
+                .ok_or_else(|| error::corruption("revision has no digest index row"))?;
+            if crate::revision::decode_summary(indexed.value())? != summary {
+                return Err(error::corruption(
+                    "revision digest summary disagrees with its primary document",
                 ));
             }
             Ok(())

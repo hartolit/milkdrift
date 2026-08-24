@@ -232,7 +232,7 @@ impl ReconciliationPlanProjection {
     }
 }
 
-/// Complete revision-reconciliation read model.
+/// Current/latest revision-reconciliation operational read model.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ReconciliationProjection {
     #[serde(with = "super::serde_map")]
@@ -243,13 +243,13 @@ pub struct ReconciliationProjection {
 }
 
 impl ReconciliationProjection {
-    /// All immutable adoption requests by identity.
+    /// Current/latest adoption request by identity.
     #[must_use]
     pub const fn requests(&self) -> &BTreeMap<ReconciliationId, ReconciliationRequestProjection> {
         &self.requests
     }
 
-    /// All immutable plans by identity.
+    /// Current/latest plan by identity.
     #[must_use]
     pub const fn plans(&self) -> &BTreeMap<ReconciliationPlanId, ReconciliationPlanProjection> {
         &self.plans
