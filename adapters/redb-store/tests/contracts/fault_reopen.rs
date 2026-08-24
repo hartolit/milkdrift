@@ -3,7 +3,7 @@ use super::*;
 fn reopen_and_single_owner_are_enforced() -> Result<(), Box<dyn std::error::Error>> {
     let directory = TempDir::new()?;
     let store = RedbStore::open(directory.path())?;
-    assert_eq!(store.schema_info()?.stored_version, 1);
+    assert_eq!(store.schema_info()?.stored_version, 2);
     assert!(matches!(
         RedbStore::open(directory.path()),
         Err(PersistenceError::Storage {
@@ -13,32 +13,34 @@ fn reopen_and_single_owner_are_enforced() -> Result<(), Box<dyn std::error::Erro
     ));
     drop(store);
     let reopened = RedbStore::open(directory.path())?;
-    assert_eq!(reopened.schema_info()?.stored_version, 1);
+    assert_eq!(reopened.schema_info()?.stored_version, 2);
     Ok(())
 }
 
 #[test]
-fn future_storage_schema_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+fn older_and_future_storage_schemas_are_refused() -> Result<(), Box<dyn std::error::Error>> {
     const METADATA: TableDefinition<'static, &'static str, u64> =
         TableDefinition::new("milkdrift.v1.metadata");
-    let directory = TempDir::new()?;
-    drop(RedbStore::open(directory.path())?);
-    let database = Database::open(directory.path().join("milkdrift.redb"))?;
-    let write = database.begin_write()?;
-    {
-        let mut metadata = write.open_table(METADATA)?;
-        metadata.insert("storage_schema_version", 2)?;
+    for found in [1, 3] {
+        let directory = TempDir::new()?;
+        drop(RedbStore::open(directory.path())?);
+        let database = Database::open(directory.path().join("milkdrift.redb"))?;
+        let write = database.begin_write()?;
+        {
+            let mut metadata = write.open_table(METADATA)?;
+            metadata.insert("storage_schema_version", found)?;
+        }
+        write.commit()?;
+        drop(database);
+        assert!(matches!(
+            RedbStore::open(directory.path()),
+            Err(PersistenceError::UnsupportedVersion {
+                document: "storage",
+                found: observed,
+                supported: 2
+            }) if observed == found as u32
+        ));
     }
-    write.commit()?;
-    drop(database);
-    assert!(matches!(
-        RedbStore::open(directory.path()),
-        Err(PersistenceError::UnsupportedVersion {
-            document: "storage",
-            found: 2,
-            supported: 1
-        })
-    ));
     Ok(())
 }
 
@@ -80,19 +82,42 @@ fn owned_storage_paths_refuse_symlinked_database_and_artifact_directories()
 
 #[test]
 fn command_fault_boundaries_are_atomic_and_replayable() -> Result<(), Box<dyn std::error::Error>> {
-    let before_directory = TempDir::new()?;
-    let before = RedbStore::open_with_config(
-        RedbStoreConfig::new(before_directory.path())
-            .with_fault_injector(Arc::new(FailOnce::new(FaultPoint::BeforeCommandCommit))),
-    )?;
-    let request = accepted_request("run-before", "command-before", "event-before", "start")?;
-    assert!(before.commit_command(&request).is_err());
-    assert_eq!(before.head(request.receipt().run())?, RunSequence::ZERO);
-    assert!(
-        before
-            .command_result(request.receipt().run(), request.receipt().command())?
-            .is_none()
-    );
+    for (index, point) in [
+        FaultPoint::BeforeEventInsert,
+        FaultPoint::AfterEventInsert,
+        FaultPoint::AfterHistoryChainUpdate,
+        FaultPoint::BeforeCommandCommit,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let directory = TempDir::new()?;
+        let store = RedbStore::open_with_config(
+            RedbStoreConfig::new(directory.path())
+                .with_fault_injector(Arc::new(FailOnce::new(point))),
+        )?;
+        let request = accepted_request(
+            &format!("run-before-{index}"),
+            &format!("command-before-{index}"),
+            &format!("event-before-{index}"),
+            "start",
+        )?;
+        assert!(store.commit_command(&request).is_err());
+        assert_eq!(store.head(request.receipt().run())?, RunSequence::ZERO);
+        assert!(
+            store
+                .command_result(request.receipt().run(), request.receipt().command())?
+                .is_none()
+        );
+        drop(store);
+
+        let reopened = RedbStore::open(directory.path())?;
+        assert_eq!(reopened.head(request.receipt().run())?, RunSequence::ZERO);
+        assert!(matches!(
+            reopened.commit_command(&request)?,
+            AtomicRunCommitOutcome::Committed(_)
+        ));
+    }
 
     let after_directory = TempDir::new()?;
     let after = RedbStore::open_with_config(

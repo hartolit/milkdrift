@@ -1192,7 +1192,7 @@ impl RuntimeService {
             Some(accounting),
             required_artifacts.into_iter().collect(),
             newly_referenced_artifacts.into_iter().collect(),
-            plan.expected_lease_catalog,
+            plan.expected_lease_revision,
             result,
             indexes,
         )?;

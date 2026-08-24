@@ -1,35 +1,67 @@
-# ADR 0003: Redb transactions and content-addressed artifact ownership
+# ADR 0003: Redb transactions and truthful local integrity
 
 - Status: accepted
-- Date: 2026-08-18
+- Date: 2026-08-24
 
 ## Context
 
-The durable runtime needs immutable revision lookup, atomic journal acceptance, recovery indexes, workspace state, and large artifact content. A generic database abstraction would leak storage mechanics inward, while embedding large task output in events or database values would weaken bounds and duplicate content. Database transactions cannot by themselves atomically commit filesystem bytes.
+Milkdrift needs durable revision lookup, atomic command/event acceptance, workspace state,
+discovery indexes, snapshots, and large artifact content. It is a local pre-release engine;
+it does not have a host-held secret or monotonic external anchor. An unkeyed Merkle trie
+inside the same database cannot prove freshness or origin because anyone able to replace or
+rewrite the whole database can also recompute its hashes.
 
 ## Decision
 
-`milkdrift-persistence` owns narrow durable documents and ports. `milkdrift-redb-store` implements them with named, versioned redb tables and validated byte encodings; redb handles, transactions, and table names never cross the adapter boundary. One write transaction coordinates accepted events, command results, aggregate head, artifact-reference checks, and recovery/discoverability indexes. Expected sequence is checked against the aggregate head inside that transaction.
+`milkdrift-persistence` owns narrow durable documents and ports, and
+`milkdrift-redb-store` implements them with named typed redb tables. One redb write
+transaction commits a command result, its contiguous events, the authoritative run head,
+the cumulative history-chain head/checkpoints, workspace accounting, artifact references,
+and derived index changes. Expected sequence is checked against `RUN_HEADS` in that same
+transaction. A command result is accepted only with its exact event range.
 
-Immutable revisions are stored as canonical documents and verified on read. Internal table documents use canonical schema-v1 envelopes whose BLAKE3 checksums bind both family and payload. The explicit internal document-format marker is v3. Raw v0 and enveloped v1/v2 stores are semantically validated and migrated in one restart-safe transaction; unknown future schema/document versions are refused. One mandatory checked integrity-root document anchors fixed-depth domain-separated authenticated catalogs. Exact membership and absence checks bind run/event/command, revision, discovery, workspace, snapshot, and artifact rows to that root while `RUN_HEADS` remains the sole event-sequence authority. The catalogs are integrity metadata, not copied semantic counts.
+The adapter detects accidental partial corruption: malformed or non-canonical checksummed
+documents; row key/document identity mismatch; missing or extra event rows around a head;
+broken event checksums or cumulative history links; dangling or disagreeing direct indexes;
+invalid workspace ancestry/provenance/accounting; invalid snapshots; and missing, wrongly
+sized, or digest-invalid artifact content. Ordinary reads validate the rows they consume,
+and an explicit bounded, resumable scrub walks the remaining authoritative and derived
+families. A clean bounded health sample is not a complete-store proof.
 
-Artifact bytes use BLAKE3 content addressing under paths derived only from validated digests. Publication streams through a bounded temporary file, verifies size and digest, flushes and synchronizes it, then atomically renames and synchronizes the containing directory before metadata becomes committed. Journal events may reference only committed metadata. A crash before metadata commit leaves removable orphan content; it cannot leave an accepted event pointing to missing bytes. Reads are bounded and verify size and digest. Sensitivity is restricted by default, and authorization is required before export unless metadata explicitly marks content public.
+The adapter does not detect replacement or rollback of the entire database, nor an attacker
+who rewrites every affected row and recomputes unkeyed checksums. Those guarantees require a
+future external keyed or monotonic trust anchor. The removed in-database authenticated trie
+did not provide them and imposed path rewrites and duplicate membership state.
 
-Administrative integrity pages and orphan-cleanup effects are bounded, deterministic, and resumable through opaque exclusive cursors. Integrity cursors bind the authenticated root, record family, and artifact-content verification mode. Derived-index phases cross-check both directions of journal discovery, workspace ancestry, revision digests, artifact manifests/ownership, and cumulative unique-digest byte accounting. Runnable, timer, and lease queries enumerate authenticated catalogs and validate the corresponding identity/ordered rows; a symmetric deletion therefore cannot masquerade as an empty active set. Workspace reads and writes iteratively validate the selected value's complete successor/inheritance/import chain plus every owning scope's parent/root chain under explicit depth limits. Per-run `WorkspaceUsage` remains canonical budget state and authenticated workspace-domain membership binds it to its immutable budget. Product-created artifact paths are recorded durably before create or rename and retained until unlink and directory synchronization complete; cleanup pages that inventory directly, rechecks publication ownership, and performs bounded filesystem work outside the redb writer transaction.
+Authoritative immutable data consists of revision documents, event envelopes, workspace
+scope/value versions, and committed artifact metadata. Authoritative aggregate state consists
+of run heads, accepted-command results, history-chain heads, workspace usage/budgets, and
+artifact publication/accounting coordination. Discovery rows, digest/ordered indexes,
+pointers, and ownership/reference indexes are derived and verifiable, but no automatic repair
+API is claimed. Snapshots are optional accelerators: invalid snapshots are rejected and the
+runtime replays authoritative events.
 
-Runtime startup and complete-store integrity inspection are separate boundaries. Opening validates only physical schema compatibility and keeps admission closed. Synchronous startup then pages authoritative nonterminal discovery, projects and validates each active run and its directly referenced durable state, performs active recovery, and admits work only after a progress-checked fixed point. It does not traverse unrelated terminal history or invoke the administrative scanner, and it does not rehash artifact content. Corruption affecting an active run fails startup closed; terminal-history corruption remains observable through an ordinary read or an explicit scrub. A full metadata/index/catalog walk, with optional artifact-content hashing, is an operator-requested read-only `StorageAdmin::scan_integrity` operation whose cursor preserves the exact scan mode. A clean bounded health sample is not a complete historical-integrity claim.
+Artifact bytes remain BLAKE3 content-addressed. Publication verifies and synchronizes bytes,
+atomically renames and synchronizes the directory, then commits metadata; reads verify size
+and digest. Durable path-inventory and delete-guard tables preserve crash-safe cleanup without
+walking an authenticated structure.
+
+Physical schema version 2 and internal document format 5 are exact-current only. Earlier and
+future formats are refused; no migration is implemented. Pre-release users must create a new
+store or wait for an explicit future migration tool rather than reinterpret old bytes.
 
 ## Rejected alternatives
 
-- An in-memory product backend, because process teardown would discard the system's authoritative responsibilities.
-- A generic key/value or repository framework, because it obscures transaction boundaries and leaks database concepts into core code.
-- Large blobs in events, workspace JSON, or redb values, because it duplicates data and undermines bounded replay.
-- Recording artifact metadata before content durability, because accepted history could permanently reference missing bytes.
+- A generic key/value framework, because it obscures transaction and authority boundaries.
+- Large blobs in events or redb values, because they duplicate content and weaken bounds.
+- An in-database unkeyed authenticated structure, because it adds mutation cost without an
+  external trust anchor.
+- Recording artifact metadata before content durability, because accepted history could then
+  reference missing bytes.
 
 ## Consequences
 
-Local runs can be reopened from a fresh process, and all database-owned acceptance facts share one crash boundary. Artifact publication has a deliberate intent/create/rename/commit ordering with safe, resumable orphan cleanup; a caller can continue large integrity and cleanup walks without reprocessing the same logical keys. Pre-v3 migration performs one bounded-protocol legacy residue discovery before publishing v3; current-format cleanup does not claim arbitrary externally injected files. The in-database integrity root detects partial deletion, insertion, rekeying, and payload mutation within an owned current-format database. Detecting replacement or rollback of the entire database, or an adversary able to rewrite every row and recompute an unkeyed root, requires a future host-held keyed or monotonic anchor. The adapter is blocking and must later be owned behind a bounded host executor if called from an asynchronous daemon.
-
-## Reconsideration triggers
-
-Reconsider redb only for demonstrated host, scale, or corruption-recovery requirements it cannot satisfy. A replacement must preserve the narrow ports, exact atomicity, schema refusal, single sequence authority, and artifact publication ordering.
+The integrity claim is deliberately limited and testable. Partial corruption remains explicit;
+whole-store authenticity and freshness do not. Runtime startup validates active durable state,
+while full historical and optional artifact-content verification remain operator-requested.
+The blocking adapter must be hosted behind a bounded executor in a future asynchronous daemon.

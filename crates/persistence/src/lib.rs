@@ -1,7 +1,7 @@
 //! Durable, adapter-neutral persistence documents and narrow synchronous ports.
 //!
 //! This crate owns stable execution identities, schema-v1 checksummed run facts,
-//! atomic command/journal contracts, immutable revision storage, rebuildable recovery
+//! atomic command/journal contracts, immutable revision storage, verifiable recovery
 //! indexes, snapshot integrity, workspace transaction mutations, content-addressed
 //! artifact streaming, and storage lifecycle/health boundaries. It owns no runtime
 //! transition decisions, async executor, wall clock, filesystem path, database handle,
@@ -27,7 +27,7 @@ mod snapshot;
 
 pub use admin::{
     IntegrityScanCursor, IntegrityScanFamily, IntegrityScanRequest, IntegrityScanResult,
-    MAX_INTEGRITY_SCAN_CURSOR_KEY_BYTES, STORAGE_SCHEMA_VERSION_V1, StorageAdmin,
+    CURRENT_STORAGE_SCHEMA_VERSION, MAX_INTEGRITY_SCAN_CURSOR_KEY_BYTES, StorageAdmin,
     StorageComponentHealth, StorageHealth, StorageHealthStatus, StorageSchemaCompatibility,
     StorageSchemaInfo,
 };

@@ -54,7 +54,7 @@ pub(super) struct CommandPlan {
     pub(super) creation_usage:
         Option<(WorkspaceUsage, WorkspaceUsage, BTreeSet<ArtifactReference>)>,
     pub(super) required_artifacts: BTreeSet<ArtifactReference>,
-    pub(super) expected_lease_catalog: Option<IntegrityDigest>,
+    pub(super) expected_lease_revision: Option<IntegrityDigest>,
 }
 
 impl CommandPlan {

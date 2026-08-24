@@ -1233,7 +1233,7 @@ fn startup_recovery_finishes_with_an_unexpired_active_lease() -> TestResult {
 }
 
 #[test]
-#[ignore = "expensive authenticated-storage boundary regression; run explicitly"]
+#[ignore = "expensive durable-storage boundary regression; run explicitly"]
 fn more_than_index_mutation_limit_inactive_identities_do_not_block_commits() -> TestResult {
     let harness = Harness::new("large-inactive-index-history")?;
     let revision = signal_revision("workflow-large-inactive-index-history")?;

@@ -15,6 +15,7 @@ pub(crate) fn initialize_schema(
                 INTERNAL_DOCUMENT_FORMAT_VERSION,
             )
             .map_err(error::redb)?;
+        table.insert(LEASE_SET_REVISION_KEY, 0).map_err(error::redb)?;
     }
     // Opening each definition records its exact key/value encoding in redb.
     {
@@ -30,17 +31,12 @@ pub(crate) fn initialize_schema(
         let _table = write.open_table(RUN_EVENTS).map_err(error::redb)?;
     }
     {
-        let _table = write.open_table(EVENT_CHECKSUMS).map_err(error::redb)?;
-    }
-    {
         let _table = write
             .open_table(EVENT_HISTORY_DIGESTS)
             .map_err(error::redb)?;
     }
     {
-        let _table = write
-            .open_table(RUN_HISTORY_ACCUMULATORS)
-            .map_err(error::redb)?;
+        let _table = write.open_table(RUN_HISTORY_HEADS).map_err(error::redb)?;
     }
     {
         let _table = write.open_table(COMMAND_RESULTS).map_err(error::redb)?;
@@ -72,7 +68,6 @@ pub(crate) fn initialize_schema(
     {
         let _table = write.open_table(LEASE_INDEX).map_err(error::redb)?;
     }
-    crate::trie::initialize(&write)?;
     {
         let _table = write.open_table(SNAPSHOTS).map_err(error::redb)?;
     }
@@ -125,6 +120,14 @@ pub(crate) fn initialize_schema(
             .map_err(error::redb)?;
     }
     {
+        let _table = write.open_table(ARTIFACT_PATHS).map_err(error::redb)?;
+    }
+    {
+        let _table = write
+            .open_table(ARTIFACT_DELETE_GUARDS)
+            .map_err(error::redb)?;
+    }
+    {
         let _table = write
             .open_table(ARTIFACT_DIGEST_RESERVATIONS)
             .map_err(error::redb)?;
@@ -163,7 +166,7 @@ pub(crate) fn initialize_schema(
 
 pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceError> {
     let read = database.begin_read().map_err(error::redb)?;
-    let (found, internal_document_format) = {
+    let (found, internal_document_format, lease_set_revision) = {
         let table = read.open_table(METADATA).map_err(error::redb)?;
         let found = table
             .get(SCHEMA_VERSION_KEY)
@@ -174,7 +177,11 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
             .get(INTERNAL_DOCUMENT_FORMAT_VERSION_KEY)
             .map_err(error::redb)?
             .map(|value| value.value());
-        (found, internal_document_format)
+        let lease_set_revision = table
+            .get(LEASE_SET_REVISION_KEY)
+            .map_err(error::redb)?
+            .map(|value| value.value());
+        (found, internal_document_format, lease_set_revision)
     };
     if found > STORAGE_SCHEMA_VERSION {
         let found = u32::try_from(found).unwrap_or(u32::MAX);
@@ -200,6 +207,7 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
             supported: INTERNAL_DOCUMENT_FORMAT_VERSION as u32,
         });
     }
+    lease_set_revision.ok_or_else(|| error::corruption("lease-set revision is missing"))?;
     drop(read);
 
     let read = database.begin_read().map_err(error::redb)?;
@@ -218,17 +226,12 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
         let _table = read.open_table(RUN_EVENTS).map_err(error::redb)?;
     }
     {
-        let _table = read.open_table(EVENT_CHECKSUMS).map_err(error::redb)?;
-    }
-    {
         let _table = read
             .open_table(EVENT_HISTORY_DIGESTS)
             .map_err(error::redb)?;
     }
     {
-        let _table = read
-            .open_table(RUN_HISTORY_ACCUMULATORS)
-            .map_err(error::redb)?;
+        let _table = read.open_table(RUN_HISTORY_HEADS).map_err(error::redb)?;
     }
     {
         let _table = read.open_table(COMMAND_RESULTS).map_err(error::redb)?;
@@ -260,7 +263,6 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
     {
         let _table = read.open_table(LEASE_INDEX).map_err(error::redb)?;
     }
-    crate::trie::validate_roots(&read)?;
     {
         let _table = read.open_table(SNAPSHOTS).map_err(error::redb)?;
     }
@@ -308,6 +310,14 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
     {
         let _table = read
             .open_table(ARTIFACT_TEMP_MANIFEST)
+            .map_err(error::redb)?;
+    }
+    {
+        let _table = read.open_table(ARTIFACT_PATHS).map_err(error::redb)?;
+    }
+    {
+        let _table = read
+            .open_table(ARTIFACT_DELETE_GUARDS)
             .map_err(error::redb)?;
     }
     {

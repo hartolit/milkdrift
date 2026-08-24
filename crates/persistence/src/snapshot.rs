@@ -12,14 +12,15 @@ pub const SNAPSHOT_SCHEMA_VERSION_V1: u32 = 1;
 pub const MAX_SNAPSHOT_PAYLOAD_BYTES: usize = 4_194_304;
 const MAX_SNAPSHOT_DOCUMENT_BYTES: usize = 25_165_824;
 const SNAPSHOT_CHECKSUM_DOMAIN: &str = "milkdrift.projection-snapshot.v1";
-const HISTORY_DIGEST_DOMAIN: &[u8] = b"milkdrift.run-history.v1\0";
+const HISTORY_GENESIS_DOMAIN: &[u8] = b"milkdrift.run-history-chain.genesis.v1\0";
+const HISTORY_LINK_DOMAIN: &[u8] = b"milkdrift.run-history-chain.link.v1\0";
+const HISTORY_GENESIS_MARKER: &[u8] = b"genesis";
 
 /// Computes the documented digest of one complete contiguous event prefix.
 ///
-/// The input must start at sequence one, belong to one run, and be contiguous. The
-/// BLAKE3 input is the domain tag followed by length-prefixed run identity bytes and,
-/// for each event in sequence order, its big-endian sequence and length-prefixed
-/// canonical envelope checksum text. This streams without assembling giant history.
+/// The input must start at sequence one, belong to one run, and be contiguous. Each
+/// versioned, domain-separated link binds the run identity, sequence, previous digest,
+/// and canonical envelope checksum.
 pub fn history_digest(events: &[RunEventEnvelope]) -> Result<IntegrityDigest, PersistenceError> {
     let first = events.first().ok_or_else(|| {
         PersistenceError::InvalidDocument(
@@ -36,10 +37,13 @@ pub fn history_digest(events: &[RunEventEnvelope]) -> Result<IntegrityDigest, Pe
         location: "history.run_id",
         reason: "run identity length does not fit u32".to_owned(),
     })?;
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(HISTORY_DIGEST_DOMAIN);
-    hasher.update(&run_length.to_be_bytes());
-    hasher.update(run_bytes);
+    let mut genesis = blake3::Hasher::new();
+    genesis.update(HISTORY_GENESIS_DOMAIN);
+    genesis.update(&run_length.to_be_bytes());
+    genesis.update(run_bytes);
+    genesis.update(&(HISTORY_GENESIS_MARKER.len() as u32).to_be_bytes());
+    genesis.update(HISTORY_GENESIS_MARKER);
+    let mut digest = IntegrityDigest::new(format!("b3_{}", genesis.finalize()))?;
     let mut expected = RunSequence::FIRST;
     for event in events {
         if event.run_id() != first.run_id() || event.sequence() != expected {
@@ -53,12 +57,26 @@ pub fn history_digest(events: &[RunEventEnvelope]) -> Result<IntegrityDigest, Pe
                 location: "history.checksum",
                 reason: "checksum length does not fit u32".to_owned(),
             })?;
-        hasher.update(&event.sequence().get().to_be_bytes());
-        hasher.update(&checksum_length.to_be_bytes());
-        hasher.update(checksum);
+        let mut link = blake3::Hasher::new();
+        link.update(HISTORY_LINK_DOMAIN);
+        link.update(&run_length.to_be_bytes());
+        link.update(run_bytes);
+        link.update(&event.sequence().get().to_be_bytes());
+        let previous = digest.as_str().as_bytes();
+        let previous_length = u32::try_from(previous.len()).map_err(|_| {
+            PersistenceError::Bounds {
+                location: "history.previous_digest",
+                reason: "previous digest length does not fit u32".to_owned(),
+            }
+        })?;
+        link.update(&previous_length.to_be_bytes());
+        link.update(previous);
+        link.update(&checksum_length.to_be_bytes());
+        link.update(checksum);
+        digest = IntegrityDigest::new(format!("b3_{}", link.finalize()))?;
         expected = expected.next()?;
     }
-    IntegrityDigest::new(format!("b3_{}", hasher.finalize()))
+    Ok(digest)
 }
 
 /// Optional optimization over authoritative events; never independently writable state.
@@ -295,9 +313,9 @@ pub enum SnapshotLoad {
 
 /// Optional snapshot optimization port.
 pub trait SnapshotStore: Send + Sync {
-    /// Returns the authenticated digest of one exact authoritative event prefix.
+    /// Returns the cumulative digest of one exact authoritative event prefix.
     ///
-    /// Adapters should use their append-time accumulator/checkpoint rather than
+    /// Adapters should use their append-time chain checkpoint rather than
     /// replaying the prefix. The digest is an input to a runtime-owned snapshot;
     /// authoritative events remain the sole source of truth.
     fn history_digest(

@@ -71,7 +71,7 @@ pub(crate) struct ArtifactPathEntry {
     pub(crate) publication: ArtifactPublicationId,
     pub(crate) identity: String,
     pub(crate) logical_key: Vec<u8>,
-    pub(crate) path: [u8; 32],
+    pub(crate) storage_key: Vec<u8>,
 }
 
 pub(crate) fn artifact_path_entry(
@@ -91,36 +91,38 @@ pub(crate) fn artifact_path_entry(
         &identity,
         record.publication.as_str(),
     ])?;
-    let mut ordered = [0_u8; 9];
-    ordered[0] = kind.ordered_tag();
-    ordered[1..].copy_from_slice(&record.created_at_millis.to_be_bytes());
+    let mut storage_key = Vec::with_capacity(9 + logical_key.len());
+    storage_key.push(kind.ordered_tag());
+    storage_key.extend_from_slice(&record.created_at_millis.to_be_bytes());
+    storage_key.extend_from_slice(&logical_key);
     Ok(ArtifactPathEntry {
         kind,
         created_at_millis: record.created_at_millis,
         publication: record.publication.clone(),
         identity,
-        path: trie::ordered_path(CatalogFamily::ArtifactPath, &ordered, &logical_key)?,
+        storage_key,
         logical_key,
     })
 }
 
 pub(crate) fn decode_artifact_path_entry(
-    leaf: &trie::TrieLeaf,
+    storage_key: &[u8],
+    logical_key: &[u8],
 ) -> Result<ArtifactPathEntry, PersistenceError> {
-    let components = codec::decode_components(&leaf.logical_key, 4)?;
+    let components = codec::decode_components(logical_key, 4)?;
     let kind = match components[0] {
         "temp_pending" => ArtifactPathKind::TempPending,
         "temp_ready" => ArtifactPathKind::TempReady,
         "content_intent" => ArtifactPathKind::ContentIntent,
         _ => {
             return Err(error::corruption(
-                "artifact path catalog contains an unknown kind",
+                "artifact path inventory contains an unknown kind",
             ));
         }
     };
     if components[1].len() != 20 || !components[1].bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(error::corruption(
-            "artifact path catalog contains an invalid timestamp",
+            "artifact path inventory contains an invalid timestamp",
         ));
     }
     let created_at_millis = components[1]
@@ -131,17 +133,13 @@ pub(crate) fn decode_artifact_path_entry(
             "invalid artifact path publication identity: {cause}"
         ))
     })?;
-    let mut ordered = [0_u8; 9];
-    ordered[0] = kind.ordered_tag();
-    ordered[1..].copy_from_slice(&created_at_millis.to_be_bytes());
-    let expected_path =
-        trie::ordered_path(CatalogFamily::ArtifactPath, &ordered, &leaf.logical_key)?;
-    if leaf.path != expected_path
-        || leaf.payload_digest
-            != trie::digest_payload(CatalogFamily::ArtifactPath, &leaf.logical_key)
-    {
+    let mut expected_key = Vec::with_capacity(9 + logical_key.len());
+    expected_key.push(kind.ordered_tag());
+    expected_key.extend_from_slice(&created_at_millis.to_be_bytes());
+    expected_key.extend_from_slice(logical_key);
+    if storage_key != expected_key {
         return Err(error::corruption(
-            "artifact path entry disagrees with its authenticated leaf",
+            "artifact path inventory key disagrees with its document",
         ));
     }
     Ok(ArtifactPathEntry {
@@ -149,25 +147,21 @@ pub(crate) fn decode_artifact_path_entry(
         created_at_millis,
         publication,
         identity: components[2].to_owned(),
-        logical_key: leaf.logical_key.clone(),
-        path: expected_path,
+        logical_key: logical_key.to_vec(),
+        storage_key: expected_key,
     })
 }
 
 pub(crate) fn put_artifact_path(
     write: &redb::WriteTransaction,
     entry: &ArtifactPathEntry,
-    expected_previous: Option<[u8; 32]>,
 ) -> Result<(), PersistenceError> {
-    let family = CatalogFamily::ArtifactPath;
-    let replaced = trie::put(
-        write,
-        family,
-        entry.path,
-        &entry.logical_key,
-        trie::digest_payload(family, &entry.logical_key),
-    )?;
-    if replaced != expected_previous {
+    let mut paths = write.open_table(ARTIFACT_PATHS).map_err(error::redb)?;
+    if paths
+        .insert(entry.storage_key.as_slice(), entry.logical_key.as_slice())
+        .map_err(error::redb)?
+        .is_some()
+    {
         return Err(error::corruption(
             "artifact path inventory changed outside its authoritative transaction",
         ));
@@ -179,9 +173,12 @@ pub(crate) fn remove_artifact_path(
     write: &redb::WriteTransaction,
     entry: &ArtifactPathEntry,
 ) -> Result<(), PersistenceError> {
-    let family = CatalogFamily::ArtifactPath;
-    let removed = trie::remove(write, family, entry.path, &entry.logical_key)?;
-    if removed != Some(trie::digest_payload(family, &entry.logical_key)) {
+    let mut paths = write.open_table(ARTIFACT_PATHS).map_err(error::redb)?;
+    let removed = paths
+        .remove(entry.storage_key.as_slice())
+        .map_err(error::redb)?
+        .map(|value| value.value().to_vec());
+    if removed.as_deref() != Some(entry.logical_key.as_slice()) {
         return Err(error::corruption(
             "artifact path inventory is absent during finalization",
         ));
@@ -193,15 +190,14 @@ pub(crate) fn artifact_path_exists(
     write: &redb::WriteTransaction,
     entry: &ArtifactPathEntry,
 ) -> Result<bool, PersistenceError> {
-    let family = CatalogFamily::ArtifactPath;
-    let witness =
-        trie::verify_member_in_transaction(write, family, entry.path, &entry.logical_key)?;
-    match witness {
+    let paths = write.open_table(ARTIFACT_PATHS).map_err(error::redb)?;
+    match paths
+        .get(entry.storage_key.as_slice())
+        .map_err(error::redb)?
+    {
         None => Ok(false),
-        Some(witness) if witness == trie::digest_payload(family, &entry.logical_key) => Ok(true),
-        Some(_) => Err(error::corruption(
-            "artifact path inventory payload is invalid",
-        )),
+        Some(value) if value.value() == entry.logical_key.as_slice() => Ok(true),
+        Some(_) => Err(error::corruption("artifact path inventory document is invalid")),
     }
 }
 
@@ -221,17 +217,13 @@ pub(crate) fn artifact_delete_guard_exists(
     kind: ArtifactPathKind,
     identity: &str,
 ) -> Result<bool, PersistenceError> {
-    let family = CatalogFamily::ArtifactDeleteGuard;
     let key = artifact_delete_guard_key(kind, identity)?;
-    let witness =
-        trie::verify_member_in_transaction(write, family, trie::hashed_path(family, &key), &key)?;
-    match witness {
-        None => Ok(false),
-        Some(witness) if witness == trie::digest_payload(family, &key) => Ok(true),
-        Some(_) => Err(error::corruption(
-            "artifact delete guard payload is invalid",
-        )),
-    }
+    Ok(write
+        .open_table(ARTIFACT_DELETE_GUARDS)
+        .map_err(error::redb)?
+        .get(key.as_slice())
+        .map_err(error::redb)?
+        .is_some())
 }
 
 pub(crate) fn put_artifact_delete_guard(
@@ -239,16 +231,13 @@ pub(crate) fn put_artifact_delete_guard(
     kind: ArtifactPathKind,
     identity: &str,
 ) -> Result<(), PersistenceError> {
-    let family = CatalogFamily::ArtifactDeleteGuard;
     let key = artifact_delete_guard_key(kind, identity)?;
-    if trie::put(
-        write,
-        family,
-        trie::hashed_path(family, &key),
-        &key,
-        trie::digest_payload(family, &key),
-    )?
-    .is_some()
+    if write
+        .open_table(ARTIFACT_DELETE_GUARDS)
+        .map_err(error::redb)?
+        .insert(key.as_slice(), 1)
+        .map_err(error::redb)?
+        .is_some()
     {
         return Err(error::corruption("artifact delete guard was created twice"));
     }
@@ -260,10 +249,13 @@ pub(crate) fn remove_artifact_delete_guard(
     kind: ArtifactPathKind,
     identity: &str,
 ) -> Result<(), PersistenceError> {
-    let family = CatalogFamily::ArtifactDeleteGuard;
     let key = artifact_delete_guard_key(kind, identity)?;
-    let removed = trie::remove(write, family, trie::hashed_path(family, &key), &key)?;
-    if removed != Some(trie::digest_payload(family, &key)) {
+    let removed = write
+        .open_table(ARTIFACT_DELETE_GUARDS)
+        .map_err(error::redb)?
+        .remove(key.as_slice())
+        .map_err(error::redb)?;
+    if removed.is_none() {
         return Err(error::corruption(
             "artifact delete guard is absent at finalization",
         ));
@@ -348,7 +340,7 @@ pub(crate) fn ensure_temp_inventory_ready(
     let pending = artifact_path_entry(&record, ArtifactPathKind::TempPending)?;
     let ready = artifact_path_entry(&record, ArtifactPathKind::TempReady)?;
     remove_artifact_path(&write, &pending)?;
-    put_artifact_path(&write, &ready, None)?;
+    put_artifact_path(&write, &ready)?;
     store
         .faults
         .check(FaultPoint::BeforeArtifactTempReadyCommit)?;

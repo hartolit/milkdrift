@@ -2,9 +2,9 @@ use super::*;
 use super::{
     cursor::{
         integrity_cursor_state, integrity_cursor_str, make_integrity_cursor, push_failure,
-        scan_index_sample, validate_integrity_cursor,
+        scan_index_sample, storage_anchor, validate_integrity_cursor,
     },
-    integrity::{scan_authenticated_catalog_integrity, scan_index_integrity},
+    integrity::scan_index_integrity,
 };
 impl StorageAdmin for RedbStore {
     fn schema_info(&self) -> Result<StorageSchemaInfo, PersistenceError> {
@@ -16,16 +16,16 @@ impl StorageAdmin for RedbStore {
             .map(|value| value.value())
             .ok_or_else(|| error::corruption("storage schema version is missing"))?;
         let stored_version = u32::try_from(found).unwrap_or(u32::MAX);
-        let compatibility = if stored_version == STORAGE_SCHEMA_VERSION_V1 {
+        let compatibility = if stored_version == CURRENT_STORAGE_SCHEMA_VERSION {
             StorageSchemaCompatibility::Current
-        } else if stored_version < STORAGE_SCHEMA_VERSION_V1 {
+        } else if stored_version < CURRENT_STORAGE_SCHEMA_VERSION {
             StorageSchemaCompatibility::MigrationRequired
         } else {
             StorageSchemaCompatibility::FutureUnsupported
         };
         Ok(StorageSchemaInfo {
             stored_version,
-            current_version: STORAGE_SCHEMA_VERSION_V1,
+            current_version: CURRENT_STORAGE_SCHEMA_VERSION,
             compatibility,
         })
     }
@@ -100,9 +100,8 @@ impl StorageAdmin for RedbStore {
         let read = self.database().begin_read().map_err(error::redb)?;
         let revisions = read.open_table(REVISIONS).map_err(error::redb)?;
         let events = read.open_table(RUN_EVENTS).map_err(error::redb)?;
-        let checksums = read.open_table(EVENT_CHECKSUMS).map_err(error::redb)?;
         let artifacts = read.open_table(ARTIFACT_METADATA).map_err(error::redb)?;
-        let anchor = crate::trie::root_anchor(&read)?;
+        let anchor = storage_anchor(&read)?;
         validate_integrity_cursor(&request, &read, &revisions, &events, &artifacts)?;
         let maximum = u64::from(request.limit.get());
         let mut result = IntegrityScanResult {
@@ -193,19 +192,10 @@ impl StorageAdmin for RedbStore {
                                 "journal",
                                 "event key does not match its verified envelope",
                             )?;
-                        } else {
-                            match checksums
-                                .get(event.event_id().as_str())
-                                .map_err(error::redb)?
-                            {
-                                Some(checksum) if checksum.value() == event.checksum().as_str() => {
-                                }
-                                _ => push_failure(
-                                    &mut result,
-                                    "journal",
-                                    "event checksum index is missing or mismatched",
-                                )?,
-                            }
+                        } else if let Err(cause) =
+                            crate::snapshot::validate_history_link(&read, &event)
+                        {
+                            push_failure(&mut result, "journal_history", &cause.to_string())?;
                         }
                     }
                     Err(cause) => push_failure(&mut result, "journal", &cause.to_string())?,
@@ -269,22 +259,6 @@ impl StorageAdmin for RedbStore {
             scan_index_integrity(
                 &read,
                 if start_family == IntegrityScanFamily::Indexes {
-                    request.cursor.as_ref()
-                } else {
-                    None
-                },
-                maximum,
-                request.verify_artifact_content,
-                anchor,
-                &mut result,
-                &mut last_cursor,
-                &mut more_remaining,
-            )?;
-        }
-        if !more_remaining && start_family <= IntegrityScanFamily::AuthenticatedCatalogs {
-            scan_authenticated_catalog_integrity(
-                &read,
-                if start_family == IntegrityScanFamily::AuthenticatedCatalogs {
                     request.cursor.as_ref()
                 } else {
                     None

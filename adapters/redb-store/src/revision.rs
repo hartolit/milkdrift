@@ -1,3 +1,5 @@
+use std::ops::Bound;
+
 use milkdrift_blueprint::{
     BlueprintRevision, BlueprintRevisionDocument, ContentDigest, DocumentError, RevisionId,
 };
@@ -34,12 +36,6 @@ impl RevisionStore for RedbStore {
         let digest_key = codec::pair(revision.content_digest().as_str(), revision.id().as_str())?;
 
         let write = self.database().begin_write().map_err(error::redb)?;
-        crate::trie::validate_roots_in_transaction(&write)?;
-        {
-            let revisions = write.open_table(REVISIONS).map_err(error::redb)?;
-            let by_digest = write.open_table(REVISIONS_BY_DIGEST).map_err(error::redb)?;
-            validate_revision_cardinality(&revisions, &by_digest)?;
-        }
         if let Some(existing) = validated_revision_by_id_in_transaction(&write, revision.id())? {
             if existing != *revision {
                 return Err(PersistenceError::ImmutableConflict {
@@ -51,13 +47,12 @@ impl RevisionStore for RedbStore {
         }
 
         for parent_id in revision.parents() {
-            let parent =
-                validated_revision_by_id_in_transaction(&write, parent_id)?.ok_or_else(|| {
-                    PersistenceError::NotFound {
-                        entity: "parent_revision",
-                        identity: parent_id.to_string(),
-                    }
-                })?;
+            let parent = validated_revision_by_id_in_transaction(&write, parent_id)?.ok_or_else(
+                || PersistenceError::NotFound {
+                    entity: "parent_revision",
+                    identity: parent_id.to_string(),
+                },
+            )?;
             if parent.semantic().workflow() != revision.semantic().workflow()
                 || parent.sequence() >= revision.sequence()
             {
@@ -68,6 +63,7 @@ impl RevisionStore for RedbStore {
                 )));
             }
         }
+
         {
             let mut revisions = write.open_table(REVISIONS).map_err(error::redb)?;
             if revisions
@@ -92,7 +88,7 @@ impl RevisionStore for RedbStore {
                 ));
             }
         }
-        insert_revision_catalog(&write, revision, &document, &digest_key, &summary_bytes)?;
+
         self.faults.check(FaultPoint::BeforeRevisionCommit)?;
         write.commit().map_err(error::redb)?;
         self.faults.check(FaultPoint::AfterRevisionCommit)?;
@@ -104,21 +100,16 @@ impl RevisionStore for RedbStore {
         revision: &RevisionId,
     ) -> Result<Option<BlueprintRevision>, PersistenceError> {
         let read = self.database().begin_read().map_err(error::redb)?;
-        crate::trie::validate_roots(&read)?;
         let revisions = read.open_table(REVISIONS).map_err(error::redb)?;
         let by_digest = read.open_table(REVISIONS_BY_DIGEST).map_err(error::redb)?;
-        validate_revision_cardinality(&revisions, &by_digest)?;
-        let stored = validated_revision_by_id(&revisions, &by_digest, revision)?;
-        validate_revision_catalog(&read, revision, stored.as_ref())?;
-        Ok(stored)
+        validated_revision_by_id(&revisions, &by_digest, revision)
     }
 
     fn revision_summary(
         &self,
         revision: &RevisionId,
     ) -> Result<Option<RevisionSummary>, PersistenceError> {
-        let revision = self.revision(revision)?;
-        Ok(revision.as_ref().map(RevisionSummary::from))
+        Ok(self.revision(revision)?.as_ref().map(RevisionSummary::from))
     }
 
     fn revisions_by_content(
@@ -127,49 +118,36 @@ impl RevisionStore for RedbStore {
         limit: PageSize,
     ) -> Result<Vec<RevisionSummary>, PersistenceError> {
         let read = self.database().begin_read().map_err(error::redb)?;
-        crate::trie::validate_roots(&read)?;
         let table = read.open_table(REVISIONS_BY_DIGEST).map_err(error::redb)?;
         let revisions = read.open_table(REVISIONS).map_err(error::redb)?;
-        validate_revision_cardinality(&revisions, &table)?;
-        let family = crate::trie::CatalogFamily::RevisionContent;
-        let group = revision_content_group(digest);
-        let mut first = [0_u8; 32];
-        first[..16].copy_from_slice(&group);
-        let after = predecessor_path(first);
-        let page = crate::trie::page(
-            &read,
-            family,
-            None,
-            after,
-            usize::try_from(limit.get()).map_err(|_| PersistenceError::Bounds {
-                location: "revision_page_size",
-                reason: "cannot be represented on this platform".to_owned(),
-            })?,
-        )?;
-        let mut summaries = Vec::with_capacity(page.leaves.len());
-        for leaf in page.leaves {
-            if leaf.path[..16] != group {
-                break;
-            }
-            let components = codec::decode_components(&leaf.logical_key, 2)?;
+        let prefix = codec::component(digest.as_str())?;
+        let end = codec::prefix_end(prefix.clone()).ok_or_else(|| PersistenceError::Bounds {
+            location: "revision_content_prefix",
+            reason: "prefix has no finite upper bound".to_owned(),
+        })?;
+        let limit = usize::try_from(limit.get()).map_err(|_| PersistenceError::Bounds {
+            location: "revision_page_size",
+            reason: "cannot be represented on this platform".to_owned(),
+        })?;
+        let mut summaries = Vec::with_capacity(limit);
+        let rows = table
+            .range::<&[u8]>((
+                Bound::Included(prefix.as_slice()),
+                Bound::Excluded(end.as_slice()),
+            ))
+            .map_err(error::redb)?;
+        for row in rows.take(limit) {
+            let (key, value) = row.map_err(error::redb)?;
+            let components = codec::decode_components(key.value(), 2)?;
             if components[0] != digest.as_str() {
                 return Err(error::corruption(
-                    "revision content catalog ordering prefix collides across digests",
-                ));
-            }
-            let value = table
-                .get(leaf.logical_key.as_slice())
-                .map_err(error::redb)?
-                .ok_or_else(|| error::corruption("revision content catalog is dangling"))?;
-            if leaf.payload_digest != crate::trie::digest_payload(family, value.value()) {
-                return Err(error::corruption(
-                    "revision digest summary disagrees with its authenticated catalog",
+                    "revision digest index key has the wrong content digest",
                 ));
             }
             let summary = decode_summary(value.value())?;
-            if &summary.content_digest != digest {
+            if summary.content_digest != *digest || components[1] != summary.revision.as_str() {
                 return Err(error::corruption(
-                    "revision digest index contains a mismatched summary",
+                    "revision digest index key disagrees with its summary",
                 ));
             }
             let revision_bytes = revisions
@@ -182,212 +160,19 @@ impl RevisionStore for RedbStore {
                     "revision digest index disagrees with authoritative revision bytes",
                 ));
             }
-            let expected_key = codec::pair(digest.as_str(), summary.revision.as_str())?;
-            if leaf.logical_key != expected_key {
-                return Err(error::corruption(
-                    "revision digest-index key disagrees with its summary",
-                ));
-            }
-            validate_revision_catalog(&read, &summary.revision, Some(&revision))?;
             summaries.push(summary);
         }
         Ok(summaries)
     }
 }
 
-fn validate_revision_cardinality<R, I>(revisions: &R, by_digest: &I) -> Result<(), PersistenceError>
-where
-    R: ReadableTable<&'static str, &'static [u8]>,
-    I: ReadableTable<&'static [u8], &'static [u8]>,
-{
-    if revisions.len().map_err(error::redb)? != by_digest.len().map_err(error::redb)? {
-        return Err(error::corruption(
-            "revision primary table and digest index have different cardinality",
-        ));
-    }
-    Ok(())
-}
-
-fn revision_identity_path(revision: &RevisionId) -> [u8; 32] {
-    let family = crate::trie::CatalogFamily::RevisionIdentity;
-    crate::trie::hashed_path(family, revision.as_str().as_bytes())
-}
-
-fn revision_content_group(digest: &ContentDigest) -> [u8; 16] {
-    let family = crate::trie::CatalogFamily::RevisionContent;
-    let hash = crate::trie::hashed_path(family, digest.as_str().as_bytes());
-    let mut group = [0_u8; 16];
-    group.copy_from_slice(&hash[..16]);
-    group
-}
-
-fn revision_content_path(
-    digest: &ContentDigest,
-    logical_key: &[u8],
-) -> Result<[u8; 32], PersistenceError> {
-    crate::trie::ordered_path(
-        crate::trie::CatalogFamily::RevisionContent,
-        &revision_content_group(digest),
-        logical_key,
-    )
-}
-
-fn predecessor_path(mut path: [u8; 32]) -> Option<[u8; 32]> {
-    for index in (0..path.len()).rev() {
-        if path[index] != 0 {
-            path[index] -= 1;
-            path[index + 1..].fill(u8::MAX);
-            return Some(path);
-        }
-    }
-    None
-}
-
-fn insert_revision_catalog(
-    write: &redb::WriteTransaction,
-    revision: &BlueprintRevision,
-    document: &[u8],
-    digest_key: &[u8],
-    summary: &[u8],
-) -> Result<(), PersistenceError> {
-    let identity_family = crate::trie::CatalogFamily::RevisionIdentity;
-    if crate::trie::put(
-        write,
-        identity_family,
-        revision_identity_path(revision.id()),
-        revision.id().as_str().as_bytes(),
-        crate::trie::digest_payload(identity_family, document),
-    )?
-    .is_some()
-    {
-        return Err(error::corruption(
-            "revision identity catalog unexpectedly replaced a leaf",
-        ));
-    }
-    let content_family = crate::trie::CatalogFamily::RevisionContent;
-    if crate::trie::put(
-        write,
-        content_family,
-        revision_content_path(revision.content_digest(), digest_key)?,
-        digest_key,
-        crate::trie::digest_payload(content_family, summary),
-    )?
-    .is_some()
-    {
-        return Err(error::corruption(
-            "revision content catalog unexpectedly replaced a leaf",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_revision_catalog_in_transaction(
-    write: &redb::WriteTransaction,
-    revision: &RevisionId,
-    stored: Option<&BlueprintRevision>,
-) -> Result<(), PersistenceError> {
-    let revisions = write.open_table(REVISIONS).map_err(error::redb)?;
-    let by_digest = write.open_table(REVISIONS_BY_DIGEST).map_err(error::redb)?;
-    validate_revision_catalog_tables(
-        |family, path, key| crate::trie::verify_member_in_transaction(write, family, path, key),
-        &revisions,
-        &by_digest,
-        revision,
-        stored,
-    )
-}
-
 fn validated_revision_by_id_in_transaction(
     write: &redb::WriteTransaction,
     revision: &RevisionId,
 ) -> Result<Option<BlueprintRevision>, PersistenceError> {
-    let stored = {
-        let revisions = write.open_table(REVISIONS).map_err(error::redb)?;
-        let by_digest = write.open_table(REVISIONS_BY_DIGEST).map_err(error::redb)?;
-        validated_revision_by_id(&revisions, &by_digest, revision)?
-    };
-    validate_revision_catalog_in_transaction(write, revision, stored.as_ref())?;
-    Ok(stored)
-}
-
-fn validate_revision_catalog(
-    read: &redb::ReadTransaction,
-    revision: &RevisionId,
-    stored: Option<&BlueprintRevision>,
-) -> Result<(), PersistenceError> {
-    let revisions = read.open_table(REVISIONS).map_err(error::redb)?;
-    let by_digest = read.open_table(REVISIONS_BY_DIGEST).map_err(error::redb)?;
-    validate_revision_catalog_tables(
-        |family, path, key| crate::trie::verify_member(read, family, path, key),
-        &revisions,
-        &by_digest,
-        revision,
-        stored,
-    )
-}
-
-fn validate_revision_catalog_tables<R, I, V>(
-    mut verify: V,
-    revisions: &R,
-    by_digest: &I,
-    revision: &RevisionId,
-    stored: Option<&BlueprintRevision>,
-) -> Result<(), PersistenceError>
-where
-    R: ReadableTable<&'static str, &'static [u8]>,
-    I: ReadableTable<&'static [u8], &'static [u8]>,
-    V: FnMut(
-        crate::trie::CatalogFamily,
-        [u8; 32],
-        &[u8],
-    ) -> Result<Option<[u8; 32]>, PersistenceError>,
-{
-    let identity_family = crate::trie::CatalogFamily::RevisionIdentity;
-    let identity = verify(
-        identity_family,
-        revision_identity_path(revision),
-        revision.as_str().as_bytes(),
-    )?;
-    let Some(stored) = stored else {
-        return if identity.is_none() {
-            Ok(())
-        } else {
-            Err(error::corruption(
-                "revision catalog names a missing primary document",
-            ))
-        };
-    };
-    let document = revisions
-        .get(revision.as_str())
-        .map_err(error::redb)?
-        .ok_or_else(|| error::corruption("revision primary document disappeared"))?;
-    if identity
-        != Some(crate::trie::digest_payload(
-            identity_family,
-            document.value(),
-        ))
-    {
-        return Err(error::corruption(
-            "revision primary document disagrees with its authenticated catalog",
-        ));
-    }
-    let digest_key = codec::pair(stored.content_digest().as_str(), stored.id().as_str())?;
-    let summary = by_digest
-        .get(digest_key.as_slice())
-        .map_err(error::redb)?
-        .ok_or_else(|| error::corruption("revision digest summary disappeared"))?;
-    let content_family = crate::trie::CatalogFamily::RevisionContent;
-    let content = verify(
-        content_family,
-        revision_content_path(stored.content_digest(), &digest_key)?,
-        &digest_key,
-    )?;
-    if content != Some(crate::trie::digest_payload(content_family, summary.value())) {
-        return Err(error::corruption(
-            "revision digest summary disagrees with its authenticated catalog",
-        ));
-    }
-    Ok(())
+    let revisions = write.open_table(REVISIONS).map_err(error::redb)?;
+    let by_digest = write.open_table(REVISIONS_BY_DIGEST).map_err(error::redb)?;
+    validated_revision_by_id(&revisions, &by_digest, revision)
 }
 
 fn validated_revision_by_id<R, I>(
@@ -400,6 +185,23 @@ where
     I: ReadableTable<&'static [u8], &'static [u8]>,
 {
     let Some(bytes) = revisions.get(revision.as_str()).map_err(error::redb)? else {
+        for row in by_digest.iter().map_err(error::redb)? {
+            let (key, value) = row.map_err(error::redb)?;
+            let summary = decode_summary(value.value())?;
+            let components = codec::decode_components(key.value(), 2)?;
+            if components[0] != summary.content_digest.as_str()
+                || components[1] != summary.revision.as_str()
+            {
+                return Err(error::corruption(
+                    "revision digest index key disagrees with its summary",
+                ));
+            }
+            if &summary.revision == revision {
+                return Err(error::corruption(
+                    "revision digest index points to a missing primary document",
+                ));
+            }
+        }
         return Ok(None);
     };
     let stored = decode_revision(bytes.value())?;

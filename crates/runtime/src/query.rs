@@ -476,7 +476,7 @@ mod tests {
         fn active_leases(&self, _limit: PageSize) -> Result<ActiveLeaseSnapshot, PersistenceError> {
             Ok(ActiveLeaseSnapshot {
                 entries: Vec::new(),
-                witness: IntegrityDigest::hash(b"empty test lease catalog"),
+                revision: IntegrityDigest::hash(b"empty test lease revision"),
             })
         }
 

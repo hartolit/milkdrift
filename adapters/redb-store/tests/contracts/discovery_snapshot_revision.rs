@@ -194,7 +194,7 @@ fn assert_complete_integrity_scan_is_clean(
 }
 
 #[test]
-fn intact_ordered_discovery_catalogs_pass_integrity_and_reopen()
+fn intact_ordered_discovery_indexes_pass_integrity_and_reopen()
 -> Result<(), Box<dyn std::error::Error>> {
     for (kind, suffix) in [
         (DiscoveryIndexKind::Runnable, "healthy-runnable"),
@@ -222,27 +222,21 @@ fn intact_ordered_discovery_catalogs_pass_integrity_and_reopen()
     Ok(())
 }
 
-fn assert_symmetric_discovery_pair_deletion_is_corruption(
+fn assert_one_sided_discovery_pair_deletion_is_corruption(
     kind: DiscoveryIndexKind,
     suffix: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    const RUNNABLE_IDENTITIES: TableDefinition<'static, &'static [u8], &'static [u8]> =
-        TableDefinition::new("milkdrift.v1.discovery.runnable_by_identity");
     const RUNNABLE_ORDERED: TableDefinition<'static, &'static [u8], &'static [u8]> =
         TableDefinition::new("milkdrift.v1.discovery.runnable");
-    const TIMER_IDENTITIES: TableDefinition<'static, &'static [u8], &'static [u8]> =
-        TableDefinition::new("milkdrift.v1.discovery.timers_by_identity");
     const TIMER_ORDERED: TableDefinition<'static, &'static [u8], &'static [u8]> =
         TableDefinition::new("milkdrift.v1.discovery.timers");
-    const LEASE_IDENTITIES: TableDefinition<'static, &'static [u8], &'static [u8]> =
-        TableDefinition::new("milkdrift.v1.discovery.leases_by_identity");
     const LEASE_ORDERED: TableDefinition<'static, &'static [u8], &'static [u8]> =
         TableDefinition::new("milkdrift.v1.discovery.leases");
 
-    let (identity_definition, ordered_definition) = match kind {
-        DiscoveryIndexKind::Runnable => (RUNNABLE_IDENTITIES, RUNNABLE_ORDERED),
-        DiscoveryIndexKind::Timer => (TIMER_IDENTITIES, TIMER_ORDERED),
-        DiscoveryIndexKind::Lease => (LEASE_IDENTITIES, LEASE_ORDERED),
+    let ordered_definition = match kind {
+        DiscoveryIndexKind::Runnable => RUNNABLE_ORDERED,
+        DiscoveryIndexKind::Timer => TIMER_ORDERED,
+        DiscoveryIndexKind::Lease => LEASE_ORDERED,
     };
     let directory = TempDir::new()?;
     {
@@ -252,13 +246,6 @@ fn assert_symmetric_discovery_pair_deletion_is_corruption(
     let database = Database::open(directory.path().join("milkdrift.redb"))?;
     let write = database.begin_write()?;
     {
-        let mut identities = write.open_table(identity_definition)?;
-        let key = {
-            let mut rows = identities.iter()?;
-            let (key, _) = rows.next().transpose()?.ok_or("identity row is absent")?;
-            key.value().to_vec()
-        };
-        assert!(identities.remove(key.as_slice())?.is_some());
         let mut ordered = write.open_table(ordered_definition)?;
         let key = {
             let mut rows = ordered.iter()?;
@@ -295,24 +282,24 @@ fn assert_symmetric_discovery_pair_deletion_is_corruption(
 }
 
 #[test]
-fn symmetric_runnable_pair_deletion_is_corruption() -> Result<(), Box<dyn std::error::Error>> {
-    assert_symmetric_discovery_pair_deletion_is_corruption(
+fn one_sided_runnable_pair_deletion_is_corruption() -> Result<(), Box<dyn std::error::Error>> {
+    assert_one_sided_discovery_pair_deletion_is_corruption(
         DiscoveryIndexKind::Runnable,
         "symmetric-runnable",
     )
 }
 
 #[test]
-fn symmetric_timer_pair_deletion_is_corruption() -> Result<(), Box<dyn std::error::Error>> {
-    assert_symmetric_discovery_pair_deletion_is_corruption(
+fn one_sided_timer_pair_deletion_is_corruption() -> Result<(), Box<dyn std::error::Error>> {
+    assert_one_sided_discovery_pair_deletion_is_corruption(
         DiscoveryIndexKind::Timer,
         "symmetric-timer",
     )
 }
 
 #[test]
-fn symmetric_lease_pair_deletion_is_corruption() -> Result<(), Box<dyn std::error::Error>> {
-    assert_symmetric_discovery_pair_deletion_is_corruption(
+fn one_sided_lease_pair_deletion_is_corruption() -> Result<(), Box<dyn std::error::Error>> {
+    assert_one_sided_discovery_pair_deletion_is_corruption(
         DiscoveryIndexKind::Lease,
         "symmetric-lease",
     )

@@ -94,7 +94,7 @@ impl RuntimeService {
             branch: branch.clone(),
             operation: requirement.operation().clone(),
         };
-        let (usage, lease_catalog_witness) = self.admission_usage()?;
+        let (usage, lease_revision) = self.admission_usage()?;
         if !self.config.scheduler_limits.allows(&admission, &usage) {
             return Ok(DispatchOutcome::Deferred);
         }
@@ -226,7 +226,7 @@ impl RuntimeService {
                     expires_at,
                 },
             ],
-            expected_lease_catalog: Some(lease_catalog_witness),
+            expected_lease_revision: Some(lease_revision),
             ..CommandPlan::default()
         };
         match self.commit_internal_plan(
@@ -238,7 +238,7 @@ impl RuntimeService {
             schedule,
         ) {
             Ok(_) => {}
-            Err(RuntimeError::Persistence(PersistenceError::LeaseCatalogConflict { .. }))
+            Err(RuntimeError::Persistence(PersistenceError::LeaseRevisionConflict { .. }))
             | Err(RuntimeError::Persistence(PersistenceError::SequenceConflict { .. })) => {
                 return Ok(DispatchOutcome::Deferred);
             }

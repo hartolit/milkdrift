@@ -21,12 +21,12 @@ use crate::{
     fault::FaultPoint,
     json,
     schema::{
-        ARTIFACT_ACCOUNTING, ARTIFACT_DIGEST_RESERVATIONS, ARTIFACT_MANIFEST, ARTIFACT_METADATA,
-        ARTIFACT_PUBLICATIONS, ARTIFACT_PUBLICATIONS_BY_AGE, ARTIFACT_REFERENCES,
-        ARTIFACT_RESERVATIONS, ARTIFACT_TEMP_MANIFEST, ARTIFACT_TEMP_OWNERS, ARTIFACTS_BY_DIGEST,
+        ARTIFACT_ACCOUNTING, ARTIFACT_DELETE_GUARDS, ARTIFACT_DIGEST_RESERVATIONS,
+        ARTIFACT_MANIFEST, ARTIFACT_METADATA, ARTIFACT_PATHS, ARTIFACT_PUBLICATIONS,
+        ARTIFACT_PUBLICATIONS_BY_AGE, ARTIFACT_REFERENCES, ARTIFACT_RESERVATIONS,
+        ARTIFACT_TEMP_MANIFEST, ARTIFACT_TEMP_OWNERS, ARTIFACTS_BY_DIGEST,
         RUN_ARTIFACT_OWNERSHIP, WORKSPACE_USAGE,
     },
-    trie::{self, CatalogFamily},
 };
 
 const PUBLICATION_SCHEMA_VERSION: u32 = 1;
@@ -100,11 +100,8 @@ mod cleanup;
 mod path;
 mod publication;
 
-pub(crate) use path::decode_artifact_path_entry;
-pub(crate) use publication::validate_artifact_catalog_leaf;
-
 pub(crate) use accounting::{
     persist_artifact_reference_occurrence, persist_run_artifact_ownership,
-    validate_artifact_catalog, validated_run_artifact_reference_in_transaction,
+    validate_artifact_state, validated_run_artifact_reference_in_transaction,
 };
 pub(crate) use path::verify_blob;

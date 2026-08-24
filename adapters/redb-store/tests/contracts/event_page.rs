@@ -166,7 +166,7 @@ impl RunQueryStore for MemoryEventStore {
     fn active_leases(&self, _limit: PageSize) -> Result<ActiveLeaseSnapshot, PersistenceError> {
         Ok(ActiveLeaseSnapshot {
             entries: Vec::new(),
-            witness: IntegrityDigest::hash(b"empty memory event-store lease catalog"),
+            revision: IntegrityDigest::hash(b"empty memory event-store lease revision"),
         })
     }
 

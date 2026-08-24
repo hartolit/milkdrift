@@ -1,8 +1,8 @@
 use super::cursor::{
-    authenticated_catalog_cursor_position, index_cursor_position, make_artifact_digest_cursor,
-    make_authenticated_catalog_cursor, make_integrity_cursor, parse_artifact_digest_cursor,
-    push_failure, scan_binary_bytes_phase, scan_string_bytes_phase, scan_string_string_phase,
-    scan_string_u8_phase, scan_string_u64_phase,
+    index_cursor_position, make_artifact_digest_cursor, make_integrity_cursor,
+    parse_artifact_digest_cursor, push_failure, scan_binary_bytes_phase,
+    scan_string_bytes_phase, scan_string_string_phase, scan_string_u8_phase,
+    scan_string_u64_phase,
 };
 use super::*;
 #[allow(clippy::too_many_arguments)]
@@ -51,7 +51,6 @@ pub(crate) fn scan_index_integrity(
     }
     let heads = read.open_table(RUN_HEADS).map_err(error::redb)?;
     let events = read.open_table(RUN_EVENTS).map_err(error::redb)?;
-    let checksums = read.open_table(EVENT_CHECKSUMS).map_err(error::redb)?;
     let summaries = read.open_table(RUN_SUMMARIES).map_err(error::redb)?;
     let nonterminal = read.open_table(NONTERMINAL_RUNS).map_err(error::redb)?;
     let commands = read.open_table(COMMAND_RESULTS).map_err(error::redb)?;
@@ -81,39 +80,6 @@ pub(crate) fn scan_index_integrity(
     let artifact_temp_owners = read.open_table(ARTIFACT_TEMP_OWNERS).map_err(error::redb)?;
     let artifact_accounting = read.open_table(ARTIFACT_ACCOUNTING).map_err(error::redb)?;
 
-    if let Err(cause) = crate::trie::validate_roots(read) {
-        push_failure(result, "authenticated_catalog", &cause.to_string())?;
-    }
-    for (family, label) in [
-        (
-            crate::trie::CatalogFamily::RunnableIdentity,
-            "runnable_identity_catalog",
-        ),
-        (
-            crate::trie::CatalogFamily::RunnableOrdered,
-            "runnable_ordered_catalog",
-        ),
-        (
-            crate::trie::CatalogFamily::TimerIdentity,
-            "timer_identity_catalog",
-        ),
-        (
-            crate::trie::CatalogFamily::TimerOrdered,
-            "timer_ordered_catalog",
-        ),
-        (
-            crate::trie::CatalogFamily::LeaseIdentity,
-            "lease_identity_catalog",
-        ),
-        (
-            crate::trie::CatalogFamily::LeaseOrdered,
-            "lease_ordered_catalog",
-        ),
-    ] {
-        if let Err(cause) = validate_authenticated_catalog_prefix(read, family, 4) {
-            push_failure(result, label, &cause.to_string())?;
-        }
-    }
     scan_string_u64_phase(
         HEADS,
         start_phase,
@@ -130,6 +96,7 @@ pub(crate) fn scan_index_integrity(
                 error::corruption(format!("invalid run-head identity: {cause}"))
             })?;
             let head = crate::journal::validated_run_head(&heads, &events, &run)?;
+            crate::snapshot::validate_history_head(read, &run, head)?;
             if head.get() != stored_head {
                 return Err(error::corruption(
                     "run-head key changed within one read transaction",
@@ -157,13 +124,11 @@ pub(crate) fn scan_index_integrity(
                 .ok_or_else(|| error::corruption("run head is missing its workspace budget"))?;
             let usage: WorkspaceUsage = json::decode(usage_bytes.value(), "workspace usage")?;
             let _budget: WorkspaceBudget = json::decode(budget_bytes.value(), "workspace budget")?;
-            let authenticated = crate::journal::validated_workspace_domain(read, &run)?
-                .ok_or_else(|| {
-                    error::corruption("run head has no authenticated workspace domain")
-                })?;
-            if authenticated != usage {
+            let stored_usage = crate::journal::validated_workspace_domain(read, &run)?
+                .ok_or_else(|| error::corruption("run head has no workspace domain"))?;
+            if stored_usage != usage {
                 return Err(error::corruption(
-                    "run head workspace usage disagrees with its authenticated domain",
+                    "run head workspace usage disagrees with its durable domain",
                 ));
             }
             Ok(())
@@ -249,7 +214,7 @@ pub(crate) fn scan_index_integrity(
         more_remaining,
         "command_indexes",
         |key, bytes| {
-            crate::journal::validate_stored_command_record(key, bytes, &heads, &events, &checksums)
+            crate::journal::validate_stored_command_record(key, bytes, &heads, &events)
         },
     )?;
 
@@ -471,11 +436,11 @@ pub(crate) fn scan_index_integrity(
                     "workspace usage is missing its immutable budget",
                 ));
             }
-            let authenticated = crate::journal::validated_workspace_domain(read, &run)?
-                .ok_or_else(|| error::corruption("workspace usage has no authenticated domain"))?;
-            if authenticated != usage {
+            let stored_usage = crate::journal::validated_workspace_domain(read, &run)?
+                .ok_or_else(|| error::corruption("workspace usage has no budget pair"))?;
+            if stored_usage != usage {
                 return Err(error::corruption(
-                    "workspace usage disagrees with its authenticated domain",
+                    "workspace usage disagrees with its durable domain",
                 ));
             }
             Ok(())
@@ -504,7 +469,7 @@ pub(crate) fn scan_index_integrity(
             }
             if crate::journal::validated_workspace_domain(read, &run)?.is_none() {
                 return Err(error::corruption(
-                    "workspace budget has no authenticated domain",
+                    "workspace budget has no durable usage pair",
                 ));
             }
             Ok(())
@@ -545,7 +510,7 @@ pub(crate) fn scan_index_integrity(
             }
             if crate::journal::validated_workspace_domain(read, &run)?.is_none() {
                 return Err(error::corruption(
-                    "root workspace scope has no authenticated domain",
+                    "root workspace scope has no durable workspace domain",
                 ));
             }
             Ok(())
@@ -797,505 +762,6 @@ pub(crate) fn scan_index_integrity(
             Ok(())
         },
     )?;
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn scan_authenticated_catalog_integrity(
-    read: &redb::ReadTransaction,
-    cursor: Option<&IntegrityScanCursor>,
-    maximum: u64,
-    verify_artifact_content: bool,
-    anchor: [u8; 32],
-    result: &mut IntegrityScanResult,
-    last_cursor: &mut Option<IntegrityScanCursor>,
-    more_remaining: &mut bool,
-) -> Result<(), PersistenceError> {
-    let (start_family, start_path) = authenticated_catalog_cursor_position(cursor)?;
-    if result.documents_checked == maximum {
-        *last_cursor = Some(make_authenticated_catalog_cursor(
-            start_family,
-            start_path,
-            verify_artifact_content,
-            anchor,
-        )?);
-        *more_remaining = true;
-        return Ok(());
-    }
-    let start_id = start_family.map_or(0, crate::trie::CatalogFamily::id);
-    for family in crate::trie::CatalogFamily::ALL
-        .into_iter()
-        .filter(|family| family.id() >= start_id)
-    {
-        let after = (Some(family) == start_family)
-            .then_some(start_path)
-            .flatten();
-        let remaining = maximum.saturating_sub(result.documents_checked);
-        if remaining == 0 {
-            *last_cursor = Some(make_authenticated_catalog_cursor(
-                Some(family),
-                after,
-                verify_artifact_content,
-                anchor,
-            )?);
-            *more_remaining = true;
-            return Ok(());
-        }
-        let limit = usize::try_from(remaining).map_err(|_| PersistenceError::Bounds {
-            location: "integrity_scan.authenticated_catalogs",
-            reason: "remaining page size cannot be represented on this platform".to_owned(),
-        })?;
-        let page = crate::trie::page(read, family, None, after, limit)?;
-        for leaf in page.leaves {
-            result.documents_checked = result.documents_checked.saturating_add(1);
-            *last_cursor = Some(make_authenticated_catalog_cursor(
-                Some(family),
-                Some(leaf.path),
-                verify_artifact_content,
-                anchor,
-            )?);
-            if let Err(cause) = validate_authenticated_catalog_leaf(read, family, &leaf) {
-                push_failure(result, "authenticated_catalog", &cause.to_string())?;
-            }
-        }
-        if page.next_path.is_some() {
-            *more_remaining = true;
-            return Ok(());
-        }
-        if result.documents_checked == maximum
-            && family
-                != *crate::trie::CatalogFamily::ALL.last().ok_or_else(|| {
-                    error::corruption("authenticated catalog family list is empty")
-                })?
-        {
-            *more_remaining = true;
-            return Ok(());
-        }
-    }
-    Ok(())
-}
-
-fn validate_authenticated_catalog_leaf(
-    read: &redb::ReadTransaction,
-    family: crate::trie::CatalogFamily,
-    leaf: &crate::trie::TrieLeaf,
-) -> Result<(), PersistenceError> {
-    use crate::trie::CatalogFamily;
-    match family {
-        CatalogFamily::RunMembership => {
-            let _ = crate::journal::validate_run_membership_leaf(read, leaf)?;
-            Ok(())
-        }
-        CatalogFamily::NonterminalRun => {
-            let _ = crate::journal::validate_nonterminal_membership_leaf(read, leaf)?;
-            Ok(())
-        }
-        CatalogFamily::Artifact => crate::artifact::validate_artifact_catalog_leaf(read, leaf),
-        CatalogFamily::ArtifactPath => {
-            let _ = crate::artifact::decode_artifact_path_entry(leaf)?;
-            Ok(())
-        }
-        CatalogFamily::ArtifactDeleteGuard => validate_catalog_only_leaf(family, leaf),
-        CatalogFamily::RunnableBucket => validate_runnable_bucket_leaf(read, leaf),
-        CatalogFamily::RunnableRunHead => {
-            let _ = crate::journal::validate_runnable_head_leaf(read, leaf)?;
-            Ok(())
-        }
-        CatalogFamily::WorkspaceDomain => validate_workspace_domain_leaf(read, leaf),
-        CatalogFamily::SnapshotLatest => {
-            validate_string_scalar_leaf(read, SNAPSHOT_LATEST, family, leaf, "snapshot latest")
-        }
-        CatalogFamily::RevisionIdentity => {
-            validate_string_document_leaf(read, REVISIONS, family, leaf, "revision identity")
-        }
-        CatalogFamily::ArtifactPublication => validate_string_document_leaf(
-            read,
-            ARTIFACT_PUBLICATIONS,
-            family,
-            leaf,
-            "artifact publication",
-        ),
-        CatalogFamily::HistoryAccumulator => validate_string_document_leaf(
-            read,
-            RUN_HISTORY_ACCUMULATORS,
-            family,
-            leaf,
-            "history accumulator",
-        ),
-        CatalogFamily::RevisionContent => validate_binary_document_leaf(
-            read,
-            REVISIONS_BY_DIGEST,
-            family,
-            leaf,
-            "revision content",
-        ),
-        CatalogFamily::Event => {
-            let bytes = binary_catalog_document(read, RUN_EVENTS, leaf, "run event")?;
-            let event = milkdrift_persistence::RunEventEnvelope::from_json(&bytes)?;
-            crate::journal::validate_event_catalog(
-                read,
-                event.run_id(),
-                event.sequence(),
-                &leaf.logical_key,
-                &bytes,
-            )
-        }
-        CatalogFamily::Command => {
-            validate_binary_document_leaf(read, COMMAND_RESULTS, family, leaf, "command")
-        }
-        CatalogFamily::RunnableIdentity | CatalogFamily::RunnableBucketEntry => {
-            validate_binary_document_leaf(read, RUNNABLE_ENTRIES, family, leaf, "runnable identity")
-        }
-        CatalogFamily::RunnableOrdered => validate_ordered_discovery_leaf::<RunnableIndexEntry>(
-            read,
-            leaf,
-            RUNNABLE_ENTRIES,
-            RUNNABLE_INDEX,
-            CatalogFamily::RunnableIdentity,
-            CatalogFamily::RunnableOrdered,
-            "runnable index",
-            "runnable",
-            |entry| codec::pair(entry.run.as_str(), entry.execution.as_str()),
-            crate::journal::runnable_order_key,
-            crate::journal::runnable_catalog_ordered_path,
-        ),
-        CatalogFamily::TimerIdentity => {
-            validate_binary_document_leaf(read, TIMER_ENTRIES, family, leaf, "timer identity")
-        }
-        CatalogFamily::TimerOrdered => validate_ordered_discovery_leaf::<TimerIndexEntry>(
-            read,
-            leaf,
-            TIMER_ENTRIES,
-            TIMER_INDEX,
-            CatalogFamily::TimerIdentity,
-            CatalogFamily::TimerOrdered,
-            "timer index",
-            "timer",
-            |entry| codec::pair(entry.run.as_str(), entry.timer.as_str()),
-            crate::journal::timer_order_key,
-            crate::journal::timer_catalog_ordered_path,
-        ),
-        CatalogFamily::LeaseIdentity => {
-            validate_binary_document_leaf(read, LEASE_ENTRIES, family, leaf, "lease identity")
-        }
-        CatalogFamily::LeaseOrdered => validate_ordered_discovery_leaf::<LeaseIndexEntry>(
-            read,
-            leaf,
-            LEASE_ENTRIES,
-            LEASE_INDEX,
-            CatalogFamily::LeaseIdentity,
-            CatalogFamily::LeaseOrdered,
-            "lease index",
-            "lease",
-            |entry| codec::pair(entry.run.as_str(), entry.lease.as_str()),
-            crate::journal::lease_order_key,
-            crate::journal::lease_catalog_ordered_path,
-        ),
-        CatalogFamily::WorkspaceScope => {
-            validate_binary_document_leaf(read, SCOPES, family, leaf, "workspace scope")
-        }
-        CatalogFamily::WorkspaceValue => {
-            validate_binary_document_leaf(read, VALUES, family, leaf, "workspace value")
-        }
-        CatalogFamily::WorkspaceValueHead => validate_binary_document_leaf(
-            read,
-            WORKSPACE_VALUE_HEADS,
-            family,
-            leaf,
-            "workspace value head",
-        ),
-        CatalogFamily::RunArtifactOwnership => validate_binary_document_leaf(
-            read,
-            RUN_ARTIFACT_OWNERSHIP,
-            family,
-            leaf,
-            "run artifact ownership",
-        ),
-        CatalogFamily::EventHistoryCheckpoint => validate_binary_document_leaf(
-            read,
-            EVENT_HISTORY_DIGESTS,
-            family,
-            leaf,
-            "event history checkpoint",
-        ),
-        CatalogFamily::SnapshotIdentity | CatalogFamily::SnapshotOrdered => {
-            validate_binary_document_leaf(read, SNAPSHOTS, family, leaf, "snapshot")
-        }
-        CatalogFamily::ArtifactReferenceOccurrence => validate_binary_document_leaf(
-            read,
-            ARTIFACT_REFERENCES,
-            family,
-            leaf,
-            "artifact reference occurrence",
-        ),
-    }
-}
-
-fn binary_catalog_document(
-    read: &redb::ReadTransaction,
-    table: redb::TableDefinition<'static, &'static [u8], &'static [u8]>,
-    leaf: &crate::trie::TrieLeaf,
-    label: &str,
-) -> Result<Vec<u8>, PersistenceError> {
-    read.open_table(table)
-        .map_err(error::redb)?
-        .get(leaf.logical_key.as_slice())
-        .map_err(error::redb)?
-        .map(|bytes| bytes.value().to_vec())
-        .ok_or_else(|| error::corruption(format!("authenticated {label} row is missing")))
-}
-
-fn validate_binary_document_leaf(
-    read: &redb::ReadTransaction,
-    table: redb::TableDefinition<'static, &'static [u8], &'static [u8]>,
-    family: crate::trie::CatalogFamily,
-    leaf: &crate::trie::TrieLeaf,
-    label: &str,
-) -> Result<(), PersistenceError> {
-    let bytes = binary_catalog_document(read, table, leaf, label)?;
-    if leaf.payload_digest != crate::trie::digest_payload(family, &bytes) {
-        return Err(error::corruption(format!(
-            "authenticated {label} payload disagrees with its physical row"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_string_document_leaf(
-    read: &redb::ReadTransaction,
-    table: redb::TableDefinition<'static, &'static str, &'static [u8]>,
-    family: crate::trie::CatalogFamily,
-    leaf: &crate::trie::TrieLeaf,
-    label: &str,
-) -> Result<(), PersistenceError> {
-    let key = std::str::from_utf8(&leaf.logical_key)
-        .map_err(|_| error::corruption(format!("authenticated {label} key is not UTF-8")))?;
-    let bytes = read
-        .open_table(table)
-        .map_err(error::redb)?
-        .get(key)
-        .map_err(error::redb)?
-        .map(|bytes| bytes.value().to_vec())
-        .ok_or_else(|| error::corruption(format!("authenticated {label} row is missing")))?;
-    if leaf.payload_digest != crate::trie::digest_payload(family, &bytes) {
-        return Err(error::corruption(format!(
-            "authenticated {label} payload disagrees with its physical row"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_string_scalar_leaf(
-    read: &redb::ReadTransaction,
-    table: redb::TableDefinition<'static, &'static str, &'static str>,
-    family: crate::trie::CatalogFamily,
-    leaf: &crate::trie::TrieLeaf,
-    label: &str,
-) -> Result<(), PersistenceError> {
-    let key = std::str::from_utf8(&leaf.logical_key)
-        .map_err(|_| error::corruption(format!("authenticated {label} key is not UTF-8")))?;
-    let value = read
-        .open_table(table)
-        .map_err(error::redb)?
-        .get(key)
-        .map_err(error::redb)?
-        .map(|value| value.value().to_owned())
-        .ok_or_else(|| error::corruption(format!("authenticated {label} row is missing")))?;
-    if leaf.payload_digest != crate::trie::digest_payload(family, value.as_bytes()) {
-        return Err(error::corruption(format!(
-            "authenticated {label} payload disagrees with its physical row"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_catalog_only_leaf(
-    family: crate::trie::CatalogFamily,
-    leaf: &crate::trie::TrieLeaf,
-) -> Result<(), PersistenceError> {
-    if leaf.path != crate::trie::hashed_path(family, &leaf.logical_key)
-        || leaf.payload_digest != crate::trie::digest_payload(family, &leaf.logical_key)
-    {
-        return Err(error::corruption(
-            "authenticated catalog-only leaf is malformed",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_workspace_domain_leaf(
-    read: &redb::ReadTransaction,
-    leaf: &crate::trie::TrieLeaf,
-) -> Result<(), PersistenceError> {
-    let run_text = std::str::from_utf8(&leaf.logical_key)
-        .map_err(|_| error::corruption("workspace domain key is not UTF-8"))?;
-    let run = RunId::new(run_text)
-        .map_err(|cause| error::corruption(format!("workspace domain key is invalid: {cause}")))?;
-    if leaf.path != crate::journal::workspace_domain_path(&run) {
-        return Err(error::corruption(
-            "workspace domain path disagrees with its run identity",
-        ));
-    }
-    let budget = read
-        .open_table(WORKSPACE_BUDGETS)
-        .map_err(error::redb)?
-        .get(run.as_str())
-        .map_err(error::redb)?
-        .map(|bytes| json::decode::<WorkspaceBudget>(bytes.value(), "workspace budget"))
-        .transpose()?
-        .ok_or_else(|| error::corruption("authenticated workspace domain has no budget"))?;
-    let usage = read
-        .open_table(WORKSPACE_USAGE)
-        .map_err(error::redb)?
-        .get(run.as_str())
-        .map_err(error::redb)?
-        .map(|bytes| json::decode::<WorkspaceUsage>(bytes.value(), "workspace usage"))
-        .transpose()?
-        .ok_or_else(|| error::corruption("authenticated workspace domain has no usage"))?;
-    budget.validate_usage(&usage).map_err(|cause| {
-        error::corruption(format!(
-            "workspace domain usage exceeds its budget: {cause}"
-        ))
-    })?;
-    if leaf.payload_digest != crate::journal::workspace_domain_payload(&budget, usage)? {
-        return Err(error::corruption(
-            "workspace domain leaf disagrees with its budget and usage",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_runnable_bucket_leaf(
-    read: &redb::ReadTransaction,
-    leaf: &crate::trie::TrieLeaf,
-) -> Result<(), PersistenceError> {
-    use crate::trie::CatalogFamily;
-    let family = CatalogFamily::RunnableBucket;
-    let components = codec::decode_components(&leaf.logical_key, 2)?;
-    let run = RunId::new(components[0]).map_err(|cause| {
-        error::corruption(format!("runnable bucket run identity is invalid: {cause}"))
-    })?;
-    let eligible_at = components[1].parse::<u64>().map_err(|cause| {
-        error::corruption(format!("runnable bucket timestamp is invalid: {cause}"))
-    })?;
-    if leaf.path
-        != crate::journal::runnable_bucket_path(
-            &run,
-            TimestampMillis::new(eligible_at),
-            &leaf.logical_key,
-        )?
-        || leaf.payload_digest != crate::trie::digest_payload(family, &leaf.logical_key)
-    {
-        return Err(error::corruption(
-            "runnable bucket leaf disagrees with its identity",
-        ));
-    }
-    let entry_family = CatalogFamily::RunnableBucketEntry;
-    let group = crate::journal::runnable_group(entry_family, &leaf.logical_key);
-    let page = crate::trie::page(
-        read,
-        entry_family,
-        None,
-        crate::journal::first_path_in_group(group),
-        1,
-    )?;
-    if page
-        .leaves
-        .first()
-        .is_none_or(|entry| entry.path[..16] != group)
-    {
-        return Err(error::corruption(
-            "authenticated runnable bucket has no runnable entry",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_authenticated_catalog_prefix(
-    read: &redb::ReadTransaction,
-    family: crate::trie::CatalogFamily,
-    limit: usize,
-) -> Result<(), PersistenceError> {
-    let page = crate::trie::page(read, family, None, None, limit)?;
-    for leaf in page.leaves {
-        validate_authenticated_catalog_leaf(read, family, &leaf)?;
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn validate_ordered_discovery_leaf<T>(
-    read: &redb::ReadTransaction,
-    leaf: &crate::trie::TrieLeaf,
-    identity_definition: redb::TableDefinition<'static, &'static [u8], &'static [u8]>,
-    ordered_definition: redb::TableDefinition<'static, &'static [u8], &'static [u8]>,
-    identity_family: crate::trie::CatalogFamily,
-    ordered_family: crate::trie::CatalogFamily,
-    document_family: &'static str,
-    label: &'static str,
-    identity_key: fn(&T) -> Result<Vec<u8>, PersistenceError>,
-    order_key: fn(&T) -> Result<Vec<u8>, PersistenceError>,
-    ordered_path: fn(&[u8], &T) -> Result<[u8; 32], PersistenceError>,
-) -> Result<(), PersistenceError>
-where
-    T: for<'de> serde::Deserialize<'de> + serde::Serialize,
-{
-    let identities = read.open_table(identity_definition).map_err(error::redb)?;
-    let bytes = identities
-        .get(leaf.logical_key.as_slice())
-        .map_err(error::redb)?
-        .ok_or_else(|| {
-            error::corruption(format!(
-                "authenticated {label} ordered catalog names a missing identity row"
-            ))
-        })?
-        .value()
-        .to_vec();
-    let entry: T = json::decode(&bytes, document_family)?;
-    let expected_identity = identity_key(&entry)?;
-    if leaf.logical_key != expected_identity {
-        return Err(error::corruption(format!(
-            "authenticated {label} ordered catalog identity disagrees with its document"
-        )));
-    }
-    if leaf.path != ordered_path(&expected_identity, &entry)? {
-        return Err(error::corruption(format!(
-            "authenticated {label} ordered catalog path disagrees with its document"
-        )));
-    }
-    if leaf.payload_digest != crate::trie::digest_payload(ordered_family, &bytes) {
-        return Err(error::corruption(format!(
-            "authenticated {label} ordered catalog payload disagrees with its identity row"
-        )));
-    }
-
-    let ordered_key = order_key(&entry)?;
-    let ordered = read.open_table(ordered_definition).map_err(error::redb)?;
-    let ordered_bytes = ordered
-        .get(ordered_key.as_slice())
-        .map_err(error::redb)?
-        .ok_or_else(|| {
-            error::corruption(format!(
-                "authenticated {label} ordered catalog is missing its ordered row"
-            ))
-        })?;
-    if ordered_bytes.value() != bytes.as_slice() {
-        return Err(error::corruption(format!(
-            "authenticated {label} ordered row disagrees with its identity row"
-        )));
-    }
-
-    let identity_witness = crate::trie::verify_member(
-        read,
-        identity_family,
-        crate::trie::hashed_path(identity_family, &expected_identity),
-        &expected_identity,
-    )?;
-    if identity_witness != Some(crate::trie::digest_payload(identity_family, &bytes)) {
-        return Err(error::corruption(format!(
-            "authenticated {label} ordered catalog has no matching authenticated identity"
-        )));
-    }
     Ok(())
 }
 

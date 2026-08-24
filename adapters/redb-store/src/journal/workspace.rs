@@ -1,17 +1,9 @@
 use super::*;
-use super::{
-    append::{
-        predecessor_path, run_membership_path, run_membership_payload,
-        validate_nonterminal_membership_in_transaction, workspace_domain_path,
-        workspace_domain_payload,
-    },
-    queries::validated_run_head,
-};
+use super::queries::validated_run_head;
 pub(crate) fn apply_workspace(
     write: &redb::WriteTransaction,
     request: &AtomicRunCommitRequest,
 ) -> Result<(), PersistenceError> {
-    crate::trie::validate_roots_in_transaction(write)?;
     let mut scopes = write.open_table(SCOPES).map_err(error::redb)?;
     let mut roots = write.open_table(ROOT_SCOPES).map_err(error::redb)?;
     let mut values = write.open_table(VALUES).map_err(error::redb)?;
@@ -53,52 +45,30 @@ pub(crate) fn apply_workspace(
     Ok(())
 }
 
-pub(crate) fn workspace_scope_run_group(run: &RunId) -> [u8; 16] {
-    let family = crate::trie::CatalogFamily::WorkspaceScope;
-    let hash = crate::trie::hashed_path(family, run.as_str().as_bytes());
-    let mut group = [0_u8; 16];
-    group.copy_from_slice(&hash[..16]);
-    group
-}
-
-pub(crate) fn workspace_scope_catalog_path(
-    reference: &ScopeReference,
-    logical_key: &[u8],
-) -> Result<[u8; 32], PersistenceError> {
-    crate::trie::ordered_path(
-        crate::trie::CatalogFamily::WorkspaceScope,
-        &workspace_scope_run_group(reference.run()),
-        logical_key,
-    )
-}
-
 pub(crate) fn ensure_workspace_run_has_no_scopes(
     write: &redb::WriteTransaction,
     run: &RunId,
 ) -> Result<(), PersistenceError> {
-    let mut first = [0_u8; 32];
-    first[..16].copy_from_slice(&workspace_scope_run_group(run));
-    let page = crate::trie::page_in_transaction(
-        write,
-        crate::trie::CatalogFamily::WorkspaceScope,
-        None,
-        predecessor_path(first),
-        1,
-    )?;
-    if page
-        .leaves
-        .first()
-        .is_some_and(|leaf| leaf.path[..16] == first[..16])
+    let prefix = codec::component(run.as_str())?;
+    let end = codec::prefix_end(prefix.clone())
+        .ok_or_else(|| error::corruption("workspace-scope run prefix has no range end"))?;
+    let scopes = write.open_table(SCOPES).map_err(error::redb)?;
+    if scopes
+        .range::<&[u8]>(prefix.as_slice()..end.as_slice())
+        .map_err(error::redb)?
+        .next()
+        .transpose()
+        .map_err(error::redb)?
+        .is_some()
     {
         return Err(error::corruption(
-            "run has an authenticated workspace scope but no root-scope index",
+            "run has workspace scopes but no root-scope index",
         ));
     }
     Ok(())
 }
 
-pub(crate) fn validate_scope_catalog_lineage_in_transaction(
-    write: &redb::WriteTransaction,
+pub(crate) fn validate_scope_lineage_in_transaction(
     scopes: &impl redb::ReadableTable<&'static [u8], &'static [u8]>,
     roots: &impl redb::ReadableTable<&'static str, &'static str>,
     reference: &ScopeReference,
@@ -112,16 +82,9 @@ pub(crate) fn validate_scope_catalog_lineage_in_transaction(
             ));
         }
         let key = codec::pair(current.run().as_str(), current.scope().as_str())?;
-        let family = crate::trie::CatalogFamily::WorkspaceScope;
-        let witness = crate::trie::verify_member_in_transaction(
-            write,
-            family,
-            workspace_scope_catalog_path(&current, &key)?,
-            &key,
-        )?;
         let bytes = scopes.get(key.as_slice()).map_err(error::redb)?;
         let Some(bytes) = bytes else {
-            return if witness.is_some() || depth > 0 {
+            return if depth > 0 {
                 Err(error::corruption("workspace scope lineage is incomplete"))
             } else {
                 Err(PersistenceError::NotFound {
@@ -130,11 +93,6 @@ pub(crate) fn validate_scope_catalog_lineage_in_transaction(
                 })
             };
         };
-        if witness != Some(crate::trie::digest_payload(family, bytes.value())) {
-            return Err(error::corruption(
-                "workspace scope disagrees with its authenticated catalog",
-            ));
-        }
         let scope: WorkspaceScope = json::decode(bytes.value(), "workspace scope")?;
         if scope.reference() != &current {
             return Err(error::corruption(
@@ -170,7 +128,7 @@ pub(crate) fn validate_scope_catalog_lineage_in_transaction(
     )))
 }
 
-pub(crate) fn validate_scope_catalog_lineage(
+pub(crate) fn validate_scope_lineage(
     read: &redb::ReadTransaction,
     scopes: &impl redb::ReadableTable<&'static [u8], &'static [u8]>,
     roots: &impl redb::ReadableTable<&'static str, &'static str>,
@@ -186,16 +144,9 @@ pub(crate) fn validate_scope_catalog_lineage(
             ));
         }
         let key = codec::pair(current.run().as_str(), current.scope().as_str())?;
-        let family = crate::trie::CatalogFamily::WorkspaceScope;
-        let witness = crate::trie::verify_member(
-            read,
-            family,
-            workspace_scope_catalog_path(&current, &key)?,
-            &key,
-        )?;
         let bytes = scopes.get(key.as_slice()).map_err(error::redb)?;
         let Some(bytes) = bytes else {
-            return if witness.is_some() || depth > 0 {
+            return if depth > 0 {
                 Err(error::corruption("workspace scope lineage is incomplete"))
             } else {
                 Err(PersistenceError::NotFound {
@@ -204,11 +155,6 @@ pub(crate) fn validate_scope_catalog_lineage(
                 })
             };
         };
-        if witness != Some(crate::trie::digest_payload(family, bytes.value())) {
-            return Err(error::corruption(
-                "workspace scope disagrees with its authenticated catalog",
-            ));
-        }
         let scope: WorkspaceScope = json::decode(bytes.value(), "workspace scope")?;
         if scope.reference() != &current {
             return Err(error::corruption(
@@ -253,7 +199,7 @@ pub(crate) fn require_run_history_membership(
     let head = validated_run_head(&heads, &events, run)?;
     if validate_run_history_membership(read, run, head)?.is_none() {
         return Err(error::corruption(
-            "durable workspace fact has no authenticated owning run",
+            "durable workspace fact has no authoritative owning run",
         ));
     }
     Ok(())
@@ -263,48 +209,16 @@ pub(crate) fn require_prior_run_history_membership_in_transaction(
     write: &redb::WriteTransaction,
     run: &RunId,
 ) -> Result<(), PersistenceError> {
-    let head = {
-        let heads = write.open_table(RUN_HEADS).map_err(error::redb)?;
-        heads
-            .get(run.as_str())
-            .map_err(error::redb)?
-            .map(|head| RunSequence::new(head.value()))
-            .ok_or_else(|| {
-                error::corruption("cross-run workspace provenance has no durable run head")
-            })?
-    };
-    let summary_bytes = {
-        let summaries = write.open_table(RUN_SUMMARIES).map_err(error::redb)?;
-        summaries
-            .get(run.as_str())
-            .map_err(error::redb)?
-            .ok_or_else(|| error::corruption("cross-run workspace provenance has no run summary"))?
-            .value()
-            .to_vec()
-    };
-    let summary: RunSummaryIndex = json::decode(&summary_bytes, "run summary")?;
-    if summary.run != *run || summary.through_sequence != head {
+    let head = crate::journal::validated_run_head_in_transaction(write, run)?;
+    if validate_run_history_membership_in_transaction(write, run, head)?.is_none() {
         return Err(error::corruption(
-            "cross-run workspace provenance summary disagrees with its head",
+            "cross-run workspace provenance has no authoritative run",
         ));
     }
-    let family = crate::trie::CatalogFamily::RunMembership;
-    let witness = crate::trie::verify_member_in_transaction(
-        write,
-        family,
-        run_membership_path(run),
-        run.as_str().as_bytes(),
-    )?;
-    let payload = run_membership_payload(run, head, &summary_bytes);
-    if witness != Some(payload) {
-        return Err(error::corruption(
-            "cross-run workspace provenance has no authenticated run membership",
-        ));
-    }
-    validate_nonterminal_membership_in_transaction(write, &summary, payload)
+    Ok(())
 }
 
-pub(crate) fn validate_workspace_value_catalog_provenance_in_transaction(
+pub(crate) fn validate_workspace_value_storage_provenance_in_transaction(
     write: &redb::WriteTransaction,
     values: &impl redb::ReadableTable<&'static [u8], &'static [u8]>,
     scopes: &impl redb::ReadableTable<&'static [u8], &'static [u8]>,
@@ -320,28 +234,17 @@ pub(crate) fn validate_workspace_value_catalog_provenance_in_transaction(
                 current.reference().scope().run(),
             )?;
         }
-        validate_scope_catalog_lineage_in_transaction(
-            write,
-            scopes,
-            roots,
-            current.reference().scope(),
-        )?;
+        validate_scope_lineage_in_transaction(scopes, roots, current.reference().scope())?;
         if !(proposed && depth == 0) {
             let key = workspace_value_key(current.reference())?;
             let bytes = values
                 .get(key.as_slice())
                 .map_err(error::redb)?
                 .ok_or_else(|| error::corruption("workspace provenance value is missing"))?;
-            let family = crate::trie::CatalogFamily::WorkspaceValue;
-            let witness = crate::trie::verify_member_in_transaction(
-                write,
-                family,
-                crate::trie::hashed_path(family, &key),
-                &key,
-            )?;
-            if witness != Some(crate::trie::digest_payload(family, bytes.value())) {
+            let stored: WorkspaceValueEntry = json::decode(bytes.value(), "workspace value")?;
+            if stored.reference() != current.reference() {
                 return Err(error::corruption(
-                    "workspace value disagrees with its authenticated catalog",
+                    "workspace provenance key disagrees with its document",
                 ));
             }
         }
@@ -356,17 +259,8 @@ pub(crate) fn validate_workspace_value_catalog_provenance_in_transaction(
             .get(key.as_slice())
             .map_err(error::redb)?
             .map(|bytes| bytes.value().to_vec());
-        let family = crate::trie::CatalogFamily::WorkspaceValue;
-        let witness = crate::trie::verify_member_in_transaction(
-            write,
-            family,
-            crate::trie::hashed_path(family, &key),
-            &key,
-        )?;
-        current = match (stored.as_deref(), witness) {
-            (Some(bytes), Some(witness))
-                if witness == crate::trie::digest_payload(family, bytes) =>
-            {
+        current = match stored.as_deref() {
+            Some(bytes) => {
                 let source_entry: WorkspaceValueEntry = json::decode(bytes, "workspace value")?;
                 if source_entry.reference() != source {
                     return Err(error::corruption(
@@ -375,7 +269,7 @@ pub(crate) fn validate_workspace_value_catalog_provenance_in_transaction(
                 }
                 source_entry
             }
-            (None, None) if proposed && depth == 0 => {
+            None if proposed && depth == 0 => {
                 return Err(PersistenceError::NotFound {
                     entity: missing_entity,
                     identity: format!(
@@ -387,9 +281,9 @@ pub(crate) fn validate_workspace_value_catalog_provenance_in_transaction(
                     ),
                 });
             }
-            _ => {
+            None => {
                 return Err(error::corruption(
-                    "workspace provenance source and authenticated catalog disagree",
+                    "workspace provenance source is missing",
                 ));
             }
         };
@@ -399,7 +293,7 @@ pub(crate) fn validate_workspace_value_catalog_provenance_in_transaction(
     )))
 }
 
-pub(crate) fn validate_workspace_value_catalog_provenance(
+pub(crate) fn validate_workspace_value_storage_provenance(
     read: &redb::ReadTransaction,
     values: &impl redb::ReadableTable<&'static [u8], &'static [u8]>,
     scopes: &impl redb::ReadableTable<&'static [u8], &'static [u8]>,
@@ -408,18 +302,16 @@ pub(crate) fn validate_workspace_value_catalog_provenance(
 ) -> Result<(), PersistenceError> {
     let mut current = selected.clone();
     for _ in 0..MAX_VALUE_PROVENANCE_DEPTH {
-        validate_scope_catalog_lineage(read, scopes, roots, current.reference().scope())?;
+        validate_scope_lineage(read, scopes, roots, current.reference().scope())?;
         let key = workspace_value_key(current.reference())?;
         let bytes = values
             .get(key.as_slice())
             .map_err(error::redb)?
             .ok_or_else(|| error::corruption("workspace provenance value is missing"))?;
-        let family = crate::trie::CatalogFamily::WorkspaceValue;
-        let witness =
-            crate::trie::verify_member(read, family, crate::trie::hashed_path(family, &key), &key)?;
-        if witness != Some(crate::trie::digest_payload(family, bytes.value())) {
+        let stored: WorkspaceValueEntry = json::decode(bytes.value(), "workspace value")?;
+        if stored.reference() != current.reference() {
             return Err(error::corruption(
-                "workspace value disagrees with its authenticated catalog",
+                "workspace provenance key disagrees with its document",
             ));
         }
         let source = match current.origin() {
@@ -454,13 +346,9 @@ pub(crate) fn update_workspace_value_head(
             .map_err(error::redb)?
             .map(|bytes| bytes.value().to_vec())
     };
-    let family = crate::trie::CatalogFamily::WorkspaceValueHead;
-    let path = crate::trie::hashed_path(family, &head_key);
-    let previous_witness =
-        crate::trie::verify_member_in_transaction(write, family, path, &head_key)?;
     match previous_bytes.as_deref() {
-        None if previous_witness.is_none() && reference.version().get() == 1 => {}
-        Some(bytes) if previous_witness == Some(crate::trie::digest_payload(family, bytes)) => {
+        None if reference.version().get() == 1 => {}
+        Some(bytes) => {
             let previous: WorkspaceValueReference = json::decode(bytes, "workspace value head")?;
             let expected_version = previous
                 .version()
@@ -476,14 +364,9 @@ pub(crate) fn update_workspace_value_head(
                 ));
             }
         }
-        None if previous_witness.is_none() => {
+        None => {
             return Err(error::corruption(
                 "workspace value sequence begins after version one",
-            ));
-        }
-        _ => {
-            return Err(error::corruption(
-                "workspace value head disagrees with its authenticated catalog",
             ));
         }
     }
@@ -501,28 +384,14 @@ pub(crate) fn update_workspace_value_head(
             ));
         }
     }
-    let replaced_witness = crate::trie::put(
-        write,
-        family,
-        path,
-        &head_key,
-        crate::trie::digest_payload(family, &head_bytes),
-    )?;
-    if replaced_witness != previous_witness {
+    let values = write.open_table(VALUES).map_err(error::redb)?;
+    let stored = values
+        .get(value_key)
+        .map_err(error::redb)?
+        .ok_or_else(|| error::corruption("workspace value head names a missing value"))?;
+    if stored.value() != value_bytes {
         return Err(error::corruption(
-            "workspace value head witness changed outside its transaction",
-        ));
-    }
-    let value_family = crate::trie::CatalogFamily::WorkspaceValue;
-    let value_witness = crate::trie::verify_member_in_transaction(
-        write,
-        value_family,
-        crate::trie::hashed_path(value_family, value_key),
-        value_key,
-    )?;
-    if value_witness != Some(crate::trie::digest_payload(value_family, value_bytes)) {
-        return Err(error::corruption(
-            "workspace value head does not name an authenticated value",
+            "workspace value head disagrees with its value document",
         ));
     }
     Ok(())
@@ -536,19 +405,6 @@ pub(crate) fn put_scope(
 ) -> Result<(), PersistenceError> {
     let reference = scope.reference();
     let key = codec::pair(reference.run().as_str(), reference.scope().as_str())?;
-    let family = crate::trie::CatalogFamily::WorkspaceScope;
-    if crate::trie::verify_member_in_transaction(
-        write,
-        family,
-        workspace_scope_catalog_path(reference, &key)?,
-        &key,
-    )?
-    .is_some()
-    {
-        return Err(error::corruption(
-            "workspace scope catalog names an existing immutable scope",
-        ));
-    }
     if scopes.get(key.as_slice()).map_err(error::redb)?.is_some() {
         return Err(PersistenceError::ImmutableConflict {
             entity: "workspace_scope",
@@ -573,7 +429,7 @@ pub(crate) fn put_scope(
                 .map_err(error::redb)?;
         }
         (_, Some(parent)) => {
-            validate_new_scope_depth(write, scopes, roots, parent)?;
+            validate_new_scope_depth(scopes, roots, parent)?;
         }
         _ => {
             return Err(PersistenceError::InvalidDocument(
@@ -591,19 +447,6 @@ pub(crate) fn put_scope(
             "workspace scope insert replaced an existing document",
         ));
     }
-    if crate::trie::put(
-        write,
-        family,
-        workspace_scope_catalog_path(reference, &key)?,
-        &key,
-        crate::trie::digest_payload(family, &bytes),
-    )?
-    .is_some()
-    {
-        return Err(error::corruption(
-            "workspace scope insert replaced an authenticated leaf",
-        ));
-    }
     Ok(())
 }
 
@@ -616,21 +459,8 @@ pub(crate) fn put_value(
 ) -> Result<(), PersistenceError> {
     let reference = entry.reference();
     let scope = reference.scope();
-    validate_scope_catalog_lineage_in_transaction(write, scopes, roots, scope)?;
+    validate_scope_lineage_in_transaction(scopes, roots, scope)?;
     let key = workspace_value_key(reference)?;
-    let family = crate::trie::CatalogFamily::WorkspaceValue;
-    if crate::trie::verify_member_in_transaction(
-        write,
-        family,
-        crate::trie::hashed_path(family, &key),
-        &key,
-    )?
-    .is_some()
-    {
-        return Err(error::corruption(
-            "workspace value catalog names an existing immutable value",
-        ));
-    }
     if values.get(key.as_slice()).map_err(error::redb)?.is_some() {
         return Err(PersistenceError::ImmutableConflict {
             entity: "workspace_value",
@@ -643,7 +473,7 @@ pub(crate) fn put_value(
             ),
         });
     }
-    validate_workspace_value_catalog_provenance_in_transaction(
+    validate_workspace_value_storage_provenance_in_transaction(
         write, values, scopes, roots, entry, true,
     )?;
     validate_workspace_value_provenance(values, scopes, roots, entry, true)?;
@@ -655,19 +485,6 @@ pub(crate) fn put_value(
     {
         return Err(error::corruption(
             "workspace value insert replaced an existing document",
-        ));
-    }
-    if crate::trie::put(
-        write,
-        family,
-        crate::trie::hashed_path(family, &key),
-        &key,
-        crate::trie::digest_payload(family, &bytes),
-    )?
-    .is_some()
-    {
-        return Err(error::corruption(
-            "workspace value insert replaced an authenticated leaf",
         ));
     }
     update_workspace_value_head(write, reference, &key, &bytes)?;
@@ -787,7 +604,6 @@ pub(crate) fn validate_workspace_value_provenance(
 }
 
 pub(crate) fn validate_new_scope_depth(
-    write: &redb::WriteTransaction,
     scopes: &Table<'_, &[u8], &[u8]>,
     roots: &Table<'_, &str, &str>,
     parent: &ScopeReference,
@@ -810,19 +626,6 @@ pub(crate) fn validate_new_scope_depth(
         let key = codec::pair(reference.run().as_str(), reference.scope().as_str())?;
         let bytes = scopes.get(key.as_slice()).map_err(error::redb)?;
         let Some(bytes) = bytes else {
-            let family = crate::trie::CatalogFamily::WorkspaceScope;
-            if crate::trie::verify_member_in_transaction(
-                write,
-                family,
-                workspace_scope_catalog_path(&reference, &key)?,
-                &key,
-            )?
-            .is_some()
-            {
-                return Err(error::corruption(
-                    "parent workspace scope catalog names a missing document",
-                ));
-            }
             return Err(PersistenceError::NotFound {
                 entity: "parent_workspace_scope",
                 identity: format!("{}/{}", reference.run(), reference.scope()),
@@ -832,18 +635,6 @@ pub(crate) fn validate_new_scope_depth(
         if scope.reference() != &reference {
             return Err(error::corruption(
                 "workspace-scope key does not match its document",
-            ));
-        }
-        let family = crate::trie::CatalogFamily::WorkspaceScope;
-        let witness = crate::trie::verify_member_in_transaction(
-            write,
-            family,
-            workspace_scope_catalog_path(&reference, &key)?,
-            &key,
-        )?;
-        if witness != Some(crate::trie::digest_payload(family, bytes.value())) {
-            return Err(error::corruption(
-                "parent workspace scope disagrees with its authenticated catalog",
             ));
         }
         match (scope.kind(), scope.parent()) {
@@ -921,7 +712,6 @@ pub(crate) fn validated_workspace_domain(
     read: &redb::ReadTransaction,
     run: &RunId,
 ) -> Result<Option<WorkspaceUsage>, PersistenceError> {
-    crate::trie::validate_roots(read)?;
     let budget: Option<milkdrift_workspace::WorkspaceBudget> = {
         let budgets = read.open_table(WORKSPACE_BUDGETS).map_err(error::redb)?;
         budgets
@@ -938,28 +728,16 @@ pub(crate) fn validated_workspace_domain(
             .map(|bytes| json::decode(bytes.value(), "workspace usage"))
             .transpose()?
     };
-    let family = crate::trie::CatalogFamily::WorkspaceDomain;
-    let witness = crate::trie::verify_member(
-        read,
-        family,
-        workspace_domain_path(run),
-        run.as_str().as_bytes(),
-    )?;
-    match (budget, usage, witness) {
-        (None, None, None) => Ok(None),
-        (Some(budget), Some(usage), Some(witness)) => {
+    match (budget, usage) {
+        (None, None) => Ok(None),
+        (Some(budget), Some(usage)) => {
             budget.validate_usage(&usage).map_err(|cause| {
                 error::corruption(format!("workspace usage exceeds its budget: {cause}"))
             })?;
-            if witness != workspace_domain_payload(&budget, usage)? {
-                return Err(error::corruption(
-                    "workspace domain disagrees with its authenticated catalog",
-                ));
-            }
             Ok(Some(usage))
         }
         _ => Err(error::corruption(
-            "workspace budget, usage, and authenticated domain are incomplete",
+            "workspace budget and usage records are incomplete",
         )),
     }
 }
@@ -976,7 +754,7 @@ impl WorkspaceStore for RedbStore {
             Some(usage) if head == RunSequence::ZERO && membership.is_none() => Ok(usage),
             Some(usage) if membership.is_some() => Ok(usage),
             Some(_) => Err(error::corruption(
-                "workspace usage belongs to an unauthenticated run aggregate",
+                "workspace usage belongs to an absent run aggregate",
             )),
             None if head == RunSequence::ZERO && membership.is_none() => Ok(WorkspaceUsage::EMPTY),
             None => Err(error::corruption(
@@ -991,9 +769,7 @@ impl WorkspaceStore for RedbStore {
         scope: &ScopeId,
     ) -> Result<Option<WorkspaceScope>, PersistenceError> {
         let key = codec::pair(run.as_str(), scope.as_str())?;
-        let reference = ScopeReference::new(run.clone(), scope.clone());
         let read = self.database().begin_read().map_err(error::redb)?;
-        crate::trie::validate_roots(&read)?;
         let heads = read.open_table(RUN_HEADS).map_err(error::redb)?;
         let events = read.open_table(RUN_EVENTS).map_err(error::redb)?;
         let head = validated_run_head(&heads, &events, run)?;
@@ -1002,19 +778,6 @@ impl WorkspaceStore for RedbStore {
         let roots = read.open_table(ROOT_SCOPES).map_err(error::redb)?;
         let stored = table.get(key.as_slice()).map_err(error::redb)?;
         let Some(bytes) = stored else {
-            let family = crate::trie::CatalogFamily::WorkspaceScope;
-            if crate::trie::verify_member(
-                &read,
-                family,
-                workspace_scope_catalog_path(&reference, &key)?,
-                &key,
-            )?
-            .is_some()
-            {
-                return Err(error::corruption(
-                    "workspace scope catalog names a missing document",
-                ));
-            }
             if roots
                 .get(run.as_str())
                 .map_err(error::redb)?
@@ -1038,7 +801,7 @@ impl WorkspaceStore for RedbStore {
                     "workspace-scope key does not match its document",
                 ));
             }
-            validate_scope_catalog_lineage(&read, &table, &roots, stored.reference())?;
+            validate_scope_lineage(&read, &table, &roots, stored.reference())?;
             stored
         };
         Ok(Some(stored))
@@ -1050,7 +813,6 @@ impl WorkspaceStore for RedbStore {
     ) -> Result<Option<WorkspaceValueEntry>, PersistenceError> {
         let key = workspace_value_key(reference)?;
         let read = self.database().begin_read().map_err(error::redb)?;
-        crate::trie::validate_roots(&read)?;
         let heads = read.open_table(RUN_HEADS).map_err(error::redb)?;
         let events = read.open_table(RUN_EVENTS).map_err(error::redb)?;
         let head = validated_run_head(&heads, &events, reference.scope().run())?;
@@ -1058,22 +820,9 @@ impl WorkspaceStore for RedbStore {
         let table = read.open_table(VALUES).map_err(error::redb)?;
         let scopes = read.open_table(SCOPES).map_err(error::redb)?;
         let roots = read.open_table(ROOT_SCOPES).map_err(error::redb)?;
-        validate_scope_catalog_lineage(&read, &scopes, &roots, reference.scope())?;
+        validate_scope_lineage(&read, &scopes, &roots, reference.scope())?;
         let stored = table.get(key.as_slice()).map_err(error::redb)?;
         let Some(bytes) = stored else {
-            let family = crate::trie::CatalogFamily::WorkspaceValue;
-            if crate::trie::verify_member(
-                &read,
-                family,
-                crate::trie::hashed_path(family, &key),
-                &key,
-            )?
-            .is_some()
-            {
-                return Err(error::corruption(
-                    "workspace value catalog names a missing document",
-                ));
-            }
             return Ok(None);
         };
         if validated_workspace_domain(&read, reference.scope().run())?.is_none() {
@@ -1089,8 +838,10 @@ impl WorkspaceStore for RedbStore {
                 ));
             }
             validate_workspace_value_provenance(&table, &scopes, &roots, &stored, false)?;
-            validate_scope_catalog_lineage(&read, &scopes, &roots, stored.reference().scope())?;
-            validate_workspace_value_catalog_provenance(&read, &table, &scopes, &roots, &stored)?;
+            validate_scope_lineage(&read, &scopes, &roots, stored.reference().scope())?;
+            validate_workspace_value_storage_provenance(
+                &read, &table, &scopes, &roots, &stored,
+            )?;
             stored
         };
         Ok(Some(stored))
@@ -1112,7 +863,7 @@ impl WorkspaceStore for RedbStore {
         let table = read.open_table(VALUES).map_err(error::redb)?;
         let scopes = read.open_table(SCOPES).map_err(error::redb)?;
         let roots = read.open_table(ROOT_SCOPES).map_err(error::redb)?;
-        validate_scope_catalog_lineage(&read, &scopes, &roots, scope)?;
+        validate_scope_lineage(&read, &scopes, &roots, scope)?;
         let head = {
             let heads = read
                 .open_table(WORKSPACE_VALUE_HEADS)
@@ -1122,19 +873,7 @@ impl WorkspaceStore for RedbStore {
                 .map_err(error::redb)?
                 .map(|bytes| bytes.value().to_vec())
         };
-        let head_family = crate::trie::CatalogFamily::WorkspaceValueHead;
-        let witness = crate::trie::verify_member(
-            &read,
-            head_family,
-            crate::trie::hashed_path(head_family, &head_key),
-            &head_key,
-        )?;
         let Some(head) = head else {
-            if witness.is_some() {
-                return Err(error::corruption(
-                    "workspace value-head catalog names a missing document",
-                ));
-            }
             let end = codec::prefix_end(head_key.clone()).ok_or_else(|| {
                 error::corruption("workspace value prefix has no exclusive range end")
             })?;
@@ -1147,16 +886,11 @@ impl WorkspaceStore for RedbStore {
                 .is_some()
             {
                 return Err(error::corruption(
-                    "workspace values exist without an authenticated latest-value head",
+                    "workspace values exist without a latest-value head",
                 ));
             }
             return Ok(None);
         };
-        if witness != Some(crate::trie::digest_payload(head_family, &head)) {
-            return Err(error::corruption(
-                "workspace value head disagrees with its authenticated catalog",
-            ));
-        }
         let reference: WorkspaceValueReference = json::decode(&head, "workspace value head")?;
         if reference.scope() != scope || reference.key() != key {
             return Err(error::corruption(
@@ -1180,7 +914,7 @@ impl WorkspaceStore for RedbStore {
             ));
         }
         validate_workspace_value_provenance(&table, &scopes, &roots, &entry, false)?;
-        validate_workspace_value_catalog_provenance(&read, &table, &scopes, &roots, &entry)?;
+        validate_workspace_value_storage_provenance(&read, &table, &scopes, &roots, &entry)?;
         Ok(Some(entry))
     }
 
@@ -1189,7 +923,6 @@ impl WorkspaceStore for RedbStore {
         leaf: &ScopeReference,
     ) -> Result<Vec<WorkspaceScope>, PersistenceError> {
         let read = self.database().begin_read().map_err(error::redb)?;
-        crate::trie::validate_roots(&read)?;
         require_run_history_membership(&read, leaf.run())?;
         let table = read.open_table(SCOPES).map_err(error::redb)?;
         let roots = read.open_table(ROOT_SCOPES).map_err(error::redb)?;
@@ -1205,19 +938,6 @@ impl WorkspaceStore for RedbStore {
             let key = codec::pair(current.run().as_str(), current.scope().as_str())?;
             let bytes = table.get(key.as_slice()).map_err(error::redb)?;
             let Some(bytes) = bytes else {
-                let family = crate::trie::CatalogFamily::WorkspaceScope;
-                if crate::trie::verify_member(
-                    &read,
-                    family,
-                    workspace_scope_catalog_path(&current, &key)?,
-                    &key,
-                )?
-                .is_some()
-                {
-                    return Err(error::corruption(
-                        "workspace scope lineage catalog names a missing document",
-                    ));
-                }
                 return Err(PersistenceError::NotFound {
                     entity: "workspace_scope",
                     identity: format!("{}/{}", current.run(), current.scope()),
@@ -1232,18 +952,6 @@ impl WorkspaceStore for RedbStore {
             if scope.reference() != &current {
                 return Err(error::corruption(
                     "workspace-scope key does not match its document",
-                ));
-            }
-            let family = crate::trie::CatalogFamily::WorkspaceScope;
-            let witness = crate::trie::verify_member(
-                &read,
-                family,
-                workspace_scope_catalog_path(&current, &key)?,
-                &key,
-            )?;
-            if witness != Some(crate::trie::digest_payload(family, bytes.value())) {
-                return Err(error::corruption(
-                    "workspace scope disagrees with its authenticated catalog",
                 ));
             }
             let parent = scope.parent().cloned();

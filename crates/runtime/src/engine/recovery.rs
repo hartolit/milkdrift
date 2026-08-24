@@ -191,9 +191,9 @@ impl RuntimeService {
                             if let Some(previous_lease) = active_lease {
                                 // No executor start crossed the current lease boundary. Preserve the
                                 // immutable attempt/invocation and rotate only durable ownership.
-                                if plan.expected_lease_catalog.is_none() {
-                                    let (_usage, witness) = self.admission_usage()?;
-                                    plan.expected_lease_catalog = Some(witness);
+                                if plan.expected_lease_revision.is_none() {
+                                    let (_usage, revision) = self.admission_usage()?;
+                                    plan.expected_lease_revision = Some(revision);
                                 }
                                 plan.events.push(RunEventKind::NodeReLeased {
                                     previous_lease: previous_lease.lease().clone(),
@@ -862,7 +862,7 @@ impl RuntimeService {
             // The queried bound is the hard global limit. Reaching it is sufficient
             // to decline every new dispatch without projecting unrelated aggregates.
             usage.global = global_limit;
-            return Ok((usage, snapshot.witness));
+            return Ok((usage, snapshot.revision));
         }
 
         let mut projections = BTreeMap::new();
@@ -918,6 +918,6 @@ impl RuntimeService {
                 checked_increment(&mut usage.branches, (indexed.run.clone(), branch.clone()))?;
             }
         }
-        Ok((usage, snapshot.witness))
+        Ok((usage, snapshot.revision))
     }
 }

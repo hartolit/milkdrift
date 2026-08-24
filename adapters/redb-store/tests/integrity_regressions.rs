@@ -38,6 +38,12 @@ const REVISIONS_BY_DIGEST: TableDefinition<'static, &'static [u8], &'static [u8]
     TableDefinition::new("milkdrift.v1.revisions.by_digest_and_id");
 const RUN_HEADS: TableDefinition<'static, &'static str, u64> =
     TableDefinition::new("milkdrift.v1.runs.heads");
+const RUN_EVENTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
+    TableDefinition::new("milkdrift.v1.runs.events");
+const EVENT_HISTORY_DIGESTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
+    TableDefinition::new("milkdrift.v1.runs.event_history_digests");
+const RUN_HISTORY_HEADS: TableDefinition<'static, &'static str, &'static [u8]> =
+    TableDefinition::new("milkdrift.v2.runs.history_heads");
 const SNAPSHOT_LATEST: TableDefinition<'static, &'static str, &'static str> =
     TableDefinition::new("milkdrift.v1.snapshots.latest_by_run");
 
@@ -286,7 +292,7 @@ fn deleted_artifact_reference_rows_cannot_reopen_double_charging()
 }
 
 #[test]
-fn artifact_only_usage_requires_an_authenticated_workspace_domain()
+fn artifact_only_usage_requires_a_complete_workspace_domain()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = TempDir::new()?;
     let budget = WorkspaceBudget::new(0, 0, 0, 3, 64, 64)?;
@@ -640,5 +646,82 @@ fn snapshot_pointer_deletion_and_lowered_journal_head_are_corruption()
             assert_corruption(store.put_snapshot(&snapshot));
         }
     }
+    Ok(())
+}
+
+#[test]
+fn missing_history_chain_checkpoint_or_head_is_corruption()
+-> Result<(), Box<dyn std::error::Error>> {
+    for delete_checkpoint in [true, false] {
+        let directory = TempDir::new()?;
+        let request = start_request(if delete_checkpoint {
+            "run-missing-history-checkpoint"
+        } else {
+            "run-missing-history-head"
+        })?;
+        {
+            let store = RedbStore::open(directory.path())?;
+            store.commit_command(&request)?;
+        }
+
+        let database = Database::open(directory.path().join("milkdrift.redb"))?;
+        let write = database.begin_write()?;
+        if delete_checkpoint {
+            let mut checkpoints = write.open_table(EVENT_HISTORY_DIGESTS)?;
+            let key = checkpoints
+                .iter()?
+                .next()
+                .transpose()?
+                .ok_or("history checkpoint is absent")?
+                .0
+                .value()
+                .to_vec();
+            assert!(checkpoints.remove(key.as_slice())?.is_some());
+        } else {
+            let mut heads = write.open_table(RUN_HISTORY_HEADS)?;
+            assert!(heads.remove(request.receipt().run().as_str())?.is_some());
+        }
+        write.commit()?;
+        drop(database);
+
+        let store = RedbStore::open(directory.path())?;
+        assert_corruption(store.history_digest(
+            request.receipt().run(),
+            RunSequence::FIRST,
+        ));
+        assert!(exhaustive_integrity_failure_count(&store)? > 0);
+    }
+    Ok(())
+}
+
+#[test]
+fn missing_authoritative_event_is_corruption() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = TempDir::new()?;
+    let request = start_request("run-missing-event")?;
+    {
+        let store = RedbStore::open(directory.path())?;
+        store.commit_command(&request)?;
+    }
+
+    let database = Database::open(directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut events = write.open_table(RUN_EVENTS)?;
+        let key = events
+            .iter()?
+            .next()
+            .transpose()?
+            .ok_or("run event is absent")?
+            .0
+            .value()
+            .to_vec();
+        assert!(events.remove(key.as_slice())?.is_some());
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = RedbStore::open(directory.path())?;
+    assert_corruption(store.head(request.receipt().run()));
+    assert!(exhaustive_integrity_failure_count(&store)? > 0);
     Ok(())
 }

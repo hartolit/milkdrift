@@ -12,6 +12,12 @@ pub enum FaultPoint {
     AfterSchemaCommit,
     /// Immediately before committing a command transaction.
     BeforeCommandCommit,
+    /// Immediately before an event row is inserted into a command transaction.
+    BeforeEventInsert,
+    /// After an event row is inserted but before its chain/index/head state is complete.
+    AfterEventInsert,
+    /// After a history-chain link is updated but before the command transaction commits.
+    AfterHistoryChainUpdate,
     /// Immediately after redb has committed a command transaction.
     AfterCommandCommit,
     /// Immediately before committing an immutable revision transaction.
@@ -72,11 +78,11 @@ pub enum FaultPoint {
     AfterArtifactCleanupDelete,
     /// Before committing removal of a durably deleted path-inventory leaf.
     BeforeArtifactPathFinalizeCommit,
-    /// After removal of a durably deleted path-inventory leaf commits.
+    /// After removal of a durably deleted path-inventory record commits.
     AfterArtifactPathFinalizeCommit,
-    /// Before committing an authenticated delete guard ahead of filesystem unlink.
+    /// Before committing a durable delete guard ahead of filesystem unlink.
     BeforeArtifactPathDeleteIntentCommit,
-    /// After an authenticated delete guard commits and before filesystem unlink.
+    /// After a durable delete guard commits and before filesystem unlink.
     AfterArtifactPathDeleteIntentCommit,
 }
 

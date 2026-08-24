@@ -116,7 +116,7 @@ fn unpublished_internal_document_formats_are_refused_without_migration()
         Err(PersistenceError::UnsupportedVersion {
             document: "redb internal document envelope",
             found: 3,
-            supported: 4,
+            supported: 5,
         })
     ));
     Ok(())

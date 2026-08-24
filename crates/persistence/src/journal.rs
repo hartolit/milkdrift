@@ -448,7 +448,7 @@ pub enum IndexedRunState {
     Terminal,
 }
 
-/// Rebuildable summary/discovery index for one run.
+/// Derived, verifiable summary/discovery index for one run.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunSummaryIndex {
@@ -466,7 +466,7 @@ pub struct RunSummaryIndex {
     pub updated_at: TimestampMillis,
 }
 
-/// Rebuildable runnable-discovery record.
+/// Derived, verifiable runnable-discovery record.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunnableIndexEntry {
@@ -482,7 +482,7 @@ pub struct RunnableIndexEntry {
     pub through_sequence: RunSequence,
 }
 
-/// Stable runnable-discovery cursor based on the last authenticated run head.
+/// Stable runnable-discovery cursor based on the last validated stored run head.
 ///
 /// The eligibility boundary is bound into the continuation. A completed cycle
 /// therefore has one stable view of time even when the caller's boundary clock
@@ -527,7 +527,7 @@ pub struct RunnablePage {
     pub next: Option<RunnableCursor>,
 }
 
-/// Rebuildable timer-discovery record.
+/// Derived, verifiable timer-discovery record.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TimerIndexEntry {
@@ -541,7 +541,7 @@ pub struct TimerIndexEntry {
     pub through_sequence: RunSequence,
 }
 
-/// Rebuildable active-lease discovery record.
+/// Derived, verifiable active-lease discovery record.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LeaseIndexEntry {
@@ -559,17 +559,17 @@ pub struct LeaseIndexEntry {
     pub through_sequence: RunSequence,
 }
 
-/// One bounded active-lease catalog snapshot and its atomic-admission witness.
+/// One bounded active-lease snapshot and its atomic-admission revision.
 ///
-/// The witness is opaque to the runtime. Implementations must change it whenever
-/// any active-lease catalog row changes and compare an admission commit's expected
-/// witness inside the same transaction that grants the new lease.
+/// The revision is opaque to the runtime. Implementations must change it whenever
+/// any active-lease row changes and compare an admission commit's expected revision
+/// inside the same transaction that grants the new lease.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ActiveLeaseSnapshot {
     /// Active leases in stable expiry/identity order, bounded by the requested page size.
     pub entries: Vec<LeaseIndexEntry>,
-    /// Integrity-protected root of the complete active-lease catalog observed by this read.
-    pub witness: IntegrityDigest,
+    /// Revision of the complete active-lease set observed by this read.
+    pub revision: IntegrityDigest,
 }
 
 /// Upsert/remove mutation for runnable discoverability.
@@ -626,7 +626,7 @@ pub enum LeaseIndexMutation {
     },
 }
 
-/// Complete rebuildable index update coordinated with one journal append.
+/// Complete derived index update coordinated with one journal append.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunIndexUpdate {
@@ -641,7 +641,7 @@ pub struct RunIndexUpdate {
 }
 
 impl RunIndexUpdate {
-    /// Creates one immutable rebuildable-index transition.
+    /// Creates one immutable derived-index transition.
     #[must_use]
     pub fn new(
         summary: Option<RunSummaryIndex>,
@@ -712,16 +712,16 @@ pub struct AtomicRunCommitRequest {
     required_artifacts: Vec<ArtifactReference>,
     /// Required artifacts first admitted into this run's accounting domain by this commit.
     newly_referenced_artifacts: Vec<ArtifactReference>,
-    /// Exact active-lease catalog observed while admitting a new durable lease.
+    /// Exact active-lease revision observed while admitting a new durable lease.
     ///
     /// Present exactly when this commit contains a `LeaseGranted` or `NodeReLeased`
     /// fact. The adapter compares it atomically before the lease/index mutation so
     /// concurrent runtime services cannot both admit against the same pre-lease
     /// global usage.
-    expected_lease_catalog: Option<IntegrityDigest>,
+    expected_lease_revision: Option<IntegrityDigest>,
     /// Fully durable result returned on redelivery.
     result: CommandResultDocument,
-    /// Rebuildable discovery/index changes committed atomically.
+    /// Derived, verifiable discovery/index changes committed atomically.
     indexes: RunIndexUpdate,
 }
 
@@ -735,7 +735,7 @@ impl AtomicRunCommitRequest {
         workspace_accounting: Option<WorkspaceAccounting>,
         required_artifacts: Vec<ArtifactReference>,
         newly_referenced_artifacts: Vec<ArtifactReference>,
-        expected_lease_catalog: Option<IntegrityDigest>,
+        expected_lease_revision: Option<IntegrityDigest>,
         result: CommandResultDocument,
         indexes: RunIndexUpdate,
     ) -> Result<Self, PersistenceError> {
@@ -775,9 +775,9 @@ impl AtomicRunCommitRequest {
                 RunEventKind::LeaseGranted { .. } | RunEventKind::NodeReLeased { .. }
             )
         });
-        if grants_lease != expected_lease_catalog.is_some() {
+        if grants_lease != expected_lease_revision.is_some() {
             return Err(PersistenceError::InvalidDocument(
-                "expected_lease_catalog must be present exactly for a lease-creating commit"
+                "expected_lease_revision must be present exactly for a lease-creating commit"
                     .to_owned(),
             ));
         }
@@ -1037,7 +1037,7 @@ impl AtomicRunCommitRequest {
             workspace_accounting,
             required_artifacts,
             newly_referenced_artifacts,
-            expected_lease_catalog,
+            expected_lease_revision,
             result,
             indexes,
         })
@@ -1079,10 +1079,10 @@ impl AtomicRunCommitRequest {
         &self.newly_referenced_artifacts
     }
 
-    /// Active-lease catalog witness required for a lease-creating commit.
+    /// Active-lease revision required for a lease-creating commit.
     #[must_use]
-    pub const fn expected_lease_catalog(&self) -> Option<&IntegrityDigest> {
-        self.expected_lease_catalog.as_ref()
+    pub const fn expected_lease_revision(&self) -> Option<&IntegrityDigest> {
+        self.expected_lease_revision.as_ref()
     }
 
     /// Durable command result returned on redelivery.
@@ -1091,7 +1091,7 @@ impl AtomicRunCommitRequest {
         &self.result
     }
 
-    /// Rebuildable derived-index transition.
+    /// Derived, verifiable index transition.
     #[must_use]
     pub const fn indexes(&self) -> &RunIndexUpdate {
         &self.indexes
@@ -1398,7 +1398,7 @@ pub struct RunSummaryPageQuery {
 /// One immutable run-summary page.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunSummaryPage {
-    /// Rebuildable summaries.
+    /// Derived, verifiable summaries.
     pub runs: Vec<RunSummaryIndex>,
     /// Last-scanned resume point, absent when exhausted. `runs` may be empty
     /// while this cursor advances across a bounded range of nonmatching rows.
@@ -1442,7 +1442,7 @@ pub trait RunQueryStore: Send + Sync {
 
     /// Discovers eligible work with at most one deterministic candidate per run.
     ///
-    /// The page bound applies directly to authenticated per-run heads, so a run
+    /// The page bound applies directly to validated per-run heads, so a run
     /// with a saturated runnable set cannot hide another run behind its entries.
     /// Within one run the selected candidate is ordered by eligibility time
     /// ascending, priority descending only among equal eligibility timestamps,

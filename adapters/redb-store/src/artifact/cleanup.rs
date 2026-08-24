@@ -1,6 +1,6 @@
 use super::*;
 use super::{
-    accounting::validate_artifact_catalog,
+    accounting::validate_artifact_state,
     path::{
         ArtifactPathEntry, ArtifactPathKind, TempInventoryState, artifact_delete_guard_exists,
         artifact_path_entry, artifact_path_exists, decode_artifact_path_entry, publication_age_key,
@@ -8,8 +8,7 @@ use super::{
         remove_artifact_path, require_content_intent, sync_directory, temp_inventory_state,
     },
     publication::{
-        decode_publication, optional_publication_in_transaction, persist_publication_catalog,
-        publication_in_transaction, remove_publication_catalog,
+        decode_publication, optional_publication_in_transaction, publication_in_transaction,
     },
 };
 pub(crate) fn expire_writable_publications(
@@ -205,11 +204,8 @@ pub(crate) fn release_writable_publication(
     write: &redb::WriteTransaction,
     record: &PublicationRecord,
 ) -> Result<(), PersistenceError> {
-    validate_artifact_catalog(write)?;
+    validate_artifact_state(write)?;
     validate_writable_publication_indexes(write, record)?;
-    let previous_bytes = json::encode(record, "artifact publication")?;
-    let previous_payload =
-        trie::digest_payload(CatalogFamily::ArtifactPublication, &previous_bytes);
     {
         let publications = write
             .open_table(ARTIFACT_PUBLICATIONS)
@@ -232,7 +228,6 @@ pub(crate) fn release_writable_publication(
         .map_err(error::redb)?
         .insert(released.publication.as_str(), released_bytes.as_slice())
         .map_err(error::redb)?;
-    persist_publication_catalog(write, &released, Some(previous_payload))?;
     remove_publication_age_index(write, record)?;
     {
         let mut reservations = write
@@ -287,7 +282,7 @@ pub(crate) fn release_writable_publication(
         }
         let _removed = reservations.remove(key.as_slice()).map_err(error::redb)?;
     }
-    validate_artifact_catalog(write)?;
+    validate_artifact_state(write)?;
     Ok(())
 }
 
@@ -326,33 +321,34 @@ pub(crate) fn cleanup_temporary_files(
     }
     let after = decode_cleanup_path_cursor(after)?;
     let read = store.database().begin_read().map_err(error::redb)?;
-    trie::validate_roots(&read)?;
-    let page = trie::page(
-        &read,
-        CatalogFamily::ArtifactPath,
-        None,
-        after,
-        remaining.saturating_add(1),
-    )?;
+    let paths = read.open_table(ARTIFACT_PATHS).map_err(error::redb)?;
+    let temporary_start = [ArtifactPathKind::TempPending.ordered_tag()];
+    let temporary_end = [ArtifactPathKind::ContentIntent.ordered_tag()];
+    let lower = after.as_deref().map_or(
+        std::ops::Bound::Included(temporary_start.as_slice()),
+        std::ops::Bound::Excluded,
+    );
     let mut entries = Vec::new();
     let mut has_more = false;
-    for leaf in page.leaves {
-        let entry = decode_artifact_path_entry(&leaf)?;
-        if entry.kind == ArtifactPathKind::ContentIntent {
-            break;
-        }
+    let rows = paths
+        .range::<&[u8]>((lower, std::ops::Bound::Excluded(temporary_end.as_slice())))
+        .map_err(error::redb)?;
+    for row in rows {
+        let (key, value) = row.map_err(error::redb)?;
+        let entry = decode_artifact_path_entry(key.value(), value.value())?;
         if entries.len() == remaining {
             has_more = true;
             break;
         }
         entries.push(entry);
     }
+    drop(paths);
     drop(read);
     for entry in entries {
         *examined += 1;
         *last_cursor = Some(OrphanCleanupCursor::new(
             OrphanCleanupFamily::TemporaryFiles,
-            entry.path.to_vec(),
+            entry.storage_key.clone(),
             request.created_before,
         )?);
         if let Some(size) = cleanup_temporary_inventory_entry(store, &entry, request)? {
@@ -390,27 +386,22 @@ pub(crate) fn cleanup_content_files(
     if remaining == 0 {
         return Ok(true);
     }
-    let after = match decode_cleanup_path_cursor(after)? {
-        Some(after) => Some(after),
-        None => {
-            let mut before_content = [u8::MAX; 32];
-            before_content[0] = 0;
-            Some(before_content)
-        }
-    };
+    let after = decode_cleanup_path_cursor(after)?;
     let read = store.database().begin_read().map_err(error::redb)?;
-    trie::validate_roots(&read)?;
-    let page = trie::page(
-        &read,
-        CatalogFamily::ArtifactPath,
-        None,
-        after,
-        remaining.saturating_add(1),
-    )?;
+    let paths = read.open_table(ARTIFACT_PATHS).map_err(error::redb)?;
+    let content_start = [ArtifactPathKind::ContentIntent.ordered_tag()];
+    let lower = after.as_deref().map_or(
+        std::ops::Bound::Included(content_start.as_slice()),
+        std::ops::Bound::Excluded,
+    );
     let mut entries = Vec::new();
     let mut has_more = false;
-    for leaf in page.leaves {
-        let entry = decode_artifact_path_entry(&leaf)?;
+    let rows = paths
+        .range::<&[u8]>((lower, std::ops::Bound::Unbounded))
+        .map_err(error::redb)?;
+    for row in rows {
+        let (key, value) = row.map_err(error::redb)?;
+        let entry = decode_artifact_path_entry(key.value(), value.value())?;
         if entry.kind != ArtifactPathKind::ContentIntent {
             return Err(error::corruption(
                 "artifact content cleanup encountered an out-of-phase path entry",
@@ -422,12 +413,13 @@ pub(crate) fn cleanup_content_files(
         }
         entries.push(entry);
     }
+    drop(paths);
     drop(read);
     for entry in entries {
         *examined += 1;
         *last_cursor = Some(OrphanCleanupCursor::new(
             OrphanCleanupFamily::ContentFiles,
-            entry.path.to_vec(),
+            entry.storage_key.clone(),
             request.created_before,
         )?);
         if let Some(size) = cleanup_content_inventory_entry(store, &entry, request)? {
@@ -440,14 +432,16 @@ pub(crate) fn cleanup_content_files(
 
 pub(crate) fn decode_cleanup_path_cursor(
     after: Option<&[u8]>,
-) -> Result<Option<[u8; 32]>, PersistenceError> {
+) -> Result<Option<Vec<u8>>, PersistenceError> {
     after
         .map(|bytes| {
-            bytes.try_into().map_err(|_| {
-                PersistenceError::InvalidCursor(
-                    "artifact cleanup cursor does not contain an authenticated path".to_owned(),
-                )
-            })
+            if bytes.is_empty() || bytes[0] > ArtifactPathKind::ContentIntent.ordered_tag() {
+                return Err(PersistenceError::InvalidCursor(
+                    "artifact cleanup cursor does not contain a valid path-inventory key"
+                        .to_owned(),
+                ));
+            }
+            Ok(bytes.to_vec())
         })
         .transpose()
 }
@@ -466,10 +460,10 @@ pub(crate) fn cleanup_temporary_inventory_entry(
         ));
     }
     let write = store.database().begin_write().map_err(error::redb)?;
-    validate_artifact_catalog(&write)?;
+    validate_artifact_state(&write)?;
     if !artifact_path_exists(&write, entry)? {
         return Err(error::corruption(
-            "artifact cleanup path disappeared after authenticated enumeration",
+            "artifact cleanup path disappeared after bounded enumeration",
         ));
     }
     let record = optional_publication_in_transaction(&write, &entry.publication)?;
@@ -549,7 +543,7 @@ pub(crate) fn cleanup_temporary_inventory_entry(
     let path = store.temp_root.join(&entry.identity);
     let removed = remove_cleanup_file_if_present(store, &path, &store.temp_root)?;
     let finalize = store.database().begin_write().map_err(error::redb)?;
-    validate_artifact_catalog(&finalize)?;
+    validate_artifact_state(&finalize)?;
     if !artifact_delete_guard_exists(&finalize, entry.kind, &entry.identity)?
         || !artifact_path_exists(&finalize, entry)?
     {
@@ -593,10 +587,10 @@ pub(crate) fn cleanup_content_inventory_entry(
         ))
     })?;
     let write = store.database().begin_write().map_err(error::redb)?;
-    validate_artifact_catalog(&write)?;
+    validate_artifact_state(&write)?;
     if !artifact_path_exists(&write, entry)? {
         return Err(error::corruption(
-            "artifact content path disappeared after authenticated enumeration",
+            "artifact content path disappeared after bounded enumeration",
         ));
     }
     match optional_publication_in_transaction(&write, &entry.publication)? {
@@ -687,7 +681,7 @@ pub(crate) fn cleanup_content_inventory_entry(
         remove_cleanup_file_if_present(store, &path, parent)?
     };
     let finalize = store.database().begin_write().map_err(error::redb)?;
-    validate_artifact_catalog(&finalize)?;
+    validate_artifact_state(&finalize)?;
     if !artifact_delete_guard_exists(&finalize, entry.kind, &entry.identity)?
         || !artifact_path_exists(&finalize, entry)?
     {
@@ -747,7 +741,7 @@ pub(crate) fn remove_released_publication_if_uninventoried(
     }
     drop(removed);
     drop(publications);
-    remove_publication_catalog(write, &record)
+    Ok(())
 }
 
 pub(crate) fn digest_has_metadata_or_references(
@@ -815,7 +809,7 @@ pub(crate) fn finalize_released_publication_paths(
     fault_boundary: Option<(FaultPoint, FaultPoint)>,
 ) -> Result<FinalizedPathBytes, PersistenceError> {
     let prepare = store.database().begin_write().map_err(error::redb)?;
-    validate_artifact_catalog(&prepare)?;
+    validate_artifact_state(&prepare)?;
     let current = optional_publication_in_transaction(&prepare, &record.publication)?;
     match current.as_ref().map(|stored| &stored.state) {
         Some(PublicationState::Committed { .. })
@@ -901,7 +895,7 @@ pub(crate) fn finalize_released_publication_paths(
     }
 
     let finalize = store.database().begin_write().map_err(error::redb)?;
-    validate_artifact_catalog(&finalize)?;
+    validate_artifact_state(&finalize)?;
     let reloaded = optional_publication_in_transaction(&finalize, &record.publication)?;
     if reloaded != current {
         return Err(error::corruption(

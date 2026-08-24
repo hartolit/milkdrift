@@ -1263,7 +1263,7 @@ fn durable_workspace_rejects_scope_lineages_beyond_the_contract_bound()
         request.workspace_accounting().cloned(),
         request.required_artifacts().to_vec(),
         request.newly_referenced_artifacts().to_vec(),
-        request.expected_lease_catalog().cloned(),
+        request.expected_lease_revision().cloned(),
         request.result().clone(),
         request.indexes().clone(),
     );

@@ -23,7 +23,7 @@ pub(crate) fn integrity_cursor_state(
         || cursor.after_key()[0] != INTEGRITY_CURSOR_VERSION
     {
         return Err(PersistenceError::InvalidCursor(
-            "integrity cursor has an invalid authenticated-anchor prefix".to_owned(),
+            "integrity cursor has an invalid schema-anchor prefix".to_owned(),
         ));
     }
     let mut anchor = [0_u8; 32];
@@ -35,7 +35,7 @@ pub(crate) fn integrity_cursor_anchor(
     cursor: Option<&IntegrityScanCursor>,
 ) -> Result<[u8; 32], PersistenceError> {
     let cursor = cursor
-        .ok_or_else(|| error::corruption("integrity scan lost its authenticated root anchor"))?;
+        .ok_or_else(|| error::corruption("integrity scan lost its schema anchor"))?;
     integrity_cursor_state(cursor).map(|(anchor, _)| anchor)
 }
 
@@ -62,7 +62,7 @@ pub(crate) fn scan_index_sample(
     };
     let mut last_cursor = None;
     let mut more_remaining = false;
-    let anchor = crate::trie::root_anchor(&read)?;
+    let anchor = storage_anchor(&read)?;
     scan_index_integrity(
         &read,
         None,
@@ -198,59 +198,6 @@ pub(crate) fn make_index_cursor(
         verify_artifact_content,
         integrity_cursor_anchor(prior)?,
     )
-}
-
-pub(crate) fn make_authenticated_catalog_cursor(
-    family: Option<crate::trie::CatalogFamily>,
-    path: Option<[u8; 32]>,
-    verify_artifact_content: bool,
-    anchor: [u8; 32],
-) -> Result<IntegrityScanCursor, PersistenceError> {
-    let mut opaque = Vec::with_capacity(33);
-    opaque.push(family.map_or(0, crate::trie::CatalogFamily::id));
-    if let Some(path) = path {
-        opaque.extend_from_slice(&path);
-    }
-    make_integrity_cursor(
-        IntegrityScanFamily::AuthenticatedCatalogs,
-        &opaque,
-        verify_artifact_content,
-        anchor,
-    )
-}
-
-pub(crate) fn authenticated_catalog_cursor_position(
-    cursor: Option<&IntegrityScanCursor>,
-) -> Result<(Option<crate::trie::CatalogFamily>, Option<[u8; 32]>), PersistenceError> {
-    let Some(cursor) = cursor else {
-        return Ok((None, None));
-    };
-    let (_, state) = integrity_cursor_state(cursor)?;
-    let Some((&family_id, path)) = state.split_first() else {
-        return Err(PersistenceError::InvalidCursor(
-            "authenticated-catalog cursor has no family".to_owned(),
-        ));
-    };
-    if family_id == 0 {
-        return if path.is_empty() {
-            Ok((None, None))
-        } else {
-            Err(PersistenceError::InvalidCursor(
-                "authenticated-catalog start cursor has trailing bytes".to_owned(),
-            ))
-        };
-    }
-    let family = crate::trie::CatalogFamily::from_id(family_id).ok_or_else(|| {
-        PersistenceError::InvalidCursor(
-            "authenticated-catalog cursor names an unknown family".to_owned(),
-        )
-    })?;
-    let path: [u8; 32] = path.try_into().map_err(|_| {
-        PersistenceError::InvalidCursor(
-            "authenticated-catalog cursor path must contain exactly 32 bytes".to_owned(),
-        )
-    })?;
-    Ok((Some(family), Some(path)))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -534,9 +481,9 @@ pub(crate) fn validate_integrity_cursor(
         ));
     }
     let (cursor_anchor, cursor_key) = integrity_cursor_state(cursor)?;
-    if cursor_anchor != crate::trie::root_anchor(read)? {
+    if cursor_anchor != storage_anchor(read)? {
         return Err(PersistenceError::InvalidCursor(
-            "integrity cursor belongs to a different authenticated storage root".to_owned(),
+            "integrity cursor belongs to a different storage schema".to_owned(),
         ));
     }
     let exists = match cursor.family() {
@@ -550,16 +497,6 @@ pub(crate) fn validate_integrity_cursor(
             .map_err(error::redb)?
             .is_some(),
         IntegrityScanFamily::Indexes => index_integrity_cursor_exists(read, cursor)?,
-        IntegrityScanFamily::AuthenticatedCatalogs => {
-            let (family, path) = authenticated_catalog_cursor_position(Some(cursor))?;
-            match (family, path) {
-                (None, None) => true,
-                (Some(family), Some(path)) => {
-                    crate::trie::leaf_at_path(read, family, path)?.is_some()
-                }
-                _ => false,
-            }
-        }
     };
     if !exists {
         return Err(PersistenceError::InvalidCursor(
@@ -567,6 +504,21 @@ pub(crate) fn validate_integrity_cursor(
         ));
     }
     Ok(())
+}
+
+pub(crate) fn storage_anchor(
+    read: &redb::ReadTransaction,
+) -> Result<[u8; 32], PersistenceError> {
+    let metadata = read.open_table(METADATA).map_err(error::redb)?;
+    let schema = metadata
+        .get(SCHEMA_VERSION_KEY)
+        .map_err(error::redb)?
+        .ok_or_else(|| error::corruption("storage schema version is missing"))?
+        .value();
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"milkdrift.integrity-cursor.schema.v2\0");
+    hasher.update(&schema.to_be_bytes());
+    Ok(*hasher.finalize().as_bytes())
 }
 
 pub(crate) fn index_integrity_cursor_exists(

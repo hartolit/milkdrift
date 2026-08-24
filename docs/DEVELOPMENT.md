@@ -27,7 +27,7 @@ tests should be grouped by behavior with shared support kept separate.
 ## Storage-boundary stress tests
 
 The ordinary workspace test suite excludes tests whose fixture intentionally crosses a
-large persistence bound and therefore performs thousands of authenticated redb index
+large persistence bound and therefore performs thousands of durable redb index
 mutations. The manual and weekly `stress` workflow retains this end-to-end evidence. Run
 it locally in release mode rather than making every local and pull-request test pay its
 cost:

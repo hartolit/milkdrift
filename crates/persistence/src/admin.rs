@@ -1,7 +1,7 @@
 use crate::{BoundedDetail, PageSize, PersistenceError, TimestampMillis};
 
 /// Current physical persistence schema expected by adapters.
-pub const STORAGE_SCHEMA_VERSION_V1: u32 = 1;
+pub const CURRENT_STORAGE_SCHEMA_VERSION: u32 = 2;
 /// Maximum opaque key bytes retained by one resumable integrity-scan cursor.
 pub const MAX_INTEGRITY_SCAN_CURSOR_KEY_BYTES: usize = 512;
 
@@ -68,21 +68,18 @@ pub struct StorageHealth {
 /// Closed durable-record family traversed by an integrity scan.
 ///
 /// The ordering is part of the cursor contract: revisions precede run events,
-/// which precede artifact metadata/content, derived-index consistency, and finally
-/// the authenticated catalogs that prove physical membership and absence.
+/// which precede artifact metadata/content and derived-index consistency.
 /// Adapter-specific table identities do not cross this boundary.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum IntegrityScanFamily {
     /// Immutable workflow revision documents.
     Revisions,
-    /// Append-only run-event envelopes and their integrity indexes.
+    /// Append-only run-event envelopes and cumulative history-chain records.
     RunEvents,
     /// Artifact metadata and, when requested, content bytes.
     Artifacts,
-    /// Authoritative run heads and rebuildable discovery/accounting indexes.
+    /// Authoritative run heads and derived, verifiable discovery/accounting indexes.
     Indexes,
-    /// Root-bound authenticated membership catalogs and their physical documents.
-    AuthenticatedCatalogs,
 }
 
 /// Stable exclusive resume point for one bounded integrity scan.
@@ -163,15 +160,15 @@ pub struct IntegrityScanResult {
 
 /// Narrow lifecycle/schema/health port for a durable adapter.
 pub trait StorageAdmin: Send + Sync {
-    /// Returns physical schema compatibility. A future version must not be opened as v1.
+    /// Returns physical schema compatibility. Older and future formats are refused.
     fn schema_info(&self) -> Result<StorageSchemaInfo, PersistenceError>;
 
     /// Returns bounded health information without mutating/repairing durable history.
     fn health(&self, observed_at: TimestampMillis) -> Result<StorageHealth, PersistenceError>;
 
     /// Performs one bounded page of an explicit, read-only administrative scrub.
-    /// The returned cursor resumes the same authenticated root, family, and
-    /// artifact-content verification mode; callers decide whether to continue.
+    /// The returned cursor resumes the same family and artifact-content verification
+    /// mode; callers decide whether to continue.
     fn scan_integrity(
         &self,
         request: IntegrityScanRequest,

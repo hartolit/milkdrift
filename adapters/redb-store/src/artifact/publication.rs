@@ -1,7 +1,7 @@
 use super::*;
 use super::{
     accounting::{
-        commit_artifact_metadata, usage_covers, validate_artifact_catalog,
+        commit_artifact_metadata, usage_covers, validate_artifact_state,
         validated_run_artifact_reference_in_transaction,
     },
     cleanup::{
@@ -37,7 +37,7 @@ impl ArtifactStore for RedbStore {
         let temp_name = publication_temp_name(&request.publication);
         let temp_path = self.temp_root.join(&temp_name);
         let write = self.database().begin_write().map_err(error::redb)?;
-        let artifact_accounting = validate_artifact_catalog(&write)?;
+        let artifact_accounting = validate_artifact_state(&write)?;
         if artifact_accounting.committed_content_bytes > self.max_total_artifact_bytes {
             return Err(PersistenceError::Storage {
                 class: StorageFailureClass::ResourceExhausted,
@@ -196,9 +196,8 @@ impl ArtifactStore for RedbStore {
                     .insert(request.publication.as_str(), bytes.as_slice())
                     .map_err(error::redb)?;
             }
-            persist_publication_catalog(&write, &record, None)?;
             let pending = artifact_path_entry(&record, ArtifactPathKind::TempPending)?;
-            put_artifact_path(&write, &pending, None)?;
+            put_artifact_path(&write, &pending)?;
             {
                 let age_key = publication_age_key(created_at_millis, &request.publication)?;
                 let mut by_age = write
@@ -243,7 +242,7 @@ impl ArtifactStore for RedbStore {
                     .insert(key.as_slice(), 1)
                     .map_err(error::redb)?;
             }
-            validate_artifact_catalog(&write)?;
+            validate_artifact_state(&write)?;
             self.faults.check(FaultPoint::BeforeArtifactBeginCommit)?;
             write.commit().map_err(error::redb)
         })();
@@ -274,7 +273,7 @@ impl ArtifactStore for RedbStore {
         // A write transaction provides bounded in-process serialization without
         // leaking a lock or transaction through the public port.
         let write = self.database().begin_write().map_err(error::redb)?;
-        validate_artifact_catalog(&write)?;
+        validate_artifact_state(&write)?;
         let record = publication_in_transaction(&write, publication)?;
         if !matches!(record.state, PublicationState::Writable) {
             return Err(PersistenceError::ImmutableConflict {
@@ -344,7 +343,7 @@ impl ArtifactStore for RedbStore {
     ) -> Result<CommitArtifactOutcome, PersistenceError> {
         let _serialization = self.lock_artifact_publications()?;
         let write = self.database().begin_write().map_err(error::redb)?;
-        let artifact_accounting = validate_artifact_catalog(&write)?;
+        let artifact_accounting = validate_artifact_state(&write)?;
         if artifact_accounting.committed_content_bytes > self.max_total_artifact_bytes {
             return Err(PersistenceError::Storage {
                 class: StorageFailureClass::ResourceExhausted,
@@ -426,7 +425,7 @@ impl ArtifactStore for RedbStore {
         }
         if !content_intent_preexisted {
             let intent = artifact_path_entry(&record, ArtifactPathKind::ContentIntent)?;
-            put_artifact_path(&write, &intent, None)?;
+            put_artifact_path(&write, &intent)?;
             self.faults
                 .check(FaultPoint::BeforeArtifactContentIntentCommit)?;
             write.commit().map_err(error::redb)?;
@@ -446,15 +445,15 @@ impl ArtifactStore for RedbStore {
             sync_directory(&self.artifact_root)?;
         }
 
-        let digest_was_cataloged = {
+        let digest_was_known = {
             let read = self.database().begin_write().map_err(error::redb)?;
-            let cataloged = validated_artifact_digest_in_transaction(
+            let known = validated_artifact_digest_in_transaction(
                 &read,
                 record.metadata.reference().digest(),
                 record.metadata.reference().size_bytes(),
             )?;
             require_content_intent(&read, &record)?;
-            cataloged
+            known
         };
         let content_deduplicated = if final_path.exists() {
             if temp_path.exists() {
@@ -469,7 +468,7 @@ impl ArtifactStore for RedbStore {
                 record.metadata.reference(),
                 self.max_artifact_bytes,
             )?;
-            digest_was_cataloged
+            digest_was_known
         } else {
             verify_blob(
                 &temp_path,
@@ -546,7 +545,7 @@ impl ArtifactStore for RedbStore {
     ) -> Result<(), PersistenceError> {
         let _serialization = self.lock_artifact_publications()?;
         let write = self.database().begin_write().map_err(error::redb)?;
-        validate_artifact_catalog(&write)?;
+        validate_artifact_state(&write)?;
         let Some(record) = optional_publication_in_transaction(&write, publication)? else {
             drop(write);
             return Ok(());
@@ -859,43 +858,23 @@ pub(crate) fn optional_publication_in_transaction(
     write: &redb::WriteTransaction,
     publication: &ArtifactPublicationId,
 ) -> Result<Option<PublicationRecord>, PersistenceError> {
-    validate_artifact_catalog(write)?;
+    validate_artifact_state(write)?;
     let table = write
         .open_table(ARTIFACT_PUBLICATIONS)
         .map_err(error::redb)?;
-    let stored = table
+    let Some(stored) = table
         .get(publication.as_str())
         .map_err(error::redb)?
-        .map(|bytes| bytes.value().to_vec());
-    drop(table);
-    let family = CatalogFamily::ArtifactPublication;
-    let logical_key = publication.as_str().as_bytes();
-    let witness = trie::verify_member_in_transaction(
-        write,
-        family,
-        trie::hashed_path(family, logical_key),
-        logical_key,
-    )?;
-    match (stored, witness) {
-        (None, None) => Ok(None),
-        (Some(bytes), Some(witness)) => {
-            if witness != trie::digest_payload(family, &bytes) {
-                return Err(error::corruption(
-                    "artifact publication disagrees with its authenticated catalog",
-                ));
-            }
-            let record = decode_publication(&bytes)?;
-            if record.publication != *publication {
-                return Err(error::corruption(
-                    "artifact-publication key does not match its document",
-                ));
-            }
-            Ok(Some(record))
-        }
-        _ => Err(error::corruption(
-            "artifact publication and authenticated catalog are incomplete",
-        )),
+    else {
+        return Ok(None);
+    };
+    let record = decode_publication(stored.value())?;
+    if record.publication != *publication {
+        return Err(error::corruption(
+            "artifact-publication key does not match its document",
+        ));
     }
+    Ok(Some(record))
 }
 
 pub(crate) fn metadata_in_transaction(
@@ -909,7 +888,7 @@ pub(crate) fn validated_artifact_metadata_in_transaction(
     write: &redb::WriteTransaction,
     artifact: &ArtifactId,
 ) -> Result<Option<ArtifactMetadata>, PersistenceError> {
-    validate_artifact_catalog(write)?;
+    validate_artifact_state(write)?;
     let metadata = write.open_table(ARTIFACT_METADATA).map_err(error::redb)?;
     let stored = metadata
         .get(artifact.as_str())
@@ -937,22 +916,8 @@ pub(crate) fn validated_artifact_metadata_in_transaction(
             "artifact metadata disagrees with its authoritative manifest",
         ));
     }
-    let family = CatalogFamily::Artifact;
-    let logical_key = artifact.as_str().as_bytes();
-    let witness = trie::verify_member_in_transaction(
-        write,
-        family,
-        trie::hashed_path(family, logical_key),
-        logical_key,
-    )?;
     let Some(stored) = stored else {
-        return if witness.is_none() {
-            Ok(None)
-        } else {
-            Err(error::corruption(
-                "authenticated artifact is missing its metadata and manifest",
-            ))
-        };
+        return Ok(None);
     };
     let digest = stored.reference().digest().to_hex();
     let digest_key = codec::pair(&digest, artifact.as_str())?;
@@ -967,120 +932,7 @@ pub(crate) fn validated_artifact_metadata_in_transaction(
             "artifact digest index disagrees with authoritative metadata",
         ));
     }
-    let expected = artifact_catalog_payload(&stored)?;
-    if witness != Some(expected) {
-        return Err(error::corruption(
-            "artifact metadata disagrees with its authenticated catalog",
-        ));
-    }
     Ok(Some(stored))
-}
-
-pub(crate) fn artifact_catalog_payload(
-    metadata: &ArtifactMetadata,
-) -> Result<[u8; 32], PersistenceError> {
-    let bytes = json::encode(metadata, "artifact metadata")?;
-    Ok(trie::digest_payload(CatalogFamily::Artifact, &bytes))
-}
-
-fn artifact_digest_catalog_logical_key(digest: ContentDigest) -> Vec<u8> {
-    let mut key = b"\0content-digest\0".to_vec();
-    key.extend_from_slice(digest.to_hex().as_bytes());
-    key
-}
-
-pub(crate) fn validate_artifact_catalog_leaf(
-    read: &redb::ReadTransaction,
-    leaf: &trie::TrieLeaf,
-) -> Result<(), PersistenceError> {
-    let family = CatalogFamily::Artifact;
-    if leaf.path != trie::hashed_path(family, &leaf.logical_key) {
-        return Err(error::corruption(
-            "artifact catalog path disagrees with its logical identity",
-        ));
-    }
-    if let Some(digest_hex) = leaf.logical_key.strip_prefix(b"\0content-digest\0") {
-        let digest_hex = std::str::from_utf8(digest_hex)
-            .map_err(|_| error::corruption("artifact content catalog digest is not UTF-8"))?;
-        let digest = ContentDigest::from_hex(digest_hex).map_err(|cause| {
-            error::corruption(format!(
-                "artifact content catalog digest is invalid: {cause}"
-            ))
-        })?;
-        let prefix = codec::component(digest_hex)?;
-        let end = codec::prefix_end(prefix.clone())
-            .ok_or_else(|| error::corruption("artifact digest prefix has no range end"))?;
-        let by_digest = read.open_table(ARTIFACTS_BY_DIGEST).map_err(error::redb)?;
-        let indexed = by_digest
-            .range(prefix.as_slice()..end.as_slice())
-            .map_err(error::redb)?
-            .next()
-            .transpose()
-            .map_err(error::redb)?
-            .ok_or_else(|| {
-                error::corruption("authenticated artifact content has no digest-index row")
-            })?;
-        let metadata: ArtifactMetadata = json::decode(indexed.1.value(), "artifact metadata")?;
-        if metadata.reference().digest() != digest
-            || leaf.payload_digest
-                != artifact_digest_catalog_payload(digest, metadata.reference().size_bytes())?
-        {
-            return Err(error::corruption(
-                "authenticated artifact content disagrees with its digest index",
-            ));
-        }
-        return Ok(());
-    }
-
-    let artifact_text = std::str::from_utf8(&leaf.logical_key)
-        .map_err(|_| error::corruption("artifact catalog identity is not UTF-8"))?;
-    let artifact = ArtifactId::new(artifact_text).map_err(|cause| {
-        error::corruption(format!("artifact catalog identity is invalid: {cause}"))
-    })?;
-    let metadata = read
-        .open_table(ARTIFACT_METADATA)
-        .map_err(error::redb)?
-        .get(artifact.as_str())
-        .map_err(error::redb)?
-        .map(|bytes| json::decode::<ArtifactMetadata>(bytes.value(), "artifact metadata"))
-        .transpose()?
-        .ok_or_else(|| error::corruption("authenticated artifact has no metadata row"))?;
-    let manifest = read
-        .open_table(ARTIFACT_MANIFEST)
-        .map_err(error::redb)?
-        .get(artifact.as_str())
-        .map_err(error::redb)?
-        .map(|bytes| json::decode::<ArtifactMetadata>(bytes.value(), "artifact manifest"))
-        .transpose()?
-        .ok_or_else(|| error::corruption("authenticated artifact has no manifest row"))?;
-    let digest_key = codec::pair(&metadata.reference().digest().to_hex(), artifact.as_str())?;
-    let indexed = read
-        .open_table(ARTIFACTS_BY_DIGEST)
-        .map_err(error::redb)?
-        .get(digest_key.as_slice())
-        .map_err(error::redb)?
-        .map(|bytes| json::decode::<ArtifactMetadata>(bytes.value(), "artifact metadata"))
-        .transpose()?
-        .ok_or_else(|| error::corruption("authenticated artifact has no digest-index row"))?;
-    if metadata != manifest
-        || metadata != indexed
-        || metadata.reference().artifact() != &artifact
-        || leaf.payload_digest != artifact_catalog_payload(&metadata)?
-    {
-        return Err(error::corruption(
-            "authenticated artifact catalog rows disagree",
-        ));
-    }
-    Ok(())
-}
-
-fn artifact_digest_catalog_payload(
-    digest: ContentDigest,
-    size_bytes: u64,
-) -> Result<[u8; 32], PersistenceError> {
-    let size = size_bytes.to_string();
-    let bytes = codec::components(&[&digest.to_hex(), &size])?;
-    Ok(trie::digest_payload(CatalogFamily::Artifact, &bytes))
 }
 
 pub(crate) fn validated_artifact_digest_in_transaction(
@@ -1088,117 +940,28 @@ pub(crate) fn validated_artifact_digest_in_transaction(
     digest: ContentDigest,
     size_bytes: u64,
 ) -> Result<bool, PersistenceError> {
-    let family = CatalogFamily::Artifact;
-    let logical_key = artifact_digest_catalog_logical_key(digest);
-    let witness = trie::verify_member_in_transaction(
-        write,
-        family,
-        trie::hashed_path(family, &logical_key),
-        &logical_key,
-    )?;
     let digest_hex = digest.to_hex();
     let prefix = codec::component(&digest_hex)?;
     let end = codec::prefix_end(prefix.clone())
         .ok_or_else(|| error::corruption("artifact digest prefix has no range end"))?;
     let by_digest = write.open_table(ARTIFACTS_BY_DIGEST).map_err(error::redb)?;
-    let indexed = by_digest
+    let mut rows = by_digest
         .range(prefix.as_slice()..end.as_slice())
-        .map_err(error::redb)?
-        .next()
-        .transpose()
-        .map_err(error::redb)?
-        .map(|(_, bytes)| json::decode::<ArtifactMetadata>(bytes.value(), "artifact metadata"))
-        .transpose()?;
-    let expected = artifact_digest_catalog_payload(digest, size_bytes)?;
-    match (indexed, witness) {
-        (None, None) => Ok(false),
-        (Some(metadata), Some(authenticated))
-            if metadata.reference().digest() == digest
-                && metadata.reference().size_bytes() == size_bytes
-                && authenticated == expected =>
-        {
-            Ok(true)
-        }
-        (Some(_), Some(_)) => Err(error::corruption(
-            "artifact digest index disagrees with its authenticated content membership",
-        )),
-        (None, Some(_)) => Err(error::corruption(
-            "authenticated artifact content is missing from its digest index",
-        )),
-        (Some(_), None) => Err(error::corruption(
-            "artifact digest index is absent from its authenticated content catalog",
-        )),
-    }
-}
-
-pub(crate) fn persist_artifact_digest_catalog(
-    write: &redb::WriteTransaction,
-    digest: ContentDigest,
-    size_bytes: u64,
-    previously_known: bool,
-) -> Result<(), PersistenceError> {
-    let family = CatalogFamily::Artifact;
-    let logical_key = artifact_digest_catalog_logical_key(digest);
-    let expected = artifact_digest_catalog_payload(digest, size_bytes)?;
-    let replaced = trie::put(
-        write,
-        family,
-        trie::hashed_path(family, &logical_key),
-        &logical_key,
-        expected,
-    )?;
-    match (previously_known, replaced) {
-        (false, None) => Ok(()),
-        (true, Some(previous)) if previous == expected => Ok(()),
-        _ => Err(error::corruption(
-            "artifact content membership changed outside its authoritative transaction",
-        )),
-    }
-}
-
-pub(crate) fn publication_catalog_path(publication: &ArtifactPublicationId) -> [u8; 32] {
-    let family = CatalogFamily::ArtifactPublication;
-    trie::hashed_path(family, publication.as_str().as_bytes())
-}
-
-pub(crate) fn persist_publication_catalog(
-    write: &redb::WriteTransaction,
-    record: &PublicationRecord,
-    previous: Option<[u8; 32]>,
-) -> Result<(), PersistenceError> {
-    let family = CatalogFamily::ArtifactPublication;
-    let bytes = json::encode(record, "artifact publication")?;
-    let replaced = trie::put(
-        write,
-        family,
-        publication_catalog_path(&record.publication),
-        record.publication.as_str().as_bytes(),
-        trie::digest_payload(family, &bytes),
-    )?;
-    if replaced != previous {
+        .map_err(error::redb)?;
+    let Some(row) = rows.next().transpose().map_err(error::redb)? else {
+        return Ok(false);
+    };
+    let (key, bytes) = row;
+    let components = codec::decode_components(key.value(), 2)?;
+    let metadata: ArtifactMetadata = json::decode(bytes.value(), "artifact metadata")?;
+    if components[0] != digest_hex
+        || components[1] != metadata.reference().artifact().as_str()
+        || metadata.reference().digest() != digest
+        || metadata.reference().size_bytes() != size_bytes
+    {
         return Err(error::corruption(
-            "artifact publication changed outside its authoritative transaction",
+            "artifact digest index key or document is inconsistent",
         ));
     }
-    Ok(())
-}
-
-pub(crate) fn remove_publication_catalog(
-    write: &redb::WriteTransaction,
-    record: &PublicationRecord,
-) -> Result<(), PersistenceError> {
-    let family = CatalogFamily::ArtifactPublication;
-    let bytes = json::encode(record, "artifact publication")?;
-    let removed = trie::remove(
-        write,
-        family,
-        publication_catalog_path(&record.publication),
-        record.publication.as_str().as_bytes(),
-    )?;
-    if removed != Some(trie::digest_payload(family, &bytes)) {
-        return Err(error::corruption(
-            "artifact publication catalog is incomplete during removal",
-        ));
-    }
-    Ok(())
+    Ok(true)
 }

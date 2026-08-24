@@ -223,8 +223,8 @@ pub struct RuntimeHealth {
 
 /// Synchronous durable runtime.  It starts no background work and owns no mutable
 /// execution truth outside the injected store. One instance serializes scheduler and
-/// recovery admission; multiple instances use the store's opaque active-lease catalog
-/// witness so each lease grant atomically conflicts when another instance changed the
+/// recovery admission; multiple instances use the store's opaque active-lease-set
+/// revision so each lease grant atomically conflicts when another instance changed the
 /// global admission snapshot.
 pub struct RuntimeService {
     store: Arc<dyn RuntimeStore>,
