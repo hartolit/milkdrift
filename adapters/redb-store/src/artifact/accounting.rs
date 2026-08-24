@@ -92,7 +92,9 @@ pub(crate) fn manifested_run_artifact_reference(
 ) -> Result<bool, PersistenceError> {
     let digest = reference.digest().to_hex();
     let key = codec::components(&[run.as_str(), &digest, reference.artifact().as_str()])?;
-    let ownership = write.open_table(RUN_ARTIFACT_OWNERSHIP).map_err(error::redb)?;
+    let ownership = write
+        .open_table(RUN_ARTIFACT_OWNERSHIP)
+        .map_err(error::redb)?;
     let Some(bytes) = ownership.get(key.as_slice()).map_err(error::redb)? else {
         return Ok(false);
     };
@@ -133,10 +135,11 @@ pub(crate) fn persist_run_artifact_ownership(
     let digest = reference.digest().to_hex();
     let key = codec::components(&[run.as_str(), &digest, reference.artifact().as_str()])?;
     let bytes = json::encode(reference, "run artifact ownership")?;
-    let mut table = write.open_table(RUN_ARTIFACT_OWNERSHIP).map_err(error::redb)?;
+    let mut table = write
+        .open_table(RUN_ARTIFACT_OWNERSHIP)
+        .map_err(error::redb)?;
     if let Some(previous) = table.get(key.as_slice()).map_err(error::redb)? {
-        let previous: ArtifactReference =
-            json::decode(previous.value(), "run artifact ownership")?;
+        let previous: ArtifactReference = json::decode(previous.value(), "run artifact ownership")?;
         if previous != *reference {
             return Err(error::corruption(
                 "existing run artifact ownership disagrees with its identity",

@@ -862,10 +862,7 @@ pub(crate) fn optional_publication_in_transaction(
     let table = write
         .open_table(ARTIFACT_PUBLICATIONS)
         .map_err(error::redb)?;
-    let Some(stored) = table
-        .get(publication.as_str())
-        .map_err(error::redb)?
-    else {
+    let Some(stored) = table.get(publication.as_str()).map_err(error::redb)? else {
         return Ok(None);
     };
     let record = decode_publication(stored.value())?;

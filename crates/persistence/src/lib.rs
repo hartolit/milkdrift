@@ -26,10 +26,9 @@ mod revision;
 mod snapshot;
 
 pub use admin::{
-    IntegrityScanCursor, IntegrityScanFamily, IntegrityScanRequest, IntegrityScanResult,
-    CURRENT_STORAGE_SCHEMA_VERSION, MAX_INTEGRITY_SCAN_CURSOR_KEY_BYTES, StorageAdmin,
-    StorageComponentHealth, StorageHealth, StorageHealthStatus, StorageSchemaCompatibility,
-    StorageSchemaInfo,
+    CURRENT_STORAGE_SCHEMA_VERSION, IntegrityScanCursor, IntegrityScanFamily, IntegrityScanRequest,
+    IntegrityScanResult, MAX_INTEGRITY_SCAN_CURSOR_KEY_BYTES, StorageAdmin, StorageComponentHealth,
+    StorageHealth, StorageHealthStatus, StorageSchemaCompatibility, StorageSchemaInfo,
 };
 pub use artifact::{
     ArtifactReadAuthority, ArtifactReadChunk, ArtifactReadRequest, ArtifactStore,

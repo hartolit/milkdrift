@@ -63,12 +63,11 @@ pub fn history_digest(events: &[RunEventEnvelope]) -> Result<IntegrityDigest, Pe
         link.update(run_bytes);
         link.update(&event.sequence().get().to_be_bytes());
         let previous = digest.as_str().as_bytes();
-        let previous_length = u32::try_from(previous.len()).map_err(|_| {
-            PersistenceError::Bounds {
+        let previous_length =
+            u32::try_from(previous.len()).map_err(|_| PersistenceError::Bounds {
                 location: "history.previous_digest",
                 reason: "previous digest length does not fit u32".to_owned(),
-            }
-        })?;
+            })?;
         link.update(&previous_length.to_be_bytes());
         link.update(previous);
         link.update(&checksum_length.to_be_bytes());

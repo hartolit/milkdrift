@@ -1,5 +1,5 @@
-use super::*;
 use super::queries::validated_run_head;
+use super::*;
 pub(crate) fn apply_workspace(
     write: &redb::WriteTransaction,
     request: &AtomicRunCommitRequest,
@@ -282,9 +282,7 @@ pub(crate) fn validate_workspace_value_storage_provenance_in_transaction(
                 });
             }
             None => {
-                return Err(error::corruption(
-                    "workspace provenance source is missing",
-                ));
+                return Err(error::corruption("workspace provenance source is missing"));
             }
         };
     }
@@ -839,9 +837,7 @@ impl WorkspaceStore for RedbStore {
             }
             validate_workspace_value_provenance(&table, &scopes, &roots, &stored, false)?;
             validate_scope_lineage(&read, &scopes, &roots, stored.reference().scope())?;
-            validate_workspace_value_storage_provenance(
-                &read, &table, &scopes, &roots, &stored,
-            )?;
+            validate_workspace_value_storage_provenance(&read, &table, &scopes, &roots, &stored)?;
             stored
         };
         Ok(Some(stored))

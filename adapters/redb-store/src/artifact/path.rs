@@ -197,7 +197,9 @@ pub(crate) fn artifact_path_exists(
     {
         None => Ok(false),
         Some(value) if value.value() == entry.logical_key.as_slice() => Ok(true),
-        Some(_) => Err(error::corruption("artifact path inventory document is invalid")),
+        Some(_) => Err(error::corruption(
+            "artifact path inventory document is invalid",
+        )),
     }
 }
 

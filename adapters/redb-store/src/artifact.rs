@@ -24,8 +24,8 @@ use crate::{
         ARTIFACT_ACCOUNTING, ARTIFACT_DELETE_GUARDS, ARTIFACT_DIGEST_RESERVATIONS,
         ARTIFACT_MANIFEST, ARTIFACT_METADATA, ARTIFACT_PATHS, ARTIFACT_PUBLICATIONS,
         ARTIFACT_PUBLICATIONS_BY_AGE, ARTIFACT_REFERENCES, ARTIFACT_RESERVATIONS,
-        ARTIFACT_TEMP_MANIFEST, ARTIFACT_TEMP_OWNERS, ARTIFACTS_BY_DIGEST,
-        RUN_ARTIFACT_OWNERSHIP, WORKSPACE_USAGE,
+        ARTIFACT_TEMP_MANIFEST, ARTIFACT_TEMP_OWNERS, ARTIFACTS_BY_DIGEST, RUN_ARTIFACT_OWNERSHIP,
+        WORKSPACE_USAGE,
     },
 };
 
@@ -101,7 +101,7 @@ mod path;
 mod publication;
 
 pub(crate) use accounting::{
-    persist_artifact_reference_occurrence, persist_run_artifact_ownership,
-    validate_artifact_state, validated_run_artifact_reference_in_transaction,
+    persist_artifact_reference_occurrence, persist_run_artifact_ownership, validate_artifact_state,
+    validated_run_artifact_reference_in_transaction,
 };
 pub(crate) use path::verify_blob;

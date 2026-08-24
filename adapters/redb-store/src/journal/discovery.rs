@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, collections::BTreeMap, ops::Bound};
 
-use super::*;
 use super::append::RunnableHeadState;
+use super::*;
 
 pub(crate) fn apply_indexes(
     write: &redb::WriteTransaction,
@@ -76,7 +76,9 @@ fn transition_nonterminal_membership(
     }
     let mut nonterminal = write.open_table(NONTERMINAL_RUNS).map_err(error::redb)?;
     let replaced = if summary.state == IndexedRunState::Terminal {
-        nonterminal.remove(summary.run.as_str()).map_err(error::redb)?
+        nonterminal
+            .remove(summary.run.as_str())
+            .map_err(error::redb)?
     } else {
         nonterminal
             .insert(summary.run.as_str(), 1)
@@ -101,8 +103,8 @@ fn apply_runnable_mutations(
             RunnableIndexMutation::Remove { run, .. } => run,
         };
         if !heads.contains_key(run) {
-            let previous_bytes = load_runnable_head_in_transaction(write, run)?
-                .map(|(_entry, bytes)| bytes);
+            let previous_bytes =
+                load_runnable_head_in_transaction(write, run)?.map(|(_entry, bytes)| bytes);
             heads.insert(run.clone(), RunnableHeadState { previous_bytes });
         }
     }
@@ -169,7 +171,12 @@ fn apply_runnable_mutations(
     drop(entries);
     for (run, state) in heads {
         let selected = first_runnable_for_run_in_transaction(write, &run)?;
-        persist_runnable_head(write, &run, state.previous_bytes.as_deref(), selected.as_ref())?;
+        persist_runnable_head(
+            write,
+            &run,
+            state.previous_bytes.as_deref(),
+            selected.as_ref(),
+        )?;
     }
     Ok(())
 }
@@ -541,11 +548,7 @@ pub(crate) fn record_artifact_references(
             request.receipt().command().as_str(),
         ])?;
         crate::artifact::persist_artifact_reference_occurrence(write, &key, reference)?;
-        crate::artifact::persist_run_artifact_ownership(
-            write,
-            request.receipt().run(),
-            reference,
-        )?;
+        crate::artifact::persist_run_artifact_ownership(write, request.receipt().run(), reference)?;
     }
     crate::artifact::validate_artifact_state(write)?;
     Ok(())

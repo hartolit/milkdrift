@@ -13,8 +13,7 @@ use crate::{
     fault::FaultPoint,
     json,
     schema::{
-        EVENT_HISTORY_DIGESTS, RUN_EVENTS, RUN_HEADS, RUN_HISTORY_HEADS, SNAPSHOT_LATEST,
-        SNAPSHOTS,
+        EVENT_HISTORY_DIGESTS, RUN_EVENTS, RUN_HEADS, RUN_HISTORY_HEADS, SNAPSHOT_LATEST, SNAPSHOTS,
     },
 };
 
@@ -70,10 +69,7 @@ fn next_digest(
     hasher.update(&framed_length(run_bytes, "history.run_id")?);
     hasher.update(run_bytes);
     hasher.update(&sequence.get().to_be_bytes());
-    hasher.update(&framed_length(
-        previous_bytes,
-        "history.previous_digest",
-    )?);
+    hasher.update(&framed_length(previous_bytes, "history.previous_digest")?);
     hasher.update(previous_bytes);
     hasher.update(&framed_length(checksum_bytes, "history.checksum")?);
     hasher.update(checksum_bytes);
@@ -158,17 +154,10 @@ pub(crate) fn append_history_checkpoint(
             ));
         }
         Some(bytes) => {
-            let prior_sequence = RunSequence::new(
-                event
-                    .sequence()
-                    .get()
-                    .checked_sub(1)
-                    .ok_or_else(|| {
-                        error::corruption(
-                            "initial event unexpectedly has a prior history-chain head",
-                        )
-                    })?,
-            );
+            let prior_sequence =
+                RunSequence::new(event.sequence().get().checked_sub(1).ok_or_else(|| {
+                    error::corruption("initial event unexpectedly has a prior history-chain head")
+                })?);
             let head = decode_chain_record(bytes, run, prior_sequence, "history-chain head")?;
             let prior = checkpoint_in_transaction(write, run, prior_sequence)?;
             if prior.digest != head.digest {
@@ -221,15 +210,10 @@ pub(crate) fn validate_history_link(
     let previous = if event.sequence() == RunSequence::FIRST {
         genesis_digest(event.run_id())?
     } else {
-        let previous_sequence = RunSequence::new(
-            event
-                .sequence()
-                .get()
-                .checked_sub(1)
-                .ok_or_else(|| {
-                    error::corruption("noninitial history link has no previous sequence")
-                })?,
-        );
+        let previous_sequence =
+            RunSequence::new(event.sequence().get().checked_sub(1).ok_or_else(|| {
+                error::corruption("noninitial history link has no previous sequence")
+            })?);
         checkpoint(read, event.run_id(), previous_sequence)?.digest
     };
     let expected = next_digest(
@@ -254,15 +238,10 @@ pub(crate) fn validate_history_link_in_transaction(
     let previous = if event.sequence() == RunSequence::FIRST {
         genesis_digest(event.run_id())?
     } else {
-        let previous_sequence = RunSequence::new(
-            event
-                .sequence()
-                .get()
-                .checked_sub(1)
-                .ok_or_else(|| {
-                    error::corruption("noninitial history link has no previous sequence")
-                })?,
-        );
+        let previous_sequence =
+            RunSequence::new(event.sequence().get().checked_sub(1).ok_or_else(|| {
+                error::corruption("noninitial history link has no previous sequence")
+            })?);
         checkpoint_in_transaction(write, event.run_id(), previous_sequence)?.digest
     };
     let expected = next_digest(
@@ -294,9 +273,7 @@ pub(crate) fn validate_history_head(
     };
     if head == RunSequence::ZERO {
         if stored.is_some() {
-            return Err(error::corruption(
-                "empty run retains a history-chain head",
-            ));
+            return Err(error::corruption("empty run retains a history-chain head"));
         }
         return Ok(());
     }
@@ -325,9 +302,7 @@ pub(crate) fn validate_history_head_in_transaction(
     };
     if head == RunSequence::ZERO {
         if stored.is_some() {
-            return Err(error::corruption(
-                "empty run retains a history-chain head",
-            ));
+            return Err(error::corruption("empty run retains a history-chain head"));
         }
         return Ok(());
     }
@@ -494,7 +469,10 @@ impl SnapshotStore for RedbStore {
         let key = codec::pair(run.as_str(), snapshot_id.as_str())?;
         let snapshots = read.open_table(SNAPSHOTS).map_err(error::redb)?;
         let Some(bytes) = snapshots.get(key.as_slice()).map_err(error::redb)? else {
-            return rejected(Some(snapshot_id), "latest snapshot pointer is dangling".to_owned());
+            return rejected(
+                Some(snapshot_id),
+                "latest snapshot pointer is dangling".to_owned(),
+            );
         };
         let document = bytes.value().to_vec();
         drop(bytes);
@@ -702,7 +680,13 @@ fn rejected(
 ) -> Result<SnapshotLoad, PersistenceError> {
     let mut reason: String = reason
         .chars()
-        .map(|character| if character.is_control() { ' ' } else { character })
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
         .collect();
     if reason.len() > milkdrift_persistence::MAX_DETAIL_BYTES {
         let mut boundary = milkdrift_persistence::MAX_DETAIL_BYTES;

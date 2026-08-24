@@ -15,7 +15,9 @@ pub(crate) fn initialize_schema(
                 INTERNAL_DOCUMENT_FORMAT_VERSION,
             )
             .map_err(error::redb)?;
-        table.insert(LEASE_SET_REVISION_KEY, 0).map_err(error::redb)?;
+        table
+            .insert(LEASE_SET_REVISION_KEY, 0)
+            .map_err(error::redb)?;
     }
     // Opening each definition records its exact key/value encoding in redb.
     {

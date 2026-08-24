@@ -47,12 +47,13 @@ impl RevisionStore for RedbStore {
         }
 
         for parent_id in revision.parents() {
-            let parent = validated_revision_by_id_in_transaction(&write, parent_id)?.ok_or_else(
-                || PersistenceError::NotFound {
-                    entity: "parent_revision",
-                    identity: parent_id.to_string(),
-                },
-            )?;
+            let parent =
+                validated_revision_by_id_in_transaction(&write, parent_id)?.ok_or_else(|| {
+                    PersistenceError::NotFound {
+                        entity: "parent_revision",
+                        identity: parent_id.to_string(),
+                    }
+                })?;
             if parent.semantic().workflow() != revision.semantic().workflow()
                 || parent.sequence() >= revision.sequence()
             {

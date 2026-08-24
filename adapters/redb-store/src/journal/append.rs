@@ -679,8 +679,7 @@ pub(crate) fn persist_workspace_value_usage_accounting_in_transaction(
     run: &RunId,
     usage: WorkspaceUsage,
 ) -> Result<(), PersistenceError> {
-    let Some((_budget, stored_usage)) = workspace_domain_in_transaction(write, run)?
-    else {
+    let Some((_budget, stored_usage)) = workspace_domain_in_transaction(write, run)? else {
         return Err(error::corruption("workspace accounting domain is absent"));
     };
     if stored_usage != usage {
@@ -741,9 +740,7 @@ pub(crate) fn validate_or_initialize_workspace_domain(
                 .map_err(error::redb)?;
             Ok(WorkspaceUsage::EMPTY)
         }
-        Some((_budget, _usage)) => {
-            validate_workspace_domain_in_transaction(write, run, supplied)
-        }
+        Some((_budget, _usage)) => validate_workspace_domain_in_transaction(write, run, supplied),
     }
 }
 
@@ -774,8 +771,7 @@ pub(crate) fn persist_workspace_accounting(
     let Some(accounting) = request.workspace_accounting() else {
         return Ok(());
     };
-    let Some((_budget, actual)) =
-        workspace_domain_in_transaction(write, request.receipt().run())?
+    let Some((_budget, actual)) = workspace_domain_in_transaction(write, request.receipt().run())?
     else {
         return Err(error::corruption("workspace accounting domain is absent"));
     };

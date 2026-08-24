@@ -650,8 +650,8 @@ fn snapshot_pointer_deletion_and_lowered_journal_head_are_corruption()
 }
 
 #[test]
-fn missing_history_chain_checkpoint_or_head_is_corruption()
--> Result<(), Box<dyn std::error::Error>> {
+fn missing_history_chain_checkpoint_or_head_is_corruption() -> Result<(), Box<dyn std::error::Error>>
+{
     for delete_checkpoint in [true, false] {
         let directory = TempDir::new()?;
         let request = start_request(if delete_checkpoint {
@@ -685,10 +685,7 @@ fn missing_history_chain_checkpoint_or_head_is_corruption()
         drop(database);
 
         let store = RedbStore::open(directory.path())?;
-        assert_corruption(store.history_digest(
-            request.receipt().run(),
-            RunSequence::FIRST,
-        ));
+        assert_corruption(store.history_digest(request.receipt().run(), RunSequence::FIRST));
         assert!(exhaustive_integrity_failure_count(&store)? > 0);
     }
     Ok(())

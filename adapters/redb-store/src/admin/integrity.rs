@@ -1,8 +1,7 @@
 use super::cursor::{
     index_cursor_position, make_artifact_digest_cursor, make_integrity_cursor,
-    parse_artifact_digest_cursor, push_failure, scan_binary_bytes_phase,
-    scan_string_bytes_phase, scan_string_string_phase, scan_string_u8_phase,
-    scan_string_u64_phase,
+    parse_artifact_digest_cursor, push_failure, scan_binary_bytes_phase, scan_string_bytes_phase,
+    scan_string_string_phase, scan_string_u8_phase, scan_string_u64_phase,
 };
 use super::*;
 #[allow(clippy::too_many_arguments)]
@@ -213,9 +212,7 @@ pub(crate) fn scan_index_integrity(
         last_cursor,
         more_remaining,
         "command_indexes",
-        |key, bytes| {
-            crate::journal::validate_stored_command_record(key, bytes, &heads, &events)
-        },
+        |key, bytes| crate::journal::validate_stored_command_record(key, bytes, &heads, &events),
     )?;
 
     scan_binary_bytes_phase(

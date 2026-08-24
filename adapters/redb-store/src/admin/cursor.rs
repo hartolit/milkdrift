@@ -34,8 +34,8 @@ pub(crate) fn integrity_cursor_state(
 pub(crate) fn integrity_cursor_anchor(
     cursor: Option<&IntegrityScanCursor>,
 ) -> Result<[u8; 32], PersistenceError> {
-    let cursor = cursor
-        .ok_or_else(|| error::corruption("integrity scan lost its schema anchor"))?;
+    let cursor =
+        cursor.ok_or_else(|| error::corruption("integrity scan lost its schema anchor"))?;
     integrity_cursor_state(cursor).map(|(anchor, _)| anchor)
 }
 
@@ -506,9 +506,7 @@ pub(crate) fn validate_integrity_cursor(
     Ok(())
 }
 
-pub(crate) fn storage_anchor(
-    read: &redb::ReadTransaction,
-) -> Result<[u8; 32], PersistenceError> {
+pub(crate) fn storage_anchor(read: &redb::ReadTransaction) -> Result<[u8; 32], PersistenceError> {
     let metadata = read.open_table(METADATA).map_err(error::redb)?;
     let schema = metadata
         .get(SCHEMA_VERSION_KEY)

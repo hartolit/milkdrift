@@ -1,9 +1,7 @@
 use super::*;
 use super::{
     append::{validate_nonterminal_membership, validate_run_history_membership},
-    discovery::{
-        lease_set_revision, read_ordered_index, validate_runnable_head,
-    },
+    discovery::{lease_set_revision, read_ordered_index, validate_runnable_head},
 };
 
 impl RunQueryStore for RedbStore {
