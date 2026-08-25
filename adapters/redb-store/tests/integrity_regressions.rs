@@ -1,20 +1,21 @@
 //! Focused physical-deletion and lowered-accounting regressions.
 
 use milkdrift_blueprint::{BlueprintRevisionDocument, RevisionId, WorkflowId};
-use milkdrift_capability::BoundedJson;
+use milkdrift_capability::{BoundedJson, InvocationId};
 use milkdrift_persistence::{
     ActorRef, ArtifactPublicationId, ArtifactStore, AtomicRunCommitRequest,
     BeginArtifactPublication, CommandDisposition, CommandId, CommandReceipt, CommandResultDocument,
     EventId, IndexedRunState, IntegrityScanRequest, OrphanCleanupRequest, PageSize,
     PersistenceError, RevisionStore, RunEventEnvelope, RunEventKind, RunIndexUpdate, RunJournal,
-    RunSequence, RunSummaryIndex, SnapshotDocument, SnapshotId, SnapshotStore, StorageAdmin,
-    StorageFailureClass, StorageHealthStatus, TimestampMillis, WorkspaceAccounting, WorkspaceStore,
-    history_digest,
+    RunSequence, RunSummaryIndex, SnapshotDocument, SnapshotId, SnapshotLoad, SnapshotStore,
+    StorageAdmin, StorageFailureClass, StorageHealthStatus, TimestampMillis, WorkspaceAccounting,
+    WorkspaceStore, history_digest,
 };
 use milkdrift_redb_store::{RedbStore, RedbStoreConfig};
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactRetention, ArtifactSensitivity,
-    CausalId, CausalReference, ContentDigest, MediaType, RunId, WorkspaceBudget, WorkspaceUsage,
+    CausalId, CausalReference, ContentDigest, MediaType, RunId, ScopeId, ScopeReference, ValueKey,
+    ValueVersion, WorkspaceBudget, WorkspaceUsage, WorkspaceValueReference,
 };
 use redb::{Database, ReadableTable, TableDefinition};
 use serde_json::json;
@@ -28,6 +29,18 @@ const ARTIFACT_REFERENCES: TableDefinition<'static, &'static [u8], &'static [u8]
     TableDefinition::new("milkdrift.v1.artifacts.references");
 const ARTIFACT_TEMP_OWNERS: TableDefinition<'static, &'static str, &'static str> =
     TableDefinition::new("milkdrift.v1.artifacts.temp_owners");
+const ARTIFACT_PUBLICATIONS: TableDefinition<'static, &'static str, &'static [u8]> =
+    TableDefinition::new("milkdrift.v1.artifacts.publications");
+const ARTIFACT_PUBLICATIONS_BY_AGE: TableDefinition<'static, &'static [u8], &'static str> =
+    TableDefinition::new("milkdrift.v1.artifacts.writable_by_age");
+const ARTIFACT_RESERVATIONS: TableDefinition<'static, &'static str, &'static str> =
+    TableDefinition::new("milkdrift.v1.artifacts.reservations_by_run");
+const ARTIFACT_PATHS: TableDefinition<'static, &'static [u8], &'static [u8]> =
+    TableDefinition::new("milkdrift.v2.artifacts.path_inventory");
+const ARTIFACT_DELETE_GUARDS: TableDefinition<'static, &'static [u8], u8> =
+    TableDefinition::new("milkdrift.v2.artifacts.delete_guards");
+const ARTIFACT_DIGEST_RESERVATIONS: TableDefinition<'static, &'static [u8], u8> =
+    TableDefinition::new("milkdrift.v1.artifacts.reservations_by_digest");
 const ARTIFACT_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
     TableDefinition::new("milkdrift.v1.artifacts.accounting");
 const WORKSPACE_USAGE: TableDefinition<'static, &'static str, &'static [u8]> =
@@ -130,8 +143,209 @@ fn publish(
     bytes: &[u8],
 ) -> Result<(), PersistenceError> {
     store.begin_publication(request)?;
-    store.write_chunk(&request.publication, 0, bytes)?;
-    store.commit_publication(&request.publication)?;
+    store.write_chunk(request.publication(), 0, bytes)?;
+    store.commit_publication(request.publication())?;
+    Ok(())
+}
+
+#[test]
+fn integrity_scan_resumes_inside_temporary_owner_phase() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = TempDir::new()?;
+    let store = RedbStore::open(directory.path())?;
+    for ordinal in 0..3 {
+        let request = publication_request(
+            &format!("artifact-cursor-{ordinal}"),
+            &format!("publication-cursor-{ordinal}"),
+            &format!("run-cursor-{ordinal}"),
+            b"pending",
+            WorkspaceBudget::new(0, 0, 0, 1, 64, 64)?,
+            WorkspaceUsage::EMPTY,
+        )?;
+        store.begin_publication(&request)?;
+    }
+    let mut cursor = None;
+    for _ in 0..10_000 {
+        let page = store.scan_integrity(IntegrityScanRequest {
+            limit: PageSize::new(1)?,
+            verify_artifact_content: false,
+            cursor,
+        })?;
+        assert!(page.failures.is_empty());
+        let Some(next) = page.next_cursor else {
+            return Ok(());
+        };
+        cursor = Some(next);
+    }
+    Err("phase-23 integrity scan did not exhaust".into())
+}
+
+#[test]
+fn scrub_detects_corruption_in_every_artifact_coordination_family()
+-> Result<(), Box<dyn std::error::Error>> {
+    #[derive(Clone, Copy)]
+    enum Family {
+        Publications,
+        Age,
+        RunReservations,
+        Paths,
+        DeleteGuards,
+        DigestReservations,
+    }
+
+    for (ordinal, family) in [
+        Family::Publications,
+        Family::Age,
+        Family::RunReservations,
+        Family::Paths,
+        Family::DeleteGuards,
+        Family::DigestReservations,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let directory = TempDir::new()?;
+        let request = publication_request(
+            &format!("artifact-scrub-family-{ordinal}"),
+            &format!("publication-scrub-family-{ordinal}"),
+            &format!("run-scrub-family-{ordinal}"),
+            b"pending",
+            WorkspaceBudget::new(0, 0, 0, 1, 64, 64)?,
+            WorkspaceUsage::EMPTY,
+        )?;
+        {
+            let store = RedbStore::open(directory.path())?;
+            store.begin_publication(&request)?;
+            assert_eq!(exhaustive_integrity_failure_count(&store)?, 0);
+        }
+        let database = Database::open(directory.path().join("milkdrift.redb"))?;
+        let write = database.begin_write()?;
+        match family {
+            Family::Publications => {
+                let mut table = write.open_table(ARTIFACT_PUBLICATIONS)?;
+                assert!(table.remove(request.publication().as_str())?.is_some());
+            }
+            Family::Age => {
+                let mut table = write.open_table(ARTIFACT_PUBLICATIONS_BY_AGE)?;
+                let key = table
+                    .iter()?
+                    .next()
+                    .transpose()?
+                    .ok_or("age row absent")?
+                    .0
+                    .value()
+                    .to_vec();
+                assert!(table.remove(key.as_slice())?.is_some());
+            }
+            Family::RunReservations => {
+                let mut table = write.open_table(ARTIFACT_RESERVATIONS)?;
+                assert!(table.remove(request.run().as_str())?.is_some());
+            }
+            Family::Paths => {
+                let mut table = write.open_table(ARTIFACT_PATHS)?;
+                let key = table
+                    .iter()?
+                    .next()
+                    .transpose()?
+                    .ok_or("path row absent")?
+                    .0
+                    .value()
+                    .to_vec();
+                assert!(table.remove(key.as_slice())?.is_some());
+            }
+            Family::DeleteGuards => {
+                let mut key = Vec::new();
+                for component in ["temp", "dangling-delete-guard.part"] {
+                    key.extend_from_slice(&u32::try_from(component.len())?.to_be_bytes());
+                    key.extend_from_slice(component.as_bytes());
+                }
+                write
+                    .open_table(ARTIFACT_DELETE_GUARDS)?
+                    .insert(key.as_slice(), 1)?;
+            }
+            Family::DigestReservations => {
+                let mut table = write.open_table(ARTIFACT_DIGEST_RESERVATIONS)?;
+                let key = table
+                    .iter()?
+                    .next()
+                    .transpose()?
+                    .ok_or("digest reservation absent")?
+                    .0
+                    .value()
+                    .to_vec();
+                assert!(table.remove(key.as_slice())?.is_some());
+            }
+        }
+        write.commit()?;
+        drop(database);
+        let reopened = RedbStore::open(directory.path())?;
+        assert!(
+            exhaustive_integrity_failure_count(&reopened)? > 0,
+            "artifact coordination corruption family {ordinal} was not detected"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn artifact_commit_rejects_missing_authoritative_provenance_targets()
+-> Result<(), Box<dyn std::error::Error>> {
+    let missing_artifact = milkdrift_workspace::ArtifactReference::new(
+        ArtifactId::new("missing-causal-artifact")?,
+        ContentDigest::for_bytes(b"missing"),
+        MediaType::new("application/octet-stream")?,
+        7,
+    );
+    let missing_value = WorkspaceValueReference::new(
+        ScopeReference::new(
+            RunId::new("run-missing-workspace-provenance")?,
+            ScopeId::new("scope-missing-workspace-provenance")?,
+        ),
+        ValueKey::new("value-missing-workspace-provenance")?,
+        ValueVersion::FIRST,
+    );
+    let cases = [
+        CausalReference::Artifact {
+            reference: missing_artifact,
+        },
+        CausalReference::WorkspaceValue {
+            reference: missing_value,
+        },
+        CausalReference::RunInput {
+            run: RunId::new("run-missing-run-input-provenance")?,
+            key: ValueKey::new("input-missing-run-input-provenance")?,
+        },
+        CausalReference::Invocation {
+            invocation: InvocationId::new("invocation-missing-provenance")?,
+        },
+    ];
+    for (ordinal, causal) in cases.into_iter().enumerate() {
+        let directory = TempDir::new()?;
+        let bytes = format!("target-{ordinal}").into_bytes();
+        let reference = milkdrift_workspace::ArtifactReference::new(
+            ArtifactId::new(format!("artifact-provenance-target-{ordinal}"))?,
+            ContentDigest::for_bytes(&bytes),
+            MediaType::new("application/octet-stream")?,
+            bytes.len() as u64,
+        );
+        let metadata = ArtifactMetadata::new(
+            reference.clone(),
+            ArtifactSensitivity::Public,
+            ArtifactRetention::WhileReferenced,
+            ArtifactProvenance::new(causal, Vec::new())?,
+        )?;
+        let request = BeginArtifactPublication::new(
+            ArtifactPublicationId::new(format!("publication-provenance-target-{ordinal}"))?,
+            RunId::new(format!("run-provenance-target-{ordinal}"))?,
+            metadata,
+            WorkspaceBudget::new(0, 0, 0, 1, 64, 64)?,
+            WorkspaceUsage::EMPTY,
+        )?;
+        let store = RedbStore::open(directory.path())?;
+        store.begin_publication(&request)?;
+        store.write_chunk(request.publication(), 0, &bytes)?;
+        assert!(store.commit_publication(request.publication()).is_err());
+        assert!(!store.is_committed(&reference)?);
+    }
     Ok(())
 }
 
@@ -141,7 +355,7 @@ fn double_charge_request(
     let command = CommandId::new("command-double-charge")?;
     let receipt = CommandReceipt::new(
         command.clone(),
-        publication.run.clone(),
+        publication.run().clone(),
         ActorRef::new("actor-integrity")?,
         RunSequence::ZERO,
         TimestampMillis::new(20),
@@ -149,16 +363,16 @@ fn double_charge_request(
     )?;
     let event = RunEventEnvelope::new(
         EventId::new("event-double-charge")?,
-        publication.run.clone(),
+        publication.run().clone(),
         RunSequence::FIRST,
         TimestampMillis::new(20),
         RunEventKind::ArtifactPublished {
-            metadata: publication.metadata.clone(),
+            metadata: publication.metadata().clone(),
         },
     )?;
     let result = CommandResultDocument::new(
         command,
-        publication.run.clone(),
+        publication.run().clone(),
         receipt.fingerprint().clone(),
         CommandDisposition::Accepted,
         RunSequence::FIRST,
@@ -166,24 +380,24 @@ fn double_charge_request(
         BoundedJson::new(json!({"accepted": true}))?,
     )?;
     let resulting_usage = publication
-        .budget
-        .admit_artifact(&publication.resulting_usage, &publication.metadata)?;
+        .budget()
+        .admit_artifact(&publication.resulting_usage(), publication.metadata())?;
     Ok(AtomicRunCommitRequest::new(
         receipt,
         vec![event],
         Vec::new(),
         Some(WorkspaceAccounting {
-            budget: publication.budget.clone(),
-            expected_usage: publication.resulting_usage,
+            budget: publication.budget().clone(),
+            expected_usage: publication.resulting_usage(),
             resulting_usage,
         }),
-        vec![publication.metadata.reference().clone()],
-        vec![publication.metadata.reference().clone()],
+        vec![publication.metadata().reference().clone()],
+        vec![publication.metadata().reference().clone()],
         None,
         result,
         RunIndexUpdate::new(
             Some(RunSummaryIndex {
-                run: publication.run.clone(),
+                run: publication.run().clone(),
                 workflow: WorkflowId::new("workflow-integrity")?,
                 revision: revision_id()?,
                 state: IndexedRunState::Active,
@@ -286,7 +500,7 @@ fn deleted_artifact_reference_rows_cannot_reopen_double_charging()
     drop(database);
 
     let store = RedbStore::open(directory.path())?;
-    assert_corruption(store.is_referenced_by_run(&request.run, request.metadata.reference()));
+    assert_corruption(store.is_referenced_by_run(request.run(), request.metadata().reference()));
     assert_corruption(store.commit_command(&double_charge_request(&request)?));
     Ok(())
 }
@@ -313,13 +527,13 @@ fn artifact_only_usage_requires_a_complete_workspace_domain()
     let write = database.begin_write()?;
     {
         let mut usage = write.open_table(WORKSPACE_USAGE)?;
-        assert!(usage.remove(first.run.as_str())?.is_some());
+        assert!(usage.remove(first.run().as_str())?.is_some());
     }
     write.commit()?;
     drop(database);
 
     let store = RedbStore::open(directory.path())?;
-    assert_corruption(store.workspace_usage(&first.run));
+    assert_corruption(store.workspace_usage(first.run()));
     assert_eq!(
         store.health(TimestampMillis::new(20))?.status,
         StorageHealthStatus::Degraded
@@ -327,10 +541,10 @@ fn artifact_only_usage_requires_a_complete_workspace_domain()
     let second = publication_request(
         "artifact-accounted-second",
         "publication-accounted-second",
-        first.run.as_str(),
+        first.run().as_str(),
         b"second",
         budget,
-        first.resulting_usage,
+        first.resulting_usage(),
     )?;
     assert_corruption(store.begin_publication(&second));
     Ok(())
@@ -357,7 +571,7 @@ fn artifact_and_revision_primary_digest_pairs_fail_closed_after_deletion()
         let write = database.begin_write()?;
         if delete_primary {
             let mut metadata = write.open_table(ARTIFACT_METADATA)?;
-            let _ = metadata.remove(request.metadata.reference().artifact().as_str())?;
+            let _ = metadata.remove(request.metadata().reference().artifact().as_str())?;
         } else {
             let mut by_digest = write.open_table(ARTIFACTS_BY_DIGEST)?;
             let key = by_digest
@@ -373,7 +587,7 @@ fn artifact_and_revision_primary_digest_pairs_fail_closed_after_deletion()
         write.commit()?;
         drop(database);
         let store = RedbStore::open(directory.path())?;
-        assert_corruption(store.is_committed(request.metadata.reference()));
+        assert_corruption(store.is_committed(request.metadata().reference()));
         assert!(exhaustive_integrity_failure_count(&store)? > 0);
         assert_eq!(
             store.health(TimestampMillis::new(30))?.status,
@@ -464,10 +678,10 @@ fn missing_digest_index_cannot_turn_existing_content_into_a_second_charge()
         WorkspaceUsage::EMPTY,
     )?;
     store.begin_publication(&second)?;
-    store.write_chunk(&second.publication, 0, b"shared-content")?;
-    assert_corruption(store.commit_publication(&second.publication));
-    assert_corruption(store.is_committed(first.metadata.reference()));
-    assert!(!store.is_committed(second.metadata.reference())?);
+    store.write_chunk(second.publication(), 0, b"shared-content")?;
+    assert_corruption(store.commit_publication(second.publication()));
+    assert_corruption(store.is_committed(first.metadata().reference()));
+    assert!(!store.is_committed(second.metadata().reference())?);
     Ok(())
 }
 
@@ -486,7 +700,7 @@ fn missing_temp_owner_cannot_delete_a_live_writable_publication()
     {
         let store = RedbStore::open(directory.path())?;
         store.begin_publication(&request)?;
-        store.write_chunk(&request.publication, 0, b"write")?;
+        store.write_chunk(request.publication(), 0, b"write")?;
     }
     let database = Database::open(directory.path().join("milkdrift.redb"))?;
     let write = database.begin_write()?;
@@ -591,9 +805,9 @@ fn aggregate_artifact_counter_deletion_lowering_and_real_limit_are_fail_closed()
         WorkspaceUsage::EMPTY,
     )?;
     store.begin_publication(&second)?;
-    store.write_chunk(&second.publication, 0, b"abcde")?;
+    store.write_chunk(second.publication(), 0, b"abcde")?;
     assert!(matches!(
-        store.commit_publication(&second.publication),
+        store.commit_publication(second.publication()),
         Err(PersistenceError::Storage {
             class: StorageFailureClass::ResourceExhausted,
             ..
@@ -603,7 +817,7 @@ fn aggregate_artifact_counter_deletion_lowering_and_real_limit_are_fail_closed()
 }
 
 #[test]
-fn snapshot_pointer_deletion_and_lowered_journal_head_are_corruption()
+fn snapshot_pointer_deletion_is_rejected_but_lowered_journal_head_is_corruption()
 -> Result<(), Box<dyn std::error::Error>> {
     for delete_pointer in [true, false] {
         let directory = TempDir::new()?;
@@ -641,8 +855,13 @@ fn snapshot_pointer_deletion_and_lowered_journal_head_are_corruption()
         write.commit()?;
         drop(database);
         let store = RedbStore::open(directory.path())?;
-        assert_corruption(store.latest_snapshot(request.receipt().run()));
-        if !delete_pointer {
+        if delete_pointer {
+            assert!(matches!(
+                store.latest_snapshot(request.receipt().run())?,
+                SnapshotLoad::Rejected { snapshot: None, .. }
+            ));
+        } else {
+            assert_corruption(store.latest_snapshot(request.receipt().run()));
             assert_corruption(store.put_snapshot(&snapshot));
         }
     }

@@ -17,22 +17,23 @@ use std::sync::{
 };
 
 use milkdrift_blueprint::{
-    BlueprintRevisionDocument, ContentDigest as BlueprintContentDigest, PortId, RevisionId,
+    BlueprintRevisionDocument, ContentDigest as BlueprintContentDigest, NodeId, PortId, RevisionId,
     WorkflowId,
 };
-use milkdrift_capability::BoundedJson;
+use milkdrift_capability::{BoundedJson, CapabilityId, InvocationRequest, OperationId};
 use milkdrift_persistence::{
     ActorRef, ArtifactPublicationId, ArtifactReadAuthority, ArtifactReadRequest, ArtifactStore,
     AtomicRunCommitOutcome, AtomicRunCommitRequest, AttemptId, BeginArtifactOutcome,
     BeginArtifactPublication, CommandDisposition, CommandId, CommandReceipt, CommandResultDocument,
     EventId, EventPageQuery, ImmutableRevisionPut, IndexedRunState, IntegrityScanRequest, LeaseId,
     LeaseIndexEntry, LeaseIndexMutation, NodeExecutionId, OrphanCleanupRequest, PageSize,
-    PersistenceError, RevisionStore, RunEventEnvelope, RunEventKind, RunIndexUpdate, RunJournal,
-    RunQueryStore, RunSequence, RunSummaryFilter, RunSummaryIndex, RunSummaryPageQuery,
-    RunnableIndexEntry, RunnableIndexMutation, SnapshotDocument, SnapshotId, SnapshotLoad,
-    SnapshotStore, StorageAdmin, StorageFailureClass, StorageHealthStatus, TimerId,
-    TimerIndexEntry, TimerIndexMutation, TimestampMillis, WorkerId, WorkspaceAccounting,
-    WorkspaceMutation, WorkspaceStore, history_digest,
+    PersistenceError, RevisionStore, RunDiscoveryIntegrityStore, RunEventEnvelope, RunEventKind,
+    RunIndexUpdate, RunJournal, RunQueryStore, RunSequence, RunSummaryFilter, RunSummaryIndex,
+    RunSummaryPageQuery, RunnableIndexEntry, RunnableIndexMutation, SignalDeliveryMode, SignalId,
+    SignalTypeId, SnapshotDocument, SnapshotId, SnapshotLoad, SnapshotStore, StorageAdmin,
+    StorageFailureClass, StorageHealthStatus, TimerId, TimerIndexEntry, TimerIndexMutation,
+    TimestampMillis, WorkerId, WorkspaceAccounting, WorkspaceMutation, WorkspaceStore,
+    history_digest,
 };
 use milkdrift_redb_store::{
     ArtifactClock, FaultInjector, FaultPoint, RedbStore, RedbStoreConfig, injected_failure,

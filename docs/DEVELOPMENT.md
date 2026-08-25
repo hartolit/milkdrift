@@ -45,6 +45,12 @@ cargo test -p milkdrift-runtime \
   -- --nocapture
 ```
 
+The weekly/manual stress workflow also runs the ordinary-task, fork/join,
+subworkflow/repeat, revision-node-churn, unmatched-signal-budget, and pre-start
+worker-lease-churn 10,000-cycle cases individually in release mode. Keep their exact
+names synchronized only in the workflow; use the bounded-module filter above for local
+development.
+
 The ordinary workspace test suite excludes tests whose fixture intentionally crosses a
 large persistence bound and therefore performs thousands of durable redb index
 mutations. The manual and weekly `stress` workflow retains this end-to-end evidence. Run

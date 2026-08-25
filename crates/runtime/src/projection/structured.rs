@@ -14,6 +14,11 @@ use milkdrift_workspace::{
     BranchId, IterationId, RunId, SubworkflowId, WorkspaceScope, WorkspaceValueReference,
 };
 
+/// Maximum retained deliveries with a pending delivery or consumer obligation.
+pub(crate) const MAX_PENDING_SIGNAL_COUNT: usize = 1_000;
+/// Maximum aggregate payload bytes retained by pending signal obligations.
+pub(crate) const MAX_PENDING_SIGNAL_PAYLOAD_BYTES: usize = 1_048_576;
+
 /// Current state of a structured branch scope.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum BranchState {
@@ -605,6 +610,19 @@ impl SubworkflowProjection {
     #[must_use]
     pub const fn is_completed(&self) -> bool {
         matches!(self.state, SubworkflowState::Terminal(_))
+    }
+
+    /// Returns whether every terminal child output has exactly one parent import.
+    #[must_use]
+    pub(crate) fn outputs_fully_imported(&self) -> bool {
+        self.outputs.len() == self.imports.len()
+            && self.outputs.iter().all(|output| {
+                self.imports
+                    .iter()
+                    .filter(|import| import.child_value == *output)
+                    .count()
+                    == 1
+            })
     }
 }
 

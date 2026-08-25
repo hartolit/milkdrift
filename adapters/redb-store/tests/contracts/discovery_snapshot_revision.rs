@@ -306,6 +306,178 @@ fn one_sided_lease_pair_deletion_is_corruption() -> Result<(), Box<dyn std::erro
 }
 
 #[test]
+fn logical_discovery_validation_detects_symmetric_pair_loss()
+-> Result<(), Box<dyn std::error::Error>> {
+    const RUNNABLE_ENTRIES: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.discovery.runnable_entries");
+    const RUNNABLE_ORDERED: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.discovery.runnable");
+    const RUNNABLE_HEADS: TableDefinition<'static, &'static str, &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.discovery.runnable_run_heads");
+    const TIMER_ENTRIES: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.discovery.timer_entries");
+    const TIMER_ORDERED: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.discovery.timers");
+    const LEASE_ENTRIES: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.discovery.lease_entries");
+    const LEASE_ORDERED: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.discovery.leases");
+
+    for (kind, suffix) in [
+        (DiscoveryIndexKind::Runnable, "lost-runnable"),
+        (DiscoveryIndexKind::Timer, "lost-timer"),
+        (DiscoveryIndexKind::Lease, "lost-lease"),
+    ] {
+        let directory = TempDir::new()?;
+        let request = accepted_request_with_discovery_index(kind, suffix)?;
+        let run = request.receipt().run().clone();
+        let runnable = request
+            .indexes()
+            .runnable()
+            .iter()
+            .filter_map(|mutation| match mutation {
+                RunnableIndexMutation::Upsert { entry } => Some(entry.clone()),
+                RunnableIndexMutation::Remove { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        let timers = request
+            .indexes()
+            .timers()
+            .iter()
+            .filter_map(|mutation| match mutation {
+                TimerIndexMutation::Upsert { entry } => Some(entry.clone()),
+                TimerIndexMutation::Remove { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        let leases = request
+            .indexes()
+            .leases()
+            .iter()
+            .filter_map(|mutation| match mutation {
+                LeaseIndexMutation::Upsert { entry } => Some(entry.clone()),
+                LeaseIndexMutation::Remove { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        {
+            let store = RedbStore::open(directory.path())?;
+            store.commit_command(&request)?;
+            store.validate_run_discovery(&run, RunSequence::FIRST, &runnable, &timers, &leases)?;
+        }
+
+        let database = Database::open(directory.path().join("milkdrift.redb"))?;
+        let write = database.begin_write()?;
+        let (identities_definition, ordered_definition) = match kind {
+            DiscoveryIndexKind::Runnable => (RUNNABLE_ENTRIES, RUNNABLE_ORDERED),
+            DiscoveryIndexKind::Timer => (TIMER_ENTRIES, TIMER_ORDERED),
+            DiscoveryIndexKind::Lease => (LEASE_ENTRIES, LEASE_ORDERED),
+        };
+        for definition in [identities_definition, ordered_definition] {
+            let mut table = write.open_table(definition)?;
+            let keys = table
+                .iter()?
+                .map(|row| row.map(|(key, _)| key.value().to_vec()))
+                .collect::<Result<Vec<_>, _>>()?;
+            for key in keys {
+                assert!(table.remove(key.as_slice())?.is_some());
+            }
+        }
+        if matches!(kind, DiscoveryIndexKind::Runnable) {
+            let mut heads = write.open_table(RUNNABLE_HEADS)?;
+            assert!(heads.remove(run.as_str())?.is_some());
+        }
+        write.commit()?;
+        drop(database);
+
+        let reopened = RedbStore::open(directory.path())?;
+        assert_storage_corruption(reopened.validate_run_discovery(
+            &run,
+            RunSequence::FIRST,
+            &runnable,
+            &timers,
+            &leases,
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn scrub_detects_a_missing_signal_receipt_derived_from_history()
+-> Result<(), Box<dyn std::error::Error>> {
+    const SIGNAL_RECEIPTS: TableDefinition<'static, &'static [u8], u64> =
+        TableDefinition::new("milkdrift.v1.runs.signal_receipts");
+
+    let directory = TempDir::new()?;
+    let start = accepted_request(
+        "run-signal-receipt-loss",
+        "command-signal-receipt-start",
+        "event-signal-receipt-start",
+        "start",
+    )?;
+    let run = start.receipt().run().clone();
+    let signal = SignalId::new("signal-receipt-loss")?;
+    let followup = accepted_workspace_followup_request(
+        run.clone(),
+        RunSequence::FIRST,
+        "command-signal-receipt-followup",
+        "event-signal-receipt-followup",
+        vec![RunEventKind::SignalReceived {
+            signal: signal.clone(),
+            signal_type: SignalTypeId::new("signal-type-receipt-loss")?,
+            correlation: None,
+            mode: SignalDeliveryMode::OneShot,
+            payload: BoundedJson::new(json!({"received": true}))?,
+        }],
+        Vec::new(),
+        WorkspaceAccounting {
+            budget: WorkspaceBudget::new(0, 0, 0, 0, 0, 0)?,
+            expected_usage: WorkspaceUsage::EMPTY,
+            resulting_usage: WorkspaceUsage::EMPTY,
+        },
+    )?;
+    {
+        let store = RedbStore::open(directory.path())?;
+        store.commit_command(&start)?;
+        store.commit_command(&followup)?;
+        assert!(store.signal_receipt(&run, &signal)?.is_some());
+    }
+
+    let database = Database::open(directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut receipts = write.open_table(SIGNAL_RECEIPTS)?;
+        let key = receipts
+            .iter()?
+            .next()
+            .transpose()?
+            .ok_or("signal receipt is absent")?
+            .0
+            .value()
+            .to_vec();
+        assert!(receipts.remove(key.as_slice())?.is_some());
+    }
+    write.commit()?;
+    drop(database);
+
+    let reopened = RedbStore::open(directory.path())?;
+    let mut cursor = None;
+    let mut failures = 0_usize;
+    for _ in 0..10_000 {
+        let page = reopened.scan_integrity(IntegrityScanRequest {
+            limit: PageSize::new(1)?,
+            verify_artifact_content: false,
+            cursor,
+        })?;
+        failures = failures.saturating_add(page.failures.len());
+        let Some(next) = page.next_cursor else {
+            assert!(failures > 0);
+            return Ok(());
+        };
+        cursor = Some(next);
+    }
+    Err("signal-receipt scrub did not exhaust".into())
+}
+
+#[test]
 fn verified_snapshot_survives_reopen() -> Result<(), Box<dyn std::error::Error>> {
     let directory = TempDir::new()?;
     let request = accepted_request(
@@ -334,6 +506,39 @@ fn verified_snapshot_survives_reopen() -> Result<(), Box<dyn std::error::Error>>
     let store = RedbStore::open(directory.path())?;
     assert_eq!(
         store.latest_snapshot(request.receipt().run())?,
+        SnapshotLoad::Verified(snapshot)
+    );
+    Ok(())
+}
+
+#[test]
+fn runtime_sized_snapshot_payload_survives_reopen() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = TempDir::new()?;
+    let request = accepted_request(
+        "run-large-snapshot",
+        "command-large-snapshot",
+        "event-large-snapshot",
+        "start",
+    )?;
+    let payload = (0..262_144_u32)
+        .map(|index| u8::try_from(index % 251))
+        .collect::<Result<Vec<_>, _>>()?;
+    let snapshot = SnapshotDocument::new(
+        SnapshotId::new("snapshot-runtime-sized")?,
+        request.receipt().run().clone(),
+        RunSequence::FIRST,
+        history_digest(request.events())?,
+        3,
+        payload,
+    )?;
+    {
+        let store = RedbStore::open(directory.path())?;
+        store.commit_command(&request)?;
+        store.put_snapshot(&snapshot)?;
+    }
+    let reopened = RedbStore::open(directory.path())?;
+    assert_eq!(
+        reopened.latest_snapshot(request.receipt().run())?,
         SnapshotLoad::Verified(snapshot)
     );
     Ok(())

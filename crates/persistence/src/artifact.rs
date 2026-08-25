@@ -12,21 +12,29 @@ use crate::{
 pub const MAX_ORPHAN_CLEANUP_CURSOR_KEY_BYTES: usize = 512;
 
 /// Request to begin one bounded, content-addressed artifact publication.
+///
+/// Checked request facts cannot be rewritten after construction:
+///
+/// ```compile_fail
+/// use milkdrift_persistence::BeginArtifactPublication;
+/// let mut request: BeginArtifactPublication = todo!();
+/// request.resulting_usage = request.expected_usage;
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct BeginArtifactPublication {
     /// Idempotent publication-session identity.
-    pub publication: ArtifactPublicationId,
+    publication: ArtifactPublicationId,
     /// Workspace accounting domain.
-    pub run: RunId,
+    run: RunId,
     /// Complete expected digest/size/media/sensitivity/retention/provenance.
-    pub metadata: ArtifactMetadata,
+    metadata: ArtifactMetadata,
     /// Immutable workspace limits.
-    pub budget: WorkspaceBudget,
+    budget: WorkspaceBudget,
     /// Exact durable usage before charging this logical artifact record.
-    pub expected_usage: WorkspaceUsage,
+    expected_usage: WorkspaceUsage,
     /// Exact usage after charging metadata/content once.
-    pub resulting_usage: WorkspaceUsage,
+    resulting_usage: WorkspaceUsage,
 }
 
 impl BeginArtifactPublication {
@@ -49,6 +57,59 @@ impl BeginArtifactPublication {
             expected_usage,
             resulting_usage,
         })
+    }
+
+    /// Returns the idempotent publication-session identity.
+    #[must_use]
+    pub const fn publication(&self) -> &ArtifactPublicationId {
+        &self.publication
+    }
+
+    /// Returns the owning workspace accounting domain.
+    #[must_use]
+    pub const fn run(&self) -> &RunId {
+        &self.run
+    }
+
+    /// Returns the complete immutable artifact metadata.
+    #[must_use]
+    pub const fn metadata(&self) -> &ArtifactMetadata {
+        &self.metadata
+    }
+
+    /// Returns the immutable workspace budget.
+    #[must_use]
+    pub const fn budget(&self) -> &WorkspaceBudget {
+        &self.budget
+    }
+
+    /// Returns durable usage expected before publication.
+    #[must_use]
+    pub const fn expected_usage(&self) -> WorkspaceUsage {
+        self.expected_usage
+    }
+
+    /// Returns the exact usage resulting from publication.
+    #[must_use]
+    pub const fn resulting_usage(&self) -> WorkspaceUsage {
+        self.resulting_usage
+    }
+
+    /// Revalidates the request's derived accounting transition at a trust boundary.
+    pub fn validate(&self) -> Result<(), PersistenceError> {
+        self.budget
+            .validate_usage(&self.expected_usage)
+            .map_err(|error| PersistenceError::InvalidDocument(error.to_string()))?;
+        let resulting_usage = self
+            .budget
+            .admit_artifact(&self.expected_usage, &self.metadata)
+            .map_err(|error| PersistenceError::InvalidDocument(error.to_string()))?;
+        if resulting_usage != self.resulting_usage {
+            return Err(PersistenceError::InvalidDocument(
+                "artifact resulting usage does not match its budget charge".to_owned(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -171,17 +232,25 @@ pub enum ArtifactReadAuthority {
 }
 
 /// One bounded random-access read request.
+///
+/// The per-read bound remains private after validation:
+///
+/// ```compile_fail
+/// use milkdrift_persistence::ArtifactReadRequest;
+/// let mut request: ArtifactReadRequest = todo!();
+/// request.maximum_bytes = u32::MAX;
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct ArtifactReadRequest {
     /// Exact content identity and verification facts.
-    pub reference: ArtifactReference,
+    reference: ArtifactReference,
     /// Zero-based byte offset.
-    pub offset: u64,
+    offset: u64,
     /// Maximum bytes to return, from 1 through one MiB.
-    pub maximum_bytes: u32,
+    maximum_bytes: u32,
     /// Default-deny access proof.
-    pub authority: ArtifactReadAuthority,
+    authority: ArtifactReadAuthority,
 }
 
 impl ArtifactReadRequest {
@@ -192,20 +261,58 @@ impl ArtifactReadRequest {
         maximum_bytes: u32,
         authority: ArtifactReadAuthority,
     ) -> Result<Self, PersistenceError> {
-        if maximum_bytes == 0
-            || usize::try_from(maximum_bytes).map_or(true, |value| value > MAX_ARTIFACT_CHUNK_BYTES)
+        let request = Self {
+            reference,
+            offset,
+            maximum_bytes,
+            authority,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    /// Returns the exact content identity and verification facts.
+    #[must_use]
+    pub const fn reference(&self) -> &ArtifactReference {
+        &self.reference
+    }
+
+    /// Returns the zero-based byte offset.
+    #[must_use]
+    pub const fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    /// Returns the maximum number of bytes to return.
+    #[must_use]
+    pub const fn maximum_bytes(&self) -> u32 {
+        self.maximum_bytes
+    }
+
+    /// Returns the default-deny read authority.
+    #[must_use]
+    pub const fn authority(&self) -> &ArtifactReadAuthority {
+        &self.authority
+    }
+
+    /// Revalidates all bounded read facts at an adapter trust boundary.
+    pub fn validate(&self) -> Result<(), PersistenceError> {
+        if self.maximum_bytes == 0
+            || usize::try_from(self.maximum_bytes)
+                .map_or(true, |value| value > MAX_ARTIFACT_CHUNK_BYTES)
         {
             return Err(PersistenceError::Bounds {
                 location: "artifact.read.maximum_bytes",
                 reason: format!("must be between 1 and {MAX_ARTIFACT_CHUNK_BYTES}"),
             });
         }
-        Ok(Self {
-            reference,
-            offset,
-            maximum_bytes,
-            authority,
-        })
+        if self.offset > self.reference.size_bytes() {
+            return Err(PersistenceError::Bounds {
+                location: "artifact.read.offset",
+                reason: "offset is beyond exact artifact size".to_owned(),
+            });
+        }
+        Ok(())
     }
 }
 

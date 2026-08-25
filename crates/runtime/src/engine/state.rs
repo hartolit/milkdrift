@@ -21,6 +21,12 @@ use milkdrift_workspace::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::Ordering;
 
+type DiscoveryExpectations = (
+    Vec<RunnableIndexEntry>,
+    Vec<TimerIndexEntry>,
+    Vec<LeaseIndexEntry>,
+);
+
 impl RuntimeService {
     pub(super) fn workspace_accounting_transition(
         &self,
@@ -212,6 +218,50 @@ impl RuntimeService {
             timer_mutations,
             lease_mutations,
         ))
+    }
+
+    pub(super) fn discovery_expectations(
+        &self,
+        run: &RunId,
+        projection: &RunProjection,
+    ) -> Result<DiscoveryExpectations, RuntimeError> {
+        let through_sequence = projection.sequence();
+        let runnable = self
+            .runnable_executions(projection)?
+            .into_iter()
+            .map(|(execution, eligible_at)| RunnableIndexEntry {
+                run: run.clone(),
+                execution,
+                eligible_at,
+                priority: 0,
+                through_sequence,
+            })
+            .collect();
+        let timers = projection
+            .timers()
+            .values()
+            .filter(|timer| timer.is_pending())
+            .map(|timer| TimerIndexEntry {
+                run: run.clone(),
+                timer: timer.timer().clone(),
+                fire_at: timer.fire_at(),
+                through_sequence,
+            })
+            .collect();
+        let leases = projection
+            .leases()
+            .values()
+            .filter(|lease| lease.is_active())
+            .map(|lease| LeaseIndexEntry {
+                run: run.clone(),
+                lease: lease.lease().clone(),
+                attempt: lease.attempt().clone(),
+                worker: lease.worker().clone(),
+                expires_at: lease.expires_at(),
+                through_sequence,
+            })
+            .collect();
+        Ok((runnable, timers, leases))
     }
 
     pub(super) fn current_revision(

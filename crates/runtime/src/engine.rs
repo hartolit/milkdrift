@@ -16,10 +16,10 @@ use milkdrift_blueprint::NodeId;
 use milkdrift_persistence::{
     ActorRef, ArtifactStore, AtomicRunCommitOutcome, AttemptId, CommandResultDocument, EventPage,
     EventPageQuery, MAX_PAGE_SIZE, NodeExecutionId, PageSize, PersistenceError, Reason,
-    RepeatContinuationDecision, RevisionStore, RunEventEnvelope, RunJournal, RunQueryStore,
-    RunSequence, RunSummaryCursor, RunnableCursor, SnapshotDocument, SnapshotId, SnapshotStore,
-    StorageAdmin, StorageHealth, StorageSchemaCompatibility, TimestampMillis, WorkerId,
-    WorkspaceStore,
+    RepeatContinuationDecision, RevisionStore, RunDiscoveryIntegrityStore, RunEventEnvelope,
+    RunJournal, RunQueryStore, RunSequence, RunSummaryCursor, RunnableCursor, SnapshotDocument,
+    SnapshotId, SnapshotStore, StorageAdmin, StorageHealth, StorageSchemaCompatibility,
+    TimestampMillis, WorkerId, WorkspaceStore,
 };
 use milkdrift_workspace::{BranchId, RunId, ScopeReference, SubworkflowId};
 use tracing::{debug, info, info_span, warn};
@@ -47,6 +47,7 @@ pub trait RuntimeStore:
     RevisionStore
     + RunJournal
     + RunQueryStore
+    + RunDiscoveryIntegrityStore
     + WorkspaceStore
     + SnapshotStore
     + ArtifactStore
@@ -58,6 +59,7 @@ impl<T> RuntimeStore for T where
     T: RevisionStore
         + RunJournal
         + RunQueryStore
+        + RunDiscoveryIntegrityStore
         + WorkspaceStore
         + SnapshotStore
         + ArtifactStore

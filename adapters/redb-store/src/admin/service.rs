@@ -100,7 +100,10 @@ impl StorageAdmin for RedbStore {
         let read = self.database().begin_read().map_err(error::redb)?;
         let revisions = read.open_table(REVISIONS).map_err(error::redb)?;
         let events = read.open_table(RUN_EVENTS).map_err(error::redb)?;
+        let signal_receipts = read.open_table(SIGNAL_RECEIPTS).map_err(error::redb)?;
+        let metadata = read.open_table(METADATA).map_err(error::redb)?;
         let artifacts = read.open_table(ARTIFACT_METADATA).map_err(error::redb)?;
+        let artifact_manifest = read.open_table(ARTIFACT_MANIFEST).map_err(error::redb)?;
         let anchor = storage_anchor(&read)?;
         validate_integrity_cursor(&request, &read, &revisions, &events, &artifacts)?;
         let maximum = u64::from(request.limit.get());
@@ -192,10 +195,50 @@ impl StorageAdmin for RedbStore {
                                 "journal",
                                 "event key does not match its verified envelope",
                             )?;
-                        } else if let Err(cause) =
-                            crate::snapshot::validate_history_link(&read, &event)
-                        {
-                            push_failure(&mut result, "journal_history", &cause.to_string())?;
+                        } else {
+                            if let Err(cause) =
+                                crate::snapshot::validate_history_link(&read, &event)
+                            {
+                                push_failure(&mut result, "journal_history", &cause.to_string())?;
+                            }
+                            if let milkdrift_persistence::RunEventKind::SignalReceived {
+                                signal,
+                                ..
+                            } = event.kind()
+                            {
+                                let receipt_key =
+                                    codec::pair(event.run_id().as_str(), signal.as_str())?;
+                                let indexed = signal_receipts
+                                    .get(receipt_key.as_slice())
+                                    .map_err(error::redb)?
+                                    .map(|sequence| sequence.value());
+                                if indexed != Some(event.sequence().get()) {
+                                    push_failure(
+                                        &mut result,
+                                        "signal_indexes",
+                                        "signal-received event is missing its exact receipt index",
+                                    )?;
+                                }
+                            }
+                            if let milkdrift_persistence::RunEventKind::NodeScheduled {
+                                invocation,
+                                ..
+                            } = event.kind()
+                            {
+                                let invocation_key =
+                                    crate::journal::invocation_fact_key(event.run_id(), invocation);
+                                let indexed = metadata
+                                    .get(invocation_key.as_str())
+                                    .map_err(error::redb)?
+                                    .map(|sequence| sequence.value());
+                                if indexed != Some(event.sequence().get()) {
+                                    push_failure(
+                                        &mut result,
+                                        "invocation_indexes",
+                                        "node-scheduled event is missing its exact invocation fact",
+                                    )?;
+                                }
+                            }
                         }
                     }
                     Err(cause) => push_failure(&mut result, "journal", &cause.to_string())?,
@@ -233,6 +276,18 @@ impl StorageAdmin for RedbStore {
                     json::decode(bytes.value(), "artifact metadata");
                 match metadata {
                     Ok(metadata) if metadata.reference().artifact().as_str() == key.value() => {
+                        let manifest = artifact_manifest
+                            .get(key.value())
+                            .map_err(error::redb)?
+                            .map(|bytes| json::decode(bytes.value(), "artifact manifest"))
+                            .transpose();
+                        if manifest.as_ref().ok() != Some(&Some(metadata.clone())) {
+                            push_failure(
+                                &mut result,
+                                "artifact_indexes",
+                                "artifact metadata is missing its exact authoritative manifest",
+                            )?;
+                        }
                         if request.verify_artifact_content {
                             result.artifacts_checked += 1;
                             if let Err(cause) = crate::artifact::verify_blob(

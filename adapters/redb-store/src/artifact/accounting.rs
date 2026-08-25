@@ -168,6 +168,7 @@ pub(crate) fn commit_artifact_metadata(
     content_deduplicated: bool,
 ) -> Result<(), PersistenceError> {
     let mut artifact_accounting = validate_artifact_state(write)?;
+    validate_artifact_provenance(store, write, record)?;
     let previous_artifact =
         validated_artifact_metadata_in_transaction(write, record.metadata.reference().artifact())?;
     if previous_artifact
@@ -332,5 +333,121 @@ pub(crate) fn commit_artifact_metadata(
         &artifact_path_entry(record, ArtifactPathKind::ContentIntent)?,
     )?;
     validate_artifact_state(write)?;
+    Ok(())
+}
+
+fn validate_artifact_provenance(
+    store: &RedbStore,
+    write: &redb::WriteTransaction,
+    record: &PublicationRecord,
+) -> Result<(), PersistenceError> {
+    for causal in std::iter::once(record.metadata.provenance().producer())
+        .chain(record.metadata.provenance().causes())
+    {
+        match causal {
+            CausalReference::External { .. } => {}
+            CausalReference::Artifact { reference } => {
+                let Some(metadata) =
+                    validated_artifact_metadata_in_transaction(write, reference.artifact())?
+                else {
+                    return Err(PersistenceError::NotFound {
+                        entity: "artifact_provenance",
+                        identity: reference.artifact().to_string(),
+                    });
+                };
+                if metadata.reference() != reference {
+                    return Err(PersistenceError::ImmutableConflict {
+                        entity: "artifact_provenance",
+                        identity: reference.artifact().to_string(),
+                    });
+                }
+                verify_blob(
+                    &store.content_path(reference.digest()),
+                    reference,
+                    store.max_artifact_bytes,
+                )?;
+            }
+            CausalReference::WorkspaceValue { reference } => {
+                let values = write.open_table(VALUES).map_err(error::redb)?;
+                let scopes = write.open_table(SCOPES).map_err(error::redb)?;
+                let roots = write.open_table(ROOT_SCOPES).map_err(error::redb)?;
+                crate::journal::validate_scope_lineage_in_transaction(
+                    &scopes,
+                    &roots,
+                    reference.scope(),
+                )?;
+                let key = crate::journal::workspace_value_key(reference)?;
+                let bytes = values
+                    .get(key.as_slice())
+                    .map_err(error::redb)?
+                    .ok_or_else(|| PersistenceError::NotFound {
+                        entity: "artifact_provenance_workspace_value",
+                        identity: format!(
+                            "{}/{}/{}/{}",
+                            reference.scope().run(),
+                            reference.scope().scope(),
+                            reference.key(),
+                            reference.version()
+                        ),
+                    })?;
+                let entry: WorkspaceValueEntry = json::decode(bytes.value(), "workspace value")?;
+                if entry.reference() != reference {
+                    return Err(error::corruption(
+                        "artifact provenance workspace-value key disagrees with its document",
+                    ));
+                }
+                crate::journal::validate_workspace_value_provenance(
+                    &values, &scopes, &roots, &entry, false,
+                )?;
+                crate::journal::validate_workspace_value_storage_provenance_in_transaction(
+                    write, &values, &scopes, &roots, &entry, false,
+                )?;
+            }
+            CausalReference::RunInput { run, key } => {
+                if run != &record.run {
+                    return Err(PersistenceError::InvalidDocument(
+                        "artifact provenance run input belongs to another run".to_owned(),
+                    ));
+                }
+                let head = crate::journal::validated_run_head_in_transaction(write, run)?;
+                if crate::journal::validate_run_history_membership_in_transaction(write, run, head)?
+                    .is_none()
+                {
+                    return Err(PersistenceError::NotFound {
+                        entity: "artifact_provenance_run",
+                        identity: run.to_string(),
+                    });
+                }
+                let event_key =
+                    codec::run_sequence(run.as_str(), milkdrift_persistence::RunSequence::FIRST)?;
+                let events = write.open_table(RUN_EVENTS).map_err(error::redb)?;
+                let bytes = events
+                    .get(event_key.as_slice())
+                    .map_err(error::redb)?
+                    .ok_or_else(|| {
+                        error::corruption("run input provenance has no run-created event")
+                    })?;
+                let event = milkdrift_persistence::RunEventEnvelope::from_json(bytes.value())?;
+                let known = matches!(
+                    event.kind(),
+                    milkdrift_persistence::RunEventKind::RunCreated { inputs, .. }
+                        if inputs.iter().any(|input| input.key() == key)
+                );
+                if !known {
+                    return Err(PersistenceError::NotFound {
+                        entity: "artifact_provenance_run_input",
+                        identity: format!("{run}/{key}"),
+                    });
+                }
+            }
+            CausalReference::Invocation { invocation } => {
+                crate::journal::validate_invocation_fact_in_transaction(
+                    write,
+                    &record.run,
+                    invocation,
+                )?;
+            }
+        }
+    }
     Ok(())
 }

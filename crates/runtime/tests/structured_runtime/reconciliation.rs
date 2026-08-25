@@ -2,6 +2,536 @@
 
 use super::*;
 
+struct OperationCountingExecutor {
+    resolver: DeterministicExecutor,
+    calls: Mutex<BTreeMap<OperationId, usize>>,
+}
+
+impl OperationCountingExecutor {
+    fn new(descriptor: CapabilityDescriptor) -> Self {
+        Self {
+            resolver: DeterministicExecutor::new(descriptor),
+            calls: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    fn calls(&self, operation: &str) -> TestResult<usize> {
+        Ok(*self
+            .calls
+            .lock()
+            .map_err(|_| "operation-count lock poisoned")?
+            .get(&OperationId::new(operation)?)
+            .unwrap_or(&0))
+    }
+}
+
+impl TaskExecutor for OperationCountingExecutor {
+    fn resolve(
+        &self,
+        requirement: &CapabilityRequirement,
+    ) -> Result<ResolvedCapability, ExecutorError> {
+        self.resolver.resolve(requirement)
+    }
+
+    fn execute(&self, dispatch: &ExecutionDispatch) -> Result<ExecutionReportBatch, ExecutorError> {
+        let mut calls = self
+            .calls
+            .lock()
+            .map_err(|_| ExecutorError::Boundary("operation-count lock poisoned".to_owned()))?;
+        *calls
+            .entry(dispatch.request().operation().clone())
+            .or_default() += 1;
+        drop(calls);
+        self.resolver.execute(dispatch)
+    }
+
+    fn cancel(
+        &self,
+        request: &CancellationRequest,
+    ) -> Result<CancellationAcknowledgement, ExecutorError> {
+        self.resolver.cancel(request)
+    }
+}
+
+fn changed_retired_task_revision(
+    base: &BlueprintRevision,
+    operation: &str,
+) -> TestResult<BlueprintRevision> {
+    Ok(base.revise(
+        base.id(),
+        MutationBatch::new(vec![Mutation::ReplaceNode {
+            node: task("retired", operation)?,
+        }])?,
+        AuthorRef::new("human:structured-runtime-test")?,
+        "change the completed task operation for remediation",
+    )?)
+}
+
+fn descriptor_with_distinct_operation_side_effects(
+    generate: &str,
+    fail: &str,
+) -> TestResult<CapabilityDescriptor> {
+    let mut value: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../capability/tests/fixtures/descriptor-v1.json"
+    ))?;
+    let operations = value
+        .get_mut("descriptor")
+        .and_then(|descriptor| descriptor.get_mut("operations"))
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("descriptor fixture has no operations object")?;
+    let mut remediation = operations
+        .get("model.generate")
+        .cloned()
+        .ok_or("descriptor fixture has no model.generate operation")?;
+    operations
+        .get_mut("model.generate")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("model.generate operation is not an object")?
+        .insert(
+            "side_effect".to_owned(),
+            serde_json::Value::String(generate.to_owned()),
+        );
+    remediation
+        .as_object_mut()
+        .ok_or("remediation operation is not an object")?
+        .insert(
+            "side_effect".to_owned(),
+            serde_json::Value::String(fail.to_owned()),
+        );
+    operations.insert("model.fail".to_owned(), remediation);
+    Ok(
+        CapabilityDescriptorDocument::from_json(&serde_json::to_vec(&value)?)?
+            .body()
+            .clone(),
+    )
+}
+
+#[test]
+fn remediation_survives_reopen_and_dispatches_only_the_target_revision_operation() -> TestResult {
+    let directory = TempDir::new()?;
+    let descriptor = descriptor_with_model_side_effect("non_idempotent_write")?;
+    let executor = Arc::new(OperationCountingExecutor::new(descriptor));
+    let old = removable_task_revision("workflow-remediation-target-revision")?;
+    let new = changed_retired_task_revision(&old, "model.fail")?;
+    let run = RunId::new("run-remediation-target-revision")?;
+
+    let (store, clock, runtime) = runtime_with_executor_at(
+        directory.path(),
+        "remediation-target-before",
+        "remediation-target-worker",
+        NOW,
+        64,
+        executor.clone(),
+    )?;
+    store.put_revision(&old)?;
+    store.put_revision(&new)?;
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::CreateRun {
+                workflow: old.semantic().workflow().clone(),
+                revision: old.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    run.clone(),
+                    ScopeId::new("scope-remediation-target-revision")?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(runtime.tick()?.completed, 1);
+    assert_eq!(executor.calls("model.generate")?, 1);
+    assert_eq!(executor.calls("model.fail")?, 0);
+
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::RequestRevisionAdoption {
+                reconciliation: ReconciliationId::new("reconciliation-remediation-target")?,
+                revision: new.id().clone(),
+                policy: ReconciliationPolicy::CompensateOrRemediate,
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    let plan = runtime
+        .projection(&run)?
+        .reconciliation()
+        .plans()
+        .values()
+        .next()
+        .ok_or("remediation target plan is absent")?
+        .plan()
+        .clone();
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::ApplyReconciliation { plan },
+        )?,
+        CommandDisposition::Accepted
+    );
+    let applied = runtime.projection(&run)?;
+    let remediation = applied
+        .node_executions()
+        .values()
+        .find(|execution| {
+            execution.node().as_str() == "retired"
+                && execution.state() == &NodeExecutionState::Eligible
+        })
+        .ok_or("eligible remediation execution is absent")?;
+    assert_eq!(remediation.revision(), new.id());
+    assert_eq!(runtime.scheduler_tick()?.dispatched, 1);
+    drop(applied);
+    drop(runtime);
+    drop(clock);
+    drop(store);
+
+    let (store, clock, runtime) = runtime_with_executor_at(
+        directory.path(),
+        "remediation-target-after",
+        "remediation-target-worker",
+        NOW,
+        64,
+        executor.clone(),
+    )?;
+    let actions = runtime.claim_effects(PageSize::new(1)?)?;
+    let dispatch = match actions.as_slice() {
+        [EffectAction::Execute(dispatch)] => dispatch,
+        _ => return Err("reopened remediation did not yield exactly one execution".into()),
+    };
+    assert_eq!(dispatch.revision(), new.id());
+    assert_eq!(
+        dispatch.request().operation(),
+        &OperationId::new("model.fail")?
+    );
+    assert!(matches!(
+        runtime.execute_effect(&actions[0])?,
+        EffectExecutionResult::Completed { .. }
+    ));
+    assert_eq!(executor.calls("model.generate")?, 1);
+    assert_eq!(executor.calls("model.fail")?, 1);
+    drop(actions);
+    drop(runtime);
+    drop(clock);
+    drop(store);
+
+    let (_store, _clock, reopened) = runtime_with_executor_at(
+        directory.path(),
+        "remediation-target-final",
+        "remediation-target-worker",
+        NOW,
+        64,
+        executor.clone(),
+    )?;
+    assert!(reopened.claim_effects(PageSize::new(1)?)?.is_empty());
+    assert_eq!(executor.calls("model.generate")?, 1);
+    assert_eq!(executor.calls("model.fail")?, 1);
+    Ok(())
+}
+
+#[test]
+fn compacted_remediation_cannot_downgrade_its_source_side_effect_risk() -> TestResult {
+    let directory = TempDir::new()?;
+    let descriptor =
+        descriptor_with_distinct_operation_side_effects("non_idempotent_write", "none")?;
+    let executor = Arc::new(OperationCountingExecutor::new(descriptor));
+    let first = removable_task_revision("workflow-remediation-risk")?;
+    let second = changed_retired_task_revision(&first, "model.fail")?;
+    let third = revision_without_completed_task(&second)?;
+    let run = RunId::new("run-remediation-risk")?;
+    let (store, clock, runtime) = runtime_with_executor_at(
+        directory.path(),
+        "remediation-risk-before",
+        "remediation-risk-worker",
+        NOW,
+        64,
+        executor.clone(),
+    )?;
+    store.put_revision(&first)?;
+    store.put_revision(&second)?;
+    store.put_revision(&third)?;
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::CreateRun {
+                workflow: first.semantic().workflow().clone(),
+                revision: first.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    run.clone(),
+                    ScopeId::new("scope-remediation-risk")?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(runtime.tick()?.completed, 1);
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::RequestRevisionAdoption {
+                reconciliation: ReconciliationId::new("remediation-risk-second")?,
+                revision: second.id().clone(),
+                policy: ReconciliationPolicy::CompensateOrRemediate,
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    let plan = runtime
+        .projection(&run)?
+        .reconciliation()
+        .plans()
+        .values()
+        .next()
+        .ok_or("remediation-risk plan is absent")?
+        .plan()
+        .clone();
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::ApplyReconciliation { plan },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(runtime.tick()?.completed, 1);
+    assert_eq!(executor.calls("model.generate")?, 1);
+    assert_eq!(executor.calls("model.fail")?, 1);
+
+    let mut lifecycle_transitions = 0_u64;
+    while store.head(&run)?.get() % 128 != 0 {
+        lifecycle_transitions += 1;
+        let command = match runtime.projection(&run)?.lifecycle() {
+            RunLifecycle::Running => RunCommand::PauseRun,
+            RunLifecycle::Paused => RunCommand::ResumeRun,
+            lifecycle => {
+                return Err(format!(
+                    "remediation-risk run cannot checkpoint from lifecycle {lifecycle:?}"
+                )
+                .into());
+            }
+        };
+        assert_eq!(
+            submit_command(&runtime, store.as_ref(), &run, command)?,
+            CommandDisposition::Accepted
+        );
+    }
+    let snapshot = store.latest_snapshot(&run)?;
+    assert!(
+        matches!(snapshot, milkdrift_persistence::SnapshotLoad::Verified(_)),
+        "remediation-risk checkpoint was not verified at head {} after {lifecycle_transitions} lifecycle transitions: {snapshot:?}",
+        store.head(&run)?.get()
+    );
+    drop(runtime);
+    drop(clock);
+    drop(store);
+
+    let (store, _clock, reopened) = runtime_with_executor_at(
+        directory.path(),
+        "remediation-risk-after",
+        "remediation-risk-worker",
+        NOW,
+        64,
+        executor,
+    )?;
+    let settled = reopened
+        .projection(&run)?
+        .settled_node_executions()
+        .values()
+        .find(|execution| execution.node().as_str() == "retired")
+        .ok_or("remediation-risk settled frontier is absent")?
+        .side_effect();
+    assert_eq!(settled, SideEffectClass::NonIdempotentWrite);
+    assert_eq!(
+        submit_command(
+            &reopened,
+            store.as_ref(),
+            &run,
+            RunCommand::RequestRevisionAdoption {
+                reconciliation: ReconciliationId::new("remediation-risk-third")?,
+                revision: third.id().clone(),
+                policy: ReconciliationPolicy::FinishCurrentThenAdopt,
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    let projection = reopened.projection(&run)?;
+    let plan = projection
+        .reconciliation()
+        .plans()
+        .values()
+        .next()
+        .ok_or("post-compaction risk plan is absent")?;
+    assert!(plan.items().iter().any(|item| {
+        item.node.as_ref() == NodeId::new("retired").ok().as_ref()
+            && item.classification == ReconciliationClassification::CompletedOrUncertainSideEffects
+            && item.action == ReconciliationAction::RejectRetrospectiveRewrite
+    }));
+    Ok(())
+}
+
+#[test]
+fn run_cancellation_after_lease_prevents_external_start() -> TestResult {
+    let directory = TempDir::new()?;
+    let executor = Arc::new(OperationCountingExecutor::new(test_descriptor()?));
+    let (store, _clock, runtime) = runtime_with_executor_at(
+        directory.path(),
+        "cancel-after-lease",
+        "cancel-after-lease",
+        NOW,
+        64,
+        executor.clone(),
+    )?;
+    let revision = task_revision("workflow-cancel-after-lease")?;
+    let run = RunId::new("run-cancel-after-lease")?;
+    store.put_revision(&revision)?;
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::CreateRun {
+                workflow: revision.semantic().workflow().clone(),
+                revision: revision.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    run.clone(),
+                    ScopeId::new("scope-cancel-after-lease")?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(runtime.scheduler_tick()?.dispatched, 1);
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::RequestCancellation,
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert!(runtime.claim_effects(PageSize::new(1)?)?.is_empty());
+    assert_eq!(executor.calls("model.generate")?, 0);
+    assert!(
+        !runtime
+            .history(&run)?
+            .iter()
+            .any(|event| matches!(event.kind(), RunEventKind::NodeStarted { .. }))
+    );
+    Ok(())
+}
+
+#[test]
+fn reconciliation_cancellation_after_lease_prevents_the_old_external_start() -> TestResult {
+    let directory = TempDir::new()?;
+    let executor = Arc::new(OperationCountingExecutor::new(test_descriptor()?));
+    let (store, _clock, runtime) = runtime_with_executor_at(
+        directory.path(),
+        "reconcile-cancel-after-lease",
+        "reconcile-cancel-after-lease",
+        NOW,
+        64,
+        executor.clone(),
+    )?;
+    let old = task_revision("workflow-reconcile-cancel-after-lease")?;
+    let new = revised_task_revision(&old, "model.fail")?;
+    let run = RunId::new("run-reconcile-cancel-after-lease")?;
+    store.put_revision(&old)?;
+    store.put_revision(&new)?;
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::CreateRun {
+                workflow: old.semantic().workflow().clone(),
+                revision: old.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    run.clone(),
+                    ScopeId::new("scope-reconcile-cancel-after-lease")?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(runtime.scheduler_tick()?.dispatched, 1);
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::RequestRevisionAdoption {
+                reconciliation: ReconciliationId::new("reconcile-cancel-after-lease")?,
+                revision: new.id().clone(),
+                policy: ReconciliationPolicy::CancelAndRestartSafeWork,
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    let plan = runtime
+        .projection(&run)?
+        .reconciliation()
+        .plans()
+        .values()
+        .next()
+        .ok_or("cancel-after-lease reconciliation plan is absent")?
+        .plan()
+        .clone();
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::ApplyReconciliation { plan },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert!(runtime.claim_effects(PageSize::new(1)?)?.is_empty());
+    assert_eq!(executor.calls("model.generate")?, 0);
+    assert!(
+        !runtime
+            .history(&run)?
+            .iter()
+            .any(|event| matches!(event.kind(), RunEventKind::NodeStarted { .. }))
+    );
+    Ok(())
+}
+
 #[test]
 fn compacted_retry_history_still_blocks_retrospective_side_effect_rewrite() -> TestResult {
     let directory = TempDir::new()?;
@@ -633,6 +1163,12 @@ fn active_branch_frontier_does_not_capture_unowned_post_join_pending_work() -> T
             && item.classification == ReconciliationClassification::RemovedPending
             && item.action == ReconciliationAction::RemoveUnstarted
     }));
+    let removed_execution = plan
+        .items()
+        .iter()
+        .find(|item| item.node.as_ref() == NodeId::new("independent").ok().as_ref())
+        .and_then(|item| item.execution.clone())
+        .ok_or("removed independent execution identity is absent")?;
     let plan_id = plan.plan().clone();
     assert_eq!(
         submit_command(
@@ -652,10 +1188,14 @@ fn active_branch_frontier_does_not_capture_unowned_post_join_pending_work() -> T
             .executions_for_node(&NodeId::new("independent")?)
             .next()
             .map(|execution| execution.state()),
-        Some(&NodeExecutionState::RemovedProspectively(
-            plan.plan().clone()
-        ))
+        None,
+        "prospectively removed work absent from the pinned revision must retire from active state"
     );
+    assert!(runtime.history(&run)?.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::ReconciliationExecutionRemoved { execution, .. }
+            if execution == &removed_execution
+    )));
     for (branch, fork, children, state) in owned_before {
         let after = applied
             .branches()

@@ -61,19 +61,27 @@ impl RunProjection {
                 attempt,
                 reason,
             } => {
-                let plan_view =
-                    self.reconciliation.plans.get(plan).ok_or_else(|| {
-                        invalid_at(event, "cancellation references an unknown plan")
+                let authorized = self
+                    .reconciliation
+                    .plans
+                    .get(plan)
+                    .ok_or_else(|| invalid_at(event, "cancellation references an unknown plan"))
+                    .map(|plan_view| {
+                        plan_view.stale_sequence.is_none()
+                            && plan_view.applied_sequence.is_none()
+                            && plan_view.items.iter().any(|item| {
+                                item.execution.as_ref() == Some(execution)
+                                    && item.action == ReconciliationAction::CancelAndRestart
+                            })
                     })?;
-                let authorized = plan_view.stale_sequence.is_none()
-                    && plan_view.applied_sequence.is_none()
-                    && plan_view.items.iter().any(|item| {
-                        item.execution.as_ref() == Some(execution)
-                            && item.action == ReconciliationAction::CancelAndRestart
-                    });
                 let execution_view = self.execution(execution, event)?;
                 let attempt_view = self.attempt(attempt, event)?;
+                let before_dispatch = matches!(
+                    attempt_view.state,
+                    AttemptState::Scheduled | AttemptState::Leased
+                );
                 if !authorized
+                    || !self.reconciliation_cancellation_is_safe(execution)
                     || self.reconciliation_cancellations.contains_key(execution)
                     || execution_view.cancellation.is_some()
                     || attempt_view.execution != *execution
@@ -81,6 +89,12 @@ impl RunProjection {
                     || !matches!(
                         attempt_view.state,
                         AttemptState::Scheduled | AttemptState::Leased | AttemptState::Running
+                    )
+                    || !matches!(
+                        execution_view.state,
+                        NodeExecutionState::Scheduled(ref active)
+                            | NodeExecutionState::Running(ref active)
+                            if active == attempt
                     )
                 {
                     return Err(invalid_at(
@@ -120,6 +134,19 @@ impl RunProjection {
                     ));
                 }
                 self.adjust_scope_ownership(&restart_scope, true, event)?;
+                if before_dispatch {
+                    self.complete_attempt_leases(attempt);
+                    self.active_attempt_ids.remove(attempt);
+                    self.attempts
+                        .get_mut(attempt)
+                        .ok_or_else(|| invalid_at(event, "unknown reconciliation attempt"))?
+                        .state = AttemptState::CancelledBeforeDispatch;
+                    self.node_executions
+                        .get_mut(execution)
+                        .ok_or_else(|| invalid_at(event, "unknown reconciliation execution"))?
+                        .state = NodeExecutionState::CancelledBeforeDispatch;
+                    self.deactivate_execution(execution, event)?;
+                }
             }
             RunEventKind::ReconciliationRemediationCreated {
                 plan,
@@ -142,12 +169,15 @@ impl RunProjection {
                             && item.node.as_ref() == Some(node)
                             && item.action == ReconciliationAction::CompensateOrRemediate
                     });
+                let target_revision = plan_view.to_revision.clone();
+                let source_revision = plan_view.from_revision.clone();
                 let source = self
                     .current_node_execution(source_execution)
                     .ok_or_else(|| {
                         invalid_at(event, "remediation source is outside the current frontier")
                     })?;
                 if !authorized
+                    || self.revision.as_ref() != Some(&source_revision)
                     || self.node_executions.contains_key(execution)
                     || self.settled_node_executions.contains_key(execution)
                     || self.reserved_executions.contains(execution)
@@ -173,10 +203,7 @@ impl RunProjection {
                         node: node.clone(),
                         scope: scope.clone(),
                         mode: *mode,
-                        revision: self
-                            .revision
-                            .clone()
-                            .ok_or_else(|| invalid_at(event, "remediation has no revision"))?,
+                        revision: target_revision,
                         epoch_retired_sequence: None,
                         created_sequence: sequence,
                         created_at: event.occurred_at(),

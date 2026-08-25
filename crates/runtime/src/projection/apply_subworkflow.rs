@@ -162,10 +162,9 @@ impl RunProjection {
                 if !child.is_completed()
                     || child_value.scope().run() != &child.child_run
                     || !child.outputs.contains(child_value)
-                    || child
-                        .imports
-                        .iter()
-                        .any(|import| import.parent_value == *parent_value)
+                    || child.imports.iter().any(|import| {
+                        import.child_value == *child_value || import.parent_value == *parent_value
+                    })
                     || self.workspace_values.contains(parent_value)
                 {
                     return Err(invalid_at(

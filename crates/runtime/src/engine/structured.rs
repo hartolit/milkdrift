@@ -25,6 +25,14 @@ use milkdrift_persistence::{
 };
 use milkdrift_workspace::{RunId, ScopeReference, ValueKey, WorkspaceScope, WorkspaceValue};
 
+struct StructuredPlanContext<'a> {
+    run: &'a RunId,
+    occurred_at: TimestampMillis,
+    projection: &'a mut RunProjection,
+    events: &'a mut Vec<RunEventEnvelope>,
+    workspace: &'a mut Vec<WorkspaceMutation>,
+}
+
 impl RuntimeService {
     pub(super) fn extend_structured_progress(
         &self,
@@ -43,46 +51,45 @@ impl RuntimeService {
         if projection.lifecycle() == RunLifecycle::Paused {
             return Ok(());
         }
-        self.prepare_structured_frontier(
+        let mut context = StructuredPlanContext {
             run,
             occurred_at,
-            revision,
             projection,
             events,
             workspace,
-            &mut branch_scan_remaining,
-        )?;
+        };
+        self.prepare_structured_frontier(revision, &mut context, &mut branch_scan_remaining)?;
         for _ in 0..MAX_DRIVER_PASSES {
-            if events.len() >= STRUCTURED_EVENT_SOFT_LIMIT {
+            if context.events.len() >= STRUCTURED_EVENT_SOFT_LIMIT {
                 return Ok(());
             }
-            let before = events.len();
-            self.drive_eligible_frontier(
-                run,
-                occurred_at,
-                projection,
-                events,
-                workspace,
-                &mut eligible_scan_remaining,
-            )?;
+            let before = context.events.len();
+            self.drive_eligible_frontier(&mut context, &mut eligible_scan_remaining)?;
             self.close_finished_branches(
-                run,
-                occurred_at,
+                context.run,
+                context.occurred_at,
                 revision,
-                projection,
-                events,
+                context.projection,
+                context.events,
                 &mut branch_scan_remaining,
             )?;
             self.add_ready_successors(
-                run,
-                occurred_at,
+                context.run,
+                context.occurred_at,
                 revision,
-                projection,
-                events,
+                context.projection,
+                context.events,
                 &mut successor_scan_remaining,
             )?;
-            self.try_finalize_run(run, occurred_at, revision, projection, events, workspace)?;
-            if events.len() == before || projection.is_completed() {
+            self.try_finalize_run(
+                context.run,
+                context.occurred_at,
+                revision,
+                context.projection,
+                context.events,
+                context.workspace,
+            )?;
+            if context.events.len() == before || context.projection.is_completed() {
                 return Ok(());
             }
         }
@@ -91,44 +98,50 @@ impl RuntimeService {
         ))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn prepare_structured_frontier(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
         revision: &BlueprintRevision,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        workspace: &mut Vec<WorkspaceMutation>,
+        context: &mut StructuredPlanContext<'_>,
         branch_scan_remaining: &mut usize,
     ) -> Result<(), RuntimeError> {
-        let received_signal_in_current_commit = events
+        let received_signal_in_current_commit = context
+            .events
             .iter()
             .any(|event| matches!(event.kind(), RunEventKind::SignalReceived { .. }));
-        if !received_signal_in_current_commit && run_drain_reason(projection).is_none() {
-            self.drain_broadcast_signals(run, occurred_at, projection, events, workspace)?;
+        if !received_signal_in_current_commit && run_drain_reason(context.projection).is_none() {
+            self.drain_broadcast_signals(
+                context.run,
+                context.occurred_at,
+                context.projection,
+                context.events,
+                context.workspace,
+            )?;
         }
-        if projection.lifecycle() == RunLifecycle::Running && projection.termination().is_none() {
-            let root_scope = projection
+        if context.projection.lifecycle() == RunLifecycle::Running
+            && context.projection.termination().is_none()
+        {
+            let root_scope = context
+                .projection
                 .root_scope()
                 .ok_or_else(|| RuntimeError::InvalidHistory("run root scope is absent".to_owned()))?
                 .reference()
                 .clone();
             for node_id in entry_nodes(revision) {
-                if events.len() >= STRUCTURED_EVENT_SOFT_LIMIT {
+                if context.events.len() >= STRUCTURED_EVENT_SOFT_LIMIT {
                     return Ok(());
                 }
-                if node_occurrence_exists_for_current_pin(projection, node_id, &root_scope) {
+                if node_occurrence_exists_for_current_pin(context.projection, node_id, &root_scope)
+                {
                     continue;
                 }
                 let node = revision.semantic().nodes().get(node_id).ok_or_else(|| {
                     RuntimeError::InvalidHistory("current revision entry node is absent".to_owned())
                 })?;
                 self.push_projected_event(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
+                    context.run,
+                    context.occurred_at,
+                    context.projection,
+                    context.events,
                     RunEventKind::NodeBecameEligible {
                         node: node_id.clone(),
                         execution: self.next_execution_id()?,
@@ -138,26 +151,27 @@ impl RuntimeService {
                 )?;
             }
         }
-        if let Some(reason) = run_drain_reason(projection).cloned() {
+        if let Some(reason) = run_drain_reason(context.projection).cloned() {
             let active_branches: Vec<_> = self
-                .scan_branch_ids(run, projection, branch_scan_remaining)?
+                .scan_branch_ids(context.run, context.projection, branch_scan_remaining)?
                 .into_iter()
                 .filter(|branch| {
-                    projection
+                    context
+                        .projection
                         .branches()
                         .get(branch)
                         .is_some_and(|branch| branch.state() == BranchState::Active)
                 })
                 .collect();
             for branch in active_branches {
-                if events.len() >= STRUCTURED_EVENT_SOFT_LIMIT {
+                if context.events.len() >= STRUCTURED_EVENT_SOFT_LIMIT {
                     return Ok(());
                 }
                 self.push_projected_event(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
+                    context.run,
+                    context.occurred_at,
+                    context.projection,
+                    context.events,
                     RunEventKind::BranchCancellationRequested {
                         branch,
                         reason: reason.clone(),
@@ -168,25 +182,20 @@ impl RuntimeService {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn drive_eligible_frontier(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        workspace: &mut Vec<WorkspaceMutation>,
+        context: &mut StructuredPlanContext<'_>,
         eligible_scan_remaining: &mut usize,
     ) -> Result<(), RuntimeError> {
         let eligible: Vec<_> = self
-            .scan_eligible_execution_ids(run, projection, eligible_scan_remaining)?
+            .scan_eligible_execution_ids(context.run, context.projection, eligible_scan_remaining)?
             .into_iter()
             .filter_map(|execution| {
-                let execution = projection.node_executions().get(&execution)?;
+                let execution = context.projection.node_executions().get(&execution)?;
                 (execution.state() == &NodeExecutionState::Eligible
                     && (execution.mode() == NodeExecutionMode::Runtime
-                        || run_drain_reason(projection).is_some()
-                        || execution_branch_state(projection, execution.execution())
+                        || run_drain_reason(context.projection).is_some()
+                        || execution_branch_state(context.projection, execution.execution())
                             == Some(BranchState::Cancelling)))
                 .then(|| {
                     (
@@ -198,36 +207,22 @@ impl RuntimeService {
             })
             .collect();
         for (execution, node, scope) in eligible {
-            if events.len() >= STRUCTURED_EVENT_SOFT_LIMIT {
+            if context.events.len() >= STRUCTURED_EVENT_SOFT_LIMIT {
                 return Ok(());
             }
-            self.drive_eligible_execution(
-                run,
-                occurred_at,
-                projection,
-                events,
-                workspace,
-                execution,
-                node,
-                scope,
-            )?;
+            self.drive_eligible_execution(context, execution, node, scope)?;
         }
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn drive_eligible_execution(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        workspace: &mut Vec<WorkspaceMutation>,
+        context: &mut StructuredPlanContext<'_>,
         execution: NodeExecutionId,
         node_id: NodeId,
         scope_reference: ScopeReference,
     ) -> Result<(), RuntimeError> {
-        let execution_revision = self.revision_for_execution(projection, &execution)?;
+        let execution_revision = self.revision_for_execution(context.projection, &execution)?;
         let node = execution_revision
             .semantic()
             .nodes()
@@ -238,15 +233,17 @@ impl RuntimeService {
                     execution_revision.id()
                 ))
             })?;
-        let structurally_cancelling = run_drain_reason(projection).is_some()
-            || execution_branch_state(projection, &execution) == Some(BranchState::Cancelling);
+        let structurally_cancelling = run_drain_reason(context.projection).is_some()
+            || execution_branch_state(context.projection, &execution)
+                == Some(BranchState::Cancelling);
         if structurally_cancelling
             && !matches!(
                 node.kind(),
                 NodeKind::Repeat { .. } | NodeKind::Subworkflow { .. }
             )
         {
-            let timers: Vec<_> = projection
+            let timers: Vec<_> = context
+                .projection
                 .timers()
                 .values()
                 .filter(|timer| {
@@ -261,26 +258,27 @@ impl RuntimeService {
                 .collect();
             for timer in timers {
                 self.push_projected_event(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
+                    context.run,
+                    context.occurred_at,
+                    context.projection,
+                    context.events,
                     RunEventKind::TimerCancelled {
                         timer,
                         reason: Reason::new("structured cancellation released a pending timer")?,
                     },
                 )?;
             }
-            if projection
+            if context
+                .projection
                 .waits()
                 .get(&execution)
                 .is_some_and(|wait| wait.is_pending())
             {
                 self.push_projected_event(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
+                    context.run,
+                    context.occurred_at,
+                    context.projection,
+                    context.events,
                     RunEventKind::WaitCancelled {
                         execution: execution.clone(),
                         reason: Reason::new("structured cancellation released a pending wait")?,
@@ -288,10 +286,10 @@ impl RuntimeService {
                 )?;
             }
             self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
+                context.run,
+                context.occurred_at,
+                context.projection,
+                context.events,
                 RunEventKind::NodeExecutionCancelledBeforeDispatch {
                     execution: execution.clone(),
                     reason: Reason::new(
@@ -304,55 +302,55 @@ impl RuntimeService {
         match node.kind() {
             NodeKind::Task { .. } => {}
             NodeKind::Terminal { outcome } => self.drive_terminal_node(
-                run,
-                occurred_at,
+                context.run,
+                context.occurred_at,
                 &execution_revision,
-                projection,
-                events,
-                workspace,
+                context.projection,
+                context.events,
+                context.workspace,
                 node,
                 execution,
                 scope_reference,
                 outcome,
             )?,
             NodeKind::Wait { duration_ms } => self.drive_timer_wait_node(
-                run,
-                occurred_at,
-                projection,
-                events,
+                context.run,
+                context.occurred_at,
+                context.projection,
+                context.events,
                 node,
                 execution,
                 *duration_ms,
             )?,
             NodeKind::SignalWait { signal } => self.drive_signal_wait_node(
-                run,
-                occurred_at,
-                projection,
-                events,
-                workspace,
+                context.run,
+                context.occurred_at,
+                context.projection,
+                context.events,
+                context.workspace,
                 node,
                 execution,
                 scope_reference,
                 signal,
             )?,
             NodeKind::Branch { config } => self.drive_branch_node(
-                run,
-                occurred_at,
-                projection,
-                events,
-                workspace,
+                context.run,
+                context.occurred_at,
+                context.projection,
+                context.events,
+                context.workspace,
                 node,
                 execution,
                 scope_reference,
                 config,
             )?,
             NodeKind::Fork { config } => self.drive_fork_node(
-                run,
-                occurred_at,
+                context.run,
+                context.occurred_at,
                 &execution_revision,
-                projection,
-                events,
-                workspace,
+                context.projection,
+                context.events,
+                context.workspace,
                 node,
                 execution,
                 node_id,
@@ -360,11 +358,11 @@ impl RuntimeService {
                 config,
             )?,
             NodeKind::Reducer { config } => self.drive_reducer(
-                run,
-                occurred_at,
-                projection,
-                events,
-                workspace,
+                context.run,
+                context.occurred_at,
+                context.projection,
+                context.events,
+                context.workspace,
                 node,
                 &execution,
                 &scope_reference,
@@ -372,33 +370,33 @@ impl RuntimeService {
                 &execution_revision,
             )?,
             NodeKind::Repeat { config } => self.drive_repeat_intent(
-                run,
-                occurred_at,
-                projection,
-                events,
-                workspace,
+                context.run,
+                context.occurred_at,
+                context.projection,
+                context.events,
+                context.workspace,
                 node,
                 &execution,
                 &scope_reference,
                 config,
             )?,
             NodeKind::Subworkflow { reference } => self.drive_subworkflow_node(
-                run,
-                occurred_at,
-                projection,
-                events,
-                workspace,
+                context.run,
+                context.occurred_at,
+                context.projection,
+                context.events,
+                context.workspace,
                 node,
                 execution,
                 scope_reference,
                 reference,
             )?,
             NodeKind::Join { config } => self.drive_join_node(
-                run,
-                occurred_at,
+                context.run,
+                context.occurred_at,
                 &execution_revision,
-                projection,
-                events,
+                context.projection,
+                context.events,
                 node,
                 execution,
                 config,

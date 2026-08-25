@@ -202,7 +202,7 @@ impl RunProjection {
                     .and_then(|scope| self.scopes.get(scope))
                     .is_some_and(|scope| matches!(scope.kind(), ScopeKind::Iteration { .. }));
                 child.is_active()
-                    || child.outputs.len() != child.imports.len()
+                    || !child.outputs_fully_imported()
                     || child
                         .scope
                         .parent()
@@ -250,11 +250,19 @@ impl RunProjection {
             self.reconciliation.requests.clear();
             self.reconciliation.plans.clear();
         }
-        self.reconciliation_cancellations.retain(|execution, _| {
-            self.node_executions
-                .get(execution)
-                .is_some_and(|execution| !execution.is_completed())
-        });
+        self.reconciliation_cancellations
+            .retain(|execution, cancellation| {
+                self.node_executions
+                    .get(execution)
+                    .is_some_and(|execution| {
+                        !execution.is_completed()
+                            || self
+                                .reconciliation
+                                .plans
+                                .get(cancellation.plan())
+                                .is_some_and(|plan| plan.is_pending())
+                    })
+            });
         self.reconciliation_remediations.retain(|execution, _| {
             self.node_executions
                 .get(execution)
@@ -289,7 +297,7 @@ impl RunProjection {
                     && !self.remediations.contains_key(*identity)
                     && !self.subworkflows.values().any(|child| {
                         child.parent_execution == **identity
-                            && (child.is_active() || child.outputs.len() != child.imports.len())
+                            && (child.is_active() || !child.outputs_fully_imported())
                     })
                     && self.execution_scope_is_closed(execution)
             })
@@ -305,7 +313,7 @@ impl RunProjection {
                 )
             })?;
             let latest_attempt = execution.attempts.last().cloned();
-            let side_effect = execution
+            let mut side_effect = execution
                 .attempts
                 .iter()
                 .filter_map(|attempt| self.attempts.get(attempt))
@@ -314,6 +322,14 @@ impl RunProjection {
                 .max_by_key(|effect| side_effect_rank(*effect))
                 .unwrap_or(SideEffectClass::None);
             let key = (execution.scope.clone(), execution.node.clone());
+            if let Some(previous) = self
+                .settled_execution_by_scope_node
+                .get(&key)
+                .and_then(|previous| self.settled_node_executions.get(previous))
+                && side_effect_rank(previous.side_effect()) > side_effect_rank(side_effect)
+            {
+                side_effect = previous.side_effect();
+            }
             let is_latest_frontier = self
                 .settled_execution_by_scope_node
                 .get(&key)
@@ -550,7 +566,13 @@ impl RunProjection {
                 self.scopes
                     .get(summary.scope())
                     .is_some_and(|scope| match scope.kind() {
-                        ScopeKind::RunRoot => true,
+                        ScopeKind::RunRoot => {
+                            !matches!(
+                                summary.state(),
+                                NodeExecutionState::RemovedProspectively(plan)
+                                    if self.reconciliation.plans.get(plan).is_none_or(|plan| !plan.is_pending())
+                            )
+                        }
                         ScopeKind::Branch { branch } => self.branches.contains_key(branch),
                         ScopeKind::Iteration { iteration } => {
                             self.iterations.contains_key(iteration)
@@ -649,6 +671,47 @@ impl RunProjection {
 
     pub(crate) fn validate_compacted_state(&self) -> Result<(), RuntimeError> {
         let invalid = |reason: &str| RuntimeError::InvalidHistory(reason.to_owned());
+        let retained_signal_payload_bytes = self.signals.values().try_fold(
+            0_usize,
+            |total, signal| -> Result<usize, RuntimeError> {
+                let payload = serde_json::to_vec(signal.payload()).map_err(|_| {
+                    invalid("retained signal payload could not be deterministically serialized")
+                })?;
+                total
+                    .checked_add(payload.len())
+                    .ok_or_else(|| invalid("retained signal payload byte count overflowed"))
+            },
+        )?;
+        if self.signals.len() > super::MAX_PENDING_SIGNAL_COUNT
+            || retained_signal_payload_bytes > super::MAX_PENDING_SIGNAL_PAYLOAD_BYTES
+        {
+            return Err(invalid(
+                "retained signal count or aggregate payload bytes exceed the pending budget",
+            ));
+        }
+        if self
+            .attempts
+            .values()
+            .any(|attempt| attempt.lease_workers.len() > 1)
+        {
+            return Err(invalid(
+                "attempt retains more than one worker that crossed the start boundary",
+            ));
+        }
+        if self.settled_node_executions.values().any(|summary| {
+            self.scopes
+                .get(summary.scope())
+                .is_some_and(|scope| matches!(scope.kind(), ScopeKind::RunRoot))
+                && matches!(
+                    summary.state(),
+                    NodeExecutionState::RemovedProspectively(plan)
+                        if self.reconciliation.plans.get(plan).is_none_or(|plan| !plan.is_pending())
+                )
+        }) {
+            return Err(invalid(
+                "applied prospective removal remains in the root execution frontier",
+            ));
+        }
         if self
             .active_attempt_ids
             .iter()
@@ -681,6 +744,20 @@ impl RunProjection {
                 .is_none_or(|child| !child.is_active())
         }) {
             return Err(invalid("active subworkflow references compacted state"));
+        }
+        if self.subworkflows.values().any(|child| {
+            child.imports.iter().enumerate().any(|(index, import)| {
+                !child.outputs.contains(&import.child_value)
+                    || child.imports[..index].iter().any(|prior| {
+                        prior.child_value == import.child_value
+                            || prior.parent_value == import.parent_value
+                    })
+                    || !self.workspace_values.contains(&import.parent_value)
+            })
+        }) {
+            return Err(invalid(
+                "subworkflow imports do not exactly reference unique terminal child outputs",
+            ));
         }
         if self.node_executions.values().any(|execution| {
             matches!(

@@ -28,3 +28,33 @@ jobs:
           --test structured_runtime
           lifecycle::historical_execution_frontier_stays_bounded_across_index_limit
           -- --ignored --exact --nocapture
+      - name: Run 10,000 ordinary occurrence compaction
+        run: >-
+          cargo test --release -p milkdrift-runtime --lib
+          projection::tests::bounded::ten_thousand_closed_task_occurrences_keep_one_terminal_frontier
+          -- --exact --nocapture
+      - name: Run 10,000 fork/join ownership cycles
+        run: >-
+          cargo test --release -p milkdrift-runtime --lib
+          projection::tests::bounded::ten_thousand_closed_fork_join_cycles_retire_structured_ownership
+          -- --exact --nocapture
+      - name: Run 10,000 completed subworkflow/repeat children
+        run: >-
+          cargo test --release -p milkdrift-runtime --lib
+          projection::tests::bounded::ten_thousand_completed_repeat_children_keep_only_import_frontier
+          -- --exact --nocapture
+      - name: Run 10,000 revision node-id churn cycles
+        run: >-
+          cargo test --release -p milkdrift-runtime --lib
+          projection::tests::bounded::ten_thousand_revision_node_churn_drops_removed_root_summaries
+          -- --exact --nocapture
+      - name: Run 10,000 unmatched-signal budget attempts
+        run: >-
+          cargo test --release -p milkdrift-runtime --lib
+          projection::tests::bounded::ten_thousand_unmatched_signals_cannot_exceed_the_pending_budget
+          -- --exact --nocapture
+      - name: Run 10,000 pre-start worker lease releases
+        run: >-
+          cargo test --release -p milkdrift-runtime --lib
+          projection::tests::bounded::ten_thousand_pre_start_releases_retain_no_worker_history
+          -- --exact --nocapture

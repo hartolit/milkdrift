@@ -923,6 +923,26 @@ fn snapshot_checksum_and_history_prefix_are_verified() -> Result<(), Box<dyn std
 }
 
 #[test]
+fn snapshot_payload_larger_than_generic_json_array_limit_roundtrips_canonically()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = (0..16_384_u32)
+        .map(|index| u8::try_from(index % 251))
+        .collect::<Result<Vec<_>, _>>()?;
+    let snapshot = SnapshotDocument::new(
+        SnapshotId::new("snapshot-large-payload")?,
+        RunId::new("run-large-snapshot-payload")?,
+        RunSequence::FIRST,
+        IntegrityDigest::new(format!("b3_{}", "1".repeat(64)))?,
+        3,
+        payload,
+    )?;
+    let encoded = snapshot.to_canonical_json()?;
+    assert_eq!(SnapshotDocument::from_json(&encoded)?, snapshot);
+    assert_eq!(snapshot.to_canonical_json()?, encoded);
+    Ok(())
+}
+
+#[test]
 fn every_port_is_object_safe() {
     fn accepts_object<T: ?Sized>() {}
     accepts_object::<dyn RunJournal>();

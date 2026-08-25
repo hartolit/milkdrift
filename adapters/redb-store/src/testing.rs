@@ -5,13 +5,13 @@
 
 use std::path::Path;
 
-use milkdrift_persistence::PersistenceError;
-use milkdrift_workspace::{ScopeReference, WorkspaceValueEntry, WorkspaceValueReference};
-use redb::Database;
+use milkdrift_persistence::{PersistenceError, RunnableIndexEntry};
+use milkdrift_workspace::{RunId, ScopeReference, WorkspaceValueEntry, WorkspaceValueReference};
+use redb::{Database, ReadableTable};
 
 use crate::{
     codec, error, json,
-    schema::{SCOPES, VALUES},
+    schema::{RUNNABLE_ENTRIES, RUNNABLE_INDEX, RUNNABLE_RUN_HEADS, SCOPES, VALUES},
     store::DATABASE_FILENAME,
 };
 
@@ -65,6 +65,64 @@ pub fn insert_orphan_workspace_value(
             entity: "workspace_value",
             identity: format!("{:?}", entry.reference()),
         });
+    }
+    write.commit().map_err(error::redb)
+}
+
+/// Removes every runnable identity/ordered row and the per-run head for one run.
+///
+/// This creates the otherwise-undetectable-by-pairing symmetric-loss shape used to
+/// prove runtime startup compares derived discovery against authoritative replay.
+pub fn remove_run_runnable_discovery(root: &Path, run: &RunId) -> Result<(), PersistenceError> {
+    let database = open_database(root)?;
+    let write = database.begin_write().map_err(error::redb)?;
+    let entries = {
+        let identities = write.open_table(RUNNABLE_ENTRIES).map_err(error::redb)?;
+        let mut selected = Vec::new();
+        for row in identities.iter().map_err(error::redb)? {
+            let (key, bytes) = row.map_err(error::redb)?;
+            let entry = json::decode::<RunnableIndexEntry>(bytes.value(), "runnable index")?;
+            if &entry.run == run {
+                selected.push((key.value().to_vec(), entry));
+            }
+        }
+        selected
+    };
+    if entries.is_empty() {
+        return Err(PersistenceError::NotFound {
+            entity: "runnable_discovery",
+            identity: run.to_string(),
+        });
+    }
+    {
+        let mut identities = write.open_table(RUNNABLE_ENTRIES).map_err(error::redb)?;
+        let mut ordered = write.open_table(RUNNABLE_INDEX).map_err(error::redb)?;
+        for (identity_key, entry) in &entries {
+            if identities
+                .remove(identity_key.as_slice())
+                .map_err(error::redb)?
+                .is_none()
+                || ordered
+                    .remove(crate::journal::runnable_order_key(entry)?.as_slice())
+                    .map_err(error::redb)?
+                    .is_none()
+            {
+                return Err(error::corruption(
+                    "runnable discovery changed during logical fault injection",
+                ));
+            }
+        }
+    }
+    if write
+        .open_table(RUNNABLE_RUN_HEADS)
+        .map_err(error::redb)?
+        .remove(run.as_str())
+        .map_err(error::redb)?
+        .is_none()
+    {
+        return Err(error::corruption(
+            "runnable head is absent during logical fault injection",
+        ));
     }
     write.commit().map_err(error::redb)
 }

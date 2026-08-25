@@ -21,7 +21,8 @@ A minimal revision is constructed through a validated mutation batch; see the cr
 - `crates/runtime`: commands, pure projections, scheduling, execution ownership, recovery, and reconciliation.
 - `adapters/redb-store`: transactional local redb storage and content-addressed artifact bytes.
 - `docs`: status, roadmap, development commands, and durable decisions.
-- `.github/workflows/quality.yml`: the single repository quality workflow.
+- `.github/workflows/quality.yml`: the primary format/check/test/lint/documentation workflow.
+- `.github/workflows/stress.yml`: weekly and manually triggered long-run storage/projection boundary evidence.
 
 The canonical documents are [VISION.md](VISION.md), [ARCHITECTURE.md](ARCHITECTURE.md), [docs/STATUS.md](docs/STATUS.md), [docs/ROADMAP.md](docs/ROADMAP.md), [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), and [the ADR index](docs/decisions/README.md).
 

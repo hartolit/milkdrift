@@ -967,7 +967,7 @@ pub enum RunEventKind {
     ReconciliationDecisionRecorded {
         /// Immutable plan.
         plan: ReconciliationPlanId,
-        /// Stable decision identity.
+        /// Decision idempotency identity within the immutable plan.
         decision: ReconciliationDecisionId,
         /// Authorized actor reference.
         actor: ActorRef,
@@ -1048,7 +1048,7 @@ pub enum RunEventKind {
     RecoveryDecisionRecorded {
         /// Attempt being resolved.
         attempt: AttemptId,
-        /// Stable decision identity.
+        /// Decision idempotency identity within the retained attempt.
         decision: ReconciliationDecisionId,
         /// Actor reference.
         actor: ActorRef,

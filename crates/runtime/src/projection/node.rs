@@ -790,8 +790,8 @@ pub struct NodeAttemptProjection {
     pub(super) capability: Option<CapabilityResolution>,
     pub(super) side_effect: Option<SideEffectClassification>,
     pub(super) leases: Vec<LeaseId>,
-    /// Workers that durably owned this attempt. This bounded ownership summary is
-    /// sufficient to authenticate late evidence after individual leases retire.
+    /// The latest worker that durably crossed `NodeStarted` for this attempt.
+    /// Pre-start lease churn is deliberately excluded from this bounded summary.
     pub(super) lease_workers: std::collections::BTreeSet<WorkerId>,
     pub(super) progress: Vec<ProgressObservation>,
     pub(super) last_report_sequence: Option<u64>,
@@ -875,7 +875,7 @@ impl NodeAttemptProjection {
         &self.leases
     }
 
-    /// Workers with durable historical ownership of this retained attempt.
+    /// Latest worker that durably crossed the attempt's start boundary.
     #[must_use]
     pub const fn lease_workers(&self) -> &std::collections::BTreeSet<WorkerId> {
         &self.lease_workers

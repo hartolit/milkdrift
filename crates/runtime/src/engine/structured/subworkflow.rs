@@ -1,16 +1,272 @@
-//! Deterministic structured-node execution, reducers, repeats, and subworkflow intent creation.
+//! Subworkflow intent creation and attached child-aggregate lifecycle.
 
 use super::super::RuntimeService;
-use crate::RuntimeError;
-use crate::projection::RunProjection;
-use milkdrift_blueprint::{Node, PortId};
+use super::super::support::{CommandPlan, bounded_projection_set};
+use crate::projection::{RunLifecycle, RunProjection, SubworkflowState};
+use crate::{RunCommand, RunCommandDocument, RuntimeError, SystemTransition};
+use milkdrift_blueprint::{Node, NodeKind, PortId, RevisionId};
 use milkdrift_persistence::{
-    BoundedDetail, NodeExecutionId, NodeOutcome, RunEventEnvelope, RunEventKind,
-    SubworkflowOwnership, TimestampMillis, WorkspaceMutation,
+    BoundedDetail, CommandDisposition, NodeExecutionId, NodeOutcome, PageSize, Reason,
+    RunEventEnvelope, RunEventKind, RunSequence, SubworkflowOwnership, TimestampMillis,
+    WorkspaceMutation,
 };
-use milkdrift_workspace::{RunId, ScopeReference, ValueKey, WorkspaceScope};
+use milkdrift_workspace::{
+    RunId, ScopeReference, SubworkflowId, ValueKey, WorkspaceScope, WorkspaceValueEntry,
+    WorkspaceValueReference,
+};
+use std::collections::BTreeMap;
+use std::sync::atomic::Ordering;
+
+struct ActiveChild {
+    subworkflow: SubworkflowId,
+    parent_execution: NodeExecutionId,
+    run: RunId,
+    revision: RevisionId,
+    scope: WorkspaceScope,
+    inputs: Vec<WorkspaceValueReference>,
+    state: SubworkflowState,
+}
 
 impl RuntimeService {
+    pub(in crate::engine) fn drive_child_aggregates(
+        &self,
+        now: TimestampMillis,
+        limit: PageSize,
+    ) -> Result<(), RuntimeError> {
+        for summary in self.next_nonterminal_page(&self.child_cursor, limit, "child-aggregate")? {
+            if self.structured_scan_budget.load(Ordering::Acquire) == 0 {
+                break;
+            }
+            let parent = self.projection(&summary.run)?;
+            for child in self.active_children(&summary.run, &parent)? {
+                let child_head = self.ensure_child_created(now, &parent, &child)?;
+                let child_projection = self.advance_child_lifecycle(now, child_head, &child)?;
+                self.observe_child_terminal(now, &summary.run, &child, &child_projection)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn active_children(
+        &self,
+        parent_run: &RunId,
+        parent: &RunProjection,
+    ) -> Result<Vec<ActiveChild>, RuntimeError> {
+        let claimed = self.claim_structured_scan_visits(parent.active_subworkflow_ids().len());
+        let mut allowance = claimed;
+        bounded_projection_set(
+            parent_run,
+            parent.active_subworkflow_ids(),
+            &self.child_subworkflow_cursors,
+            &mut allowance,
+            "active child scan cursor",
+        )?
+        .into_iter()
+        .map(|subworkflow| {
+            let child = parent.subworkflows().get(&subworkflow).ok_or_else(|| {
+                RuntimeError::InvalidHistory("active child frontier identity is absent".to_owned())
+            })?;
+            Ok(ActiveChild {
+                subworkflow: child.subworkflow().clone(),
+                parent_execution: child.parent_execution().clone(),
+                run: child.child_run().clone(),
+                revision: child.child_revision().clone(),
+                scope: child.scope().clone(),
+                inputs: child.inputs().to_vec(),
+                state: child.state(),
+            })
+        })
+        .collect()
+    }
+
+    fn ensure_child_created(
+        &self,
+        now: TimestampMillis,
+        parent: &RunProjection,
+        child: &ActiveChild,
+    ) -> Result<RunSequence, RuntimeError> {
+        let child_head = self.store.head(&child.run)?;
+        if child_head != RunSequence::ZERO {
+            return Ok(child_head);
+        }
+
+        let child_blueprint = self.load_validated_revision(&child.revision, None)?;
+        let root_scope = WorkspaceScope::run_root(child.run.clone(), self.next_scope_id()?);
+        let mut inputs_by_key = BTreeMap::new();
+        for reference in &child.inputs {
+            let entry = self.projected_workspace_value(parent, reference, &[])?;
+            if inputs_by_key
+                .insert(entry.reference().key().clone(), entry.value().clone())
+                .is_some()
+            {
+                return Err(RuntimeError::InvalidTransition(
+                    "subworkflow inputs must map to distinct child keys".to_owned(),
+                ));
+            }
+        }
+        let inputs = inputs_by_key
+            .into_iter()
+            .map(|(key, value)| {
+                WorkspaceValueEntry::initial(root_scope.reference().clone(), key, value)
+            })
+            .collect();
+        let budget = parent.workspace_budget().ok_or_else(|| {
+            RuntimeError::InvalidHistory("parent run has no workspace budget".to_owned())
+        })?;
+        let create = RunCommandDocument::new(
+            self.next_command_id()?,
+            child.run.clone(),
+            self.config.internal_actor.clone(),
+            RunSequence::ZERO,
+            now,
+            Reason::new("parent materialized a pinned child run aggregate")?,
+            Vec::new(),
+            RunCommand::CreateRun {
+                workflow: child_blueprint.semantic().workflow().clone(),
+                revision: child.revision.clone(),
+                root_scope,
+                workspace_budget: budget.clone(),
+                inputs,
+            },
+        )?;
+        let created = self.handle_command(&create)?;
+        if created.result().disposition() != CommandDisposition::Accepted {
+            return Err(RuntimeError::InvalidTransition(
+                "pinned child run creation was durably rejected".to_owned(),
+            ));
+        }
+        Ok(created.result().resulting_sequence())
+    }
+
+    fn advance_child_lifecycle(
+        &self,
+        now: TimestampMillis,
+        child_head: RunSequence,
+        attached: &ActiveChild,
+    ) -> Result<RunProjection, RuntimeError> {
+        let mut child = self.projection(&attached.run)?;
+        if attached.state == SubworkflowState::Cancelling
+            && !child.lifecycle().is_completed()
+            && child.lifecycle() != RunLifecycle::Cancelling
+        {
+            let cancel = RunCommandDocument::new(
+                self.next_command_id()?,
+                attached.run.clone(),
+                self.config.internal_actor.clone(),
+                child.sequence(),
+                now,
+                Reason::new("attached parent propagated structured cancellation")?,
+                Vec::new(),
+                RunCommand::RequestCancellation,
+            )?;
+            let _ = self.handle_command(&cancel)?;
+            child = self.projection(&attached.run)?;
+        } else if child.lifecycle() == RunLifecycle::Created {
+            let start = RunCommandDocument::new(
+                self.next_command_id()?,
+                attached.run.clone(),
+                self.config.internal_actor.clone(),
+                child_head,
+                now,
+                Reason::new("parent started its pinned child run")?,
+                Vec::new(),
+                RunCommand::StartRun,
+            )?;
+            let _ = self.handle_command(&start)?;
+            child = self.projection(&attached.run)?;
+        }
+        Ok(child)
+    }
+
+    fn observe_child_terminal(
+        &self,
+        now: TimestampMillis,
+        parent_run: &RunId,
+        attached: &ActiveChild,
+        child: &RunProjection,
+    ) -> Result<(), RuntimeError> {
+        let Some(terminal) = child.terminal() else {
+            return Ok(());
+        };
+        let parent = self.projection(parent_run)?;
+        let child_view = parent
+            .subworkflows()
+            .get(&attached.subworkflow)
+            .ok_or_else(|| {
+                RuntimeError::InvalidHistory("parent lost its durable child link".to_owned())
+            })?;
+        if child_view.is_completed() {
+            return Ok(());
+        }
+        let parent_execution = parent
+            .node_executions()
+            .get(&attached.parent_execution)
+            .ok_or_else(|| {
+                RuntimeError::InvalidHistory("subworkflow parent execution is absent".to_owned())
+            })?;
+        let parent_revision = self.revision_for_execution(&parent, &attached.parent_execution)?;
+        let parent_node = parent_revision
+            .semantic()
+            .nodes()
+            .get(parent_execution.node())
+            .ok_or_else(|| {
+                RuntimeError::InvalidHistory("subworkflow parent node is absent".to_owned())
+            })?;
+        let publish_on_parent = matches!(parent_node.kind(), NodeKind::Subworkflow { .. });
+        let import_scope = attached.scope.reference().clone();
+        let mut plan = CommandPlan::one(RunEventKind::SubworkflowTerminal {
+            subworkflow: attached.subworkflow.clone(),
+            child_run: attached.run.clone(),
+            outcome: terminal.outcome(),
+            outputs: terminal.outputs().to_vec(),
+            cost_micros: child.resource_usage().cost_micros().clone(),
+        });
+        for child_value in terminal.outputs() {
+            let source = self.projected_workspace_value(child, child_value, &[])?;
+            let imported = self.projected_imported_output_entry(
+                &parent,
+                &import_scope,
+                source.reference().key().clone(),
+                child_value.clone(),
+                source.value().clone(),
+                &plan.workspace,
+            )?;
+            let parent_value = imported.reference().clone();
+            plan.workspace
+                .push(WorkspaceMutation::PutValue { entry: imported });
+            plan.events.push(RunEventKind::SubworkflowOutputImported {
+                subworkflow: attached.subworkflow.clone(),
+                child_value: child_value.clone(),
+                parent_value: parent_value.clone(),
+            });
+            if publish_on_parent {
+                let published = self.projected_output_entry(
+                    &parent,
+                    parent_execution.scope(),
+                    source.reference().key().clone(),
+                    source.value().clone(),
+                    &plan.workspace,
+                )?;
+                let published_value = published.reference().clone();
+                plan.workspace
+                    .push(WorkspaceMutation::PutValue { entry: published });
+                plan.events
+                    .push(RunEventKind::DeterministicOutputPublished {
+                        execution: attached.parent_execution.clone(),
+                        value: published_value,
+                        artifact: None,
+                    });
+            }
+        }
+        let _ = self.commit_internal_plan(
+            parent_run,
+            now,
+            SystemTransition::ObserveChildTerminal,
+            plan,
+        )?;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn create_subworkflow_intent(
         &self,

@@ -175,7 +175,7 @@ pub(crate) fn index_cursor_position(
             "index integrity cursor has no phase".to_owned(),
         ));
     };
-    if phase > 22 || key.is_empty() {
+    if phase > 35 || key.is_empty() {
         return Err(PersistenceError::InvalidCursor(
             "index integrity cursor has an unknown phase or empty key".to_owned(),
         ));
@@ -200,6 +200,86 @@ pub(crate) fn make_index_cursor(
     )
 }
 
+const DELETE_GUARD_CURSOR_VERSION: u8 = 1;
+
+pub(crate) fn make_delete_guard_cursor(
+    guard_key: &[u8],
+    in_progress: bool,
+    after_path: Option<&[u8]>,
+    verify_artifact_content: bool,
+    prior: Option<&IntegrityScanCursor>,
+) -> Result<IntegrityScanCursor, PersistenceError> {
+    let guard_length = u16::try_from(guard_key.len()).map_err(|_| PersistenceError::Bounds {
+        location: "integrity_cursor",
+        reason: "artifact delete-guard cursor key exceeds u16".to_owned(),
+    })?;
+    let mut state = Vec::with_capacity(
+        5_usize
+            .saturating_add(guard_key.len())
+            .saturating_add(after_path.map_or(0, <[u8]>::len)),
+    );
+    state.push(34);
+    state.push(DELETE_GUARD_CURSOR_VERSION);
+    state.extend_from_slice(&guard_length.to_be_bytes());
+    state.push(match (in_progress, after_path) {
+        (false, _) => 0,
+        (true, None) => 1,
+        (true, Some(_)) => 2,
+    });
+    state.extend_from_slice(guard_key);
+    if let Some(path) = after_path {
+        state.extend_from_slice(path);
+    }
+    make_integrity_cursor(
+        IntegrityScanFamily::Indexes,
+        &state,
+        verify_artifact_content,
+        integrity_cursor_anchor(prior)?,
+    )
+}
+
+pub(crate) type DeleteGuardCursorState<'a> = (&'a [u8], bool, Option<&'a [u8]>);
+
+pub(crate) fn parse_delete_guard_cursor(
+    state: &[u8],
+) -> Result<DeleteGuardCursorState<'_>, PersistenceError> {
+    if state.len() < 4 || state[0] != DELETE_GUARD_CURSOR_VERSION {
+        return Err(PersistenceError::InvalidCursor(
+            "artifact delete-guard cursor is malformed".to_owned(),
+        ));
+    }
+    let guard_length = usize::from(u16::from_be_bytes([state[1], state[2]]));
+    let guard_end = 4_usize.checked_add(guard_length).ok_or_else(|| {
+        PersistenceError::InvalidCursor("artifact delete-guard cursor overflows".to_owned())
+    })?;
+    let guard = state
+        .get(4..guard_end)
+        .filter(|key| !key.is_empty())
+        .ok_or_else(|| {
+            PersistenceError::InvalidCursor(
+                "artifact delete-guard cursor has no guard key".to_owned(),
+            )
+        })?;
+    match state[3] {
+        0 if state.len() == guard_end => Ok((guard, false, None)),
+        1 if state.len() == guard_end => Ok((guard, true, None)),
+        2 => {
+            let path = state
+                .get(guard_end..)
+                .filter(|key| !key.is_empty())
+                .ok_or_else(|| {
+                    PersistenceError::InvalidCursor(
+                        "artifact delete-guard cursor has no path key".to_owned(),
+                    )
+                })?;
+            Ok((guard, true, Some(path)))
+        }
+        _ => Err(PersistenceError::InvalidCursor(
+            "artifact delete-guard cursor has an invalid state".to_owned(),
+        )),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn scan_binary_bytes_phase(
     phase: u8,
@@ -213,6 +293,141 @@ pub(crate) fn scan_binary_bytes_phase(
     more_remaining: &mut bool,
     component: &str,
     mut validate: impl FnMut(&[u8], &[u8]) -> Result<(), PersistenceError>,
+) -> Result<(), PersistenceError> {
+    if *more_remaining || phase < start_phase {
+        return Ok(());
+    }
+    let lower = if phase == start_phase {
+        start_key.map_or(Bound::Unbounded, Bound::Excluded)
+    } else {
+        Bound::Unbounded
+    };
+    for item in table
+        .range::<&[u8]>((lower, Bound::Unbounded))
+        .map_err(error::redb)?
+    {
+        if result.documents_checked == maximum {
+            *more_remaining = true;
+            break;
+        }
+        let (key, value) = item.map_err(error::redb)?;
+        result.documents_checked += 1;
+        *last_cursor = Some(make_index_cursor(
+            phase,
+            key.value(),
+            verify_artifact_content,
+            last_cursor.as_ref(),
+        )?);
+        if let Err(cause) = validate(key.value(), value.value()) {
+            push_failure(result, component, &cause.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn scan_binary_string_phase(
+    phase: u8,
+    start_phase: u8,
+    start_key: Option<&[u8]>,
+    table: &impl redb::ReadableTable<&'static [u8], &'static str>,
+    maximum: u64,
+    verify_artifact_content: bool,
+    result: &mut IntegrityScanResult,
+    last_cursor: &mut Option<IntegrityScanCursor>,
+    more_remaining: &mut bool,
+    component: &str,
+    mut validate: impl FnMut(&[u8], &str) -> Result<(), PersistenceError>,
+) -> Result<(), PersistenceError> {
+    if *more_remaining || phase < start_phase {
+        return Ok(());
+    }
+    let lower = if phase == start_phase {
+        start_key.map_or(Bound::Unbounded, Bound::Excluded)
+    } else {
+        Bound::Unbounded
+    };
+    for item in table
+        .range::<&[u8]>((lower, Bound::Unbounded))
+        .map_err(error::redb)?
+    {
+        if result.documents_checked == maximum {
+            *more_remaining = true;
+            break;
+        }
+        let (key, value) = item.map_err(error::redb)?;
+        result.documents_checked += 1;
+        *last_cursor = Some(make_index_cursor(
+            phase,
+            key.value(),
+            verify_artifact_content,
+            last_cursor.as_ref(),
+        )?);
+        if let Err(cause) = validate(key.value(), value.value()) {
+            push_failure(result, component, &cause.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn scan_binary_u64_phase(
+    phase: u8,
+    start_phase: u8,
+    start_key: Option<&[u8]>,
+    table: &impl redb::ReadableTable<&'static [u8], u64>,
+    maximum: u64,
+    verify_artifact_content: bool,
+    result: &mut IntegrityScanResult,
+    last_cursor: &mut Option<IntegrityScanCursor>,
+    more_remaining: &mut bool,
+    component: &str,
+    mut validate: impl FnMut(&[u8], u64) -> Result<(), PersistenceError>,
+) -> Result<(), PersistenceError> {
+    if *more_remaining || phase < start_phase {
+        return Ok(());
+    }
+    let lower = if phase == start_phase {
+        start_key.map_or(Bound::Unbounded, Bound::Excluded)
+    } else {
+        Bound::Unbounded
+    };
+    for item in table
+        .range::<&[u8]>((lower, Bound::Unbounded))
+        .map_err(error::redb)?
+    {
+        if result.documents_checked == maximum {
+            *more_remaining = true;
+            break;
+        }
+        let (key, value) = item.map_err(error::redb)?;
+        result.documents_checked += 1;
+        *last_cursor = Some(make_index_cursor(
+            phase,
+            key.value(),
+            verify_artifact_content,
+            last_cursor.as_ref(),
+        )?);
+        if let Err(cause) = validate(key.value(), value.value()) {
+            push_failure(result, component, &cause.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn scan_binary_u8_phase(
+    phase: u8,
+    start_phase: u8,
+    start_key: Option<&[u8]>,
+    table: &impl redb::ReadableTable<&'static [u8], u8>,
+    maximum: u64,
+    verify_artifact_content: bool,
+    result: &mut IntegrityScanResult,
+    last_cursor: &mut Option<IntegrityScanCursor>,
+    more_remaining: &mut bool,
+    component: &str,
+    mut validate: impl FnMut(&[u8], u8) -> Result<(), PersistenceError>,
 ) -> Result<(), PersistenceError> {
     if *more_remaining || phase < start_phase {
         return Ok(());
@@ -623,6 +838,71 @@ pub(crate) fn index_integrity_cursor_exists(
             .open_table(ARTIFACT_TEMP_OWNERS)
             .map_err(error::redb)?
             .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        24 => read
+            .open_table(SIGNAL_RECEIPTS)
+            .map_err(error::redb)?
+            .get(key)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        25 => read
+            .open_table(RUNNABLE_RUN_HEADS)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        26 => binary_cursor_exists(read, WORKSPACE_VALUE_HEADS, key),
+        27 => read
+            .open_table(METADATA)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        28 => binary_cursor_exists(read, SNAPSHOTS, key),
+        29 => read
+            .open_table(SNAPSHOT_LATEST)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        30 => read
+            .open_table(ARTIFACT_PUBLICATIONS)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        31 => read
+            .open_table(ARTIFACT_PUBLICATIONS_BY_AGE)
+            .map_err(error::redb)?
+            .get(key)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        32 => read
+            .open_table(ARTIFACT_RESERVATIONS)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        33 => binary_cursor_exists(read, ARTIFACT_PATHS, key),
+        34 => read
+            .open_table(ARTIFACT_DELETE_GUARDS)
+            .map_err(error::redb)?
+            .get(parse_delete_guard_cursor(key)?.0)
+            .map_err(error::redb)
+            .and_then(|guard| {
+                let (_, _, path) = parse_delete_guard_cursor(key)?;
+                if guard.is_none() {
+                    return Ok(false);
+                }
+                path.map_or(Ok(true), |path| {
+                    binary_cursor_exists(read, ARTIFACT_PATHS, path)
+                })
+            }),
+        35 => read
+            .open_table(ARTIFACT_DIGEST_RESERVATIONS)
+            .map_err(error::redb)?
+            .get(key)
             .map_err(error::redb)
             .map(|row| row.is_some()),
         _ => Err(PersistenceError::InvalidCursor(

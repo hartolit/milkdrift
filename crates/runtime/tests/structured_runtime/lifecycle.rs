@@ -172,6 +172,26 @@ impl RunQueryStore for StartupProbeStore {
     }
 }
 
+impl milkdrift_persistence::RunDiscoveryIntegrityStore for StartupProbeStore {
+    fn validate_run_discovery(
+        &self,
+        run: &RunId,
+        through_sequence: milkdrift_persistence::RunSequence,
+        runnable: &[milkdrift_persistence::RunnableIndexEntry],
+        timers: &[milkdrift_persistence::TimerIndexEntry],
+        leases: &[milkdrift_persistence::LeaseIndexEntry],
+    ) -> PersistenceResult<()> {
+        milkdrift_persistence::RunDiscoveryIntegrityStore::validate_run_discovery(
+            self.inner.as_ref(),
+            run,
+            through_sequence,
+            runnable,
+            timers,
+            leases,
+        )
+    }
+}
+
 impl WorkspaceStore for StartupProbeStore {
     forward_store_methods! {
         fn workspace_usage(
@@ -389,6 +409,81 @@ fn startup_rejects_a_nonadvancing_active_recovery_cursor() -> TestResult {
     assert!(!runtime.is_accepting_admission());
     assert!(probe.discovery_calls() >= 2);
     assert_eq!(probe.integrity_scan_calls(), 0);
+    Ok(())
+}
+
+#[test]
+fn startup_rejects_symmetric_runnable_index_loss_after_authoritative_replay() -> TestResult {
+    let directory = TempDir::new()?;
+    let run = RunId::new("run-startup-runnable-symmetric-loss")?;
+    {
+        let store = Arc::new(RedbStore::open(directory.path())?);
+        let runtime = RuntimeService::new(
+            store.clone(),
+            Arc::new(DeterministicExecutor::new(test_descriptor()?)),
+            Arc::new(ManualClock::new(NOW)),
+            Arc::new(SequentialIdGenerator::new("startup-runnable-loss", 1)?),
+            RuntimeConfig::new(
+                WorkerId::new("worker-startup-runnable-loss")?,
+                ActorRef::new("controller:startup-runnable-loss")?,
+                30_000,
+                8,
+                SchedulerLimits::new(8, 4, 2, 4)?,
+                RetryPolicy::new(1, Vec::new(), 10, 1_000, 0)?,
+            )?,
+        )?;
+        let revision = task_revision("workflow-startup-runnable-symmetric-loss")?;
+        store.put_revision(&revision)?;
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::CreateRun {
+                workflow: revision.semantic().workflow().clone(),
+                revision: revision.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    run.clone(),
+                    ScopeId::new("scope-startup-runnable-symmetric-loss")?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?;
+        submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?;
+        assert_eq!(
+            store
+                .runnable_page(TimestampMillis::new(NOW), None, PageSize::new(8)?)?
+                .entries
+                .len(),
+            1
+        );
+    }
+
+    storage_fault::remove_run_runnable_discovery(directory.path(), &run)?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let runtime = RuntimeService::open_closed(
+        store,
+        Arc::new(DeterministicExecutor::new(test_descriptor()?)),
+        Arc::new(ManualClock::new(NOW)),
+        Arc::new(SequentialIdGenerator::new(
+            "startup-runnable-loss-reopen",
+            1,
+        )?),
+        RuntimeConfig::new(
+            WorkerId::new("worker-startup-runnable-loss-reopen")?,
+            ActorRef::new("controller:startup-runnable-loss-reopen")?,
+            30_000,
+            8,
+            SchedulerLimits::new(8, 4, 2, 4)?,
+            RetryPolicy::new(1, Vec::new(), 10, 1_000, 0)?,
+        )?,
+    )?;
+    let Err(error) = runtime.initialize_startup() else {
+        return Err("startup accepted symmetric runnable-index loss".into());
+    };
+    assert!(error.to_string().contains("runnable discovery"));
+    assert_eq!(runtime.startup_state(), RuntimeStartupState::OpenedClosed);
+    assert!(!runtime.is_accepting_admission());
     Ok(())
 }
 

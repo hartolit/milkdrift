@@ -206,6 +206,31 @@ where
             return project_complete_history(store, run);
         }
     };
+    let canonical_payload = match serde_json::to_vec(&ProjectionSnapshotPayloadRef {
+        schema_version: payload.schema_version,
+        projection: &payload.projection,
+    }) {
+        Ok(payload) => payload,
+        Err(error) => {
+            warn!(run = %run, snapshot = %snapshot.snapshot(), reason = %error, "projection snapshot payload could not be canonicalized");
+            discard_optional_snapshot(
+                store,
+                run,
+                snapshot.snapshot(),
+                "projection snapshot payload could not be canonicalized",
+            );
+            return project_complete_history(store, run);
+        }
+    };
+    if canonical_payload.as_slice() != snapshot.payload() {
+        discard_optional_snapshot(
+            store,
+            run,
+            snapshot.snapshot(),
+            "projection snapshot payload is not the exact canonical schema",
+        );
+        return project_complete_history(store, run);
+    }
     if payload.schema_version != RUN_PROJECTION_SNAPSHOT_SCHEMA_V3
         || payload.projection.run_id() != Some(run)
         || payload.projection.sequence() != snapshot.covered_sequence()
@@ -310,6 +335,7 @@ mod tests {
         events: Vec<RunEventEnvelope>,
         largest_page_request: AtomicU32,
         page_reads: AtomicUsize,
+        history_from_start_reads: AtomicUsize,
         grow_head_after_first_page: bool,
         snapshot: Mutex<SnapshotLoad>,
         discard_snapshot_error: bool,
@@ -374,6 +400,9 @@ mod tests {
         fn events(&self, query: &EventPageQuery) -> Result<EventPage, PersistenceError> {
             self.largest_page_request
                 .fetch_max(query.limit.get(), Ordering::SeqCst);
+            if query.cursor.is_none() {
+                self.history_from_start_reads.fetch_add(1, Ordering::SeqCst);
+            }
             let read_index = self.page_reads.fetch_add(1, Ordering::SeqCst);
             let effective_len = if query.run != self.run {
                 0
@@ -563,6 +592,7 @@ mod tests {
             events,
             largest_page_request: AtomicU32::new(0),
             page_reads: AtomicUsize::new(0),
+            history_from_start_reads: AtomicUsize::new(0),
             grow_head_after_first_page: false,
             snapshot: Mutex::new(SnapshotLoad::Absent),
             discard_snapshot_error: false,
@@ -606,6 +636,7 @@ mod tests {
             events,
             largest_page_request: AtomicU32::new(0),
             page_reads: AtomicUsize::new(0),
+            history_from_start_reads: AtomicUsize::new(0),
             grow_head_after_first_page: true,
             snapshot: Mutex::new(SnapshotLoad::Absent),
             discard_snapshot_error: false,
@@ -655,6 +686,172 @@ mod tests {
         Ok((run, vec![created, started]))
     }
 
+    fn assert_projection_payload_falls_back(
+        name: &str,
+        mutate: impl FnOnce(&mut serde_json::Value) -> Result<(), Box<dyn Error>>,
+        canonicalize_known_schema: bool,
+    ) -> Result<(), Box<dyn Error>> {
+        let (run, events) = snapshot_history_fixture(name)?;
+        let mut prefix = RunProjection::new();
+        prefix.apply_replayed(&events[0])?;
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&encode_projection_snapshot(&prefix)?)?;
+        mutate(&mut value)?;
+        let payload = if canonicalize_known_schema {
+            let decoded: ProjectionSnapshotPayload = serde_json::from_value(value)?;
+            serde_json::to_vec(&decoded)?
+        } else {
+            serde_json::to_vec(&value)?
+        };
+        let snapshot = SnapshotDocument::new(
+            SnapshotId::new(format!("snapshot-{name}"))?,
+            run.clone(),
+            RunSequence::FIRST,
+            history_digest(&events[..1])?,
+            RUN_PROJECTION_SNAPSHOT_SCHEMA_V3,
+            payload,
+        )?;
+        let expected = RunProjection::replay(&events)?;
+        let store = PagedStore {
+            run: run.clone(),
+            events,
+            largest_page_request: AtomicU32::new(0),
+            page_reads: AtomicUsize::new(0),
+            history_from_start_reads: AtomicUsize::new(0),
+            grow_head_after_first_page: false,
+            snapshot: Mutex::new(SnapshotLoad::Verified(snapshot)),
+            discard_snapshot_error: false,
+        };
+
+        let projected = project_from_latest_snapshot(&store, &run)?;
+
+        assert_eq!(projected, expected);
+        assert_eq!(store.history_from_start_reads.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            *store
+                .snapshot
+                .lock()
+                .map_err(|_| "snapshot fallback test lock is poisoned")?,
+            SnapshotLoad::Absent
+        ));
+        Ok(())
+    }
+
+    fn compacted_projection_snapshot_golden()
+    -> Result<(SnapshotDocument, RunProjection), Box<dyn Error>> {
+        let (run, mut events) = snapshot_history_fixture("snapshot-golden")?;
+        let scope = match events[0].kind() {
+            RunEventKind::RunCreated { root_scope, .. } => root_scope.reference().clone(),
+            _ => return Err("snapshot golden fixture does not begin with run creation".into()),
+        };
+        let execution = NodeExecutionId::new("snapshot-golden-execution")?;
+        events.extend([
+            RunEventEnvelope::new(
+                EventId::new("event-snapshot-golden-eligible")?,
+                run.clone(),
+                RunSequence::new(3),
+                TimestampMillis::new(3),
+                RunEventKind::NodeBecameEligible {
+                    node: NodeId::new("work")?,
+                    execution: execution.clone(),
+                    scope,
+                    mode: NodeExecutionMode::Runtime,
+                },
+            )?,
+            RunEventEnvelope::new(
+                EventId::new("event-snapshot-golden-terminal")?,
+                run.clone(),
+                RunSequence::new(4),
+                TimestampMillis::new(4),
+                RunEventKind::DeterministicNodeTerminal {
+                    execution: execution.clone(),
+                    outcome: NodeOutcome::Succeeded,
+                    error_class: None,
+                    detail: None,
+                },
+            )?,
+            RunEventEnvelope::new(
+                EventId::new("event-snapshot-golden-scan")?,
+                run.clone(),
+                RunSequence::new(5),
+                TimestampMillis::new(5),
+                RunEventKind::StructuredSuccessorScanCompleted { execution },
+            )?,
+        ]);
+        let projection = RunProjection::replay(&events)?;
+        let snapshot = SnapshotDocument::new(
+            SnapshotId::new("snapshot-runtime-projection-v3-golden")?,
+            run,
+            RunSequence::new(5),
+            history_digest(&events)?,
+            RUN_PROJECTION_SNAPSHOT_SCHEMA_V3,
+            encode_projection_snapshot(&projection)?,
+        )?;
+        Ok((snapshot, projection))
+    }
+
+    #[test]
+    fn exact_snapshot_envelope_and_compacted_projection_v3_match_reviewed_golden()
+    -> Result<(), Box<dyn Error>> {
+        let (snapshot, projection) = compacted_projection_snapshot_golden()?;
+        let wire_with_newline = include_bytes!(
+            "../tests/fixtures/projection-snapshot-envelope-v1-projection-v3-wire.json"
+        );
+        let wire = wire_with_newline
+            .strip_suffix(b"\n")
+            .unwrap_or(wire_with_newline);
+        assert_eq!(snapshot.to_canonical_json()?, wire);
+        let decoded_wire = SnapshotDocument::from_json(wire)?;
+        assert_eq!(decoded_wire, snapshot);
+        assert_eq!(decoded_wire.to_canonical_json()?, wire);
+
+        let golden: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../tests/fixtures/projection-snapshot-envelope-v1-projection-v3.json"
+        ))?;
+        let envelope = golden
+            .get("snapshot_envelope")
+            .ok_or("snapshot golden envelope is absent")?;
+        assert_eq!(envelope["schema_version"], serde_json::json!(1));
+        assert_eq!(
+            envelope["snapshot"],
+            serde_json::to_value(snapshot.snapshot())?
+        );
+        assert_eq!(envelope["run"], serde_json::to_value(snapshot.run())?);
+        assert_eq!(
+            envelope["covered_sequence"],
+            serde_json::to_value(snapshot.covered_sequence())?
+        );
+        assert_eq!(
+            envelope["history_digest"],
+            serde_json::to_value(snapshot.history_digest())?
+        );
+        assert_eq!(
+            envelope["projection_schema"],
+            serde_json::json!(snapshot.projection_schema())
+        );
+        assert_eq!(
+            envelope["checksum"],
+            serde_json::to_value(snapshot.checksum())?
+        );
+
+        let decoded: ProjectionSnapshotPayload = serde_json::from_value(
+            golden
+                .get("projection_payload")
+                .ok_or("snapshot golden projection payload is absent")?
+                .clone(),
+        )?;
+        assert_eq!(decoded.schema_version, RUN_PROJECTION_SNAPSHOT_SCHEMA_V3);
+        assert_eq!(decoded.projection, projection);
+        let canonical = serde_json::to_vec(&ProjectionSnapshotPayloadRef {
+            schema_version: decoded.schema_version,
+            projection: &decoded.projection,
+        })?;
+        assert_eq!(canonical, snapshot.payload());
+        let redecoded: ProjectionSnapshotPayload = serde_json::from_slice(&canonical)?;
+        assert_eq!(redecoded.projection, decoded.projection);
+        Ok(())
+    }
+
     #[test]
     fn compatible_snapshot_replays_only_the_authoritative_tail() -> Result<(), Box<dyn Error>> {
         let (run, events) = snapshot_history_fixture("snapshot-tail")?;
@@ -673,6 +870,7 @@ mod tests {
             events,
             largest_page_request: AtomicU32::new(0),
             page_reads: AtomicUsize::new(0),
+            history_from_start_reads: AtomicUsize::new(0),
             grow_head_after_first_page: false,
             snapshot: Mutex::new(SnapshotLoad::Verified(snapshot)),
             discard_snapshot_error: false,
@@ -761,6 +959,7 @@ mod tests {
             events,
             largest_page_request: AtomicU32::new(0),
             page_reads: AtomicUsize::new(0),
+            history_from_start_reads: AtomicUsize::new(0),
             grow_head_after_first_page: false,
             snapshot: Mutex::new(SnapshotLoad::Verified(snapshot)),
             discard_snapshot_error: false,
@@ -799,6 +998,7 @@ mod tests {
             events,
             largest_page_request: AtomicU32::new(0),
             page_reads: AtomicUsize::new(0),
+            history_from_start_reads: AtomicUsize::new(0),
             grow_head_after_first_page: false,
             snapshot: Mutex::new(SnapshotLoad::Verified(snapshot)),
             discard_snapshot_error: false,
@@ -812,8 +1012,82 @@ mod tests {
             projected.lifecycle(),
             crate::RunLifecycle::Running
         ));
+        assert_eq!(store.history_from_start_reads.load(Ordering::SeqCst), 0);
+        assert!(matches!(
+            *store
+                .snapshot
+                .lock()
+                .map_err(|_| "snapshot positive test lock is poisoned")?,
+            SnapshotLoad::Verified(_)
+        ));
         assert_eq!(store.page_reads.load(Ordering::SeqCst), 1);
         Ok(())
+    }
+
+    #[test]
+    fn payload_schema_mismatch_discards_snapshot_and_replays_from_start()
+    -> Result<(), Box<dyn Error>> {
+        assert_projection_payload_falls_back(
+            "snapshot-payload-schema-mismatch",
+            |value| {
+                value["schema_version"] = serde_json::json!(2);
+                Ok(())
+            },
+            true,
+        )
+    }
+
+    #[test]
+    fn payload_run_mismatch_discards_snapshot_and_replays_from_start() -> Result<(), Box<dyn Error>>
+    {
+        assert_projection_payload_falls_back(
+            "snapshot-payload-run-mismatch",
+            |value| {
+                value["projection"]["run_id"] =
+                    serde_json::to_value(RunId::new("run-another-snapshot")?)?;
+                Ok(())
+            },
+            true,
+        )
+    }
+
+    #[test]
+    fn payload_sequence_mismatch_discards_snapshot_and_replays_from_start()
+    -> Result<(), Box<dyn Error>> {
+        assert_projection_payload_falls_back(
+            "snapshot-payload-sequence-mismatch",
+            |value| {
+                value["projection"]["sequence"] = serde_json::json!(2);
+                Ok(())
+            },
+            true,
+        )
+    }
+
+    #[test]
+    fn payload_compaction_mismatch_discards_snapshot_and_replays_from_start()
+    -> Result<(), Box<dyn Error>> {
+        assert_projection_payload_falls_back(
+            "snapshot-payload-compaction-mismatch",
+            |value| {
+                value["projection"]["history_compacted_through"] = serde_json::json!(0);
+                Ok(())
+            },
+            true,
+        )
+    }
+
+    #[test]
+    fn nested_unknown_projection_field_discards_snapshot_and_replays_from_start()
+    -> Result<(), Box<dyn Error>> {
+        assert_projection_payload_falls_back(
+            "snapshot-nested-unknown-field",
+            |value| {
+                value["projection"]["future_projection_field"] = serde_json::json!(true);
+                Ok(())
+            },
+            false,
+        )
     }
 
     #[test]
@@ -835,6 +1109,7 @@ mod tests {
             events,
             largest_page_request: AtomicU32::new(0),
             page_reads: AtomicUsize::new(0),
+            history_from_start_reads: AtomicUsize::new(0),
             grow_head_after_first_page: false,
             snapshot: Mutex::new(SnapshotLoad::Verified(snapshot)),
             discard_snapshot_error: true,

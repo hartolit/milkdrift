@@ -2,10 +2,10 @@ use super::{
     AttemptId, CapabilityRequirement, ErrorClass, IdempotencyBehavior, InvocationId, LeaseId,
     NodeExecutionId, NodeId, NodeOutcome, OperationId, ProviderProfileRef, Reason,
     ReconciliationAction, ReconciliationClassification, ReconciliationId, ReconciliationItem,
-    ReconciliationPlanId, ReconciliationPolicy, RunEventKind, RunProjection, RunSequence,
-    SideEffectClass, SignalDeliveryMode, SignalId, SignalTypeId, TestResult, TimerId,
-    TimestampMillis, WorkerId, WorkspaceScope, created, eligible, envelope, fixture,
-    invocation_request, resolved_snapshot_with_side_effect, runtime_eligible,
+    ReconciliationPlanId, ReconciliationPolicy, RecoveryClassification, RunEventKind,
+    RunProjection, RunSequence, SideEffectClass, SignalDeliveryMode, SignalId, SignalTypeId,
+    TestResult, TimerId, TimestampMillis, WorkerId, WorkspaceScope, created, eligible, envelope,
+    fixture, invocation_request, resolved_snapshot_with_side_effect, runtime_eligible,
 };
 use crate::query::encode_projection_snapshot;
 use milkdrift_workspace::{IterationId, ScopeId};
@@ -155,7 +155,136 @@ fn ten_thousand_closed_task_occurrences_keep_one_terminal_frontier() -> TestResu
 }
 
 #[test]
-fn one_thousand_closed_fork_join_cycles_retire_structured_ownership() -> TestResult {
+fn incomplete_and_failed_lower_risk_replacements_preserve_maximum_side_effect_risk() -> TestResult {
+    let fixture = fixture("bounded-summary-side-effect")?;
+    let first = NodeExecutionId::new("execution-side-effect-first")?;
+    let second = NodeExecutionId::new("execution-side-effect-second")?;
+    let attempt = AttemptId::new("attempt-side-effect-first")?;
+    let invocation = InvocationId::new("invocation-side-effect-first")?;
+    let requirement = CapabilityRequirement::new(OperationId::new("tool.publish")?)
+        .provider_profile(ProviderProfileRef::new("publisher-prod")?);
+    let snapshot = resolved_snapshot_with_side_effect(
+        1,
+        SideEffectClass::NonIdempotentWrite,
+        IdempotencyBehavior::Unsupported,
+    )?;
+    let events = [
+        created(&fixture, 1)?,
+        envelope(2, &fixture.run, RunEventKind::RunStarted)?,
+        eligible(3, &fixture, "work", &first, fixture.root.reference())?,
+        envelope(
+            4,
+            &fixture.run,
+            RunEventKind::NodeScheduled {
+                node: NodeId::new("work")?,
+                execution: first.clone(),
+                attempt: attempt.clone(),
+                invocation: invocation.clone(),
+                idempotency_key: None,
+                request: invocation_request(&invocation, None)?,
+            },
+        )?,
+        envelope(
+            5,
+            &fixture.run,
+            RunEventKind::CapabilityResolved {
+                execution: first.clone(),
+                attempt: attempt.clone(),
+                requirement,
+                snapshot,
+            },
+        )?,
+        envelope(
+            6,
+            &fixture.run,
+            RunEventKind::SideEffectClassified {
+                attempt: attempt.clone(),
+                side_effect: SideEffectClass::NonIdempotentWrite,
+                idempotency: IdempotencyBehavior::Unsupported,
+                idempotency_key: None,
+            },
+        )?,
+        envelope(
+            7,
+            &fixture.run,
+            RunEventKind::LeaseGranted {
+                lease: LeaseId::new("lease-side-effect-first")?,
+                execution: first.clone(),
+                attempt: attempt.clone(),
+                worker: WorkerId::new("worker-side-effect-first")?,
+                expires_at: TimestampMillis::new(10_000),
+            },
+        )?,
+        envelope(
+            8,
+            &fixture.run,
+            RunEventKind::NodeStarted {
+                execution: first.clone(),
+                attempt: attempt.clone(),
+                invocation,
+            },
+        )?,
+        envelope(
+            9,
+            &fixture.run,
+            RunEventKind::NodeTerminal {
+                execution: first.clone(),
+                attempt,
+                report_sequence: 1,
+                outcome: NodeOutcome::Succeeded,
+                error_class: None,
+                detail: None,
+            },
+        )?,
+        envelope(
+            10,
+            &fixture.run,
+            RunEventKind::StructuredSuccessorScanCompleted {
+                execution: first.clone(),
+            },
+        )?,
+        runtime_eligible(11, &fixture, "work", &second, fixture.root.reference())?,
+        envelope(
+            12,
+            &fixture.run,
+            RunEventKind::DeterministicNodeTerminal {
+                execution: second.clone(),
+                outcome: NodeOutcome::Failed,
+                error_class: Some(ErrorClass::Provider),
+                detail: None,
+            },
+        )?,
+        envelope(
+            13,
+            &fixture.run,
+            RunEventKind::RunTerminal {
+                outcome: milkdrift_persistence::RunOutcome::Failed,
+                outputs: Vec::new(),
+                artifacts: Vec::new(),
+                reason: Some(Reason::new("lower-risk replacement failed")?),
+            },
+        )?,
+    ];
+
+    let incomplete = RunProjection::replay(&events[..11])?;
+    assert!(incomplete.node_executions().contains_key(&second));
+    assert_eq!(
+        incomplete.settled_node_executions()[&first].side_effect(),
+        SideEffectClass::NonIdempotentWrite
+    );
+
+    let projection = RunProjection::replay(&events)?;
+
+    assert_eq!(projection.settled_node_executions().len(), 1);
+    assert_eq!(
+        projection.settled_node_executions()[&second].side_effect(),
+        SideEffectClass::NonIdempotentWrite
+    );
+    Ok(())
+}
+
+#[test]
+fn ten_thousand_closed_fork_join_cycles_retire_structured_ownership() -> TestResult {
     let fixture = fixture("bounded-fork-join")?;
     let repeat = NodeExecutionId::new("repeat-execution")?;
     let mut projection = RunProjection::new();
@@ -169,8 +298,9 @@ fn one_thousand_closed_fork_join_cycles_retire_structured_ownership() -> TestRes
         fixture.root.reference(),
     )?)?;
     let mut sequence = 4_u64;
-
-    for number in 1..=1_000_u32 {
+    let mut size_at_100 = 0_usize;
+    let mut size_at_10_000 = None;
+    for number in 1..=10_000_u32 {
         let iteration = IterationId::new(format!("iteration-{number}"))?;
         let iteration_scope = WorkspaceScope::iteration(
             ScopeId::new(format!("iteration-scope-{number}"))?,
@@ -336,11 +466,15 @@ fn one_thousand_closed_fork_join_cycles_retire_structured_ownership() -> TestRes
             &fixture.run,
             RunEventKind::RepeatConditionRecorded {
                 iteration: iteration.clone(),
-                result: number != 1_000,
+                result: number != 10_000,
             },
         )?)?;
         sequence += 1;
-        if number == 1_000 {
+        if number == 100 {
+            size_at_100 = encode_projection_snapshot(&projection)?.len();
+        }
+        if number == 10_000 {
+            size_at_10_000 = Some(encode_projection_snapshot(&projection)?.len());
             projection.apply_replayed(&envelope(
                 sequence,
                 &fixture.run,
@@ -386,8 +520,13 @@ fn one_thousand_closed_fork_join_cycles_retire_structured_ownership() -> TestRes
             .is_empty()
     );
     assert_eq!(projection.scopes().len(), 1);
+    let size_at_10_000 = size_at_10_000.ok_or("missing 10,000-cycle snapshot evidence")?;
+    let final_size = encode_projection_snapshot(&projection)?.len();
+    assert!(final_size < size_at_100.saturating_mul(2));
+    assert!(size_at_10_000 < size_at_100.saturating_mul(2));
+    assert!(size_at_10_000.abs_diff(size_at_100) < 1_024);
     eprintln!(
-        "fork_join_cycles=1000 branches={} joins={} routes={} owners={} child_sets={} branch_scopes={}",
+        "fork_join_cycles=10000 branches={} joins={} routes={} owners={} child_sets={} branch_scopes={} snapshot_at_100_bytes={size_at_100} snapshot_at_10000_bytes={size_at_10_000} closed_snapshot_bytes={final_size}",
         projection.branches().len(),
         projection.joins().len(),
         projection.branch_routes().len(),
@@ -413,6 +552,8 @@ fn ten_thousand_completed_repeat_children_keep_only_import_frontier() -> TestRes
         fixture.root.reference(),
     )?)?;
     let mut sequence = 4_u64;
+    let mut size_at_100 = 0_usize;
+    let mut size_at_9_999 = 0_usize;
 
     for number in 1..=10_000_u32 {
         let iteration = IterationId::new(format!("iteration-{number}"))?;
@@ -474,6 +615,11 @@ fn ten_thousand_completed_repeat_children_keep_only_import_frontier() -> TestRes
             },
         )?)?;
         sequence += 1;
+        if number == 100 {
+            size_at_100 = encode_projection_snapshot(&projection)?.len();
+        } else if number == 9_999 {
+            size_at_9_999 = encode_projection_snapshot(&projection)?.len();
+        }
         assert!(projection.subworkflows().len() <= 1);
         assert!(projection.child_runs.len() <= 1);
         if number == 10_000 {
@@ -513,8 +659,13 @@ fn ten_thousand_completed_repeat_children_keep_only_import_frontier() -> TestRes
     assert!(projection.subworkflow_usage_by_execution.is_empty());
     assert!(projection.iterations().is_empty());
     assert_eq!(projection.scopes().len(), 1);
+    let final_size = encode_projection_snapshot(&projection)?.len();
+    assert!(size_at_100 > 0);
+    assert!(size_at_9_999 > 0);
+    assert!(size_at_9_999 < size_at_100.saturating_mul(2));
+    assert!(size_at_9_999.abs_diff(size_at_100) < 1_024);
     eprintln!(
-        "completed_subworkflows=10000 children={} child_runs={} usage_summaries={} iterations={} child_scopes={}",
+        "completed_subworkflows=10000 children={} child_runs={} usage_summaries={} iterations={} child_scopes={} snapshot_at_100_bytes={size_at_100} snapshot_at_9999_bytes={size_at_9_999} closed_snapshot_bytes={final_size}",
         projection.subworkflows().len(),
         projection.child_runs.len(),
         projection.subworkflow_usage_by_execution.len(),
@@ -869,7 +1020,252 @@ fn settled_signals_timers_and_recovery_passes_do_not_accumulate() -> TestResult 
 }
 
 #[test]
-fn one_thousand_settled_revision_plans_keep_only_the_current_summary() -> TestResult {
+fn ten_thousand_unmatched_signals_cannot_exceed_the_pending_budget() -> TestResult {
+    let fixture = fixture("bounded-pending-signals")?;
+    let mut events = vec![
+        created(&fixture, 1)?,
+        envelope(2, &fixture.run, RunEventKind::RunStarted)?,
+    ];
+    for number in 1..=10_000_u32 {
+        events.push(envelope(
+            u64::from(number).saturating_add(2),
+            &fixture.run,
+            RunEventKind::SignalReceived {
+                signal: SignalId::new(format!("pending-signal-{number}"))?,
+                signal_type: SignalTypeId::new("test.pending")?,
+                correlation: None,
+                mode: SignalDeliveryMode::OneShot,
+                payload: milkdrift_capability::BoundedJson::new(serde_json::json!({}))?,
+            },
+        )?);
+    }
+    assert!(RunProjection::replay(&events).is_err());
+
+    let accepted = super::super::MAX_PENDING_SIGNAL_COUNT;
+    let projection = RunProjection::replay(&events[..accepted.saturating_add(2)])?;
+    assert_eq!(projection.signals().len(), accepted);
+    let payload_bytes = projection
+        .signals()
+        .values()
+        .try_fold(0_usize, |total, signal| {
+            serde_json::to_vec(signal.payload()).map(|payload| total.saturating_add(payload.len()))
+        })?;
+    assert!(payload_bytes <= super::super::MAX_PENDING_SIGNAL_PAYLOAD_BYTES);
+    let snapshot_bytes = encode_projection_snapshot(&projection)?.len();
+    eprintln!(
+        "unmatched_signals_attempted=10000 retained={} retained_payload_bytes={payload_bytes} snapshot_bytes={snapshot_bytes}",
+        projection.signals().len(),
+    );
+    Ok(())
+}
+
+#[test]
+fn aggregate_pending_signal_payload_bytes_are_hard_bounded() -> TestResult {
+    let fixture = fixture("bounded-pending-signal-bytes")?;
+    let payload = milkdrift_capability::BoundedJson::new(serde_json::json!("x".repeat(32_768)))?;
+    let mut projection = RunProjection::replay(&[
+        created(&fixture, 1)?,
+        envelope(2, &fixture.run, RunEventKind::RunStarted)?,
+    ])?;
+    let mut accepted = 0_usize;
+    for number in 1..=100_u64 {
+        let event = envelope(
+            number.saturating_add(2),
+            &fixture.run,
+            RunEventKind::SignalReceived {
+                signal: SignalId::new(format!("large-pending-signal-{number}"))?,
+                signal_type: SignalTypeId::new("test.pending.large")?,
+                correlation: None,
+                mode: SignalDeliveryMode::OneShot,
+                payload: payload.clone(),
+            },
+        )?;
+        if projection.apply(&event).is_err() {
+            break;
+        }
+        accepted = accepted.saturating_add(1);
+    }
+    let one_payload_bytes = serde_json::to_vec(&payload)?.len();
+    let retained_payload_bytes = accepted.saturating_mul(one_payload_bytes);
+    assert!(accepted < super::super::MAX_PENDING_SIGNAL_COUNT);
+    assert!(retained_payload_bytes <= super::super::MAX_PENDING_SIGNAL_PAYLOAD_BYTES);
+    assert!(
+        retained_payload_bytes.saturating_add(one_payload_bytes)
+            > super::super::MAX_PENDING_SIGNAL_PAYLOAD_BYTES
+    );
+    Ok(())
+}
+
+#[test]
+fn ten_thousand_pre_start_releases_retain_no_worker_history() -> TestResult {
+    let fixture = fixture("bounded-pre-start-releases")?;
+    let execution = NodeExecutionId::new("execution-pre-start-releases")?;
+    let attempt = AttemptId::new("attempt-pre-start-releases")?;
+    let invocation = InvocationId::new("invocation-pre-start-releases")?;
+    let requirement = CapabilityRequirement::new(OperationId::new("tool.publish")?)
+        .provider_profile(ProviderProfileRef::new("publisher-prod")?);
+    let snapshot = resolved_snapshot_with_side_effect(
+        1,
+        SideEffectClass::None,
+        IdempotencyBehavior::Unsupported,
+    )?;
+    let mut projection = RunProjection::replay(&[
+        created(&fixture, 1)?,
+        envelope(2, &fixture.run, RunEventKind::RunStarted)?,
+        eligible(3, &fixture, "work", &execution, fixture.root.reference())?,
+        envelope(
+            4,
+            &fixture.run,
+            RunEventKind::NodeScheduled {
+                node: NodeId::new("work")?,
+                execution: execution.clone(),
+                attempt: attempt.clone(),
+                invocation: invocation.clone(),
+                idempotency_key: None,
+                request: invocation_request(&invocation, None)?,
+            },
+        )?,
+        envelope(
+            5,
+            &fixture.run,
+            RunEventKind::CapabilityResolved {
+                execution: execution.clone(),
+                attempt: attempt.clone(),
+                requirement,
+                snapshot,
+            },
+        )?,
+        envelope(
+            6,
+            &fixture.run,
+            RunEventKind::SideEffectClassified {
+                attempt: attempt.clone(),
+                side_effect: SideEffectClass::None,
+                idempotency: IdempotencyBehavior::Unsupported,
+                idempotency_key: None,
+            },
+        )?,
+        envelope(
+            7,
+            &fixture.run,
+            RunEventKind::LeaseGranted {
+                lease: LeaseId::new("lease-0")?,
+                execution: execution.clone(),
+                attempt: attempt.clone(),
+                worker: WorkerId::new("worker-0")?,
+                expires_at: TimestampMillis::new(800),
+            },
+        )?,
+    ])?;
+    let mut sequence = 8_u64;
+    let mut previous_lease = LeaseId::new("lease-0")?;
+    let mut size_at_100 = 0_usize;
+
+    let started = envelope(
+        sequence,
+        &fixture.run,
+        RunEventKind::NodeStarted {
+            execution: execution.clone(),
+            attempt: attempt.clone(),
+            invocation: invocation.clone(),
+        },
+    )?;
+    let mut malformed_state = projection.clone();
+    malformed_state
+        .node_executions
+        .get_mut(&execution)
+        .ok_or("hostile start fixture execution is absent")?
+        .state = super::super::NodeExecutionState::Eligible;
+    assert!(malformed_state.apply(&started).is_err());
+
+    let mut cancelling = projection.clone();
+    cancelling.apply(&envelope(
+        sequence,
+        &fixture.run,
+        RunEventKind::RunCancellationRequested {
+            reason: Reason::new("cancel before worker start")?,
+            evidence: Vec::new(),
+        },
+    )?)?;
+    assert!(
+        cancelling
+            .apply(&envelope(
+                sequence + 1,
+                &fixture.run,
+                RunEventKind::NodeStarted {
+                    execution: execution.clone(),
+                    attempt: attempt.clone(),
+                    invocation: invocation.clone(),
+                },
+            )?)
+            .is_err()
+    );
+
+    for number in 1..=10_000_u32 {
+        projection.apply_replayed(&envelope(
+            sequence,
+            &fixture.run,
+            RunEventKind::LeaseExpired {
+                lease: previous_lease.clone(),
+                classification: RecoveryClassification::NotStarted,
+            },
+        )?)?;
+        sequence += 1;
+        projection.apply_replayed(&envelope(
+            sequence,
+            &fixture.run,
+            RunEventKind::RecoveryStarted {
+                controller: WorkerId::new("controller")?,
+                through_sequence: RunSequence::new(sequence - 1),
+            },
+        )?)?;
+        sequence += 1;
+        projection.apply_replayed(&envelope(
+            sequence,
+            &fixture.run,
+            RunEventKind::RecoveryClassified {
+                attempt: attempt.clone(),
+                lease: Some(previous_lease.clone()),
+                classification: RecoveryClassification::NotStarted,
+                reason: Reason::new("worker never crossed start")?,
+            },
+        )?)?;
+        sequence += 1;
+        let next_lease = LeaseId::new(format!("lease-{number}"))?;
+        projection.apply_replayed(&envelope(
+            sequence,
+            &fixture.run,
+            RunEventKind::NodeReLeased {
+                previous_lease,
+                lease: next_lease.clone(),
+                attempt: attempt.clone(),
+                worker: WorkerId::new(format!("worker-{number}"))?,
+                expires_at: TimestampMillis::new(sequence.saturating_add(1).saturating_mul(100)),
+            },
+        )?)?;
+        sequence += 1;
+        previous_lease = next_lease;
+        assert!(projection.attempts()[&attempt].lease_workers().is_empty());
+        assert!(projection.attempts()[&attempt].leases().len() <= 2);
+        assert!(projection.leases().len() <= 2);
+        if number == 100 {
+            size_at_100 = encode_projection_snapshot(&projection)?.len();
+        }
+    }
+    let final_size = encode_projection_snapshot(&projection)?.len();
+    assert!(final_size < size_at_100.saturating_mul(2));
+    assert!(final_size.abs_diff(size_at_100) < 1_024);
+    eprintln!(
+        "pre_start_releases=10000 retained_workers={} retained_attempt_leases={} retained_leases={} snapshot_at_100_bytes={size_at_100} snapshot_at_10000_bytes={final_size}",
+        projection.attempts()[&attempt].lease_workers().len(),
+        projection.attempts()[&attempt].leases().len(),
+        projection.leases().len(),
+    );
+    Ok(())
+}
+
+#[test]
+fn ten_thousand_revision_node_churn_drops_removed_root_summaries() -> TestResult {
     let fixture = fixture("bounded-revisions")?;
     let mut projection = RunProjection::new();
     projection.apply_replayed(&created(&fixture, 1)?)?;
@@ -877,12 +1273,13 @@ fn one_thousand_settled_revision_plans_keep_only_the_current_summary() -> TestRe
     let mut sequence = 3_u64;
     let mut current = fixture.revision.clone();
     let mut size_at_100 = 0_usize;
-    for number in 1..=1_000_u32 {
+    for number in 1..=10_000_u32 {
+        let node_name = format!("work-{number}");
         let execution = NodeExecutionId::new(format!("revision-pending-{number}"))?;
         projection.apply_replayed(&runtime_eligible(
             sequence,
             &fixture,
-            "work",
+            &node_name,
             &execution,
             fixture.root.reference(),
         )?)?;
@@ -915,7 +1312,7 @@ fn one_thousand_settled_revision_plans_keep_only_the_current_summary() -> TestRe
                 to_revision: next.clone(),
                 based_on_sequence: based_on,
                 items: vec![ReconciliationItem {
-                    node: Some(NodeId::new("work")?),
+                    node: Some(NodeId::new(node_name)?),
                     execution: Some(execution.clone()),
                     classification: ReconciliationClassification::ChangedPending,
                     action: ReconciliationAction::UseNewOnNextInvocation,
@@ -957,6 +1354,7 @@ fn one_thousand_settled_revision_plans_keep_only_the_current_summary() -> TestRe
         sequence += 1;
         current = next;
         assert!(projection.node_executions().is_empty());
+        assert!(projection.settled_node_executions().is_empty());
         if number == 100 {
             size_at_100 = encode_projection_snapshot(&projection)?.len();
         }
@@ -964,8 +1362,22 @@ fn one_thousand_settled_revision_plans_keep_only_the_current_summary() -> TestRe
     assert_eq!(projection.pins().len(), 1);
     assert_eq!(projection.reconciliation().requests().len(), 1);
     assert_eq!(projection.reconciliation().plans().len(), 1);
+    assert!(projection.execution_ids_by_node.is_empty());
+    assert!(projection.settled_execution_by_scope_node.is_empty());
+    assert!(
+        projection
+            .latest_descendant_execution_by_scope_node
+            .is_empty()
+    );
     let final_size = encode_projection_snapshot(&projection)?.len();
     assert!(final_size < size_at_100.saturating_mul(2));
     assert!(final_size.abs_diff(size_at_100) < 1_024);
+    eprintln!(
+        "revision_node_churn=10000 settled_summaries={} node_indexes={} scope_node_indexes={} descendant_indexes={} snapshot_at_100_bytes={size_at_100} snapshot_at_10000_bytes={final_size}",
+        projection.settled_node_executions().len(),
+        projection.execution_ids_by_node.len(),
+        projection.settled_execution_by_scope_node.len(),
+        projection.latest_descendant_execution_by_scope_node.len(),
+    );
     Ok(())
 }

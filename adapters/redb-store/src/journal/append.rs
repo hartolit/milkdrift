@@ -795,6 +795,7 @@ pub(crate) fn append_events(
 ) -> Result<(), PersistenceError> {
     let mut events = write.open_table(RUN_EVENTS).map_err(error::redb)?;
     let mut signal_receipts = write.open_table(SIGNAL_RECEIPTS).map_err(error::redb)?;
+    let mut metadata = write.open_table(METADATA).map_err(error::redb)?;
     for event in request.events() {
         let key = codec::run_sequence(event.run_id().as_str(), event.sequence())?;
         if events.get(key.as_slice()).map_err(error::redb)?.is_some() {
@@ -814,6 +815,18 @@ pub(crate) fn append_events(
             return Err(error::corruption("event append overwrote an existing slot"));
         }
         match event.kind() {
+            RunEventKind::NodeScheduled { invocation, .. } => {
+                let key = crate::journal::invocation_fact_key(event.run_id(), invocation);
+                if metadata
+                    .insert(key.as_str(), event.sequence().get())
+                    .map_err(error::redb)?
+                    .is_some()
+                {
+                    return Err(error::corruption(
+                        "invocation fact index rejected a duplicate stable identity",
+                    ));
+                }
+            }
             RunEventKind::SignalReceived { signal, .. } => {
                 let signal_key = codec::pair(event.run_id().as_str(), signal.as_str())?;
                 if signal_receipts

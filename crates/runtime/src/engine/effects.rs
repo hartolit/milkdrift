@@ -208,6 +208,20 @@ impl RuntimeService {
             .ok_or_else(|| {
                 RuntimeError::InvalidHistory("claimed attempt execution is absent".to_owned())
             })?;
+        if execution.cancellation().is_some()
+            || !matches!(
+                execution.state(),
+                NodeExecutionState::Scheduled(active) if active == attempt
+            )
+            || cancellation_reason_for_execution(
+                &projection,
+                execution.execution(),
+                run_drain_reason(&projection),
+            )
+            .is_some()
+        {
+            return Ok(None);
+        }
         let revision = projection.revision_for_attempt(attempt).ok_or_else(|| {
             RuntimeError::InvalidHistory("claimed attempt has no governing revision".to_owned())
         })?;

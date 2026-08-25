@@ -2,8 +2,9 @@
 
 use super::RuntimeService;
 use super::support::{
-    CommandPlan, checked_timestamp_add, collect_required_artifacts, entry_nodes, event_kind_name,
-    node_execution_mode, require_lifecycle, wait_signal_matches,
+    CommandPlan, cancellation_reason_for_execution, checked_timestamp_add,
+    collect_required_artifacts, entry_nodes, event_kind_name, node_execution_mode,
+    require_lifecycle, run_drain_reason, wait_signal_matches,
 };
 use crate::projection::{AttemptState, IterationState, RunLifecycle, RunProjection, TimerPurpose};
 use crate::{RunCommand, RunCommandDocument, RuntimeError, WorkerReport};
@@ -415,6 +416,29 @@ impl RuntimeService {
                 duplicate_command: document.command_id().clone(),
             }));
         }
+        let retained_count = projection.signals().len();
+        let retained_payload_bytes =
+            projection
+                .signals()
+                .values()
+                .try_fold(0_usize, |total, signal| {
+                    let bytes = serde_json::to_vec(signal.payload())?;
+                    total.checked_add(bytes.len()).ok_or_else(|| {
+                        RuntimeError::InvalidTransition(
+                            "pending signal payload byte count overflowed".to_owned(),
+                        )
+                    })
+                })?;
+        let payload_bytes = serde_json::to_vec(payload)?.len();
+        if retained_count >= crate::projection::MAX_PENDING_SIGNAL_COUNT
+            || retained_payload_bytes
+                .checked_add(payload_bytes)
+                .is_none_or(|bytes| bytes > crate::projection::MAX_PENDING_SIGNAL_PAYLOAD_BYTES)
+        {
+            return Err(RuntimeError::InvalidTransition(
+                "pending signal count or aggregate payload-byte budget is exhausted".to_owned(),
+            ));
+        }
         let mut plan = CommandPlan::one(RunEventKind::SignalReceived {
             signal: signal.clone(),
             signal_type: signal_type.clone(),
@@ -547,6 +571,24 @@ impl RuntimeService {
                 let attempt_view = projection.attempts().get(attempt).ok_or_else(|| {
                     RuntimeError::InvalidHistory("lease attempt is absent".to_owned())
                 })?;
+                let execution = projection
+                    .node_executions()
+                    .get(attempt_view.execution())
+                    .ok_or_else(|| {
+                        RuntimeError::InvalidHistory("lease attempt execution is absent".to_owned())
+                    })?;
+                if execution.cancellation().is_some()
+                    || cancellation_reason_for_execution(
+                        projection,
+                        execution.execution(),
+                        run_drain_reason(projection),
+                    )
+                    .is_some()
+                {
+                    return Err(RuntimeError::InvalidTransition(
+                        "a cancelled execution cannot cross the external start boundary".to_owned(),
+                    ));
+                }
                 let invocation = attempt_view.invocation().ok_or_else(|| {
                     RuntimeError::InvalidHistory("leased attempt has no invocation".to_owned())
                 })?;

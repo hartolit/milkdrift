@@ -99,6 +99,10 @@ impl RunProjection {
             } => {
                 let execution_view = self.execution(execution, event)?;
                 let attempt_view = self.attempt(attempt, event)?;
+                let before_dispatch = matches!(
+                    attempt_view.state,
+                    AttemptState::Scheduled | AttemptState::Leased
+                );
                 if execution_view.attempts.last() != Some(attempt)
                     || execution_view.cancellation.is_some()
                     || attempt_view.execution != *execution
@@ -127,6 +131,19 @@ impl RunProjection {
                     reason: reason.clone(),
                     sequence,
                 });
+                if before_dispatch {
+                    self.complete_attempt_leases(attempt);
+                    self.active_attempt_ids.remove(attempt);
+                    self.attempts
+                        .get_mut(attempt)
+                        .ok_or_else(|| invalid_at(event, "unknown cancellation attempt"))?
+                        .state = AttemptState::CancelledBeforeDispatch;
+                    self.node_executions
+                        .get_mut(execution)
+                        .ok_or_else(|| invalid_at(event, "unknown cancellation execution"))?
+                        .state = NodeExecutionState::CancelledBeforeDispatch;
+                    self.deactivate_execution(execution, event)?;
+                }
             }
             _ => unreachable!(
                 "central projection dispatch owns execution eligibility and cancellation routing"

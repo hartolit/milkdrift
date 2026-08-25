@@ -372,6 +372,19 @@ impl RuntimeService {
             ));
         }
 
+        let (runnable, timers, leases) = self.active_recovery_component(
+            run,
+            "derived discovery indexes",
+            self.discovery_expectations(run, projection),
+        )?;
+        self.active_recovery_component(
+            run,
+            "derived discovery indexes",
+            self.store
+                .validate_run_discovery(run, projection.sequence(), &runnable, &timers, &leases)
+                .map_err(RuntimeError::from),
+        )?;
+
         let revision = self.active_recovery_component(
             run,
             "pinned revision",

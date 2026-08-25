@@ -694,7 +694,7 @@ fn reconciliation_cancellation_is_execution_cancellation_authority() -> TestResu
     let next_revision = revision('b')?;
     let next_digest = digest('2')?;
     let reason = Reason::new("cancel safely for prospective restart")?;
-    let mut projection = RunProjection::replay(&[
+    let events = [
         created(&fixture, 1)?,
         envelope(2, &fixture.run, RunEventKind::RunStarted)?,
         eligible(3, &fixture, "task", &execution, fixture.root.reference())?,
@@ -784,49 +784,86 @@ fn reconciliation_cancellation_is_execution_cancellation_authority() -> TestResu
                 reason: reason.clone(),
             },
         )?,
-        envelope(
-            11,
-            &fixture.run,
-            RunEventKind::ReconciliationApplied {
-                plan: plan.clone(),
-                from_revision: fixture.revision.clone(),
-                to_revision: next_revision.clone(),
-                based_on_sequence: RunSequence::new(10),
-            },
-        )?,
-        envelope(
-            12,
-            &fixture.run,
-            RunEventKind::RevisionPinned {
-                previous: fixture.revision.clone(),
-                revision: next_revision,
-                revision_digest: next_digest,
-                plan,
-            },
-        )?,
-    ])?;
+    ];
+    let mut unsafe_events = events.clone();
+    unsafe_events[4] = envelope(
+        5,
+        &fixture.run,
+        RunEventKind::CapabilityResolved {
+            execution: execution.clone(),
+            attempt: attempt.clone(),
+            requirement: CapabilityRequirement::new(OperationId::new("tool.publish")?)
+                .provider_profile(ProviderProfileRef::new("publisher-prod")?),
+            snapshot: resolved_snapshot_with_side_effect(
+                7,
+                SideEffectClass::NonIdempotentWrite,
+                IdempotencyBehavior::Unsupported,
+            )?,
+        },
+    )?;
+    unsafe_events[5] = envelope(
+        6,
+        &fixture.run,
+        RunEventKind::SideEffectClassified {
+            attempt: attempt.clone(),
+            side_effect: SideEffectClass::NonIdempotentWrite,
+            idempotency: IdempotencyBehavior::Unsupported,
+            idempotency_key: None,
+        },
+    )?;
+    assert!(
+        RunProjection::replay(&unsafe_events).is_err(),
+        "hostile cancel-and-restart plans must not authorize non-idempotent active work"
+    );
+    let mut projection = RunProjection::replay(&events)?;
 
-    let cancellation = projection.node_executions()[&execution]
-        .cancellation()
-        .ok_or("reconciliation cancellation was not projected on the execution")?;
-    assert_eq!(cancellation.attempt(), Some(&attempt));
-    assert_eq!(cancellation.reason(), &reason);
+    assert_eq!(
+        projection
+            .current_node_execution(&execution)
+            .map(super::super::node::CurrentNodeExecution::state),
+        Some(&NodeExecutionState::CancelledBeforeDispatch)
+    );
+    assert!(!projection.active_execution_ids().contains(&execution));
+    assert!(!projection.active_attempt_ids().contains(&attempt));
+    assert!(projection.active_lease_for_attempt(&attempt).is_none());
 
     projection.apply(&envelope(
-        13,
+        11,
         &fixture.run,
-        RunEventKind::NodeTerminal {
-            execution: execution.clone(),
-            attempt,
-            report_sequence: 1,
-            outcome: NodeOutcome::Cancelled,
-            error_class: None,
-            detail: None,
+        RunEventKind::ReconciliationApplied {
+            plan: plan.clone(),
+            from_revision: fixture.revision.clone(),
+            to_revision: next_revision.clone(),
+            based_on_sequence: RunSequence::new(10),
         },
     )?)?;
-    assert_eq!(
-        projection.node_executions()[&execution].state(),
-        &NodeExecutionState::Terminal(NodeOutcome::Cancelled)
+    projection.apply(&envelope(
+        12,
+        &fixture.run,
+        RunEventKind::RevisionPinned {
+            previous: fixture.revision.clone(),
+            revision: next_revision,
+            revision_digest: next_digest,
+            plan,
+        },
+    )?)?;
+
+    assert!(
+        projection
+            .apply(&envelope(
+                13,
+                &fixture.run,
+                RunEventKind::NodeTerminal {
+                    execution,
+                    attempt,
+                    report_sequence: 1,
+                    outcome: NodeOutcome::Cancelled,
+                    error_class: None,
+                    detail: None,
+                },
+            )?)
+            .is_err(),
+        "terminal evidence must not revive work cancelled before external start"
     );
     Ok(())
 }

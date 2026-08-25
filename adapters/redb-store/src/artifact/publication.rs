@@ -22,10 +22,10 @@ impl ArtifactStore for RedbStore {
         name = "milkdrift.redb_store.begin_artifact_publication",
         skip_all,
         fields(
-            run = %request.run,
-            publication = %request.publication,
-            artifact = %request.metadata.reference().artifact(),
-            size_bytes = request.metadata.reference().size_bytes()
+            run = %request.run(),
+            publication = %request.publication(),
+            artifact = %request.metadata().reference().artifact(),
+            size_bytes = request.metadata().reference().size_bytes()
         )
     )]
     fn begin_publication(
@@ -34,7 +34,7 @@ impl ArtifactStore for RedbStore {
     ) -> Result<BeginArtifactOutcome, PersistenceError> {
         validate_publication_request(self, request)?;
         let _serialization = self.lock_artifact_publications()?;
-        let temp_name = publication_temp_name(&request.publication);
+        let temp_name = publication_temp_name(request.publication());
         let temp_path = self.temp_root.join(&temp_name);
         let write = self.database().begin_write().map_err(error::redb)?;
         let artifact_accounting = validate_artifact_state(&write)?;
@@ -47,12 +47,12 @@ impl ArtifactStore for RedbStore {
         }
 
         let existing_publication =
-            optional_publication_in_transaction(&write, &request.publication)?;
+            optional_publication_in_transaction(&write, request.publication())?;
         if let Some(record) = existing_publication {
             if !record.matches(request) {
                 return Err(PersistenceError::ImmutableConflict {
                     entity: "artifact_publication",
-                    identity: request.publication.to_string(),
+                    identity: request.publication().to_string(),
                 });
             }
             return match record.state {
@@ -133,12 +133,12 @@ impl ArtifactStore for RedbStore {
         }
 
         if let Some(existing) =
-            metadata_in_transaction(&write, request.metadata.reference().artifact())?
+            metadata_in_transaction(&write, request.metadata().reference().artifact())?
         {
-            if existing != request.metadata {
+            if existing != *request.metadata() {
                 return Err(PersistenceError::ImmutableConflict {
                     entity: "artifact",
-                    identity: request.metadata.reference().artifact().to_string(),
+                    identity: request.metadata().reference().artifact().to_string(),
                 });
             }
             verify_blob(
@@ -157,12 +157,12 @@ impl ArtifactStore for RedbStore {
 
         let actual = crate::journal::validate_or_initialize_workspace_domain(
             &write,
-            &request.run,
-            &request.budget,
+            request.run(),
+            request.budget(),
         )?;
-        if actual != request.expected_usage {
+        if actual != request.expected_usage() {
             return Err(PersistenceError::WorkspaceUsageConflict {
-                run: request.run.clone(),
+                run: request.run().clone(),
             });
         }
         {
@@ -170,15 +170,15 @@ impl ArtifactStore for RedbStore {
                 .open_table(ARTIFACT_RESERVATIONS)
                 .map_err(error::redb)?;
             if let Some(owner) = reservations
-                .get(request.run.as_str())
+                .get(request.run().as_str())
                 .map_err(error::redb)?
-                && owner.value() != request.publication.as_str()
+                && owner.value() != request.publication().as_str()
             {
                 return Err(PersistenceError::Storage {
                     class: StorageFailureClass::OwnerBusy,
                     message: format!(
                         "run {} already has an active artifact publication",
-                        request.run
+                        request.run()
                     ),
                 });
             }
@@ -193,18 +193,18 @@ impl ArtifactStore for RedbStore {
                     .open_table(ARTIFACT_PUBLICATIONS)
                     .map_err(error::redb)?;
                 publications
-                    .insert(request.publication.as_str(), bytes.as_slice())
+                    .insert(request.publication().as_str(), bytes.as_slice())
                     .map_err(error::redb)?;
             }
             let pending = artifact_path_entry(&record, ArtifactPathKind::TempPending)?;
             put_artifact_path(&write, &pending)?;
             {
-                let age_key = publication_age_key(created_at_millis, &request.publication)?;
+                let age_key = publication_age_key(created_at_millis, request.publication())?;
                 let mut by_age = write
                     .open_table(ARTIFACT_PUBLICATIONS_BY_AGE)
                     .map_err(error::redb)?;
                 by_age
-                    .insert(age_key.as_slice(), request.publication.as_str())
+                    .insert(age_key.as_slice(), request.publication().as_str())
                     .map_err(error::redb)?;
             }
             {
@@ -212,7 +212,7 @@ impl ArtifactStore for RedbStore {
                     .open_table(ARTIFACT_RESERVATIONS)
                     .map_err(error::redb)?;
                 reservations
-                    .insert(request.run.as_str(), request.publication.as_str())
+                    .insert(request.run().as_str(), request.publication().as_str())
                     .map_err(error::redb)?;
             }
             {
@@ -220,11 +220,11 @@ impl ArtifactStore for RedbStore {
                     .open_table(ARTIFACT_TEMP_OWNERS)
                     .map_err(error::redb)?;
                 owners
-                    .insert(temp_name.as_str(), request.publication.as_str())
+                    .insert(temp_name.as_str(), request.publication().as_str())
                     .map_err(error::redb)?;
             }
             {
-                let bytes = json::encode(&request.publication, "artifact temporary manifest")?;
+                let bytes = json::encode(request.publication(), "artifact temporary manifest")?;
                 let mut manifest = write
                     .open_table(ARTIFACT_TEMP_MANIFEST)
                     .map_err(error::redb)?;
@@ -233,8 +233,8 @@ impl ArtifactStore for RedbStore {
                     .map_err(error::redb)?;
             }
             {
-                let digest = request.metadata.reference().digest().to_hex();
-                let key = codec::pair(&digest, request.publication.as_str())?;
+                let digest = request.metadata().reference().digest().to_hex();
+                let key = codec::pair(&digest, request.publication().as_str())?;
                 let mut digest_reservations = write
                     .open_table(ARTIFACT_DIGEST_RESERVATIONS)
                     .map_err(error::redb)?;
@@ -248,7 +248,7 @@ impl ArtifactStore for RedbStore {
         })();
         transaction_result?;
         self.faults.check(FaultPoint::AfterArtifactBeginCommit)?;
-        ensure_temp_inventory_ready(self, &request.publication)?;
+        ensure_temp_inventory_ready(self, request.publication())?;
         Ok(BeginArtifactOutcome::Writable)
     }
 
@@ -642,20 +642,21 @@ impl ArtifactStore for RedbStore {
         &self,
         request: &ArtifactReadRequest,
     ) -> Result<ArtifactReadChunk, PersistenceError> {
+        request.validate()?;
         let metadata = self
-            .metadata(request.reference.artifact())?
+            .metadata(request.reference().artifact())?
             .ok_or_else(|| PersistenceError::NotFound {
                 entity: "artifact",
-                identity: request.reference.artifact().to_string(),
+                identity: request.reference().artifact().to_string(),
             })?;
-        if metadata.reference() != &request.reference {
+        if metadata.reference() != request.reference() {
             return Err(PersistenceError::ImmutableConflict {
                 entity: "artifact_reference",
-                identity: request.reference.artifact().to_string(),
+                identity: request.reference().artifact().to_string(),
             });
         }
-        authorize_artifact_read(metadata.sensitivity(), &request.authority)?;
-        if request.reference.size_bytes() > self.max_read_bytes {
+        authorize_artifact_read(metadata.sensitivity(), request.authority())?;
+        if request.reference().size_bytes() > self.max_read_bytes {
             return Err(PersistenceError::Storage {
                 class: StorageFailureClass::ResourceExhausted,
                 message: format!(
@@ -664,31 +665,25 @@ impl ArtifactStore for RedbStore {
                 ),
             });
         }
-        if request.offset > request.reference.size_bytes() {
-            return Err(PersistenceError::Bounds {
-                location: "artifact.read.offset",
-                reason: "offset is beyond exact artifact size".to_owned(),
-            });
-        }
-        let path = self.content_path(request.reference.digest());
-        verify_blob(&path, &request.reference, self.max_read_bytes)?;
-        let remaining = request.reference.size_bytes() - request.offset;
-        let count = remaining.min(u64::from(request.maximum_bytes));
+        let path = self.content_path(request.reference().digest());
+        let mut file = open_regular_for_read(&path)?;
+        super::path::verify_opened_blob(&mut file, request.reference(), self.max_read_bytes)?;
+        let remaining = request.reference().size_bytes() - request.offset();
+        let count = remaining.min(u64::from(request.maximum_bytes()));
         let count = usize::try_from(count).map_err(|_| PersistenceError::Bounds {
             location: "artifact.read.maximum_bytes",
             reason: "read length does not fit usize".to_owned(),
         })?;
-        let mut file = open_regular_for_read(&path)?;
-        file.seek(SeekFrom::Start(request.offset))
+        file.seek(SeekFrom::Start(request.offset()))
             .map_err(error::io)?;
         let mut bytes = vec![0_u8; count];
         file.read_exact(&mut bytes).map_err(|cause| {
             error::corruption(format!("artifact changed during verified read: {cause}"))
         })?;
         Ok(ArtifactReadChunk {
-            offset: request.offset,
+            offset: request.offset(),
             bytes,
-            end_of_artifact: request.offset + count as u64 == request.reference.size_bytes(),
+            end_of_artifact: request.offset() + count as u64 == request.reference().size_bytes(),
         })
     }
 
@@ -789,22 +784,10 @@ pub(crate) fn validate_publication_request(
     store: &RedbStore,
     request: &BeginArtifactPublication,
 ) -> Result<(), PersistenceError> {
-    request
-        .budget
-        .validate_usage(&request.expected_usage)
-        .map_err(|cause| PersistenceError::InvalidDocument(cause.to_string()))?;
-    let calculated = request
-        .budget
-        .admit_artifact(&request.expected_usage, &request.metadata)
-        .map_err(|cause| PersistenceError::InvalidDocument(cause.to_string()))?;
-    if calculated != request.resulting_usage {
-        return Err(PersistenceError::InvalidDocument(
-            "artifact resulting usage does not match its budget charge".to_owned(),
-        ));
-    }
-    let size = request.metadata.reference().size_bytes();
+    request.validate()?;
+    let size = request.metadata().reference().size_bytes();
     if size > store.max_artifact_bytes
-        || request.resulting_usage.artifact_bytes() > store.max_total_artifact_bytes
+        || request.resulting_usage().artifact_bytes() > store.max_total_artifact_bytes
     {
         return Err(PersistenceError::Storage {
             class: StorageFailureClass::ResourceExhausted,

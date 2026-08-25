@@ -1,9 +1,9 @@
 use milkdrift_workspace::RunId;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{
     BoundedDetail, IntegrityDigest, PersistenceError, RunEventEnvelope, RunSequence, SnapshotId,
-    document::canonical_json_bytes,
 };
 
 /// Current optional projection-snapshot envelope schema.
@@ -11,6 +11,9 @@ pub const SNAPSHOT_SCHEMA_VERSION_V1: u32 = 1;
 /// Maximum serialized projection payload.
 pub const MAX_SNAPSHOT_PAYLOAD_BYTES: usize = 4_194_304;
 const MAX_SNAPSHOT_DOCUMENT_BYTES: usize = 25_165_824;
+const MAX_SNAPSHOT_JSON_DEPTH: usize = 64;
+const MAX_SNAPSHOT_JSON_STRING_BYTES: usize = 65_536;
+const MAX_SNAPSHOT_JSON_CONTAINER_ITEMS: usize = 4_096;
 const SNAPSHOT_CHECKSUM_DOMAIN: &str = "milkdrift.projection-snapshot.v1";
 const HISTORY_GENESIS_DOMAIN: &[u8] = b"milkdrift.run-history-chain.genesis.v1\0";
 const HISTORY_LINK_DOMAIN: &[u8] = b"milkdrift.run-history-chain.link.v1\0";
@@ -32,18 +35,7 @@ pub fn history_digest(events: &[RunEventEnvelope]) -> Result<IntegrityDigest, Pe
             "snapshot history must begin at sequence one".to_owned(),
         ));
     }
-    let run_bytes = first.run_id().as_str().as_bytes();
-    let run_length = u32::try_from(run_bytes.len()).map_err(|_| PersistenceError::Bounds {
-        location: "history.run_id",
-        reason: "run identity length does not fit u32".to_owned(),
-    })?;
-    let mut genesis = blake3::Hasher::new();
-    genesis.update(HISTORY_GENESIS_DOMAIN);
-    genesis.update(&run_length.to_be_bytes());
-    genesis.update(run_bytes);
-    genesis.update(&(HISTORY_GENESIS_MARKER.len() as u32).to_be_bytes());
-    genesis.update(HISTORY_GENESIS_MARKER);
-    let mut digest = IntegrityDigest::new(format!("b3_{}", genesis.finalize()))?;
+    let mut digest = history_genesis_digest(first.run_id())?;
     let mut expected = RunSequence::FIRST;
     for event in events {
         if event.run_id() != first.run_id() || event.sequence() != expected {
@@ -51,31 +43,62 @@ pub fn history_digest(events: &[RunEventEnvelope]) -> Result<IntegrityDigest, Pe
                 "snapshot history must be one run's contiguous prefix".to_owned(),
             ));
         }
-        let checksum = event.checksum().as_str().as_bytes();
-        let checksum_length =
-            u32::try_from(checksum.len()).map_err(|_| PersistenceError::Bounds {
-                location: "history.checksum",
-                reason: "checksum length does not fit u32".to_owned(),
-            })?;
-        let mut link = blake3::Hasher::new();
-        link.update(HISTORY_LINK_DOMAIN);
-        link.update(&run_length.to_be_bytes());
-        link.update(run_bytes);
-        link.update(&event.sequence().get().to_be_bytes());
-        let previous = digest.as_str().as_bytes();
-        let previous_length =
-            u32::try_from(previous.len()).map_err(|_| PersistenceError::Bounds {
-                location: "history.previous_digest",
-                reason: "previous digest length does not fit u32".to_owned(),
-            })?;
-        link.update(&previous_length.to_be_bytes());
-        link.update(previous);
-        link.update(&checksum_length.to_be_bytes());
-        link.update(checksum);
-        digest = IntegrityDigest::new(format!("b3_{}", link.finalize()))?;
+        digest = history_link_digest(event.run_id(), event.sequence(), &digest, event.checksum())?;
         expected = expected.next()?;
     }
     Ok(digest)
+}
+
+fn framed_history_length(
+    bytes: &[u8],
+    location: &'static str,
+) -> Result<[u8; 4], PersistenceError> {
+    u32::try_from(bytes.len())
+        .map(u32::to_be_bytes)
+        .map_err(|_| PersistenceError::Bounds {
+            location,
+            reason: "framed history-chain value exceeds u32".to_owned(),
+        })
+}
+
+/// Computes the domain-separated genesis digest for one run history chain.
+pub fn history_genesis_digest(run: &RunId) -> Result<IntegrityDigest, PersistenceError> {
+    let run_bytes = run.as_str().as_bytes();
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(HISTORY_GENESIS_DOMAIN);
+    hasher.update(&framed_history_length(run_bytes, "history.run_id")?);
+    hasher.update(run_bytes);
+    hasher.update(&framed_history_length(
+        HISTORY_GENESIS_MARKER,
+        "history.genesis_marker",
+    )?);
+    hasher.update(HISTORY_GENESIS_MARKER);
+    IntegrityDigest::new(format!("b3_{}", hasher.finalize()))
+}
+
+/// Computes one domain-separated link in a run history chain.
+pub fn history_link_digest(
+    run: &RunId,
+    sequence: RunSequence,
+    previous: &IntegrityDigest,
+    checksum: &IntegrityDigest,
+) -> Result<IntegrityDigest, PersistenceError> {
+    let run_bytes = run.as_str().as_bytes();
+    let previous_bytes = previous.as_str().as_bytes();
+    let checksum_bytes = checksum.as_str().as_bytes();
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(HISTORY_LINK_DOMAIN);
+    hasher.update(&framed_history_length(run_bytes, "history.run_id")?);
+    hasher.update(run_bytes);
+    hasher.update(&sequence.get().to_be_bytes());
+    hasher.update(&framed_history_length(
+        previous_bytes,
+        "history.previous_digest",
+    )?);
+    hasher.update(previous_bytes);
+    hasher.update(&framed_history_length(checksum_bytes, "history.checksum")?);
+    hasher.update(checksum_bytes);
+    IntegrityDigest::new(format!("b3_{}", hasher.finalize()))
 }
 
 /// Optional optimization over authoritative events; never independently writable state.
@@ -193,7 +216,7 @@ impl SnapshotDocument {
 
     /// Encodes deterministic compact canonical JSON.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, PersistenceError> {
-        canonical_json_bytes(self, MAX_SNAPSHOT_DOCUMENT_BYTES)
+        snapshot_canonical_json_bytes(self)
     }
 
     /// Decodes and verifies a persisted snapshot document.
@@ -205,6 +228,7 @@ impl SnapshotDocument {
             });
         }
         let value = crate::document::parse_json_without_duplicates(bytes)?;
+        validate_snapshot_json_value(&value, "$", 0)?;
         let version = value
             .get("schema_version")
             .and_then(serde_json::Value::as_u64)
@@ -288,10 +312,104 @@ fn snapshot_checksum(
         projection_schema,
         payload,
     };
-    Ok(IntegrityDigest::hash(&canonical_json_bytes(
+    Ok(IntegrityDigest::hash(&snapshot_canonical_json_bytes(
         &input,
-        MAX_SNAPSHOT_DOCUMENT_BYTES,
     )?))
+}
+
+fn snapshot_canonical_json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, PersistenceError> {
+    let mut value = serde_json::to_value(value)?;
+    validate_snapshot_json_value(&value, "$", 0)?;
+    sort_snapshot_json_value(&mut value);
+    let bytes = serde_json::to_vec(&value)?;
+    if bytes.len() > MAX_SNAPSHOT_DOCUMENT_BYTES {
+        return Err(PersistenceError::Bounds {
+            location: "snapshot.document",
+            reason: format!("canonical JSON exceeds {MAX_SNAPSHOT_DOCUMENT_BYTES} bytes"),
+        });
+    }
+    Ok(bytes)
+}
+
+fn validate_snapshot_json_value(
+    value: &Value,
+    path: &str,
+    depth: usize,
+) -> Result<(), PersistenceError> {
+    if depth > MAX_SNAPSHOT_JSON_DEPTH {
+        return Err(snapshot_json_bound(
+            "snapshot.document.depth",
+            format!("{path} exceeds depth {MAX_SNAPSHOT_JSON_DEPTH}"),
+        ));
+    }
+    match value {
+        Value::String(text) if text.len() > MAX_SNAPSHOT_JSON_STRING_BYTES => {
+            Err(snapshot_json_bound(
+                "snapshot.document.string",
+                format!("{path} exceeds {MAX_SNAPSHOT_JSON_STRING_BYTES} bytes"),
+            ))
+        }
+        Value::Array(values) => {
+            let maximum = if path == "$.payload" {
+                MAX_SNAPSHOT_PAYLOAD_BYTES
+            } else {
+                MAX_SNAPSHOT_JSON_CONTAINER_ITEMS
+            };
+            if values.len() > maximum {
+                return Err(snapshot_json_bound(
+                    "snapshot.document.array",
+                    format!("{path} exceeds {maximum} entries"),
+                ));
+            }
+            for (index, child) in values.iter().enumerate() {
+                validate_snapshot_json_value(child, &format!("{path}[{index}]"), depth + 1)?;
+            }
+            Ok(())
+        }
+        Value::Object(map) => {
+            if map.len() > MAX_SNAPSHOT_JSON_CONTAINER_ITEMS {
+                return Err(snapshot_json_bound(
+                    "snapshot.document.object",
+                    format!("{path} exceeds {MAX_SNAPSHOT_JSON_CONTAINER_ITEMS} entries"),
+                ));
+            }
+            for (key, child) in map {
+                if key.len() > MAX_SNAPSHOT_JSON_STRING_BYTES {
+                    return Err(snapshot_json_bound(
+                        "snapshot.document.key",
+                        format!("key below {path} exceeds {MAX_SNAPSHOT_JSON_STRING_BYTES} bytes"),
+                    ));
+                }
+                validate_snapshot_json_value(child, &format!("{path}.{key}"), depth + 1)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn snapshot_json_bound(location: &'static str, reason: String) -> PersistenceError {
+    PersistenceError::Bounds { location, reason }
+}
+
+fn sort_snapshot_json_value(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for child in map.values_mut() {
+                sort_snapshot_json_value(child);
+            }
+            let previous = std::mem::take(map);
+            let mut entries = previous.into_iter().collect::<Vec<_>>();
+            entries.sort_by(|left, right| left.0.cmp(&right.0));
+            map.extend(entries);
+        }
+        Value::Array(values) => {
+            for child in values {
+                sort_snapshot_json_value(child);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Result of loading the latest snapshot optimization.

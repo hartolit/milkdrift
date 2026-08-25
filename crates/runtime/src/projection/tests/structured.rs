@@ -1187,3 +1187,113 @@ fn subworkflow_creation_materializes_atomic_child_scope_inputs() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn subworkflow_imports_require_exact_child_output_coverage() -> TestResult {
+    let fixture = fixture("subworkflow-import-coverage")?;
+    let parent = NodeExecutionId::new("execution-subworkflow-imports")?;
+    let subworkflow = SubworkflowId::new("subworkflow-import-child")?;
+    let child_run = RunId::new("run-subworkflow-import-child")?;
+    let child_scope = WorkspaceScope::subworkflow(
+        ScopeId::new("subworkflow-import-scope")?,
+        &fixture.root,
+        subworkflow.clone(),
+    )?;
+    let child_root = WorkspaceScope::run_root(
+        child_run.clone(),
+        ScopeId::new("subworkflow-import-child-root")?,
+    );
+    let child_a = WorkspaceValueReference::new(
+        child_root.reference().clone(),
+        milkdrift_workspace::ValueKey::new("a")?,
+        milkdrift_workspace::ValueVersion::FIRST,
+    );
+    let child_b = WorkspaceValueReference::new(
+        child_root.reference().clone(),
+        milkdrift_workspace::ValueKey::new("b")?,
+        milkdrift_workspace::ValueVersion::FIRST,
+    );
+    let parent_a = WorkspaceValueReference::new(
+        fixture.root.reference().clone(),
+        milkdrift_workspace::ValueKey::new("a")?,
+        milkdrift_workspace::ValueVersion::FIRST,
+    );
+    let parent_b = WorkspaceValueReference::new(
+        fixture.root.reference().clone(),
+        milkdrift_workspace::ValueKey::new("b")?,
+        milkdrift_workspace::ValueVersion::FIRST,
+    );
+    let mut projection = RunProjection::replay(&[
+        created(&fixture, 1)?,
+        envelope(2, &fixture.run, RunEventKind::RunStarted)?,
+        runtime_eligible(
+            3,
+            &fixture,
+            "subworkflow",
+            &parent,
+            fixture.root.reference(),
+        )?,
+        envelope(
+            4,
+            &fixture.run,
+            RunEventKind::SubworkflowCreated {
+                subworkflow: subworkflow.clone(),
+                parent_execution: parent,
+                child_run: child_run.clone(),
+                child_revision: revision('b')?,
+                scope: child_scope,
+                ownership: SubworkflowOwnership::Attached,
+                inputs: Vec::new(),
+            },
+        )?,
+        envelope(
+            5,
+            &fixture.run,
+            RunEventKind::SubworkflowTerminal {
+                subworkflow: subworkflow.clone(),
+                child_run,
+                outcome: RunOutcome::Succeeded,
+                outputs: vec![child_a.clone(), child_b.clone()],
+                cost_micros: std::collections::BTreeMap::new(),
+            },
+        )?,
+        envelope(
+            6,
+            &fixture.run,
+            RunEventKind::SubworkflowOutputImported {
+                subworkflow: subworkflow.clone(),
+                child_value: child_a.clone(),
+                parent_value: parent_a,
+            },
+        )?,
+    ])?;
+    assert!(!projection.subworkflows()[&subworkflow].outputs_fully_imported());
+
+    let before = projection.clone();
+    assert!(
+        projection
+            .apply(&envelope(
+                7,
+                &fixture.run,
+                RunEventKind::SubworkflowOutputImported {
+                    subworkflow: subworkflow.clone(),
+                    child_value: child_a,
+                    parent_value: parent_b.clone(),
+                },
+            )?)
+            .is_err()
+    );
+    assert_eq!(projection, before);
+
+    projection.apply(&envelope(
+        7,
+        &fixture.run,
+        RunEventKind::SubworkflowOutputImported {
+            subworkflow: subworkflow.clone(),
+            child_value: child_b,
+            parent_value: parent_b,
+        },
+    )?)?;
+    assert!(projection.subworkflows()[&subworkflow].outputs_fully_imported());
+    Ok(())
+}

@@ -1,5 +1,7 @@
+use milkdrift_capability::SideEffectClass;
 use milkdrift_persistence::{
-    AuthorityDecision, ReconciliationClassification, RunEventEnvelope, RunEventKind,
+    AuthorityDecision, NodeExecutionId, ReconciliationAction, ReconciliationClassification,
+    RunEventEnvelope, RunEventKind,
 };
 
 use crate::RuntimeError;
@@ -12,6 +14,32 @@ use super::reconciliation::{
 use super::run::RunProjection;
 
 impl RunProjection {
+    pub(super) fn reconciliation_cancellation_is_safe(&self, execution: &NodeExecutionId) -> bool {
+        let Some(execution_view) = self.node_executions.get(execution) else {
+            return false;
+        };
+        let attempt = match &execution_view.state {
+            super::node::NodeExecutionState::Scheduled(attempt)
+            | super::node::NodeExecutionState::Running(attempt) => attempt,
+            _ => return false,
+        };
+        self.attempts.get(attempt).is_some_and(|attempt_view| {
+            attempt_view.execution == *execution
+                && matches!(
+                    attempt_view.state,
+                    super::node::AttemptState::Scheduled
+                        | super::node::AttemptState::Leased
+                        | super::node::AttemptState::Running
+                )
+                && attempt_view.side_effect.as_ref().is_some_and(|facts| {
+                    matches!(
+                        facts.side_effect,
+                        SideEffectClass::None | SideEffectClass::ReadOnly
+                    )
+                })
+        }) && !self.execution_has_active_structured_ownership(execution)
+    }
+
     pub(super) fn apply_reconciliation_plan_kind(
         &mut self,
         event: &RunEventEnvelope,
@@ -110,6 +138,14 @@ impl RunProjection {
                             return Err(invalid_at(
                                 event,
                                 "reconciliation item node and execution disagree",
+                            ));
+                        }
+                        if item.action == ReconciliationAction::CancelAndRestart
+                            && !self.reconciliation_cancellation_is_safe(execution)
+                        {
+                            return Err(invalid_at(
+                                event,
+                                "cancel-and-restart requires active none/read-only work with no structured ownership",
                             ));
                         }
                     }

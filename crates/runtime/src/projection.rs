@@ -67,6 +67,8 @@ mod replay;
 mod run;
 mod structured;
 
+pub(crate) use structured::{MAX_PENDING_SIGNAL_COUNT, MAX_PENDING_SIGNAL_PAYLOAD_BYTES};
+
 pub use node::{
     AttemptState, AttemptTerminal, CapabilityResolution, CurrentNodeExecution,
     DeterministicNodeTerminalProjection, ExternalOutcomeObligation, LateTerminalEvidence,

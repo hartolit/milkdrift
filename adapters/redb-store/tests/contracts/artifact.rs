@@ -10,6 +10,92 @@ impl ArtifactClock for FixedArtifactClock {
 }
 
 #[test]
+fn artifact_commit_accepts_an_authoritative_invocation_provenance_fact()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = TempDir::new()?;
+    let run = RunId::new("run-invocation-provenance")?;
+    let budget = WorkspaceBudget::new(0, 0, 0, 1, 1024, 1024)?;
+    let initial = accepted_request(
+        run.as_str(),
+        "command-invocation-provenance-start",
+        "event-invocation-provenance-start",
+        "start",
+    )?;
+    let initial = AtomicRunCommitRequest::new(
+        initial.receipt().clone(),
+        initial.events().to_vec(),
+        initial.workspace().to_vec(),
+        Some(WorkspaceAccounting {
+            budget: budget.clone(),
+            expected_usage: WorkspaceUsage::EMPTY,
+            resulting_usage: WorkspaceUsage::EMPTY,
+        }),
+        initial.required_artifacts().to_vec(),
+        initial.newly_referenced_artifacts().to_vec(),
+        initial.expected_lease_revision().cloned(),
+        initial.result().clone(),
+        initial.indexes().clone(),
+    )?;
+    let invocation = milkdrift_capability::InvocationId::new("invocation-provenance-known")?;
+    let followup = accepted_workspace_followup_request(
+        run.clone(),
+        RunSequence::FIRST,
+        "command-invocation-provenance-scheduled",
+        "event-invocation-provenance-scheduled",
+        vec![RunEventKind::NodeScheduled {
+            node: NodeId::new("node-invocation-provenance")?,
+            execution: NodeExecutionId::new("execution-invocation-provenance")?,
+            attempt: AttemptId::new("attempt-invocation-provenance")?,
+            invocation: invocation.clone(),
+            idempotency_key: None,
+            request: InvocationRequest::new(
+                invocation.clone(),
+                CapabilityId::new("capability-invocation-provenance")?,
+                OperationId::new("operation.invoke")?,
+                None,
+                None,
+                Vec::new(),
+                std::collections::BTreeMap::new(),
+            )?,
+        }],
+        Vec::new(),
+        WorkspaceAccounting {
+            budget: budget.clone(),
+            expected_usage: WorkspaceUsage::EMPTY,
+            resulting_usage: WorkspaceUsage::EMPTY,
+        },
+    )?;
+    let bytes = b"invocation-produced";
+    let base = artifact_metadata(
+        "artifact-invocation-provenance",
+        bytes,
+        ArtifactSensitivity::Public,
+    )?;
+    let metadata = ArtifactMetadata::new(
+        base.reference().clone(),
+        ArtifactSensitivity::Public,
+        ArtifactRetention::WhileReferenced,
+        ArtifactProvenance::new(CausalReference::Invocation { invocation }, Vec::new())?,
+    )?;
+    let publication = BeginArtifactPublication::new(
+        ArtifactPublicationId::new("publication-invocation-provenance")?,
+        run,
+        metadata.clone(),
+        budget,
+        WorkspaceUsage::EMPTY,
+    )?;
+
+    let store = RedbStore::open(directory.path())?;
+    store.commit_command(&initial)?;
+    store.commit_command(&followup)?;
+    store.begin_publication(&publication)?;
+    store.write_chunk(publication.publication(), 0, bytes)?;
+    store.commit_publication(publication.publication())?;
+    assert!(store.is_committed(metadata.reference())?);
+    Ok(())
+}
+
+#[test]
 fn artifact_cleanup_uses_the_injected_publication_clock() -> Result<(), Box<dyn std::error::Error>>
 {
     let directory = TempDir::new()?;
@@ -27,7 +113,7 @@ fn artifact_cleanup_uses_the_injected_publication_clock() -> Result<(), Box<dyn 
         WorkspaceUsage::EMPTY,
     )?;
     store.begin_publication(&request)?;
-    store.write_chunk(&request.publication, 0, &bytes[..1])?;
+    store.write_chunk(request.publication(), 0, &bytes[..1])?;
 
     let retained = store.cleanup_orphans(OrphanCleanupRequest {
         observed_at: TimestampMillis::new(100),
@@ -53,6 +139,10 @@ fn artifact_begin_and_chunk_fault_boundaries_resume_exact_durable_offsets()
     for (index, point) in [
         FaultPoint::BeforeArtifactBeginCommit,
         FaultPoint::AfterArtifactBeginCommit,
+        FaultPoint::BeforeArtifactTempCreate,
+        FaultPoint::AfterArtifactTempCreate,
+        FaultPoint::BeforeArtifactTempReadyCommit,
+        FaultPoint::AfterArtifactTempReadyCommit,
     ]
     .into_iter()
     .enumerate()
@@ -87,7 +177,7 @@ fn artifact_begin_and_chunk_fault_boundaries_resume_exact_durable_offsets()
         } else {
             assert_eq!(reopened.begin_publication(&request)?.next_offset(), Some(0));
         }
-        reopened.abort_publication(&request.publication)?;
+        reopened.abort_publication(request.publication())?;
     }
 
     for (index, point) in [
@@ -116,7 +206,7 @@ fn artifact_begin_and_chunk_fault_boundaries_resume_exact_durable_offsets()
                 .with_fault_injector(Arc::new(FailOnce::new(point))),
         )?;
         store.begin_publication(&request)?;
-        assert!(store.write_chunk(&request.publication, 0, &bytes).is_err());
+        assert!(store.write_chunk(request.publication(), 0, &bytes).is_err());
         drop(store);
 
         let reopened = RedbStore::open(directory.path())?;
@@ -130,9 +220,9 @@ fn artifact_begin_and_chunk_fault_boundaries_resume_exact_durable_offsets()
             Some(durable_offset)
         );
         if durable_offset == 0 {
-            reopened.write_chunk(&request.publication, 0, &bytes)?;
+            reopened.write_chunk(request.publication(), 0, &bytes)?;
         }
-        reopened.commit_publication(&request.publication)?;
+        reopened.commit_publication(request.publication())?;
         assert!(reopened.is_committed(metadata.reference())?);
     }
     Ok(())
@@ -169,20 +259,20 @@ fn artifact_abort_fault_boundaries_are_retryable_and_release_ownership()
                 .with_fault_injector(Arc::new(FailOnce::new(point))),
         )?;
         store.begin_publication(&request)?;
-        store.write_chunk(&request.publication, 0, &bytes[..3])?;
-        assert!(store.abort_publication(&request.publication).is_err());
+        store.write_chunk(request.publication(), 0, &bytes[..3])?;
+        assert!(store.abort_publication(request.publication()).is_err());
         drop(store);
 
         let reopened = RedbStore::open(directory.path())?;
         if point == FaultPoint::BeforeArtifactAbortCommit {
             assert_eq!(reopened.begin_publication(&request)?.next_offset(), Some(3));
         }
-        reopened.abort_publication(&request.publication)?;
+        reopened.abort_publication(request.publication())?;
         assert_eq!(
             reopened.begin_publication(&request)?,
             BeginArtifactOutcome::Writable
         );
-        reopened.abort_publication(&request.publication)?;
+        reopened.abort_publication(request.publication())?;
     }
     Ok(())
 }
@@ -223,7 +313,7 @@ fn cleanup_fault_boundaries_expire_writable_sessions_and_release_reservations()
                 .with_fault_injector(Arc::new(FailOnce::new(point))),
         )?;
         store.begin_publication(&request)?;
-        store.write_chunk(&request.publication, 0, &bytes[..3])?;
+        store.write_chunk(request.publication(), 0, &bytes[..3])?;
         assert!(store.cleanup_orphans(cleanup_request.clone()).is_err());
         drop(store);
 
@@ -250,7 +340,7 @@ fn cleanup_fault_boundaries_expire_writable_sessions_and_release_reservations()
             reopened.begin_publication(&replacement)?,
             BeginArtifactOutcome::Writable
         );
-        reopened.abort_publication(&replacement.publication)?;
+        reopened.abort_publication(replacement.publication())?;
     }
     Ok(())
 }
@@ -277,8 +367,8 @@ fn cleanup_expires_a_session_crashed_after_content_rename() -> Result<(), Box<dy
             .with_fault_injector(Arc::new(FailOnce::new(FaultPoint::AfterArtifactRename))),
     )?;
     store.begin_publication(&request)?;
-    store.write_chunk(&request.publication, 0, bytes)?;
-    assert!(store.commit_publication(&request.publication).is_err());
+    store.write_chunk(request.publication(), 0, bytes)?;
+    assert!(store.commit_publication(request.publication()).is_err());
     assert!(!store.is_committed(metadata.reference())?);
     drop(store);
 
@@ -295,7 +385,7 @@ fn cleanup_expires_a_session_crashed_after_content_rename() -> Result<(), Box<dy
         reopened.begin_publication(&request)?,
         BeginArtifactOutcome::Writable
     );
-    reopened.abort_publication(&request.publication)?;
+    reopened.abort_publication(request.publication())?;
     Ok(())
 }
 
@@ -325,7 +415,7 @@ fn cleanup_file_delete_fault_boundaries_are_restart_safe() -> Result<(), Box<dyn
         {
             let store = RedbStore::open(directory.path())?;
             store.begin_publication(&request)?;
-            store.write_chunk(&request.publication, 0, &bytes[..1])?;
+            store.write_chunk(request.publication(), 0, &bytes[..1])?;
         }
         let store = RedbStore::open_with_config(
             RedbStoreConfig::new(directory.path())
@@ -384,8 +474,8 @@ fn orphan_cleanup_cursors_visit_every_family_without_starvation()
         WorkspaceUsage::EMPTY,
     )?;
     store.begin_publication(&referenced_request)?;
-    store.write_chunk(&referenced_request.publication, 0, referenced_bytes)?;
-    store.commit_publication(&referenced_request.publication)?;
+    store.write_chunk(referenced_request.publication(), 0, referenced_bytes)?;
+    store.commit_publication(referenced_request.publication())?;
 
     for index in 0..7 {
         let bytes = format!("abandoned-publication-{index}").into_bytes();
@@ -402,7 +492,7 @@ fn orphan_cleanup_cursors_visit_every_family_without_starvation()
             WorkspaceUsage::EMPTY,
         )?;
         store.begin_publication(&request)?;
-        store.write_chunk(&request.publication, 0, &bytes[..1])?;
+        store.write_chunk(request.publication(), 0, &bytes[..1])?;
     }
     drop(store);
     for index in 0..4 {
@@ -423,8 +513,8 @@ fn orphan_cleanup_cursors_visit_every_family_without_starvation()
                 .with_fault_injector(Arc::new(FailOnce::new(FaultPoint::AfterArtifactRename))),
         )?;
         crashing.begin_publication(&request)?;
-        crashing.write_chunk(&request.publication, 0, &bytes)?;
-        assert!(crashing.commit_publication(&request.publication).is_err());
+        crashing.write_chunk(request.publication(), 0, &bytes)?;
+        assert!(crashing.commit_publication(request.publication()).is_err());
     }
 
     let store = RedbStore::open(directory.path())?;
@@ -477,6 +567,8 @@ fn orphan_cleanup_cursors_visit_every_family_without_starvation()
 fn artifact_publication_fault_boundaries_recover_without_dangling_metadata()
 -> Result<(), Box<dyn std::error::Error>> {
     let points = [
+        FaultPoint::BeforeArtifactContentIntentCommit,
+        FaultPoint::AfterArtifactContentIntentCommit,
         FaultPoint::BeforeArtifactRename,
         FaultPoint::AfterArtifactRename,
         FaultPoint::BeforeArtifactMetadataCommit,
@@ -507,10 +599,10 @@ fn artifact_publication_fault_boundaries_recover_without_dangling_metadata()
         );
         assert!(
             store
-                .write_chunk(&request.publication, 0, &bytes)?
+                .write_chunk(request.publication(), 0, &bytes)?
                 .complete_size
         );
-        assert!(store.commit_publication(&request.publication).is_err());
+        assert!(store.commit_publication(request.publication()).is_err());
 
         let committed_after_failure = store.is_committed(metadata.reference())?;
         if point == FaultPoint::AfterArtifactMetadataCommit {
@@ -526,13 +618,95 @@ fn artifact_publication_fault_boundaries_recover_without_dangling_metadata()
         })?;
         assert_eq!(cleanup.temporary_publications_removed, 0);
         assert_eq!(cleanup.unreferenced_blobs_removed, 0);
-        let recovered = store.commit_publication(&request.publication)?;
+        let recovered = store.commit_publication(request.publication())?;
         assert!(store.is_committed(metadata.reference())?);
         if point == FaultPoint::AfterArtifactMetadataCommit {
             assert!(!recovered.was_published());
         } else {
             assert!(recovered.was_published());
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn artifact_path_intent_and_finalize_faults_resume_after_reopen()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (index, point) in [
+        FaultPoint::BeforeArtifactPathDeleteIntentCommit,
+        FaultPoint::AfterArtifactPathDeleteIntentCommit,
+        FaultPoint::BeforeArtifactPathFinalizeCommit,
+        FaultPoint::AfterArtifactPathFinalizeCommit,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let directory = TempDir::new()?;
+        let bytes = format!("path-fault-boundary-{index}").into_bytes();
+        let request = BeginArtifactPublication::new(
+            ArtifactPublicationId::new(format!("publication-path-fault-{index}"))?,
+            RunId::new(format!("run-path-fault-{index}"))?,
+            artifact_metadata(
+                &format!("artifact-path-fault-{index}"),
+                &bytes,
+                ArtifactSensitivity::Public,
+            )?,
+            WorkspaceBudget::new(0, 0, 0, 1, 1024, 1024)?,
+            WorkspaceUsage::EMPTY,
+        )?;
+        {
+            let store = RedbStore::open(directory.path())?;
+            store.begin_publication(&request)?;
+            store.write_chunk(request.publication(), 0, &bytes[..1])?;
+        }
+        let cleanup_request = OrphanCleanupRequest {
+            observed_at: TimestampMillis::new(u64::MAX),
+            created_before: TimestampMillis::new(u64::MAX - 1),
+            limit: PageSize::new(100)?,
+            cursor: None,
+        };
+        let crashing = RedbStore::open_with_config(
+            RedbStoreConfig::new(directory.path())
+                .with_fault_injector(Arc::new(FailOnce::new(point))),
+        )?;
+        assert!(crashing.cleanup_orphans(cleanup_request.clone()).is_err());
+        drop(crashing);
+
+        let reopened = RedbStore::open(directory.path())?;
+        let mut cursor = None;
+        for _ in 0..10_000 {
+            let page = reopened.scan_integrity(IntegrityScanRequest {
+                limit: PageSize::new(1)?,
+                verify_artifact_content: false,
+                cursor,
+            })?;
+            assert!(
+                page.failures.is_empty(),
+                "legal artifact crash state failed scrub at {point:?}: {:?}",
+                page.failures
+            );
+            let Some(next) = page.next_cursor else {
+                break;
+            };
+            cursor = Some(next);
+        }
+        for _ in 0..4 {
+            let _ = reopened.cleanup_orphans(cleanup_request.clone())?;
+        }
+        assert!(
+            std::fs::read_dir(directory.path().join("artifacts/.tmp"))?
+                .next()
+                .is_none()
+        );
+        assert_eq!(
+            reopened.workspace_usage(request.run())?,
+            WorkspaceUsage::EMPTY
+        );
+        assert!(
+            reopened
+                .metadata(request.metadata().reference().artifact())?
+                .is_none()
+        );
     }
     Ok(())
 }
@@ -554,21 +728,21 @@ fn artifact_rejects_bad_digest_offsets_chunks_and_budget() -> Result<(), Box<dyn
     )?;
     store.begin_publication(&request)?;
     assert!(matches!(
-        store.write_chunk(&request.publication, 1, &actual[..1]),
+        store.write_chunk(request.publication(), 1, &actual[..1]),
         Err(PersistenceError::ImmutableConflict { .. })
     ));
     assert!(matches!(
-        store.write_chunk(&request.publication, 0, &[]),
+        store.write_chunk(request.publication(), 0, &[]),
         Err(PersistenceError::Bounds { .. })
     ));
     let oversized_chunk = vec![0_u8; milkdrift_persistence::MAX_ARTIFACT_CHUNK_BYTES + 1];
     assert!(matches!(
-        store.write_chunk(&request.publication, 0, &oversized_chunk),
+        store.write_chunk(request.publication(), 0, &oversized_chunk),
         Err(PersistenceError::Bounds { .. })
     ));
-    store.write_chunk(&request.publication, 0, actual)?;
+    store.write_chunk(request.publication(), 0, actual)?;
     assert!(matches!(
-        store.commit_publication(&request.publication),
+        store.commit_publication(request.publication()),
         Err(PersistenceError::Storage {
             class: StorageFailureClass::Corruption,
             ..
@@ -610,25 +784,25 @@ fn artifact_publication_resumes_deduplicates_verifies_and_cleans_orphans()
             BeginArtifactOutcome::Writable
         );
         assert!(matches!(
-            store.write_chunk(&request.publication, 0, &[0_u8; 64]),
+            store.write_chunk(request.publication(), 0, &[0_u8; 64]),
             Err(PersistenceError::Bounds { .. })
         ));
         let first = &content[..7];
-        let progress = store.write_chunk(&request.publication, 0, first)?;
+        let progress = store.write_chunk(request.publication(), 0, first)?;
         assert_eq!(progress.bytes_received, 7);
         assert!(!progress.complete_size);
     }
     let store = RedbStore::open(directory.path())?;
     assert_eq!(store.begin_publication(&request)?.next_offset(), Some(7));
-    store.write_chunk(&request.publication, 7, &content[7..])?;
-    let first_commit = store.commit_publication(&request.publication)?;
+    store.write_chunk(request.publication(), 7, &content[7..])?;
+    let first_commit = store.commit_publication(request.publication())?;
     assert!(first_commit.was_published());
     assert_eq!(first_commit.content_deduplicated(), Some(false));
     assert!(store.is_committed(metadata.reference())?);
-    assert!(store.is_referenced_by_run(&request.run, metadata.reference())?);
+    assert!(store.is_referenced_by_run(request.run(), metadata.reference())?);
     assert_eq!(
-        store.workspace_usage(&request.run)?,
-        request.resulting_usage
+        store.workspace_usage(request.run())?,
+        request.resulting_usage()
     );
     assert!(
         !store.is_referenced_by_run(&RunId::new("run-without-artifact")?, metadata.reference())?
@@ -657,10 +831,10 @@ fn artifact_publication_resumes_deduplicates_verifies_and_cleans_orphans()
     let second_metadata = artifact_metadata("artifact-two", content, ArtifactSensitivity::Public)?;
     let second = BeginArtifactPublication::new(
         ArtifactPublicationId::new("publication-two")?,
-        request.run.clone(),
+        request.run().clone(),
         second_metadata.clone(),
         budget,
-        request.resulting_usage,
+        request.resulting_usage(),
     )?;
     assert_eq!(
         store.begin_publication(&second)?,
@@ -668,14 +842,17 @@ fn artifact_publication_resumes_deduplicates_verifies_and_cleans_orphans()
     );
     assert!(
         store
-            .write_chunk(&second.publication, 0, content)?
+            .write_chunk(second.publication(), 0, content)?
             .complete_size
     );
-    let second_commit = store.commit_publication(&second.publication)?;
+    let second_commit = store.commit_publication(second.publication())?;
     assert!(second_commit.was_published());
     assert_eq!(second_commit.content_deduplicated(), Some(true));
-    assert!(store.is_referenced_by_run(&request.run, second_metadata.reference())?);
-    assert_eq!(store.workspace_usage(&request.run)?, second.resulting_usage);
+    assert!(store.is_referenced_by_run(request.run(), second_metadata.reference())?);
+    assert_eq!(
+        store.workspace_usage(request.run())?,
+        second.resulting_usage()
+    );
     let read = ArtifactReadRequest::new(
         second_metadata.reference().clone(),
         0,
@@ -699,7 +876,7 @@ fn artifact_publication_resumes_deduplicates_verifies_and_cleans_orphans()
         WorkspaceUsage::EMPTY,
     )?;
     store.begin_publication(&temp_request)?;
-    store.write_chunk(&temp_request.publication, 0, &temp_bytes[..1])?;
+    store.write_chunk(temp_request.publication(), 0, &temp_bytes[..1])?;
     drop(store);
 
     let orphan_bytes = b"unreferenced";
@@ -720,10 +897,10 @@ fn artifact_publication_resumes_deduplicates_verifies_and_cleans_orphans()
             .with_fault_injector(Arc::new(FailOnce::new(FaultPoint::AfterArtifactRename))),
     )?;
     crashing.begin_publication(&orphan_request)?;
-    crashing.write_chunk(&orphan_request.publication, 0, orphan_bytes)?;
+    crashing.write_chunk(orphan_request.publication(), 0, orphan_bytes)?;
     assert!(
         crashing
-            .commit_publication(&orphan_request.publication)
+            .commit_publication(orphan_request.publication())
             .is_err()
     );
     drop(crashing);
@@ -782,12 +959,12 @@ fn artifact_publication_and_reads_refuse_symlink_redirection()
     )?;
     let store = RedbStore::open(shard_directory.path())?;
     store.begin_publication(&request)?;
-    store.write_chunk(&request.publication, 0, bytes)?;
+    store.write_chunk(request.publication(), 0, bytes)?;
     let digest = metadata.reference().digest().to_hex();
     let shard = shard_directory.path().join("artifacts").join(&digest[..2]);
     symlink(escaped_directory.path(), &shard)?;
     assert!(matches!(
-        store.commit_publication(&request.publication),
+        store.commit_publication(request.publication()),
         Err(PersistenceError::Storage {
             class: StorageFailureClass::Corruption,
             ..
@@ -812,8 +989,8 @@ fn artifact_publication_and_reads_refuse_symlink_redirection()
     )?;
     let content_store = RedbStore::open(content_directory.path())?;
     content_store.begin_publication(&content_request)?;
-    content_store.write_chunk(&content_request.publication, 0, b"verified content")?;
-    content_store.commit_publication(&content_request.publication)?;
+    content_store.write_chunk(content_request.publication(), 0, b"verified content")?;
+    content_store.commit_publication(content_request.publication())?;
     let digest = content_metadata.reference().digest().to_hex();
     let path = content_directory
         .path()

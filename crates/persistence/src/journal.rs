@@ -1499,6 +1499,26 @@ pub trait RunQueryStore: Send + Sync {
     ) -> Result<Vec<LeaseIndexEntry>, PersistenceError>;
 }
 
+/// Explicit logical validation port for derived per-run discovery state.
+///
+/// A caller that has replayed authoritative history supplies the complete projected
+/// runnable, timer, and lease sets for one run. Adapters compare those expectations
+/// with their derived indexes, including redundant physical pairs, so symmetric loss
+/// of every row in an index cannot masquerade as an empty set. Runtime startup uses
+/// this after authoritative replay for each bounded page of active runs; offline scrub
+/// remains responsible for complete-store physical validation.
+pub trait RunDiscoveryIntegrityStore: Send + Sync {
+    /// Validates the complete derived discovery state at an authoritative run head.
+    fn validate_run_discovery(
+        &self,
+        run: &RunId,
+        through_sequence: RunSequence,
+        runnable: &[RunnableIndexEntry],
+        timers: &[TimerIndexEntry],
+        leases: &[LeaseIndexEntry],
+    ) -> Result<(), PersistenceError>;
+}
+
 /// Read-only access to durable workspace state. All mutations occur through
 /// [`RunJournal::commit_command`] to preserve crash atomicity with event history.
 pub trait WorkspaceStore: Send + Sync {

@@ -1,7 +1,8 @@
 use super::cursor::{
-    index_cursor_position, make_artifact_digest_cursor, make_integrity_cursor,
-    parse_artifact_digest_cursor, push_failure, scan_binary_bytes_phase, scan_string_bytes_phase,
-    scan_string_string_phase, scan_string_u8_phase, scan_string_u64_phase,
+    index_cursor_position, make_artifact_digest_cursor, make_delete_guard_cursor,
+    make_integrity_cursor, parse_artifact_digest_cursor, parse_delete_guard_cursor, push_failure,
+    scan_binary_bytes_phase, scan_binary_string_phase, scan_binary_u8_phase, scan_binary_u64_phase,
+    scan_string_bytes_phase, scan_string_string_phase, scan_string_u8_phase, scan_string_u64_phase,
 };
 use super::*;
 #[allow(clippy::too_many_arguments)]
@@ -39,6 +40,18 @@ pub(crate) fn scan_index_integrity(
     const ARTIFACT_TEMP_MANIFEST_PHASE: u8 = 21;
     const ARTIFACT_ACCOUNTING_PHASE: u8 = 22;
     const ARTIFACT_TEMP_OWNERS_PHASE: u8 = 23;
+    const SIGNAL_RECEIPTS_PHASE: u8 = 24;
+    const RUNNABLE_RUN_HEADS_PHASE: u8 = 25;
+    const WORKSPACE_VALUE_HEADS_PHASE: u8 = 26;
+    const INVOCATION_FACTS_PHASE: u8 = 27;
+    const SNAPSHOTS_PHASE: u8 = 28;
+    const SNAPSHOT_LATEST_PHASE: u8 = 29;
+    const ARTIFACT_PUBLICATIONS_PHASE: u8 = 30;
+    const ARTIFACT_PUBLICATION_AGE_PHASE: u8 = 31;
+    const ARTIFACT_RESERVATIONS_PHASE: u8 = 32;
+    const ARTIFACT_PATHS_PHASE: u8 = 33;
+    const ARTIFACT_DELETE_GUARDS_PHASE: u8 = 34;
+    const ARTIFACT_DIGEST_RESERVATIONS_PHASE: u8 = 35;
 
     let (start_phase, start_key) = index_cursor_position(cursor)?;
     if last_cursor.is_none() {
@@ -54,6 +67,8 @@ pub(crate) fn scan_index_integrity(
     let summaries = read.open_table(RUN_SUMMARIES).map_err(error::redb)?;
     let nonterminal = read.open_table(NONTERMINAL_RUNS).map_err(error::redb)?;
     let commands = read.open_table(COMMAND_RESULTS).map_err(error::redb)?;
+    let signal_receipts = read.open_table(SIGNAL_RECEIPTS).map_err(error::redb)?;
+    let runnable_run_heads = read.open_table(RUNNABLE_RUN_HEADS).map_err(error::redb)?;
     let runnable_identities = read.open_table(RUNNABLE_ENTRIES).map_err(error::redb)?;
     let runnable_ordered = read.open_table(RUNNABLE_INDEX).map_err(error::redb)?;
     let timer_identities = read.open_table(TIMER_ENTRIES).map_err(error::redb)?;
@@ -63,6 +78,28 @@ pub(crate) fn scan_index_integrity(
     let scopes = read.open_table(SCOPES).map_err(error::redb)?;
     let root_scopes = read.open_table(ROOT_SCOPES).map_err(error::redb)?;
     let values = read.open_table(VALUES).map_err(error::redb)?;
+    let value_heads = read
+        .open_table(WORKSPACE_VALUE_HEADS)
+        .map_err(error::redb)?;
+    let metadata = read.open_table(METADATA).map_err(error::redb)?;
+    let snapshots = read.open_table(SNAPSHOTS).map_err(error::redb)?;
+    let snapshot_latest = read.open_table(SNAPSHOT_LATEST).map_err(error::redb)?;
+    let artifact_publications = read
+        .open_table(ARTIFACT_PUBLICATIONS)
+        .map_err(error::redb)?;
+    let artifact_publications_by_age = read
+        .open_table(ARTIFACT_PUBLICATIONS_BY_AGE)
+        .map_err(error::redb)?;
+    let artifact_reservations = read
+        .open_table(ARTIFACT_RESERVATIONS)
+        .map_err(error::redb)?;
+    let artifact_paths = read.open_table(ARTIFACT_PATHS).map_err(error::redb)?;
+    let artifact_delete_guards = read
+        .open_table(ARTIFACT_DELETE_GUARDS)
+        .map_err(error::redb)?;
+    let artifact_digest_reservations = read
+        .open_table(ARTIFACT_DIGEST_RESERVATIONS)
+        .map_err(error::redb)?;
     let usage = read.open_table(WORKSPACE_USAGE).map_err(error::redb)?;
     let budgets = read.open_table(WORKSPACE_BUDGETS).map_err(error::redb)?;
     let revision_digests = read.open_table(REVISIONS_BY_DIGEST).map_err(error::redb)?;
@@ -796,6 +833,374 @@ pub(crate) fn scan_index_integrity(
             Ok(())
         },
     )?;
+    scan_binary_u64_phase(
+        SIGNAL_RECEIPTS_PHASE,
+        start_phase,
+        start_key,
+        &signal_receipts,
+        maximum,
+        verify_artifact_content,
+        result,
+        last_cursor,
+        more_remaining,
+        "signal_indexes",
+        |key, sequence| {
+            let components = codec::decode_components(key, 2)?;
+            let run = RunId::new(components[0]).map_err(|cause| {
+                error::corruption(format!("invalid signal-receipt run identity: {cause}"))
+            })?;
+            let signal = SignalId::new(components[1]).map_err(|cause| {
+                error::corruption(format!("invalid signal-receipt identity: {cause}"))
+            })?;
+            crate::journal::validate_signal_receipt_row(read, &run, &signal, sequence).map(|_| ())
+        },
+    )?;
+    scan_string_bytes_phase(
+        RUNNABLE_RUN_HEADS_PHASE,
+        start_phase,
+        start_key,
+        &runnable_run_heads,
+        maximum,
+        verify_artifact_content,
+        result,
+        last_cursor,
+        more_remaining,
+        "runnable_indexes",
+        |run, bytes| crate::journal::validate_runnable_head(read, run, bytes).map(|_| ()),
+    )?;
+    scan_binary_bytes_phase(
+        WORKSPACE_VALUE_HEADS_PHASE,
+        start_phase,
+        start_key,
+        &value_heads,
+        maximum,
+        verify_artifact_content,
+        result,
+        last_cursor,
+        more_remaining,
+        "workspace_indexes",
+        |key, bytes| {
+            let reference: WorkspaceValueReference = json::decode(bytes, "workspace value head")?;
+            let expected = codec::value_prefix(
+                reference.scope().run().as_str(),
+                reference.scope().scope().as_str(),
+                reference.key().as_str(),
+            )?;
+            if key != expected.as_slice() {
+                return Err(error::corruption(
+                    "workspace value-head key does not match its document",
+                ));
+            }
+            let value_key = crate::journal::workspace_value_key(&reference)?;
+            let value = values
+                .get(value_key.as_slice())
+                .map_err(error::redb)?
+                .ok_or_else(|| error::corruption("workspace value head names a missing value"))?;
+            let value: WorkspaceValueEntry = json::decode(value.value(), "workspace value")?;
+            if value.reference() != &reference {
+                return Err(error::corruption(
+                    "workspace value head disagrees with its authoritative value",
+                ));
+            }
+            Ok(())
+        },
+    )?;
+    scan_string_u64_phase(
+        INVOCATION_FACTS_PHASE,
+        start_phase,
+        start_key,
+        &metadata,
+        maximum,
+        verify_artifact_content,
+        result,
+        last_cursor,
+        more_remaining,
+        "invocation_indexes",
+        |key, sequence| {
+            if matches!(
+                key,
+                crate::schema::SCHEMA_VERSION_KEY
+                    | crate::schema::INTERNAL_DOCUMENT_FORMAT_VERSION_KEY
+                    | crate::schema::LEASE_SET_REVISION_KEY
+                    | crate::schema::NONTERMINAL_SET_COUNT_KEY
+            ) {
+                Ok(())
+            } else {
+                crate::journal::validate_invocation_fact_row(read, key, sequence)
+            }
+        },
+    )?;
+    scan_binary_bytes_phase(
+        SNAPSHOTS_PHASE,
+        start_phase,
+        start_key,
+        &snapshots,
+        maximum,
+        verify_artifact_content,
+        result,
+        last_cursor,
+        more_remaining,
+        "snapshot_indexes",
+        |key, bytes| {
+            let components = codec::decode_components(key, 2)?;
+            let snapshot = SnapshotDocument::from_json(bytes)?;
+            if snapshot.run().as_str() != components[0]
+                || snapshot.snapshot().as_str() != components[1]
+            {
+                return Err(error::corruption(
+                    "snapshot key does not match its checked document",
+                ));
+            }
+            let run = snapshot.run();
+            let head = crate::journal::validated_run_head(&heads, &events, run)?;
+            crate::journal::validate_run_history_membership(read, run, head)?;
+            if snapshot.covered_sequence() > head
+                || crate::snapshot::history_digest_read(read, run, snapshot.covered_sequence())?
+                    != *snapshot.history_digest()
+            {
+                return Err(error::corruption(
+                    "snapshot does not match authoritative history",
+                ));
+            }
+            let latest_id = snapshot_latest
+                .get(run.as_str())
+                .map_err(error::redb)?
+                .ok_or_else(|| error::corruption("snapshot has no latest pointer"))?;
+            let latest_key = codec::pair(run.as_str(), latest_id.value())?;
+            let latest = snapshots
+                .get(latest_key.as_slice())
+                .map_err(error::redb)?
+                .ok_or_else(|| error::corruption("latest snapshot pointer is dangling"))?;
+            let latest = SnapshotDocument::from_json(latest.value())?;
+            if snapshot.covered_sequence() > latest.covered_sequence()
+                || (snapshot.covered_sequence() == latest.covered_sequence()
+                    && snapshot.snapshot().as_str() > latest.snapshot().as_str())
+            {
+                return Err(error::corruption(
+                    "latest snapshot pointer does not name the newest snapshot",
+                ));
+            }
+            Ok(())
+        },
+    )?;
+    scan_string_string_phase(
+        SNAPSHOT_LATEST_PHASE,
+        start_phase,
+        start_key,
+        &snapshot_latest,
+        maximum,
+        verify_artifact_content,
+        result,
+        last_cursor,
+        more_remaining,
+        "snapshot_indexes",
+        |run, snapshot| {
+            let run = RunId::new(run).map_err(|cause| {
+                error::corruption(format!("invalid latest-snapshot run: {cause}"))
+            })?;
+            let snapshot = SnapshotId::new(snapshot).map_err(|cause| {
+                error::corruption(format!("invalid latest-snapshot identity: {cause}"))
+            })?;
+            let key = codec::pair(run.as_str(), snapshot.as_str())?;
+            let bytes = snapshots
+                .get(key.as_slice())
+                .map_err(error::redb)?
+                .ok_or_else(|| error::corruption("latest snapshot pointer is dangling"))?;
+            let document = SnapshotDocument::from_json(bytes.value())?;
+            if document.run() != &run || document.snapshot() != &snapshot {
+                return Err(error::corruption(
+                    "latest snapshot pointer disagrees with its document",
+                ));
+            }
+            Ok(())
+        },
+    )?;
+    scan_string_bytes_phase(
+        ARTIFACT_PUBLICATIONS_PHASE,
+        start_phase,
+        start_key,
+        &artifact_publications,
+        maximum,
+        verify_artifact_content,
+        result,
+        last_cursor,
+        more_remaining,
+        "artifact_publication_indexes",
+        |key, bytes| crate::artifact::validate_publication_scrub(read, key, bytes),
+    )?;
+    scan_binary_string_phase(
+        ARTIFACT_PUBLICATION_AGE_PHASE,
+        start_phase,
+        start_key,
+        &artifact_publications_by_age,
+        maximum,
+        verify_artifact_content,
+        result,
+        last_cursor,
+        more_remaining,
+        "artifact_publication_indexes",
+        |key, publication| crate::artifact::validate_publication_age_scrub(read, key, publication),
+    )?;
+    scan_string_string_phase(
+        ARTIFACT_RESERVATIONS_PHASE,
+        start_phase,
+        start_key,
+        &artifact_reservations,
+        maximum,
+        verify_artifact_content,
+        result,
+        last_cursor,
+        more_remaining,
+        "artifact_publication_indexes",
+        |run, publication| {
+            crate::artifact::validate_publication_reservation_scrub(read, run, publication)
+        },
+    )?;
+    scan_binary_bytes_phase(
+        ARTIFACT_PATHS_PHASE,
+        start_phase,
+        start_key,
+        &artifact_paths,
+        maximum,
+        verify_artifact_content,
+        result,
+        last_cursor,
+        more_remaining,
+        "artifact_path_indexes",
+        |key, value| crate::artifact::validate_path_scrub(read, key, value),
+    )?;
+    scan_delete_guard_phase(
+        ARTIFACT_DELETE_GUARDS_PHASE,
+        start_phase,
+        start_key,
+        &artifact_delete_guards,
+        &artifact_paths,
+        maximum,
+        verify_artifact_content,
+        result,
+        last_cursor,
+        more_remaining,
+    )?;
+    scan_binary_u8_phase(
+        ARTIFACT_DIGEST_RESERVATIONS_PHASE,
+        start_phase,
+        start_key,
+        &artifact_digest_reservations,
+        maximum,
+        verify_artifact_content,
+        result,
+        last_cursor,
+        more_remaining,
+        "artifact_publication_indexes",
+        |key, marker| crate::artifact::validate_digest_reservation_scrub(read, key, marker),
+    )?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_delete_guard_phase(
+    phase: u8,
+    start_phase: u8,
+    start_key: Option<&[u8]>,
+    guards: &impl redb::ReadableTable<&'static [u8], u8>,
+    paths: &impl redb::ReadableTable<&'static [u8], &'static [u8]>,
+    maximum: u64,
+    verify_artifact_content: bool,
+    result: &mut IntegrityScanResult,
+    last_cursor: &mut Option<IntegrityScanCursor>,
+    more_remaining: &mut bool,
+) -> Result<(), PersistenceError> {
+    if *more_remaining || phase < start_phase {
+        return Ok(());
+    }
+    let resumed = if phase == start_phase {
+        start_key.map(parse_delete_guard_cursor).transpose()?
+    } else {
+        None
+    };
+    let guard_lower = match resumed {
+        Some((guard, true, _)) => Bound::Included(guard),
+        Some((guard, false, _)) => Bound::Excluded(guard),
+        None => Bound::Unbounded,
+    };
+    for row in guards
+        .range::<&[u8]>((guard_lower, Bound::Unbounded))
+        .map_err(error::redb)?
+    {
+        let (guard, marker) = row.map_err(error::redb)?;
+        let guard_key = guard.value();
+        let resume_path = resumed
+            .filter(|(resumed_guard, in_progress, _)| *in_progress && *resumed_guard == guard_key)
+            .and_then(|(_, _, path)| path);
+        let is_resumed_guard =
+            resumed.is_some_and(|(key, progress, _)| progress && key == guard_key);
+        if !is_resumed_guard {
+            if result.documents_checked == maximum {
+                *more_remaining = true;
+                break;
+            }
+            result.documents_checked += 1;
+            if let Err(cause) =
+                crate::artifact::validate_delete_guard_scrub(guard_key, marker.value())
+            {
+                push_failure(result, "artifact_path_indexes", &cause.to_string())?;
+                *last_cursor = Some(make_delete_guard_cursor(
+                    guard_key,
+                    false,
+                    None,
+                    verify_artifact_content,
+                    last_cursor.as_ref(),
+                )?);
+                continue;
+            }
+        }
+        let path_lower = resume_path.map_or(Bound::Unbounded, Bound::Excluded);
+        let mut found = false;
+        let mut last_path = resume_path.map(<[u8]>::to_vec);
+        for path in paths
+            .range::<&[u8]>((path_lower, Bound::Unbounded))
+            .map_err(error::redb)?
+        {
+            if result.documents_checked == maximum {
+                *last_cursor = Some(make_delete_guard_cursor(
+                    guard_key,
+                    true,
+                    last_path.as_deref(),
+                    verify_artifact_content,
+                    last_cursor.as_ref(),
+                )?);
+                *more_remaining = true;
+                return Ok(());
+            }
+            let (path_key, path_value) = path.map_err(error::redb)?;
+            result.documents_checked += 1;
+            last_path = Some(path_key.value().to_vec());
+            match crate::artifact::artifact_path_guard_key(path_key.value(), path_value.value()) {
+                Ok(candidate) if candidate.as_slice() == guard_key => {
+                    found = true;
+                    break;
+                }
+                Ok(_) => {}
+                Err(cause) => {
+                    push_failure(result, "artifact_path_indexes", &cause.to_string())?;
+                }
+            }
+        }
+        if !found {
+            push_failure(
+                result,
+                "artifact_path_indexes",
+                "artifact delete guard has no matching path inventory row",
+            )?;
+        }
+        *last_cursor = Some(make_delete_guard_cursor(
+            guard_key,
+            false,
+            None,
+            verify_artifact_content,
+            last_cursor.as_ref(),
+        )?);
+    }
     Ok(())
 }
 

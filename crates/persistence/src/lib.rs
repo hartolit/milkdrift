@@ -65,15 +65,15 @@ pub use journal::{
     EventCursor, EventPage, EventPageQuery, IndexedRunState, LeaseIndexEntry, LeaseIndexMutation,
     MAX_COMMAND_DOCUMENT_BYTES, MAX_COMMAND_RESULT_DOCUMENT_BYTES, MAX_INDEX_MUTATIONS_PER_COMMIT,
     MAX_REQUIRED_ARTIFACTS_PER_COMMIT, MAX_VALUE_PROVENANCE_DEPTH,
-    MAX_WORKSPACE_MUTATIONS_PER_COMMIT, RunIndexUpdate, RunJournal, RunQueryStore,
-    RunSummaryCursor, RunSummaryFilter, RunSummaryIndex, RunSummaryPage, RunSummaryPageQuery,
-    RunnableCursor, RunnableIndexEntry, RunnableIndexMutation, RunnablePage, TimerIndexEntry,
-    TimerIndexMutation, WorkspaceAccounting, WorkspaceMutation, WorkspaceStore,
+    MAX_WORKSPACE_MUTATIONS_PER_COMMIT, RunDiscoveryIntegrityStore, RunIndexUpdate, RunJournal,
+    RunQueryStore, RunSummaryCursor, RunSummaryFilter, RunSummaryIndex, RunSummaryPage,
+    RunSummaryPageQuery, RunnableCursor, RunnableIndexEntry, RunnableIndexMutation, RunnablePage,
+    TimerIndexEntry, TimerIndexMutation, WorkspaceAccounting, WorkspaceMutation, WorkspaceStore,
 };
 pub use revision::{ImmutableRevisionPut, RevisionStore, RevisionSummary};
 pub use snapshot::{
     MAX_SNAPSHOT_PAYLOAD_BYTES, SNAPSHOT_SCHEMA_VERSION_V1, SnapshotDocument, SnapshotLoad,
-    SnapshotStore, history_digest,
+    SnapshotStore, history_digest, history_genesis_digest, history_link_digest,
 };
 
 // Canonical identities already owned by inward crates are re-exported rather than

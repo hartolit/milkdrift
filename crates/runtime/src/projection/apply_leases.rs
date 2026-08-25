@@ -65,7 +65,6 @@ impl RunProjection {
                     .get_mut(attempt)
                     .ok_or_else(|| invalid_at(event, "unknown attempt"))?;
                 attempt_view.leases.push(lease.clone());
-                attempt_view.lease_workers.insert(worker.clone());
                 attempt_view.state = AttemptState::Leased;
             }
             RunEventKind::LeaseHeartbeatRecorded { lease, expires_at } => {
@@ -251,7 +250,6 @@ impl RunProjection {
                     .get_mut(attempt)
                     .ok_or_else(|| invalid_at(event, "unknown attempt"))?;
                 attempt_view.leases.push(lease.clone());
-                attempt_view.lease_workers.insert(worker.clone());
                 attempt_view.state = AttemptState::Leased;
                 self.node_executions
                     .get_mut(&execution)

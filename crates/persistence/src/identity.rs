@@ -74,9 +74,9 @@ identity_type!(/// Identity tying a revision-adoption request to its plans and d
     ReconciliationId);
 identity_type!(/// Stable identity of one immutable reconciliation plan.
     ReconciliationPlanId);
-identity_type!(/// Stable identity of one reconciliation authority decision.
+identity_type!(/// Decision idempotency identity, scoped by its owning plan or attempt.
     ReconciliationDecisionId);
-identity_type!(/// Stable identity of one repeat-continuation authority decision.
+identity_type!(/// Decision idempotency identity, scoped by its owning repeat execution.
     RepeatDecisionId);
 identity_type!(/// Stable, non-secret identity of a worker/controller instance.
     WorkerId);

@@ -9,6 +9,7 @@ use crate::RuntimeError;
 use super::helpers::{invalid_at, wait_condition_timer, wait_signal_projection_matches};
 use super::node::{NodeExecutionProjection, TimerProjection, TimerPurpose};
 use super::run::RunProjection;
+use super::structured::{MAX_PENDING_SIGNAL_COUNT, MAX_PENDING_SIGNAL_PAYLOAD_BYTES};
 use super::structured::{SignalProjection, WaitCancellationProjection, WaitProjection};
 
 impl RunProjection {
@@ -104,6 +105,29 @@ impl RunProjection {
             } => {
                 if self.signals.contains_key(signal) {
                     return Err(invalid_at(event, "signal identity was already received"));
+                }
+                let retained_count = self.signals.len();
+                let retained_payload_bytes =
+                    self.signals.values().try_fold(0_usize, |total, signal| {
+                        let bytes = serde_json::to_vec(signal.payload()).map_err(|_| {
+                            invalid_at(event, "pending signal payload could not be serialized")
+                        })?;
+                        total.checked_add(bytes.len()).ok_or_else(|| {
+                            invalid_at(event, "pending signal payload byte count overflowed")
+                        })
+                    })?;
+                let payload_bytes = serde_json::to_vec(payload)
+                    .map_err(|_| invalid_at(event, "signal payload could not be serialized"))?
+                    .len();
+                if retained_count >= MAX_PENDING_SIGNAL_COUNT
+                    || retained_payload_bytes
+                        .checked_add(payload_bytes)
+                        .is_none_or(|bytes| bytes > MAX_PENDING_SIGNAL_PAYLOAD_BYTES)
+                {
+                    return Err(invalid_at(
+                        event,
+                        "pending signal count or aggregate payload-byte budget is exhausted",
+                    ));
                 }
                 self.signals.insert(
                     signal.clone(),

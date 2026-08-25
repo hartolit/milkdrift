@@ -543,13 +543,21 @@ pub(crate) fn verify_blob(
     reference: &ArtifactReference,
     maximum: u64,
 ) -> Result<(), PersistenceError> {
+    let mut file = open_regular_for_read(path)?;
+    verify_opened_blob(&mut file, reference, maximum)
+}
+
+pub(crate) fn verify_opened_blob(
+    file: &mut File,
+    reference: &ArtifactReference,
+    maximum: u64,
+) -> Result<(), PersistenceError> {
     if reference.size_bytes() > maximum {
         return Err(PersistenceError::Storage {
             class: StorageFailureClass::ResourceExhausted,
             message: format!("artifact verification exceeds configured bound {maximum}"),
         });
     }
-    let mut file = open_regular_for_read(path)?;
     let size = file.metadata().map_err(error::io)?.len();
     if size != reference.size_bytes() {
         return Err(error::corruption(format!(

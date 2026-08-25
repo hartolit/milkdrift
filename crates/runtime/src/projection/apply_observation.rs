@@ -22,20 +22,34 @@ impl RunProjection {
                 invocation,
             } => {
                 let attempt_view = self.attempt(attempt, event)?;
+                let execution_view = self.execution(execution, event)?;
+                let started_worker = self
+                    .active_lease_for_attempt(attempt)
+                    .filter(|lease| lease.execution() == execution)
+                    .map(|lease| lease.worker().clone());
                 if attempt_view.execution != *execution
                     || attempt_view.invocation.as_ref() != Some(invocation)
                     || attempt_view.state != AttemptState::Leased
-                    || self.active_lease_for_attempt(attempt).is_none()
+                    || execution_view.state != NodeExecutionState::Scheduled(attempt.clone())
+                    || execution_view.cancellation.is_some()
+                    || self.has_execution_cancellation_source(execution)
+                    || started_worker.is_none()
                 {
                     return Err(invalid_at(
                         event,
                         "node start does not match a leased scheduled invocation",
                     ));
                 }
-                self.attempts
+                let attempt_view = self
+                    .attempts
                     .get_mut(attempt)
-                    .ok_or_else(|| invalid_at(event, "unknown attempt"))?
-                    .state = AttemptState::Running;
+                    .ok_or_else(|| invalid_at(event, "unknown attempt"))?;
+                attempt_view.state = AttemptState::Running;
+                attempt_view.lease_workers.clear();
+                attempt_view.lease_workers.insert(
+                    started_worker
+                        .ok_or_else(|| invalid_at(event, "active lease worker disappeared"))?,
+                );
                 self.node_executions
                     .get_mut(execution)
                     .ok_or_else(|| invalid_at(event, "unknown execution"))?

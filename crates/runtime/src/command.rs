@@ -204,7 +204,7 @@ pub enum RunCommand {
     DecideReconciliation {
         /// Immutable plan.
         plan: ReconciliationPlanId,
-        /// Stable decision identity.
+        /// Decision idempotency identity within the immutable plan.
         decision: ReconciliationDecisionId,
         /// Closed decision.
         outcome: AuthorityDecision,
@@ -218,7 +218,7 @@ pub enum RunCommand {
     DecideRepeatContinuation {
         /// Repeat execution awaiting authority.
         repeat_execution: NodeExecutionId,
-        /// Stable idempotency identity of the decision.
+        /// Decision idempotency identity within the repeat execution.
         decision: RepeatDecisionId,
         /// Closed approval/rejection outcome.
         outcome: RepeatContinuationDecision,
@@ -229,7 +229,7 @@ pub enum RunCommand {
     ResolveExternalWork {
         /// Attempt whose external result remains retained/uncertain.
         attempt: AttemptId,
-        /// Stable decision identity.
+        /// Decision idempotency identity within the retained attempt.
         decision: ReconciliationDecisionId,
         /// Authorized action.
         action: ExternalWorkAction,

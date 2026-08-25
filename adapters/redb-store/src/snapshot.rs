@@ -2,7 +2,8 @@ use std::ops::Bound;
 
 use milkdrift_persistence::{
     BoundedDetail, IntegrityDigest, PersistenceError, RunEventEnvelope, RunSequence,
-    SnapshotDocument, SnapshotId, SnapshotLoad, SnapshotStore,
+    SnapshotDocument, SnapshotId, SnapshotLoad, SnapshotStore, history_genesis_digest,
+    history_link_digest,
 };
 use milkdrift_workspace::RunId;
 use redb::ReadableTable;
@@ -17,9 +18,6 @@ use crate::{
     },
 };
 
-const HISTORY_GENESIS_DOMAIN: &[u8] = b"milkdrift.run-history-chain.genesis.v1\0";
-const HISTORY_LINK_DOMAIN: &[u8] = b"milkdrift.run-history-chain.link.v1\0";
-const HISTORY_GENESIS_MARKER: &[u8] = b"genesis";
 const HISTORY_CHAIN_SCHEMA_VERSION: u32 = 1;
 const HISTORY_CHAIN_DOCUMENT_FAMILY: &str = "history-chain record";
 
@@ -30,50 +28,6 @@ struct HistoryChainRecord {
     run: RunId,
     through_sequence: RunSequence,
     digest: IntegrityDigest,
-}
-
-fn framed_length(bytes: &[u8], location: &'static str) -> Result<[u8; 4], PersistenceError> {
-    u32::try_from(bytes.len())
-        .map(u32::to_be_bytes)
-        .map_err(|_| PersistenceError::Bounds {
-            location,
-            reason: "framed history-chain value exceeds u32".to_owned(),
-        })
-}
-
-fn genesis_digest(run: &RunId) -> Result<IntegrityDigest, PersistenceError> {
-    let run_bytes = run.as_str().as_bytes();
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(HISTORY_GENESIS_DOMAIN);
-    hasher.update(&framed_length(run_bytes, "history.run_id")?);
-    hasher.update(run_bytes);
-    hasher.update(&framed_length(
-        HISTORY_GENESIS_MARKER,
-        "history.genesis_marker",
-    )?);
-    hasher.update(HISTORY_GENESIS_MARKER);
-    IntegrityDigest::new(format!("b3_{}", hasher.finalize()))
-}
-
-fn next_digest(
-    run: &RunId,
-    sequence: RunSequence,
-    previous: &IntegrityDigest,
-    checksum: &IntegrityDigest,
-) -> Result<IntegrityDigest, PersistenceError> {
-    let run_bytes = run.as_str().as_bytes();
-    let previous_bytes = previous.as_str().as_bytes();
-    let checksum_bytes = checksum.as_str().as_bytes();
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(HISTORY_LINK_DOMAIN);
-    hasher.update(&framed_length(run_bytes, "history.run_id")?);
-    hasher.update(run_bytes);
-    hasher.update(&sequence.get().to_be_bytes());
-    hasher.update(&framed_length(previous_bytes, "history.previous_digest")?);
-    hasher.update(previous_bytes);
-    hasher.update(&framed_length(checksum_bytes, "history.checksum")?);
-    hasher.update(checksum_bytes);
-    IntegrityDigest::new(format!("b3_{}", hasher.finalize()))
 }
 
 fn decode_chain_record(
@@ -147,7 +101,7 @@ pub(crate) fn append_history_checkpoint(
             .map(|bytes| bytes.value().to_vec())
     };
     let previous = match previous_head_bytes.as_deref() {
-        None if event.sequence() == RunSequence::FIRST => genesis_digest(run)?,
+        None if event.sequence() == RunSequence::FIRST => history_genesis_digest(run)?,
         None => {
             return Err(error::corruption(
                 "noninitial event is missing its history-chain head",
@@ -168,7 +122,7 @@ pub(crate) fn append_history_checkpoint(
             head.digest
         }
     };
-    let digest = next_digest(run, event.sequence(), &previous, event.checksum())?;
+    let digest = history_link_digest(run, event.sequence(), &previous, event.checksum())?;
     let record = HistoryChainRecord {
         schema_version: HISTORY_CHAIN_SCHEMA_VERSION,
         run: run.clone(),
@@ -208,7 +162,7 @@ pub(crate) fn validate_history_link(
     event: &RunEventEnvelope,
 ) -> Result<IntegrityDigest, PersistenceError> {
     let previous = if event.sequence() == RunSequence::FIRST {
-        genesis_digest(event.run_id())?
+        history_genesis_digest(event.run_id())?
     } else {
         let previous_sequence =
             RunSequence::new(event.sequence().get().checked_sub(1).ok_or_else(|| {
@@ -216,7 +170,7 @@ pub(crate) fn validate_history_link(
             })?);
         checkpoint(read, event.run_id(), previous_sequence)?.digest
     };
-    let expected = next_digest(
+    let expected = history_link_digest(
         event.run_id(),
         event.sequence(),
         &previous,
@@ -236,7 +190,7 @@ pub(crate) fn validate_history_link_in_transaction(
     event: &RunEventEnvelope,
 ) -> Result<IntegrityDigest, PersistenceError> {
     let previous = if event.sequence() == RunSequence::FIRST {
-        genesis_digest(event.run_id())?
+        history_genesis_digest(event.run_id())?
     } else {
         let previous_sequence =
             RunSequence::new(event.sequence().get().checked_sub(1).ok_or_else(|| {
@@ -244,7 +198,7 @@ pub(crate) fn validate_history_link_in_transaction(
             })?);
         checkpoint_in_transaction(write, event.run_id(), previous_sequence)?.digest
     };
-    let expected = next_digest(
+    let expected = history_link_digest(
         event.run_id(),
         event.sequence(),
         &previous,
@@ -330,7 +284,7 @@ fn history_digest_write(
     Ok(checkpoint_in_transaction(write, run, through)?.digest)
 }
 
-fn history_digest_read(
+pub(crate) fn history_digest_read(
     read: &redb::ReadTransaction,
     run: &RunId,
     through: RunSequence,
@@ -457,15 +411,19 @@ impl SnapshotStore for RedbStore {
             .map(|value| value.value().to_owned());
         let Some(snapshot_id) = snapshot_id else {
             if snapshots_exist_for_run_read(&read, run)? {
-                return Err(error::corruption(format!(
-                    "run {run} retains snapshots without a latest-snapshot pointer"
-                )));
+                return rejected(
+                    None,
+                    format!("run {run} retains snapshots without a latest-snapshot pointer"),
+                );
             }
             return Ok(SnapshotLoad::Absent);
         };
-        let snapshot_id = SnapshotId::new(snapshot_id).map_err(|cause| {
-            error::corruption(format!("invalid latest snapshot identity: {cause}"))
-        })?;
+        let snapshot_id = match SnapshotId::new(snapshot_id) {
+            Ok(snapshot_id) => snapshot_id,
+            Err(cause) => {
+                return rejected(None, format!("invalid latest snapshot identity: {cause}"));
+            }
+        };
         let key = codec::pair(run.as_str(), snapshot_id.as_str())?;
         let snapshots = read.open_table(SNAPSHOTS).map_err(error::redb)?;
         let Some(bytes) = snapshots.get(key.as_slice()).map_err(error::redb)? else {

@@ -81,34 +81,11 @@ impl RunQueryStore for RedbStore {
         let Some(sequence) = receipts.get(key.as_slice()).map_err(error::redb)? else {
             return Ok(None);
         };
-        let sequence = RunSequence::new(sequence.value());
-        if sequence == RunSequence::ZERO || sequence > observed_head {
-            return Err(error::corruption(
-                "signal receipt index points outside authoritative history",
-            ));
-        }
-        let event_key = codec::run_sequence(run.as_str(), sequence)?;
-        let stored = events
-            .get(event_key.as_slice())
-            .map_err(error::redb)?
-            .ok_or_else(|| error::corruption("signal receipt event is absent"))?;
-        let event = decode_stored_event(stored.value())?;
-        if event.run_id() != run
-            || event.sequence() != sequence
-            || !matches!(
-                event.kind(),
-                RunEventKind::SignalReceived {
-                    signal: received,
-                    ..
-                } if received == signal
-            )
-        {
-            return Err(error::corruption(
-                "signal receipt index does not match its authoritative event",
-            ));
-        }
-        crate::snapshot::validate_history_link(&read, &event)?;
-        Ok(Some(event))
+        let sequence = sequence.value();
+        drop(receipts);
+        drop(events);
+        drop(heads);
+        validate_signal_receipt_row(&read, run, signal, sequence).map(Some)
     }
 
     fn run_summary(&self, run: &RunId) -> Result<Option<RunSummaryIndex>, PersistenceError> {
@@ -414,6 +391,317 @@ impl RunQueryStore for RedbStore {
             |entry: &LeaseIndexEntry| codec::pair(entry.run.as_str(), entry.lease.as_str()),
         )
     }
+}
+
+impl RunDiscoveryIntegrityStore for RedbStore {
+    fn validate_run_discovery(
+        &self,
+        run: &RunId,
+        through_sequence: RunSequence,
+        runnable: &[RunnableIndexEntry],
+        timers: &[TimerIndexEntry],
+        leases: &[LeaseIndexEntry],
+    ) -> Result<(), PersistenceError> {
+        let read = self.database().begin_read().map_err(error::redb)?;
+        let heads = read.open_table(RUN_HEADS).map_err(error::redb)?;
+        let events = read.open_table(RUN_EVENTS).map_err(error::redb)?;
+        if validated_run_head(&heads, &events, run)? != through_sequence {
+            return Err(error::corruption(
+                "discovery expectation does not name the authoritative run head",
+            ));
+        }
+        validate_run_history_membership(&read, run, through_sequence)?;
+
+        let actual_runnable = complete_run_index(
+            &read,
+            RUNNABLE_ENTRIES,
+            RUNNABLE_INDEX,
+            run,
+            "runnable",
+            |entry: &RunnableIndexEntry| entry.run.as_str(),
+            |entry: &RunnableIndexEntry| entry.execution.as_str(),
+            runnable_order_key,
+        )?;
+        let expected_runnable = expected_run_index(
+            run,
+            runnable,
+            "runnable",
+            |entry| entry.run.as_str(),
+            |entry| entry.execution.as_str(),
+        )?;
+        validate_discovery_sequences(
+            &read,
+            run,
+            through_sequence,
+            actual_runnable.values().map(|entry| entry.through_sequence),
+            "runnable",
+        )?;
+        if actual_runnable.len() != expected_runnable.len()
+            || expected_runnable.iter().any(|(identity, expected)| {
+                actual_runnable.get(identity).is_none_or(|actual| {
+                    actual.run != expected.run
+                        || actual.execution != expected.execution
+                        || actual.eligible_at != expected.eligible_at
+                        || actual.priority != expected.priority
+                })
+            })
+        {
+            return Err(error::corruption(
+                "runnable discovery does not match authoritative projection",
+            ));
+        }
+        let runnable_heads = read.open_table(RUNNABLE_RUN_HEADS).map_err(error::redb)?;
+        let stored_head = runnable_heads
+            .get(run.as_str())
+            .map_err(error::redb)?
+            .map(|bytes| json::decode(bytes.value(), "runnable run head"))
+            .transpose()?;
+        let projected_head = crate::journal::first_runnable_for_run(&read, run)?;
+        if stored_head != projected_head {
+            return Err(error::corruption(
+                "runnable run head does not match complete runnable state",
+            ));
+        }
+
+        let actual_timers = complete_run_index(
+            &read,
+            TIMER_ENTRIES,
+            TIMER_INDEX,
+            run,
+            "timer",
+            |entry: &TimerIndexEntry| entry.run.as_str(),
+            |entry: &TimerIndexEntry| entry.timer.as_str(),
+            timer_order_key,
+        )?;
+        let expected_timers = expected_run_index(
+            run,
+            timers,
+            "timer",
+            |entry| entry.run.as_str(),
+            |entry| entry.timer.as_str(),
+        )?;
+        validate_discovery_sequences(
+            &read,
+            run,
+            through_sequence,
+            actual_timers.values().map(|entry| entry.through_sequence),
+            "timer",
+        )?;
+        if actual_timers.len() != expected_timers.len()
+            || expected_timers.iter().any(|(identity, expected)| {
+                actual_timers.get(identity).is_none_or(|actual| {
+                    actual.run != expected.run
+                        || actual.timer != expected.timer
+                        || actual.fire_at != expected.fire_at
+                })
+            })
+        {
+            return Err(error::corruption(
+                "timer discovery does not match authoritative projection",
+            ));
+        }
+
+        let actual_leases = complete_run_index(
+            &read,
+            LEASE_ENTRIES,
+            LEASE_INDEX,
+            run,
+            "lease",
+            |entry: &LeaseIndexEntry| entry.run.as_str(),
+            |entry: &LeaseIndexEntry| entry.lease.as_str(),
+            lease_order_key,
+        )?;
+        let expected_leases = expected_run_index(
+            run,
+            leases,
+            "lease",
+            |entry| entry.run.as_str(),
+            |entry| entry.lease.as_str(),
+        )?;
+        validate_discovery_sequences(
+            &read,
+            run,
+            through_sequence,
+            actual_leases.values().map(|entry| entry.through_sequence),
+            "lease",
+        )?;
+        if actual_leases.len() != expected_leases.len()
+            || expected_leases.iter().any(|(identity, expected)| {
+                actual_leases.get(identity).is_none_or(|actual| {
+                    actual.run != expected.run
+                        || actual.lease != expected.lease
+                        || actual.attempt != expected.attempt
+                        || actual.worker != expected.worker
+                        || actual.expires_at != expected.expires_at
+                })
+            })
+        {
+            return Err(error::corruption(
+                "lease discovery does not match authoritative projection",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn validate_discovery_sequences(
+    read: &redb::ReadTransaction,
+    run: &RunId,
+    head: RunSequence,
+    sequences: impl Iterator<Item = RunSequence>,
+    family: &str,
+) -> Result<(), PersistenceError> {
+    let events = read.open_table(RUN_EVENTS).map_err(error::redb)?;
+    for sequence in sequences {
+        if sequence == RunSequence::ZERO || sequence > head {
+            return Err(error::corruption(format!(
+                "{family} discovery points outside authoritative history"
+            )));
+        }
+        let key = codec::run_sequence(run.as_str(), sequence)?;
+        let stored = events
+            .get(key.as_slice())
+            .map_err(error::redb)?
+            .ok_or_else(|| {
+                error::corruption(format!(
+                    "{family} discovery points to a missing history event"
+                ))
+            })?;
+        let event = decode_stored_event(stored.value())?;
+        if event.run_id() != run || event.sequence() != sequence {
+            return Err(error::corruption(format!(
+                "{family} discovery history identity is inconsistent"
+            )));
+        }
+        crate::snapshot::validate_history_link(read, &event)?;
+    }
+    Ok(())
+}
+
+fn expected_run_index<T: Clone + Eq>(
+    run: &RunId,
+    entries: &[T],
+    family: &str,
+    entry_run: impl Fn(&T) -> &str,
+    identity: impl Fn(&T) -> &str,
+) -> Result<BTreeMap<String, T>, PersistenceError> {
+    let mut result = BTreeMap::new();
+    for entry in entries {
+        if entry_run(entry) != run.as_str() {
+            return Err(PersistenceError::InvalidDocument(format!(
+                "{family} discovery expectation belongs to another run"
+            )));
+        }
+        if result
+            .insert(identity(entry).to_owned(), entry.clone())
+            .is_some()
+        {
+            return Err(PersistenceError::InvalidDocument(format!(
+                "{family} discovery expectation contains a duplicate identity"
+            )));
+        }
+    }
+    Ok(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn complete_run_index<T>(
+    read: &redb::ReadTransaction,
+    identities: redb::TableDefinition<'_, &'static [u8], &'static [u8]>,
+    ordered: redb::TableDefinition<'_, &'static [u8], &'static [u8]>,
+    run: &RunId,
+    family: &str,
+    entry_run: impl Fn(&T) -> &str,
+    identity: impl Fn(&T) -> &str,
+    order_key: impl Fn(&T) -> Result<Vec<u8>, PersistenceError>,
+) -> Result<BTreeMap<String, T>, PersistenceError>
+where
+    T: Clone + Eq + serde::Serialize + serde::de::DeserializeOwned,
+{
+    let identities = read.open_table(identities).map_err(error::redb)?;
+    let ordered = read.open_table(ordered).map_err(error::redb)?;
+    let prefix = codec::component(run.as_str())?;
+    let end = codec::prefix_end(prefix.clone())
+        .ok_or_else(|| error::corruption("discovery run prefix has no range end"))?;
+    let document_family = match family {
+        "runnable" => "runnable index",
+        "timer" => "timer index",
+        "lease" => "lease index",
+        _ => return Err(error::corruption("unknown discovery index family")),
+    };
+    let mut result = BTreeMap::new();
+    for row in identities
+        .range::<&[u8]>((
+            Bound::Included(prefix.as_slice()),
+            Bound::Excluded(end.as_slice()),
+        ))
+        .map_err(error::redb)?
+    {
+        let (key, bytes) = row.map_err(error::redb)?;
+        let entry: T = json::decode(bytes.value(), document_family)?;
+        if entry_run(&entry) != run.as_str()
+            || key.value() != codec::pair(run.as_str(), identity(&entry))?.as_slice()
+        {
+            return Err(error::corruption(format!(
+                "{family} identity key disagrees with its document"
+            )));
+        }
+        let paired = ordered
+            .get(order_key(&entry)?.as_slice())
+            .map_err(error::redb)?
+            .ok_or_else(|| error::corruption(format!("{family} ordered index is incomplete")))?;
+        if paired.value() != bytes.value() {
+            return Err(error::corruption(format!(
+                "{family} identity and ordered rows disagree"
+            )));
+        }
+        if result.insert(identity(&entry).to_owned(), entry).is_some() {
+            return Err(error::corruption(format!(
+                "{family} identity index contains a duplicate"
+            )));
+        }
+    }
+    Ok(result)
+}
+
+pub(crate) fn validate_signal_receipt_row(
+    read: &redb::ReadTransaction,
+    run: &RunId,
+    signal: &milkdrift_persistence::SignalId,
+    sequence: u64,
+) -> Result<RunEventEnvelope, PersistenceError> {
+    let heads = read.open_table(RUN_HEADS).map_err(error::redb)?;
+    let events = read.open_table(RUN_EVENTS).map_err(error::redb)?;
+    let observed_head = validated_run_head(&heads, &events, run)?;
+    validate_run_history_membership(read, run, observed_head)?;
+    let sequence = RunSequence::new(sequence);
+    if sequence == RunSequence::ZERO || sequence > observed_head {
+        return Err(error::corruption(
+            "signal receipt index points outside authoritative history",
+        ));
+    }
+    let event_key = codec::run_sequence(run.as_str(), sequence)?;
+    let stored = events
+        .get(event_key.as_slice())
+        .map_err(error::redb)?
+        .ok_or_else(|| error::corruption("signal receipt event is absent"))?;
+    let event = decode_stored_event(stored.value())?;
+    if event.run_id() != run
+        || event.sequence() != sequence
+        || !matches!(
+            event.kind(),
+            RunEventKind::SignalReceived {
+                signal: received,
+                ..
+            } if received == signal
+        )
+    {
+        return Err(error::corruption(
+            "signal receipt index does not match its authoritative event",
+        ));
+    }
+    crate::snapshot::validate_history_link(read, &event)?;
+    Ok(event)
 }
 
 pub(crate) fn page_size_usize(limit: PageSize) -> Result<usize, PersistenceError> {
