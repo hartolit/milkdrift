@@ -229,8 +229,7 @@ impl RuntimeService {
                         ));
                     }
                     let source = projection
-                        .node_executions()
-                        .get(source_execution)
+                        .current_node_execution(source_execution)
                         .ok_or_else(|| {
                             RuntimeError::Reconciliation(
                                 "remediation source execution is absent".to_owned(),

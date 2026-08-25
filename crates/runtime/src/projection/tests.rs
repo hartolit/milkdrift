@@ -9,13 +9,14 @@ use milkdrift_capability::{
 };
 use milkdrift_persistence::{
     ActorRef, AttemptId, AuthorityDecision, BoundedDetail, BranchResultReference, CommandId,
-    CurrencyCode, EventId, JoinRule, LeaseId, MAX_REPEAT_CONTINUATION_CYCLES, NodeExecutionId,
-    NodeExecutionMode, NodeOutcome, Reason, ReconciliationAction, ReconciliationClassification,
-    ReconciliationDecisionId, ReconciliationId, ReconciliationItem, ReconciliationPlanId,
-    ReconciliationPolicy, RecoveryClassification, RepeatContinuationCause,
-    RepeatContinuationDecision, RepeatDecisionId, RepeatTerminationReason, RunEventEnvelope,
-    RunEventKind, RunOutcome, RunSequence, SignalDeliveryMode, SignalId, SignalTypeId,
-    SubworkflowOwnership, TimerId, TimestampMillis, WaitCondition, WaitSatisfaction, WorkerId,
+    CurrencyCode, EventId, EvidenceId, EvidenceKind, EvidenceReference, JoinRule, LeaseId,
+    MAX_REPEAT_CONTINUATION_CYCLES, NodeExecutionId, NodeExecutionMode, NodeOutcome, Reason,
+    ReconciliationAction, ReconciliationClassification, ReconciliationDecisionId, ReconciliationId,
+    ReconciliationItem, ReconciliationPlanId, ReconciliationPolicy, RecoveryClassification,
+    RepeatContinuationCause, RepeatContinuationDecision, RepeatDecisionId, RepeatTerminationReason,
+    RunEventEnvelope, RunEventKind, RunOutcome, RunSequence, SignalDeliveryMode, SignalId,
+    SignalTypeId, SubworkflowOwnership, TimerId, TimestampMillis, WaitCondition, WaitSatisfaction,
+    WorkerId,
 };
 use milkdrift_workspace::{
     BranchId, IterationId, RunId, ScopeId, ScopeReference, SubworkflowId, WorkspaceBudget,

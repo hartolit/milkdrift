@@ -26,7 +26,7 @@ use tracing::{debug, info, info_span, warn};
 
 use crate::projection::RunProjection;
 use crate::query::{
-    RUN_PROJECTION_SNAPSHOT_SCHEMA_V2, encode_projection_snapshot, load_bounded_history,
+    RUN_PROJECTION_SNAPSHOT_SCHEMA_V3, encode_projection_snapshot, load_bounded_history,
     project_from_latest_snapshot,
 };
 use crate::{
@@ -410,7 +410,7 @@ impl RuntimeService {
         let payload = encode_projection_snapshot(projection)?;
         let history_digest = self.store.history_digest(run, projection.sequence())?;
         let mut identity = blake3::Hasher::new();
-        identity.update(b"milkdrift.runtime-projection-snapshot.v2\0");
+        identity.update(b"milkdrift.runtime-projection-snapshot.v3\0");
         identity.update(run.as_str().as_bytes());
         identity.update(&projection.sequence().get().to_be_bytes());
         let snapshot = SnapshotId::new(format!(
@@ -422,7 +422,7 @@ impl RuntimeService {
             run.clone(),
             projection.sequence(),
             history_digest,
-            RUN_PROJECTION_SNAPSHOT_SCHEMA_V2,
+            RUN_PROJECTION_SNAPSHOT_SCHEMA_V3,
             payload,
         )?)?;
         Ok(())

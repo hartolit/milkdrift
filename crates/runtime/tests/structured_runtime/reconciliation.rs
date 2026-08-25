@@ -58,13 +58,13 @@ fn compacted_retry_history_still_blocks_retrospective_side_effect_rewrite() -> T
     assert_eq!(runtime.tick()?.completed, 1);
     let compacted = runtime.projection(&run)?;
     let completed = compacted
-        .node_executions()
+        .settled_node_executions()
         .values()
         .find(|execution| execution.node().as_str() == "retired")
         .ok_or("completed retry execution is absent")?;
     assert_eq!(completed.attempt_count(), 2);
     assert_eq!(completed.attempts().len(), 1);
-    assert_eq!(compacted.attempts().len(), 1);
+    assert!(compacted.attempts().is_empty());
     assert_eq!(compacted.unresolved_attempts().count(), 0);
 
     assert_eq!(
@@ -850,18 +850,20 @@ fn cancel_and_restart_adoption_creates_one_replacement_after_confirmed_cancellat
     let projection = runtime.projection(&run)?;
     assert_eq!(projection.revision(), Some(new.id()));
     let work = NodeId::new("work")?;
-    let mut executions: Vec<_> = projection.executions_for_node(&work).collect();
-    executions.sort_by_key(|execution| execution.created_sequence());
-    assert_eq!(executions.len(), 2);
-    assert_eq!(executions[0].scope(), executions[1].scope());
+    let executions: Vec<_> = projection.executions_for_node(&work).collect();
+    assert_eq!(executions.len(), 1);
     assert_eq!(
         executions[0].state(),
-        &NodeExecutionState::Terminal(milkdrift_persistence::NodeOutcome::Cancelled)
-    );
-    assert_eq!(
-        executions[1].state(),
         &NodeExecutionState::Terminal(milkdrift_persistence::NodeOutcome::Succeeded)
     );
+    let history = runtime.history(&run)?;
+    assert!(history.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::NodeTerminal {
+            outcome: milkdrift_persistence::NodeOutcome::Cancelled,
+            ..
+        }
+    )));
     assert_eq!(
         runtime
             .history(&run)?

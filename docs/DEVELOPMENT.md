@@ -36,7 +36,7 @@ cost:
 cargo test --release \
   -p milkdrift-runtime \
   --test structured_runtime \
-  lifecycle::more_than_index_mutation_limit_inactive_identities_do_not_block_commits \
+  lifecycle::historical_execution_frontier_stays_bounded_across_index_limit \
   -- --ignored --exact --nocapture
 ```
 

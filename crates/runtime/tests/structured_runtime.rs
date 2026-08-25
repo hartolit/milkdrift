@@ -28,21 +28,21 @@ use milkdrift_persistence::{
     ActorRef, ArtifactPublicationId, ArtifactStore, AtomicRunCommitRequest, AuthorityDecision,
     BeginArtifactPublication, CommandDisposition, CommandId, CommandReceipt, CommandResultDocument,
     EventId, EventPageQuery, IndexedRunState, IntegrityScanRequest, MAX_INDEX_MUTATIONS_PER_COMMIT,
-    NodeExecutionId, NodeExecutionMode, NodeOutcome, PageSize, Reason, ReconciliationAction,
-    ReconciliationClassification, ReconciliationDecisionId, ReconciliationId, ReconciliationPolicy,
-    RecoveryClassification, RepeatContinuationCause, RepeatContinuationDecision, RepeatDecisionId,
-    RepeatTerminationReason, RevisionStore, RunEventEnvelope, RunEventKind, RunIndexUpdate,
-    RunJournal, RunOutcome, RunQueryStore, RunSummaryIndex, SignalDeliveryMode, SignalId,
-    SignalTypeId, SnapshotStore, StorageAdmin, TimestampMillis, WorkerId, WorkspaceAccounting,
-    WorkspaceStore,
+    MAX_PAGE_SIZE, NodeExecutionId, NodeExecutionMode, NodeOutcome, PageSize, Reason,
+    ReconciliationAction, ReconciliationClassification, ReconciliationDecisionId, ReconciliationId,
+    ReconciliationPolicy, RecoveryClassification, RepeatContinuationCause,
+    RepeatContinuationDecision, RepeatDecisionId, RepeatTerminationReason, RevisionStore,
+    RunEventEnvelope, RunEventKind, RunIndexUpdate, RunJournal, RunOutcome, RunQueryStore,
+    RunSummaryIndex, SignalDeliveryMode, SignalId, SignalTypeId, SnapshotStore, StorageAdmin,
+    TimestampMillis, WorkerId, WorkspaceAccounting, WorkspaceStore,
 };
 use milkdrift_redb_store::RedbStore;
 use milkdrift_runtime::{
-    AttemptState, BranchState, DeterministicExecutor, EffectAction, EffectExecutionResult,
-    ExecutionDispatch, ExecutionReportBatch, ExecutorError, IdGenerator, IterationState,
-    LeaseState, ManualClock, NodeExecutionState, ResolvedCapability, RetryPolicy, RunCommand,
-    RunLifecycle, RuntimeConfig, RuntimeError, RuntimeService, RuntimeStartupState,
-    SchedulerLimits, SequentialIdGenerator, SubworkflowState, TaskExecutor, WorkerReport,
+    AttemptState, DeterministicExecutor, EffectAction, EffectExecutionResult, ExecutionDispatch,
+    ExecutionReportBatch, ExecutorError, IdGenerator, IterationState, LeaseState, ManualClock,
+    NodeExecutionState, ResolvedCapability, RetryPolicy, RunCommand, RunLifecycle, RuntimeConfig,
+    RuntimeError, RuntimeService, RuntimeStartupState, SchedulerLimits, SequentialIdGenerator,
+    TaskExecutor, WorkerReport,
 };
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactRetention, ArtifactSensitivity,
@@ -605,9 +605,7 @@ fn block_first_runnable_operation(
         .node_executions()
         .get(&entry.execution)
         .ok_or("runnable execution is absent from its projection")?;
-    let revision_id = projection
-        .revision_at(execution.created_sequence())
-        .ok_or("runnable execution has no governing revision")?;
+    let revision_id = execution.revision();
     let revision = store
         .revision(revision_id)?
         .ok_or("runnable execution governing revision is absent")?;

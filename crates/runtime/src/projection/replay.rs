@@ -14,8 +14,8 @@ use crate::RuntimeError;
 
 use super::helpers::{invalid, invalid_at};
 use super::node::{
-    LeaseProjection, NodeAttemptProjection, NodeExecutionProjection, RetryProjection,
-    TimerProjection,
+    CurrentNodeExecution, LeaseProjection, NodeAttemptProjection, NodeExecutionProjection,
+    RetryProjection, SettledNodeExecutionProjection, TimerProjection,
 };
 use super::reconciliation::{
     ReconciliationCancellationProjection, ReconciliationProjection,
@@ -162,10 +162,50 @@ impl RunProjection {
         self.termination.as_ref()
     }
 
-    /// Current logical executions and compact terminal occurrences keyed by identity.
+    /// Operationally live logical executions keyed by identity.
+    ///
+    /// Complete settled history is intentionally absent; use journal pages for
+    /// timeline/audit access and [`Self::settled_node_executions`] for bounded
+    /// current terminal facts.
     #[must_use]
     pub const fn node_executions(&self) -> &BTreeMap<NodeExecutionId, NodeExecutionProjection> {
         &self.node_executions
+    }
+
+    /// Bounded current terminal summaries keyed by their journal occurrence identity.
+    #[must_use]
+    pub const fn settled_node_executions(
+        &self,
+    ) -> &BTreeMap<NodeExecutionId, SettledNodeExecutionProjection> {
+        &self.settled_node_executions
+    }
+
+    /// Looks up one occurrence only when it remains in the operational frontier.
+    #[must_use]
+    pub fn current_node_execution(
+        &self,
+        execution: &NodeExecutionId,
+    ) -> Option<CurrentNodeExecution<'_>> {
+        self.node_executions
+            .get(execution)
+            .map(CurrentNodeExecution::Active)
+            .or_else(|| {
+                self.settled_node_executions
+                    .get(execution)
+                    .map(CurrentNodeExecution::Settled)
+            })
+    }
+
+    /// Every live or compact current occurrence in deterministic projection order.
+    pub(crate) fn current_node_executions(&self) -> impl Iterator<Item = CurrentNodeExecution<'_>> {
+        self.node_executions
+            .values()
+            .map(CurrentNodeExecution::Active)
+            .chain(
+                self.settled_node_executions
+                    .values()
+                    .map(CurrentNodeExecution::Settled),
+            )
     }
 
     /// Compact terminal-child usage required by one live structured parent.
@@ -271,16 +311,18 @@ impl RunProjection {
             .and_then(|lease| self.leases.get(lease))
     }
 
-    /// Every execution of one stable semantic node in stable identity order.
+    /// Current live/settled occurrences of one semantic node in stable identity order.
+    ///
+    /// This is an operational frontier, not complete execution history.
     pub fn executions_for_node<'a>(
         &'a self,
         node: &'a NodeId,
-    ) -> impl Iterator<Item = &'a NodeExecutionProjection> + 'a {
+    ) -> impl Iterator<Item = CurrentNodeExecution<'a>> + 'a {
         self.execution_ids_by_node
             .get(node)
             .into_iter()
             .flat_map(BTreeSet::iter)
-            .filter_map(|execution| self.node_executions.get(execution))
+            .filter_map(|execution| self.current_node_execution(execution))
     }
 
     /// Latest execution of a node in one scope or any descendant scope.
@@ -289,10 +331,10 @@ impl RunProjection {
         &self,
         scope: &ScopeReference,
         node: &NodeId,
-    ) -> Option<&NodeExecutionProjection> {
+    ) -> Option<CurrentNodeExecution<'_>> {
         self.latest_descendant_execution_by_scope_node
             .get(&(scope.clone(), node.clone()))
-            .and_then(|execution| self.node_executions.get(execution))
+            .and_then(|execution| self.current_node_execution(execution))
     }
 
     /// Current/latest attempts and unresolved safety obligations keyed by identity.
@@ -372,6 +414,16 @@ impl RunProjection {
     #[must_use]
     pub const fn branch_routes(&self) -> &BTreeMap<NodeExecutionId, PortId> {
         &self.branch_routes
+    }
+
+    /// Frozen route for a live or compact current occurrence.
+    #[must_use]
+    pub(crate) fn route_for_execution(&self, execution: &NodeExecutionId) -> Option<&PortId> {
+        self.branch_routes.get(execution).or_else(|| {
+            self.settled_node_executions
+                .get(execution)
+                .and_then(SettledNodeExecutionProjection::route)
+        })
     }
 
     /// Current satisfied joins still needed by their execution frontier.

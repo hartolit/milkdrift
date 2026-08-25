@@ -15,11 +15,13 @@ fn branch_freezes_exactly_one_route_and_never_creates_the_other_execution() -> T
         projection.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Succeeded)
     );
-    assert_eq!(projection.branch_routes().len(), 1);
-    assert_eq!(
-        projection.branch_routes().values().next(),
-        Some(&PortId::new("true")?)
-    );
+    assert!(projection.branch_routes().is_empty());
+    let selected = PortId::new("true")?;
+    assert!(harness.runtime.history(&run)?.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::BranchRouteSelected { selected_port, .. }
+            if selected_port == &selected
+    )));
     assert_eq!(
         projection
             .executions_for_node(&NodeId::new("selected")?)
@@ -51,26 +53,28 @@ fn all_join_preserves_independent_success_and_failure_branch_truth() -> TestResu
     assert_eq!(harness.drive(&run, 8)?, 2);
 
     let projection = harness.runtime.projection(&run)?;
-    assert_eq!(projection.branches().len(), 2);
-    assert!(
-        projection
-            .branches()
-            .values()
-            .any(|branch| { branch.state() == BranchState::Completed(RunOutcome::Succeeded) })
-    );
-    assert!(
-        projection
-            .branches()
-            .values()
-            .any(|branch| branch.state() == BranchState::Completed(RunOutcome::Failed))
-    );
-    let join = projection
-        .joins()
-        .values()
-        .next()
-        .ok_or("join did not complete")?;
-    assert_eq!(join.branches().len(), 2);
-    assert!(join.retained_branches().is_empty());
+    assert!(projection.branches().is_empty());
+    assert!(projection.joins().is_empty());
+    let history = harness.runtime.history(&run)?;
+    assert!(history.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::BranchTerminal {
+            outcome: RunOutcome::Succeeded,
+            ..
+        }
+    )));
+    assert!(history.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::BranchTerminal {
+            outcome: RunOutcome::Failed,
+            ..
+        }
+    )));
+    assert!(history.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::JoinSatisfied { branches, retained_branches, .. }
+            if branches.len() == 2 && retained_branches.is_empty()
+    )));
     Ok(())
 }
 
@@ -95,75 +99,76 @@ fn nested_fork_waits_for_descendants_and_preserves_outputs_through_outer_join() 
         .next()
         .ok_or("outer fork execution is absent")?;
     let outer_a_port = PortId::new("a")?;
-    let outer_a = projection
-        .branches()
-        .values()
-        .find(|branch| {
-            branch.fork_execution() == outer_fork.execution() && branch.port() == &outer_a_port
-        })
-        .ok_or("outer a branch is absent")?;
-    assert_eq!(
-        outer_a.state(),
-        BranchState::Completed(RunOutcome::Succeeded)
-    );
-    assert_eq!(
-        outer_a.outputs().len(),
-        1,
-        "outer branch lost its declared post-join result output"
-    );
-
-    let outer_join_node = NodeId::new("outer-join")?;
-    let outer_join_execution = projection
-        .executions_for_node(&outer_join_node)
-        .next()
-        .ok_or("outer join execution is absent")?;
-    let outer_join = projection
-        .joins()
-        .get(outer_join_execution.execution())
-        .ok_or("outer join result is absent")?;
-    let outer_result = outer_join
-        .branches()
-        .iter()
-        .find(|result| result.branch == *outer_a.branch())
-        .ok_or("outer join omitted branch a")?;
-    assert_eq!(outer_result.outputs, outer_a.outputs());
-
-    let inner_join_node = NodeId::new("inner-join")?;
-    let inner_join_execution = projection
-        .executions_for_node(&inner_join_node)
-        .next()
-        .ok_or("inner join execution is absent")?;
-    let inner_join_sequence = projection
-        .joins()
-        .get(inner_join_execution.execution())
-        .ok_or("inner join result is absent")?
-        .sequence();
-    let tail_node = NodeId::new("outer-a-tail")?;
-    let tail_execution = projection
-        .executions_for_node(&tail_node)
-        .next()
-        .ok_or("outer a successor is absent")?;
     let history = harness.runtime.history(&run)?;
+    let outer_a = history
+        .iter()
+        .find_map(|event| match event.kind() {
+            RunEventKind::BranchScopeCreated {
+                fork_execution,
+                port,
+                branch,
+                ..
+            } if fork_execution == outer_fork.execution() && port == &outer_a_port => {
+                Some(branch.clone())
+            }
+            _ => None,
+        })
+        .ok_or("outer a branch history is absent")?;
+    let (outer_terminal_sequence, outer_outputs) = history
+        .iter()
+        .find_map(|event| match event.kind() {
+            RunEventKind::BranchTerminal {
+                branch,
+                outcome: RunOutcome::Succeeded,
+                outputs,
+            } if branch == &outer_a => Some((event.sequence(), outputs.clone())),
+            _ => None,
+        })
+        .ok_or("outer a terminal fact is absent")?;
+    assert_eq!(outer_outputs.len(), 1);
+    assert!(history.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::JoinSatisfied { branches, .. }
+            if branches.iter().any(|result| {
+                result.branch == outer_a && result.outputs == outer_outputs
+            })
+    )));
+    let inner_join_execution = history
+        .iter()
+        .find_map(|event| match event.kind() {
+            RunEventKind::NodeBecameEligible {
+                node, execution, ..
+            } if node.as_str() == "inner-join" => Some(execution.clone()),
+            _ => None,
+        })
+        .ok_or("inner join execution history is absent")?;
+    let inner_join_sequence = history
+        .iter()
+        .find_map(|event| match event.kind() {
+            RunEventKind::JoinSatisfied { execution, .. } if execution == &inner_join_execution => {
+                Some(event.sequence())
+            }
+            _ => None,
+        })
+        .ok_or("inner join result history is absent")?;
+    let tail_execution = history
+        .iter()
+        .find_map(|event| match event.kind() {
+            RunEventKind::NodeBecameEligible {
+                node, execution, ..
+            } if node.as_str() == "outer-a-tail" => Some(execution.clone()),
+            _ => None,
+        })
+        .ok_or("outer a successor history is absent")?;
     let tail_terminal_sequence = history
         .iter()
         .find_map(|event| match event.kind() {
-            RunEventKind::NodeTerminal { execution, .. }
-                if execution == tail_execution.execution() =>
-            {
+            RunEventKind::NodeTerminal { execution, .. } if execution == &tail_execution => {
                 Some(event.sequence())
             }
             _ => None,
         })
         .ok_or("outer a successor terminal fact is absent")?;
-    let outer_terminal_sequence = history
-        .iter()
-        .find_map(|event| match event.kind() {
-            RunEventKind::BranchTerminal { branch, .. } if branch == outer_a.branch() => {
-                Some(event.sequence())
-            }
-            _ => None,
-        })
-        .ok_or("outer a terminal fact is absent")?;
     assert!(outer_terminal_sequence > inner_join_sequence);
     assert!(outer_terminal_sequence > tail_terminal_sequence);
     Ok(())
@@ -196,25 +201,30 @@ fn fork_branches_may_end_at_direct_terminals_without_a_join() -> TestResult {
         harness.create_and_start(&run, &revision)?;
         let projection = harness.runtime.projection(&run)?;
         assert_eq!(projection.lifecycle(), RunLifecycle::Terminal(expected));
-        assert_eq!(projection.branches().len(), 2);
-        assert!(
-            projection
-                .branches()
-                .values()
-                .all(|branch| !branch.is_active())
+        assert!(projection.branches().is_empty());
+        let history = harness.runtime.history(&run)?;
+        assert_eq!(
+            history
+                .iter()
+                .filter(|event| matches!(event.kind(), RunEventKind::BranchTerminal { .. }))
+                .count(),
+            2
         );
         if suffix == "mixed" {
-            assert!(
-                projection
-                    .branches()
-                    .values()
-                    .any(|branch| { branch.state() == BranchState::Completed(RunOutcome::Failed) })
-            );
-            assert!(
-                projection.branches().values().any(|branch| {
-                    branch.state() == BranchState::Completed(RunOutcome::Succeeded)
-                })
-            );
+            assert!(history.iter().any(|event| matches!(
+                event.kind(),
+                RunEventKind::BranchTerminal {
+                    outcome: RunOutcome::Failed,
+                    ..
+                }
+            )));
+            assert!(history.iter().any(|event| matches!(
+                event.kind(),
+                RunEventKind::BranchTerminal {
+                    outcome: RunOutcome::Succeeded,
+                    ..
+                }
+            )));
         }
     }
     Ok(())
@@ -234,26 +244,23 @@ fn any_join_records_and_cancels_its_unfinished_loser_without_dispatch() -> TestR
         projection.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Succeeded)
     );
-    assert_eq!(projection.joins().len(), 1);
-    assert!(
-        projection
-            .joins()
-            .values()
-            .all(|join| join.retained_branches().is_empty())
-    );
-    assert!(
-        projection
-            .branches()
-            .values()
-            .any(|branch| { branch.state() == BranchState::Completed(RunOutcome::Succeeded) })
-    );
-    assert!(
-        projection
-            .branches()
-            .values()
-            .any(|branch| { branch.state() == BranchState::Completed(RunOutcome::Cancelled) })
-    );
+    assert!(projection.joins().is_empty());
+    assert!(projection.branches().is_empty());
     let history = harness.runtime.history(&run)?;
+    assert!(history.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::BranchTerminal {
+            outcome: RunOutcome::Succeeded,
+            ..
+        }
+    )));
+    assert!(history.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::BranchTerminal {
+            outcome: RunOutcome::Cancelled,
+            ..
+        }
+    )));
     assert!(history.iter().any(|event| matches!(
         event.kind(),
         RunEventKind::BranchCancellationRequested { .. }
@@ -283,25 +290,23 @@ fn first_success_and_quorum_cancel_losers_without_dispatching_them() -> TestResu
             projection.is_completed(),
             "{suffix} did not drain the loser"
         );
-        assert_eq!(projection.branches().len(), 2);
-        assert!(
-            projection
-                .branches()
-                .values()
-                .any(|branch| { branch.state() == BranchState::Completed(RunOutcome::Succeeded) })
-        );
-        assert!(
-            projection
-                .branches()
-                .values()
-                .any(|branch| { branch.state() == BranchState::Completed(RunOutcome::Cancelled) })
-        );
-        assert!(
-            projection
-                .joins()
-                .values()
-                .all(|join| join.retained_branches().is_empty())
-        );
+        assert!(projection.branches().is_empty());
+        assert!(projection.joins().is_empty());
+        let history = harness.runtime.history(&run)?;
+        assert!(history.iter().any(|event| matches!(
+            event.kind(),
+            RunEventKind::BranchTerminal {
+                outcome: RunOutcome::Succeeded,
+                ..
+            }
+        )));
+        assert!(history.iter().any(|event| matches!(
+            event.kind(),
+            RunEventKind::BranchTerminal {
+                outcome: RunOutcome::Cancelled,
+                ..
+            }
+        )));
     }
     Ok(())
 }
@@ -368,31 +373,34 @@ fn collect_and_first_reducers_publish_deterministic_workspace_outputs() -> TestR
 
         let projection = harness.runtime.projection(&run)?;
         assert!(projection.is_completed());
+        assert!(projection.branches().is_empty());
+        assert!(projection.joins().is_empty());
         let root_scope = projection
             .root_scope()
             .ok_or("reducer run has no root scope")?
             .reference();
+        let history = harness.runtime.history(&run)?;
         let mut sibling_output_scopes = BTreeSet::new();
         for task_id in [NodeId::new("a-task")?, NodeId::new("b-task")?] {
-            let task_execution = projection
-                .executions_for_node(&task_id)
-                .next()
+            let (task_execution, task_scope) = history
+                .iter()
+                .find_map(|event| match event.kind() {
+                    RunEventKind::NodeBecameEligible {
+                        node,
+                        execution,
+                        scope,
+                        ..
+                    } if node == &task_id => Some((execution.clone(), scope.clone())),
+                    _ => None,
+                })
                 .ok_or("branch task execution was not created")?;
-            assert_ne!(task_execution.scope(), root_scope);
-            assert!(matches!(
-                projection
-                    .scopes()
-                    .get(task_execution.scope())
-                    .ok_or("branch task scope was not projected")?
-                    .kind(),
-                ScopeKind::Branch { .. }
-            ));
-            assert_eq!(task_execution.outputs().len(), 1);
-            assert_eq!(
-                task_execution.outputs()[0].value().scope(),
-                task_execution.scope()
-            );
-            assert!(sibling_output_scopes.insert(task_execution.scope().clone()));
+            assert_ne!(&task_scope, root_scope);
+            assert!(history.iter().any(|event| matches!(
+                event.kind(),
+                RunEventKind::NodeOutputPublished { execution, value, .. }
+                    if execution == &task_execution && value.scope() == &task_scope
+            )));
+            assert!(sibling_output_scopes.insert(task_scope));
         }
         assert_eq!(sibling_output_scopes.len(), 2);
         let reducer_id = NodeId::new("reduce")?;
@@ -407,11 +415,29 @@ fn collect_and_first_reducers_publish_deterministic_workspace_outputs() -> TestR
             .store
             .value(execution.outputs()[0].value())?
             .ok_or("reducer output is absent from workspace storage")?;
-        let mut branches: Vec<_> = projection.branches().values().collect();
-        branches.sort_by(|left, right| left.port().cmp(right.port()));
+        let mut branches: Vec<_> = history
+            .iter()
+            .filter_map(|event| match event.kind() {
+                RunEventKind::BranchScopeCreated { port, branch, .. } => {
+                    Some((port.clone(), branch.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        branches.sort();
         let branch_outputs: Vec<_> = branches
-            .into_iter()
-            .flat_map(|branch| branch.outputs().iter().cloned())
+            .iter()
+            .flat_map(|(_, branch)| {
+                history.iter().find_map(|event| match event.kind() {
+                    RunEventKind::BranchTerminal {
+                        branch: terminal,
+                        outputs,
+                        ..
+                    } if terminal == branch => Some(outputs.clone()),
+                    _ => None,
+                })
+            })
+            .flatten()
             .collect();
         let mut lexical_outputs = branch_outputs.clone();
         lexical_outputs.sort();
@@ -675,36 +701,42 @@ fn attached_subworkflow_materializes_starts_and_links_a_terminal_child_run() -> 
     harness.drive(&run, 8)?;
     let projection = harness.runtime.projection(&run)?;
     assert!(projection.is_completed());
-    let link = projection
-        .subworkflows()
-        .values()
-        .next()
-        .ok_or("parent has no child link")?;
-    assert_eq!(link.child_revision(), child.id());
-    assert_eq!(
-        link.state(),
-        SubworkflowState::Terminal(RunOutcome::Succeeded)
-    );
-    assert_eq!(link.imports().len(), 1);
-    let imported = &link.imports()[0];
-    assert_eq!(imported.child_value().scope().run(), link.child_run());
-    assert_eq!(imported.parent_value().scope().run(), &run);
+    assert!(projection.subworkflows().is_empty());
+    let history = harness.runtime.history(&run)?;
+    let (subworkflow, child_run) = history
+        .iter()
+        .find_map(|event| match event.kind() {
+            RunEventKind::SubworkflowCreated {
+                subworkflow,
+                child_run,
+                child_revision,
+                ..
+            } if child_revision == child.id() => Some((subworkflow.clone(), child_run.clone())),
+            _ => None,
+        })
+        .ok_or("parent child-link history is absent")?;
+    let (child_value, parent_value) = history
+        .iter()
+        .find_map(|event| match event.kind() {
+            RunEventKind::SubworkflowOutputImported {
+                subworkflow: imported,
+                child_value,
+                parent_value,
+            } if imported == &subworkflow => Some((child_value.clone(), parent_value.clone())),
+            _ => None,
+        })
+        .ok_or("parent child import history is absent")?;
+    assert_eq!(child_value.scope().run(), &child_run);
+    assert_eq!(parent_value.scope().run(), &run);
     let parent_entry = harness
         .store
-        .value(imported.parent_value())?
+        .value(&parent_value)?
         .ok_or("imported child output is absent from the parent workspace")?;
     match parent_entry.origin() {
-        ValueOrigin::Imported { source } => assert_eq!(source, imported.child_value()),
+        ValueOrigin::Imported { source } => assert_eq!(source, &child_value),
         origin => return Err(format!("expected imported value origin, found {origin:?}").into()),
     }
-    assert!(
-        harness
-            .runtime
-            .history(&run)?
-            .iter()
-            .any(|event| matches!(event.kind(), RunEventKind::SubworkflowOutputImported { .. }))
-    );
-    let child_projection = harness.runtime.projection(link.child_run())?;
+    let child_projection = harness.runtime.projection(&child_run)?;
     assert_eq!(child_projection.revision(), Some(child.id()));
     assert_eq!(
         child_projection.lifecycle(),
@@ -727,14 +759,9 @@ fn repeat_runs_each_pinned_child_in_an_isolated_scope_and_stops_at_the_bound() -
 
     let projection = harness.runtime.projection(&run)?;
     assert!(projection.is_completed());
-    assert_eq!(projection.iterations().len(), 1);
-    let latest_iteration = projection
-        .iterations()
-        .values()
-        .next()
-        .ok_or("latest repeat iteration is absent")?;
-    assert_eq!(latest_iteration.iteration_number(), 2);
-    assert!(latest_iteration.is_completed());
+    assert!(projection.iterations().is_empty());
+    assert!(projection.repeat_terminations().is_empty());
+    assert!(projection.subworkflows().is_empty());
     let history = harness.runtime.history(&run)?;
     let iteration_scopes: BTreeSet<_> = history
         .iter()
@@ -755,16 +782,13 @@ fn repeat_runs_each_pinned_child_in_an_isolated_scope_and_stops_at_the_bound() -
         })
         .collect();
     assert_eq!(iteration_parents.len(), 1, "iterations are not siblings");
-    let termination = projection
-        .repeat_terminations()
-        .values()
-        .next()
-        .ok_or("repeat did not record a terminal bound")?;
-    assert_eq!(
-        termination.termination(),
-        RepeatTerminationReason::MaximumIterations
-    );
-    assert_eq!(projection.subworkflows().len(), 1);
+    assert!(history.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::RepeatTerminated {
+            termination: RepeatTerminationReason::MaximumIterations,
+            ..
+        }
+    )));
     let mut imported_parent_values = BTreeSet::new();
     let mut imported_child_values = BTreeSet::new();
     for event in &history {
@@ -944,23 +968,10 @@ fn await_approval_repeat_extends_exactly_once_then_rejection_terminates() -> Tes
         rejected.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Failed)
     );
-    assert_eq!(rejected.iterations().len(), 1);
-    assert_eq!(rejected.subworkflows().len(), 1);
-    let continuation = rejected
-        .repeat_continuations()
-        .get(&repeat_execution)
-        .ok_or("repeat lost the rejected continuation fact")?;
-    assert!(continuation.is_rejected());
-    assert_eq!(continuation.decisions().len(), 1);
-    assert_eq!(continuation.decision_count(), 2);
-    assert_eq!(
-        rejected
-            .repeat_terminations()
-            .get(&repeat_execution)
-            .ok_or("rejected repeat has no deterministic termination")?
-            .termination(),
-        RepeatTerminationReason::MaximumIterations
-    );
+    assert!(rejected.iterations().is_empty());
+    assert!(rejected.subworkflows().is_empty());
+    assert!(rejected.repeat_continuations().is_empty());
+    assert!(rejected.repeat_terminations().is_empty());
     let history = harness.runtime.history(&run)?;
     assert_eq!(
         history
@@ -969,6 +980,13 @@ fn await_approval_repeat_extends_exactly_once_then_rejection_terminates() -> Tes
             .count(),
         2
     );
+    assert!(history.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::RepeatTerminated {
+            termination: RepeatTerminationReason::MaximumIterations,
+            ..
+        }
+    )));
     assert_eq!(
         history
             .iter()

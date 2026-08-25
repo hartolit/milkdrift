@@ -16,7 +16,7 @@ use milkdrift_workspace::{
 
 use super::node::{
     LeaseProjection, NodeAttemptProjection, NodeExecutionProjection, RetryProjection,
-    TimerProjection,
+    SettledNodeExecutionProjection, TimerProjection,
 };
 use super::reconciliation::{
     ReconciliationCancellationProjection, ReconciliationProjection,
@@ -293,6 +293,10 @@ pub struct RunProjection {
     pub(super) termination: Option<RunTerminationIntent>,
     #[serde(with = "super::serde_map")]
     pub(super) node_executions: BTreeMap<NodeExecutionId, NodeExecutionProjection>,
+    #[serde(with = "super::serde_map")]
+    pub(super) settled_node_executions: BTreeMap<NodeExecutionId, SettledNodeExecutionProjection>,
+    #[serde(with = "super::serde_map")]
+    pub(super) settled_execution_by_scope_node: BTreeMap<(ScopeReference, NodeId), NodeExecutionId>,
     #[serde(with = "super::serde_map")]
     pub(super) execution_ids_by_node: BTreeMap<NodeId, BTreeSet<NodeExecutionId>>,
     #[serde(with = "super::serde_map")]

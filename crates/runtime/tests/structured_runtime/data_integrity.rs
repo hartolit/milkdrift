@@ -209,7 +209,15 @@ fn oversized_provider_retry_after_preserves_the_terminal_failure() -> TestResult
         projection.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Failed)
     );
-    assert_eq!(projection.attempts().len(), 1);
+    assert!(projection.attempts().is_empty());
+    assert!(
+        projection
+            .settled_node_executions()
+            .values()
+            .any(|execution| execution.state()
+                == &NodeExecutionState::Terminal(NodeOutcome::Failed)
+                && execution.attempt_count() == 1)
+    );
     assert!(projection.retries().is_empty());
     assert!(
         !harness
@@ -233,12 +241,13 @@ fn direct_artifact_input_is_owned_accounted_and_optional_absence_is_omitted() ->
     harness.create_and_start(&run, &revision)?;
     assert_eq!(harness.drive(&run, 8)?, 1);
 
-    let projection = harness.runtime.projection(&run)?;
-    let request = projection
-        .attempts()
-        .values()
-        .next()
-        .and_then(|attempt| attempt.request())
+    let history = harness.runtime.history(&run)?;
+    let request = history
+        .iter()
+        .find_map(|event| match event.kind() {
+            RunEventKind::NodeScheduled { request, .. } => Some(request),
+            _ => None,
+        })
         .ok_or("scheduled invocation request was not persisted")?;
     assert_eq!(request.inputs().len(), 1);
     assert_eq!(request.inputs()[0].name(), "artifact");
@@ -1053,14 +1062,19 @@ fn changed_pending_adoption_supersedes_old_eligibility_and_runs_new_definition()
         .executions_for_node(&work)
         .find(|execution| execution.execution() != &original)
         .ok_or("replacement execution is absent")?;
-    let attempt = replacement
-        .attempts()
-        .last()
-        .and_then(|attempt| completed.attempts().get(attempt))
-        .ok_or("replacement attempt is absent")?;
+    let history = harness.runtime.history(&run)?;
+    let request = history
+        .iter()
+        .find_map(|event| match event.kind() {
+            RunEventKind::NodeScheduled {
+                execution, request, ..
+            } if execution == replacement.execution() => Some(request),
+            _ => None,
+        })
+        .ok_or("replacement scheduled request is absent from history")?;
     assert_eq!(
-        attempt.request().map(|request| request.operation()),
-        Some(&OperationId::new("model.fail")?),
+        request.operation(),
+        &OperationId::new("model.fail")?,
         "dispatch must use the adopted definition, not the superseded eligibility"
     );
     Ok(())
@@ -1252,22 +1266,22 @@ fn immutable_repeat_condition_error_is_durably_terminalized_once() -> TestResult
         projection.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Failed)
     );
-    assert_eq!(projection.iterations().len(), 1);
-    assert!(
-        projection
-            .iterations()
-            .values()
-            .all(|iteration| iteration.state() == IterationState::Completed(false))
-    );
-    assert_eq!(projection.repeat_terminations().len(), 1);
+    assert!(projection.iterations().is_empty());
+    assert!(projection.repeat_terminations().is_empty());
+    let history = harness.runtime.history(&run)?;
     assert_eq!(
-        projection
-            .repeat_terminations()
-            .values()
-            .next()
-            .ok_or("repeat condition error has no termination fact")?
-            .termination(),
-        RepeatTerminationReason::ConditionEvaluationFailed
+        history
+            .iter()
+            .filter(|event| matches!(
+                event.kind(),
+                RunEventKind::RepeatTerminated {
+                    termination: RepeatTerminationReason::ConditionEvaluationFailed,
+                    ..
+                }
+            ))
+            .count(),
+        1,
+        "the immutable journal retains the single terminal repeat decision"
     );
     Ok(())
 }

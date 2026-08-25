@@ -50,12 +50,13 @@ mod run;
 mod structured;
 
 pub use node::{
-    AttemptState, AttemptTerminal, CapabilityResolution, DeterministicNodeTerminalProjection,
-    ExternalOutcomeObligation, LateTerminalEvidence, LeaseProjection, LeaseState,
-    NodeAttemptProjection, NodeExecutionCancellationProjection, NodeExecutionProjection,
-    NodeExecutionState, ProgressObservation, PublishedNodeOutput, RetainedExternalOutcome,
-    RetryProjection, RetryState, SideEffectClassification, TimerCancellationProjection,
-    TimerProjection, TimerPurpose, TimerState,
+    AttemptState, AttemptTerminal, CapabilityResolution, CurrentNodeExecution,
+    DeterministicNodeTerminalProjection, ExternalOutcomeObligation, LateTerminalEvidence,
+    LeaseProjection, LeaseState, NodeAttemptProjection, NodeExecutionCancellationProjection,
+    NodeExecutionProjection, NodeExecutionState, ProgressObservation, PublishedNodeOutput,
+    RetainedExternalOutcome, RetryProjection, RetryState, SettledNodeExecutionProjection,
+    SideEffectClassification, TimerCancellationProjection, TimerProjection, TimerPurpose,
+    TimerState,
 };
 pub use reconciliation::{
     ReconciliationCancellationProjection, ReconciliationDecision, ReconciliationPlanProjection,

@@ -2,10 +2,9 @@
 
 use super::support::{
     ResolvedInputValue, artifact_reference_as_bounded, control_nodes_before_join,
-    execution_branch_state, execution_is_in_current_node_epoch, node_execution_mode,
-    node_occurrence_exists_for_current_pin, predecessors_ready, run_drain_reason,
-    scope_has_inactive_branch, source_execution_is_valid_for_occurrence, wait_signal_matches,
-    workspace_value_as_bounded,
+    execution_branch_state, node_execution_mode, node_occurrence_exists_for_current_pin,
+    predecessors_ready, run_drain_reason, scope_has_inactive_branch,
+    source_execution_is_valid_for_occurrence, wait_signal_matches, workspace_value_as_bounded,
 };
 use super::{RuntimeService, STRUCTURED_EVENT_SOFT_LIMIT};
 use crate::projection::{BranchState, NodeExecutionState, RunLifecycle, RunProjection};
@@ -122,8 +121,7 @@ impl RuntimeService {
         }
 
         let mut terminal_executions: Vec<_> = projection
-            .node_executions()
-            .values()
+            .current_node_executions()
             .filter_map(|execution| {
                 let node = revision.semantic().nodes().get(execution.node())?;
                 match node.kind() {
@@ -166,7 +164,7 @@ impl RuntimeService {
         } else if unjoined_failed_terminal
             || unjoined_failed_branch
             || (terminal_executions.is_empty()
-                && projection.node_executions().values().any(|execution| {
+                && projection.current_node_executions().any(|execution| {
                     matches!(
                         execution.state(),
                         NodeExecutionState::Terminal(NodeOutcome::Failed | NodeOutcome::Rejected)
@@ -624,7 +622,7 @@ impl RuntimeService {
                 value.scope() == &join_scope
                     && source_execution_is_valid_for_occurrence(
                         projection,
-                        value,
+                        *value,
                         node.id(),
                         &join_scope,
                     )
@@ -824,8 +822,7 @@ impl RuntimeService {
                 .filter(|branch| matches!(branch.state(), BranchState::Completed(_)))
             {
                 let fork = projection
-                    .node_executions()
-                    .get(branch.fork_execution())
+                    .current_node_execution(branch.fork_execution())
                     .ok_or_else(|| {
                         RuntimeError::InvalidHistory(
                             "completed branch owner fork is absent".to_owned(),
@@ -838,7 +835,7 @@ impl RuntimeService {
                 }
             }
             if execution.state() != &NodeExecutionState::Terminal(NodeOutcome::Succeeded)
-                || !execution_is_in_current_node_epoch(projection, execution)
+                || !execution.is_current_epoch()
                 || execution_branch_state(projection, execution.execution())
                     .is_some_and(|state| state != BranchState::Active)
             {
@@ -861,7 +858,7 @@ impl RuntimeService {
                 processed_sources.push(source_execution);
                 continue;
             }
-            let selected_port = projection.branch_routes().get(&source_execution);
+            let selected_port = projection.route_for_execution(&source_execution);
             for edge in revision
                 .semantic()
                 .edges()

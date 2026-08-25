@@ -46,7 +46,7 @@ atomically renames and synchronizes the directory, then commits metadata; reads 
 and digest. Durable path-inventory and delete-guard tables preserve crash-safe cleanup without
 walking an authenticated structure.
 
-Physical schema version 2 and internal document format 5 are exact-current only. Earlier and
+Physical schema version 3 and internal document format 5 are exact-current only. Earlier and
 future formats are refused; no migration is implemented. Pre-release users must create a new
 store or wait for an explicit future migration tool rather than reinterpret old bytes.
 

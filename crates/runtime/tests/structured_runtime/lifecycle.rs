@@ -510,15 +510,14 @@ fn scheduler_commits_dispatch_without_entering_long_running_executor() -> TestRe
         completed.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Succeeded)
     );
-    assert_eq!(completed.attempts().len(), 1);
-    assert_eq!(
+    assert!(completed.attempts().is_empty());
+    assert!(
         completed
-            .attempts()
+            .settled_node_executions()
             .values()
-            .next()
-            .and_then(|attempt| attempt.terminal())
-            .map(|terminal| terminal.outcome()),
-        Some(NodeOutcome::Succeeded)
+            .any(|execution| {
+                execution.state() == &NodeExecutionState::Terminal(NodeOutcome::Succeeded)
+            })
     );
     Ok(())
 }
@@ -1082,15 +1081,14 @@ fn active_invocation_cancellation_reaches_the_executor_and_is_acknowledged_durab
         projection.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Cancelled)
     );
-    assert_eq!(projection.attempts().len(), 1);
-    assert_eq!(
+    assert!(projection.attempts().is_empty());
+    assert!(
         projection
-            .attempts()
+            .settled_node_executions()
             .values()
-            .next()
-            .and_then(|attempt| attempt.terminal())
-            .map(|terminal| terminal.outcome()),
-        Some(NodeOutcome::Cancelled)
+            .any(|execution| {
+                execution.state() == &NodeExecutionState::Terminal(NodeOutcome::Cancelled)
+            })
     );
     let history = runtime.history(&run)?;
     assert!(history.iter().any(|event| matches!(
@@ -1239,21 +1237,21 @@ fn startup_recovery_finishes_with_an_unexpired_active_lease() -> TestResult {
 
 #[test]
 #[ignore = "expensive durable-storage boundary regression; run explicitly"]
-fn more_than_index_mutation_limit_inactive_identities_do_not_block_commits() -> TestResult {
-    let harness = Harness::new("large-inactive-index-history")?;
-    let revision = signal_revision("workflow-large-inactive-index-history")?;
-    let run = RunId::new("run-large-inactive-index-history")?;
+fn historical_execution_frontier_stays_bounded_across_index_limit() -> TestResult {
+    let harness = Harness::new("bounded-operational-frontier")?;
+    let revision = signal_revision("workflow-bounded-operational-frontier")?;
+    let run = RunId::new("run-bounded-operational-frontier")?;
     harness.put_revision(&revision)?;
     harness.create_and_start(&run, &revision)?;
     let initial = harness.runtime.projection(&run)?;
     let root_scope = initial
         .root_scope()
-        .ok_or("large-history run has no root scope")?
+        .ok_or("bounded-frontier run has no root scope")?
         .reference()
         .clone();
     let budget = initial
         .workspace_budget()
-        .ok_or("large-history run has no workspace budget")?
+        .ok_or("bounded-frontier run has no workspace budget")?
         .clone();
     let usage = harness.store.workspace_usage(&run)?;
     let historical_count = MAX_INDEX_MUTATIONS_PER_COMMIT + 1;
@@ -1266,9 +1264,11 @@ fn more_than_index_mutation_limit_inactive_identities_do_not_block_commits() -> 
     // the atomic index-mutation bound before it could pause the run.
     while created < historical_count {
         let expected = harness.store.head(&run)?;
-        let batch_size = historical_count.saturating_sub(created).min(256);
+        // Each occurrence emits three events; keep the command result below its
+        // independent 512-event-identity document bound.
+        let batch_size = historical_count.saturating_sub(created).min(160);
         let mut sequence = expected;
-        let mut events = Vec::with_capacity(batch_size.saturating_mul(2));
+        let mut events = Vec::with_capacity(batch_size.saturating_mul(3));
         for offset in 0..batch_size {
             let number = created.saturating_add(offset);
             let execution = NodeExecutionId::new(format!("historical-execution-{number:04}"))?;
@@ -1292,18 +1292,26 @@ fn more_than_index_mutation_limit_inactive_identities_do_not_block_commits() -> 
                 sequence,
                 TimestampMillis::new(NOW),
                 RunEventKind::DeterministicNodeTerminal {
-                    execution,
+                    execution: execution.clone(),
                     outcome: NodeOutcome::Succeeded,
                     error_class: None,
                     detail: None,
                 },
+            )?);
+            sequence = sequence.next()?;
+            events.push(RunEventEnvelope::new(
+                EventId::new(format!("historical-successor-scan-{number:04}"))?,
+                run.clone(),
+                sequence,
+                TimestampMillis::new(NOW),
+                RunEventKind::StructuredSuccessorScanCompleted { execution },
             )?);
         }
         let command = CommandId::new(format!("seed-index-history-{batch_number:02}"))?;
         let receipt = CommandReceipt::new(
             command.clone(),
             run.clone(),
-            ActorRef::new("controller:large-inactive-index-history")?,
+            ActorRef::new("controller:bounded-operational-frontier")?,
             expected,
             TimestampMillis::new(NOW),
             format!(r#"{{"batch":{batch_number},"schema_version":1,"type":"seed_index_history"}}"#)
@@ -1356,17 +1364,64 @@ fn more_than_index_mutation_limit_inactive_identities_do_not_block_commits() -> 
     let projection = harness.runtime.projection(&run)?;
     assert!(projection.waits().values().any(|wait| wait.is_pending()));
     assert!(
-        projection.node_executions().len() > MAX_INDEX_MUTATIONS_PER_COMMIT,
-        "fixture accumulated only {} execution identities",
+        projection.node_executions().len() <= 2,
+        "active frontier retained {} full executions",
         projection.node_executions().len()
     );
+    assert!(projection.settled_node_executions().len() <= 2);
+    assert_eq!(
+        projection
+            .executions_for_node(&NodeId::new("done")?)
+            .count(),
+        1
+    );
+    let before_pause = harness.store.head(&run)?;
     assert_eq!(
         harness.command(&run, RunCommand::PauseRun)?,
         CommandDisposition::Accepted
     );
+    assert_eq!(harness.store.head(&run)?, before_pause.next()?);
     assert_eq!(
         harness.runtime.projection(&run)?.lifecycle(),
         RunLifecycle::Paused
+    );
+
+    let mut cursor = None;
+    let mut eligible = 0_usize;
+    let mut terminal = 0_usize;
+    let mut scanned = 0_usize;
+    loop {
+        let page = harness.runtime.history_page(&EventPageQuery::new(
+            run.clone(),
+            cursor,
+            PageSize::new(MAX_PAGE_SIZE)?,
+        )?)?;
+        for event in page.events {
+            match event.kind() {
+                RunEventKind::NodeBecameEligible { node, .. } if node.as_str() == "done" => {
+                    eligible = eligible.saturating_add(1);
+                }
+                RunEventKind::DeterministicNodeTerminal { .. } => {
+                    terminal = terminal.saturating_add(1);
+                }
+                RunEventKind::StructuredSuccessorScanCompleted { .. } => {
+                    scanned = scanned.saturating_add(1);
+                }
+                _ => {}
+            }
+        }
+        let Some(next) = page.next else {
+            break;
+        };
+        cursor = Some(next);
+    }
+    assert_eq!(eligible, historical_count);
+    assert_eq!(terminal, historical_count);
+    assert_eq!(scanned, historical_count);
+    eprintln!(
+        "historical_occurrences={historical_count} active_executions={} settled_summaries={} pause_events=1 eligible_events={eligible} terminal_events={terminal} successor_scan_events={scanned}",
+        projection.node_executions().len(),
+        projection.settled_node_executions().len(),
     );
     Ok(())
 }

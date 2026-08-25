@@ -8,7 +8,7 @@ use tracing::warn;
 
 use crate::{RunProjection, RuntimeError};
 
-pub(crate) const RUN_PROJECTION_SNAPSHOT_SCHEMA_V2: u32 = 2;
+pub(crate) const RUN_PROJECTION_SNAPSHOT_SCHEMA_V3: u32 = 3;
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -184,7 +184,7 @@ where
         SnapshotLoad::Verified(snapshot) => snapshot,
     };
 
-    if snapshot.projection_schema() != RUN_PROJECTION_SNAPSHOT_SCHEMA_V2 {
+    if snapshot.projection_schema() != RUN_PROJECTION_SNAPSHOT_SCHEMA_V3 {
         discard_optional_snapshot(
             store,
             run,
@@ -206,7 +206,7 @@ where
             return project_complete_history(store, run);
         }
     };
-    if payload.schema_version != RUN_PROJECTION_SNAPSHOT_SCHEMA_V2
+    if payload.schema_version != RUN_PROJECTION_SNAPSHOT_SCHEMA_V3
         || payload.projection.run_id() != Some(run)
         || payload.projection.sequence() != snapshot.covered_sequence()
         || payload.projection.history_compacted_through() != snapshot.covered_sequence()
@@ -249,7 +249,7 @@ pub(crate) fn encode_projection_snapshot(
     }
     projection.validate_compacted_state()?;
     Ok(serde_json::to_vec(&ProjectionSnapshotPayloadRef {
-        schema_version: RUN_PROJECTION_SNAPSHOT_SCHEMA_V2,
+        schema_version: RUN_PROJECTION_SNAPSHOT_SCHEMA_V3,
         projection,
     })?)
 }
@@ -294,11 +294,12 @@ mod tests {
         },
     };
 
-    use milkdrift_blueprint::{ContentDigest, RevisionId, WorkflowId};
+    use milkdrift_blueprint::{ContentDigest, NodeId, RevisionId, WorkflowId};
     use milkdrift_persistence::{
         ActiveLeaseSnapshot, EventCursor, EventId, EventPage, IntegrityDigest, LeaseIndexEntry,
-        PersistenceError, RunEventKind, RunSummaryIndex, RunSummaryPage, RunSummaryPageQuery,
-        SnapshotDocument, SnapshotId, TimerIndexEntry, TimestampMillis, history_digest,
+        NodeExecutionId, NodeExecutionMode, NodeOutcome, PersistenceError, Reason, RunEventKind,
+        RunSummaryIndex, RunSummaryPage, RunSummaryPageQuery, SnapshotDocument, SnapshotId,
+        TimerIndexEntry, TimestampMillis, history_digest,
     };
     use milkdrift_workspace::{ScopeId, WorkspaceBudget, WorkspaceScope};
 
@@ -664,7 +665,7 @@ mod tests {
             run.clone(),
             RunSequence::FIRST,
             history_digest(&events[..1])?,
-            RUN_PROJECTION_SNAPSHOT_SCHEMA_V2,
+            RUN_PROJECTION_SNAPSHOT_SCHEMA_V3,
             encode_projection_snapshot(&prefix)?,
         )?;
         let store = PagedStore {
@@ -692,6 +693,91 @@ mod tests {
     }
 
     #[test]
+    fn compacted_execution_snapshot_plus_tail_equals_full_replay() -> Result<(), Box<dyn Error>> {
+        let (run, mut events) = snapshot_history_fixture("snapshot-compacted-execution")?;
+        let scope = match events[0].kind() {
+            RunEventKind::RunCreated { root_scope, .. } => root_scope.reference().clone(),
+            _ => return Err("snapshot fixture does not begin with run creation".into()),
+        };
+        let execution = NodeExecutionId::new("snapshot-settled-execution")?;
+        events.extend([
+            RunEventEnvelope::new(
+                EventId::new("event-snapshot-settled-eligible")?,
+                run.clone(),
+                RunSequence::new(3),
+                TimestampMillis::new(3),
+                RunEventKind::NodeBecameEligible {
+                    node: NodeId::new("work")?,
+                    execution: execution.clone(),
+                    scope,
+                    mode: NodeExecutionMode::Runtime,
+                },
+            )?,
+            RunEventEnvelope::new(
+                EventId::new("event-snapshot-settled-terminal")?,
+                run.clone(),
+                RunSequence::new(4),
+                TimestampMillis::new(4),
+                RunEventKind::DeterministicNodeTerminal {
+                    execution: execution.clone(),
+                    outcome: NodeOutcome::Succeeded,
+                    error_class: None,
+                    detail: None,
+                },
+            )?,
+            RunEventEnvelope::new(
+                EventId::new("event-snapshot-settled-successor-scan")?,
+                run.clone(),
+                RunSequence::new(5),
+                TimestampMillis::new(5),
+                RunEventKind::StructuredSuccessorScanCompleted {
+                    execution: execution.clone(),
+                },
+            )?,
+            RunEventEnvelope::new(
+                EventId::new("event-snapshot-settled-tail-pause")?,
+                run.clone(),
+                RunSequence::new(6),
+                TimestampMillis::new(6),
+                RunEventKind::RunPaused {
+                    reason: Reason::new("verify compact snapshot tail")?,
+                    evidence: Vec::new(),
+                },
+            )?,
+        ]);
+        let prefix = RunProjection::replay(&events[..5])?;
+        assert!(prefix.node_executions().is_empty());
+        assert_eq!(prefix.settled_node_executions().len(), 1);
+        let snapshot = SnapshotDocument::new(
+            SnapshotId::new("snapshot-query-compacted-execution")?,
+            run.clone(),
+            RunSequence::new(5),
+            history_digest(&events[..5])?,
+            RUN_PROJECTION_SNAPSHOT_SCHEMA_V3,
+            encode_projection_snapshot(&prefix)?,
+        )?;
+        let store = PagedStore {
+            run: run.clone(),
+            events,
+            largest_page_request: AtomicU32::new(0),
+            page_reads: AtomicUsize::new(0),
+            grow_head_after_first_page: false,
+            snapshot: Mutex::new(SnapshotLoad::Verified(snapshot)),
+            discard_snapshot_error: false,
+        };
+
+        let projected = project_from_latest_snapshot(&store, &run)?;
+        let replayed = project_complete_history(&store, &run)?;
+
+        assert_eq!(projected, replayed);
+        assert_eq!(projected.sequence(), RunSequence::new(6));
+        assert!(matches!(projected.lifecycle(), crate::RunLifecycle::Paused));
+        assert!(projected.node_executions().is_empty());
+        assert_eq!(projected.settled_node_executions().len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn compatible_snapshot_at_journal_head_loads_without_replaying_an_event()
     -> Result<(), Box<dyn Error>> {
         let (run, events) = snapshot_history_fixture("snapshot-at-head")?;
@@ -705,7 +791,7 @@ mod tests {
             run.clone(),
             head,
             history_digest(&events)?,
-            RUN_PROJECTION_SNAPSHOT_SCHEMA_V2,
+            RUN_PROJECTION_SNAPSHOT_SCHEMA_V3,
             encode_projection_snapshot(&complete)?,
         )?;
         let store = PagedStore {

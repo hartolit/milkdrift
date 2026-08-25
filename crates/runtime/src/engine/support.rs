@@ -1,6 +1,8 @@
 //! Shared bounded plan types and pure orchestration helpers.
 
-use crate::projection::{BranchState, NodeExecutionState, RunLifecycle, RunProjection};
+use crate::projection::{
+    BranchState, CurrentNodeExecution, NodeExecutionState, RunLifecycle, RunProjection,
+};
 use crate::{HistoricalExecutionState, NodeHistory, RunCommand, RuntimeError};
 use milkdrift_blueprint::{
     BlueprintRevision, EdgeKind, Node, NodeId, NodeKind, PathSegment, ReducerStrategy,
@@ -351,8 +353,7 @@ pub(super) fn predecessors_ready(
                         && execution.state()
                             == &NodeExecutionState::Terminal(NodeOutcome::Succeeded)
                         && projection
-                            .branch_routes()
-                            .get(execution.execution())
+                            .route_for_execution(execution.execution())
                             .is_none_or(|port| port == edge.source_port())
                 })
         });
@@ -372,7 +373,7 @@ pub(super) fn predecessors_ready(
             projection
                 .executions_for_node(edge.source_node())
                 .filter(|execution| {
-                    execution_is_in_current_node_epoch(projection, execution)
+                    execution_is_in_current_node_epoch(projection, *execution)
                         && execution_scope_related(projection, execution.scope(), target_scope)
                         && execution.state()
                             == &NodeExecutionState::Terminal(NodeOutcome::Succeeded)
@@ -421,7 +422,7 @@ pub(super) fn execution_scope_related(
     projection
         .branches()
         .get(branch)
-        .and_then(|branch| projection.node_executions().get(branch.fork_execution()))
+        .and_then(|branch| projection.current_node_execution(branch.fork_execution()))
         .is_some_and(|fork| fork.scope() == target_scope)
 }
 
@@ -547,7 +548,7 @@ pub(super) fn reconciliation_history(
 ) -> Result<BTreeMap<NodeId, Vec<NodeHistory>>, RuntimeError> {
     let mut result: BTreeMap<NodeId, Vec<NodeHistory>> = BTreeMap::new();
     let mut retained = 0_usize;
-    for execution in projection.node_executions().values() {
+    for execution in projection.current_node_executions() {
         if !revision.semantic().nodes().contains_key(execution.node())
             && !target_revision
                 .semantic()
@@ -566,11 +567,14 @@ pub(super) fn reconciliation_history(
             .attempts()
             .last()
             .and_then(|attempt| projection.attempts().get(attempt));
-        let side_effect = attempt
-            .and_then(|attempt| attempt.side_effect())
-            .map_or(SideEffectClass::None, |classification| {
-                classification.side_effect()
-            });
+        let side_effect = match execution {
+            CurrentNodeExecution::Active(_) => attempt
+                .and_then(|attempt| attempt.side_effect())
+                .map_or(SideEffectClass::None, |classification| {
+                    classification.side_effect()
+                }),
+            CurrentNodeExecution::Settled(summary) => summary.side_effect(),
+        };
         let structured_active = projection
             .execution_has_active_structured_ownership(execution.execution())
             || revision
@@ -657,14 +661,14 @@ pub(super) fn node_occurrence_exists_for_current_pin(
 
 pub(super) fn execution_is_in_current_node_epoch(
     _projection: &RunProjection,
-    execution: &crate::projection::NodeExecutionProjection,
+    execution: CurrentNodeExecution<'_>,
 ) -> bool {
     execution.is_current_epoch()
 }
 
 pub(super) fn source_execution_is_valid_for_occurrence(
     projection: &RunProjection,
-    source: &crate::projection::NodeExecutionProjection,
+    source: CurrentNodeExecution<'_>,
     target_node: &NodeId,
     target_scope: &ScopeReference,
 ) -> bool {
@@ -672,7 +676,7 @@ pub(super) fn source_execution_is_valid_for_occurrence(
         .executions_for_node(target_node)
         .filter(|target| target.scope() == target_scope)
         .filter(|target| target.is_current_epoch())
-        .map(crate::projection::NodeExecutionProjection::created_sequence)
+        .map(CurrentNodeExecution::created_sequence)
         .max();
     let Some(target_created) = target_created else {
         return false;

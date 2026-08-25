@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use milkdrift_blueprint::{NodeId, RevisionId};
+use milkdrift_blueprint::{NodeId, PortId, RevisionId};
 use milkdrift_capability::{
     CancellationAcknowledgement, ErrorClass, IdempotencyBehavior, IdempotencyKey, InvocationId,
     InvocationRequest, InvocationTerminal, ResolvedCapabilitySnapshot, SideEffectClass,
@@ -121,6 +121,214 @@ pub struct NodeExecutionProjection {
     pub(super) cancellation: Option<NodeExecutionCancellationProjection>,
     pub(super) deterministic_terminal: Option<DeterministicNodeTerminalProjection>,
     pub(super) outputs: Vec<PublishedNodeOutput>,
+}
+
+/// Bounded current terminal fact for a settled execution occurrence.
+///
+/// Full attempt, cancellation, dispatch, and deterministic-terminal detail is
+/// journal history after every transition consumer has closed. One summary is
+/// retained per live scope/node frontier so current scheduling, output
+/// selection, and prospective reconciliation never need a lifetime execution
+/// catalog.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct SettledNodeExecutionProjection {
+    pub(super) execution: NodeExecutionId,
+    pub(super) node: NodeId,
+    pub(super) scope: ScopeReference,
+    pub(super) mode: NodeExecutionMode,
+    pub(super) revision: RevisionId,
+    pub(super) epoch_retired_sequence: Option<RunSequence>,
+    pub(super) created_sequence: RunSequence,
+    pub(super) attempt_count: u32,
+    pub(super) attempts: Vec<AttemptId>,
+    pub(super) state: NodeExecutionState,
+    pub(super) side_effect: SideEffectClass,
+    pub(super) route: Option<PortId>,
+    pub(super) outputs: Vec<PublishedNodeOutput>,
+}
+
+impl SettledNodeExecutionProjection {
+    /// Stable occurrence identity used to locate exact journal evidence.
+    #[must_use]
+    pub const fn execution(&self) -> &NodeExecutionId {
+        &self.execution
+    }
+
+    /// Stable semantic node identity.
+    #[must_use]
+    pub const fn node(&self) -> &NodeId {
+        &self.node
+    }
+
+    /// Scope whose current semantic frontier owns this summary.
+    #[must_use]
+    pub const fn scope(&self) -> &ScopeReference {
+        &self.scope
+    }
+
+    /// Immutable revision governing the settled occurrence.
+    #[must_use]
+    pub const fn revision(&self) -> &RevisionId {
+        &self.revision
+    }
+
+    /// Whether the summary remains in its node's current revision epoch.
+    #[must_use]
+    pub const fn is_current_epoch(&self) -> bool {
+        self.epoch_retired_sequence.is_none()
+    }
+
+    /// Sequence at which the occurrence became eligible.
+    #[must_use]
+    pub const fn created_sequence(&self) -> RunSequence {
+        self.created_sequence
+    }
+
+    /// Terminal occurrence state.
+    #[must_use]
+    pub const fn state(&self) -> &NodeExecutionState {
+        &self.state
+    }
+
+    /// Total attempts admitted for the occurrence.
+    #[must_use]
+    pub const fn attempt_count(&self) -> u32 {
+        self.attempt_count
+    }
+
+    /// Latest attempt anchor for journal provenance, if the occurrence dispatched.
+    #[must_use]
+    pub fn latest_attempt(&self) -> Option<&AttemptId> {
+        self.attempts.last()
+    }
+
+    /// Latest attempt anchor only; earlier identities are journal history.
+    #[must_use]
+    pub fn attempts(&self) -> &[AttemptId] {
+        &self.attempts
+    }
+
+    /// Most conservative frozen side-effect classification for the occurrence.
+    #[must_use]
+    pub const fn side_effect(&self) -> SideEffectClass {
+        self.side_effect
+    }
+
+    /// Frozen branch/router selection needed by the current downstream frontier.
+    #[must_use]
+    pub const fn route(&self) -> Option<&PortId> {
+        self.route.as_ref()
+    }
+
+    /// Explicit output references still retained for current downstream work.
+    #[must_use]
+    pub fn outputs(&self) -> &[PublishedNodeOutput] {
+        &self.outputs
+    }
+}
+
+/// One occurrence in the current operational node/scope frontier.
+///
+/// The active variant carries complete transition state. The settled variant is
+/// a compact terminal fact; neither variant is a historical timeline query.
+#[derive(Clone, Copy, Debug)]
+pub enum CurrentNodeExecution<'a> {
+    /// Operationally live occurrence with full transition state.
+    Active(&'a NodeExecutionProjection),
+    /// Closed current occurrence represented by a bounded summary.
+    Settled(&'a SettledNodeExecutionProjection),
+}
+
+impl<'a> CurrentNodeExecution<'a> {
+    /// Stable occurrence identity.
+    #[must_use]
+    pub const fn execution(self) -> &'a NodeExecutionId {
+        match self {
+            Self::Active(value) => value.execution(),
+            Self::Settled(value) => value.execution(),
+        }
+    }
+
+    /// Stable semantic node identity.
+    #[must_use]
+    pub const fn node(self) -> &'a NodeId {
+        match self {
+            Self::Active(value) => value.node(),
+            Self::Settled(value) => value.node(),
+        }
+    }
+
+    /// Exact occurrence scope.
+    #[must_use]
+    pub const fn scope(self) -> &'a ScopeReference {
+        match self {
+            Self::Active(value) => value.scope(),
+            Self::Settled(value) => value.scope(),
+        }
+    }
+
+    /// Immutable governing revision.
+    #[must_use]
+    pub const fn revision(self) -> &'a RevisionId {
+        match self {
+            Self::Active(value) => value.revision(),
+            Self::Settled(value) => value.revision(),
+        }
+    }
+
+    /// Whether this occurrence remains in its node's current revision epoch.
+    #[must_use]
+    pub const fn is_current_epoch(self) -> bool {
+        match self {
+            Self::Active(value) => value.is_current_epoch(),
+            Self::Settled(value) => value.is_current_epoch(),
+        }
+    }
+
+    /// Revision-pin sequence that retired the occurrence epoch, if any.
+    #[must_use]
+    pub const fn epoch_retired_sequence(self) -> Option<RunSequence> {
+        match self {
+            Self::Active(value) => value.epoch_retired_sequence(),
+            Self::Settled(value) => value.epoch_retired_sequence,
+        }
+    }
+
+    /// Sequence at which the occurrence became eligible.
+    #[must_use]
+    pub const fn created_sequence(self) -> RunSequence {
+        match self {
+            Self::Active(value) => value.created_sequence(),
+            Self::Settled(value) => value.created_sequence(),
+        }
+    }
+
+    /// Current or terminal state.
+    #[must_use]
+    pub const fn state(self) -> &'a NodeExecutionState {
+        match self {
+            Self::Active(value) => value.state(),
+            Self::Settled(value) => value.state(),
+        }
+    }
+
+    /// Explicit output references retained for the current frontier.
+    #[must_use]
+    pub fn outputs(self) -> &'a [PublishedNodeOutput] {
+        match self {
+            Self::Active(value) => value.outputs(),
+            Self::Settled(value) => value.outputs(),
+        }
+    }
+
+    /// Latest attempt anchor only; settled earlier attempts are journal history.
+    #[must_use]
+    pub fn attempts(self) -> &'a [AttemptId] {
+        match self {
+            Self::Active(value) => value.attempts(),
+            Self::Settled(value) => &value.attempts,
+        }
+    }
 }
 
 impl NodeExecutionProjection {
@@ -636,8 +844,8 @@ impl NodeAttemptProjection {
     /// Sequence at which the exact executor request became durable.
     ///
     /// This is absent only while a retry identity is reserved but not yet
-    /// scheduled. Combined with [`crate::projection::RunProjection::revision_at`], it identifies
-    /// the immutable workflow revision governing this attempt.
+    /// scheduled. The owning execution carries the immutable workflow revision
+    /// governing this attempt.
     #[must_use]
     pub const fn scheduled_sequence(&self) -> Option<RunSequence> {
         self.scheduled_sequence

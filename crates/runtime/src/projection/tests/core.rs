@@ -298,11 +298,6 @@ fn persisted_invocation_request_must_match_frozen_capability_resolution() -> Tes
         projection.revision_for_attempt(&attempt),
         Some(&fixture.revision)
     );
-    assert_eq!(
-        projection.revision_at(RunSequence::new(4)),
-        Some(&fixture.revision)
-    );
-    assert_eq!(projection.revision_at(RunSequence::new(5)), None);
     let snapshot_document = ResolvedCapabilitySnapshotDocument::from_json(include_bytes!(
         "../../../../capability/tests/fixtures/resolved-capability-snapshot-v1.json"
     ))?;
@@ -781,7 +776,10 @@ fn cancellation_facts_close_attempt_free_wait_and_timer_ownership() -> TestResul
         RunLifecycle::Terminal(RunOutcome::Cancelled)
     );
     assert_eq!(
-        projection.node_executions()[&execution].state(),
+        projection
+            .current_node_execution(&execution)
+            .ok_or("cancelled execution summary is absent")?
+            .state(),
         &NodeExecutionState::CancelledBeforeDispatch
     );
     assert!(!projection.waits().contains_key(&execution));

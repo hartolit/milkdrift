@@ -1,13 +1,14 @@
 use super::{
-    ActorRef, AttemptId, AttemptState, AuthorityDecision, CapabilityRequirement,
-    IdempotencyBehavior, IdempotencyKey, InvocationId, LeaseId, NodeAttemptProjection,
-    NodeExecutionId, NodeExecutionMode, NodeExecutionState, NodeId, NodeOutcome, OperationId,
-    ProviderProfileRef, Reason, ReconciliationAction, ReconciliationClassification,
-    ReconciliationDecisionId, ReconciliationId, ReconciliationItem, ReconciliationPlanId,
-    ReconciliationPolicy, RecoveryClassification, ResolvedCapabilitySnapshotDocument, RunEventKind,
-    RunLifecycle, RunProjection, RunSequence, RuntimeError, SideEffectClass, TestResult, TimerId,
-    TimestampMillis, WaitCondition, WorkerId, created, digest, eligible, envelope, fixture,
-    invocation_request, resolved_snapshot_with_side_effect, revision, runtime_eligible,
+    ActorRef, AttemptId, AttemptState, AuthorityDecision, CapabilityRequirement, EvidenceId,
+    EvidenceKind, EvidenceReference, IdempotencyBehavior, IdempotencyKey, InvocationId, LeaseId,
+    NodeAttemptProjection, NodeExecutionId, NodeExecutionMode, NodeExecutionState, NodeId,
+    NodeOutcome, OperationId, ProviderProfileRef, Reason, ReconciliationAction,
+    ReconciliationClassification, ReconciliationDecisionId, ReconciliationId, ReconciliationItem,
+    ReconciliationPlanId, ReconciliationPolicy, RecoveryClassification,
+    ResolvedCapabilitySnapshotDocument, RunEventKind, RunLifecycle, RunProjection, RunSequence,
+    RuntimeError, SideEffectClass, TestResult, TimerId, TimestampMillis, WaitCondition, WorkerId,
+    created, digest, eligible, envelope, fixture, invocation_request,
+    resolved_snapshot_with_side_effect, revision, runtime_eligible,
 };
 
 #[test]
@@ -156,6 +157,136 @@ fn keeps_uncertain_retained_work_visible_through_cancellation_and_recovery() -> 
             .get(&attempt)
             .map(NodeAttemptProjection::state),
         Some(&AttemptState::Retained)
+    );
+    Ok(())
+}
+
+#[test]
+fn explicit_external_resolution_releases_the_execution_after_successor_closure() -> TestResult {
+    let fixture = fixture("resolved-uncertainty-compaction")?;
+    let execution = NodeExecutionId::new("execution-resolved")?;
+    let attempt = AttemptId::new("attempt-resolved")?;
+    let invocation = InvocationId::new("invocation-resolved")?;
+    let snapshot = resolved_snapshot_with_side_effect(
+        1,
+        SideEffectClass::None,
+        IdempotencyBehavior::Unsupported,
+    )?;
+    let mut projection = RunProjection::replay(&[
+        created(&fixture, 1)?,
+        envelope(2, &fixture.run, RunEventKind::RunStarted)?,
+        eligible(
+            3,
+            &fixture,
+            "resolved",
+            &execution,
+            fixture.root.reference(),
+        )?,
+        envelope(
+            4,
+            &fixture.run,
+            RunEventKind::NodeScheduled {
+                node: NodeId::new("resolved")?,
+                execution: execution.clone(),
+                attempt: attempt.clone(),
+                invocation: invocation.clone(),
+                idempotency_key: None,
+                request: invocation_request(&invocation, None)?,
+            },
+        )?,
+        envelope(
+            5,
+            &fixture.run,
+            RunEventKind::CapabilityResolved {
+                execution: execution.clone(),
+                attempt: attempt.clone(),
+                requirement: CapabilityRequirement::new(OperationId::new("tool.publish")?)
+                    .provider_profile(ProviderProfileRef::new("publisher-prod")?),
+                snapshot,
+            },
+        )?,
+        envelope(
+            6,
+            &fixture.run,
+            RunEventKind::SideEffectClassified {
+                attempt: attempt.clone(),
+                side_effect: SideEffectClass::None,
+                idempotency: IdempotencyBehavior::Unsupported,
+                idempotency_key: None,
+            },
+        )?,
+        envelope(
+            7,
+            &fixture.run,
+            RunEventKind::LeaseGranted {
+                lease: LeaseId::new("lease-resolved")?,
+                execution: execution.clone(),
+                attempt: attempt.clone(),
+                worker: WorkerId::new("worker-resolved")?,
+                expires_at: TimestampMillis::new(10_000),
+            },
+        )?,
+        envelope(
+            8,
+            &fixture.run,
+            RunEventKind::NodeStarted {
+                execution: execution.clone(),
+                attempt: attempt.clone(),
+                invocation,
+            },
+        )?,
+        envelope(
+            9,
+            &fixture.run,
+            RunEventKind::ExternalOutcomeUncertain {
+                attempt: attempt.clone(),
+                report_sequence: 1,
+                side_effect: SideEffectClass::None,
+                reason: Reason::new("worker disconnected after dispatch")?,
+                evidence: Vec::new(),
+            },
+        )?,
+    ])?;
+    assert_eq!(projection.unresolved_attempts().count(), 1);
+    assert!(projection.node_executions().contains_key(&execution));
+    assert!(projection.settled_node_executions().is_empty());
+
+    projection.apply_replayed(&envelope(
+        10,
+        &fixture.run,
+        RunEventKind::RecoveryDecisionRecorded {
+            attempt: attempt.clone(),
+            decision: ReconciliationDecisionId::new("decision-resolved")?,
+            actor: ActorRef::new("operator")?,
+            outcome: AuthorityDecision::ResolveSucceeded,
+            reason: Reason::new("external receipt confirms success")?,
+            evidence: vec![EvidenceReference {
+                id: EvidenceId::new("receipt-resolved")?,
+                kind: EvidenceKind::ExternalReceipt,
+            }],
+        },
+    )?)?;
+    assert_eq!(projection.unresolved_attempts().count(), 0);
+    assert!(projection.node_executions().contains_key(&execution));
+    assert!(
+        projection
+            .pending_successor_execution_ids()
+            .contains(&execution)
+    );
+
+    projection.apply_replayed(&envelope(
+        11,
+        &fixture.run,
+        RunEventKind::StructuredSuccessorScanCompleted {
+            execution: execution.clone(),
+        },
+    )?)?;
+    assert!(projection.node_executions().is_empty());
+    assert!(projection.attempts().is_empty());
+    assert_eq!(projection.settled_node_executions().len(), 1);
+    assert_eq!(
+        projection.settled_node_executions()[&execution].side_effect(),
+        SideEffectClass::None
     );
     Ok(())
 }

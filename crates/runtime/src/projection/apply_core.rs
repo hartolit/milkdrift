@@ -152,6 +152,13 @@ impl RunProjection {
                         execution.epoch_retired_sequence = Some(sequence);
                     }
                 }
+                for execution in self.settled_node_executions.values_mut() {
+                    if retired_epoch_nodes.contains(&execution.node)
+                        && execution.epoch_retired_sequence.is_none()
+                    {
+                        execution.epoch_retired_sequence = Some(sequence);
+                    }
+                }
                 self.pending_successor_executions
                     .extend(completed_to_reconsider);
                 self.pending_pin = None;
@@ -278,7 +285,9 @@ impl RunProjection {
                 mode,
             } => {
                 self.validate_scope_reference(scope, event)?;
-                if self.node_executions.contains_key(execution) {
+                if self.node_executions.contains_key(execution)
+                    || self.settled_node_executions.contains_key(execution)
+                {
                     return Err(invalid_at(
                         event,
                         "node execution identity was already created",

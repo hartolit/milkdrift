@@ -202,7 +202,11 @@ impl RunProjection {
                     .and_then(|result| self.branches.get(&result.branch))
                     .map(|branch| branch.fork_execution.clone())
                     .ok_or_else(|| invalid_at(event, "join has no known owning fork"))?;
-                let fork_scope = self.execution(&fork_execution, event)?.scope.clone();
+                let fork_scope = self
+                    .current_node_execution(&fork_execution)
+                    .ok_or_else(|| invalid_at(event, "join fork is outside the current frontier"))?
+                    .scope()
+                    .clone();
                 if self.execution(execution, event)?.scope != fork_scope {
                     return Err(invalid_at(
                         event,

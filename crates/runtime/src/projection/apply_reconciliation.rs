@@ -77,7 +77,7 @@ impl RunProjection {
                     || self.reconciliation.plans.contains_key(plan)
                     || request.sequence.get().checked_sub(1) != Some(based_on_sequence.get())
                     || self.sequence != request.sequence
-                    || self.revision_at(*based_on_sequence) != Some(from_revision)
+                    || self.revision.as_ref() != Some(from_revision)
                 {
                     return Err(invalid_at(
                         event,
@@ -106,11 +106,14 @@ impl RunProjection {
                         ));
                     }
                     if let Some(execution) = &item.execution {
-                        let execution_view = self.execution(execution, event)?;
+                        let execution_view =
+                            self.current_node_execution(execution).ok_or_else(|| {
+                                invalid_at(event, "reconciliation item references retired history")
+                            })?;
                         if item
                             .node
                             .as_ref()
-                            .is_some_and(|node| node != &execution_view.node)
+                            .is_some_and(|node| node != execution_view.node())
                         {
                             return Err(invalid_at(
                                 event,
@@ -314,16 +317,22 @@ impl RunProjection {
                             && item.node.as_ref() == Some(node)
                             && item.action == ReconciliationAction::CompensateOrRemediate
                     });
-                let source = self.execution(source_execution, event)?;
+                let source = self
+                    .current_node_execution(source_execution)
+                    .ok_or_else(|| {
+                        invalid_at(event, "remediation source is outside the current frontier")
+                    })?;
                 if !authorized
                     || self.node_executions.contains_key(execution)
+                    || self.settled_node_executions.contains_key(execution)
                     || self.reserved_executions.contains(execution)
                     || self.reconciliation_remediations.contains_key(execution)
                     || source_attempt.as_ref().is_some_and(|attempt| {
-                        self.attempts
-                            .get(attempt)
-                            .is_none_or(|attempt| attempt.execution != *source_execution)
-                            || !source.attempts.contains(attempt)
+                        !source.attempts().contains(attempt)
+                            || self
+                                .attempts
+                                .get(attempt)
+                                .is_some_and(|attempt| attempt.execution != *source_execution)
                     })
                 {
                     return Err(invalid_at(
@@ -409,11 +418,10 @@ impl RunProjection {
                 let actions_enacted = plan_view.items.iter().all(|item| match item.action {
                     ReconciliationAction::RemoveUnstarted => {
                         item.execution.as_ref().is_none_or(|execution| {
-                            self.node_executions
-                                .get(execution)
+                            self.current_node_execution(execution)
                                 .is_some_and(|execution| {
-                                    execution.state
-                                        == NodeExecutionState::RemovedProspectively(plan.clone())
+                                    execution.state()
+                                        == &NodeExecutionState::RemovedProspectively(plan.clone())
                                 })
                         })
                     }
@@ -421,11 +429,10 @@ impl RunProjection {
                         if item.classification == ReconciliationClassification::ChangedPending =>
                     {
                         item.execution.as_ref().is_none_or(|execution| {
-                            self.node_executions
-                                .get(execution)
+                            self.current_node_execution(execution)
                                 .is_some_and(|execution| {
-                                    execution.state
-                                        == NodeExecutionState::RemovedProspectively(plan.clone())
+                                    execution.state()
+                                        == &NodeExecutionState::RemovedProspectively(plan.clone())
                                 })
                         })
                     }
@@ -718,6 +725,7 @@ impl RunProjection {
                     || self.remediations.contains_key(execution)
                     || self.reserved_executions.contains(execution)
                     || self.node_executions.contains_key(execution)
+                    || self.settled_node_executions.contains_key(execution)
                     || *scope != source_scope
                 {
                     return Err(invalid_at(

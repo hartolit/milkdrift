@@ -77,7 +77,7 @@ impl RuntimeService {
                 .filter(|source| {
                     source_execution_is_valid_for_occurrence(
                         projection,
-                        source,
+                        *source,
                         node.id(),
                         occurrence_scope,
                     ) && execution_scope_related(projection, source.scope(), occurrence_scope)
@@ -125,7 +125,7 @@ impl RuntimeService {
                 .filter(|source| {
                     source_execution_is_valid_for_occurrence(
                         projection,
-                        source,
+                        *source,
                         node.id(),
                         occurrence_scope,
                     ) && execution_scope_related(projection, source.scope(), occurrence_scope)
@@ -138,8 +138,7 @@ impl RuntimeService {
                     .find(|branch| branch.children().contains(execution.execution()))
                     .and_then(|branch| {
                         projection
-                            .node_executions()
-                            .get(branch.fork_execution())
+                            .current_node_execution(branch.fork_execution())
                             .map(|fork| {
                                 (
                                     fork.created_sequence().get(),
@@ -256,7 +255,7 @@ impl RuntimeService {
                     .filter(|source| {
                         source_execution_is_valid_for_occurrence(
                             projection,
-                            source,
+                            *source,
                             occurrence_node,
                             occurrence_scope,
                         ) && execution_scope_related(projection, source.scope(), occurrence_scope)

@@ -246,17 +246,16 @@ fn crash_after_durable_lease_recovers_only_after_expiry_and_retries_once() -> Te
             completed.lifecycle(),
             RunLifecycle::Terminal(RunOutcome::Succeeded)
         );
-        assert_eq!(completed.attempts().len(), 1);
-        let attempt = completed
-            .attempts()
-            .get(&original_attempt)
-            .ok_or("completed reassigned attempt is absent")?;
+        assert!(completed.attempts().is_empty());
+        let execution = completed
+            .settled_node_executions()
+            .values()
+            .find(|execution| execution.latest_attempt() == Some(&original_attempt))
+            .ok_or("completed reassigned execution summary is absent")?;
         assert_eq!(
-            attempt.state(),
-            &AttemptState::Terminal(NodeOutcome::Succeeded)
+            execution.state(),
+            &NodeExecutionState::Terminal(NodeOutcome::Succeeded)
         );
-        assert!(attempt.terminal().is_some());
-        assert!(attempt.obligation().is_none());
         assert!(
             !completed.leases().contains_key(&replacement_lease),
             "completed lease detail belongs to journal history, not the active projection"
@@ -574,18 +573,22 @@ fn idempotent_boundary_error_retries_exact_request_and_keeps_first_attempt_truth
         projection.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Succeeded)
     );
-    let second = projection
-        .attempts()
+    let second_attempt = projection
+        .settled_node_executions()
         .values()
-        .find(|attempt| attempt.attempt_number() == 2)
-        .ok_or("second idempotent attempt is absent")?;
-    assert_eq!(projection.attempts().len(), 1);
-    assert_eq!(
-        second.state(),
-        &AttemptState::Terminal(NodeOutcome::Succeeded)
+        .find_map(|execution| execution.latest_attempt().cloned())
+        .ok_or("second idempotent attempt anchor is absent")?;
+    assert!(projection.attempts().is_empty());
+    assert!(
+        projection
+            .settled_node_executions()
+            .values()
+            .any(|execution| {
+                execution.state() == &NodeExecutionState::Terminal(NodeOutcome::Succeeded)
+                    && execution.attempt_count() == 2
+            })
     );
     assert_eq!(projection.unresolved_attempts().count(), 0);
-    let second_attempt = second.attempt().clone();
     let mut history = Vec::new();
     let mut cursor = None;
     let mut page_count = 0_usize;
@@ -1000,15 +1003,22 @@ fn harmless_uncertain_attempt_is_covered_by_exact_terminal_failure_retry() -> Te
         projection.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Failed)
     );
-    let retry = projection
-        .attempts()
+    let retry_attempt = projection
+        .settled_node_executions()
         .values()
-        .find(|attempt| attempt.attempt_number() == 2)
-        .ok_or("terminal failure retry is absent")?;
-    assert_eq!(projection.attempts().len(), 1);
-    assert_eq!(retry.state(), &AttemptState::Terminal(NodeOutcome::Failed));
+        .find_map(|execution| execution.latest_attempt().cloned())
+        .ok_or("terminal failure retry anchor is absent")?;
+    assert!(projection.attempts().is_empty());
+    assert!(
+        projection
+            .settled_node_executions()
+            .values()
+            .any(|execution| {
+                execution.state() == &NodeExecutionState::Terminal(NodeOutcome::Failed)
+                    && execution.attempt_count() == 2
+            })
+    );
     assert_eq!(projection.unresolved_attempts().count(), 0);
-    let retry_attempt = retry.attempt().clone();
     let history = runtime.history(&run)?;
     let first_attempt = history
         .iter()
@@ -1187,13 +1197,16 @@ fn active_retry_cancellation_only_closes_harmless_prior_uncertainty() -> TestRes
             runtime.tick()?;
         }
         let projection = runtime.projection(&run)?;
-        let retry_attempt = projection
-            .attempts()
-            .values()
-            .find(|attempt| attempt.attempt_number() == 2)
-            .ok_or("cancelled retry attempt is absent")?;
+        let history = runtime.history(&run)?;
+        let retry_id = history
+            .iter()
+            .find_map(|event| match event.kind() {
+                RunEventKind::NodeRetryScheduled { next_attempt, .. } => Some(next_attempt.clone()),
+                _ => None,
+            })
+            .ok_or("cancelled retry identity is absent from history")?;
         if closes {
-            assert_eq!(projection.attempts().len(), 1);
+            assert!(projection.attempts().is_empty());
             assert_eq!(projection.unresolved_attempts().count(), 0);
             assert_eq!(
                 projection.lifecycle(),
@@ -1211,8 +1224,6 @@ fn active_retry_cancellation_only_closes_harmless_prior_uncertainty() -> TestRes
             assert_eq!(projection.unresolved_attempts().count(), 1);
             assert_eq!(projection.lifecycle(), RunLifecycle::Cancelling);
         }
-        let retry_id = retry_attempt.attempt().clone();
-        let history = runtime.history(&run)?;
         assert!(history.iter().any(|event| matches!(
             event.kind(),
             RunEventKind::NodeRetryScheduled { next_attempt, .. } if next_attempt == &retry_id

@@ -1,10 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use milkdrift_blueprint::RevisionId;
 use milkdrift_capability::InvocationRequest;
 use milkdrift_persistence::{
-    AttemptId, AttemptUsage, CorrelationKey, NodeExecutionId, RunEventEnvelope, RunSequence,
-    SignalTypeId, TimerId, WaitCondition, WaitSatisfaction,
+    AttemptId, AttemptUsage, CorrelationKey, NodeExecutionId, RunEventEnvelope, SignalTypeId,
+    TimerId, WaitCondition, WaitSatisfaction,
 };
 use milkdrift_workspace::{
     ArtifactMetadata, ArtifactReference, CausalReference, ScopeReference, WorkspaceScope,
@@ -440,23 +439,6 @@ impl RunProjection {
                 .ok_or_else(|| invalid_at(event, "monetary usage overflow"))?;
         }
         Ok(())
-    }
-
-    /// Returns the exact immutable revision governing a durable event sequence.
-    ///
-    /// The value is absent before run creation or beyond the projected journal
-    /// head. Attempt provenance uses its recorded scheduling sequence here rather
-    /// than assuming the run's current prospective pin.
-    #[must_use]
-    pub fn revision_at(&self, sequence: RunSequence) -> Option<&RevisionId> {
-        if sequence == RunSequence::ZERO || sequence > self.sequence {
-            return None;
-        }
-        self.pins
-            .iter()
-            .rev()
-            .find(|pin| pin.effective_sequence <= sequence)
-            .map(|pin| &pin.revision)
     }
 
     pub(super) fn wait_cause_matches(
