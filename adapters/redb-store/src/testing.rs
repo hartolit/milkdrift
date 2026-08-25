@@ -5,13 +5,16 @@
 
 use std::path::Path;
 
-use milkdrift_persistence::{PersistenceError, RunnableIndexEntry};
+use milkdrift_persistence::{PersistenceError, RunnableIndexEntry, SnapshotId};
 use milkdrift_workspace::{RunId, ScopeReference, WorkspaceValueEntry, WorkspaceValueReference};
 use redb::{Database, ReadableTable};
 
 use crate::{
     codec, error, json,
-    schema::{RUNNABLE_ENTRIES, RUNNABLE_INDEX, RUNNABLE_RUN_HEADS, SCOPES, VALUES},
+    schema::{
+        RUNNABLE_ENTRIES, RUNNABLE_INDEX, RUNNABLE_RUN_HEADS, SCOPES, SNAPSHOT_LATEST, SNAPSHOTS,
+        VALUES,
+    },
     store::DATABASE_FILENAME,
 };
 
@@ -123,6 +126,44 @@ pub fn remove_run_runnable_discovery(root: &Path, run: &RunId) -> Result<(), Per
         return Err(error::corruption(
             "runnable head is absent during logical fault injection",
         ));
+    }
+    write.commit().map_err(error::redb)
+}
+
+/// Replaces the latest optional snapshot bytes without changing its pointer.
+///
+/// This creates an unsupported or corrupt optional optimization so cross-crate
+/// tests can prove the adapter rejects it and runtime recovery replays the journal.
+pub fn replace_latest_snapshot_document(
+    root: &Path,
+    run: &RunId,
+    document: &[u8],
+) -> Result<(), PersistenceError> {
+    let database = open_database(root)?;
+    let write = database.begin_write().map_err(error::redb)?;
+    let snapshot = {
+        let latest = write.open_table(SNAPSHOT_LATEST).map_err(error::redb)?;
+        let value = latest
+            .get(run.as_str())
+            .map_err(error::redb)?
+            .ok_or_else(|| PersistenceError::NotFound {
+                entity: "latest_snapshot",
+                identity: run.to_string(),
+            })?;
+        SnapshotId::new(value.value())?
+    };
+    let key = codec::pair(run.as_str(), snapshot.as_str())?;
+    let replaced = write
+        .open_table(SNAPSHOTS)
+        .map_err(error::redb)?
+        .insert(key.as_slice(), document)
+        .map_err(error::redb)?
+        .is_some();
+    if !replaced {
+        return Err(PersistenceError::NotFound {
+            entity: "snapshot",
+            identity: snapshot.to_string(),
+        });
     }
     write.commit().map_err(error::redb)
 }

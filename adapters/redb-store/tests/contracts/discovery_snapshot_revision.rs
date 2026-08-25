@@ -1,4 +1,65 @@
 use super::*;
+
+#[test]
+fn malformed_and_stale_integrity_cursors_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    const REVISIONS: TableDefinition<'static, &'static str, &'static [u8]> =
+        TableDefinition::new("milkdrift.v1.revisions.by_id");
+
+    let directory = TempDir::new()?;
+    let revision_bytes =
+        include_bytes!("../../../../crates/blueprint/tests/fixtures/revision-v1.json");
+    let (_document, revision) = BlueprintRevisionDocument::from_json(revision_bytes)?;
+    let request = accepted_request(
+        "run-stale-integrity-cursor",
+        "command-stale-integrity-cursor",
+        "event-stale-integrity-cursor",
+        "start",
+    )?;
+    let store = RedbStore::open(directory.path())?;
+    store.put_revision(&revision)?;
+    store.commit_command(&request)?;
+    let page = store.scan_integrity(IntegrityScanRequest {
+        limit: PageSize::new(1)?,
+        verify_artifact_content: false,
+        cursor: None,
+    })?;
+    let cursor = page.next_cursor.ok_or("integrity scan did not paginate")?;
+
+    let malformed = milkdrift_persistence::IntegrityScanCursor::new(
+        milkdrift_persistence::IntegrityScanFamily::Indexes,
+        vec![1],
+        false,
+    )?;
+    assert!(matches!(
+        store.scan_integrity(IntegrityScanRequest {
+            limit: PageSize::new(1)?,
+            verify_artifact_content: false,
+            cursor: Some(malformed),
+        }),
+        Err(PersistenceError::InvalidCursor(_))
+    ));
+    drop(store);
+
+    let database = Database::open(directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut revisions = write.open_table(REVISIONS)?;
+        let _removed = revisions.remove(revision.id().as_str())?;
+    }
+    write.commit()?;
+    drop(database);
+    let store = RedbStore::open(directory.path())?;
+    assert!(matches!(
+        store.scan_integrity(IntegrityScanRequest {
+            limit: PageSize::new(1)?,
+            verify_artifact_content: false,
+            cursor: Some(cursor),
+        }),
+        Err(PersistenceError::InvalidCursor(_))
+    ));
+    Ok(())
+}
+
 #[test]
 fn revision_lookup_and_integrity_scan_detect_physical_key_mismatches()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -508,6 +569,7 @@ fn verified_snapshot_survives_reopen() -> Result<(), Box<dyn std::error::Error>>
         store.latest_snapshot(request.receipt().run())?,
         SnapshotLoad::Verified(snapshot)
     );
+    assert_complete_integrity_scan_is_clean(&store)?;
     Ok(())
 }
 

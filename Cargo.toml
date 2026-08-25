@@ -17,6 +17,7 @@ repository = "https://github.com/hartolit/milkdrift"
 rust-version = "1.95"
 
 [workspace.dependencies]
+base64 = "0.22.1"
 blake3 = "1.8.2"
 milkdrift-contracts = { version = "=0.1.0", path = "crates/contracts" }
 proptest = "1.7.0"

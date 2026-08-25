@@ -67,3 +67,19 @@ cargo test --release \
 
 Do not mark a hanging or nondeterministic test ignored; correct the lifecycle or coordination
 defect instead.
+
+### 2026-08-25 local measurement
+
+With Rust 1.95.0 on the available development machine, the all-feature workspace suite
+passed in 41.414 seconds and the normal debug `projection::tests::bounded::` group passed
+in 24.877 seconds. The same bounded group passed in release mode in 31.070 seconds,
+including a 28.62-second release rebuild; its test execution was 2.42 seconds. The ignored
+release redb frontier case passed in 0.483 seconds after that build. The 10,000-transition
+projection invariants therefore remain normal non-ignored CI tests, while the durable
+cross-index boundary case remains a weekly/manual release stress test because it is
+purposefully excluded from the ordinary workspace suite.
+
+These are one-machine observations, not universal timing guarantees. `/usr/bin/time -v`
+was not installed, so Bash wall/user/system timings were saved and peak resident memory
+was unavailable. The measured commands were the all-feature workspace test command and
+the debug/release bounded and ignored release stress commands shown above.

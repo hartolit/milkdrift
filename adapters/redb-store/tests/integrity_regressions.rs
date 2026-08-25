@@ -5,11 +5,11 @@ use milkdrift_capability::{BoundedJson, InvocationId};
 use milkdrift_persistence::{
     ActorRef, ArtifactPublicationId, ArtifactStore, AtomicRunCommitRequest,
     BeginArtifactPublication, CommandDisposition, CommandId, CommandReceipt, CommandResultDocument,
-    EventId, IndexedRunState, IntegrityScanRequest, OrphanCleanupRequest, PageSize,
-    PersistenceError, RevisionStore, RunEventEnvelope, RunEventKind, RunIndexUpdate, RunJournal,
-    RunSequence, RunSummaryIndex, SnapshotDocument, SnapshotId, SnapshotLoad, SnapshotStore,
-    StorageAdmin, StorageFailureClass, StorageHealthStatus, TimestampMillis, WorkspaceAccounting,
-    WorkspaceStore, history_digest,
+    EventId, IndexedRunState, IntegrityScanFamily, IntegrityScanRequest, OrphanCleanupRequest,
+    PageSize, PersistenceError, RevisionStore, RunEventEnvelope, RunEventKind, RunIndexUpdate,
+    RunJournal, RunSequence, RunSummaryIndex, SnapshotDocument, SnapshotId, SnapshotLoad,
+    SnapshotStore, StorageAdmin, StorageFailureClass, StorageHealthStatus, TimestampMillis,
+    WorkspaceAccounting, WorkspaceStore, history_digest,
 };
 use milkdrift_redb_store::{RedbStore, RedbStoreConfig};
 use milkdrift_workspace::{
@@ -149,9 +149,11 @@ fn publish(
 }
 
 #[test]
-fn integrity_scan_resumes_inside_temporary_owner_phase() -> Result<(), Box<dyn std::error::Error>> {
+fn integrity_pages_preserve_budget_and_resume_inside_delete_guard_phase()
+-> Result<(), Box<dyn std::error::Error>> {
     let directory = TempDir::new()?;
     let store = RedbStore::open(directory.path())?;
+    let mut publications = Vec::new();
     for ordinal in 0..3 {
         let request = publication_request(
             &format!("artifact-cursor-{ordinal}"),
@@ -162,21 +164,68 @@ fn integrity_scan_resumes_inside_temporary_owner_phase() -> Result<(), Box<dyn s
             WorkspaceUsage::EMPTY,
         )?;
         store.begin_publication(&request)?;
+        publications.push(request.publication().clone());
     }
+    drop(store);
+    let database = Database::open(directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut guards = write.open_table(ARTIFACT_DELETE_GUARDS)?;
+        for publication in publications {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(b"milkdrift.artifact-publication-temp.v1\0");
+            hasher.update(publication.as_str().as_bytes());
+            let identity = format!("{}.part", hasher.finalize());
+            let mut key = Vec::new();
+            for component in ["temp", identity.as_str()] {
+                key.extend_from_slice(&u32::try_from(component.len())?.to_be_bytes());
+                key.extend_from_slice(component.as_bytes());
+            }
+            guards.insert(key.as_slice(), 1)?;
+        }
+    }
+    write.commit()?;
+    drop(database);
+    let store = RedbStore::open(directory.path())?;
+    let complete = store.scan_integrity(IntegrityScanRequest {
+        limit: PageSize::new(1_000)?,
+        verify_artifact_content: false,
+        cursor: None,
+    })?;
+    assert_eq!(complete.failures.len(), 3);
+    assert!(complete.next_cursor.is_none());
+
     let mut cursor = None;
+    let mut paginated_documents = 0_u64;
+    let mut paginated_failures = 0_usize;
+    let mut resumed_delete_guard = false;
     for _ in 0..10_000 {
         let page = store.scan_integrity(IntegrityScanRequest {
             limit: PageSize::new(1)?,
             verify_artifact_content: false,
             cursor,
         })?;
-        assert!(page.failures.is_empty());
+        assert!(page.documents_checked <= 1);
+        paginated_documents = paginated_documents.saturating_add(page.documents_checked);
+        paginated_failures = paginated_failures.saturating_add(page.failures.len());
         let Some(next) = page.next_cursor else {
+            assert_eq!(paginated_documents, complete.documents_checked);
+            assert_eq!(paginated_failures, complete.failures.len());
+            assert!(
+                resumed_delete_guard,
+                "scan never returned an in-progress phase-34 delete-guard cursor"
+            );
             return Ok(());
         };
+        if next.family() == IntegrityScanFamily::Indexes
+            && next.after_key().get(33) == Some(&34)
+            && matches!(next.after_key().get(37), Some(1 | 2))
+        {
+            resumed_delete_guard = true;
+        }
         cursor = Some(next);
     }
-    Err("phase-23 integrity scan did not exhaust".into())
+    Err("phase-34 integrity scan did not exhaust".into())
 }
 
 #[test]

@@ -26,7 +26,9 @@ broken event checksums or cumulative history links; dangling or disagreeing dire
 invalid workspace ancestry/provenance/accounting; invalid snapshots; and missing, wrongly
 sized, or digest-invalid artifact content. Ordinary reads validate the rows they consume,
 and an explicit bounded, resumable scrub walks the remaining authoritative and derived
-families. A clean bounded health sample is not a complete-store proof.
+families through run, scheduler, workspace, revision, snapshot, and artifact modules while
+preserving integrity-cursor schema v1 phase tags and ordering. A clean bounded health sample
+is not a complete-store proof.
 
 The adapter does not detect replacement or rollback of the entire database, nor an attacker
 who rewrites every affected row and recomputes unkeyed checksums. Those guarantees require a
@@ -38,8 +40,10 @@ scope/value versions, and committed artifact metadata. Authoritative aggregate s
 of run heads, accepted-command results, history-chain heads, workspace usage/budgets, and
 artifact publication/accounting coordination. Discovery rows, digest/ordered indexes,
 pointers, and ownership/reference indexes are derived and verifiable, but no automatic repair
-API is claimed. Snapshots are optional accelerators: invalid snapshots are rejected and the
-runtime replays authoritative events.
+API is claimed. Snapshots are optional accelerators: envelope v2 carries a strict padded
+standard-Base64 representation of raw projection payload v3, while its direct
+domain-separated, length-framed BLAKE3 checksum binds the raw bytes and semantic metadata.
+Invalid or unsupported snapshots are rejected and the runtime replays authoritative events.
 
 Artifact bytes remain BLAKE3 content-addressed. Publication verifies and synchronizes bytes,
 atomically renames and synchronizes the directory, then commits metadata; reads verify size

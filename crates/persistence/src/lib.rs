@@ -72,8 +72,9 @@ pub use journal::{
 };
 pub use revision::{ImmutableRevisionPut, RevisionStore, RevisionSummary};
 pub use snapshot::{
-    MAX_SNAPSHOT_PAYLOAD_BYTES, SNAPSHOT_SCHEMA_VERSION_V1, SnapshotDocument, SnapshotLoad,
-    SnapshotStore, history_digest, history_genesis_digest, history_link_digest,
+    MAX_SNAPSHOT_DOCUMENT_BYTES, MAX_SNAPSHOT_ENCODED_PAYLOAD_BYTES, MAX_SNAPSHOT_PAYLOAD_BYTES,
+    SNAPSHOT_ENVELOPE_SCHEMA_VERSION_V2, SnapshotDocument, SnapshotLoad, SnapshotStore,
+    history_digest, history_genesis_digest, history_link_digest,
 };
 
 // Canonical identities already owned by inward crates are re-exported rather than

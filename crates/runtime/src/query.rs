@@ -184,7 +184,7 @@ where
         SnapshotLoad::Verified(snapshot) => snapshot,
     };
 
-    if snapshot.projection_schema() != RUN_PROJECTION_SNAPSHOT_SCHEMA_V3 {
+    if snapshot.projection_payload_schema() != RUN_PROJECTION_SNAPSHOT_SCHEMA_V3 {
         discard_optional_snapshot(
             store,
             run,
@@ -795,23 +795,27 @@ mod tests {
     -> Result<(), Box<dyn Error>> {
         let (snapshot, projection) = compacted_projection_snapshot_golden()?;
         let wire_with_newline = include_bytes!(
-            "../tests/fixtures/projection-snapshot-envelope-v1-projection-v3-wire.json"
+            "../tests/fixtures/projection-snapshot-envelope-v2-projection-v3-wire.json"
         );
         let wire = wire_with_newline
             .strip_suffix(b"\n")
             .unwrap_or(wire_with_newline);
+        let unsupported_v1_wire = include_bytes!(
+            "../tests/fixtures/unsupported-projection-snapshot-envelope-v1-projection-v3-wire.json"
+        );
+        assert!(wire.len().saturating_mul(2) < unsupported_v1_wire.len());
         assert_eq!(snapshot.to_canonical_json()?, wire);
         let decoded_wire = SnapshotDocument::from_json(wire)?;
         assert_eq!(decoded_wire, snapshot);
         assert_eq!(decoded_wire.to_canonical_json()?, wire);
 
         let golden: serde_json::Value = serde_json::from_slice(include_bytes!(
-            "../tests/fixtures/projection-snapshot-envelope-v1-projection-v3.json"
+            "../tests/fixtures/projection-snapshot-envelope-v2-projection-v3.json"
         ))?;
         let envelope = golden
             .get("snapshot_envelope")
             .ok_or("snapshot golden envelope is absent")?;
-        assert_eq!(envelope["schema_version"], serde_json::json!(1));
+        assert_eq!(envelope["schema_version"], serde_json::json!(2));
         assert_eq!(
             envelope["snapshot"],
             serde_json::to_value(snapshot.snapshot())?
@@ -826,8 +830,8 @@ mod tests {
             serde_json::to_value(snapshot.history_digest())?
         );
         assert_eq!(
-            envelope["projection_schema"],
-            serde_json::json!(snapshot.projection_schema())
+            envelope["projection_payload_schema"],
+            serde_json::json!(snapshot.projection_payload_schema())
         );
         assert_eq!(
             envelope["checksum"],

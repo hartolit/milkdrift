@@ -1331,6 +1331,69 @@ fn startup_recovery_finishes_with_an_unexpired_active_lease() -> TestResult {
 }
 
 #[test]
+fn unsupported_v1_snapshot_is_rejected_and_startup_replays_authoritative_history() -> TestResult {
+    let harness = Harness::new("snapshot-v1-fallback")?;
+    let revision = task_revision("workflow-snapshot-v1-fallback")?;
+    let run = RunId::new("run-snapshot-v1-fallback")?;
+    harness.put_revision(&revision)?;
+    harness.create_and_start(&run, &revision)?;
+    for _ in 0..128 {
+        if matches!(
+            harness.store.latest_snapshot(&run)?,
+            milkdrift_persistence::SnapshotLoad::Verified(_)
+        ) {
+            break;
+        }
+        let command = match harness.runtime.projection(&run)?.lifecycle() {
+            RunLifecycle::Running => RunCommand::PauseRun,
+            RunLifecycle::Paused => RunCommand::ResumeRun,
+            lifecycle => {
+                return Err(format!(
+                    "snapshot fallback fixture reached unexpected lifecycle {lifecycle:?}"
+                )
+                .into());
+            }
+        };
+        assert_eq!(
+            harness.command(&run, command)?,
+            CommandDisposition::Accepted
+        );
+    }
+    assert!(matches!(
+        harness.store.latest_snapshot(&run)?,
+        milkdrift_persistence::SnapshotLoad::Verified(_)
+    ));
+    let expected = harness.runtime.projection(&run)?;
+    let directory = harness.close();
+
+    storage_fault::replace_latest_snapshot_document(
+        directory.path(),
+        &run,
+        include_bytes!(
+            "../fixtures/unsupported-projection-snapshot-envelope-v1-projection-v3-wire.json"
+        ),
+    )?;
+    {
+        let store = RedbStore::open(directory.path())?;
+        assert!(matches!(
+            store.latest_snapshot(&run)?,
+            milkdrift_persistence::SnapshotLoad::Rejected {
+                snapshot: Some(_),
+                ..
+            }
+        ));
+    }
+
+    let (store, _clock, runtime) = runtime_at(directory.path(), "snapshot-v1-replay", NOW, 64)?;
+    assert_eq!(runtime.projection(&run)?, expected);
+    assert_eq!(
+        store.latest_snapshot(&run)?,
+        milkdrift_persistence::SnapshotLoad::Absent
+    );
+    Ok(())
+}
+
+#[test]
 #[ignore = "expensive durable-storage boundary regression; run explicitly"]
 fn historical_execution_frontier_stays_bounded_across_index_limit() -> TestResult {
     let harness = Harness::new("bounded-operational-frontier")?;

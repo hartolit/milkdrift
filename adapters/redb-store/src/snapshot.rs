@@ -469,7 +469,7 @@ impl SnapshotStore for RedbStore {
         let write = self.database().begin_write().map_err(error::redb)?;
         let head = crate::journal::validated_run_head_in_transaction(&write, run)?;
         crate::journal::validate_run_history_membership_in_transaction(&write, run, head)?;
-        let previous_latest = validated_latest_pointer(&write, run)?;
+        let previous_latest = latest_pointer_id_for_discard(&write, run)?;
         let target = {
             let snapshots = write.open_table(SNAPSHOTS).map_err(error::redb)?;
             snapshots
@@ -478,8 +478,9 @@ impl SnapshotStore for RedbStore {
                 .map(|bytes| bytes.value().to_vec())
         };
         if let Some(document) = target.as_deref() {
-            let target = decode_stored_snapshot(document)?;
-            if target.run() != run || target.snapshot() != snapshot {
+            if let Ok(target) = decode_stored_snapshot(document)
+                && (target.run() != run || target.snapshot() != snapshot)
+            {
                 return Err(error::corruption(
                     "discarded snapshot key disagrees with its document",
                 ));
@@ -492,7 +493,7 @@ impl SnapshotStore for RedbStore {
         }
         if previous_latest
             .as_ref()
-            .is_some_and(|latest| latest.snapshot() == snapshot)
+            .is_some_and(|latest| latest == snapshot)
         {
             let replacement = newest_snapshot_for_run(&write, run)?;
             let mut latest = write.open_table(SNAPSHOT_LATEST).map_err(error::redb)?;
@@ -508,6 +509,39 @@ impl SnapshotStore for RedbStore {
         write.commit().map_err(error::redb)?;
         self.faults.check(FaultPoint::AfterSnapshotDiscardCommit)
     }
+}
+
+fn latest_pointer_id_for_discard(
+    write: &redb::WriteTransaction,
+    run: &RunId,
+) -> Result<Option<SnapshotId>, PersistenceError> {
+    let snapshot_id = write
+        .open_table(SNAPSHOT_LATEST)
+        .map_err(error::redb)?
+        .get(run.as_str())
+        .map_err(error::redb)?
+        .map(|value| value.value().to_owned());
+    let Some(snapshot_id) = snapshot_id else {
+        if snapshots_exist_for_run(write, run)? {
+            return Err(error::corruption(format!(
+                "run {run} retains snapshots without a latest-snapshot pointer"
+            )));
+        }
+        return Ok(None);
+    };
+    let snapshot_id = SnapshotId::new(snapshot_id)
+        .map_err(|cause| error::corruption(format!("invalid latest snapshot identity: {cause}")))?;
+    let key = codec::pair(run.as_str(), snapshot_id.as_str())?;
+    if write
+        .open_table(SNAPSHOTS)
+        .map_err(error::redb)?
+        .get(key.as_slice())
+        .map_err(error::redb)?
+        .is_none()
+    {
+        return Err(error::corruption("latest snapshot pointer is dangling"));
+    }
+    Ok(Some(snapshot_id))
 }
 
 fn validated_latest_pointer(
