@@ -1,8 +1,8 @@
 use std::ops::Bound;
 
 use milkdrift_persistence::{
-    BoundedDetail, IntegrityDigest, PersistenceError, RunEventEnvelope, RunSequence,
-    SnapshotDocument, SnapshotId, SnapshotLoad, SnapshotStore, history_genesis_digest,
+    BoundedDetail, IntegrityDigest, PersistenceError, ProjectionCheckpoint, RunEventEnvelope,
+    RunSequence, SnapshotDocument, SnapshotId, SnapshotLoad, SnapshotStore, history_genesis_digest,
     history_link_digest,
 };
 use milkdrift_workspace::RunId;
@@ -18,7 +18,7 @@ use crate::{
     },
 };
 
-const HISTORY_CHAIN_SCHEMA_VERSION: u32 = 1;
+const HISTORY_CHAIN_SCHEMA_VERSION: u32 = 2;
 const HISTORY_CHAIN_DOCUMENT_FAMILY: &str = "history-chain record";
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -28,6 +28,7 @@ struct HistoryChainRecord {
     run: RunId,
     through_sequence: RunSequence,
     digest: IntegrityDigest,
+    projection_checkpoint: Option<ProjectionCheckpoint>,
 }
 
 fn decode_chain_record(
@@ -48,6 +49,15 @@ fn decode_chain_record(
         return Err(error::corruption(format!(
             "{label} key disagrees with its document"
         )));
+    }
+    if record
+        .projection_checkpoint
+        .as_ref()
+        .is_some_and(|checkpoint| checkpoint.payload_schema() == 0)
+    {
+        return Err(error::corruption(
+            "history-chain projection checkpoint has a zero payload schema",
+        ));
     }
     Ok(record)
 }
@@ -128,6 +138,7 @@ pub(crate) fn append_history_checkpoint(
         run: run.clone(),
         through_sequence: event.sequence(),
         digest,
+        projection_checkpoint: None,
     };
     let document = json::encode(&record, HISTORY_CHAIN_DOCUMENT_FAMILY)?;
     let key = codec::run_sequence(run.as_str(), event.sequence())?;
@@ -152,6 +163,63 @@ pub(crate) fn append_history_checkpoint(
     if replaced.as_ref().map(|bytes| bytes.value()) != previous_head_bytes.as_deref() {
         return Err(error::corruption(
             "history-chain head changed outside the event transaction",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn attach_projection_checkpoint(
+    write: &redb::WriteTransaction,
+    run: &RunId,
+    sequence: RunSequence,
+    checkpoint: &ProjectionCheckpoint,
+) -> Result<(), PersistenceError> {
+    let key = codec::run_sequence(run.as_str(), sequence)?;
+    let mut record = checkpoint_in_transaction(write, run, sequence)?;
+    if record.projection_checkpoint.is_some() {
+        return Err(error::corruption(
+            "journal head already has a projection checkpoint",
+        ));
+    }
+    let head_bytes = {
+        let heads = write.open_table(RUN_HISTORY_HEADS).map_err(error::redb)?;
+        heads
+            .get(run.as_str())
+            .map_err(error::redb)?
+            .ok_or_else(|| error::corruption("history-chain head is missing"))?
+            .value()
+            .to_vec()
+    };
+    let head = decode_chain_record(&head_bytes, run, sequence, "history-chain head")?;
+    if head != record {
+        return Err(error::corruption(
+            "history-chain head disagrees with its checkpoint before projection commitment",
+        ));
+    }
+    record.projection_checkpoint = Some(checkpoint.clone());
+    let document = json::encode(&record, HISTORY_CHAIN_DOCUMENT_FAMILY)?;
+    {
+        let mut checkpoints = write
+            .open_table(EVENT_HISTORY_DIGESTS)
+            .map_err(error::redb)?;
+        let replaced = checkpoints
+            .insert(key.as_slice(), document.as_slice())
+            .map_err(error::redb)?
+            .ok_or_else(|| error::corruption("history-chain checkpoint disappeared"))?;
+        if replaced.value() != head_bytes.as_slice() {
+            return Err(error::corruption(
+                "history-chain checkpoint changed before projection commitment",
+            ));
+        }
+    }
+    let mut heads = write.open_table(RUN_HISTORY_HEADS).map_err(error::redb)?;
+    let replaced = heads
+        .insert(run.as_str(), document.as_slice())
+        .map_err(error::redb)?
+        .ok_or_else(|| error::corruption("history-chain head disappeared"))?;
+    if replaced.value() != head_bytes.as_slice() {
+        return Err(error::corruption(
+            "history-chain head changed before projection commitment",
         ));
     }
     Ok(())
@@ -362,6 +430,15 @@ impl SnapshotStore for RedbStore {
                 "snapshot history digest does not match authoritative events".to_owned(),
             ));
         }
+        let committed =
+            checkpoint_in_transaction(&write, snapshot.run(), snapshot.covered_sequence())?
+                .projection_checkpoint;
+        if committed.as_ref() != Some(&snapshot.payload_checkpoint()?) {
+            return Err(PersistenceError::InvalidDocument(
+                "snapshot payload does not match the projection commitment recorded with its journal head"
+                    .to_owned(),
+            ));
+        }
         let previous_latest = validated_latest_pointer(&write, snapshot.run())?;
         {
             let mut snapshots = write.open_table(SNAPSHOTS).map_err(error::redb)?;
@@ -459,6 +536,20 @@ impl SnapshotStore for RedbStore {
             return rejected(
                 Some(snapshot_id),
                 "snapshot history digest no longer matches authoritative events".to_owned(),
+            );
+        }
+        let committed = match checkpoint(&read, run, snapshot.covered_sequence()) {
+            Ok(record) => record.projection_checkpoint,
+            Err(cause) => return rejected(Some(snapshot_id), cause.to_string()),
+        };
+        let supplied = match snapshot.payload_checkpoint() {
+            Ok(checkpoint) => checkpoint,
+            Err(cause) => return rejected(Some(snapshot_id), cause.to_string()),
+        };
+        if committed.as_ref() != Some(&supplied) {
+            return rejected(
+                Some(snapshot_id),
+                "snapshot payload does not match its append-time projection commitment".to_owned(),
             );
         }
         Ok(SnapshotLoad::Verified(snapshot))

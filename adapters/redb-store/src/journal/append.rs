@@ -136,6 +136,14 @@ impl RunJournal for RedbStore {
         validate_artifact_accounting_references(&write, request)?;
         validate_workspace_accounting(&write, request)?;
         append_events(&write, request, self.faults.as_ref())?;
+        if let Some(checkpoint) = request.projection_checkpoint() {
+            crate::snapshot::attach_projection_checkpoint(
+                &write,
+                request.receipt().run(),
+                request.result().resulting_sequence(),
+                checkpoint,
+            )?;
+        }
         apply_workspace(&write, request)?;
         apply_indexes(&write, request)?;
         record_artifact_references(&write, request)?;

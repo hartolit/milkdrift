@@ -555,6 +555,7 @@ fn verified_snapshot_survives_reopen() -> Result<(), Box<dyn std::error::Error>>
         1,
         br#"{"projection":"stable"}"#.to_vec(),
     )?;
+    let request = request.with_projection_checkpoint(snapshot.payload_checkpoint()?)?;
     {
         let store = RedbStore::open(directory.path())?;
         store.commit_command(&request)?;
@@ -563,6 +564,18 @@ fn verified_snapshot_survives_reopen() -> Result<(), Box<dyn std::error::Error>>
             store.latest_snapshot(request.receipt().run())?,
             SnapshotLoad::Verified(snapshot.clone())
         );
+        let divergent = SnapshotDocument::new(
+            SnapshotId::new("snapshot-divergent")?,
+            request.receipt().run().clone(),
+            RunSequence::FIRST,
+            history_digest(request.events())?,
+            1,
+            br#"{"projection":"semantically-different"}"#.to_vec(),
+        )?;
+        assert!(matches!(
+            store.put_snapshot(&divergent),
+            Err(PersistenceError::InvalidDocument(_))
+        ));
     }
     let store = RedbStore::open(directory.path())?;
     assert_eq!(
@@ -593,6 +606,7 @@ fn runtime_sized_snapshot_payload_survives_reopen() -> Result<(), Box<dyn std::e
         3,
         payload,
     )?;
+    let request = request.with_projection_checkpoint(snapshot.payload_checkpoint()?)?;
     {
         let store = RedbStore::open(directory.path())?;
         store.commit_command(&request)?;

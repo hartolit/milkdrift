@@ -719,6 +719,8 @@ pub struct AtomicRunCommitRequest {
     /// concurrent runtime services cannot both admit against the same pre-lease
     /// global usage.
     expected_lease_revision: Option<IntegrityDigest>,
+    /// Optional projection payload commitment derived from the accepted resulting state.
+    projection_checkpoint: Option<crate::ProjectionCheckpoint>,
     /// Fully durable result returned on redelivery.
     result: CommandResultDocument,
     /// Derived, verifiable discovery/index changes committed atomically.
@@ -1038,9 +1040,32 @@ impl AtomicRunCommitRequest {
             required_artifacts,
             newly_referenced_artifacts,
             expected_lease_revision,
+            projection_checkpoint: None,
             result,
             indexes,
         })
+    }
+
+    /// Attaches a projection commitment to the accepted resulting journal head.
+    ///
+    /// Storage must persist this in the same transaction as the event append. Rejected
+    /// commands cannot carry a projection commitment.
+    pub fn with_projection_checkpoint(
+        mut self,
+        checkpoint: crate::ProjectionCheckpoint,
+    ) -> Result<Self, PersistenceError> {
+        if self.events.is_empty() {
+            return Err(PersistenceError::InvalidDocument(
+                "a rejected command cannot carry a projection checkpoint".to_owned(),
+            ));
+        }
+        if self.projection_checkpoint.is_some() {
+            return Err(PersistenceError::InvalidDocument(
+                "an atomic command cannot replace its projection checkpoint".to_owned(),
+            ));
+        }
+        self.projection_checkpoint = Some(checkpoint);
+        Ok(self)
     }
 
     /// Validated command receipt.
@@ -1083,6 +1108,12 @@ impl AtomicRunCommitRequest {
     #[must_use]
     pub const fn expected_lease_revision(&self) -> Option<&IntegrityDigest> {
         self.expected_lease_revision.as_ref()
+    }
+
+    /// Projection payload commitment recorded at the resulting journal head, when requested.
+    #[must_use]
+    pub const fn projection_checkpoint(&self) -> Option<&crate::ProjectionCheckpoint> {
+        self.projection_checkpoint.as_ref()
     }
 
     /// Durable command result returned on redelivery.

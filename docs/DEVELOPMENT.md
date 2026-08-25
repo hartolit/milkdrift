@@ -8,7 +8,7 @@ Use Rust 1.95.0 as declared by `rust-toolchain.toml` and the workspace
 ```sh
 cargo fmt --all -- --check
 cargo check --workspace --all-targets --all-features
-cargo test --workspace --no-fail-fast
+cargo test --workspace --all-features --no-fail-fast
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps
 cargo deny check
@@ -70,11 +70,11 @@ defect instead.
 
 ### 2026-08-25 local measurement
 
-With Rust 1.95.0 on the available development machine, the all-feature workspace suite
-passed in 41.414 seconds and the normal debug `projection::tests::bounded::` group passed
-in 24.877 seconds. The same bounded group passed in release mode in 31.070 seconds,
-including a 28.62-second release rebuild; its test execution was 2.42 seconds. The ignored
-release redb frontier case passed in 0.483 seconds after that build. The 10,000-transition
+With Rust 1.95.0 on the available development machine, the closure all-feature workspace
+suite passed in 54.427 seconds and the normal debug `projection::tests::bounded::` group
+passed in 27.190 seconds. Seven representative 10,000-cycle cases passed in release mode
+in 42.090 seconds, including a 39.32-second release rebuild; test execution was 2.72
+seconds. The ignored release redb frontier case passed in 0.543 seconds after that build. The 10,000-transition
 projection invariants therefore remain normal non-ignored CI tests, while the durable
 cross-index boundary case remains a weekly/manual release stress test because it is
 purposefully excluded from the ordinary workspace suite.

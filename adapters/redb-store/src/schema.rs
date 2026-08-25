@@ -2,7 +2,7 @@ use redb::TableDefinition;
 
 pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 3;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
-pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 5;
+pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 6;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
 pub(crate) const LEASE_SET_REVISION_KEY: &str = "lease_set_revision";
 pub(crate) const NONTERMINAL_SET_COUNT_KEY: &str = "nonterminal_set_count";
@@ -96,6 +96,7 @@ pub(crate) const ARTIFACT_DIGEST_RESERVATIONS: TableDefinition<'static, &'static
     TableDefinition::new("milkdrift.v1.artifacts.reservations_by_digest");
 pub(crate) const ARTIFACTS_BY_DIGEST: TableDefinition<'static, &'static [u8], &'static [u8]> =
     TableDefinition::new("milkdrift.v1.artifacts.by_digest_and_id");
+// Derived occurrence index plus authoritative per-run membership/accounting evidence.
 pub(crate) const ARTIFACT_REFERENCES: TableDefinition<'static, &'static [u8], &'static [u8]> =
     TableDefinition::new("milkdrift.v1.artifacts.references");
 pub(crate) const RUN_ARTIFACT_OWNERSHIP: TableDefinition<'static, &'static [u8], &'static [u8]> =

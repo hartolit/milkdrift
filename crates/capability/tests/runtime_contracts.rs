@@ -14,7 +14,6 @@ use milkdrift_capability::{
     ResolvedCapabilitySnapshotDocument, ResourceObservations, SchemaContract, SchemaId,
     SideEffectClass, StreamingMode, TerminalStatus, TrustZone, UsageObservation,
 };
-use serde::Serialize;
 use serde_json::{Value, json};
 
 const ARTIFACT_DIGEST: &str = "abababababababababababababababababababababababababababababababab";
@@ -134,12 +133,11 @@ fn invocation_event() -> Result<InvocationEvent, ContractError> {
     )
 }
 
-fn assert_golden<T: Serialize>(
-    value: &T,
+fn assert_golden(
+    actual: Vec<u8>,
     fixture: &[u8],
     label: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let actual = milkdrift_capability::canonical_json_bytes(value)?;
     let expected = fixture.trim_ascii_end();
     assert_eq!(actual, expected, "{label} v1 wire format changed");
     Ok(())
@@ -149,7 +147,7 @@ fn assert_golden<T: Serialize>(
 fn executor_documents_round_trip_with_golden_v1_bytes() -> Result<(), Box<dyn std::error::Error>> {
     let request = InvocationRequestDocument::new(invocation_request()?);
     assert_golden(
-        &request,
+        request.to_canonical_json()?,
         include_bytes!("fixtures/invocation-request-v1.json"),
         "invocation request",
     )?;
@@ -160,7 +158,7 @@ fn executor_documents_round_trip_with_golden_v1_bytes() -> Result<(), Box<dyn st
 
     let event = InvocationEventDocument::new(invocation_event()?);
     assert_golden(
-        &event,
+        event.to_canonical_json()?,
         include_bytes!("fixtures/invocation-event-v1.json"),
         "invocation event",
     )?;
@@ -175,7 +173,7 @@ fn executor_documents_round_trip_with_golden_v1_bytes() -> Result<(), Box<dyn st
         "run cancellation requested",
     )?);
     assert_golden(
-        &cancellation,
+        cancellation.to_canonical_json()?,
         include_bytes!("fixtures/cancellation-request-v1.json"),
         "cancellation request",
     )?;
@@ -193,7 +191,7 @@ fn executor_documents_round_trip_with_golden_v1_bytes() -> Result<(), Box<dyn st
             Some("executor reached its cancellation boundary".to_owned()),
         )?);
     assert_golden(
-        &acknowledgement,
+        acknowledgement.to_canonical_json()?,
         include_bytes!("fixtures/cancellation-acknowledgement-v1.json"),
         "cancellation acknowledgement",
     )?;
@@ -229,7 +227,7 @@ fn resolved_snapshot_is_exact_digest_bound_and_golden() -> Result<(), Box<dyn st
 
     let document = ResolvedCapabilitySnapshotDocument::new(snapshot.clone());
     assert_golden(
-        &document,
+        document.to_canonical_json()?,
         include_bytes!("fixtures/resolved-capability-snapshot-v1.json"),
         "resolved capability snapshot",
     )?;

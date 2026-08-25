@@ -8,6 +8,9 @@ pub(super) fn scan_core(context: &mut ScanContext<'_, '_>) -> Result<(), Persist
     let values = read.open_table(VALUES).map_err(error::redb)?;
     let usage = read.open_table(WORKSPACE_USAGE).map_err(error::redb)?;
     let budgets = read.open_table(WORKSPACE_BUDGETS).map_err(error::redb)?;
+    let ownership = read
+        .open_table(RUN_ARTIFACT_OWNERSHIP)
+        .map_err(error::redb)?;
 
     context.binary_bytes(phase::SCOPES, &scopes, "workspace_indexes", |key, bytes| {
         let scope: WorkspaceScope = json::decode(bytes, "workspace scope")?;
@@ -77,6 +80,7 @@ pub(super) fn scan_core(context: &mut ScanContext<'_, '_>) -> Result<(), Persist
                 "workspace usage disagrees with its durable domain",
             ));
         }
+        crate::artifact::validate_run_artifact_ownership(&ownership, &run, usage)?;
         Ok(())
     })?;
     context.string_bytes(

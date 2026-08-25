@@ -144,11 +144,11 @@ pub(super) fn scan_committed(context: &mut ScanContext<'_, '_>) -> Result<(), Pe
             }
             let record: crate::artifact::ArtifactAccountingRecord =
                 json::decode(bytes, "artifact accounting")?;
-            if record.schema_version != 3 {
+            if record.schema_version != crate::artifact::ARTIFACT_ACCOUNTING_SCHEMA_VERSION {
                 return Err(PersistenceError::UnsupportedVersion {
                     document: "artifact_accounting",
                     found: record.schema_version,
-                    supported: 3,
+                    supported: crate::artifact::ARTIFACT_ACCOUNTING_SCHEMA_VERSION,
                 });
             }
             Ok(())
@@ -362,12 +362,17 @@ fn scan_digest_index(
         match stored {
             Ok(None) if total == 0 => {}
             Ok(Some(record))
-                if record.schema_version == 3 && record.committed_content_bytes == total => {}
-            Ok(Some(record)) if record.schema_version != 3 => push_failure(
-                context.result,
-                "artifact_indexes",
-                "artifact accounting has an unsupported schema version",
-            )?,
+                if record.schema_version == crate::artifact::ARTIFACT_ACCOUNTING_SCHEMA_VERSION
+                    && record.committed_content_bytes == total => {}
+            Ok(Some(record))
+                if record.schema_version != crate::artifact::ARTIFACT_ACCOUNTING_SCHEMA_VERSION =>
+            {
+                push_failure(
+                    context.result,
+                    "artifact_indexes",
+                    "artifact accounting has an unsupported schema version",
+                )?
+            }
             Ok(_) => push_failure(
                 context.result,
                 "artifact_indexes",

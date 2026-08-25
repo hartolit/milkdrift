@@ -7,6 +7,7 @@ use super::support::{
     require_lifecycle, run_drain_reason, wait_signal_matches,
 };
 use crate::projection::{AttemptState, IterationState, RunLifecycle, RunProjection, TimerPurpose};
+use crate::query::{RUN_PROJECTION_SNAPSHOT_SCHEMA_V3, encode_projection_snapshot};
 use crate::{RunCommand, RunCommandDocument, RuntimeError, WorkerReport};
 use milkdrift_blueprint::{NodeKind, PortId, RepeatTermination, RevisionId, WorkflowId};
 use milkdrift_capability::{
@@ -16,9 +17,9 @@ use milkdrift_capability::{
 use milkdrift_persistence::{
     AtomicRunCommitOutcome, AtomicRunCommitRequest, AttemptId, AttemptUsage, BoundedDetail,
     CommandDisposition, CommandReceipt, CommandResultDocument, CurrencyCode,
-    MAX_WORKSPACE_MUTATIONS_PER_COMMIT, NodeExecutionId, NodeOutcome, Reason, RunEventEnvelope,
-    RunEventKind, RunIndexUpdate, SignalDeliveryMode, TimerId, TimestampMillis, WaitSatisfaction,
-    WorkerId, WorkspaceAccounting, WorkspaceMutation,
+    MAX_WORKSPACE_MUTATIONS_PER_COMMIT, NodeExecutionId, NodeOutcome, ProjectionCheckpoint, Reason,
+    RunEventEnvelope, RunEventKind, RunIndexUpdate, SignalDeliveryMode, TimerId, TimestampMillis,
+    WaitSatisfaction, WorkerId, WorkspaceAccounting, WorkspaceMutation,
 };
 use milkdrift_workspace::{
     ArtifactId, ArtifactReference, ValueKey, ValueOrigin, ValueVersion, WorkspaceBudget,
@@ -563,6 +564,7 @@ impl RuntimeService {
                 if lease_view.worker() != worker
                     || lease_view.attempt() != attempt
                     || !lease_view.is_active()
+                    || lease_view.expires_at() <= document.issued_at()
                 {
                     return Err(RuntimeError::InvalidTransition(
                         "lease acceptance does not match active worker ownership".to_owned(),
@@ -620,6 +622,17 @@ impl RuntimeService {
             }
             WorkerReport::Started { attempt } => {
                 let attempt_view = self.worker_attempt(projection, worker, attempt)?;
+                let lease_is_current = projection.leases().values().any(|lease| {
+                    lease.attempt() == attempt
+                        && lease.worker() == worker
+                        && lease.is_active()
+                        && lease.expires_at() > document.issued_at()
+                });
+                if !lease_is_current {
+                    return Err(RuntimeError::InvalidTransition(
+                        "worker start requires an unexpired active lease".to_owned(),
+                    ));
+                }
                 let invocation = attempt_view.invocation().ok_or_else(|| {
                     RuntimeError::InvalidHistory("scheduled attempt has no invocation".to_owned())
                 })?;
@@ -1250,7 +1263,22 @@ impl RuntimeService {
             &candidate,
             document.issued_at(),
         )?;
-        let request = AtomicRunCommitRequest::new(
+        let should_checkpoint =
+            self.should_checkpoint_projection(projection.sequence(), &candidate);
+        let projection_payload = if should_checkpoint {
+            Some(encode_projection_snapshot(&candidate)?)
+        } else {
+            None
+        };
+        let projection_checkpoint = if let Some(payload) = projection_payload.as_deref() {
+            Some(ProjectionCheckpoint::new(
+                RUN_PROJECTION_SNAPSHOT_SCHEMA_V3,
+                payload,
+            )?)
+        } else {
+            None
+        };
+        let mut request = AtomicRunCommitRequest::new(
             receipt,
             envelopes,
             plan.workspace,
@@ -1261,12 +1289,15 @@ impl RuntimeService {
             result,
             indexes,
         )?;
-        let should_checkpoint =
-            self.should_checkpoint_projection(projection.sequence(), &candidate);
+        if let Some(checkpoint) = projection_checkpoint {
+            request = request.with_projection_checkpoint(checkpoint)?;
+        }
         let outcome = self.store.commit_command(&request)?;
         if should_checkpoint
             && matches!(&outcome, AtomicRunCommitOutcome::Committed(_))
-            && let Err(error) = self.persist_projection_snapshot(document.run_id(), &candidate)
+            && let Some(payload) = projection_payload
+            && let Err(error) =
+                self.persist_projection_snapshot(document.run_id(), &candidate, payload)
         {
             warn!(
                 run = %document.run_id(),

@@ -27,6 +27,8 @@ const ARTIFACTS_BY_DIGEST: TableDefinition<'static, &'static [u8], &'static [u8]
     TableDefinition::new("milkdrift.v1.artifacts.by_digest_and_id");
 const ARTIFACT_REFERENCES: TableDefinition<'static, &'static [u8], &'static [u8]> =
     TableDefinition::new("milkdrift.v1.artifacts.references");
+const RUN_ARTIFACT_OWNERSHIP: TableDefinition<'static, &'static [u8], &'static [u8]> =
+    TableDefinition::new("milkdrift.v1.artifacts.ownership_by_run");
 const ARTIFACT_TEMP_OWNERS: TableDefinition<'static, &'static str, &'static str> =
     TableDefinition::new("milkdrift.v1.artifacts.temp_owners");
 const ARTIFACT_PUBLICATIONS: TableDefinition<'static, &'static str, &'static [u8]> =
@@ -53,6 +55,8 @@ const RUN_HEADS: TableDefinition<'static, &'static str, u64> =
     TableDefinition::new("milkdrift.v1.runs.heads");
 const RUN_EVENTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
     TableDefinition::new("milkdrift.v1.runs.events");
+const COMMAND_RESULTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
+    TableDefinition::new("milkdrift.v1.commands.results");
 const EVENT_HISTORY_DIGESTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
     TableDefinition::new("milkdrift.v1.runs.event_history_digests");
 const RUN_HISTORY_HEADS: TableDefinition<'static, &'static str, &'static [u8]> =
@@ -516,8 +520,121 @@ fn start_request(run: &str) -> Result<AtomicRunCommitRequest, Box<dyn std::error
     )?)
 }
 
+fn continuation_request(
+    run: &RunId,
+    sequence: u64,
+) -> Result<AtomicRunCommitRequest, Box<dyn std::error::Error>> {
+    let expected = RunSequence::new(sequence.checked_sub(1).ok_or("sequence underflow")?);
+    let resulting = RunSequence::new(sequence);
+    let command = CommandId::new(format!("command-continuity-{sequence}"))?;
+    let receipt = CommandReceipt::new(
+        command.clone(),
+        run.clone(),
+        ActorRef::new("actor-integrity")?,
+        expected,
+        TimestampMillis::new(10 + sequence),
+        format!(r#"{{"schema_version":1,"type":"continuity-{sequence}"}}"#).into_bytes(),
+    )?;
+    let event = RunEventEnvelope::new(
+        EventId::new(format!("event-continuity-{sequence}"))?,
+        run.clone(),
+        resulting,
+        TimestampMillis::new(10 + sequence),
+        RunEventKind::RunStarted,
+    )?;
+    let result = CommandResultDocument::new(
+        command,
+        run.clone(),
+        receipt.fingerprint().clone(),
+        CommandDisposition::Accepted,
+        resulting,
+        vec![event.event_id().clone()],
+        BoundedJson::new(json!({"accepted": true}))?,
+    )?;
+    Ok(AtomicRunCommitRequest::new(
+        receipt,
+        vec![event],
+        Vec::new(),
+        Some(WorkspaceAccounting {
+            budget: WorkspaceBudget::new(0, 0, 0, 0, 0, 0)?,
+            expected_usage: WorkspaceUsage::EMPTY,
+            resulting_usage: WorkspaceUsage::EMPTY,
+        }),
+        Vec::new(),
+        Vec::new(),
+        None,
+        result,
+        RunIndexUpdate::new(
+            Some(RunSummaryIndex {
+                run: run.clone(),
+                workflow: WorkflowId::new("workflow-integrity")?,
+                revision: revision_id()?,
+                state: IndexedRunState::Active,
+                through_sequence: resulting,
+                updated_at: TimestampMillis::new(10 + sequence),
+            }),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
+    )?)
+}
+
+fn pair_key(first: &str, second: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut key = Vec::new();
+    for component in [first, second] {
+        key.extend_from_slice(&u32::try_from(component.len())?.to_be_bytes());
+        key.extend_from_slice(component.as_bytes());
+    }
+    Ok(key)
+}
+
+fn event_key(run: &RunId, sequence: RunSequence) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut key = Vec::new();
+    key.extend_from_slice(&u32::try_from(run.as_str().len())?.to_be_bytes());
+    key.extend_from_slice(run.as_str().as_bytes());
+    key.extend_from_slice(&sequence.get().to_be_bytes());
+    Ok(key)
+}
+
 #[test]
-fn deleted_artifact_reference_rows_cannot_reopen_double_charging()
+fn scrub_detects_paired_interior_event_and_command_deletion()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = TempDir::new()?;
+    let first = start_request("run-continuity-gap")?;
+    let run = first.receipt().run().clone();
+    let second = continuation_request(&run, 2)?;
+    let third = continuation_request(&run, 3)?;
+    {
+        let store = RedbStore::open(directory.path())?;
+        store.commit_command(&first)?;
+        store.commit_command(&second)?;
+        store.commit_command(&third)?;
+    }
+    let database = Database::open(directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    assert!(
+        write
+            .open_table(RUN_EVENTS)?
+            .remove(event_key(&run, RunSequence::new(2))?.as_slice())?
+            .is_some()
+    );
+    assert!(
+        write
+            .open_table(COMMAND_RESULTS)?
+            .remove(pair_key(run.as_str(), "command-continuity-2")?.as_slice())?
+            .is_some()
+    );
+    write.commit()?;
+    drop(database);
+
+    let store = RedbStore::open(directory.path())?;
+    assert!(exhaustive_integrity_failure_count(&store)? > 0);
+    Ok(())
+}
+
+#[test]
+fn paired_artifact_reference_loss_cannot_reopen_double_charging()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = TempDir::new()?;
     let budget = WorkspaceBudget::new(0, 0, 0, 10, 1_024, 1_024)?;
@@ -545,12 +662,23 @@ fn deleted_artifact_reference_rows_cannot_reopen_double_charging()
             let _ = references.remove(key.as_slice())?;
         }
     }
+    {
+        let mut ownership = write.open_table(RUN_ARTIFACT_OWNERSHIP)?;
+        let keys = ownership
+            .iter()?
+            .map(|item| item.map(|(key, _)| key.value().to_vec()))
+            .collect::<Result<Vec<_>, _>>()?;
+        for key in keys {
+            let _ = ownership.remove(key.as_slice())?;
+        }
+    }
     write.commit()?;
     drop(database);
 
     let store = RedbStore::open(directory.path())?;
     assert_corruption(store.is_referenced_by_run(request.run(), request.metadata().reference()));
     assert_corruption(store.commit_command(&double_charge_request(&request)?));
+    assert!(exhaustive_integrity_failure_count(&store)? > 0);
     Ok(())
 }
 
@@ -887,6 +1015,7 @@ fn snapshot_pointer_deletion_is_rejected_but_lowered_journal_head_is_corruption(
             1,
             b"projection".to_vec(),
         )?;
+        let request = request.with_projection_checkpoint(snapshot.payload_checkpoint()?)?;
         {
             let store = RedbStore::open(directory.path())?;
             store.commit_command(&request)?;

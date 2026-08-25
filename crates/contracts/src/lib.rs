@@ -151,6 +151,111 @@ pub fn validate_json_value(value: &Value, limits: JsonLimits) -> Result<(), Json
     validate_value(value, "$", 0, limits)
 }
 
+/// Rejects disproportionate JSON depth, strings, keys, and container cardinality before
+/// a general-purpose parser can allocate the corresponding value tree.
+///
+/// This lexical pass is intentionally conservative for escaped strings; the ordinary
+/// JSON parser remains responsible for syntax and duplicate-key validation afterward.
+pub fn preflight_json_structure(
+    bytes: &[u8],
+    limits: JsonLimits,
+) -> Result<(), JsonBoundViolation> {
+    #[derive(Clone, Copy)]
+    struct Frame {
+        commas: usize,
+        has_content: bool,
+    }
+
+    let mut frames: Vec<Frame> = Vec::new();
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut string_bytes = 0usize;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if in_string {
+            if escaped {
+                escaped = false;
+                string_bytes = string_bytes.saturating_add(1);
+            } else if byte == b'\\' {
+                escaped = true;
+                string_bytes = string_bytes.saturating_add(1);
+            } else if byte == b'"' {
+                in_string = false;
+                let mut next = index.saturating_add(1);
+                while next < bytes.len() && bytes[next].is_ascii_whitespace() {
+                    next = next.saturating_add(1);
+                }
+                let (kind, maximum) = if bytes.get(next) == Some(&b':') {
+                    (JsonBoundKind::Key, limits.maximum_key_bytes)
+                } else {
+                    (JsonBoundKind::String, limits.maximum_string_bytes)
+                };
+                if string_bytes > maximum {
+                    return Err(violation("$", kind, maximum));
+                }
+            } else {
+                string_bytes = string_bytes.saturating_add(1);
+            }
+            index = index.saturating_add(1);
+            continue;
+        }
+        match byte {
+            b'"' => {
+                if let Some(frame) = frames.last_mut() {
+                    frame.has_content = true;
+                }
+                in_string = true;
+                escaped = false;
+                string_bytes = 0;
+            }
+            b'{' | b'[' => {
+                if let Some(frame) = frames.last_mut() {
+                    frame.has_content = true;
+                }
+                let depth = frames.len();
+                if depth > limits.maximum_depth {
+                    return Err(violation("$", JsonBoundKind::Depth, limits.maximum_depth));
+                }
+                frames.push(Frame {
+                    commas: 0,
+                    has_content: false,
+                });
+            }
+            b'}' | b']' => {
+                if let Some(frame) = frames.pop() {
+                    let items = if frame.has_content {
+                        frame.commas.saturating_add(1)
+                    } else {
+                        0
+                    };
+                    if items > limits.maximum_container_items {
+                        let kind = if byte == b'}' {
+                            JsonBoundKind::Object
+                        } else {
+                            JsonBoundKind::Array
+                        };
+                        return Err(violation("$", kind, limits.maximum_container_items));
+                    }
+                }
+            }
+            b',' => {
+                if let Some(frame) = frames.last_mut() {
+                    frame.commas = frame.commas.saturating_add(1);
+                }
+            }
+            byte if byte.is_ascii_whitespace() => {}
+            _ => {
+                if let Some(frame) = frames.last_mut() {
+                    frame.has_content = true;
+                }
+            }
+        }
+        index = index.saturating_add(1);
+    }
+    Ok(())
+}
+
 /// Failure while producing canonical JSON.
 #[derive(Debug)]
 pub enum CanonicalJsonError {
@@ -341,7 +446,7 @@ mod tests {
 
     use super::{
         JsonBoundKind, JsonLimits, canonical_json_bytes, parse_json_without_duplicates,
-        validate_json_value,
+        preflight_json_structure, validate_json_value,
     };
 
     const LIMITS: JsonLimits = JsonLimits {
@@ -370,5 +475,26 @@ mod tests {
             assert_eq!(error.path(), "$.a.b.c.d.e");
             assert_eq!(error.maximum(), 4);
         }
+    }
+
+    #[test]
+    fn lexical_preflight_rejects_large_containers_before_value_allocation() {
+        let array = preflight_json_structure(br#"[1,2,3]"#, LIMITS);
+        assert!(
+            array.is_err(),
+            "three array entries passed the preflight bound"
+        );
+        if let Err(array) = array {
+            assert_eq!(array.kind(), JsonBoundKind::Array);
+        }
+        let string = preflight_json_structure(br#"{"key":"123456789"}"#, LIMITS);
+        assert!(
+            string.is_err(),
+            "oversized string passed the preflight bound"
+        );
+        if let Err(string) = string {
+            assert_eq!(string.kind(), JsonBoundKind::String);
+        }
+        assert!(preflight_json_structure(br#"{"a":[1,2]}"#, LIMITS).is_ok());
     }
 }

@@ -33,9 +33,63 @@ const SNAPSHOT_JSON_LIMITS: JsonLimits = JsonLimits {
     maximum_container_items: 16,
 };
 const SNAPSHOT_CHECKSUM_DOMAIN: &[u8] = b"milkdrift.projection-snapshot-envelope.checksum.v2\0";
+const PROJECTION_CHECKPOINT_DOMAIN: &[u8] = b"milkdrift.projection-payload-checkpoint.v1\0";
 const HISTORY_GENESIS_DOMAIN: &[u8] = b"milkdrift.run-history-chain.genesis.v1\0";
 const HISTORY_LINK_DOMAIN: &[u8] = b"milkdrift.run-history-chain.link.v1\0";
 const HISTORY_GENESIS_MARKER: &[u8] = b"genesis";
+
+/// Durable commitment to runtime projection bytes derived at an accepted journal head.
+///
+/// The commitment is adapter-neutral but is not an independently writable projection:
+/// storage associates it atomically with the authoritative event append that produced it.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectionCheckpoint {
+    payload_schema: u32,
+    payload_digest: IntegrityDigest,
+}
+
+impl ProjectionCheckpoint {
+    /// Commits to one exact, bounded, non-empty projection payload.
+    pub fn new(payload_schema: u32, payload: &[u8]) -> Result<Self, PersistenceError> {
+        if payload_schema == 0 || payload.is_empty() {
+            return Err(PersistenceError::InvalidDocument(
+                "projection checkpoint schema and payload must be non-zero/non-empty".to_owned(),
+            ));
+        }
+        if payload.len() > MAX_SNAPSHOT_PAYLOAD_BYTES {
+            return Err(PersistenceError::Bounds {
+                location: "projection_checkpoint.payload",
+                reason: format!("exceeds {MAX_SNAPSHOT_PAYLOAD_BYTES} bytes"),
+            });
+        }
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(PROJECTION_CHECKPOINT_DOMAIN);
+        hasher.update(&payload_schema.to_be_bytes());
+        let length = u64::try_from(payload.len()).map_err(|_| PersistenceError::Bounds {
+            location: "projection_checkpoint.payload",
+            reason: "payload length exceeds u64".to_owned(),
+        })?;
+        hasher.update(&length.to_be_bytes());
+        hasher.update(payload);
+        Ok(Self {
+            payload_schema,
+            payload_digest: IntegrityDigest::new(format!("b3_{}", hasher.finalize()))?,
+        })
+    }
+
+    /// Runtime-owned payload schema included in the commitment.
+    #[must_use]
+    pub const fn payload_schema(&self) -> u32 {
+        self.payload_schema
+    }
+
+    /// Domain-separated digest of the exact payload bytes.
+    #[must_use]
+    pub const fn payload_digest(&self) -> &IntegrityDigest {
+        &self.payload_digest
+    }
+}
 
 /// Computes the documented digest of one complete contiguous event prefix.
 ///
@@ -229,6 +283,11 @@ impl SnapshotDocument {
     #[must_use]
     pub fn payload(&self) -> &[u8] {
         &self.payload
+    }
+
+    /// Computes the append-time commitment that must authorize this payload.
+    pub fn payload_checkpoint(&self) -> Result<ProjectionCheckpoint, PersistenceError> {
+        ProjectionCheckpoint::new(self.projection_payload_schema, &self.payload)
     }
 
     /// Snapshot integrity checksum.
@@ -427,7 +486,7 @@ fn snapshot_json_bound(violation: JsonBoundViolation) -> PersistenceError {
 pub enum SnapshotLoad {
     /// No snapshot optimization exists.
     Absent,
-    /// Integrity and covered-history digest were verified by storage.
+    /// Integrity, covered-history digest, and append-time projection commitment were verified.
     Verified(SnapshotDocument),
     /// Snapshot bytes/index/history linkage were invalid; caller must replay events.
     Rejected {
@@ -453,8 +512,9 @@ pub trait SnapshotStore: Send + Sync {
 
     /// Stores an immutable snapshot and advances the latest pointer atomically.
     ///
-    /// Implementations verify `covered_sequence` is not beyond the journal head and
-    /// recompute `history_digest` from exact authoritative event envelopes.
+    /// Implementations verify `covered_sequence` is not beyond the journal head,
+    /// recompute `history_digest` from exact authoritative event envelopes, and require
+    /// an equal projection commitment recorded atomically at that journal sequence.
     fn put_snapshot(&self, snapshot: &SnapshotDocument) -> Result<(), PersistenceError>;
 
     /// Loads and validates the latest candidate. A rejected snapshot is never used to

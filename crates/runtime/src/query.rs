@@ -1,3 +1,6 @@
+use milkdrift_contracts::{
+    JsonLimits, parse_json_without_duplicates, preflight_json_structure, validate_json_value,
+};
 use milkdrift_persistence::{
     EventCursor, EventPageQuery, MAX_PAGE_SIZE, PageSize, RunEventEnvelope, RunQueryStore,
     RunSequence, SnapshotLoad, SnapshotStore,
@@ -9,6 +12,12 @@ use tracing::warn;
 use crate::{RunProjection, RuntimeError};
 
 pub(crate) const RUN_PROJECTION_SNAPSHOT_SCHEMA_V3: u32 = 3;
+const PROJECTION_PAYLOAD_JSON_LIMITS: JsonLimits = JsonLimits {
+    maximum_depth: 64,
+    maximum_string_bytes: 1_048_576,
+    maximum_key_bytes: 256,
+    maximum_container_items: 16_384,
+};
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -22,6 +31,27 @@ struct ProjectionSnapshotPayload {
 struct ProjectionSnapshotPayloadRef<'a> {
     schema_version: u32,
     projection: &'a RunProjection,
+}
+
+fn decode_projection_snapshot_payload(bytes: &[u8]) -> Result<ProjectionSnapshotPayload, String> {
+    preflight_json_structure(bytes, PROJECTION_PAYLOAD_JSON_LIMITS).map_err(|violation| {
+        format!(
+            "projection payload {} exceeds {:?} limit {}",
+            violation.path(),
+            violation.kind(),
+            violation.maximum()
+        )
+    })?;
+    let value = parse_json_without_duplicates(bytes).map_err(|error| error.to_string())?;
+    validate_json_value(&value, PROJECTION_PAYLOAD_JSON_LIMITS).map_err(|violation| {
+        format!(
+            "projection payload {} exceeds {:?} limit {}",
+            violation.path(),
+            violation.kind(),
+            violation.maximum()
+        )
+    })?;
+    serde_json::from_value(value).map_err(|error| error.to_string())
 }
 
 /// Folds one authoritative history range against the head observed by the first read.
@@ -193,7 +223,7 @@ where
         );
         return project_complete_history(store, run);
     }
-    let payload: ProjectionSnapshotPayload = match serde_json::from_slice(snapshot.payload()) {
+    let payload = match decode_projection_snapshot_payload(snapshot.payload()) {
         Ok(payload) => payload,
         Err(error) => {
             warn!(run = %run, snapshot = %snapshot.snapshot(), reason = %error, "projection snapshot payload rejected");
@@ -393,6 +423,26 @@ mod tests {
                 PersistenceError::InvalidDocument("test snapshot lock is poisoned".to_owned())
             })? = SnapshotLoad::Absent;
             Ok(())
+        }
+    }
+
+    #[test]
+    fn projection_payload_cardinality_is_rejected_by_lexical_preflight() {
+        let mut payload = br#"{"schema_version":3,"projection":{"oversized":["#.to_vec();
+        for index in 0..=PROJECTION_PAYLOAD_JSON_LIMITS.maximum_container_items {
+            if index != 0 {
+                payload.push(b',');
+            }
+            payload.extend_from_slice(b"null");
+        }
+        payload.extend_from_slice(b"]}}");
+        let result = decode_projection_snapshot_payload(&payload);
+        assert!(
+            result.is_err(),
+            "oversized projection array passed lexical preflight"
+        );
+        if let Err(error) = result {
+            assert!(error.contains("Array"), "unexpected rejection: {error}");
         }
     }
 

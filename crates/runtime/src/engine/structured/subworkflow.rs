@@ -11,7 +11,7 @@ use milkdrift_persistence::{
     WorkspaceMutation,
 };
 use milkdrift_workspace::{
-    RunId, ScopeReference, SubworkflowId, ValueKey, WorkspaceScope, WorkspaceValueEntry,
+    RunId, ScopeId, ScopeReference, SubworkflowId, ValueKey, WorkspaceScope, WorkspaceValueEntry,
     WorkspaceValueReference,
 };
 use std::collections::BTreeMap;
@@ -85,13 +85,9 @@ impl RuntimeService {
         parent: &RunProjection,
         child: &ActiveChild,
     ) -> Result<RunSequence, RuntimeError> {
-        let child_head = self.store.head(&child.run)?;
-        if child_head != RunSequence::ZERO {
-            return Ok(child_head);
-        }
-
         let child_blueprint = self.load_validated_revision(&child.revision, None)?;
-        let root_scope = WorkspaceScope::run_root(child.run.clone(), self.next_scope_id()?);
+        let root_scope =
+            WorkspaceScope::run_root(child.run.clone(), child_root_scope(parent, child)?);
         let mut inputs_by_key = BTreeMap::new();
         for reference in &child.inputs {
             let entry = self.projected_workspace_value(parent, reference, &[])?;
@@ -104,7 +100,7 @@ impl RuntimeService {
                 ));
             }
         }
-        let inputs = inputs_by_key
+        let inputs: Vec<_> = inputs_by_key
             .into_iter()
             .map(|(key, value)| {
                 WorkspaceValueEntry::initial(root_scope.reference().clone(), key, value)
@@ -113,6 +109,37 @@ impl RuntimeService {
         let budget = parent.workspace_budget().ok_or_else(|| {
             RuntimeError::InvalidHistory("parent run has no workspace budget".to_owned())
         })?;
+        let child_head = self.store.head(&child.run)?;
+        if child_head != RunSequence::ZERO {
+            let existing = self.projection(&child.run)?;
+            let expected_references: Vec<_> = inputs
+                .iter()
+                .map(|entry| entry.reference().clone())
+                .collect();
+            if existing.run_id() != Some(&child.run)
+                || existing.workflow() != Some(child_blueprint.semantic().workflow())
+                || existing.revision() != Some(&child.revision)
+                || existing.root_scope() != Some(&root_scope)
+                || existing.workspace_budget() != Some(budget)
+                || existing.inputs() != expected_references
+            {
+                return Err(RuntimeError::InvalidHistory(
+                    "pre-existing child run does not match its parent-bound creation facts"
+                        .to_owned(),
+                ));
+            }
+            for expected in &inputs {
+                let actual =
+                    self.projected_workspace_value(&existing, expected.reference(), &[])?;
+                if actual != *expected {
+                    return Err(RuntimeError::InvalidHistory(
+                        "pre-existing child run input does not match its parent-bound value"
+                            .to_owned(),
+                    ));
+                }
+            }
+            return Ok(child_head);
+        }
         let create = RunCommandDocument::new(
             self.next_command_id()?,
             child.run.clone(),
@@ -408,4 +435,25 @@ impl RuntimeService {
         )?;
         Ok(())
     }
+}
+
+fn child_root_scope(parent: &RunProjection, child: &ActiveChild) -> Result<ScopeId, RuntimeError> {
+    let parent_run = parent.run_id().ok_or_else(|| {
+        RuntimeError::InvalidHistory("subworkflow parent aggregate identity is absent".to_owned())
+    })?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"milkdrift.attached-child-root-scope.v1\0");
+    for component in [
+        parent_run.as_str(),
+        child.subworkflow.as_str(),
+        child.run.as_str(),
+    ] {
+        let length = u64::try_from(component.len()).map_err(|_error| {
+            RuntimeError::InvalidHistory("child identity length exceeds u64".to_owned())
+        })?;
+        hasher.update(&length.to_be_bytes());
+        hasher.update(component.as_bytes());
+    }
+    ScopeId::new(format!("child-root-{}", hasher.finalize().to_hex()))
+        .map_err(|error| RuntimeError::InvalidHistory(error.to_string()))
 }

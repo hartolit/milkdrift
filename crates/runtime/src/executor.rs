@@ -67,7 +67,7 @@ impl ResolvedCapability {
 }
 
 /// Dispatch value delivered to an executor after schedule and lease facts are durable.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ExecutionDispatch {
     run: RunId,
     revision: RevisionId,
@@ -81,36 +81,8 @@ pub struct ExecutionDispatch {
 }
 
 impl ExecutionDispatch {
-    /// Constructs a dispatch and validates every duplicated boundary fact.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        run: RunId,
-        revision: RevisionId,
-        node: NodeId,
-        execution: NodeExecutionId,
-        attempt: AttemptId,
-        lease: LeaseId,
-        lease_expires_at: TimestampMillis,
-        resolution: ResolvedCapability,
-        request: InvocationRequest,
-    ) -> Result<Self, ExecutorError> {
-        let snapshot = resolution.snapshot().clone();
-        Self::from_snapshot(
-            run,
-            revision,
-            node,
-            execution,
-            attempt,
-            lease,
-            lease_expires_at,
-            snapshot,
-            request,
-        )
-    }
-
-    /// Reconstructs a dispatch from the exact durable capability snapshot.
-    #[allow(clippy::too_many_arguments)]
-    pub fn from_snapshot(
+    pub(crate) fn from_snapshot(
         run: RunId,
         revision: RevisionId,
         node: NodeId,
@@ -251,7 +223,7 @@ impl CancellationDispatch {
 }
 
 /// One durably claimed external action for a caller-owned effect host.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum EffectAction {
     /// Execute one immutable invocation.
     Execute(Box<ExecutionDispatch>),

@@ -207,8 +207,12 @@ fn remediation_survives_reopen_and_dispatches_only_the_target_revision_operation
         executor.clone(),
     )?;
     let actions = runtime.claim_effects(PageSize::new(1)?)?;
-    let dispatch = match actions.as_slice() {
-        [EffectAction::Execute(dispatch)] => dispatch,
+    let action = actions
+        .into_iter()
+        .next()
+        .ok_or("reopened remediation action is absent")?;
+    let dispatch = match &action {
+        EffectAction::Execute(dispatch) => dispatch,
         _ => return Err("reopened remediation did not yield exactly one execution".into()),
     };
     assert_eq!(dispatch.revision(), new.id());
@@ -217,12 +221,11 @@ fn remediation_survives_reopen_and_dispatches_only_the_target_revision_operation
         &OperationId::new("model.fail")?
     );
     assert!(matches!(
-        runtime.execute_effect(&actions[0])?,
+        runtime.execute_effect(action)?,
         EffectExecutionResult::Completed { .. }
     ));
     assert_eq!(executor.calls("model.generate")?, 1);
     assert_eq!(executor.calls("model.fail")?, 1);
-    drop(actions);
     drop(runtime);
     drop(clock);
     drop(store);

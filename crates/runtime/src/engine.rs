@@ -26,8 +26,7 @@ use tracing::{debug, info, info_span, warn};
 
 use crate::projection::RunProjection;
 use crate::query::{
-    RUN_PROJECTION_SNAPSHOT_SCHEMA_V3, encode_projection_snapshot, load_bounded_history,
-    project_from_latest_snapshot,
+    RUN_PROJECTION_SNAPSHOT_SCHEMA_V3, load_bounded_history, project_from_latest_snapshot,
 };
 use crate::{
     BoundaryClock, IdGenerator, RetryPolicy, RunCommand, RunCommandDocument, RuntimeError,
@@ -403,13 +402,13 @@ impl RuntimeService {
         &self,
         run: &RunId,
         projection: &RunProjection,
+        payload: Vec<u8>,
     ) -> Result<(), RuntimeError> {
         if projection.sequence() == RunSequence::ZERO || projection.run_id() != Some(run) {
             return Err(RuntimeError::InvalidHistory(
                 "projection snapshot requires a non-empty matching aggregate".to_owned(),
             ));
         }
-        let payload = encode_projection_snapshot(projection)?;
         let history_digest = self.store.history_digest(run, projection.sequence())?;
         let mut identity = blake3::Hasher::new();
         identity.update(b"milkdrift.runtime-projection-snapshot.v3\0");

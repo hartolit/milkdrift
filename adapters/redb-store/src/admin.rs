@@ -16,12 +16,11 @@ use crate::{
 };
 use milkdrift_blueprint::BlueprintRevisionDocument;
 use milkdrift_persistence::{
-    ArtifactPublicationId, BoundedDetail, CURRENT_STORAGE_SCHEMA_VERSION, IndexedRunState,
-    IntegrityScanCursor, IntegrityScanFamily, IntegrityScanRequest, IntegrityScanResult,
-    LeaseIndexEntry, PersistenceError, RevisionSummary, RunnableIndexEntry, SignalId,
-    SnapshotDocument, SnapshotId, StorageAdmin, StorageComponentHealth, StorageHealth,
-    StorageHealthStatus, StorageSchemaCompatibility, StorageSchemaInfo, TimerIndexEntry,
-    TimestampMillis,
+    ArtifactPublicationId, BoundedDetail, IndexedRunState, IntegrityScanCursor,
+    IntegrityScanFamily, IntegrityScanRequest, IntegrityScanResult, LeaseIndexEntry,
+    PersistenceError, RevisionSummary, RunSequence, RunnableIndexEntry, SignalId, SnapshotDocument,
+    SnapshotId, StorageAdmin, StorageComponentHealth, StorageHealth, StorageHealthStatus,
+    StorageSchemaCompatibility, StorageSchemaInfo, TimerIndexEntry, TimestampMillis,
 };
 use milkdrift_workspace::{
     ArtifactMetadata, ArtifactReference, RunId, ScopeId, ScopeKind, WorkspaceBudget,

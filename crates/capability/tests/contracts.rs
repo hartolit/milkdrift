@@ -9,7 +9,6 @@ use milkdrift_capability::{
     FeatureId, IdempotencyBehavior, InputReference, InvocationId, InvocationRequest,
     InvocationRequestDocument, InvocationValueReference, Locality, OperationContract, OperationId,
     ProviderProfileRef, SchemaContract, SchemaId, SideEffectClass, StreamingMode, TrustZone,
-    canonical_json_bytes,
 };
 use proptest::prelude::*;
 use serde_json::json;
@@ -98,7 +97,7 @@ fn requirement_matches_only_truthfully_advertised_features()
 #[test]
 fn immutable_description_and_mutable_observation_are_distinct()
 -> Result<(), Box<dyn std::error::Error>> {
-    let descriptor_json = canonical_json_bytes(&descriptor()?)?;
+    let descriptor_json = serde_json::to_vec(&descriptor()?)?;
     let observation = CapabilityObservation::new(
         CapabilityId::new("anthropic-primary")?,
         1_776_000_000_000,
@@ -106,7 +105,7 @@ fn immutable_description_and_mutable_observation_are_distinct()
         2,
         "healthy",
     )?;
-    let observation_json = canonical_json_bytes(&observation)?;
+    let observation_json = serde_json::to_vec(&observation)?;
     let descriptor_text = String::from_utf8(descriptor_json)?;
     let observation_text = String::from_utf8(observation_json)?;
     assert!(!descriptor_text.contains("current_load"));

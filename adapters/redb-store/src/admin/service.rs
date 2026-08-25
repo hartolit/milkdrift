@@ -8,6 +8,8 @@ use super::{
 };
 impl StorageAdmin for RedbStore {
     fn schema_info(&self) -> Result<StorageSchemaInfo, PersistenceError> {
+        let current_version = u32::try_from(crate::schema::STORAGE_SCHEMA_VERSION)
+            .map_err(|_| error::corruption("storage schema version exceeds the public range"))?;
         let read = self.database().begin_read().map_err(error::redb)?;
         let table = read.open_table(METADATA).map_err(error::redb)?;
         let found = table
@@ -16,16 +18,16 @@ impl StorageAdmin for RedbStore {
             .map(|value| value.value())
             .ok_or_else(|| error::corruption("storage schema version is missing"))?;
         let stored_version = u32::try_from(found).unwrap_or(u32::MAX);
-        let compatibility = if stored_version == CURRENT_STORAGE_SCHEMA_VERSION {
+        let compatibility = if stored_version == current_version {
             StorageSchemaCompatibility::Current
-        } else if stored_version < CURRENT_STORAGE_SCHEMA_VERSION {
+        } else if stored_version < current_version {
             StorageSchemaCompatibility::MigrationRequired
         } else {
             StorageSchemaCompatibility::FutureUnsupported
         };
         Ok(StorageSchemaInfo {
             stored_version,
-            current_version: CURRENT_STORAGE_SCHEMA_VERSION,
+            current_version,
             compatibility,
         })
     }
@@ -159,6 +161,22 @@ impl StorageAdmin for RedbStore {
             }
         }
         if !more_remaining && start_family <= IntegrityScanFamily::RunEvents {
+            let mut previous_event_position = if start_family == IntegrityScanFamily::RunEvents {
+                request
+                    .cursor
+                    .as_ref()
+                    .map(|cursor| -> Result<_, PersistenceError> {
+                        let (_, key) = integrity_cursor_state(cursor)?;
+                        let event = events.get(key).map_err(error::redb)?.and_then(|bytes| {
+                            milkdrift_persistence::RunEventEnvelope::from_json(bytes.value()).ok()
+                        });
+                        Ok(event.map(|event| (event.run_id().clone(), event.sequence())))
+                    })
+                    .transpose()?
+                    .flatten()
+            } else {
+                None
+            };
             let lower = if start_family == IntegrityScanFamily::RunEvents {
                 request
                     .cursor
@@ -187,6 +205,24 @@ impl StorageAdmin for RedbStore {
                 )?);
                 match milkdrift_persistence::RunEventEnvelope::from_json(bytes.value()) {
                     Ok(event) => {
+                        let contiguous = match &previous_event_position {
+                            Some((previous_run, previous_sequence))
+                                if previous_run == event.run_id() =>
+                            {
+                                previous_sequence
+                                    .next()
+                                    .is_ok_and(|expected| expected == event.sequence())
+                            }
+                            Some(_) | None => event.sequence() == RunSequence::FIRST,
+                        };
+                        if !contiguous {
+                            push_failure(
+                                &mut result,
+                                "journal_history",
+                                "event table is not contiguous from sequence one within its run",
+                            )?;
+                        }
+                        previous_event_position = Some((event.run_id().clone(), event.sequence()));
                         let expected_key =
                             codec::run_sequence(event.run_id().as_str(), event.sequence())?;
                         if key.value() != expected_key.as_slice() {

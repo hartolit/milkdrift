@@ -25,7 +25,9 @@ impl RunProjection {
                 let execution_view = self.execution(execution, event)?;
                 let started_worker = self
                     .active_lease_for_attempt(attempt)
-                    .filter(|lease| lease.execution() == execution)
+                    .filter(|lease| {
+                        lease.execution() == execution && lease.expires_at() > event.occurred_at()
+                    })
                     .map(|lease| lease.worker().clone());
                 if attempt_view.execution != *execution
                     || attempt_view.invocation.as_ref() != Some(invocation)

@@ -228,7 +228,11 @@ fn crash_after_durable_lease_recovers_only_after_expiry_and_retries_once() -> Te
         assert_eq!(scheduled.completed, 0);
         let actions = runtime.claim_effects(PageSize::new(1)?)?;
         assert_eq!(actions.len(), 1);
-        let dispatch = match &actions[0] {
+        let action = actions
+            .into_iter()
+            .next()
+            .ok_or("recovered unstarted attempt action is absent")?;
+        let dispatch = match &action {
             EffectAction::Execute(dispatch) => dispatch,
             EffectAction::Cancel(_) => {
                 return Err("recovered unstarted attempt claimed cancellation".into());
@@ -237,7 +241,7 @@ fn crash_after_durable_lease_recovers_only_after_expiry_and_retries_once() -> Te
         assert_eq!(dispatch.attempt(), &original_attempt);
         assert_eq!(dispatch.lease(), &replacement_lease);
         assert_eq!(
-            runtime.execute_effect(&actions[0])?,
+            runtime.execute_effect(action)?,
             EffectExecutionResult::Completed { observations: 1 }
         );
 
@@ -366,7 +370,7 @@ fn crash_after_durable_start_recovers_as_uncertain_without_duplicate_dispatch_hi
         );
 
         let crash = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            runtime.execute_effect(&action)
+            runtime.execute_effect(action)
         }));
         assert!(
             crash.is_err(),
@@ -649,6 +653,67 @@ fn idempotent_boundary_error_retries_exact_request_and_keeps_first_attempt_truth
     assert_eq!(
         dispatches[0].request().extensions(),
         dispatches[1].request().extensions()
+    );
+    Ok(())
+}
+
+#[test]
+fn uncertainty_and_retry_share_one_boundary_clock_observation() -> TestResult {
+    let directory = TempDir::new()?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let clock = Arc::new(AdvancingClock::new(NOW));
+    let executor = Arc::new(BoundaryFailingExecutor::new(
+        descriptor_with_model_side_effect("idempotent_write")?,
+        1,
+    ));
+    let runtime = RuntimeService::new(
+        store.clone(),
+        executor,
+        clock,
+        Arc::new(SequentialIdGenerator::new(
+            "advancing-uncertainty-clock",
+            1,
+        )?),
+        RuntimeConfig::new(
+            WorkerId::new("worker-advancing-uncertainty-clock")?,
+            ActorRef::new("controller:advancing-uncertainty-clock")?,
+            30_000,
+            32,
+            SchedulerLimits::new(8, 4, 2, 4)?,
+            RetryPolicy::new(2, vec![ErrorClass::Adapter], 1, 1_000, 0)?,
+        )?,
+    )?;
+    let revision = task_revision("workflow-advancing-uncertainty-clock")?;
+    let run = RunId::new("run-advancing-uncertainty-clock")?;
+    store.put_revision(&revision)?;
+    submit_command(
+        &runtime,
+        store.as_ref(),
+        &run,
+        RunCommand::CreateRun {
+            workflow: revision.semantic().workflow().clone(),
+            revision: revision.id().clone(),
+            root_scope: WorkspaceScope::run_root(
+                run.clone(),
+                ScopeId::new("scope-advancing-uncertainty-clock")?,
+            ),
+            workspace_budget: generous_budget()?,
+            inputs: Vec::new(),
+        },
+    )?;
+    submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?;
+    let tick = runtime.tick()?;
+    assert_eq!(tick.uncertain, 1);
+    let history = runtime.history(&run)?;
+    assert!(
+        history
+            .iter()
+            .any(|event| matches!(event.kind(), RunEventKind::ExternalOutcomeUncertain { .. }))
+    );
+    assert!(
+        history
+            .iter()
+            .any(|event| matches!(event.kind(), RunEventKind::NodeRetryScheduled { .. }))
     );
     Ok(())
 }

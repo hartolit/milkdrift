@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     fs::{self, File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -31,7 +32,7 @@ use crate::{
 };
 
 const PUBLICATION_SCHEMA_VERSION: u32 = 1;
-const ARTIFACT_ACCOUNTING_SCHEMA_VERSION: u32 = 3;
+pub(crate) const ARTIFACT_ACCOUNTING_SCHEMA_VERSION: u32 = 3;
 pub(crate) const GLOBAL_ARTIFACT_BYTES_KEY: &str = "artifact_content_bytes";
 const MAX_CHUNK_BYTES: usize = milkdrift_persistence::MAX_ARTIFACT_CHUNK_BYTES;
 
@@ -103,7 +104,7 @@ mod publication;
 
 pub(crate) use accounting::{
     persist_artifact_reference_occurrence, persist_run_artifact_ownership, validate_artifact_state,
-    validated_run_artifact_reference_in_transaction,
+    validate_run_artifact_ownership, validated_run_artifact_reference_in_transaction,
 };
 pub(crate) use path::verify_blob;
 

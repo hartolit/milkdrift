@@ -5,7 +5,7 @@ use std::{
     path::Path,
     sync::{
         Arc, Barrier, Condvar, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -21,8 +21,8 @@ use milkdrift_capability::{
     ArtifactReference as InvocationArtifactReference, BoundedJson, CancellationAcknowledgement,
     CancellationRequest, CapabilityDescriptor, CapabilityDescriptorDocument, CapabilityRequirement,
     ErrorClass, InvocationEvent, InvocationEventKind, InvocationFailure, InvocationId,
-    InvocationTerminal, InvocationValueReference, OperationId, SchemaId, SideEffectClass,
-    TerminalStatus,
+    InvocationRequest, InvocationTerminal, InvocationValueReference, OperationId,
+    ResolvedCapabilitySnapshot, SchemaId, SideEffectClass, TerminalStatus,
 };
 use milkdrift_persistence::{
     ActorRef, ArtifactPublicationId, ArtifactStore, AtomicRunCommitRequest, AuthorityDecision,
@@ -38,11 +38,11 @@ use milkdrift_persistence::{
 };
 use milkdrift_redb_store::{RedbStore, testing as storage_fault};
 use milkdrift_runtime::{
-    AttemptState, DeterministicExecutor, EffectAction, EffectExecutionResult, ExecutionDispatch,
-    ExecutionReportBatch, ExecutorError, IdGenerator, IterationState, LeaseState, ManualClock,
-    NodeExecutionState, ResolvedCapability, RetryPolicy, RunCommand, RunLifecycle, RuntimeConfig,
-    RuntimeError, RuntimeService, RuntimeStartupState, SchedulerLimits, SequentialIdGenerator,
-    TaskExecutor, WorkerReport,
+    AttemptState, BoundaryClock, DeterministicExecutor, EffectAction, EffectExecutionResult,
+    ExecutionDispatch, ExecutionReportBatch, ExecutorError, IdGenerator, IterationState,
+    LeaseState, ManualClock, NodeExecutionState, ResolvedCapability, RetryPolicy, RunCommand,
+    RunLifecycle, RuntimeConfig, RuntimeError, RuntimeService, RuntimeStartupState,
+    SchedulerLimits, SequentialIdGenerator, TaskExecutor, WorkerReport,
 };
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactRetention, ArtifactSensitivity,
@@ -71,6 +71,44 @@ struct Harness {
     runtime: RuntimeService,
 }
 
+struct ChildRunCollisionIdGenerator {
+    fallback: SequentialIdGenerator,
+    child_run: RunId,
+}
+
+struct AdvancingClock(AtomicU64);
+
+impl AdvancingClock {
+    const fn new(initial: u64) -> Self {
+        Self(AtomicU64::new(initial))
+    }
+}
+
+impl BoundaryClock for AdvancingClock {
+    fn now(&self) -> Result<TimestampMillis, RuntimeError> {
+        Ok(TimestampMillis::new(self.0.fetch_add(2, Ordering::SeqCst)))
+    }
+}
+
+impl ChildRunCollisionIdGenerator {
+    fn new(prefix: &str, child_run: RunId) -> TestResult<Self> {
+        Ok(Self {
+            fallback: SequentialIdGenerator::new(prefix, 1)?,
+            child_run,
+        })
+    }
+}
+
+impl IdGenerator for ChildRunCollisionIdGenerator {
+    fn next(&self, kind: &'static str) -> Result<String, RuntimeError> {
+        if kind == "child-run" {
+            Ok(self.child_run.as_str().to_owned())
+        } else {
+            self.fallback.next(kind)
+        }
+    }
+}
+
 struct BlockingExecutor {
     resolver: DeterministicExecutor,
     blocking_operation: Mutex<OperationId>,
@@ -87,6 +125,50 @@ struct PanickingExecutor {
 struct DispatchCountingExecutor {
     resolver: DeterministicExecutor,
     dispatches: AtomicUsize,
+}
+
+struct InvalidReportsCountingExecutor {
+    resolver: DeterministicExecutor,
+    dispatches: AtomicUsize,
+}
+
+impl InvalidReportsCountingExecutor {
+    fn new(descriptor: CapabilityDescriptor) -> Self {
+        Self {
+            resolver: DeterministicExecutor::new(descriptor),
+            dispatches: AtomicUsize::new(0),
+        }
+    }
+
+    fn dispatches(&self) -> usize {
+        self.dispatches.load(Ordering::SeqCst)
+    }
+}
+
+impl TaskExecutor for InvalidReportsCountingExecutor {
+    fn resolve(
+        &self,
+        requirement: &CapabilityRequirement,
+    ) -> Result<ResolvedCapability, ExecutorError> {
+        self.resolver.resolve(requirement)
+    }
+
+    fn execute(
+        &self,
+        _dispatch: &ExecutionDispatch,
+    ) -> Result<ExecutionReportBatch, ExecutorError> {
+        self.dispatches.fetch_add(1, Ordering::SeqCst);
+        Err(ExecutorError::InvalidReports(
+            "deterministic invalid report fixture".to_owned(),
+        ))
+    }
+
+    fn cancel(
+        &self,
+        request: &CancellationRequest,
+    ) -> Result<CancellationAcknowledgement, ExecutorError> {
+        self.resolver.cancel(request)
+    }
 }
 
 impl DispatchCountingExecutor {
@@ -126,7 +208,23 @@ impl TaskExecutor for DispatchCountingExecutor {
 struct BoundaryFailingExecutor {
     resolver: DeterministicExecutor,
     failures_remaining: AtomicUsize,
-    dispatches: Mutex<Vec<ExecutionDispatch>>,
+    dispatches: Mutex<Vec<RecordedDispatch>>,
+}
+
+#[derive(Clone)]
+struct RecordedDispatch {
+    resolution: ResolvedCapabilitySnapshot,
+    request: InvocationRequest,
+}
+
+impl RecordedDispatch {
+    fn resolution(&self) -> &ResolvedCapabilitySnapshot {
+        &self.resolution
+    }
+
+    fn request(&self) -> &InvocationRequest {
+        &self.request
+    }
 }
 
 struct BoundaryThenBlockingExecutor {
@@ -378,7 +476,7 @@ impl BoundaryFailingExecutor {
         }
     }
 
-    fn dispatches(&self) -> TestResult<Vec<ExecutionDispatch>> {
+    fn dispatches(&self) -> TestResult<Vec<RecordedDispatch>> {
         Ok(self
             .dispatches
             .lock()
@@ -407,7 +505,10 @@ impl TaskExecutor for BoundaryFailingExecutor {
         self.dispatches
             .lock()
             .map_err(|_| ExecutorError::Boundary("dispatch log lock poisoned".to_owned()))?
-            .push(dispatch.clone());
+            .push(RecordedDispatch {
+                resolution: dispatch.resolution().clone(),
+                request: dispatch.request().clone(),
+            });
         if self
             .failures_remaining
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
@@ -645,6 +746,35 @@ impl Harness {
             executor.clone(),
             clock.clone(),
             Arc::new(SequentialIdGenerator::new(prefix, 1)?),
+            config,
+        )?;
+        Ok(Self {
+            _directory: directory,
+            store,
+            clock,
+            executor,
+            runtime,
+        })
+    }
+
+    fn with_child_run_collision(prefix: &str, child_run: RunId) -> TestResult<Self> {
+        let directory = TempDir::new()?;
+        let store = Arc::new(RedbStore::open(directory.path())?);
+        let clock = Arc::new(ManualClock::new(NOW));
+        let executor = Arc::new(DeterministicExecutor::new(test_descriptor()?));
+        let config = RuntimeConfig::new(
+            WorkerId::new(format!("worker-{prefix}"))?,
+            ActorRef::new(format!("controller:{prefix}"))?,
+            30_000,
+            64,
+            SchedulerLimits::new(64, 32, 16, 32)?,
+            RetryPolicy::new(1, Vec::new(), 10, 1_000, 0)?,
+        )?;
+        let runtime = RuntimeService::new(
+            store.clone(),
+            executor.clone(),
+            clock.clone(),
+            Arc::new(ChildRunCollisionIdGenerator::new(prefix, child_run)?),
             config,
         )?;
         Ok(Self {

@@ -12,8 +12,7 @@ use crate::{
 /// Schema version implemented by the first capability contract format.
 pub const SCHEMA_VERSION_V1: u32 = 1;
 
-/// Returns a deterministic compact JSON representation with recursively sorted object keys.
-pub fn canonical_json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, ContractError> {
+pub(crate) fn canonical_json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, ContractError> {
     let bytes =
         encode_canonical_json(value, DOCUMENT_JSON_LIMITS).map_err(|error| match error {
             CanonicalJsonError::Json(error) => ContractError::InvalidJson(error),

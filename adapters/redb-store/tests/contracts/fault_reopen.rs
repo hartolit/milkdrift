@@ -191,6 +191,7 @@ fn snapshot_put_and_discard_fault_boundaries_reopen_safely()
             1,
             b"projection".to_vec(),
         )?;
+        let request = request.with_projection_checkpoint(snapshot.payload_checkpoint()?)?;
         let store = RedbStore::open_with_config(
             RedbStoreConfig::new(directory.path())
                 .with_fault_injector(Arc::new(FailOnce::new(point))),
@@ -240,6 +241,7 @@ fn snapshot_put_and_discard_fault_boundaries_reopen_safely()
             1,
             b"projection".to_vec(),
         )?;
+        let request = request.with_projection_checkpoint(snapshot.payload_checkpoint()?)?;
         let store = RedbStore::open_with_config(
             RedbStoreConfig::new(directory.path())
                 .with_fault_injector(Arc::new(FailOnce::new(point))),

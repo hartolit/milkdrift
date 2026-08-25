@@ -49,8 +49,8 @@ pub use condition::{
     Comparison, Condition, ConditionError, ConditionOperand, PathSegment, PathSelector,
 };
 pub use document::{
-    BlueprintRevisionDocument, DocumentError, canonical_blueprint_json,
-    node_configuration_fingerprint, node_dependency_fingerprint,
+    BlueprintRevisionDocument, DocumentError, node_configuration_fingerprint,
+    node_dependency_fingerprint,
 };
 pub use identity::{
     AuthorRef, BlueprintId, ContentDigest, EdgeId, FieldId, IdentityError, MutationBatchId,

@@ -8,8 +8,8 @@ use milkdrift_blueprint::{
 };
 use milkdrift_capability::{
     BoundedJson, ErrorClass, IdempotencyBehavior, IdempotencyKey, OperationId, SideEffectClass,
-    canonical_json_bytes,
 };
+use milkdrift_contracts::{JsonLimits, canonical_json_bytes};
 use milkdrift_persistence::{MAX_PAGE_SIZE, RunnableIndexEntry};
 use milkdrift_workspace::{BranchId, RunId};
 use serde_json::{Number, Value};
@@ -17,6 +17,12 @@ use serde_json::{Number, Value};
 use crate::RuntimeError;
 
 pub(crate) const MAX_RETRY_ATTEMPTS: u32 = 1_000;
+const BINDING_KEY_JSON_LIMITS: JsonLimits = JsonLimits {
+    maximum_depth: 64,
+    maximum_string_bytes: 1_048_576,
+    maximum_key_bytes: 256,
+    maximum_container_items: 8_192,
+};
 
 /// Hard scheduler admission limits. Every value is non-zero.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -602,8 +608,8 @@ fn binding_key(source: &BindingSource) -> Result<String, RuntimeError> {
         *path = PathSelector::new(Vec::new())
             .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
     }
-    let bytes = canonical_json_bytes(&key_source)
-        .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
+    let bytes = canonical_json_bytes(&key_source, BINDING_KEY_JSON_LIMITS)
+        .map_err(|error| RuntimeError::Scheduling(format!("{error:?}")))?;
     Ok(blake3::hash(&bytes).to_hex().to_string())
 }
 

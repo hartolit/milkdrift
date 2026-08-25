@@ -48,14 +48,14 @@ pub enum PersistenceError {
     /// JSON was malformed or did not match the closed schema.
     #[error("invalid durable JSON: {0}")]
     Json(#[from] serde_json::Error),
-    /// A document or storage schema is newer than this binary understands.
-    #[error("unsupported {document} schema version {found}; maximum supported is {supported}")]
+    /// A document or storage schema is not the exact version this binary understands.
+    #[error("unsupported {document} schema version {found}; supported version is {supported}")]
     UnsupportedVersion {
         /// Durable document family.
         document: &'static str,
         /// Version read from storage.
         found: u32,
-        /// Latest supported version.
+        /// Exact supported version.
         supported: u32,
     },
     /// Stored data failed its checksum or another integrity check.

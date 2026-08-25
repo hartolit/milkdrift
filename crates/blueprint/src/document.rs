@@ -210,11 +210,6 @@ impl BlueprintRevisionDocument {
     }
 }
 
-/// Returns deterministic canonical JSON for validated semantic blueprint content.
-pub fn canonical_blueprint_json(semantic: &SemanticBlueprint) -> Result<Vec<u8>, DocumentError> {
-    canonical_value_bytes(semantic)
-}
-
 /// Calculates the schema-v1 domain-separated fingerprint of one immutable node definition.
 pub fn node_configuration_fingerprint(node: &Node) -> Result<NodeFingerprint, DocumentError> {
     let bytes = canonical_value_bytes(node)?;

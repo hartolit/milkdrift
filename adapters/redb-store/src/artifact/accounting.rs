@@ -37,6 +37,13 @@ pub(crate) fn validated_run_artifact_reference_in_transaction(
     reference: &ArtifactReference,
 ) -> Result<bool, PersistenceError> {
     validate_artifact_state(write)?;
+    let usage = crate::journal::workspace_domain_in_transaction(write, run)?
+        .map_or(WorkspaceUsage::EMPTY, |(_budget, usage)| usage);
+    let ownership = write
+        .open_table(RUN_ARTIFACT_OWNERSHIP)
+        .map_err(error::redb)?;
+    validate_run_artifact_ownership(&ownership, run, usage)?;
+    drop(ownership);
     let indexed = indexed_run_artifact_reference(write, run, reference)?;
     let authoritative = manifested_run_artifact_reference(write, run, reference)?;
     if indexed != authoritative {
@@ -46,6 +53,56 @@ pub(crate) fn validated_run_artifact_reference_in_transaction(
         )));
     }
     Ok(authoritative)
+}
+
+pub(crate) fn validate_run_artifact_ownership<T>(
+    ownership: &T,
+    run: &RunId,
+    usage: WorkspaceUsage,
+) -> Result<(), PersistenceError>
+where
+    T: redb::ReadableTable<&'static [u8], &'static [u8]>,
+{
+    let prefix = codec::components(&[run.as_str()])?;
+    let end = codec::prefix_end(prefix.clone())
+        .ok_or_else(|| error::corruption("run artifact-ownership prefix has no range end"))?;
+    let mut artifacts = BTreeSet::new();
+    let mut bytes = 0_u64;
+    for item in ownership
+        .range::<&[u8]>(prefix.as_slice()..end.as_slice())
+        .map_err(error::redb)?
+    {
+        let (key, value) = item.map_err(error::redb)?;
+        let components = codec::decode_components(key.value(), 3)?;
+        let reference: ArtifactReference = json::decode(value.value(), "run artifact ownership")?;
+        if components[0] != run.as_str()
+            || components[1] != reference.digest().to_hex()
+            || components[2] != reference.artifact().as_str()
+            || !artifacts.insert(reference.artifact().clone())
+        {
+            return Err(error::corruption(
+                "run artifact-ownership key, document, or unique identity is inconsistent",
+            ));
+        }
+        bytes = bytes
+            .checked_add(reference.size_bytes())
+            .ok_or_else(|| error::corruption("run artifact-ownership bytes overflow"))?;
+        let count = u64::try_from(artifacts.len())
+            .map_err(|_| error::corruption("run artifact-ownership count exceeds u64"))?;
+        if count > usage.artifacts() || bytes > usage.artifact_bytes() {
+            return Err(error::corruption(
+                "run artifact ownership exceeds authoritative workspace usage",
+            ));
+        }
+    }
+    let count = u64::try_from(artifacts.len())
+        .map_err(|_| error::corruption("run artifact-ownership count exceeds u64"))?;
+    if count != usage.artifacts() || bytes != usage.artifact_bytes() {
+        return Err(error::corruption(
+            "run artifact ownership does not equal authoritative workspace usage",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn indexed_run_artifact_reference(

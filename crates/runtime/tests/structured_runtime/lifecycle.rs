@@ -577,7 +577,7 @@ fn scheduler_commits_dispatch_without_entering_long_running_executor() -> TestRe
     let effect_runtime = runtime.clone();
     let effect = std::thread::spawn(move || {
         effect_runtime
-            .execute_effect(&action)
+            .execute_effect(action)
             .map_err(|error| error.to_string())
     });
     executor.wait_until_entered()?;
@@ -724,6 +724,132 @@ fn terminal_observed_after_lease_expiry_is_preserved_as_late_evidence() -> TestR
         event.kind(),
         RunEventKind::LateTerminalEvidenceRecorded { .. }
     )));
+    Ok(())
+}
+
+#[test]
+fn expired_leases_cannot_cross_or_reenter_the_external_execution_boundary() -> TestResult {
+    for claim_before_expiry in [false, true] {
+        let directory = TempDir::new()?;
+        let identity = if claim_before_expiry {
+            "expired-claimed-ticket"
+        } else {
+            "expired-unclaimed-lease"
+        };
+        let executor = Arc::new(DispatchCountingExecutor::new(test_descriptor()?));
+        let (store, clock, runtime) = runtime_with_executor_at(
+            directory.path(),
+            identity,
+            identity,
+            NOW,
+            8,
+            executor.clone(),
+        )?;
+        let revision = task_revision(&format!("workflow-{identity}"))?;
+        let run = RunId::new(format!("run-{identity}"))?;
+        store.put_revision(&revision)?;
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::CreateRun {
+                workflow: revision.semantic().workflow().clone(),
+                revision: revision.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    run.clone(),
+                    ScopeId::new(format!("scope-{identity}"))?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?;
+        submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?;
+        assert_eq!(runtime.scheduler_tick()?.dispatched, 1);
+        let action = if claim_before_expiry {
+            Some(
+                runtime
+                    .claim_effects(PageSize::new(1)?)?
+                    .into_iter()
+                    .next()
+                    .ok_or("fresh lease was not claimable")?,
+            )
+        } else {
+            None
+        };
+        clock.advance(30_001)?;
+        if let Some(action) = action {
+            assert!(matches!(
+                runtime.execute_effect(action),
+                Err(RuntimeError::InvalidTransition(_))
+            ));
+        } else {
+            assert!(runtime.claim_effects(PageSize::new(1)?)?.is_empty());
+        }
+        assert_eq!(executor.dispatches(), 0);
+        let starts = runtime
+            .history(&run)?
+            .into_iter()
+            .filter(|event| matches!(event.kind(), RunEventKind::NodeStarted { .. }))
+            .count();
+        assert_eq!(starts, usize::from(claim_before_expiry));
+    }
+    Ok(())
+}
+
+#[test]
+fn consumed_non_idempotent_ticket_is_not_reissued_after_deterministic_failure() -> TestResult {
+    let directory = TempDir::new()?;
+    let executor = Arc::new(InvalidReportsCountingExecutor::new(
+        descriptor_with_model_side_effect("non_idempotent_write")?,
+    ));
+    let (store, _clock, runtime) = runtime_with_executor_at(
+        directory.path(),
+        "one-shot-effect-ticket",
+        "one-shot-effect-ticket",
+        NOW,
+        8,
+        executor.clone(),
+    )?;
+    let revision = task_revision("workflow-one-shot-effect-ticket")?;
+    let run = RunId::new("run-one-shot-effect-ticket")?;
+    store.put_revision(&revision)?;
+    submit_command(
+        &runtime,
+        store.as_ref(),
+        &run,
+        RunCommand::CreateRun {
+            workflow: revision.semantic().workflow().clone(),
+            revision: revision.id().clone(),
+            root_scope: WorkspaceScope::run_root(
+                run.clone(),
+                ScopeId::new("scope-one-shot-effect-ticket")?,
+            ),
+            workspace_budget: generous_budget()?,
+            inputs: Vec::new(),
+        },
+    )?;
+    submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?;
+    assert_eq!(runtime.scheduler_tick()?.dispatched, 1);
+    let action = runtime
+        .claim_effects(PageSize::new(1)?)?
+        .into_iter()
+        .next()
+        .ok_or("effect ticket was not claimed")?;
+    assert!(matches!(
+        runtime.execute_effect(action),
+        Err(RuntimeError::Executor(ExecutorError::InvalidReports(_)))
+    ));
+    assert_eq!(executor.dispatches(), 1);
+    assert!(runtime.claim_effects(PageSize::new(1)?)?.is_empty());
+    assert_eq!(executor.dispatches(), 1);
+    assert_eq!(
+        runtime
+            .history(&run)?
+            .iter()
+            .filter(|event| matches!(event.kind(), RunEventKind::NodeStarted { .. }))
+            .count(),
+        1
+    );
     Ok(())
 }
 

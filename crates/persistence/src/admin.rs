@@ -1,7 +1,5 @@
 use crate::{BoundedDetail, PageSize, PersistenceError, TimestampMillis};
 
-/// Current physical persistence schema expected by adapters.
-pub const CURRENT_STORAGE_SCHEMA_VERSION: u32 = 3;
 /// Maximum opaque key bytes retained by one resumable integrity-scan cursor.
 pub const MAX_INTEGRITY_SCAN_CURSOR_KEY_BYTES: usize = 512;
 

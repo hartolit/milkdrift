@@ -21,7 +21,7 @@ pub use descriptor::{
 pub use document::{
     CancellationAcknowledgementDocument, CancellationRequestDocument, CapabilityDescriptorDocument,
     InvocationEventDocument, InvocationRequestDocument, ResolvedCapabilitySnapshotDocument,
-    SCHEMA_VERSION_V1, canonical_json_bytes,
+    SCHEMA_VERSION_V1,
 };
 pub use identity::{
     CapabilityId, ExtensionKey, FeatureId, IdempotencyKey, InvocationId, OperationId,

@@ -67,6 +67,7 @@ impl RuntimeService {
         let maximum = usize::try_from(maximum.get()).map_err(|_error| {
             RuntimeError::Scheduling("effect claim page size does not fit usize".to_owned())
         })?;
+        let now = self.clock.now()?;
         let mut actions = Vec::with_capacity(maximum);
         for indexed in snapshot.entries {
             if actions.len() == maximum || indexed.worker != self.config.worker {
@@ -86,13 +87,16 @@ impl RuntimeService {
                     "active effect index disagrees with authoritative lease state".to_owned(),
                 ));
             }
+            if lease.expires_at() <= now {
+                continue;
+            }
             let attempt = projection.attempts().get(&indexed.attempt).ok_or_else(|| {
                 RuntimeError::InvalidHistory("active lease names an absent attempt".to_owned())
             })?;
             match attempt.state() {
                 AttemptState::Leased => {
                     if let Some(dispatch) =
-                        self.claim_invocation(&indexed.run, &indexed.lease, &indexed.attempt)?
+                        self.claim_invocation(&indexed.run, &indexed.lease, &indexed.attempt, now)?
                     {
                         actions.push(EffectAction::Execute(Box::new(dispatch)));
                     }
@@ -125,11 +129,11 @@ impl RuntimeService {
     /// called on the scheduler/recovery call stack.
     pub fn execute_effect(
         &self,
-        action: &EffectAction,
+        action: EffectAction,
     ) -> Result<EffectExecutionResult, RuntimeError> {
         match action {
-            EffectAction::Execute(dispatch) => self.execute_invocation_effect(dispatch),
-            EffectAction::Cancel(dispatch) => self.execute_cancellation_effect(dispatch),
+            EffectAction::Execute(dispatch) => self.execute_invocation_effect(&dispatch),
+            EffectAction::Cancel(dispatch) => self.execute_cancellation_effect(&dispatch),
         }
     }
 
@@ -147,7 +151,7 @@ impl RuntimeService {
             })?,
             ..EffectTickResult::default()
         };
-        for action in &actions {
+        for action in actions {
             match self.execute_effect(action)? {
                 EffectExecutionResult::Completed { observations } => {
                     result.completed = result.completed.saturating_add(1);
@@ -183,6 +187,7 @@ impl RuntimeService {
         run: &RunId,
         lease: &LeaseId,
         attempt: &AttemptId,
+        now: TimestampMillis,
     ) -> Result<Option<ExecutionDispatch>, RuntimeError> {
         let projection = self.projection(run)?;
         let attempt_view = projection
@@ -199,6 +204,7 @@ impl RuntimeService {
         if !lease_view.is_active()
             || lease_view.attempt() != attempt
             || lease_view.worker() != &self.config.worker
+            || lease_view.expires_at() <= now
         {
             return Ok(None);
         }
@@ -249,7 +255,7 @@ impl RuntimeService {
         let (execution, _rejection) = self.commit_worker_report(
             run,
             stable_effect_command_id(run, attempt, &report)?,
-            self.clock.now()?,
+            now,
             Reason::new("effect host accepted a durable dispatch lease")?,
             report,
         )?;
@@ -318,11 +324,47 @@ impl RuntimeService {
         &self,
         dispatch: &ExecutionDispatch,
     ) -> Result<EffectExecutionResult, RuntimeError> {
-        let next_sequence = self
-            .projection(dispatch.run())?
+        let projection = self.projection(dispatch.run())?;
+        let now = self.clock.now()?;
+        let attempt = projection
             .attempts()
             .get(dispatch.attempt())
-            .and_then(crate::projection::NodeAttemptProjection::last_report_sequence)
+            .ok_or_else(|| {
+                RuntimeError::InvalidTransition(
+                    "effect ticket attempt is no longer active".to_owned(),
+                )
+            })?;
+        let execution = projection
+            .node_executions()
+            .get(dispatch.execution())
+            .ok_or_else(|| {
+                RuntimeError::InvalidTransition(
+                    "effect ticket execution is no longer active".to_owned(),
+                )
+            })?;
+        let lease = projection.leases().get(dispatch.lease()).ok_or_else(|| {
+            RuntimeError::InvalidTransition("effect ticket lease is no longer active".to_owned())
+        })?;
+        if attempt.state() != &AttemptState::Running
+            || attempt.execution() != dispatch.execution()
+            || attempt.request() != Some(dispatch.request())
+            || attempt.capability().map(|value| value.snapshot()) != Some(dispatch.resolution())
+            || !matches!(execution.state(), NodeExecutionState::Running(active) if active == dispatch.attempt())
+            || execution.node() != dispatch.node()
+            || projection.revision_for_attempt(dispatch.attempt()) != Some(dispatch.revision())
+            || !lease.is_active()
+            || lease.attempt() != dispatch.attempt()
+            || lease.execution() != dispatch.execution()
+            || lease.worker() != &self.config.worker
+            || lease.expires_at() != dispatch.lease_expires_at()
+            || lease.expires_at() <= now
+        {
+            return Err(RuntimeError::InvalidTransition(
+                "effect ticket no longer matches the exact active attempt and lease".to_owned(),
+            ));
+        }
+        let next_sequence = attempt
+            .last_report_sequence()
             .unwrap_or(0)
             .checked_add(1)
             .ok_or_else(|| {
@@ -517,6 +559,7 @@ impl RuntimeService {
             .ok_or_else(|| {
                 RuntimeError::InvalidTransition("report sequence overflow".to_owned())
             })?;
+        let now = self.clock.now()?;
         let mut plan = CommandPlan::one(RunEventKind::ExternalOutcomeUncertain {
             attempt: attempt.clone(),
             report_sequence,
@@ -538,7 +581,7 @@ impl RuntimeService {
                 attempt_view.execution(),
                 attempt,
                 attempt_view.attempt_number(),
-                self.clock.now()?,
+                now,
                 ErrorClass::Adapter,
                 None,
                 "automatic retry admitted after a lost external effect boundary",
@@ -554,7 +597,7 @@ impl RuntimeService {
         }
         let _ = self.commit_internal_plan(
             run,
-            self.clock.now()?,
+            now,
             SystemTransition::DispatchOutcomeUncertain {
                 attempt: attempt.clone(),
             },

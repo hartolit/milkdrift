@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     CapabilityDescriptor, CapabilityId, ContractError, OperationContract, OperationId,
-    ProviderProfileRef, SCHEMA_VERSION_V1, canonical_json_bytes,
+    ProviderProfileRef, SCHEMA_VERSION_V1, document::canonical_json_bytes,
 };
 
 const DIGEST_DOMAIN: &[u8] = b"milkdrift.resolved-capability-snapshot.v1\0";

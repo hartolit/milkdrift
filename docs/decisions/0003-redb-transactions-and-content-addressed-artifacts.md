@@ -39,10 +39,13 @@ Authoritative immutable data consists of revision documents, event envelopes, wo
 scope/value versions, and committed artifact metadata. Authoritative aggregate state consists
 of run heads, accepted-command results, history-chain heads, workspace usage/budgets, and
 artifact publication/accounting coordination. Discovery rows, digest/ordered indexes,
-pointers, and ownership/reference indexes are derived and verifiable, but no automatic repair
-API is claimed. Snapshots are optional accelerators: envelope v2 carries a strict padded
+pointers, and occurrence indexes are derived and verifiable. Per-run artifact ownership is
+authoritative membership paired exactly with workspace artifact usage; no automatic repair API
+is claimed. Snapshots are optional accelerators: envelope v2 carries a strict padded
 standard-Base64 representation of raw projection payload v3, while its direct
-domain-separated, length-framed BLAKE3 checksum binds the raw bytes and semantic metadata.
+domain-separated, length-framed BLAKE3 checksum binds the raw bytes and semantic metadata. A
+history-chain v2 row at the covered head must also carry the equal projection-payload commitment
+recorded atomically with that event append.
 Invalid or unsupported snapshots are rejected and the runtime replays authoritative events.
 
 Artifact bytes remain BLAKE3 content-addressed. Publication verifies and synchronizes bytes,
@@ -50,7 +53,7 @@ atomically renames and synchronizes the directory, then commits metadata; reads 
 and digest. Durable path-inventory and delete-guard tables preserve crash-safe cleanup without
 walking an authenticated structure.
 
-Physical schema version 3 and internal document format 5 are exact-current only. Earlier and
+Physical schema version 3 and internal document format 6 are exact-current only. Earlier and
 future formats are refused; no migration is implemented. Pre-release users must create a new
 store or wait for an explicit future migration tool rather than reinterpret old bytes.
 

@@ -746,6 +746,50 @@ fn attached_subworkflow_materializes_starts_and_links_a_terminal_child_run() -> 
 }
 
 #[test]
+fn attached_subworkflow_refuses_a_preexisting_foreign_child_run() -> TestResult {
+    let collision = RunId::new("run-foreign-child-collision")?;
+    let harness = Harness::with_child_run_collision("subworkflow-collision", collision.clone())?;
+    let foreign = task_revision("workflow-foreign-child")?;
+    let child = output_child_revision("workflow-intended-child")?;
+    let parent = subworkflow_revision("workflow-collision-parent", &child)?;
+    harness.put_revision(&foreign)?;
+    harness.put_revision(&child)?;
+    harness.put_revision(&parent)?;
+    harness.create(&collision, &foreign)?;
+    let foreign_head = harness.store.head(&collision)?;
+
+    let parent_run = RunId::new("run-collision-parent")?;
+    harness.create_and_start(&parent_run, &parent)?;
+    assert_eq!(
+        harness
+            .runtime
+            .projection(&parent_run)?
+            .subworkflows()
+            .len(),
+        1
+    );
+    assert!(matches!(
+        harness.runtime.scheduler_tick(),
+        Err(RuntimeError::InvalidHistory(_))
+    ));
+    assert_eq!(harness.store.head(&collision)?, foreign_head);
+    let foreign_projection = harness.runtime.projection(&collision)?;
+    assert_eq!(
+        foreign_projection.workflow(),
+        Some(foreign.semantic().workflow())
+    );
+    assert_eq!(foreign_projection.revision(), Some(foreign.id()));
+    assert!(
+        harness
+            .runtime
+            .history(&parent_run)?
+            .iter()
+            .all(|event| { !matches!(event.kind(), RunEventKind::SubworkflowTerminal { .. }) })
+    );
+    Ok(())
+}
+
+#[test]
 fn repeat_runs_each_pinned_child_in_an_isolated_scope_and_stops_at_the_bound() -> TestResult {
     let harness = Harness::new("repeat")?;
     install_child_output_script(&harness)?;

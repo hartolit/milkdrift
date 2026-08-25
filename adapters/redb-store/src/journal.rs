@@ -43,7 +43,7 @@ pub(crate) use append::{
     persist_workspace_value_usage_accounting_in_transaction,
     validate_or_initialize_workspace_domain, validate_run_history_membership,
     validate_run_history_membership_in_transaction, validate_stored_command_record,
-    validate_workspace_domain_in_transaction,
+    validate_workspace_domain_in_transaction, workspace_domain_in_transaction,
 };
 pub(crate) use discovery::{
     first_runnable_for_run, lease_order_key, lease_set_revision_in_transaction, runnable_order_key,
