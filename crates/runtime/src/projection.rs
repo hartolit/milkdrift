@@ -38,9 +38,27 @@ pub(super) mod serde_map {
     }
 }
 
+mod apply_artifact;
+mod apply_branch;
 mod apply_core;
+mod apply_eligibility;
+mod apply_execution;
+mod apply_join;
+mod apply_leases;
+mod apply_lifecycle;
+mod apply_observation;
 mod apply_reconciliation;
+mod apply_reconciliation_action;
+mod apply_reconciliation_plan;
+mod apply_recovery;
+mod apply_repeat_decision;
+mod apply_repeat_iteration;
+mod apply_retry;
 mod apply_structured;
+mod apply_subworkflow;
+mod apply_terminal;
+mod apply_timer;
+mod apply_wait_signal;
 mod compaction;
 mod helpers;
 mod node;

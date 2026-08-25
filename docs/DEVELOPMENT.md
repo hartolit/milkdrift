@@ -7,16 +7,26 @@ Use Rust 1.95.0 as declared by `rust-toolchain.toml` and the workspace
 
 ```sh
 cargo fmt --all -- --check
-cargo check --workspace --all-targets
-cargo test --workspace
+cargo check --workspace --all-targets --all-features
+cargo test --workspace --no-fail-fast
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
+RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps
 cargo deny check
 ```
 
 Apply formatting with `cargo fmt --all`. Golden JSON is hand-reviewed compatibility data under each crate's `tests/fixtures` directory. To update a fixture, change the schema implementation and fixture in one review, run its exact canonical re-encoding test, and record any compatibility decision that changes reader behavior in an ADR. Never regenerate fixtures merely to make a failing test disappear.
 
-Dependencies must be stable crates.io releases with a concrete use in current code. Run `cargo deny check` after any lockfile change. Git dependencies require a documented necessity.
+Dependencies must be stable crates.io releases with a concrete use in current code. Run
+the following audit after any dependency or lockfile change; `cargo machete` is optional
+local tooling and CI does not assume it is installed:
+
+```sh
+cargo tree --workspace --duplicates
+cargo machete
+cargo deny check
+```
+
+Git dependencies require a documented necessity.
 
 Keep module ownership visible. A source file that accumulates multiple lifecycle or
 domain responsibilities must be split into real Rust child modules; `include!` and
@@ -25,6 +35,15 @@ files approaching 2,000 lines require an explicit cohesion review, and integrati
 tests should be grouped by behavior with shared support kept separate.
 
 ## Storage-boundary stress tests
+
+The ordinary projection long-run checks are named, non-ignored tests and should remain
+part of normal validation. They report compacted active-state metrics with `--nocapture`:
+
+```sh
+cargo test -p milkdrift-runtime \
+  projection::tests::bounded:: \
+  -- --nocapture
+```
 
 The ordinary workspace test suite excludes tests whose fixture intentionally crosses a
 large persistence bound and therefore performs thousands of durable redb index

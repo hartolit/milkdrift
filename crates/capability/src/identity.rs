@@ -1,7 +1,3 @@
-use std::fmt;
-
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
 use crate::ContractError;
 
 #[derive(Clone, Copy)]
@@ -68,29 +64,11 @@ fn validate_id(
 
 macro_rules! identity_type {
     ($(#[$meta:meta])* $name:ident, $max:expr, $rule:expr) => {
-        $(#[$meta])*
-        #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-        pub struct $name(String);
-
-        impl $name {
-            /// Constructs and validates the identity.
-            pub fn new(value: impl Into<String>) -> Result<Self, ContractError> {
-                let value = value.into();
-                validate_id(&value, stringify!($name), $max, $rule)?;
-                Ok(Self(value))
-            }
-
-            /// Returns the validated identity text.
-            #[must_use]
-            pub fn as_str(&self) -> &str {
-                &self.0
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str(&self.0)
-            }
+        milkdrift_contracts::validated_string_type! {
+            $(#[$meta])*
+            pub struct $name;
+            error = ContractError;
+            validate = |value, kind| validate_id(value, kind, $max, $rule);
         }
 
         impl TryFrom<String> for $name {
@@ -98,25 +76,6 @@ macro_rules! identity_type {
 
             fn try_from(value: String) -> Result<Self, Self::Error> {
                 Self::new(value)
-            }
-        }
-
-        impl Serialize for $name {
-            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-            where
-                S: Serializer,
-            {
-                serializer.serialize_str(&self.0)
-            }
-        }
-
-        impl<'de> Deserialize<'de> for $name {
-            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                let value = String::deserialize(deserializer)?;
-                Self::new(value).map_err(serde::de::Error::custom)
             }
         }
     };

@@ -1,0 +1,1 @@
+{"checksum":"b3_83662b09b54b8b0dba4de43df1e3fdbac71eff577a8fc006e2f731720c4ba595","event_id":"event-family-03","kind":{"attempt":"attempt-family","execution":"execution-family","expires_at":1700000001000,"lease":"lease-family","type":"lease_granted","worker":"worker-family"},"occurred_at":1700000000003,"run_id":"run-family-fixture","schema_version":1,"sequence":3}

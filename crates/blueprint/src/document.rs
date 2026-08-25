@@ -1,14 +1,13 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt,
-};
+use std::collections::BTreeMap;
 
-use serde::{
-    Deserialize, Serialize,
-    de::{self, MapAccess, SeqAccess, Visitor},
-};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
+
+use milkdrift_contracts::{
+    CanonicalJsonError, JsonBoundKind, JsonBoundViolation, JsonLimits,
+    canonical_json_bytes as encode_canonical_json,
+};
 
 use crate::{
     AuthorRef, BLUEPRINT_SCHEMA_VERSION_V1, BlueprintId, BlueprintMetadata, BlueprintRevision,
@@ -20,6 +19,12 @@ const MAX_BLUEPRINT_DOCUMENT_BYTES: usize = 4_194_304;
 const MAX_BLUEPRINT_DOCUMENT_DEPTH: usize = 64;
 const MAX_JSON_STRING_BYTES: usize = 65_536;
 const MAX_JSON_CONTAINER_ITEMS: usize = 8_192;
+const BLUEPRINT_JSON_LIMITS: JsonLimits = JsonLimits {
+    maximum_depth: MAX_BLUEPRINT_DOCUMENT_DEPTH,
+    maximum_string_bytes: MAX_JSON_STRING_BYTES,
+    maximum_key_bytes: 256,
+    maximum_container_items: MAX_JSON_CONTAINER_ITEMS,
+};
 
 /// Error returned while reading or writing a portable blueprint revision document.
 #[derive(Debug, Error)]
@@ -164,8 +169,7 @@ impl BlueprintRevisionDocument {
                 reason: format!("document exceeds {MAX_BLUEPRINT_DOCUMENT_BYTES} bytes"),
             });
         }
-        reject_duplicate_json_keys(bytes)?;
-        let value: Value = serde_json::from_slice(bytes)?;
+        let value = milkdrift_contracts::parse_json_without_duplicates(bytes)?;
         validate_value(&value, "$", 0)?;
         let version = value
             .get("schema_version")
@@ -206,96 +210,6 @@ impl BlueprintRevisionDocument {
     }
 }
 
-fn reject_duplicate_json_keys(bytes: &[u8]) -> Result<(), serde_json::Error> {
-    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
-    NoDuplicateJson::deserialize(&mut deserializer)?;
-    deserializer.end()
-}
-
-struct NoDuplicateJson;
-
-impl<'de> Deserialize<'de> for NoDuplicateJson {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        deserializer.deserialize_any(NoDuplicateJsonVisitor)
-    }
-}
-
-struct NoDuplicateJsonVisitor;
-
-impl<'de> Visitor<'de> for NoDuplicateJsonVisitor {
-    type Value = NoDuplicateJson;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("JSON without duplicate object keys")
-    }
-
-    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-    where
-        A: MapAccess<'de>,
-    {
-        let mut keys = BTreeSet::new();
-        while let Some(key) = map.next_key::<String>()? {
-            if !keys.insert(key.clone()) {
-                return Err(de::Error::custom(format!(
-                    "duplicate JSON object key '{key}'"
-                )));
-            }
-            map.next_value::<NoDuplicateJson>()?;
-        }
-        Ok(NoDuplicateJson)
-    }
-
-    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
-    where
-        A: SeqAccess<'de>,
-    {
-        while sequence.next_element::<NoDuplicateJson>()?.is_some() {}
-        Ok(NoDuplicateJson)
-    }
-
-    fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
-        Ok(NoDuplicateJson)
-    }
-
-    fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E> {
-        Ok(NoDuplicateJson)
-    }
-
-    fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E> {
-        Ok(NoDuplicateJson)
-    }
-
-    fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
-        Ok(NoDuplicateJson)
-    }
-
-    fn visit_str<E>(self, _: &str) -> Result<Self::Value, E> {
-        Ok(NoDuplicateJson)
-    }
-
-    fn visit_string<E>(self, _: String) -> Result<Self::Value, E> {
-        Ok(NoDuplicateJson)
-    }
-
-    fn visit_none<E>(self) -> Result<Self::Value, E> {
-        Ok(NoDuplicateJson)
-    }
-
-    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        NoDuplicateJson::deserialize(deserializer)
-    }
-
-    fn visit_unit<E>(self) -> Result<Self::Value, E> {
-        Ok(NoDuplicateJson)
-    }
-}
-
 /// Returns deterministic canonical JSON for validated semantic blueprint content.
 pub fn canonical_blueprint_json(semantic: &SemanticBlueprint) -> Result<Vec<u8>, DocumentError> {
     canonical_value_bytes(semantic)
@@ -331,10 +245,11 @@ pub fn node_dependency_fingerprint(
 }
 
 pub(crate) fn canonical_value_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, DocumentError> {
-    let mut value = serde_json::to_value(value)?;
-    validate_value(&value, "$", 0)?;
-    sort_value(&mut value);
-    let bytes = serde_json::to_vec(&value)?;
+    let bytes =
+        encode_canonical_json(value, BLUEPRINT_JSON_LIMITS).map_err(|error| match error {
+            CanonicalJsonError::Json(error) => DocumentError::Json(error),
+            CanonicalJsonError::Bounds(violation) => blueprint_bound(violation),
+        })?;
     if bytes.len() > MAX_BLUEPRINT_DOCUMENT_BYTES {
         return Err(DocumentError::Bounds {
             location: "$".to_owned(),
@@ -344,68 +259,22 @@ pub(crate) fn canonical_value_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, 
     Ok(bytes)
 }
 
-fn sort_value(value: &mut Value) {
-    match value {
-        Value::Object(map) => {
-            for child in map.values_mut() {
-                sort_value(child);
-            }
-            let previous = std::mem::take(map);
-            let mut entries: Vec<_> = previous.into_iter().collect();
-            entries.sort_by(|left, right| left.0.cmp(&right.0));
-            map.extend(entries);
-        }
-        Value::Array(values) => {
-            for child in values {
-                sort_value(child);
-            }
-        }
-        _ => {}
-    }
+fn validate_value(value: &Value, location: &str, depth: usize) -> Result<(), DocumentError> {
+    debug_assert_eq!(location, "$", "blueprint validation starts at the root");
+    debug_assert_eq!(depth, 0, "blueprint validation starts at depth zero");
+    milkdrift_contracts::validate_json_value(value, BLUEPRINT_JSON_LIMITS).map_err(blueprint_bound)
 }
 
-fn validate_value(value: &Value, location: &str, depth: usize) -> Result<(), DocumentError> {
-    if depth > MAX_BLUEPRINT_DOCUMENT_DEPTH {
-        return Err(DocumentError::Bounds {
-            location: location.to_owned(),
-            reason: format!("nesting exceeds depth {MAX_BLUEPRINT_DOCUMENT_DEPTH}"),
-        });
-    }
-    match value {
-        Value::String(text) if text.len() > MAX_JSON_STRING_BYTES => Err(DocumentError::Bounds {
-            location: location.to_owned(),
-            reason: format!("string exceeds {MAX_JSON_STRING_BYTES} bytes"),
-        }),
-        Value::Array(values) => {
-            if values.len() > MAX_JSON_CONTAINER_ITEMS {
-                return Err(DocumentError::Bounds {
-                    location: location.to_owned(),
-                    reason: format!("array exceeds {MAX_JSON_CONTAINER_ITEMS} items"),
-                });
-            }
-            for (index, child) in values.iter().enumerate() {
-                validate_value(child, &format!("{location}[{index}]"), depth + 1)?;
-            }
-            Ok(())
-        }
-        Value::Object(map) => {
-            if map.len() > MAX_JSON_CONTAINER_ITEMS {
-                return Err(DocumentError::Bounds {
-                    location: location.to_owned(),
-                    reason: format!("object exceeds {MAX_JSON_CONTAINER_ITEMS} entries"),
-                });
-            }
-            for (key, child) in map {
-                if key.len() > 256 {
-                    return Err(DocumentError::Bounds {
-                        location: location.to_owned(),
-                        reason: "object key exceeds 256 bytes".to_owned(),
-                    });
-                }
-                validate_value(child, &format!("{location}.{key}"), depth + 1)?;
-            }
-            Ok(())
-        }
-        _ => Ok(()),
+fn blueprint_bound(violation: JsonBoundViolation) -> DocumentError {
+    let reason = match violation.kind() {
+        JsonBoundKind::Depth => format!("nesting exceeds depth {}", violation.maximum()),
+        JsonBoundKind::String => format!("string exceeds {} bytes", violation.maximum()),
+        JsonBoundKind::Key => format!("object key exceeds {} bytes", violation.maximum()),
+        JsonBoundKind::Array => format!("array exceeds {} items", violation.maximum()),
+        JsonBoundKind::Object => format!("object exceeds {} entries", violation.maximum()),
+    };
+    DocumentError::Bounds {
+        location: violation.path().to_owned(),
+        reason,
     }
 }

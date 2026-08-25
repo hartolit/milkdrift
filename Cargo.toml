@@ -4,6 +4,7 @@ members = [
     "adapters/redb-store",
     "crates/blueprint",
     "crates/capability",
+    "crates/contracts",
     "crates/persistence",
     "crates/runtime",
     "crates/workspace",
@@ -17,6 +18,7 @@ rust-version = "1.95"
 
 [workspace.dependencies]
 blake3 = "1.8.2"
+milkdrift-contracts = { version = "=0.1.0", path = "crates/contracts" }
 proptest = "1.7.0"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.143"

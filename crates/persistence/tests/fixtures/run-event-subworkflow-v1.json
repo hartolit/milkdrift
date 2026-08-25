@@ -1,0 +1,1 @@
+{"checksum":"b3_1dd61edf1d878aebe06ac30cc6b20cb29e2bb4e1149fce57d21bb36a9c36403a","event_id":"event-family-13","kind":{"child_run":"run-child-family","cost_micros":{},"outcome":"succeeded","outputs":[],"subworkflow":"subworkflow-family","type":"subworkflow_terminal"},"occurred_at":1700000000013,"run_id":"run-family-fixture","schema_version":1,"sequence":13}

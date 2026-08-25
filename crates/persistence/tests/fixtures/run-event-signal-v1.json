@@ -1,0 +1,1 @@
+{"checksum":"b3_e0427d780320db27c2900e1d77bb9253c91c7e27c81442e47ecc8e06e668e991","event_id":"event-family-11","kind":{"correlation":null,"mode":"one_shot","payload":{"approved":true},"signal":"signal-family","signal_type":"signal.type.family","type":"signal_received"},"occurred_at":1700000000011,"run_id":"run-family-fixture","schema_version":1,"sequence":11}

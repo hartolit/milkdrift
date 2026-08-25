@@ -424,11 +424,7 @@ fn deleted_optional_supplied_input_is_corruption_not_absence() -> TestResult {
     );
     let head = harness.store.head(&run)?;
     let directory = harness.close();
-    delete_raw_row(
-        directory.path(),
-        RAW_VALUES,
-        &raw_value_key(&input_reference)?,
-    )?;
+    storage_fault::remove_workspace_value(directory.path(), &input_reference)?;
 
     let (store, _clock, executor, runtime) =
         open_closed_runtime_at(directory.path(), "deleted-optional-input-reopen", NOW, 64)?;
@@ -474,7 +470,7 @@ fn orphan_latest_optional_input_is_rejected_against_the_projection() -> TestResu
     );
     let head = harness.store.head(&run)?;
     let directory = harness.close();
-    insert_raw_workspace_value(directory.path(), &orphan)?;
+    storage_fault::insert_orphan_workspace_value(directory.path(), &orphan)?;
 
     let (store, _clock, runtime) =
         runtime_at(directory.path(), "orphan-optional-input-reopen", NOW, 64)?;
@@ -523,11 +519,7 @@ fn deleted_required_producer_output_cannot_be_scheduled_as_an_invocation_input()
     );
     let head = harness.store.head(&run)?;
     let directory = harness.close();
-    delete_raw_row(
-        directory.path(),
-        RAW_VALUES,
-        &raw_value_key(&output_reference)?,
-    )?;
+    storage_fault::remove_workspace_value(directory.path(), &output_reference)?;
 
     let (store, _clock, executor, runtime) =
         open_closed_runtime_at(directory.path(), "deleted-producer-output-reopen", NOW, 64)?;
@@ -568,7 +560,7 @@ fn deleted_root_scope_blocks_even_an_inputless_invocation() -> TestResult {
         .clone();
     let head = harness.store.head(&run)?;
     let directory = harness.close();
-    delete_raw_row(directory.path(), RAW_SCOPES, &raw_scope_key(&root)?)?;
+    storage_fault::remove_workspace_scope(directory.path(), &root)?;
 
     let (store, _clock, executor, runtime) =
         open_closed_runtime_at(directory.path(), "deleted-root-scope-reopen", NOW, 64)?;
@@ -622,7 +614,7 @@ fn deleted_branch_scope_blocks_its_inputless_child_invocation() -> TestResult {
     let head = harness.store.head(&run)?;
     let directory = harness.close();
     for scope in &scopes {
-        delete_raw_row(directory.path(), RAW_SCOPES, &raw_scope_key(scope)?)?;
+        storage_fault::remove_workspace_scope(directory.path(), scope)?;
     }
 
     let (store, _clock, executor, runtime) =
@@ -666,7 +658,7 @@ fn terminal_unrelated_corruption_is_skipped_by_startup_and_found_by_explicit_scr
     let head = harness.store.head(&run)?;
     let history = harness.runtime.history(&run)?;
     let directory = harness.close();
-    delete_raw_row(directory.path(), RAW_SCOPES, &raw_scope_key(&root)?)?;
+    storage_fault::remove_workspace_scope(directory.path(), &root)?;
 
     let (store, _clock, executor, runtime) = open_closed_runtime_at(
         directory.path(),
@@ -856,7 +848,7 @@ fn orphan_latest_value_cannot_become_a_worker_output_predecessor() -> TestResult
     drop(runtime);
     drop(clock);
     drop(store);
-    insert_raw_workspace_value(directory.path(), &orphan)?;
+    storage_fault::insert_orphan_workspace_value(directory.path(), &orphan)?;
 
     let (store, _clock, runtime) = runtime_with_executor_at(
         directory.path(),
@@ -965,7 +957,7 @@ fn orphan_latest_value_cannot_version_a_deterministic_terminal_output() -> TestR
     );
     let head = harness.store.head(&run)?;
     let directory = harness.close();
-    insert_raw_workspace_value(directory.path(), &orphan)?;
+    storage_fault::insert_orphan_workspace_value(directory.path(), &orphan)?;
 
     let (store, _clock, runtime) =
         runtime_at(directory.path(), "orphan-terminal-output-reopen", NOW, 64)?;

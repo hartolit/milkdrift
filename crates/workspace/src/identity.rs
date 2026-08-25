@@ -1,6 +1,6 @@
 use std::{fmt, str::FromStr};
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::WorkspaceError;
 
@@ -42,34 +42,16 @@ fn validate_identity(
 
 macro_rules! identity_type {
     ($(#[$meta:meta])* $name:ident, $maximum:expr) => {
-        $(#[$meta])*
-        #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-        pub struct $name(String);
-
-        impl $name {
-            /// Constructs and validates the identity.
-            pub fn new(value: impl Into<String>) -> Result<Self, WorkspaceError> {
-                let value = value.into();
-                validate_identity(&value, stringify!($name), $maximum)?;
-                Ok(Self(value))
-            }
-
-            /// Returns the validated identity text.
-            #[must_use]
-            pub fn as_str(&self) -> &str {
-                &self.0
-            }
+        milkdrift_contracts::validated_string_type! {
+            $(#[$meta])*
+            pub struct $name;
+            error = WorkspaceError;
+            validate = |value, kind| validate_identity(value, kind, $maximum);
         }
 
         impl AsRef<str> for $name {
             fn as_ref(&self) -> &str {
                 self.as_str()
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str(&self.0)
             }
         }
 
@@ -89,24 +71,6 @@ macro_rules! identity_type {
             }
         }
 
-        impl Serialize for $name {
-            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-            where
-                S: Serializer,
-            {
-                serializer.serialize_str(&self.0)
-            }
-        }
-
-        impl<'de> Deserialize<'de> for $name {
-            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                let value = String::deserialize(deserializer)?;
-                Self::new(value).map_err(serde::de::Error::custom)
-            }
-        }
     };
 }
 

@@ -1,6 +1,6 @@
 use std::fmt;
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 
 /// Error returned by a blueprint identity constructor.
@@ -35,48 +35,11 @@ fn validate(value: &str, kind: &'static str, max: usize) -> Result<(), IdentityE
 
 macro_rules! identity_type {
     ($(#[$meta:meta])* $name:ident, $max:expr) => {
-        $(#[$meta])*
-        #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-        pub struct $name(String);
-
-        impl $name {
-            /// Constructs a validated typed identity.
-            pub fn new(value: impl Into<String>) -> Result<Self, IdentityError> {
-                let value = value.into();
-                validate(&value, stringify!($name), $max)?;
-                Ok(Self(value))
-            }
-
-            /// Returns the identity text.
-            #[must_use]
-            pub fn as_str(&self) -> &str {
-                &self.0
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str(&self.0)
-            }
-        }
-
-        impl Serialize for $name {
-            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-            where
-                S: Serializer,
-            {
-                serializer.serialize_str(&self.0)
-            }
-        }
-
-        impl<'de> Deserialize<'de> for $name {
-            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                let value = String::deserialize(deserializer)?;
-                Self::new(value).map_err(serde::de::Error::custom)
-            }
+        milkdrift_contracts::validated_string_type! {
+            $(#[$meta])*
+            pub struct $name;
+            error = IdentityError;
+            validate = |value, kind| validate(value, kind, $max);
         }
     };
 }

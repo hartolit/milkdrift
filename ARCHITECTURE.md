@@ -108,12 +108,18 @@ The implemented production dependency direction is shown below. Arrows point
 from a stable contract to a crate that consumes it:
 
 ```text
+milkdrift-contracts   -> {capability, blueprint, workspace, persistence, runtime}
 milkdrift-capability  -> {blueprint, workspace, persistence, runtime}
 milkdrift-blueprint   -> {persistence, runtime, redb-store}
 milkdrift-workspace   -> {persistence, runtime, redb-store}
 milkdrift-persistence -> {runtime, redb-store}
 ```
 
+`milkdrift-contracts` owns only cross-domain implementation mechanics with
+multiple production consumers: bounded JSON traversal, duplicate-key rejection,
+canonical recursive JSON ordering, and the common validated-string newtype
+implementation. Domain crates continue to own their identities, validation
+rules, byte limits, schema versions, error vocabulary, and durable meaning.
 The redb adapter also consumes blueprint documents directly for immutable
 revision storage. Capability contracts know nothing about blueprints.
 Blueprint uses only pure capability requirements and schema identities.
@@ -139,6 +145,12 @@ Portable capability and blueprint documents use canonical schema-v1 JSON envelop
 
 Readers support only versions they can interpret without guessing. A writer emits one current canonical version. Adding optional meaning still requires a schema review; changing existing meaning or canonical bytes requires a new version and fixtures. Old golden fixtures remain read tests for every supported version. Disk events, projections, daemon commands, peer messages, and artifacts will each declare independent version ownership rather than sharing one global version.
 
+Run-event envelopes are durable internal execution truth, not a promise that a
+future daemon will expose the storage schema directly. External historical read
+models will be separately versioned, paged, authorization-aware projections over
+that truth. They may redact or reshape fields without changing, replacing, or
+claiming ownership of the append-only event contract.
+
 ## 16. Logical ownership and crate extraction
 
 The following map is the long-lived ownership reference:
@@ -151,6 +163,9 @@ milkdrift/
 │   │   ├── validation
 │   │   ├── revision
 │   │   └── mutation
+│   ├── contracts/
+│   │   ├── canonical-json
+│   │   └── validated-newtype-mechanics
 │   ├── runtime/
 │   │   ├── scheduler
 │   │   ├── execution
@@ -187,15 +202,16 @@ The logical map is the long-lived ownership reference. Its exact current physica
 
 | Logical responsibility | Current physical crate/module |
 | --- | --- |
+| Shared contract mechanics | `milkdrift-contracts` owns bounded/canonical JSON mechanics and the common validated-string implementation; semantic rules remain in consuming domain crates |
 | `blueprint/model` | `milkdrift-blueprint::model` (public types re-exported at crate root) |
 | `blueprint/validation` | `milkdrift-blueprint::validation` |
 | `blueprint/revision` | `milkdrift-blueprint::revision` |
 | `blueprint/mutation` | `milkdrift-blueprint::mutation` |
 | `runtime/scheduler` | `milkdrift-runtime::scheduler` and runtime controller admission/index decisions |
-| `runtime/execution` | `milkdrift-runtime::{command,executor}` plus the `engine::{command_planning,completion,dispatch,scheduling,state,support,workspace}` and `projection::{apply_core,helpers,node,run}` modules |
-| `runtime/structured-concurrency` | Blueprint definitions, `milkdrift-runtime::engine::structured`, `milkdrift-runtime::projection::{apply_structured,structured}`, and `milkdrift-workspace::scope` |
-| `runtime/reconciliation` | `milkdrift-runtime::reconciliation`, `engine::reconciliation`, `projection::{apply_reconciliation,reconciliation}`, and persistence-owned plan event documents |
-| `runtime/recovery` | `milkdrift-runtime::{query,engine::recovery,projection::replay}` and recovery indexes in the redb adapter |
+| `runtime/execution` | `milkdrift-runtime::{command,executor}` plus focused engine command-planning/completion/dispatch/scheduling/state/workspace modules; `projection::apply_core` is an exhaustive dispatcher into lifecycle, eligibility, execution, lease, observation, terminal, retry, and structured event-family reducers |
+| `runtime/structured-concurrency` | Blueprint definitions, the runtime structured coordinator with separate repeat/subworkflow/reducer mechanics, branch/join/repeat/wait/signal/timer/subworkflow projection reducers and views, and `milkdrift-workspace::scope` |
+| `runtime/reconciliation` | `milkdrift-runtime::reconciliation`, engine reconciliation, separate projection plan/action reducers and reconciliation views, and persistence-owned plan event documents |
+| `runtime/recovery` | `milkdrift-runtime::{query,engine::recovery,projection::replay}`, the focused recovery reducer, and recovery indexes in the redb adapter |
 | `capability/contracts` | `milkdrift-capability::{descriptor,invocation,document,identity,bounded}` |
 | `capability/registry` | Deterministic test boundary only; live Pass 3 registry remains unimplemented |
 | `capability/resolution` | Pure requirement matching and exact immutable snapshots in `milkdrift-capability`; live policy selection remains Pass 3 |

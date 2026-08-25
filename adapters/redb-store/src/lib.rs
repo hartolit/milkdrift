@@ -19,5 +19,8 @@ mod schema;
 mod snapshot;
 mod store;
 
+#[cfg(feature = "test-admin")]
+pub mod testing;
+
 pub use fault::{FaultInjector, FaultPoint, injected_failure};
 pub use store::{ArtifactClock, RedbStore, RedbStoreConfig, SystemArtifactClock};

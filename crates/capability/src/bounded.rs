@@ -4,6 +4,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
+use milkdrift_contracts::{JsonBoundKind, JsonBoundViolation, JsonLimits};
+
 use crate::ExtensionKey;
 
 /// Largest accepted serialized public contract document.
@@ -14,6 +16,12 @@ pub(crate) const MAX_EXTENSION_ENTRIES: usize = 64;
 pub(crate) const MAX_EXTENSION_BYTES: usize = 65_536;
 const MAX_STRING_BYTES: usize = 32_768;
 const MAX_CONTAINER_ITEMS: usize = 4_096;
+pub(crate) const DOCUMENT_JSON_LIMITS: JsonLimits = JsonLimits {
+    maximum_depth: MAX_JSON_DEPTH,
+    maximum_string_bytes: MAX_STRING_BYTES,
+    maximum_key_bytes: 192,
+    maximum_container_items: MAX_CONTAINER_ITEMS,
+};
 
 /// Error returned when a capability contract violates a stable invariant.
 #[derive(Debug, Error)]
@@ -60,7 +68,7 @@ pub struct BoundedJson(Value);
 impl BoundedJson {
     /// Validates and stores a JSON value.
     pub fn new(value: Value) -> Result<Self, ContractError> {
-        validate_json_value(&value, "$", 0)?;
+        validate_json_value(&value)?;
         if serde_json::to_vec(&value)?.len() > MAX_EXTENSION_BYTES {
             return Err(ContractError::Bounds {
                 location: "$".to_owned(),
@@ -107,51 +115,23 @@ pub(crate) fn validate_extensions(
 }
 
 pub(crate) fn validate_document_value(value: &Value) -> Result<(), ContractError> {
-    validate_json_value(value, "$", 0)
+    validate_json_value(value)
 }
 
-fn validate_json_value(value: &Value, location: &str, depth: usize) -> Result<(), ContractError> {
-    if depth > MAX_JSON_DEPTH {
-        return Err(ContractError::Bounds {
-            location: location.to_owned(),
-            reason: format!("nesting exceeds depth {MAX_JSON_DEPTH}"),
-        });
-    }
-    match value {
-        Value::String(text) if text.len() > MAX_STRING_BYTES => Err(ContractError::Bounds {
-            location: location.to_owned(),
-            reason: format!("string exceeds {MAX_STRING_BYTES} bytes"),
-        }),
-        Value::Array(values) => {
-            if values.len() > MAX_CONTAINER_ITEMS {
-                return Err(ContractError::Bounds {
-                    location: location.to_owned(),
-                    reason: format!("array exceeds {MAX_CONTAINER_ITEMS} items"),
-                });
-            }
-            for (index, child) in values.iter().enumerate() {
-                validate_json_value(child, &format!("{location}[{index}]"), depth + 1)?;
-            }
-            Ok(())
-        }
-        Value::Object(map) => {
-            if map.len() > MAX_CONTAINER_ITEMS {
-                return Err(ContractError::Bounds {
-                    location: location.to_owned(),
-                    reason: format!("object exceeds {MAX_CONTAINER_ITEMS} entries"),
-                });
-            }
-            for (key, child) in map {
-                if key.len() > 192 {
-                    return Err(ContractError::Bounds {
-                        location: location.to_owned(),
-                        reason: "object key exceeds 192 bytes".to_owned(),
-                    });
-                }
-                validate_json_value(child, &format!("{location}.{key}"), depth + 1)?;
-            }
-            Ok(())
-        }
-        _ => Ok(()),
+fn validate_json_value(value: &Value) -> Result<(), ContractError> {
+    milkdrift_contracts::validate_json_value(value, DOCUMENT_JSON_LIMITS).map_err(contract_bound)
+}
+
+pub(crate) fn contract_bound(violation: JsonBoundViolation) -> ContractError {
+    let reason = match violation.kind() {
+        JsonBoundKind::Depth => format!("nesting exceeds depth {}", violation.maximum()),
+        JsonBoundKind::String => format!("string exceeds {} bytes", violation.maximum()),
+        JsonBoundKind::Key => format!("object key exceeds {} bytes", violation.maximum()),
+        JsonBoundKind::Array => format!("array exceeds {} items", violation.maximum()),
+        JsonBoundKind::Object => format!("object exceeds {} entries", violation.maximum()),
+    };
+    ContractError::Bounds {
+        location: violation.path().to_owned(),
+        reason,
     }
 }

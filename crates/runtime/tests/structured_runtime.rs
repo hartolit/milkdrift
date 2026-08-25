@@ -36,7 +36,7 @@ use milkdrift_persistence::{
     RunSummaryIndex, SignalDeliveryMode, SignalId, SignalTypeId, SnapshotStore, StorageAdmin,
     TimestampMillis, WorkerId, WorkspaceAccounting, WorkspaceStore,
 };
-use milkdrift_redb_store::RedbStore;
+use milkdrift_redb_store::{RedbStore, testing as storage_fault};
 use milkdrift_runtime::{
     AttemptState, DeterministicExecutor, EffectAction, EffectExecutionResult, ExecutionDispatch,
     ExecutionReportBatch, ExecutorError, IdGenerator, IterationState, LeaseState, ManualClock,
@@ -50,7 +50,6 @@ use milkdrift_workspace::{
     ValueKey, ValueOrigin, WorkspaceBudget, WorkspaceScope, WorkspaceUsage, WorkspaceValue,
     WorkspaceValueEntry, WorkspaceValueReference,
 };
-use redb::{Database, TableDefinition};
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -64,11 +63,6 @@ type ClosedRuntimeFixture = (
 );
 
 const NOW: u64 = 10_000;
-const RAW_SCOPES: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.workspace.scopes");
-const RAW_VALUES: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.workspace.values");
-
 struct Harness {
     _directory: TempDir,
     store: Arc<RedbStore>,
@@ -845,82 +839,6 @@ fn submit_worker_report(
         },
     )?;
     Ok(runtime.handle_command(&document)?.result().disposition())
-}
-
-fn raw_push_component(encoded: &mut Vec<u8>, value: &str) -> TestResult {
-    encoded.extend_from_slice(&u32::try_from(value.len())?.to_be_bytes());
-    encoded.extend_from_slice(value.as_bytes());
-    Ok(())
-}
-
-fn raw_scope_key(reference: &ScopeReference) -> TestResult<Vec<u8>> {
-    let mut encoded = Vec::new();
-    raw_push_component(&mut encoded, reference.run().as_str())?;
-    raw_push_component(&mut encoded, reference.scope().as_str())?;
-    Ok(encoded)
-}
-
-fn raw_value_key(reference: &WorkspaceValueReference) -> TestResult<Vec<u8>> {
-    let mut encoded = raw_scope_key(reference.scope())?;
-    raw_push_component(&mut encoded, reference.key().as_str())?;
-    encoded.extend_from_slice(&reference.version().get().to_be_bytes());
-    Ok(encoded)
-}
-
-fn delete_raw_row(
-    root: &Path,
-    definition: TableDefinition<'static, &'static [u8], &'static [u8]>,
-    key: &[u8],
-) -> TestResult {
-    let database = Database::create(root.join("milkdrift.redb"))?;
-    let write = database.begin_write()?;
-    let removed = {
-        let mut table = write.open_table(definition)?;
-        table.remove(key)?.is_some()
-    };
-    if !removed {
-        return Err("raw corruption fixture could not find its target row".into());
-    }
-    write.commit()?;
-    Ok(())
-}
-
-fn insert_raw_workspace_value(root: &Path, entry: &WorkspaceValueEntry) -> TestResult {
-    const FAMILY: &str = "workspace value";
-    const DOMAIN: &[u8] = b"milkdrift.redb.internal-document.v1\0";
-    #[derive(serde::Serialize)]
-    struct Envelope<'a> {
-        schema_version: u32,
-        family: &'static str,
-        checksum: String,
-        payload: &'a WorkspaceValueEntry,
-    }
-
-    let payload = serde_json::to_vec(entry)?;
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(DOMAIN);
-    hasher.update(&(FAMILY.len() as u64).to_be_bytes());
-    hasher.update(FAMILY.as_bytes());
-    hasher.update(&(payload.len() as u64).to_be_bytes());
-    hasher.update(&payload);
-    let encoded = serde_json::to_vec(&Envelope {
-        schema_version: 1,
-        family: FAMILY,
-        checksum: hasher.finalize().to_hex().to_string(),
-        payload: entry,
-    })?;
-    let key = raw_value_key(entry.reference())?;
-    let database = Database::create(root.join("milkdrift.redb"))?;
-    let write = database.begin_write()?;
-    let replaced = {
-        let mut table = write.open_table(RAW_VALUES)?;
-        table.insert(key.as_slice(), encoded.as_slice())?.is_some()
-    };
-    if replaced {
-        return Err("raw orphan fixture unexpectedly replaced an existing row".into());
-    }
-    write.commit()?;
-    Ok(())
 }
 
 fn assert_integrity_error(error: &RuntimeError) {

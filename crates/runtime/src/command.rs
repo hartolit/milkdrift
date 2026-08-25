@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::fmt;
 
 use milkdrift_blueprint::{NodeId, RevisionId, WorkflowId};
 use milkdrift_capability::{
@@ -14,8 +13,9 @@ use milkdrift_persistence::{
     SignalTypeId, TimerId, TimestampMillis, WorkerId,
 };
 use milkdrift_workspace::{RunId, WorkspaceBudget, WorkspaceScope, WorkspaceValueEntry};
-use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
+
+use milkdrift_contracts::{CanonicalJsonError, JsonLimits};
 
 use crate::RuntimeError;
 
@@ -23,6 +23,12 @@ use crate::RuntimeError;
 pub const RUN_COMMAND_SCHEMA_VERSION_V1: u32 = 1;
 /// Maximum events/references carried directly by one command.
 pub const MAX_COMMAND_ITEMS: usize = 512;
+const COMMAND_JSON_LIMITS: JsonLimits = JsonLimits {
+    maximum_depth: 64,
+    maximum_string_bytes: 65_536,
+    maximum_key_bytes: 65_536,
+    maximum_container_items: 4_096,
+};
 
 /// Explicit operator/controller action for retained or uncertain external work.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -377,8 +383,7 @@ impl RunCommandDocument {
                 "command document exceeds {MAX_COMMAND_DOCUMENT_BYTES} bytes"
             )));
         }
-        reject_duplicate_json_keys(bytes)?;
-        let value: serde_json::Value = serde_json::from_slice(bytes)?;
+        let value = milkdrift_contracts::parse_json_without_duplicates(bytes)?;
         let version = value
             .get("schema_version")
             .and_then(serde_json::Value::as_u64)
@@ -538,127 +543,25 @@ impl RunCommandDocument {
     }
 }
 
-fn reject_duplicate_json_keys(bytes: &[u8]) -> Result<(), RuntimeError> {
-    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
-    NoDuplicateJson::deserialize(&mut deserializer)?;
-    deserializer.end()?;
-    Ok(())
-}
-
-struct NoDuplicateJson;
-
-impl<'de> Deserialize<'de> for NoDuplicateJson {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        deserializer.deserialize_any(NoDuplicateJsonVisitor)
-    }
-}
-
-struct NoDuplicateJsonVisitor;
-
-impl<'de> Visitor<'de> for NoDuplicateJsonVisitor {
-    type Value = NoDuplicateJson;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("JSON without duplicate object keys")
-    }
-
-    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-    where
-        A: MapAccess<'de>,
-    {
-        let mut keys = BTreeSet::new();
-        while let Some(key) = map.next_key::<String>()? {
-            if !keys.insert(key.clone()) {
-                return Err(de::Error::custom(format!(
-                    "duplicate JSON object key '{key}'"
-                )));
-            }
-            map.next_value::<NoDuplicateJson>()?;
-        }
-        Ok(NoDuplicateJson)
-    }
-
-    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
-    where
-        A: SeqAccess<'de>,
-    {
-        while sequence.next_element::<NoDuplicateJson>()?.is_some() {}
-        Ok(NoDuplicateJson)
-    }
-
-    fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
-        Ok(NoDuplicateJson)
-    }
-
-    fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E> {
-        Ok(NoDuplicateJson)
-    }
-
-    fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E> {
-        Ok(NoDuplicateJson)
-    }
-
-    fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
-        Ok(NoDuplicateJson)
-    }
-
-    fn visit_str<E>(self, _: &str) -> Result<Self::Value, E> {
-        Ok(NoDuplicateJson)
-    }
-
-    fn visit_string<E>(self, _: String) -> Result<Self::Value, E> {
-        Ok(NoDuplicateJson)
-    }
-
-    fn visit_none<E>(self) -> Result<Self::Value, E> {
-        Ok(NoDuplicateJson)
-    }
-
-    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        NoDuplicateJson::deserialize(deserializer)
-    }
-
-    fn visit_unit<E>(self) -> Result<Self::Value, E> {
-        Ok(NoDuplicateJson)
-    }
-}
-
 fn canonical_json<T: Serialize>(value: &T) -> Result<Vec<u8>, RuntimeError> {
-    let mut value = serde_json::to_value(value)?;
-    sort_json(&mut value);
-    let bytes = serde_json::to_vec(&value)?;
+    let bytes =
+        milkdrift_contracts::canonical_json_bytes(value, COMMAND_JSON_LIMITS).map_err(|error| {
+            match error {
+                CanonicalJsonError::Json(error) => RuntimeError::Json(error),
+                CanonicalJsonError::Bounds(violation) => RuntimeError::InvalidCommand(format!(
+                    "command JSON bound exceeded at {} for {:?} (maximum {})",
+                    violation.path(),
+                    violation.kind(),
+                    violation.maximum()
+                )),
+            }
+        })?;
     if bytes.len() > MAX_COMMAND_DOCUMENT_BYTES {
         return Err(RuntimeError::InvalidCommand(format!(
             "command document exceeds {MAX_COMMAND_DOCUMENT_BYTES} bytes"
         )));
     }
     Ok(bytes)
-}
-
-fn sort_json(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::Object(map) => {
-            for child in map.values_mut() {
-                sort_json(child);
-            }
-            let previous = std::mem::take(map);
-            let mut entries: Vec<_> = previous.into_iter().collect();
-            entries.sort_by(|left, right| left.0.cmp(&right.0));
-            map.extend(entries);
-        }
-        serde_json::Value::Array(values) => {
-            for child in values {
-                sort_json(child);
-            }
-        }
-        _ => {}
-    }
 }
 
 impl ExternalWorkAction {

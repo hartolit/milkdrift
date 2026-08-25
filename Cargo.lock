@@ -167,6 +167,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "milkdrift-capability",
+ "milkdrift-contracts",
  "proptest",
  "serde",
  "serde_json",
@@ -178,10 +179,19 @@ name = "milkdrift-capability"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "milkdrift-contracts",
  "proptest",
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "milkdrift-contracts"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -191,6 +201,7 @@ dependencies = [
  "blake3",
  "milkdrift-blueprint",
  "milkdrift-capability",
+ "milkdrift-contracts",
  "milkdrift-workspace",
  "proptest",
  "serde",
@@ -222,11 +233,11 @@ dependencies = [
  "blake3",
  "milkdrift-blueprint",
  "milkdrift-capability",
+ "milkdrift-contracts",
  "milkdrift-persistence",
  "milkdrift-redb-store",
  "milkdrift-workspace",
  "proptest",
- "redb",
  "serde",
  "serde_json",
  "tempfile",
@@ -240,6 +251,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "milkdrift-capability",
+ "milkdrift-contracts",
  "proptest",
  "serde",
  "serde_json",

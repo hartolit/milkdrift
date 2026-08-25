@@ -1,0 +1,1 @@
+{"checksum":"b3_6e39a05b53ada9b797ff349fc127cc54294a45d8abdeddbae2b289d3cc9c206c","event_id":"event-family-10","kind":{"condition":{"correlation":null,"signal_type":"signal.type.family","type":"signal"},"execution":"wait-execution-family","type":"wait_registered"},"occurred_at":1700000000010,"run_id":"run-family-fixture","schema_version":1,"sequence":10}

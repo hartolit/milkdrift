@@ -1,11 +1,11 @@
-use std::{collections::BTreeSet, fmt};
-
 use milkdrift_workspace::RunId;
-use serde::{
-    Deserialize, Deserializer, Serialize,
-    de::{MapAccess, SeqAccess, Visitor},
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use milkdrift_contracts::{
+    CanonicalJsonError, JsonBoundKind, JsonBoundViolation, JsonLimits,
+    canonical_json_bytes as encode_canonical_json,
 };
-use serde_json::{Map, Value};
 
 use crate::{
     EventId, IntegrityDigest, PersistenceError, RunEventKind, RunSequence, TimestampMillis,
@@ -19,6 +19,12 @@ const MAX_DOCUMENT_DEPTH: usize = 64;
 const MAX_CONTAINER_ITEMS: usize = 4_096;
 const MAX_STRING_BYTES: usize = 65_536;
 const EVENT_CHECKSUM_DOMAIN: &str = "milkdrift.run-event-envelope.v1";
+const PERSISTENCE_JSON_LIMITS: JsonLimits = JsonLimits {
+    maximum_depth: MAX_DOCUMENT_DEPTH,
+    maximum_string_bytes: MAX_STRING_BYTES,
+    maximum_key_bytes: MAX_STRING_BYTES,
+    maximum_container_items: MAX_CONTAINER_ITEMS,
+};
 
 /// Explicit, checksummed schema-v1 append-only event envelope.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -227,10 +233,11 @@ pub(crate) fn canonical_json_bytes<T: Serialize>(
     value: &T,
     maximum_bytes: usize,
 ) -> Result<Vec<u8>, PersistenceError> {
-    let mut value = serde_json::to_value(value)?;
-    validate_value(&value, "$", 0)?;
-    sort_value(&mut value);
-    let bytes = serde_json::to_vec(&value)?;
+    let bytes =
+        encode_canonical_json(value, PERSISTENCE_JSON_LIMITS).map_err(|error| match error {
+            CanonicalJsonError::Json(error) => PersistenceError::Json(error),
+            CanonicalJsonError::Bounds(violation) => persistence_bound(violation),
+        })?;
     if bytes.len() > maximum_bytes {
         return Err(PersistenceError::Bounds {
             location: "document",
@@ -240,173 +247,51 @@ pub(crate) fn canonical_json_bytes<T: Serialize>(
     Ok(bytes)
 }
 
-fn sort_value(value: &mut Value) {
-    match value {
-        Value::Object(map) => {
-            for child in map.values_mut() {
-                sort_value(child);
-            }
-            let previous = std::mem::take(map);
-            let mut entries: Vec<_> = previous.into_iter().collect();
-            entries.sort_by(|left, right| left.0.cmp(&right.0));
-            map.extend(entries);
-        }
-        Value::Array(values) => {
-            for child in values {
-                sort_value(child);
-            }
-        }
-        _ => {}
-    }
-}
-
 fn validate_value(value: &Value, location: &str, depth: usize) -> Result<(), PersistenceError> {
-    if depth > MAX_DOCUMENT_DEPTH {
-        return Err(PersistenceError::Bounds {
-            location: "document.depth",
-            reason: format!("{location} exceeds depth {MAX_DOCUMENT_DEPTH}"),
-        });
-    }
-    match value {
-        Value::String(text) if text.len() > MAX_STRING_BYTES => Err(PersistenceError::Bounds {
-            location: "document.string",
-            reason: format!("{location} exceeds {MAX_STRING_BYTES} bytes"),
-        }),
-        Value::Array(values) => {
-            if values.len() > MAX_CONTAINER_ITEMS {
-                return Err(PersistenceError::Bounds {
-                    location: "document.array",
-                    reason: format!("{location} exceeds {MAX_CONTAINER_ITEMS} entries"),
-                });
-            }
-            for (index, child) in values.iter().enumerate() {
-                validate_value(child, &format!("{location}[{index}]"), depth + 1)?;
-            }
-            Ok(())
-        }
-        Value::Object(values) => {
-            if values.len() > MAX_CONTAINER_ITEMS {
-                return Err(PersistenceError::Bounds {
-                    location: "document.object",
-                    reason: format!("{location} exceeds {MAX_CONTAINER_ITEMS} entries"),
-                });
-            }
-            for (key, child) in values {
-                if key.len() > MAX_STRING_BYTES {
-                    return Err(PersistenceError::Bounds {
-                        location: "document.key",
-                        reason: format!("key below {location} exceeds {MAX_STRING_BYTES} bytes"),
-                    });
-                }
-                validate_value(child, &format!("{location}.{key}"), depth + 1)?;
-            }
-            Ok(())
-        }
-        _ => Ok(()),
-    }
-}
-
-struct DuplicateCheckedValue(Value);
-
-impl<'de> Deserialize<'de> for DuplicateCheckedValue {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct CheckedVisitor;
-
-        impl<'de> Visitor<'de> for CheckedVisitor {
-            type Value = DuplicateCheckedValue;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str("a JSON value without duplicate object keys")
-            }
-
-            fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
-                Ok(DuplicateCheckedValue(Value::Bool(value)))
-            }
-
-            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
-                Ok(DuplicateCheckedValue(Value::Number(value.into())))
-            }
-
-            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
-                Ok(DuplicateCheckedValue(Value::Number(value.into())))
-            }
-
-            fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                serde_json::Number::from_f64(value)
-                    .map(Value::Number)
-                    .map(DuplicateCheckedValue)
-                    .ok_or_else(|| E::custom("non-finite JSON number"))
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(DuplicateCheckedValue(Value::String(value.to_owned())))
-            }
-
-            fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
-                Ok(DuplicateCheckedValue(Value::String(value)))
-            }
-
-            fn visit_none<E>(self) -> Result<Self::Value, E> {
-                Ok(DuplicateCheckedValue(Value::Null))
-            }
-
-            fn visit_unit<E>(self) -> Result<Self::Value, E> {
-                Ok(DuplicateCheckedValue(Value::Null))
-            }
-
-            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                DuplicateCheckedValue::deserialize(deserializer)
-            }
-
-            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
-            where
-                A: SeqAccess<'de>,
-            {
-                let mut values = Vec::new();
-                while let Some(DuplicateCheckedValue(value)) = sequence.next_element()? {
-                    values.push(value);
-                }
-                Ok(DuplicateCheckedValue(Value::Array(values)))
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: MapAccess<'de>,
-            {
-                let mut keys = BTreeSet::new();
-                let mut values = Map::new();
-                while let Some(key) = map.next_key::<String>()? {
-                    if !keys.insert(key.clone()) {
-                        return Err(serde::de::Error::custom(format!(
-                            "duplicate JSON object key '{key}'"
-                        )));
-                    }
-                    let DuplicateCheckedValue(value) = map.next_value()?;
-                    values.insert(key, value);
-                }
-                Ok(DuplicateCheckedValue(Value::Object(values)))
-            }
-        }
-
-        deserializer.deserialize_any(CheckedVisitor)
-    }
+    debug_assert_eq!(location, "$", "persistence validation starts at the root");
+    debug_assert_eq!(depth, 0, "persistence validation starts at depth zero");
+    milkdrift_contracts::validate_json_value(value, PERSISTENCE_JSON_LIMITS)
+        .map_err(persistence_bound)
 }
 
 pub(crate) fn parse_json_without_duplicates(bytes: &[u8]) -> Result<Value, PersistenceError> {
-    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
-    let value = DuplicateCheckedValue::deserialize(&mut deserializer)?.0;
-    deserializer.end()?;
-    Ok(value)
+    milkdrift_contracts::parse_json_without_duplicates(bytes).map_err(PersistenceError::Json)
+}
+
+fn persistence_bound(violation: JsonBoundViolation) -> PersistenceError {
+    let (location, reason) = match violation.kind() {
+        JsonBoundKind::Depth => (
+            "document.depth",
+            format!("{} exceeds depth {}", violation.path(), violation.maximum()),
+        ),
+        JsonBoundKind::String => (
+            "document.string",
+            format!("{} exceeds {} bytes", violation.path(), violation.maximum()),
+        ),
+        JsonBoundKind::Key => (
+            "document.key",
+            format!(
+                "key below {} exceeds {} bytes",
+                violation.path(),
+                violation.maximum()
+            ),
+        ),
+        JsonBoundKind::Array => (
+            "document.array",
+            format!(
+                "{} exceeds {} entries",
+                violation.path(),
+                violation.maximum()
+            ),
+        ),
+        JsonBoundKind::Object => (
+            "document.object",
+            format!(
+                "{} exceeds {} entries",
+                violation.path(),
+                violation.maximum()
+            ),
+        ),
+    };
+    PersistenceError::Bounds { location, reason }
 }

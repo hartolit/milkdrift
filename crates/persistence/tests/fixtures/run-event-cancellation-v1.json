@@ -1,0 +1,1 @@
+{"checksum":"b3_eb894bce3a84f4132627ef2c4f798f649a81179eafebc4de8837fde8c2e726e5","event_id":"event-family-05","kind":{"evidence":[],"reason":"operator requested cancellation","type":"run_cancellation_requested"},"occurred_at":1700000000005,"run_id":"run-family-fixture","schema_version":1,"sequence":5}
