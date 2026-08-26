@@ -72,6 +72,12 @@ Every external run command presents an exact grant revision to the runtime's inj
 
 An actor may inspect or propose without authority to apply. Approval is an explicit command/event linking proposal, exact revision or effect, approver, and policy. An AI controller is an ordinary task using a workflow-control capability under a scoped grant. It uses the same closed mutations, optimistic checks, proposals, approvals, and audit trail as a human; it has no hidden privileged node kind or mutable backdoor.
 
+A workflow proposal is bounded, versioned, duplicate-key-safe, canonical, and digest-bound untrusted data. It names the exact workflow, base revision and digest, optional live run and observed sequence, one closed mutation batch, provenance, evidence/artifact references, rationale, risk notes, requested application policy, optional run action, and a claimed stop condition. Large reasoning remains in referenced artifacts rather than ordinary command documents. Model prose and tool calls are never control intent: only a successfully decoded structured-output value can become a proposal, and malformed or adversarial output terminates the producing task without direct workflow effect.
+
+`milkdrift-control` is an application layer over existing owners. It privately builds and validates the complete prospective revision, derives an exact authority delta, classifies deterministic risk, stores the immutable candidate, and delegates live proposal, approval, apply, pause/resume/cancel/retry, and signal actions to `RuntimeService`. It never appends events or rewrites run history directly. Low-risk auto-apply is permitted only for future pure/read-only work under an explicit policy and an exact apply grant; terminal changes, existing/started work, side effects, provider/profile/trust expansion, subworkflow/interface changes, cancellation, and other elevated cases require the existing recorded approval path. Stale sequence, base, digest, plan, or proposal guards fail closed.
+
+Observer, Advisor, Supervisor, Controller, and Autonomous are convenience names that expand into ordinary immutable grants with caller-supplied exact workflow/run, capability, budget, validity, and revocation scope. They are not runtime roles. Continuous control is an ordinary acyclic wrapper around an explicit pinned `Repeat` body with hard invocation/revision/mutation/node/time/cost/input/output/artifact/process/model/failure/rejection/repetition/child-depth ceilings and a human checkpoint; no arbitrary graph cycle or unbounded background loop is introduced.
+
 ## 8. Execution semantics
 
 Sequential execution is ordinary acyclic control/data edges. A typed **branch** selects one declared arm using a safe condition AST. A **fork** creates named isolated child branches under structured concurrency. A **join** is owned by one fork and waits for all, any successful, or a satisfiable quorum; cancellation/failure policy is explicit. A **reducer/compositor** is a separate node with a declared input shape and does not masquerade as synchronization.
@@ -114,15 +120,15 @@ The implemented production dependency direction is shown below. Arrows point
 from a stable contract to a crate that consumes it:
 
 ```text
-milkdrift-contracts   -> {capability, blueprint, workspace, authority, persistence, runtime}
-milkdrift-capability  -> {blueprint, workspace, authority, persistence, runtime, capability-host}
-milkdrift-blueprint   -> {authority, persistence, model, runtime, redb-store}
-milkdrift-workspace   -> {authority, persistence, runtime, redb-store}
-milkdrift-authority   -> {persistence, runtime, capability-host}
-milkdrift-persistence -> {runtime, redb-store}
-milkdrift-model       -> {runtime, model-provider}
-milkdrift-runtime     -> {capability-host}
-milkdrift-capability-host -> {local-process, model-provider}
+milkdrift-contracts   -> {capability, blueprint, workspace, authority, persistence, runtime, control}
+milkdrift-capability  -> {blueprint, workspace, authority, persistence, runtime, capability-host, control}
+milkdrift-blueprint   -> {authority, persistence, model, runtime, redb-store, control}
+milkdrift-workspace   -> {authority, persistence, runtime, redb-store, control}
+milkdrift-authority   -> {persistence, runtime, capability-host, control}
+milkdrift-persistence -> {runtime, redb-store, control}
+milkdrift-model       -> {runtime, model-provider, control}
+milkdrift-runtime     -> {capability-host, control}
+milkdrift-capability-host -> {local-process, model-provider, control}
 milkdrift-authority   -> {secret-env, local-process, model-provider}
 ```
 
@@ -141,6 +147,10 @@ adapter only as a development dependency in adapter-backed integration tests.
 `milkdrift-capability-host` is an outer embeddable host implementing the runtime
 `TaskExecutor` port. It owns the narrow materialization/publication port and its
 `RuntimeStore` bridge, but knows no redb table or filesystem artifact layout.
+`milkdrift-control` is an outer application crate consuming semantic, authority,
+persistence, runtime, model, and host contracts. Its workflow-control adapter calls
+the same `ControlService` used by a future human client and reports only normal
+capability observations; it owns neither durable truth nor a host lifecycle.
 `milkdrift-local-process` depends outward on that port and owns process/filesystem APIs;
 it never depends on redb or mutates runtime state. `milkdrift-secret-env` is a separate
 concrete secret boundary. Apps later depend on daemon protocols. Dependencies
@@ -185,6 +195,12 @@ milkdrift/
 │   │   ├── actors-and-grants
 │   │   ├── policy-evaluation
 │   │   └── secret-references
+│   ├── control/
+│   │   ├── proposal-and-command-contracts
+│   │   ├── risk-and-authority-policy
+│   │   ├── shared-application-service
+│   │   ├── workflow-control-adapter
+│   │   └── bounded-controller-pattern
 │   ├── runtime/
 │   │   ├── scheduler
 │   │   ├── execution
@@ -232,6 +248,7 @@ The logical map is the long-lived ownership reference. Its exact current physica
 | --- | --- |
 | Shared contract mechanics | `milkdrift-contracts` owns bounded/canonical JSON mechanics and the common validated-string implementation; semantic rules remain in consuming domain crates |
 | Actor/grant/policy/secret-reference authority | `milkdrift-authority::{identity,model,evaluator,secret,document}`; it is pure, safe Rust and owns no authentication or live secret value source |
+| Human/service/AI workflow control | `milkdrift-control::{document,command,policy,preset,service,adapter,controller,read}` owns strict proposals and application orchestration while durable revisions, authorization decisions, reconciliation, and events remain with their existing owners |
 | `blueprint/model` | `milkdrift-blueprint::model` (public types re-exported at crate root) |
 | `blueprint/validation` | `milkdrift-blueprint::validation` |
 | `blueprint/revision` | `milkdrift-blueprint::revision` |

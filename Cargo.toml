@@ -10,6 +10,7 @@ members = [
     "crates/capability",
     "crates/capability-host",
     "crates/contracts",
+    "crates/control",
     "crates/model",
     "crates/persistence",
     "crates/runtime",

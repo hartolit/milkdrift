@@ -16,3 +16,5 @@ Do not write an ADR for a local refactor, a choice obvious from a small piece of
 - [0010 — Host-owned materialization and artifact publication](0010-host-owned-materialization.md)
 - [0011 — Exact causal context manifests](0011-causal-context-manifests.md)
 - [0012 — Provider-neutral model contracts with explicit endpoint mappings](0012-provider-neutral-model-endpoints.md)
+- [0013 — Proposals create immutable prospective revisions](0013-immutable-proposal-revisions.md)
+- [0014 — Human and AI workflow control share one application path](0014-shared-human-ai-control-path.md)

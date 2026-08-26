@@ -23,6 +23,21 @@ cargo test -p milkdrift-runtime --test causal_context -- --nocapture
 cargo test -p milkdrift-model-provider --test mock_endpoints -- --nocapture
 ```
 
+Focused Pass-03D workflow-control checks are:
+
+```sh
+cargo test -p milkdrift-control --test proposal_contracts -- --nocapture
+cargo test -p milkdrift-control --test authority_policy_controller -- --nocapture
+cargo test -p milkdrift-control --test control_service -- --nocapture
+```
+
+These cover canonical/digest-bound and hostile proposal documents, exact ordinary-grant preset
+behavior, explicit bounded controller construction, low-risk reviewer insertion, approval before
+terminal changes, stale/no-effect rejection, deterministic replay, restart recovery, and malformed
+control-capability input becoming a normal rejected terminal. They use only temporary local redb
+stores, the deterministic executor, and fixed clocks/identities; no network, model endpoint, or
+credential is required.
+
 The model-provider suite binds local ephemeral loopback listeners and uses fixed mock
 OpenAI-compatible/Anthropic payloads. It performs no internet requests and needs no real
 credentials. The context suite proves deterministic ordering across candidate page order,

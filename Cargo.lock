@@ -601,6 +601,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "milkdrift-control"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "milkdrift-authority",
+ "milkdrift-blueprint",
+ "milkdrift-capability",
+ "milkdrift-capability-host",
+ "milkdrift-contracts",
+ "milkdrift-model",
+ "milkdrift-persistence",
+ "milkdrift-redb-store",
+ "milkdrift-runtime",
+ "milkdrift-workspace",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "milkdrift-local-process"
 version = "0.1.0"
 dependencies = [
