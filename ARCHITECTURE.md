@@ -50,7 +50,7 @@ Compaction means removal from active operational state only. This pass never del
 
 "Bounded" is relative to semantic liveness, not a universal constant-memory claim. Projection and checkpoint size may grow with workflow shape, intentionally active branches, unresolved safety obligations, retained outputs/artifacts/context, bounded worker ownership evidence, and configured workspace limits. For fixed workflow shape and bounded active concurrency, settled event count and elapsed iterations do not by themselves increase active state.
 
-The headless runtime owns transition decisions, projections, leases, scheduling, recovery, and reconciliation through narrow persistence/execution ports. `milkdrift-capability-host::EffectWorkerHost` is the explicit embeddable owner of bounded caller-created effect and cancellation workers; it has no singleton or async runtime. A future daemon will own that object together with registry, secret, and persistence lifecycles. Clients request commands and render projections; they do not own truth.
+The headless runtime owns transition decisions, projections, leases, scheduling, recovery, and reconciliation through narrow persistence/execution ports. `milkdrift-capability-host::EffectWorkerHost` is the explicit embeddable owner of bounded caller-created effect and cancellation workers; it has no singleton or async runtime. The daemon owns that object together with registry, secret, redb, artifact, recovery, and shutdown lifecycles. Clients request commands and render projections; they do not own truth.
 
 ## 5. Prospective live reconciliation
 
@@ -68,7 +68,7 @@ Invocation requests, progress/output events, cancellation exchange, terminal out
 
 Actor identity and scoped authority are distinct from revision authorship. Canonical `ActorRef` ownership is in `milkdrift-authority`; blueprint `AuthorRef` remains provenance only. Immutable schema-v1 grant revisions constrain commands by workflow/run, typed operation, capability identity/category/operation/profile/trust/locality, normalized filesystem roots and access, credential-free network profiles/destinations, opaque secret references, side-effect class, cost, duration, invocation, artifact, concurrency, validity, and revocation generation. Pure policy evaluation records the actor, exact grant revision, evaluator policy/version, request facts, stable reason codes, evaluated constraints, caller-supplied boundary time, result, and deterministic digest.
 
-Every external run command presents an exact grant revision to the runtime's injected evaluator before semantic acceptance. The exact decision is part of command-result schema v2 and is committed in the same transaction as acceptance events or denial-without-events; exact redelivery returns that original decision/result without reevaluation. System transitions and worker observations use separate private runtime-owned receipt paths. Authentication remains a future daemon/peer boundary and is not inferred from an actor string or grant reference.
+Every external run command presents an exact grant revision to the runtime's injected evaluator before semantic acceptance. The exact decision is part of command-result schema v2 and is committed in the same transaction as acceptance events or denial-without-events; exact redelivery returns that original decision/result without reevaluation. System transitions and worker observations use separate private runtime-owned receipt paths. The local daemon authenticates a referenced bearer secret at request time and supplies the configured immutable actor/grant context; actor identity is absent from command JSON. Peer authentication remains a separate future boundary.
 
 An actor may inspect or propose without authority to apply. Approval is an explicit command/event linking proposal, exact revision or effect, approver, and policy. An AI controller is an ordinary task using a workflow-control capability under a scoped grant. It uses the same closed mutations, optimistic checks, proposals, approvals, and audit trail as a human; it has no hidden privileged node kind or mutable backdoor.
 
@@ -112,7 +112,13 @@ A peer exposes remote capability advertisements and invocation/cancellation/even
 
 ## 12. Daemon and clients
 
-One daemon process will own authoritative durable state, scheduling, registries, effects, reconciliation, secrets mediation, and peer sessions. The CLI and Iced desktop app are thin clients over versioned commands and projections. They may optimistically render a pending command but cannot create hidden state or directly mutate journals. UI layout is stored separately from semantic revisions and can change without changing a content digest.
+One daemon process owns authoritative local durable state, scheduling, registries, effects, reconciliation, and secret mediation. Startup validates configuration and credential references before opening the service, opens redb once, initializes the runtime with admission closed, performs targeted recovery, registers configured adapters, starts bounded effect workers, and exposes readiness only afterward. Shutdown closes mutation admission first, reports draining, applies the configured drain/cancel/retain policy, flushes the control sidecar, joins the runtime owner, and drops storage.
+
+Axum owns sockets and SSE framing only. Every runtime, redb, artifact, control, and registry operation crosses a bounded synchronous queue into one dedicated owner thread; a full queue returns a stable overload error. External adapter work remains on the fixed `EffectWorkerHost` threads, so neither an HTTP task nor the runtime owner holds a global lock while awaiting a process/model stream. Periodic maintenance has a configured bound and a blocking notification wait rather than a busy loop.
+
+`milkdrift-control-protocol` owns pure external protocol 1.0 DTOs. Its read models project immutable revisions, compact runs/nodes/attempts, proposal state, timelines, capabilities, authority, artifacts, and health without serializing internal event variants or redb keys. Feed-bound opaque cursors provide bounded pages and monotonic SSE resume. `milkdrift-control-client` is the only HTTP mapping used by the CLI and future Iced client. The CLI cannot create hidden state or directly mutate journals.
+
+Layout document schema 1 is presentation-only state with exact workflow/revision association, positions, annotations, viewport, author, update generation, and its own digest. The daemon persists it independently under optimistic generation checks. Layout never contains semantic edges, task configuration, prompts, secrets, or capability requirements and never changes a blueprint digest.
 
 ## 13. Dependency direction and forbidden coupling
 
@@ -130,6 +136,10 @@ milkdrift-model       -> {runtime, model-provider, control}
 milkdrift-runtime     -> {capability-host, control}
 milkdrift-capability-host -> {local-process, model-provider, control}
 milkdrift-authority   -> {secret-env, local-process, model-provider}
+milkdrift-control-protocol -> {control-client, daemon}
+milkdrift-control-client   -> {cli}
+{authority, blueprint, capability-host, control, persistence, runtime, redb-store,
+ local-process, model-provider, control-protocol} -> daemon
 ```
 
 `milkdrift-contracts` owns only cross-domain implementation mechanics with
@@ -149,11 +159,12 @@ adapter only as a development dependency in adapter-backed integration tests.
 `RuntimeStore` bridge, but knows no redb table or filesystem artifact layout.
 `milkdrift-control` is an outer application crate consuming semantic, authority,
 persistence, runtime, model, and host contracts. Its workflow-control adapter calls
-the same `ControlService` used by a future human client and reports only normal
+the same `ControlService` reached by authenticated human/service clients and reports only normal
 capability observations; it owns neither durable truth nor a host lifecycle.
 `milkdrift-local-process` depends outward on that port and owns process/filesystem APIs;
 it never depends on redb or mutates runtime state. `milkdrift-secret-env` is a separate
-concrete secret boundary. Apps later depend on daemon protocols. Dependencies
+concrete secret boundary. `milkdrift-control-protocol` is a pure outward DTO boundary;
+the HTTP stack exists only in `milkdrift-control-client` and `milkdrift-daemon`. Dependencies
 may point toward stable semantics, never from semantics toward a host.
 
 Forbidden in the semantic crates are Tokio or another executor, HTTP clients/servers, databases, Iced, provider SDKs, subprocess/OS APIs, transport types, secret values, tensor/inference types, live handles, clocks, randomness that affects identity, and mutable singleton registries. Project-authored code is safe Rust unless an independently proven requirement has a focused safety contract and tests.
@@ -162,17 +173,17 @@ Forbidden in the semantic crates are Tokio or another executor, HTTP clients/ser
 
 Every disk, wire, provider, tool, peer, imported blueprint, artifact, path, signal, and AI-produced proposal is untrusted input. Readers enforce schema version, byte/count/depth/string/path bounds before expensive work; reject unknown core semantics; and preserve only bounded namespaced extensions. Conditions are data ASTs, not scripts.
 
-Credentials and secret values never appear in blueprints, descriptors, requirements, events, diagnostics, logs, or peer advertisements. `SecretRef` serializes only an opaque reference, while resolved `SensitiveSecret` values are non-serializable, non-clone, redacted, and exposed only through a narrow closure. The host owns the resolver port; `milkdrift-secret-env` resolves only explicitly mapped references and never enumerates the environment. Local-process profiles are argv templates, never shell command strings; each substitution remains one OS argument. The child begins from `env_clear`, receives only allowlisted ambient names and resolved secret refs, and secret-bearing profiles cannot stream process text. Filesystem/process effects require canonical allowlisted roots, isolated materialization, bounded regular files, traversal/symlink/hardlink rejection, and declared output imports. Side effects, authority decisions, hostile output, cancellation observations, and uncertain outcomes are provenance facts. Budget and termination controls are enforced by their owning boundary, not trusted to an AI prompt.
+Credentials and secret values never appear in blueprints, descriptors, requirements, events, command bodies, diagnostics, logs, or peer advertisements. `SecretRef` serializes only an opaque reference, while resolved `SensitiveSecret` values are non-serializable, non-clone, redacted, and exposed only through a narrow closure. The local daemon accepts only loopback plaintext, requires an enabled bearer-reference binding, compares credential digests in constant time, rereads file/environment references for rotation, and maps a match to server-owned actor/grant facts. Authentication and authority remain separate; permissive CORS is absent. The host owns the resolver port; `milkdrift-secret-env` resolves only explicitly mapped references and never enumerates the environment. Local-process profiles are argv templates, never shell command strings; each substitution remains one OS argument. The child begins from `env_clear`, receives only allowlisted ambient names and resolved secret refs, and secret-bearing profiles cannot stream process text. Filesystem/process effects require canonical allowlisted roots, isolated materialization, bounded regular files, traversal/symlink/hardlink rejection, and declared output imports. Side effects, authority decisions, hostile output, cancellation observations, and uncertain outcomes are provenance facts. Budget and termination controls are enforced by their owning boundary, not trusted to an AI prompt.
 
 ## 15. Disk/wire schemas and compatibility
 
-Portable documents use explicit numeric schema versions: blueprint revision/mutation and invocation request are currently v2; other capability documents, context manifests, model contracts, and endpoint profiles are v1. Digest inputs use recursively key-sorted deterministic JSON and deterministic collections. Unknown core variants, malformed typed identities, invalid derived fields, and unsupported future versions fail clearly. Explicit bounded DNS-namespaced extension maps are the only forward-compatible unknown field mechanism.
+Portable documents use explicit numeric schema versions: blueprint revision/mutation and invocation request are currently v2; the external control protocol is 1.0; daemon configuration, external cursors, CLI JSON output, layout documents, and the daemon control sidecar are schema 1; other capability documents, context manifests, model contracts, and endpoint profiles are v1. Digest inputs use recursively key-sorted deterministic JSON and deterministic collections. Unknown core variants, malformed typed identities, invalid derived fields, and unsupported future versions fail clearly. Explicit bounded DNS-namespaced extension maps are the only forward-compatible unknown field mechanism.
 
-Readers support only versions they can interpret without guessing. A writer emits one current canonical version. Adding optional meaning still requires a schema review; changing existing meaning or canonical bytes requires a new version and fixtures. Old golden fixtures remain read tests for every supported version. Disk events, projections, daemon commands, peer messages, and artifacts will each declare independent version ownership rather than sharing one global version.
+Readers support only versions they can interpret without guessing. A writer emits one current canonical version. Adding optional meaning still requires a schema review; changing existing meaning or canonical bytes requires a new version and fixtures. Old golden fixtures remain read tests for every supported version. Disk events, projections, daemon commands, layouts, peer messages, and artifacts each declare independent version ownership rather than sharing one global version.
 
-Run-event envelopes are durable internal execution truth, not a promise that a
-future daemon will expose the storage schema directly. External historical read
-models will be separately versioned, paged, authorization-aware projections over
+Run-event envelopes are durable internal execution truth, not a promise that the
+daemon exposes the storage schema directly. External historical read
+models are separately versioned, paged, authorization-aware projections over
 that truth. They may redact or reshape fields without changing, replacing, or
 claiming ownership of the append-only event contract.
 
@@ -247,8 +258,10 @@ The logical map is the long-lived ownership reference. Its exact current physica
 | Logical responsibility | Current physical crate/module |
 | --- | --- |
 | Shared contract mechanics | `milkdrift-contracts` owns bounded/canonical JSON mechanics and the common validated-string implementation; semantic rules remain in consuming domain crates |
-| Actor/grant/policy/secret-reference authority | `milkdrift-authority::{identity,model,evaluator,secret,document}`; it is pure, safe Rust and owns no authentication or live secret value source |
+| Actor/grant/policy/secret-reference authority | `milkdrift-authority::{identity,model,evaluator,secret,document}` remains pure and owns no transport authentication or live secret source; `milkdrift-daemon::auth` maps local credential references to those server-owned facts |
 | Human/service/AI workflow control | `milkdrift-control::{document,command,policy,preset,service,adapter,controller,read}` owns strict proposals and application orchestration while durable revisions, authorization decisions, reconciliation, and events remain with their existing owners |
+| External control protocol | `milkdrift-control-protocol` owns protocol 1.0 commands, stable errors/results, bounded read models/pages, feed-bound cursors/SSE observations, and layout schema 1 without async, HTTP, runtime, or storage types |
+| Reusable control client | `milkdrift-control-client` owns version negotiation, bearer-authenticated typed HTTP calls, bounded safe-query retries and artifact ranges, and exact-cursor SSE reconnect |
 | `blueprint/model` | `milkdrift-blueprint::model` (public types re-exported at crate root) |
 | `blueprint/validation` | `milkdrift-blueprint::validation` |
 | `blueprint/revision` | `milkdrift-blueprint::revision` |
@@ -279,7 +292,8 @@ The logical map is the long-lived ownership reference. Its exact current physica
 | `adapters/redb` | The transactional local adapter, split across `milkdrift-redb-store::{admin,journal,store}` facades and their private child modules |
 | `adapters/peer-transport` | Not implemented |
 | `apps/desktop-iced` | Not implemented |
-| `apps/daemon` | Not implemented |
+| `apps/daemon` | `milkdrift-daemon::{config,auth,host,http}` owns validated local configuration, credential-to-actor mapping, redb/runtime/capability/effect lifecycles, the bounded owner boundary, loopback HTTP/SSE, readiness, and ordered shutdown |
+| `apps/cli` | `milkdrift-cli` is a thin argument/presentation layer over `milkdrift-control-client`; it owns confirmations, stable JSON schema 1, output/download policy, and exit codes, never durable truth |
 
 Physical crates are extracted only for a real dependency, lifecycle, host, publication, or multiple-consumer boundary. No empty crate or placeholder directory may be created merely to resemble the diagram. A later pass may merge or split physical packages when it preserves logical ownership and reduces coupling. Within a cohesive crate, private modules are preferred until extraction creates a measurable boundary; conversely, a growing module must split when unrelated invariants, dependencies, lifecycle, or test ownership become entangled.
 

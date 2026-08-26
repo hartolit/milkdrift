@@ -78,6 +78,10 @@ impl RevisionStore for StartupProbeStore {
             digest: &milkdrift_blueprint::ContentDigest,
             limit: PageSize,
         ) -> PersistenceResult<Vec<milkdrift_persistence::RevisionSummary>>;
+        fn revisions(
+            &self,
+            query: &milkdrift_persistence::RevisionPageQuery,
+        ) -> PersistenceResult<milkdrift_persistence::RevisionPage>;
     }
 }
 

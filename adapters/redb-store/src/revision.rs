@@ -4,7 +4,8 @@ use milkdrift_blueprint::{
     BlueprintRevision, BlueprintRevisionDocument, ContentDigest, DocumentError, RevisionId,
 };
 use milkdrift_persistence::{
-    ImmutableRevisionPut, PageSize, PersistenceError, RevisionStore, RevisionSummary,
+    ImmutableRevisionPut, PageSize, PersistenceError, RevisionCursor, RevisionPage,
+    RevisionPageQuery, RevisionStore, RevisionSummary,
 };
 use redb::ReadableTable;
 
@@ -164,6 +165,68 @@ impl RevisionStore for RedbStore {
             summaries.push(summary);
         }
         Ok(summaries)
+    }
+
+    fn revisions(&self, query: &RevisionPageQuery) -> Result<RevisionPage, PersistenceError> {
+        if query
+            .cursor
+            .as_ref()
+            .is_some_and(|cursor| !cursor.matches(&query.filter))
+        {
+            return Err(PersistenceError::InvalidCursor(
+                "revision cursor belongs to another filter".to_owned(),
+            ));
+        }
+        let read = self.database().begin_read().map_err(error::redb)?;
+        let revisions = read.open_table(REVISIONS).map_err(error::redb)?;
+        let by_digest = read.open_table(REVISIONS_BY_DIGEST).map_err(error::redb)?;
+        let start = query
+            .cursor
+            .as_ref()
+            .map(|cursor| cursor.after_revision().as_str());
+        let rows = match start {
+            Some(after) => revisions
+                .range::<&str>((Bound::Excluded(after), Bound::Unbounded))
+                .map_err(error::redb)?,
+            None => revisions.iter().map_err(error::redb)?,
+        };
+        let limit = usize::try_from(query.limit.get()).map_err(|_| PersistenceError::Bounds {
+            location: "revision_page_size",
+            reason: "cannot be represented on this platform".to_owned(),
+        })?;
+        let mut result = Vec::with_capacity(limit);
+        let mut last_scanned = None;
+        let mut scanned = 0_usize;
+        for row in rows.take(limit) {
+            let (key, _bytes) = row.map_err(error::redb)?;
+            let revision_id: RevisionId = serde_json::from_value(serde_json::Value::String(
+                key.value().to_owned(),
+            ))
+            .map_err(|cause| {
+                error::corruption(format!("revision table contains invalid identity: {cause}"))
+            })?;
+            let revision = validated_revision_by_id(&revisions, &by_digest, &revision_id)?
+                .ok_or_else(|| error::corruption("revision disappeared during read transaction"))?;
+            scanned += 1;
+            last_scanned = Some(revision_id);
+            if query
+                .filter
+                .workflow
+                .as_ref()
+                .is_none_or(|workflow| revision.semantic().workflow() == workflow)
+            {
+                result.push(RevisionSummary::from(&revision));
+            }
+        }
+        let next = if scanned == limit {
+            last_scanned.map(|revision| RevisionCursor::new(revision, query.filter.clone()))
+        } else {
+            None
+        };
+        Ok(RevisionPage {
+            revisions: result,
+            next,
+        })
     }
 }
 

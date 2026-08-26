@@ -18,3 +18,6 @@ Do not write an ADR for a local refactor, a choice obvious from a small piece of
 - [0012 — Provider-neutral model contracts with explicit endpoint mappings](0012-provider-neutral-model-endpoints.md)
 - [0013 — Proposals create immutable prospective revisions](0013-immutable-proposal-revisions.md)
 - [0014 — Human and AI workflow control share one application path](0014-shared-human-ai-control-path.md)
+- [0015 — One daemon and one bounded runtime owner](0015-single-daemon-runtime-owner.md)
+- [0016 — External clients consume projected read models](0016-external-control-read-models.md)
+- [0017 — Layout is outside semantic revision identity](0017-layout-outside-semantic-identity.md)

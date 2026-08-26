@@ -26,6 +26,63 @@ pub struct RevisionSummary {
     pub parents: Vec<RevisionId>,
 }
 
+/// Stable revision-list filter.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RevisionFilter {
+    /// Optional exact workflow lineage.
+    pub workflow: Option<WorkflowId>,
+}
+
+/// Exclusive physical resume point bound to one exact revision filter.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RevisionCursor {
+    after_revision: RevisionId,
+    filter: RevisionFilter,
+}
+
+impl RevisionCursor {
+    /// Constructs an exclusive continuation for one exact filter.
+    #[must_use]
+    pub const fn new(after_revision: RevisionId, filter: RevisionFilter) -> Self {
+        Self {
+            after_revision,
+            filter,
+        }
+    }
+
+    /// Last physically scanned revision identity.
+    #[must_use]
+    pub const fn after_revision(&self) -> &RevisionId {
+        &self.after_revision
+    }
+
+    /// Whether this continuation belongs to the supplied filter.
+    #[must_use]
+    pub fn matches(&self, filter: &RevisionFilter) -> bool {
+        &self.filter == filter
+    }
+}
+
+/// Bounded revision-list query.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RevisionPageQuery {
+    /// Exact stable filter.
+    pub filter: RevisionFilter,
+    /// Optional exclusive continuation.
+    pub cursor: Option<RevisionCursor>,
+    /// Maximum physical rows scanned and returned.
+    pub limit: PageSize,
+}
+
+/// Bounded stable revision page.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RevisionPage {
+    /// Matching revision summaries.
+    pub revisions: Vec<RevisionSummary>,
+    /// Advancing continuation, absent when fewer than the scan limit existed.
+    pub next: Option<RevisionCursor>,
+}
+
 impl From<&BlueprintRevision> for RevisionSummary {
     fn from(revision: &BlueprintRevision) -> Self {
         Self {
@@ -69,4 +126,7 @@ pub trait RevisionStore: Send + Sync {
         digest: &ContentDigest,
         limit: PageSize,
     ) -> Result<Vec<RevisionSummary>, PersistenceError>;
+
+    /// Lists a bounded stable identity-ordered page without scanning complete lineage history.
+    fn revisions(&self, query: &RevisionPageQuery) -> Result<RevisionPage, PersistenceError>;
 }

@@ -29,8 +29,8 @@ Observer, Advisor, Supervisor, Controller, and Autonomous are configuration conv
 expand to standard immutable grant revisions. They confer no implicit runtime privilege. Ongoing
 control is represented by an ordinary acyclic blueprint containing an explicit pinned `Repeat` with
 hard resource, action, failure, rejection, repetition, and child-depth ceilings plus a human
-checkpoint. A future daemon or UI may authenticate callers and host the service, but must not add a
-parallel semantic path.
+checkpoint. The daemon authenticates callers and hosts the service without adding a parallel
+semantic path; a future UI must remain a client of that same boundary.
 
 ## Rejected alternatives
 
@@ -49,7 +49,7 @@ parallel semantic path.
 
 Security and recovery tests exercise the same service and runtime commands regardless of caller
 type. Human-facing clients can reuse the command/read-model contract; models gain no bypass around
-approval or reconciliation. The adapter remains embeddable until a daemon owns authentication,
+approval or reconciliation. The adapter remains embeddable while the daemon owns authentication,
 authority-context resolution, artifact publication, lifecycle, and transport. Adding a new control
 operation requires an exhaustive mapping to an existing authority/runtime operation or a separate
 reviewed ownership change.

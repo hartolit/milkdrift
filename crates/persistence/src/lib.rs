@@ -71,7 +71,10 @@ pub use journal::{
     RunSummaryPageQuery, RunnableCursor, RunnableIndexEntry, RunnableIndexMutation, RunnablePage,
     TimerIndexEntry, TimerIndexMutation, WorkspaceAccounting, WorkspaceMutation, WorkspaceStore,
 };
-pub use revision::{ImmutableRevisionPut, RevisionStore, RevisionSummary};
+pub use revision::{
+    ImmutableRevisionPut, RevisionCursor, RevisionFilter, RevisionPage, RevisionPageQuery,
+    RevisionStore, RevisionSummary,
+};
 pub use snapshot::{
     MAX_SNAPSHOT_DOCUMENT_BYTES, MAX_SNAPSHOT_ENCODED_PAYLOAD_BYTES, MAX_SNAPSHOT_PAYLOAD_BYTES,
     ProjectionCheckpoint, SNAPSHOT_ENVELOPE_SCHEMA_VERSION_V2, SnapshotDocument, SnapshotLoad,

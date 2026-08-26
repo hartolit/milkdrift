@@ -12,7 +12,25 @@ cargo test --workspace --all-features --no-fail-fast
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps
 cargo deny check
+cargo tree --workspace --duplicates
 ```
+
+Focused daemon/control-plane checks are:
+
+```sh
+cargo test -p milkdrift-control-protocol --all-features -- --nocapture
+cargo test -p milkdrift-control-client --all-features -- --nocapture
+cargo test -p milkdrift-daemon --test control_plane daemon_auth_startup_readiness_and_authority -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane daemon_command_idempotency_restart_and_stale_conflict -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane daemon_bounded_overload_returns_stable_error -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane daemon_stream_reconnect_auth_rotation_and_shutdown -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane daemon_graceful_shutdown_and_restart -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane daemon_configured_process_adapter_executes_to_terminal -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane daemon_startup_corruption_refuses_command_admission -- --exact --nocapture
+cargo test -p milkdrift-cli --all-features -- --nocapture
+```
+
+These tests use temporary redb/artifact roots and ephemeral loopback listeners only. They cover fail-closed configuration/authentication, server-owned actor mapping, ordinary authority denial, queue overload, durable command replay across restart, stale guards, exact-cursor SSE resume, credential rotation, startup corruption, and ordered shutdown. They require no internet or real credential. Run the daemon manually with `cargo run -p milkdrift-daemon -- --config PATH`; run the client with `cargo run -p milkdrift-cli -- [GLOBAL OPTIONS] COMMAND`. Keep bearer values in a private file or a referenced environment variable, never a command argument.
 
 Focused Pass-03C checks are:
 

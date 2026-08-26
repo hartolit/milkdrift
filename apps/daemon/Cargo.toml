@@ -1,0 +1,46 @@
+[package]
+name = "milkdrift-daemon"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-stream.workspace = true
+axum.workspace = true
+blake3.workspace = true
+clap.workspace = true
+futures-util.workspace = true
+milkdrift-authority = { version = "=0.1.0", path = "../../crates/authority" }
+milkdrift-blueprint = { version = "=0.1.0", path = "../../crates/blueprint" }
+milkdrift-capability = { version = "=0.1.0", path = "../../crates/capability" }
+milkdrift-capability-host = { version = "=0.1.0", path = "../../crates/capability-host" }
+milkdrift-contracts.workspace = true
+milkdrift-control = { version = "=0.1.0", path = "../../crates/control" }
+milkdrift-control-protocol = { version = "=0.1.0", path = "../../crates/control-protocol" }
+milkdrift-local-process = { version = "=0.1.0", path = "../../adapters/local-process" }
+milkdrift-model-provider = { version = "=0.1.0", path = "../../adapters/model-provider" }
+milkdrift-persistence = { version = "=0.1.0", path = "../../crates/persistence" }
+milkdrift-redb-store = { version = "=0.1.0", path = "../../adapters/redb-store" }
+milkdrift-runtime = { version = "=0.1.0", path = "../../crates/runtime" }
+milkdrift-workspace = { version = "=0.1.0", path = "../../crates/workspace" }
+serde.workspace = true
+serde_json.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+milkdrift-control-client = { version = "=0.1.0", path = "../../crates/control-client" }
+reqwest.workspace = true
+tempfile.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true
