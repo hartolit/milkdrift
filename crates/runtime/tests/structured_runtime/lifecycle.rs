@@ -319,9 +319,10 @@ fn runtime_for_startup_probe(
     store: Arc<StartupProbeStore>,
     prefix: &str,
 ) -> TestResult<RuntimeService> {
-    Ok(RuntimeService::open_closed(
+    Ok(RuntimeService::open_closed_with_authority(
         store,
         Arc::new(DeterministicExecutor::new(test_descriptor()?)),
+        test_authority(),
         Arc::new(ManualClock::new(NOW)),
         Arc::new(SequentialIdGenerator::new(prefix, 1)?),
         RuntimeConfig::new(
@@ -418,9 +419,10 @@ fn startup_rejects_symmetric_runnable_index_loss_after_authoritative_replay() ->
     let run = RunId::new("run-startup-runnable-symmetric-loss")?;
     {
         let store = Arc::new(RedbStore::open(directory.path())?);
-        let runtime = RuntimeService::new(
+        let runtime = RuntimeService::new_with_authority(
             store.clone(),
             Arc::new(DeterministicExecutor::new(test_descriptor()?)),
+            test_authority(),
             Arc::new(ManualClock::new(NOW)),
             Arc::new(SequentialIdGenerator::new("startup-runnable-loss", 1)?),
             RuntimeConfig::new(
@@ -461,9 +463,10 @@ fn startup_rejects_symmetric_runnable_index_loss_after_authoritative_replay() ->
 
     storage_fault::remove_run_runnable_discovery(directory.path(), &run)?;
     let store = Arc::new(RedbStore::open(directory.path())?);
-    let runtime = RuntimeService::open_closed(
+    let runtime = RuntimeService::open_closed_with_authority(
         store,
         Arc::new(DeterministicExecutor::new(test_descriptor()?)),
+        test_authority(),
         Arc::new(ManualClock::new(NOW)),
         Arc::new(SequentialIdGenerator::new(
             "startup-runnable-loss-reopen",
@@ -491,9 +494,10 @@ fn startup_rejects_symmetric_runnable_index_loss_after_authoritative_replay() ->
 fn startup_keeps_admission_closed_until_active_recovery_completes() -> TestResult {
     let directory = TempDir::new()?;
     let store = Arc::new(RedbStore::open(directory.path())?);
-    let runtime = RuntimeService::open_closed(
+    let runtime = RuntimeService::open_closed_with_authority(
         store,
         Arc::new(DeterministicExecutor::new(test_descriptor()?)),
+        test_authority(),
         Arc::new(ManualClock::new(NOW)),
         Arc::new(SequentialIdGenerator::new("startup-gate", 1)?),
         RuntimeConfig::new(
@@ -529,9 +533,10 @@ fn scheduler_commits_dispatch_without_entering_long_running_executor() -> TestRe
     let directory = TempDir::new()?;
     let store = Arc::new(RedbStore::open(directory.path())?);
     let executor = Arc::new(BlockingExecutor::new(test_descriptor()?)?);
-    let runtime = Arc::new(RuntimeService::new(
+    let runtime = Arc::new(RuntimeService::new_with_authority(
         store.clone(),
         executor.clone(),
+        test_authority(),
         Arc::new(ManualClock::new(NOW)),
         Arc::new(SequentialIdGenerator::new("nonblocking-scheduler", 1)?),
         RuntimeConfig::new(
@@ -618,13 +623,14 @@ fn scheduler_commits_dispatch_without_entering_long_running_executor() -> TestRe
 }
 
 #[test]
-fn terminal_observed_after_lease_expiry_is_preserved_as_late_evidence() -> TestResult {
+fn late_worker_reports_cannot_be_forged_through_external_commands() -> TestResult {
     let directory = TempDir::new()?;
     let store = Arc::new(RedbStore::open(directory.path())?);
     let clock = Arc::new(ManualClock::new(NOW));
-    let runtime = RuntimeService::new(
+    let runtime = RuntimeService::new_with_authority(
         store.clone(),
         Arc::new(DeterministicExecutor::new(test_descriptor()?)),
+        test_authority(),
         clock.clone(),
         Arc::new(SequentialIdGenerator::new("late-terminal", 1)?),
         RuntimeConfig::new(
@@ -703,27 +709,22 @@ fn terminal_observed_after_lease_expiry_is_preserved_as_late_evidence() -> TestR
             },
         },
     )?;
-    assert_eq!(
-        runtime.handle_command(&command)?.result().disposition(),
-        CommandDisposition::Accepted
-    );
-
+    let head = store.head(&run)?;
+    assert!(matches!(
+        runtime.handle_authorized_command(&command, &test_authority_claim()?),
+        Err(RuntimeError::InvalidCommand(detail))
+            if detail.contains("worker reports cannot be submitted")
+    ));
+    assert_eq!(store.head(&run)?, head);
     let projection = runtime.projection(&run)?;
-    let attempt = projection
-        .attempts()
-        .get(dispatch.attempt())
-        .ok_or("claimed attempt is absent after evidence")?;
-    assert_eq!(attempt.state(), &AttemptState::Uncertain);
-    assert!(attempt.terminal().is_none());
-    let evidence = attempt
-        .late_terminal_evidence()
-        .ok_or("late terminal evidence was not retained")?;
-    assert_eq!(evidence.report_sequence(), report_sequence);
-    assert_eq!(evidence.terminal().status(), TerminalStatus::Success);
-    assert!(runtime.history(&run)?.iter().any(|event| matches!(
-        event.kind(),
-        RunEventKind::LateTerminalEvidenceRecorded { .. }
-    )));
+    assert_eq!(
+        projection
+            .attempts()
+            .get(dispatch.attempt())
+            .ok_or("claimed attempt is absent after rejected report")?
+            .state(),
+        &AttemptState::Uncertain
+    );
     Ok(())
 }
 
@@ -858,9 +859,10 @@ fn explicit_terminal_waits_for_an_already_dispatched_any_join_loser() -> TestRes
     let directory = TempDir::new()?;
     let store = Arc::new(RedbStore::open(directory.path())?);
     let executor = Arc::new(BlockingExecutor::new(test_descriptor()?)?);
-    let runtime = Arc::new(RuntimeService::new(
+    let runtime = Arc::new(RuntimeService::new_with_authority(
         store.clone(),
         executor.clone(),
+        test_authority(),
         Arc::new(ManualClock::new(NOW)),
         Arc::new(SequentialIdGenerator::new("terminal-deferral", 1)?),
         RuntimeConfig::new(
@@ -892,7 +894,7 @@ fn explicit_terminal_waits_for_an_already_dispatched_any_join_loser() -> TestRes
             inputs: Vec::new(),
         },
     )?;
-    runtime.handle_command(&create)?;
+    runtime.handle_authorized_command(&create, &test_authority_claim()?)?;
     let start = runtime.command(
         run.clone(),
         ActorRef::new("human:structured-runtime-test")?,
@@ -901,7 +903,7 @@ fn explicit_terminal_waits_for_an_already_dispatched_any_join_loser() -> TestRes
         Vec::new(),
         RunCommand::StartRun,
     )?;
-    runtime.handle_command(&start)?;
+    runtime.handle_authorized_command(&start, &test_authority_claim()?)?;
 
     let first_runtime = runtime.clone();
     let first_tick =
@@ -967,9 +969,10 @@ fn later_cancellation_dominates_completed_explicit_success_and_failure_terminals
         let directory = TempDir::new()?;
         let store = Arc::new(RedbStore::open(directory.path())?);
         let executor = Arc::new(BlockingExecutor::new(test_descriptor()?)?);
-        let runtime = Arc::new(RuntimeService::new(
+        let runtime = Arc::new(RuntimeService::new_with_authority(
             store.clone(),
             executor.clone(),
+            test_authority(),
             Arc::new(ManualClock::new(NOW)),
             Arc::new(SequentialIdGenerator::new(
                 format!("terminal-cancellation-{suffix}"),
@@ -1105,9 +1108,10 @@ fn explicit_failure_terminal_drains_owned_work_and_finishes_failed() -> TestResu
     let directory = TempDir::new()?;
     let store = Arc::new(RedbStore::open(directory.path())?);
     let executor = Arc::new(BlockingExecutor::new(test_descriptor()?)?);
-    let runtime = Arc::new(RuntimeService::new(
+    let runtime = Arc::new(RuntimeService::new_with_authority(
         store.clone(),
         executor.clone(),
+        test_authority(),
         Arc::new(ManualClock::new(NOW)),
         Arc::new(SequentialIdGenerator::new("explicit-failure-drain", 1)?),
         RuntimeConfig::new(
@@ -1221,9 +1225,10 @@ fn active_invocation_cancellation_reaches_the_executor_and_is_acknowledged_durab
         SchedulerLimits::new(8, 4, 2, 4)?,
         RetryPolicy::new(1, Vec::new(), 10, 1_000, 0)?,
     )?;
-    let runtime = Arc::new(RuntimeService::new(
+    let runtime = Arc::new(RuntimeService::new_with_authority(
         store.clone(),
         executor.clone(),
+        test_authority(),
         clock,
         Arc::new(SequentialIdGenerator::new("active-cancel", 1)?),
         config,
@@ -1247,7 +1252,10 @@ fn active_invocation_cancellation_reaches_the_executor_and_is_acknowledged_durab
         },
     )?;
     assert_eq!(
-        runtime.handle_command(&create)?.result().disposition(),
+        runtime
+            .handle_authorized_command(&create, &test_authority_claim()?)?
+            .result()
+            .disposition(),
         CommandDisposition::Accepted
     );
     let start = runtime.command(
@@ -1258,7 +1266,7 @@ fn active_invocation_cancellation_reaches_the_executor_and_is_acknowledged_durab
         Vec::new(),
         RunCommand::StartRun,
     )?;
-    runtime.handle_command(&start)?;
+    runtime.handle_authorized_command(&start, &test_authority_claim()?)?;
 
     let tick_runtime = runtime.clone();
     let dispatch =
@@ -1281,7 +1289,10 @@ fn active_invocation_cancellation_reaches_the_executor_and_is_acknowledged_durab
         RunCommand::RequestCancellation,
     )?;
     assert_eq!(
-        runtime.handle_command(&cancel)?.result().disposition(),
+        runtime
+            .handle_authorized_command(&cancel, &test_authority_claim()?)?
+            .result()
+            .disposition(),
         CommandDisposition::Accepted
     );
 

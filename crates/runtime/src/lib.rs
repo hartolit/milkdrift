@@ -21,8 +21,9 @@ pub use boundary::{
     BoundaryClock, IdGenerator, ManualClock, SequentialIdGenerator, SystemBoundaryClock,
 };
 pub use command::{
-    ExternalWorkAction, MAX_COMMAND_ITEMS, RUN_COMMAND_SCHEMA_VERSION_V1, RunCommand,
-    RunCommandDocument, SystemTransition, WorkerReport,
+    AUTHORIZED_RUN_COMMAND_SCHEMA_VERSION_V1, CommandAuthorityClaim, ExternalWorkAction,
+    MAX_COMMAND_ITEMS, RUN_COMMAND_SCHEMA_VERSION_V1, RunCommand, RunCommandDocument,
+    SystemTransition, WorkerReport,
 };
 pub use engine::{
     CommandExecution, EffectExecutionResult, EffectTickResult, RecoveryResult, RuntimeConfig,

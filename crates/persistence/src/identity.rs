@@ -86,8 +86,6 @@ identity_type!(/// Stable identity of an optional projection snapshot.
     SnapshotId);
 identity_type!(/// Stable identity of an artifact/blob publication session.
     PublicationId);
-identity_type!(/// Stable actor/issuer reference; this is not an authority grant.
-    ActorRef);
 identity_type!(/// Stable reference to supporting evidence.
     EvidenceId);
 

@@ -60,13 +60,15 @@ Editing during a run produces a new immutable revision. Reconciliation compares 
 
 Capability descriptors contain provider-neutral facts: identity and descriptor revision, stable category, namespaced operations, exact input/output schema contracts, streaming shapes, cancellation and idempotency behavior, side-effect class, admission limits, locality, trust zones, honest optional resource observations, and bounded extensions. Mutable health, availability, load, leases, credentials, and executor handles are separate.
 
-Blueprint tasks carry capability requirements. A future registry resolves exact pins and constraint matches against current descriptors and policy, then records the chosen descriptor revision. Namespaced features advertise tools, structured output, reasoning controls, embeddings, images, seeds, token accounting, cancellation, or other features only when actually supported. There is no permanent enum of every provider operation and no fabricated common denominator.
+Blueprint tasks carry capability requirements. `milkdrift-capability-host` resolves exact pins and constraint matches against one consistent live registry snapshot, fresh availability evidence, immediate capacity evidence, and configured authority/policy facts, then the runtime records the chosen descriptor revision. Selection is stable by exact requirement, explicit priority, capability identity, and revision; after the snapshot is persisted, execution and cancellation route only to that exact generation and never fall back. Namespaced features advertise tools, structured output, reasoning controls, embeddings, images, seeds, token accounting, cancellation, or other features only when actually supported. There is no permanent enum of every provider operation and no fabricated common denominator.
 
 Invocation requests, progress/output events, cancellation exchange, terminal outcome, usage, retryability, side-effect status, and uncertainty are versioned provider-neutral contracts. Values and artifacts use bounded references. Adapters translate and report; they never decide run state.
 
 ## 7. Actors, authority, proposals, and AI control
 
-Actor identity and scoped authority are distinct from revision authorship. Authority grants constrain commands by workflow, capability, operation, budget, path, network destination, secret reference, side-effect class, and duration. Policy evaluation records the actor, grant/version, decision, and relevant constraints.
+Actor identity and scoped authority are distinct from revision authorship. Canonical `ActorRef` ownership is in `milkdrift-authority`; blueprint `AuthorRef` remains provenance only. Immutable schema-v1 grant revisions constrain commands by workflow/run, typed operation, capability identity/category/operation/profile/trust/locality, normalized filesystem roots and access, credential-free network profiles/destinations, opaque secret references, side-effect class, cost, duration, invocation, artifact, concurrency, validity, and revocation generation. Pure policy evaluation records the actor, exact grant revision, evaluator policy/version, request facts, stable reason codes, evaluated constraints, caller-supplied boundary time, result, and deterministic digest.
+
+Every external run command presents an exact grant revision to the runtime's injected evaluator before semantic acceptance. The exact decision is part of command-result schema v2 and is committed in the same transaction as acceptance events or denial-without-events; exact redelivery returns that original decision/result without reevaluation. System transitions and worker observations use separate private runtime-owned receipt paths. Authentication remains a future daemon/peer boundary and is not inferred from an actor string or grant reference.
 
 An actor may inspect or propose without authority to apply. Approval is an explicit command/event linking proposal, exact revision or effect, approver, and policy. An AI controller is an ordinary task using a workflow-control capability under a scoped grant. It uses the same closed mutations, optimistic checks, proposals, approvals, and audit trail as a human; it has no hidden privileged node kind or mutable backdoor.
 
@@ -108,11 +110,13 @@ The implemented production dependency direction is shown below. Arrows point
 from a stable contract to a crate that consumes it:
 
 ```text
-milkdrift-contracts   -> {capability, blueprint, workspace, persistence, runtime}
-milkdrift-capability  -> {blueprint, workspace, persistence, runtime}
-milkdrift-blueprint   -> {persistence, runtime, redb-store}
-milkdrift-workspace   -> {persistence, runtime, redb-store}
+milkdrift-contracts   -> {capability, blueprint, workspace, authority, persistence, runtime}
+milkdrift-capability  -> {blueprint, workspace, authority, persistence, runtime, capability-host}
+milkdrift-blueprint   -> {authority, persistence, runtime, redb-store}
+milkdrift-workspace   -> {authority, persistence, runtime, redb-store}
+milkdrift-authority   -> {persistence, runtime, capability-host}
 milkdrift-persistence -> {runtime, redb-store}
+milkdrift-runtime     -> {capability-host}
 ```
 
 `milkdrift-contracts` owns only cross-domain implementation mechanics with
@@ -127,9 +131,10 @@ Persistence documents depend on immutable semantic/workspace contracts but own
 no runtime decisions. Runtime and the redb/filesystem adapter are sibling
 consumers of persistence and the immutable domain contracts; runtime uses the
 adapter only as a development dependency in adapter-backed integration tests.
-Future registries implement runtime-facing ports, and apps depend on daemon
-protocols. Dependencies may point toward stable semantics, never from semantics
-toward a host.
+`milkdrift-capability-host` is an outer embeddable host implementing the runtime
+`TaskExecutor` port; it contains live handles but no redb, process, model, peer,
+network-stack, or UI dependency. Apps later depend on daemon protocols. Dependencies
+may point toward stable semantics, never from semantics toward a host.
 
 Forbidden in the semantic crates are Tokio or another executor, HTTP clients/servers, databases, Iced, provider SDKs, subprocess/OS APIs, transport types, secret values, tensor/inference types, live handles, clocks, randomness that affects identity, and mutable singleton registries. Project-authored code is safe Rust unless an independently proven requirement has a focused safety contract and tests.
 
@@ -137,7 +142,7 @@ Forbidden in the semantic crates are Tokio or another executor, HTTP clients/ser
 
 Every disk, wire, provider, tool, peer, imported blueprint, artifact, path, signal, and AI-produced proposal is untrusted input. Readers enforce schema version, byte/count/depth/string/path bounds before expensive work; reject unknown core semantics; and preserve only bounded namespaced extensions. Conditions are data ASTs, not scripts.
 
-Credentials and secret values never appear in blueprints, descriptors, requirements, events, diagnostics, logs, or peer advertisements. Later adapters receive opaque secret/profile references through a policy-mediated host and minimize exposure duration. Filesystem/network/process effects require normalized allowlists and resist traversal, symlink, redirect, shell-injection, and confused-deputy attacks. Side effects, authority decisions, approvals, hostile provider output, and uncertain outcomes are provenance facts. Budget and termination controls are enforced by the owning runtime, not trusted to an AI prompt.
+Credentials and secret values never appear in blueprints, descriptors, requirements, events, diagnostics, logs, or peer advertisements. `SecretRef` serializes only an opaque reference, while resolved `SensitiveSecret` values are non-serializable, non-clone, redacted, and exposed only through a narrow closure. The host owns the resolver port; Pass 03A supplies only deterministic in-memory test infrastructure and Pass 03B supplies concrete sources. Filesystem/network/process effects require normalized allowlists and resist traversal, symlink, redirect, shell-injection, and confused-deputy attacks. Side effects, authority decisions, approvals, hostile provider output, and uncertain outcomes are provenance facts. Budget and termination controls are enforced by the owning runtime, not trusted to an AI prompt.
 
 ## 15. Disk/wire schemas and compatibility
 
@@ -166,6 +171,10 @@ milkdrift/
 │   ├── contracts/
 │   │   ├── canonical-json
 │   │   └── validated-newtype-mechanics
+│   ├── authority/
+│   │   ├── actors-and-grants
+│   │   ├── policy-evaluation
+│   │   └── secret-references
 │   ├── runtime/
 │   │   ├── scheduler
 │   │   ├── execution
@@ -174,8 +183,11 @@ milkdrift/
 │   │   └── recovery
 │   ├── capability/
 │   │   ├── contracts
-│   │   ├── registry
 │   │   └── resolution
+│   ├── capability-host/
+│   │   ├── registry-and-health
+│   │   ├── admission-and-generation-lifecycle
+│   │   └── adapter-and-secret-ports
 │   ├── workspace/
 │   │   ├── context
 │   │   ├── artifacts
@@ -203,6 +215,7 @@ The logical map is the long-lived ownership reference. Its exact current physica
 | Logical responsibility | Current physical crate/module |
 | --- | --- |
 | Shared contract mechanics | `milkdrift-contracts` owns bounded/canonical JSON mechanics and the common validated-string implementation; semantic rules remain in consuming domain crates |
+| Actor/grant/policy/secret-reference authority | `milkdrift-authority::{identity,model,evaluator,secret,document}`; it is pure, safe Rust and owns no authentication or live secret value source |
 | `blueprint/model` | `milkdrift-blueprint::model` (public types re-exported at crate root) |
 | `blueprint/validation` | `milkdrift-blueprint::validation` |
 | `blueprint/revision` | `milkdrift-blueprint::revision` |
@@ -213,8 +226,8 @@ The logical map is the long-lived ownership reference. Its exact current physica
 | `runtime/reconciliation` | `milkdrift-runtime::reconciliation`, engine reconciliation, separate projection plan/action reducers and reconciliation views, and persistence-owned plan event documents |
 | `runtime/recovery` | `milkdrift-runtime::{query,engine::recovery,projection::replay}`, the focused recovery reducer, and recovery indexes in the redb adapter |
 | `capability/contracts` | `milkdrift-capability::{descriptor,invocation,document,identity,bounded}` |
-| `capability/registry` | Deterministic test boundary only; live Pass 3 registry remains unimplemented |
-| `capability/resolution` | Pure requirement matching and exact immutable snapshots in `milkdrift-capability`; live policy selection remains Pass 3 |
+| `capability/registry` | `milkdrift-capability-host::registry` owns bounded live registrations, observations, actual permit ownership, generation lifecycle, and queries |
+| `capability/resolution` | Pure matching and exact snapshots remain in `milkdrift-capability`; deterministic authority/policy/health/capacity selection and the runtime executor bridge are in `milkdrift-capability-host` |
 | `workspace/context` | Scoped immutable values/budgets in `milkdrift-workspace`; causal context construction remains Pass 3 |
 | `workspace/artifacts` | Metadata/contracts in `milkdrift-workspace` and durable bytes in `milkdrift-redb-store` |
 | `workspace/branches` | `milkdrift-workspace::scope` plus runtime branch/iteration/subworkflow projections |

@@ -98,7 +98,7 @@ impl RuntimeService {
         if !self.config.scheduler_limits.allows(&admission, &usage) {
             return Ok(DispatchOutcome::Deferred);
         }
-        let resolution = self.executor.resolve(&requirement)?;
+        let resolution = self.executor.resolve(&requirement, now.get())?;
         let contract = resolution.snapshot().operation_contract();
         let attempt = match execution.state() {
             NodeExecutionState::Eligible => self.next_attempt_id()?,
@@ -421,7 +421,7 @@ impl RuntimeService {
             RunCommand::SystemTransition { transition },
         )?;
         let receipt = document.receipt()?;
-        let outcome = self.commit_accepted(&document, receipt, projection, plan)?;
+        let outcome = self.commit_accepted(&document, receipt, projection, plan, None)?;
         let (result, replayed) = match outcome {
             AtomicRunCommitOutcome::Committed(value) => (value, false),
             AtomicRunCommitOutcome::Replayed(value) => (value, true),

@@ -1,0 +1,17 @@
+[package]
+name = "milkdrift-capability-host"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+blake3.workspace = true
+milkdrift-authority = { version = "=0.1.0", path = "../authority" }
+milkdrift-capability = { version = "=0.1.0", path = "../capability" }
+milkdrift-runtime = { version = "=0.1.0", path = "../runtime" }
+thiserror.workspace = true
+
+[lints]
+workspace = true

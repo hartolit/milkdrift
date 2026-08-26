@@ -297,28 +297,43 @@ pub(crate) fn decode_command_record(bytes: &[u8]) -> Result<OwnedCommandRecord, 
 pub(crate) fn validate_command_result(
     result: &CommandResultDocument,
 ) -> Result<(), PersistenceError> {
-    if result.schema_version() != COMMAND_RESULT_SCHEMA_VERSION_V1 {
+    if !matches!(
+        result.schema_version(),
+        COMMAND_RESULT_SCHEMA_VERSION_V1 | COMMAND_RESULT_SCHEMA_VERSION_V2
+    ) {
         return Err(PersistenceError::UnsupportedVersion {
             document: "command_result",
             found: result.schema_version(),
-            supported: COMMAND_RESULT_SCHEMA_VERSION_V1,
+            supported: COMMAND_RESULT_SCHEMA_VERSION_V2,
         });
     }
-    let rebuilt = CommandResultDocument::new(
-        result.command().clone(),
-        result.run().clone(),
-        result.command_fingerprint().clone(),
-        result.disposition(),
-        result.resulting_sequence(),
-        result.event_ids().to_vec(),
-        result.result().clone(),
-    )
+    let rebuilt = match result.authorization() {
+        Some(decision) => CommandResultDocument::new_authorized(
+            result.command().clone(),
+            result.run().clone(),
+            result.command_fingerprint().clone(),
+            result.disposition(),
+            result.resulting_sequence(),
+            result.event_ids().to_vec(),
+            result.result().clone(),
+            decision.clone(),
+        ),
+        None => CommandResultDocument::new(
+            result.command().clone(),
+            result.run().clone(),
+            result.command_fingerprint().clone(),
+            result.disposition(),
+            result.resulting_sequence(),
+            result.event_ids().to_vec(),
+            result.result().clone(),
+        ),
+    }
     .map_err(|cause| {
         PersistenceError::Corruption(format!("stored command result failed validation: {cause}"))
     })?;
     if &rebuilt != result {
         return Err(error::corruption(
-            "stored command result is not canonical schema v1",
+            "stored command result is not canonical for its exact schema",
         ));
     }
     Ok(())

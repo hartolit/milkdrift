@@ -19,9 +19,44 @@ pub enum ExecutorError {
     /// An immutable request and its exact capability snapshot disagree.
     #[error("invalid execution dispatch: {0}")]
     InvalidDispatch(String),
-    /// The boundary could not resolve an exact capability honestly.
-    #[error("capability resolution failed: {0}")]
-    Resolution(String),
+    /// No descriptor matched the exact semantic and policy constraints.
+    #[error("capability resolution mismatch: {reasons:?}")]
+    ResolutionMismatch {
+        /// Stable mismatch fields.
+        reasons: Vec<String>,
+    },
+    /// Authority policy denied capability selection.
+    #[error("capability selection denied by authority policy: {0}")]
+    AuthorityDenied(String),
+    /// The exact persisted descriptor generation is no longer hosted.
+    #[error("capability generation {capability}/{descriptor_revision} is unavailable")]
+    UnavailableGeneration {
+        /// Exact capability identity.
+        capability: milkdrift_capability::CapabilityId,
+        /// Exact descriptor revision.
+        descriptor_revision: u64,
+    },
+    /// A generation is unhealthy, stale, draining for resolution, or otherwise unavailable.
+    #[error("capability unavailable: {0}")]
+    Unavailable(String),
+    /// Admission was refused without entering adapter code.
+    #[error("capability generation overloaded: {0}")]
+    Overloaded(String),
+    /// Host shutdown closed new admission before adapter entry.
+    #[error("capability host admission is closed")]
+    AdmissionClosed,
+    /// A typed host failure occurred before external adapter entry.
+    #[error("executor failed before adapter entry: {0}")]
+    BoundaryBeforeEntry(String),
+    /// Adapter code was entered and returned without a terminal durable observation.
+    #[error("executor outcome is unknown after adapter entry: {0}")]
+    BoundaryAfterEntry(String),
+    /// Adapter code panicked; `after_entry` distinguishes uncertainty classification.
+    #[error("adapter panicked (after_entry={after_entry})")]
+    AdapterPanicked {
+        /// Whether external adapter code had been entered.
+        after_entry: bool,
+    },
     /// Executor admission or execution failed before a valid report batch existed.
     #[error("executor boundary failed: {0}")]
     Boundary(String),
@@ -316,6 +351,7 @@ pub trait TaskExecutor: Send + Sync {
     fn resolve(
         &self,
         requirement: &CapabilityRequirement,
+        observed_at_unix_ms: u64,
     ) -> Result<ResolvedCapability, ExecutorError>;
 
     /// Compatibility hook for bounded synchronous executors.
@@ -408,7 +444,9 @@ impl DeterministicExecutor {
         operation: &OperationId,
     ) -> Result<Vec<InvocationEventKind>, ExecutorError> {
         let contract = self.descriptor.operation(operation).ok_or_else(|| {
-            ExecutorError::Resolution(format!("operation '{operation}' is not advertised"))
+            ExecutorError::ResolutionMismatch {
+                reasons: vec![format!("operation '{operation}' is not advertised")],
+            }
         })?;
         let terminal = InvocationTerminal::new(
             TerminalStatus::Success,
@@ -425,13 +463,13 @@ impl TaskExecutor for DeterministicExecutor {
     fn resolve(
         &self,
         requirement: &CapabilityRequirement,
+        _observed_at_unix_ms: u64,
     ) -> Result<ResolvedCapability, ExecutorError> {
         let result = self.descriptor.matches(requirement);
         if !result.is_match() {
-            return Err(ExecutorError::Resolution(format!(
-                "descriptor did not satisfy requirement: {}",
-                result.mismatch_reasons().join(",")
-            )));
+            return Err(ExecutorError::ResolutionMismatch {
+                reasons: result.mismatch_reasons().to_vec(),
+            });
         }
         let snapshot =
             ResolvedCapabilitySnapshot::from_descriptor(&self.descriptor, requirement.operation())?;

@@ -1,16 +1,19 @@
 use std::collections::BTreeSet;
 
+use milkdrift_authority::{
+    ActorRef, AuthorityBudget, AuthorityOperation, AuthorityRequest, BoundaryTimeMillis,
+    DecisionId, GrantId, RequestedResourceFacts,
+};
 use milkdrift_blueprint::{NodeId, RevisionId, WorkflowId};
 use milkdrift_capability::{
     BoundedJson, CancellationAcknowledgement, InvocationEvent, InvocationTerminal,
 };
 use milkdrift_persistence::{
-    ActorRef, AttemptId, AuthorityDecision, CommandId, CommandReceipt, CorrelationKey,
-    EvidenceReference, LeaseId, MAX_COMMAND_DOCUMENT_BYTES,
-    MAX_REPEAT_CONTINUATION_ADDITIONAL_ITERATIONS, NodeExecutionId, Reason,
-    ReconciliationDecisionId, ReconciliationId, ReconciliationPlanId, ReconciliationPolicy,
-    RepeatContinuationDecision, RepeatDecisionId, RunSequence, SignalDeliveryMode, SignalId,
-    SignalTypeId, TimerId, TimestampMillis, WorkerId,
+    AttemptId, AuthorityDecision, CommandId, CommandReceipt, CorrelationKey, EvidenceReference,
+    LeaseId, MAX_COMMAND_DOCUMENT_BYTES, MAX_REPEAT_CONTINUATION_ADDITIONAL_ITERATIONS,
+    NodeExecutionId, Reason, ReconciliationDecisionId, ReconciliationId, ReconciliationPlanId,
+    ReconciliationPolicy, RepeatContinuationDecision, RepeatDecisionId, RunSequence,
+    SignalDeliveryMode, SignalId, SignalTypeId, TimerId, TimestampMillis, WorkerId,
 };
 use milkdrift_workspace::{RunId, WorkspaceBudget, WorkspaceScope, WorkspaceValueEntry};
 use serde::{Deserialize, Serialize};
@@ -21,6 +24,8 @@ use crate::RuntimeError;
 
 /// Current closed runtime-command document schema.
 pub const RUN_COMMAND_SCHEMA_VERSION_V1: u32 = 1;
+/// Current authorization wrapper schema around an unchanged command-v1 document.
+pub const AUTHORIZED_RUN_COMMAND_SCHEMA_VERSION_V1: u32 = 1;
 /// Maximum events/references carried directly by one command.
 pub const MAX_COMMAND_ITEMS: usize = 512;
 const COMMAND_JSON_LIMITS: JsonLimits = JsonLimits {
@@ -252,6 +257,53 @@ pub enum RunCommand {
     },
 }
 
+/// Exact grant revision and revocation generation presented with an external command.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandAuthorityClaim {
+    grant: GrantId,
+    grant_revision: u64,
+    revocation_generation: u64,
+}
+
+impl CommandAuthorityClaim {
+    /// Constructs an exact nonzero grant revision claim.
+    pub fn new(
+        grant: GrantId,
+        grant_revision: u64,
+        revocation_generation: u64,
+    ) -> Result<Self, RuntimeError> {
+        if grant_revision == 0 {
+            return Err(RuntimeError::InvalidCommand(
+                "authority grant revision must be nonzero".to_owned(),
+            ));
+        }
+        Ok(Self {
+            grant,
+            grant_revision,
+            revocation_generation,
+        })
+    }
+
+    /// Exact grant lineage.
+    #[must_use]
+    pub const fn grant(&self) -> &GrantId {
+        &self.grant
+    }
+
+    /// Exact immutable grant revision.
+    #[must_use]
+    pub const fn grant_revision(&self) -> u64 {
+        self.grant_revision
+    }
+
+    /// Exact revocation generation observed by the caller boundary.
+    #[must_use]
+    pub const fn revocation_generation(&self) -> u64 {
+        self.revocation_generation
+    }
+}
+
 /// Versioned command envelope binding intent to identity, actor, aggregate, guard, and clock fact.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -287,6 +339,20 @@ struct RunCommandIntent<'a> {
     reason: &'a Reason,
     evidence: &'a [EvidenceReference],
     command: &'a RunCommand,
+}
+
+#[derive(Serialize)]
+struct AuthorizedCommandAudit<'a> {
+    schema_version: u32,
+    authority: &'a CommandAuthorityClaim,
+    command: &'a RunCommandDocument,
+}
+
+#[derive(Serialize)]
+struct AuthorizedCommandIntent<'a> {
+    schema_version: u32,
+    authority: &'a CommandAuthorityClaim,
+    command: RunCommandIntent<'a>,
 }
 
 impl RunCommandDocument {
@@ -434,6 +500,127 @@ impl RunCommandDocument {
             self.to_canonical_json()?,
             canonical_json(&intent)?,
         )?)
+    }
+
+    /// Creates a receipt whose audit and idempotency bytes include the exact authority claim.
+    pub fn authorized_receipt(
+        &self,
+        authority: &CommandAuthorityClaim,
+    ) -> Result<CommandReceipt, RuntimeError> {
+        let intent = RunCommandIntent {
+            schema_version: self.schema_version,
+            reason: &self.reason,
+            evidence: &self.evidence,
+            command: &self.command,
+        };
+        let audit = AuthorizedCommandAudit {
+            schema_version: AUTHORIZED_RUN_COMMAND_SCHEMA_VERSION_V1,
+            authority,
+            command: self,
+        };
+        let authorized_intent = AuthorizedCommandIntent {
+            schema_version: AUTHORIZED_RUN_COMMAND_SCHEMA_VERSION_V1,
+            authority,
+            command: intent,
+        };
+        Ok(CommandReceipt::new_idempotent(
+            self.command_id.clone(),
+            self.run_id.clone(),
+            self.actor.clone(),
+            self.expected_sequence,
+            self.issued_at,
+            canonical_json(&audit)?,
+            canonical_json(&authorized_intent)?,
+        )?)
+    }
+
+    /// Derives exact typed authorization facts from this closed external command.
+    pub fn authority_request(
+        &self,
+        claim: &CommandAuthorityClaim,
+    ) -> Result<AuthorityRequest, RuntimeError> {
+        let (operation, workflow, budget) = match &self.command {
+            RunCommand::CreateRun {
+                workflow,
+                workspace_budget,
+                ..
+            } => (
+                AuthorityOperation::CreateRun,
+                Some(workflow.clone()),
+                AuthorityBudget {
+                    artifact_bytes: Some(workspace_budget.max_total_artifact_bytes()),
+                    ..AuthorityBudget::default()
+                },
+            ),
+            RunCommand::StartRun => (
+                AuthorityOperation::StartRun,
+                None,
+                AuthorityBudget::default(),
+            ),
+            RunCommand::PauseRun => (AuthorityOperation::Pause, None, AuthorityBudget::default()),
+            RunCommand::ResumeRun => (AuthorityOperation::Resume, None, AuthorityBudget::default()),
+            RunCommand::RequestCancellation => {
+                (AuthorityOperation::Cancel, None, AuthorityBudget::default())
+            }
+            RunCommand::DeliverSignal { .. } => (
+                AuthorityOperation::DeliverSignal,
+                None,
+                AuthorityBudget::default(),
+            ),
+            RunCommand::FireTimer { .. } => (
+                AuthorityOperation::FireTimer,
+                None,
+                AuthorityBudget::default(),
+            ),
+            RunCommand::RequestRevisionAdoption { .. } => (
+                AuthorityOperation::Propose,
+                None,
+                AuthorityBudget::default(),
+            ),
+            RunCommand::DecideReconciliation { .. }
+            | RunCommand::DecideRepeatContinuation { .. } => (
+                AuthorityOperation::Approve,
+                None,
+                AuthorityBudget::default(),
+            ),
+            RunCommand::ApplyReconciliation { .. } => {
+                (AuthorityOperation::Apply, None, AuthorityBudget::default())
+            }
+            RunCommand::ResolveExternalWork { action, .. } => (
+                match action {
+                    ExternalWorkAction::Retry => AuthorityOperation::Retry,
+                    ExternalWorkAction::Query => AuthorityOperation::Inspect,
+                    ExternalWorkAction::Compensate => AuthorityOperation::Apply,
+                    ExternalWorkAction::Retain => AuthorityOperation::Approve,
+                    ExternalWorkAction::ResolveSucceeded | ExternalWorkAction::ResolveFailed => {
+                        AuthorityOperation::Terminate
+                    }
+                },
+                None,
+                AuthorityBudget::default(),
+            ),
+            RunCommand::SystemTransition { .. } | RunCommand::WorkerReport { .. } => {
+                return Err(RuntimeError::InvalidCommand(
+                    "internal system transitions and worker reports cannot be submitted through the external command API"
+                        .to_owned(),
+                ));
+            }
+        };
+        let mut resources = RequestedResourceFacts::empty();
+        resources.workflow = workflow;
+        resources.run = Some(self.run_id.clone());
+        let digest = blake3::hash(self.command_id.as_str().as_bytes());
+        Ok(AuthorityRequest {
+            decision: DecisionId::new(format!("decision:{digest}"))?,
+            actor: self.actor.clone(),
+            grant: claim.grant.clone(),
+            grant_revision: claim.grant_revision,
+            revocation_generation: claim.revocation_generation,
+            operation,
+            resources,
+            budget,
+            evaluated_at: BoundaryTimeMillis::new(self.issued_at.get()),
+        })
     }
 
     fn validate(&self) -> Result<(), RuntimeError> {

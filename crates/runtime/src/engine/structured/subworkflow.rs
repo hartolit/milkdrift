@@ -156,7 +156,7 @@ impl RuntimeService {
                 inputs,
             },
         )?;
-        let created = self.handle_command(&create)?;
+        let created = self.handle_internal_command(&create)?;
         if created.result().disposition() != CommandDisposition::Accepted {
             return Err(RuntimeError::InvalidTransition(
                 "pinned child run creation was durably rejected".to_owned(),
@@ -186,7 +186,7 @@ impl RuntimeService {
                 Vec::new(),
                 RunCommand::RequestCancellation,
             )?;
-            let _ = self.handle_command(&cancel)?;
+            let _ = self.handle_internal_command(&cancel)?;
             child = self.projection(&attached.run)?;
         } else if child.lifecycle() == RunLifecycle::Created {
             let start = RunCommandDocument::new(
@@ -199,7 +199,7 @@ impl RuntimeService {
                 Vec::new(),
                 RunCommand::StartRun,
             )?;
-            let _ = self.handle_command(&start)?;
+            let _ = self.handle_internal_command(&start)?;
             child = self.projection(&attached.run)?;
         }
         Ok(child)

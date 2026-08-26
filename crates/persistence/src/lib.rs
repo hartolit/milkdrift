@@ -54,16 +54,17 @@ pub use event::{
     WaitCondition, WaitSatisfaction,
 };
 pub use identity::{
-    ActorRef, ArtifactPublicationId, AttemptId, CommandId, CorrelationKey, EventId, EvidenceId,
+    ArtifactPublicationId, AttemptId, CommandId, CorrelationKey, EventId, EvidenceId,
     IntegrityDigest, LeaseId, NodeExecutionId, PublicationId, ReconciliationDecisionId,
     ReconciliationId, ReconciliationPlanId, RepeatDecisionId, RunSequence, SignalId, SignalTypeId,
     SnapshotId, TimerId, TimestampMillis, WorkerId,
 };
 pub use journal::{
     ActiveLeaseSnapshot, AtomicRunCommitOutcome, AtomicRunCommitRequest,
-    COMMAND_RESULT_SCHEMA_VERSION_V1, CommandDisposition, CommandReceipt, CommandResultDocument,
-    EventCursor, EventPage, EventPageQuery, IndexedRunState, LeaseIndexEntry, LeaseIndexMutation,
-    MAX_COMMAND_DOCUMENT_BYTES, MAX_COMMAND_RESULT_DOCUMENT_BYTES, MAX_INDEX_MUTATIONS_PER_COMMIT,
+    COMMAND_RESULT_SCHEMA_VERSION_V1, COMMAND_RESULT_SCHEMA_VERSION_V2, CommandDisposition,
+    CommandReceipt, CommandResultDocument, EventCursor, EventPage, EventPageQuery, IndexedRunState,
+    LeaseIndexEntry, LeaseIndexMutation, MAX_COMMAND_DOCUMENT_BYTES,
+    MAX_COMMAND_RESULT_DOCUMENT_BYTES, MAX_INDEX_MUTATIONS_PER_COMMIT,
     MAX_REQUIRED_ARTIFACTS_PER_COMMIT, MAX_VALUE_PROVENANCE_DEPTH,
     MAX_WORKSPACE_MUTATIONS_PER_COMMIT, RunDiscoveryIntegrityStore, RunIndexUpdate, RunJournal,
     RunQueryStore, RunSummaryCursor, RunSummaryFilter, RunSummaryIndex, RunSummaryPage,
@@ -79,5 +80,7 @@ pub use snapshot::{
 
 // Canonical identities already owned by inward crates are re-exported rather than
 // duplicated into wire-incompatible persistence-local wrappers.
+/// Compatibility re-export; the canonical actor identity is owned by `milkdrift-authority`.
+pub use milkdrift_authority::ActorRef;
 pub use milkdrift_capability::InvocationId;
 pub use milkdrift_workspace::{BranchId, IterationId, RunId, ScopeId, SubworkflowId};

@@ -401,11 +401,15 @@ impl RuntimeService {
             Ok(()) => Err(RuntimeError::Executor(ExecutorError::InvalidReports(
                 "executor returned without a terminal observation".to_owned(),
             ))),
-            Err(ExecutorError::Boundary(reason)) => {
+            Err(
+                error @ (ExecutorError::Boundary(_)
+                | ExecutorError::BoundaryAfterEntry(_)
+                | ExecutorError::AdapterPanicked { after_entry: true }),
+            ) => {
                 warn!(
                     run = %dispatch.run(),
                     attempt = %dispatch.attempt(),
-                    reason = %reason,
+                    reason = %error,
                     "external effect boundary returned without a terminal observation"
                 );
                 self.record_effect_uncertainty(dispatch.run(), dispatch.attempt())?;
@@ -521,7 +525,7 @@ impl RuntimeService {
                     report: report.clone(),
                 },
             )?;
-            match self.handle_command_preserving_rejection(&document) {
+            match self.handle_internal_command_preserving_rejection(&document) {
                 Ok(outcome) => return Ok(outcome),
                 Err(RuntimeError::Persistence(PersistenceError::SequenceConflict { .. })) => {}
                 Err(error) => return Err(error),

@@ -2,11 +2,12 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use milkdrift_authority::ActorRef;
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_persistence::{
-    ActorRef, AttemptId, AuthorityDecision, EvidenceReference, LeaseId, NodeExecutionId,
-    NodeExecutionMode, Reason, ReconciliationDecisionId, ReconciliationId, ReconciliationItem,
-    ReconciliationPlanId, ReconciliationPolicy, RecoveryClassification, RunSequence, WorkerId,
+    AttemptId, AuthorityDecision, EvidenceReference, LeaseId, NodeExecutionId, NodeExecutionMode,
+    Reason, ReconciliationDecisionId, ReconciliationId, ReconciliationItem, ReconciliationPlanId,
+    ReconciliationPolicy, RecoveryClassification, RunSequence, WorkerId,
 };
 use milkdrift_workspace::ScopeReference;
 

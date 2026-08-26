@@ -2,8 +2,10 @@
 resolver = "3"
 members = [
     "adapters/redb-store",
+    "crates/authority",
     "crates/blueprint",
     "crates/capability",
+    "crates/capability-host",
     "crates/contracts",
     "crates/persistence",
     "crates/runtime",

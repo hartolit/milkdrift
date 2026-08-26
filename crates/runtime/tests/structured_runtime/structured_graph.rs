@@ -592,14 +592,18 @@ fn broadcast_signal_fanout_is_received_once_then_drained_in_bounded_batches() ->
             payload: BoundedJson::new(json!({"broadcast": true}))?,
         },
     )?;
-    let accepted = harness.runtime.handle_command(&command)?;
+    let accepted = harness
+        .runtime
+        .handle_authorized_command(&command, &test_authority_claim()?)?;
     assert!(!accepted.replayed());
     assert_eq!(
         accepted.result().disposition(),
         CommandDisposition::Accepted
     );
     assert_eq!(accepted.result().event_ids().len(), 1);
-    let replayed = harness.runtime.handle_command(&command)?;
+    let replayed = harness
+        .runtime
+        .handle_authorized_command(&command, &test_authority_claim()?)?;
     assert!(replayed.replayed());
     assert_eq!(replayed.result(), accepted.result());
 
@@ -936,14 +940,18 @@ fn await_approval_repeat_extends_exactly_once_then_rejection_terminates() -> Tes
             approved_additional_iterations: Some(2),
         },
     )?;
-    let approved = harness.runtime.handle_command(&approval)?;
+    let approved = harness
+        .runtime
+        .handle_authorized_command(&approval, &test_authority_claim()?)?;
     assert_eq!(
         approved.result().disposition(),
         CommandDisposition::Accepted
     );
     assert!(!approved.replayed());
     let approved_head = harness.store.head(&run)?;
-    let replayed = harness.runtime.handle_command(&approval)?;
+    let replayed = harness
+        .runtime
+        .handle_authorized_command(&approval, &test_authority_claim()?)?;
     assert!(replayed.replayed());
     assert_eq!(replayed.result(), approved.result());
     assert_eq!(harness.store.head(&run)?, approved_head);

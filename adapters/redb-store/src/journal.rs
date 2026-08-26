@@ -3,15 +3,16 @@ use std::{
     ops::Bound,
 };
 
+use milkdrift_authority::ActorRef;
 use milkdrift_persistence::{
-    ActiveLeaseSnapshot, ActorRef, AtomicRunCommitOutcome, AtomicRunCommitRequest,
-    COMMAND_RESULT_SCHEMA_VERSION_V1, CommandId, CommandReceipt, CommandResultDocument,
-    EventCursor, EventPage, EventPageQuery, IndexedRunState, IntegrityDigest, InvocationId,
-    LeaseIndexEntry, LeaseIndexMutation, MAX_VALUE_PROVENANCE_DEPTH, PageSize, PersistenceError,
-    RunDiscoveryIntegrityStore, RunEventEnvelope, RunEventKind, RunJournal, RunQueryStore,
-    RunSequence, RunSummaryIndex, RunSummaryPage, RunSummaryPageQuery, RunnableCursor,
-    RunnableIndexEntry, RunnableIndexMutation, RunnablePage, TimerIndexEntry, TimerIndexMutation,
-    TimestampMillis, WorkspaceMutation, WorkspaceStore,
+    ActiveLeaseSnapshot, AtomicRunCommitOutcome, AtomicRunCommitRequest,
+    COMMAND_RESULT_SCHEMA_VERSION_V1, COMMAND_RESULT_SCHEMA_VERSION_V2, CommandId, CommandReceipt,
+    CommandResultDocument, EventCursor, EventPage, EventPageQuery, IndexedRunState,
+    IntegrityDigest, InvocationId, LeaseIndexEntry, LeaseIndexMutation, MAX_VALUE_PROVENANCE_DEPTH,
+    PageSize, PersistenceError, RunDiscoveryIntegrityStore, RunEventEnvelope, RunEventKind,
+    RunJournal, RunQueryStore, RunSequence, RunSummaryIndex, RunSummaryPage, RunSummaryPageQuery,
+    RunnableCursor, RunnableIndexEntry, RunnableIndexMutation, RunnablePage, TimerIndexEntry,
+    TimerIndexMutation, TimestampMillis, WorkspaceMutation, WorkspaceStore,
 };
 use milkdrift_workspace::{
     ArtifactReference, MAX_SCOPE_DEPTH, RunId, ScopeId, ScopeKind, ScopeReference, ValueKey,

@@ -85,7 +85,8 @@ pub(super) fn require_lifecycle(
 pub(super) fn durable_rejection(error: &RuntimeError) -> bool {
     matches!(
         error,
-        RuntimeError::InvalidCommand(_)
+        RuntimeError::AuthorizationDenied { .. }
+            | RuntimeError::InvalidCommand(_)
             | RuntimeError::InvalidTransition(_)
             | RuntimeError::Scheduling(_)
             | RuntimeError::Reconciliation(_)

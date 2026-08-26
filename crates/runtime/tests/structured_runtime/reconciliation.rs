@@ -29,8 +29,9 @@ impl TaskExecutor for OperationCountingExecutor {
     fn resolve(
         &self,
         requirement: &CapabilityRequirement,
+        observed_at_unix_ms: u64,
     ) -> Result<ResolvedCapability, ExecutorError> {
-        self.resolver.resolve(requirement)
+        self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
     fn execute(&self, dispatch: &ExecutionDispatch) -> Result<ExecutionReportBatch, ExecutorError> {
@@ -544,9 +545,10 @@ fn compacted_retry_history_still_blocks_retrospective_side_effect_rewrite() -> T
         descriptor_with_model_side_effect("idempotent_write")?,
         1,
     ));
-    let runtime = RuntimeService::new(
+    let runtime = RuntimeService::new_with_authority(
         store.clone(),
         executor,
+        test_authority(),
         clock.clone(),
         Arc::new(SequentialIdGenerator::new("reconcile-compacted-retry", 1)?),
         RuntimeConfig::new(
@@ -1068,9 +1070,10 @@ fn active_branch_frontier_does_not_capture_unowned_post_join_pending_work() -> T
     let directory = TempDir::new()?;
     let store = Arc::new(RedbStore::open(directory.path())?);
     let executor = Arc::new(BlockingExecutor::new(test_descriptor()?)?);
-    let runtime = Arc::new(RuntimeService::new(
+    let runtime = Arc::new(RuntimeService::new_with_authority(
         store.clone(),
         executor.clone(),
+        test_authority(),
         Arc::new(ManualClock::new(NOW)),
         Arc::new(SequentialIdGenerator::new("reconcile-branch-frontier", 1)?),
         RuntimeConfig::new(
@@ -1287,9 +1290,10 @@ fn cancel_and_restart_adoption_creates_one_replacement_after_confirmed_cancellat
     let directory = TempDir::new()?;
     let store = Arc::new(RedbStore::open(directory.path())?);
     let executor = Arc::new(BlockingExecutor::new(test_descriptor()?)?);
-    let runtime = Arc::new(RuntimeService::new(
+    let runtime = Arc::new(RuntimeService::new_with_authority(
         store.clone(),
         executor.clone(),
+        test_authority(),
         Arc::new(ManualClock::new(NOW)),
         Arc::new(SequentialIdGenerator::new("cancel-restart-adoption", 1)?),
         RuntimeConfig::new(
@@ -1323,7 +1327,7 @@ fn cancel_and_restart_adoption_creates_one_replacement_after_confirmed_cancellat
             inputs: Vec::new(),
         },
     )?;
-    runtime.handle_command(&create)?;
+    runtime.handle_authorized_command(&create, &test_authority_claim()?)?;
     let start = runtime.command(
         run.clone(),
         ActorRef::new("human:structured-runtime-test")?,
@@ -1332,7 +1336,7 @@ fn cancel_and_restart_adoption_creates_one_replacement_after_confirmed_cancellat
         Vec::new(),
         RunCommand::StartRun,
     )?;
-    runtime.handle_command(&start)?;
+    runtime.handle_authorized_command(&start, &test_authority_claim()?)?;
 
     let dispatch_runtime = runtime.clone();
     let dispatch =
@@ -1351,7 +1355,10 @@ fn cancel_and_restart_adoption_creates_one_replacement_after_confirmed_cancellat
         },
     )?;
     assert_eq!(
-        runtime.handle_command(&request)?.result().disposition(),
+        runtime
+            .handle_authorized_command(&request, &test_authority_claim()?)?
+            .result()
+            .disposition(),
         CommandDisposition::Accepted
     );
     let plan = runtime
@@ -1372,7 +1379,10 @@ fn cancel_and_restart_adoption_creates_one_replacement_after_confirmed_cancellat
         RunCommand::ApplyReconciliation { plan },
     )?;
     assert_eq!(
-        runtime.handle_command(&apply)?.result().disposition(),
+        runtime
+            .handle_authorized_command(&apply, &test_authority_claim()?)?
+            .result()
+            .disposition(),
         CommandDisposition::Accepted
     );
 

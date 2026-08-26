@@ -34,7 +34,10 @@ fn crash_after_durable_lease_recovers_only_after_expiry_and_retries_once() -> Te
             },
         )?;
         assert_eq!(
-            runtime.handle_command(&create)?.result().disposition(),
+            runtime
+                .handle_authorized_command(&create, &test_authority_claim()?)?
+                .result()
+                .disposition(),
             CommandDisposition::Accepted
         );
         let start = runtime.command(
@@ -45,7 +48,7 @@ fn crash_after_durable_lease_recovers_only_after_expiry_and_retries_once() -> Te
             Vec::new(),
             RunCommand::StartRun,
         )?;
-        runtime.handle_command(&start)?;
+        runtime.handle_authorized_command(&start, &test_authority_claim()?)?;
 
         let scheduled = runtime.scheduler_tick()?;
         assert_eq!(scheduled.dispatched, 1);
@@ -502,9 +505,10 @@ fn idempotent_boundary_error_retries_exact_request_and_keeps_first_attempt_truth
         descriptor_with_model_side_effect("idempotent_write")?,
         1,
     ));
-    let runtime = RuntimeService::new(
+    let runtime = RuntimeService::new_with_authority(
         store.clone(),
         executor.clone(),
+        test_authority(),
         clock.clone(),
         Arc::new(SequentialIdGenerator::new("idempotent-boundary-retry", 1)?),
         RuntimeConfig::new(
@@ -666,9 +670,10 @@ fn uncertainty_and_retry_share_one_boundary_clock_observation() -> TestResult {
         descriptor_with_model_side_effect("idempotent_write")?,
         1,
     ));
-    let runtime = RuntimeService::new(
+    let runtime = RuntimeService::new_with_authority(
         store.clone(),
         executor,
+        test_authority(),
         clock,
         Arc::new(SequentialIdGenerator::new(
             "advancing-uncertainty-clock",
@@ -724,9 +729,10 @@ fn uncertainty_survives_transient_retry_id_failure_and_recovery_retries_later() 
     let store = Arc::new(RedbStore::open(directory.path())?);
     let clock = Arc::new(ManualClock::new(NOW));
     let executor = Arc::new(BoundaryFailingExecutor::new(test_descriptor()?, 1));
-    let runtime = RuntimeService::new(
+    let runtime = RuntimeService::new_with_authority(
         store.clone(),
         executor,
+        test_authority(),
         clock.clone(),
         Arc::new(TransientAttemptIdGenerator::new("transient-retry-id", 1)?),
         RuntimeConfig::new(
@@ -809,9 +815,10 @@ fn uncertainty_is_committed_when_retry_deadline_overflows() -> TestResult {
     let store = Arc::new(RedbStore::open(directory.path())?);
     let clock = Arc::new(ManualClock::new(u64::MAX - 10));
     let executor = Arc::new(BoundaryFailingExecutor::new(test_descriptor()?, 1));
-    let runtime = RuntimeService::new(
+    let runtime = RuntimeService::new_with_authority(
         store.clone(),
         executor,
+        test_authority(),
         clock,
         Arc::new(SequentialIdGenerator::new("retry-time-overflow", 1)?),
         RuntimeConfig::new(
@@ -874,9 +881,10 @@ fn concurrent_runtime_services_cannot_oversubscribe_one_global_lease_slot() -> T
     let clock = Arc::new(ManualClock::new(NOW));
     let executor = Arc::new(AdmissionRaceExecutor::new(test_descriptor()?));
     let make_runtime = |suffix: &str| -> TestResult<Arc<RuntimeService>> {
-        Ok(Arc::new(RuntimeService::new(
+        Ok(Arc::new(RuntimeService::new_with_authority(
             store.clone(),
             executor.clone(),
+            test_authority(),
             clock.clone(),
             Arc::new(SequentialIdGenerator::new(
                 format!("cross-service-{suffix}"),
@@ -1021,9 +1029,10 @@ fn harmless_uncertain_attempt_is_covered_by_exact_terminal_failure_retry() -> Te
             terminal: failed_terminal()?,
         }],
     )?;
-    let runtime = RuntimeService::new(
+    let runtime = RuntimeService::new_with_authority(
         store.clone(),
         executor,
+        test_authority(),
         clock.clone(),
         Arc::new(SequentialIdGenerator::new("harmless-failure-retry", 1)?),
         RuntimeConfig::new(
@@ -1113,9 +1122,10 @@ fn exhausted_idempotent_boundary_retries_remain_uncertain_without_fabricated_fai
         descriptor_with_model_side_effect("idempotent_write")?,
         2,
     ));
-    let runtime = RuntimeService::new(
+    let runtime = RuntimeService::new_with_authority(
         store.clone(),
         executor,
+        test_authority(),
         clock.clone(),
         Arc::new(SequentialIdGenerator::new(
             "idempotent-boundary-exhausted",
@@ -1189,9 +1199,10 @@ fn active_retry_cancellation_only_closes_harmless_prior_uncertainty() -> TestRes
         let executor = Arc::new(BoundaryThenBlockingExecutor::new(
             descriptor_with_model_side_effect(side_effect)?,
         ));
-        let runtime = Arc::new(RuntimeService::new(
+        let runtime = Arc::new(RuntimeService::new_with_authority(
             store.clone(),
             executor.clone(),
+            test_authority(),
             clock.clone(),
             Arc::new(SequentialIdGenerator::new(
                 format!("active-retry-cancel-{suffix}"),

@@ -870,10 +870,11 @@ fn orphan_latest_value_cannot_become_a_worker_output_predecessor() -> TestResult
     ) {
         Ok(disposition) => assert_eq!(disposition, CommandDisposition::Accepted),
         Err(error) => {
-            assert_integrity_error(
-                error
-                    .downcast_ref::<RuntimeError>()
-                    .ok_or("unexpected non-runtime corruption error")?,
+            let runtime_error = error
+                .downcast_ref::<RuntimeError>()
+                .ok_or("unexpected non-runtime corruption error")?;
+            assert!(
+                matches!(runtime_error, RuntimeError::InvalidCommand(detail) if detail.contains("worker reports cannot be submitted"))
             );
             assert_eq!(store.head(&run)?, head);
             assert!(

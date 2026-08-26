@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use milkdrift_authority::{ActorRef, AuthorityDecisionSnapshot};
 use milkdrift_blueprint::{RevisionId, WorkflowId};
 use milkdrift_capability::BoundedJson;
 use milkdrift_workspace::{
@@ -9,9 +10,9 @@ use milkdrift_workspace::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ActorRef, AttemptId, CommandId, IntegrityDigest, LeaseId, NodeExecutionId, PageSize,
-    PersistenceError, RunEventEnvelope, RunEventKind, RunSequence, SignalId, TimerId,
-    TimestampMillis, WorkerId, bounded::MAX_EVENTS_PER_COMMIT,
+    AttemptId, CommandId, IntegrityDigest, LeaseId, NodeExecutionId, PageSize, PersistenceError,
+    RunEventEnvelope, RunEventKind, RunSequence, SignalId, TimerId, TimestampMillis, WorkerId,
+    bounded::MAX_EVENTS_PER_COMMIT,
 };
 
 /// Maximum canonical runtime command bytes retained for exact idempotency evidence.
@@ -31,6 +32,8 @@ pub const MAX_VALUE_PROVENANCE_DEPTH: usize = MAX_WORKSPACE_MUTATIONS_PER_COMMIT
 pub const MAX_REQUIRED_ARTIFACTS_PER_COMMIT: usize = 2_048;
 /// Current opaque command-receipt/result document schema.
 pub const COMMAND_RESULT_SCHEMA_VERSION_V1: u32 = 1;
+/// Authorization-bearing command-result schema used by external commands.
+pub const COMMAND_RESULT_SCHEMA_VERSION_V2: u32 = 2;
 
 /// Exact canonical runtime command receipt used for durable idempotency.
 ///
@@ -214,6 +217,8 @@ pub struct CommandResultDocument {
     resulting_sequence: RunSequence,
     event_ids: Vec<crate::EventId>,
     result: BoundedJson,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    authorization: Option<AuthorityDecisionSnapshot>,
 }
 
 #[derive(Deserialize)]
@@ -227,6 +232,8 @@ struct CommandResultWire {
     resulting_sequence: RunSequence,
     event_ids: Vec<crate::EventId>,
     result: BoundedJson,
+    #[serde(default)]
+    authorization: Option<AuthorityDecisionSnapshot>,
 }
 
 impl<'de> Deserialize<'de> for CommandResultDocument {
@@ -235,13 +242,17 @@ impl<'de> Deserialize<'de> for CommandResultDocument {
         D: serde::Deserializer<'de>,
     {
         let wire = CommandResultWire::deserialize(deserializer)?;
-        if wire.schema_version != COMMAND_RESULT_SCHEMA_VERSION_V1 {
+        if !matches!(
+            wire.schema_version,
+            COMMAND_RESULT_SCHEMA_VERSION_V1 | COMMAND_RESULT_SCHEMA_VERSION_V2
+        ) {
             return Err(serde::de::Error::custom(format!(
                 "unsupported command_result schema version {}; supported version is {}",
-                wire.schema_version, COMMAND_RESULT_SCHEMA_VERSION_V1
+                wire.schema_version, COMMAND_RESULT_SCHEMA_VERSION_V2
             )));
         }
-        Self::new(
+        Self::build(
+            wire.schema_version,
             wire.command,
             wire.run,
             wire.command_fingerprint,
@@ -249,6 +260,7 @@ impl<'de> Deserialize<'de> for CommandResultDocument {
             wire.resulting_sequence,
             wire.event_ids,
             wire.result,
+            wire.authorization,
         )
         .map_err(serde::de::Error::custom)
     }
@@ -266,6 +278,61 @@ impl CommandResultDocument {
         event_ids: Vec<crate::EventId>,
         result: BoundedJson,
     ) -> Result<Self, PersistenceError> {
+        Self::build(
+            COMMAND_RESULT_SCHEMA_VERSION_V1,
+            command,
+            run,
+            command_fingerprint,
+            disposition,
+            resulting_sequence,
+            event_ids,
+            result,
+            None,
+        )
+    }
+
+    /// Constructs an authorization-bearing external command result.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_authorized(
+        command: CommandId,
+        run: RunId,
+        command_fingerprint: IntegrityDigest,
+        disposition: CommandDisposition,
+        resulting_sequence: RunSequence,
+        event_ids: Vec<crate::EventId>,
+        result: BoundedJson,
+        authorization: AuthorityDecisionSnapshot,
+    ) -> Result<Self, PersistenceError> {
+        Self::build(
+            COMMAND_RESULT_SCHEMA_VERSION_V2,
+            command,
+            run,
+            command_fingerprint,
+            disposition,
+            resulting_sequence,
+            event_ids,
+            result,
+            Some(authorization),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build(
+        schema_version: u32,
+        command: CommandId,
+        run: RunId,
+        command_fingerprint: IntegrityDigest,
+        disposition: CommandDisposition,
+        resulting_sequence: RunSequence,
+        event_ids: Vec<crate::EventId>,
+        result: BoundedJson,
+        authorization: Option<AuthorityDecisionSnapshot>,
+    ) -> Result<Self, PersistenceError> {
+        if (schema_version == COMMAND_RESULT_SCHEMA_VERSION_V2) != authorization.is_some() {
+            return Err(PersistenceError::InvalidDocument(
+                "command-result schema v2 requires authorization and v1 forbids it".to_owned(),
+            ));
+        }
         if event_ids.len() > MAX_EVENTS_PER_COMMIT {
             return Err(PersistenceError::Bounds {
                 location: "command_result.event_ids",
@@ -285,7 +352,7 @@ impl CommandResultDocument {
             ));
         }
         Ok(Self {
-            schema_version: COMMAND_RESULT_SCHEMA_VERSION_V1,
+            schema_version,
             command,
             run,
             command_fingerprint,
@@ -293,6 +360,7 @@ impl CommandResultDocument {
             resulting_sequence,
             event_ids,
             result,
+            authorization,
         })
     }
 
@@ -344,6 +412,12 @@ impl CommandResultDocument {
         &self.result
     }
 
+    /// Exact immutable external authorization decision, absent only for internal/v1 results.
+    #[must_use]
+    pub const fn authorization(&self) -> Option<&AuthorityDecisionSnapshot> {
+        self.authorization.as_ref()
+    }
+
     /// Serializes recursively key-sorted canonical compact JSON.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, PersistenceError> {
         crate::document::canonical_json_bytes(self, MAX_COMMAND_RESULT_DOCUMENT_BYTES)
@@ -367,11 +441,14 @@ impl CommandResultDocument {
                     "command result requires a numeric u32 schema_version".to_owned(),
                 )
             })?;
-        if version != COMMAND_RESULT_SCHEMA_VERSION_V1 {
+        if !matches!(
+            version,
+            COMMAND_RESULT_SCHEMA_VERSION_V1 | COMMAND_RESULT_SCHEMA_VERSION_V2
+        ) {
             return Err(PersistenceError::UnsupportedVersion {
                 document: "command_result",
                 found: version,
-                supported: COMMAND_RESULT_SCHEMA_VERSION_V1,
+                supported: COMMAND_RESULT_SCHEMA_VERSION_V2,
             });
         }
         Ok(serde_json::from_value(value)?)

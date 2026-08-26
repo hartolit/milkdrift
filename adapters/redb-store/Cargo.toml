@@ -12,6 +12,7 @@ test-admin = []
 
 [dependencies]
 blake3.workspace = true
+milkdrift-authority = { version = "=0.1.0", path = "../../crates/authority" }
 milkdrift-blueprint = { version = "=0.1.0", path = "../../crates/blueprint" }
 milkdrift-persistence = { version = "=0.1.0", path = "../../crates/persistence" }
 milkdrift-workspace = { version = "=0.1.0", path = "../../crates/workspace" }

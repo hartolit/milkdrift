@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use milkdrift_authority::ActorRef;
 use milkdrift_blueprint::{ContentDigest, NodeId, PortId, RevisionId, WorkflowId};
 use milkdrift_capability::{
     BoundedJson, CancellationAcknowledgement, CapabilityRequirement, ErrorClass,
@@ -14,8 +15,8 @@ use milkdrift_workspace::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ActorRef, AttemptId, BoundedDetail, CommandId, CorrelationKey, CurrencyCode, EvidenceReference,
-    LeaseId, NodeExecutionId, PersistenceError, Reason, ReconciliationDecisionId, ReconciliationId,
+    AttemptId, BoundedDetail, CommandId, CorrelationKey, CurrencyCode, EvidenceReference, LeaseId,
+    NodeExecutionId, PersistenceError, Reason, ReconciliationDecisionId, ReconciliationId,
     ReconciliationPlanId, RepeatDecisionId, RunSequence, SignalId, SignalTypeId, TimerId,
     TimestampMillis, WorkerId, bounded::MAX_EVIDENCE_REFERENCES,
 };

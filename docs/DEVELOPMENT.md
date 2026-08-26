@@ -14,6 +14,19 @@ RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps
 cargo deny check
 ```
 
+Focused Pass-03A checks are:
+
+```sh
+cargo test -p milkdrift-authority --test contracts -- --nocapture
+cargo test -p milkdrift-capability-host --test registry -- --nocapture
+cargo test -p milkdrift-persistence --test authorization_result -- --nocapture
+cargo test -p milkdrift-runtime --test durable_runtime -- --nocapture
+cargo test -p milkdrift-runtime --test structured_runtime -- --nocapture
+```
+
+The live-host tests use condition variables and explicit ownership facts rather than sleeps,
+subprocesses, networks, environment secrets, or wall-clock reads.
+
 Apply formatting with `cargo fmt --all`. Golden JSON is hand-reviewed compatibility data under each crate's `tests/fixtures` directory. To update a fixture, change the schema implementation and fixture in one review, run its exact canonical re-encoding test, and record any compatibility decision that changes reader behavior in an ADR. Never regenerate fixtures merely to make a failing test disappear.
 
 Dependencies must be stable crates.io releases with a concrete use in current code. Run

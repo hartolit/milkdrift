@@ -47,7 +47,7 @@ pub enum StreamingMode {
 }
 
 /// Executor cancellation behavior advertised for an operation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CancellationBehavior {
     /// Cancellation is not supported.
@@ -87,7 +87,7 @@ pub enum SideEffectClass {
 }
 
 /// Where execution is expected to occur.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Locality {
     /// Same machine as the owning daemon.

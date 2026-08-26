@@ -123,7 +123,7 @@ impl RuntimeService {
                             Vec::new(),
                             RunCommand::FireTimer { timer: timer.timer },
                         )?;
-                        let _ = self.handle_command(&command)?;
+                        let _ = self.handle_internal_command(&command)?;
                     }
                 }
                 self.propagate_cancellation(now, limit)?;

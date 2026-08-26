@@ -12,9 +12,12 @@ use std::{
     },
 };
 
+use milkdrift_authority::{
+    ActorRef, AuthorityDecisionSnapshot, AuthorityEvaluator, GrantSetEvaluator, PolicyId,
+};
 use milkdrift_blueprint::NodeId;
 use milkdrift_persistence::{
-    ActorRef, ArtifactStore, AtomicRunCommitOutcome, AttemptId, CommandResultDocument, EventPage,
+    ArtifactStore, AtomicRunCommitOutcome, AttemptId, CommandResultDocument, EventPage,
     EventPageQuery, MAX_PAGE_SIZE, NodeExecutionId, PageSize, PersistenceError, Reason,
     RepeatContinuationDecision, RevisionStore, RunDiscoveryIntegrityStore, RunEventEnvelope,
     RunJournal, RunQueryStore, RunSequence, RunSummaryCursor, RunnableCursor, SnapshotDocument,
@@ -29,8 +32,8 @@ use crate::query::{
     RUN_PROJECTION_SNAPSHOT_SCHEMA_V3, load_bounded_history, project_from_latest_snapshot,
 };
 use crate::{
-    BoundaryClock, IdGenerator, RetryPolicy, RunCommand, RunCommandDocument, RuntimeError,
-    SchedulerLimits, TaskExecutor,
+    BoundaryClock, CommandAuthorityClaim, IdGenerator, RetryPolicy, RunCommand, RunCommandDocument,
+    RuntimeError, SchedulerLimits, TaskExecutor,
 };
 
 const STRUCTURED_EVENT_SOFT_LIMIT: usize = milkdrift_persistence::MAX_EVENTS_PER_COMMIT - 192;
@@ -231,6 +234,7 @@ pub struct RuntimeHealth {
 pub struct RuntimeService {
     store: Arc<dyn RuntimeStore>,
     executor: Arc<dyn TaskExecutor>,
+    authority: Arc<dyn AuthorityEvaluator>,
     clock: Arc<dyn BoundaryClock>,
     ids: Arc<dyn IdGenerator>,
     config: RuntimeConfig,
@@ -287,7 +291,29 @@ impl RuntimeService {
         ids: Arc<dyn IdGenerator>,
         config: RuntimeConfig,
     ) -> Result<Self, RuntimeError> {
-        let service = Self::open_closed(store, executor, clock, ids, config)?;
+        let authority = Arc::new(GrantSetEvaluator::new(
+            PolicyId::new("runtime.deny-by-default")?,
+            1,
+            Vec::new(),
+            BTreeMap::new(),
+        )?);
+        let service =
+            Self::open_closed_with_authority(store, executor, authority, clock, ids, config)?;
+        service.initialize_startup()?;
+        Ok(service)
+    }
+
+    /// Opens and recovers a runtime with an explicit external-command authority boundary.
+    pub fn new_with_authority(
+        store: Arc<dyn RuntimeStore>,
+        executor: Arc<dyn TaskExecutor>,
+        authority: Arc<dyn AuthorityEvaluator>,
+        clock: Arc<dyn BoundaryClock>,
+        ids: Arc<dyn IdGenerator>,
+        config: RuntimeConfig,
+    ) -> Result<Self, RuntimeError> {
+        let service =
+            Self::open_closed_with_authority(store, executor, authority, clock, ids, config)?;
         service.initialize_startup()?;
         Ok(service)
     }
@@ -300,6 +326,24 @@ impl RuntimeService {
     pub fn open_closed(
         store: Arc<dyn RuntimeStore>,
         executor: Arc<dyn TaskExecutor>,
+        clock: Arc<dyn BoundaryClock>,
+        ids: Arc<dyn IdGenerator>,
+        config: RuntimeConfig,
+    ) -> Result<Self, RuntimeError> {
+        let authority = Arc::new(GrantSetEvaluator::new(
+            PolicyId::new("runtime.deny-by-default")?,
+            1,
+            Vec::new(),
+            BTreeMap::new(),
+        )?);
+        Self::open_closed_with_authority(store, executor, authority, clock, ids, config)
+    }
+
+    /// Opens a closed runtime with an explicit external-command authority boundary.
+    pub fn open_closed_with_authority(
+        store: Arc<dyn RuntimeStore>,
+        executor: Arc<dyn TaskExecutor>,
+        authority: Arc<dyn AuthorityEvaluator>,
         clock: Arc<dyn BoundaryClock>,
         ids: Arc<dyn IdGenerator>,
         config: RuntimeConfig,
@@ -326,6 +370,7 @@ impl RuntimeService {
         Ok(Self {
             store,
             executor,
+            authority,
             clock,
             ids,
             config,
@@ -537,17 +582,39 @@ impl RuntimeService {
         })
     }
 
-    /// Validates, projects, and crash-atomically commits one versioned command.
-    /// State-dependent rejection is itself a durable idempotent result.
-    pub fn handle_command(
+    /// Authorizes, validates, and crash-atomically commits one external command.
+    ///
+    /// Internal system transitions and worker reports are rejected before evaluation and
+    /// remain reachable only through private runtime-owned paths.
+    pub fn handle_authorized_command(
         &self,
         command: &RunCommandDocument,
+        claim: &CommandAuthorityClaim,
     ) -> Result<CommandExecution, RuntimeError> {
-        self.handle_command_preserving_rejection(command)
+        let receipt = command.authorized_receipt(claim)?;
+        if let Some(replayed) = self.replay_if_present(command, &receipt)? {
+            return Ok(replayed);
+        }
+        let request = command.authority_request(claim)?;
+        let decision = self.authority.evaluate(&request)?;
+        let forced_rejection =
+            (!decision.is_allowed()).then(|| RuntimeError::AuthorizationDenied {
+                decision: decision.digest().to_owned(),
+                reasons: decision.reason_codes().to_vec(),
+            });
+        self.handle_new_command(command, receipt, Some(decision), forced_rejection)
             .map(|(execution, _rejection)| execution)
     }
 
-    fn handle_command_preserving_rejection(
+    fn handle_internal_command(
+        &self,
+        command: &RunCommandDocument,
+    ) -> Result<CommandExecution, RuntimeError> {
+        self.handle_internal_command_preserving_rejection(command)
+            .map(|(execution, _rejection)| execution)
+    }
+
+    fn handle_internal_command_preserving_rejection(
         &self,
         command: &RunCommandDocument,
     ) -> Result<(CommandExecution, Option<RuntimeError>), RuntimeError> {
@@ -560,6 +627,17 @@ impl RuntimeService {
         );
         let _entered = span.enter();
         let receipt = command.receipt()?;
+        if let Some(replayed) = self.replay_if_present(command, &receipt)? {
+            return Ok((replayed, None));
+        }
+        self.handle_new_command(command, receipt, None, None)
+    }
+
+    fn replay_if_present(
+        &self,
+        command: &RunCommandDocument,
+        receipt: &milkdrift_persistence::CommandReceipt,
+    ) -> Result<Option<CommandExecution>, RuntimeError> {
         if let Some(prior) = self
             .store
             .command_result(command.run_id(), command.command_id())?
@@ -577,15 +655,21 @@ impl RuntimeService {
                 resulting_sequence = prior.resulting_sequence().get(),
                 "returning durable idempotent command result"
             );
-            return Ok((
-                CommandExecution {
-                    result: prior,
-                    replayed: true,
-                },
-                None,
-            ));
+            return Ok(Some(CommandExecution {
+                result: prior,
+                replayed: true,
+            }));
         }
+        Ok(None)
+    }
 
+    fn handle_new_command(
+        &self,
+        command: &RunCommandDocument,
+        receipt: milkdrift_persistence::CommandReceipt,
+        authorization: Option<AuthorityDecisionSnapshot>,
+        forced_rejection: Option<RuntimeError>,
+    ) -> Result<(CommandExecution, Option<RuntimeError>), RuntimeError> {
         let projection = self.projection(command.run_id())?;
         if projection.sequence() != command.expected_sequence() {
             return Err(PersistenceError::SequenceConflict {
@@ -596,7 +680,9 @@ impl RuntimeService {
             .into());
         }
 
-        let planned = if !self.command_allowed_while_draining(command.command()) {
+        let planned = if let Some(error) = forced_rejection {
+            Err(error)
+        } else if !self.command_allowed_while_draining(command.command()) {
             Err(RuntimeError::InvalidTransition(
                 "runtime admission is closed for graceful shutdown".to_owned(),
             ))
@@ -605,14 +691,14 @@ impl RuntimeService {
         };
         let (outcome, rejection) = match planned {
             Ok(plan) => (
-                self.commit_accepted(command, receipt, projection, plan)?,
+                self.commit_accepted(command, receipt, projection, plan, authorization.clone())?,
                 None,
             ),
             Err(error) if durable_rejection(&error) => {
                 warn!(reason = %error, "command rejected durably");
                 let detail = error.to_string();
                 (
-                    self.commit_rejected(command, receipt, &detail)?,
+                    self.commit_rejected(command, receipt, &detail, authorization)?,
                     Some(error),
                 )
             }
@@ -636,8 +722,9 @@ impl RuntimeService {
     pub fn execute_command(
         &self,
         command: &RunCommandDocument,
+        claim: &CommandAuthorityClaim,
     ) -> Result<CommandExecution, RuntimeError> {
-        self.handle_command(command)
+        self.handle_authorized_command(command, claim)
     }
 
     fn command_allowed_while_draining(&self, command: &RunCommand) -> bool {

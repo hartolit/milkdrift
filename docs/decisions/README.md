@@ -10,3 +10,5 @@ Do not write an ADR for a local refactor, a choice obvious from a small piece of
 - [0004 — Truthful side effects, retries, and uncertain outcomes](0004-side-effects-retries-and-uncertain-outcomes.md)
 - [0005 — Prospective immutable revision reconciliation](0005-prospective-revision-reconciliation.md)
 - [0006 — Shared contract mechanics without shared domain meaning](0006-shared-contract-mechanics.md)
+- [0007 — Scoped authority and one human/AI command path](0007-scoped-authority-and-shared-command-path.md)
+- [0008 — Generation-safe live capability hosting](0008-generation-safe-capability-hosting.md)

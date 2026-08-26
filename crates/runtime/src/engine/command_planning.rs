@@ -9,6 +9,7 @@ use super::support::{
 use crate::projection::{AttemptState, IterationState, RunLifecycle, RunProjection, TimerPurpose};
 use crate::query::{RUN_PROJECTION_SNAPSHOT_SCHEMA_V3, encode_projection_snapshot};
 use crate::{RunCommand, RunCommandDocument, RuntimeError, WorkerReport};
+use milkdrift_authority::AuthorityDecisionSnapshot;
 use milkdrift_blueprint::{NodeKind, PortId, RepeatTermination, RevisionId, WorkflowId};
 use milkdrift_capability::{
     BoundedJson, ErrorClass, InvocationEvent, InvocationEventKind, InvocationTerminal,
@@ -1156,6 +1157,7 @@ impl RuntimeService {
         receipt: CommandReceipt,
         projection: RunProjection,
         mut plan: CommandPlan,
+        authorization: Option<AuthorityDecisionSnapshot>,
     ) -> Result<AtomicRunCommitOutcome, RuntimeError> {
         if plan.events.is_empty() {
             return Err(RuntimeError::InvalidTransition(
@@ -1209,15 +1211,27 @@ impl RuntimeService {
             "resulting_sequence": resulting_sequence.get(),
         }))
         .map_err(|error| RuntimeError::InvalidCommand(error.to_string()))?;
-        let result = CommandResultDocument::new(
-            document.command_id().clone(),
-            document.run_id().clone(),
-            receipt.fingerprint().clone(),
-            CommandDisposition::Accepted,
-            resulting_sequence,
-            event_ids,
-            result_payload,
-        )?;
+        let result = match authorization {
+            Some(decision) => CommandResultDocument::new_authorized(
+                document.command_id().clone(),
+                document.run_id().clone(),
+                receipt.fingerprint().clone(),
+                CommandDisposition::Accepted,
+                resulting_sequence,
+                event_ids,
+                result_payload,
+                decision,
+            )?,
+            None => CommandResultDocument::new(
+                document.command_id().clone(),
+                document.run_id().clone(),
+                receipt.fingerprint().clone(),
+                CommandDisposition::Accepted,
+                resulting_sequence,
+                event_ids,
+                result_payload,
+            )?,
+        };
         let required_artifacts = collect_required_artifacts(&envelopes, &plan.workspace)?;
         for artifact in &required_artifacts {
             if !self.store.is_committed(artifact)? {
@@ -1314,21 +1328,34 @@ impl RuntimeService {
         document: &RunCommandDocument,
         receipt: CommandReceipt,
         detail: &str,
+        authorization: Option<AuthorityDecisionSnapshot>,
     ) -> Result<AtomicRunCommitOutcome, RuntimeError> {
         let payload = BoundedJson::new(json!({
             "status": "rejected",
             "reason": detail,
         }))
         .map_err(|error| RuntimeError::InvalidCommand(error.to_string()))?;
-        let result = CommandResultDocument::new(
-            document.command_id().clone(),
-            document.run_id().clone(),
-            receipt.fingerprint().clone(),
-            CommandDisposition::Rejected,
-            document.expected_sequence(),
-            Vec::new(),
-            payload,
-        )?;
+        let result = match authorization {
+            Some(decision) => CommandResultDocument::new_authorized(
+                document.command_id().clone(),
+                document.run_id().clone(),
+                receipt.fingerprint().clone(),
+                CommandDisposition::Rejected,
+                document.expected_sequence(),
+                Vec::new(),
+                payload,
+                decision,
+            )?,
+            None => CommandResultDocument::new(
+                document.command_id().clone(),
+                document.run_id().clone(),
+                receipt.fingerprint().clone(),
+                CommandDisposition::Rejected,
+                document.expected_sequence(),
+                Vec::new(),
+                payload,
+            )?,
+        };
         let request = AtomicRunCommitRequest::new(
             receipt,
             Vec::new(),

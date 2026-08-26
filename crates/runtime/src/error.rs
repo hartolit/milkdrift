@@ -1,3 +1,5 @@
+use milkdrift_authority::AuthorityError;
+use milkdrift_authority::DecisionReasonCode;
 use milkdrift_persistence::PersistenceError;
 use thiserror::Error;
 
@@ -6,6 +8,17 @@ use crate::ExecutorError;
 /// Failure returned by deterministic runtime operations.
 #[derive(Debug, Error)]
 pub enum RuntimeError {
+    /// Pure authority contract construction or evaluation failed.
+    #[error(transparent)]
+    Authority(#[from] AuthorityError),
+    /// The exact supplied grant revision denied an external command.
+    #[error("authorization denied by decision {decision}: {reasons:?}")]
+    AuthorizationDenied {
+        /// Deterministic decision digest.
+        decision: String,
+        /// Stable denial classifications.
+        reasons: Vec<DecisionReasonCode>,
+    },
     /// A command violates its versioned bounds or state-independent contract.
     #[error("invalid run command: {0}")]
     InvalidCommand(String),

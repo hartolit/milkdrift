@@ -1,10 +1,11 @@
+use milkdrift_authority::ActorRef;
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactReference, ArtifactSensitivity, RunId, WorkspaceBudget,
     WorkspaceUsage,
 };
 
 use crate::{
-    ActorRef, ArtifactPublicationId, EvidenceId, PageSize, PersistenceError, TimestampMillis,
+    ArtifactPublicationId, EvidenceId, PageSize, PersistenceError, TimestampMillis,
     bounded::MAX_ARTIFACT_CHUNK_BYTES,
 };
 

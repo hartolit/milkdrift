@@ -168,6 +168,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "milkdrift-authority"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "milkdrift-blueprint",
+ "milkdrift-capability",
+ "milkdrift-contracts",
+ "milkdrift-workspace",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "milkdrift-blueprint"
 version = "0.1.0"
 dependencies = [
@@ -193,6 +207,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "milkdrift-capability-host"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "milkdrift-authority",
+ "milkdrift-capability",
+ "milkdrift-runtime",
+ "thiserror",
+]
+
+[[package]]
 name = "milkdrift-contracts"
 version = "0.1.0"
 dependencies = [
@@ -206,6 +231,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "blake3",
+ "milkdrift-authority",
  "milkdrift-blueprint",
  "milkdrift-capability",
  "milkdrift-contracts",
@@ -220,6 +246,7 @@ name = "milkdrift-redb-store"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "milkdrift-authority",
  "milkdrift-blueprint",
  "milkdrift-capability",
  "milkdrift-persistence",
@@ -237,6 +264,7 @@ name = "milkdrift-runtime"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "milkdrift-authority",
  "milkdrift-blueprint",
  "milkdrift-capability",
  "milkdrift-contracts",

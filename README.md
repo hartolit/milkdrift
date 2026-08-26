@@ -2,9 +2,9 @@
 
 Milkdrift is a local-first foundation for durable, live-editable workflows whose tasks can be satisfied by explicitly constrained capabilities: hosted AI providers, local servers, coding agents, tools, humans, or peer machines. Its semantic core keeps workflow meaning independent of any executor, UI, database, network, or provider.
 
-Milkdrift currently has a headless Rust execution center. It stores immutable workflow revisions, accepts versioned idempotent run commands, records checksummed append-only events, rebuilds pure projections, schedules bounded work through exact capability snapshots, keeps branch-local workspace values, publishes content-addressed artifacts, recovers local runs after restart, and applies compatible revision changes prospectively through persisted reconciliation plans.
+Milkdrift currently has a headless Rust execution center. It stores immutable workflow revisions, authorizes versioned idempotent run commands against exact scoped grant revisions, records the decision atomically with each external command result, rebuilds pure projections, schedules bounded work through exact capability snapshots, keeps branch-local workspace values, publishes content-addressed artifacts, recovers local runs after restart, and applies compatible revision changes prospectively through persisted reconciliation plans.
 
-The production local backend uses redb plus a filesystem artifact directory. Capability execution is deliberately a narrow port with a deterministic executor for tests; real registries, provider/process adapters, causal context construction, secrets/authority mediation, peers, daemon APIs, CLI, and desktop UI remain outside this pass.
+The production local backend uses redb plus a filesystem artifact directory. A generation-safe live capability host now owns deterministic policy-constrained resolution, health staleness, immediate bounded admission, exact dispatch/cancellation routing, drain, and shutdown. It has deterministic fake adapters and an in-memory secret resolver for tests; real process/model/provider adapters, concrete secret sources, causal context construction, authentication, peers, daemon APIs, CLI, and desktop UI remain outside this pass.
 
 ```sh
 cargo test --workspace
@@ -15,6 +15,8 @@ A minimal revision is constructed through a validated mutation batch; see the cr
 ## Repository map
 
 - `crates/capability`: provider-neutral capability, exact resolution, and invocation contracts.
+- `crates/authority`: actor identity, scoped immutable grants, deterministic decisions, and opaque secret references.
+- `crates/capability-host`: live adapter generations, resolution, admission, cancellation, health, drain, and shutdown.
 - `crates/blueprint`: immutable workflow definitions, fingerprints, and revision transactions.
 - `crates/workspace`: scoped immutable values, branch lineage, artifact metadata, and budgets.
 - `crates/persistence`: versioned events and narrow journal/revision/snapshot/workspace/artifact ports.

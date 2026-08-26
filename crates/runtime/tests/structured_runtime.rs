@@ -10,6 +10,10 @@ use std::{
     time::Duration,
 };
 
+use milkdrift_authority::{
+    AuthorityBudget, AuthorityDecisionSnapshot, AuthorityError, AuthorityEvaluator,
+    DecisionReasonCode, GrantId, PolicyId,
+};
 use milkdrift_blueprint::{
     AuthorRef, BindingSource, BlueprintRevision, BranchConfig, Comparison, Condition,
     ConditionOperand, DataPort, Edge, EdgeId, EdgeKind, FieldId, ForkConfig, InterfaceField,
@@ -38,10 +42,10 @@ use milkdrift_persistence::{
 };
 use milkdrift_redb_store::{RedbStore, testing as storage_fault};
 use milkdrift_runtime::{
-    AttemptState, BoundaryClock, DeterministicExecutor, EffectAction, EffectExecutionResult,
-    ExecutionDispatch, ExecutionReportBatch, ExecutorError, IdGenerator, IterationState,
-    LeaseState, ManualClock, NodeExecutionState, ResolvedCapability, RetryPolicy, RunCommand,
-    RunLifecycle, RuntimeConfig, RuntimeError, RuntimeService, RuntimeStartupState,
+    AttemptState, BoundaryClock, CommandAuthorityClaim, DeterministicExecutor, EffectAction,
+    EffectExecutionResult, ExecutionDispatch, ExecutionReportBatch, ExecutorError, IdGenerator,
+    IterationState, LeaseState, ManualClock, NodeExecutionState, ResolvedCapability, RetryPolicy,
+    RunCommand, RunLifecycle, RuntimeConfig, RuntimeError, RuntimeService, RuntimeStartupState,
     SchedulerLimits, SequentialIdGenerator, TaskExecutor, WorkerReport,
 };
 use milkdrift_workspace::{
@@ -63,6 +67,42 @@ type ClosedRuntimeFixture = (
 );
 
 const NOW: u64 = 10_000;
+
+struct TestAuthorityEvaluator;
+
+impl AuthorityEvaluator for TestAuthorityEvaluator {
+    fn evaluate(
+        &self,
+        request: &milkdrift_authority::AuthorityRequest,
+    ) -> Result<AuthorityDecisionSnapshot, AuthorityError> {
+        AuthorityDecisionSnapshot::from_evaluation(
+            PolicyId::new("test.allow-all")?,
+            1,
+            request.clone(),
+            vec![DecisionReasonCode::Allowed],
+            AuthorityBudget {
+                cost_minor: Some(u64::MAX),
+                duration_ms: Some(u64::MAX),
+                invocations: Some(u64::MAX),
+                artifact_bytes: Some(u64::MAX),
+                concurrency: Some(u32::MAX),
+            },
+            SideEffectClass::Unknown,
+        )
+    }
+}
+
+fn test_authority() -> Arc<dyn AuthorityEvaluator> {
+    Arc::new(TestAuthorityEvaluator)
+}
+
+fn test_authority_claim() -> TestResult<CommandAuthorityClaim> {
+    Ok(CommandAuthorityClaim::new(
+        GrantId::new("grant:structured-runtime-test")?,
+        1,
+        0,
+    )?)
+}
 struct Harness {
     _directory: TempDir,
     store: Arc<RedbStore>,
@@ -149,8 +189,9 @@ impl TaskExecutor for InvalidReportsCountingExecutor {
     fn resolve(
         &self,
         requirement: &CapabilityRequirement,
+        observed_at_unix_ms: u64,
     ) -> Result<ResolvedCapability, ExecutorError> {
-        self.resolver.resolve(requirement)
+        self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
     fn execute(
@@ -188,8 +229,9 @@ impl TaskExecutor for DispatchCountingExecutor {
     fn resolve(
         &self,
         requirement: &CapabilityRequirement,
+        observed_at_unix_ms: u64,
     ) -> Result<ResolvedCapability, ExecutorError> {
-        self.resolver.resolve(requirement)
+        self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
     fn execute(&self, dispatch: &ExecutionDispatch) -> Result<ExecutionReportBatch, ExecutorError> {
@@ -288,8 +330,9 @@ impl TaskExecutor for AdmissionRaceExecutor {
     fn resolve(
         &self,
         requirement: &CapabilityRequirement,
+        observed_at_unix_ms: u64,
     ) -> Result<ResolvedCapability, ExecutorError> {
-        let resolved = self.resolver.resolve(requirement)?;
+        let resolved = self.resolver.resolve(requirement, observed_at_unix_ms)?;
         if self.barrier_enabled.load(Ordering::SeqCst) {
             {
                 let (lock, entered) = &self.resolver_entries;
@@ -411,8 +454,9 @@ impl TaskExecutor for BoundaryThenBlockingExecutor {
     fn resolve(
         &self,
         requirement: &CapabilityRequirement,
+        observed_at_unix_ms: u64,
     ) -> Result<ResolvedCapability, ExecutorError> {
-        self.resolver.resolve(requirement)
+        self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
     fn execute(&self, dispatch: &ExecutionDispatch) -> Result<ExecutionReportBatch, ExecutorError> {
@@ -497,8 +541,9 @@ impl TaskExecutor for BoundaryFailingExecutor {
     fn resolve(
         &self,
         requirement: &CapabilityRequirement,
+        observed_at_unix_ms: u64,
     ) -> Result<ResolvedCapability, ExecutorError> {
-        self.resolver.resolve(requirement)
+        self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
     fn execute(&self, dispatch: &ExecutionDispatch) -> Result<ExecutionReportBatch, ExecutorError> {
@@ -535,8 +580,9 @@ impl TaskExecutor for PanickingExecutor {
     fn resolve(
         &self,
         requirement: &CapabilityRequirement,
+        observed_at_unix_ms: u64,
     ) -> Result<ResolvedCapability, ExecutorError> {
-        self.resolver.resolve(requirement)
+        self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
     fn execute(
@@ -612,8 +658,9 @@ impl TaskExecutor for BlockingExecutor {
     fn resolve(
         &self,
         requirement: &CapabilityRequirement,
+        observed_at_unix_ms: u64,
     ) -> Result<ResolvedCapability, ExecutorError> {
-        self.resolver.resolve(requirement)
+        self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
     fn execute(&self, dispatch: &ExecutionDispatch) -> Result<ExecutionReportBatch, ExecutorError> {
@@ -741,9 +788,10 @@ impl Harness {
             SchedulerLimits::new(64, 32, 16, 32)?,
             retry_policy,
         )?;
-        let runtime = RuntimeService::new(
+        let runtime = RuntimeService::new_with_authority(
             store.clone(),
             executor.clone(),
+            test_authority(),
             clock.clone(),
             Arc::new(SequentialIdGenerator::new(prefix, 1)?),
             config,
@@ -770,9 +818,10 @@ impl Harness {
             SchedulerLimits::new(64, 32, 16, 32)?,
             RetryPolicy::new(1, Vec::new(), 10, 1_000, 0)?,
         )?;
-        let runtime = RuntimeService::new(
+        let runtime = RuntimeService::new_with_authority(
             store.clone(),
             executor.clone(),
+            test_authority(),
             clock.clone(),
             Arc::new(ChildRunCollisionIdGenerator::new(prefix, child_run)?),
             config,
@@ -802,7 +851,7 @@ impl Harness {
         )?;
         Ok(self
             .runtime
-            .handle_command(&document)?
+            .handle_authorized_command(&document, &test_authority_claim()?)?
             .result()
             .disposition())
     }
@@ -889,9 +938,10 @@ fn open_closed_runtime_at(
     let store = Arc::new(RedbStore::open(root)?);
     let clock = Arc::new(ManualClock::new(now));
     let executor = Arc::new(DispatchCountingExecutor::new(test_descriptor()?));
-    let runtime = RuntimeService::open_closed(
+    let runtime = RuntimeService::open_closed_with_authority(
         store.clone(),
         executor.clone(),
+        test_authority(),
         clock.clone(),
         Arc::new(SequentialIdGenerator::new(prefix, 1)?),
         RuntimeConfig::new(
@@ -916,9 +966,10 @@ fn runtime_with_executor_at(
 ) -> TestResult<(Arc<RedbStore>, Arc<ManualClock>, RuntimeService)> {
     let store = Arc::new(RedbStore::open(root)?);
     let clock = Arc::new(ManualClock::new(now));
-    let runtime = RuntimeService::new(
+    let runtime = RuntimeService::new_with_authority(
         store.clone(),
         executor,
+        test_authority(),
         clock.clone(),
         Arc::new(SequentialIdGenerator::new(id_prefix, 1)?),
         RuntimeConfig::new(
@@ -947,7 +998,10 @@ fn submit_command(
         Vec::new(),
         command,
     )?;
-    Ok(runtime.handle_command(&document)?.result().disposition())
+    Ok(runtime
+        .handle_authorized_command(&document, &test_authority_claim()?)?
+        .result()
+        .disposition())
 }
 
 fn submit_worker_report(
@@ -968,7 +1022,10 @@ fn submit_worker_report(
             report,
         },
     )?;
-    Ok(runtime.handle_command(&document)?.result().disposition())
+    Ok(runtime
+        .handle_authorized_command(&document, &test_authority_claim()?)?
+        .result()
+        .disposition())
 }
 
 fn assert_integrity_error(error: &RuntimeError) {
@@ -987,9 +1044,10 @@ fn recovery_service(
     executor: Arc<dyn TaskExecutor>,
     prefix: &str,
 ) -> TestResult<RuntimeService> {
-    Ok(RuntimeService::new(
+    Ok(RuntimeService::new_with_authority(
         store,
         executor,
+        test_authority(),
         clock,
         Arc::new(SequentialIdGenerator::new(prefix, 1)?),
         RuntimeConfig::new(
