@@ -14,3 +14,5 @@ Do not write an ADR for a local refactor, a choice obvious from a small piece of
 - [0008 — Generation-safe live capability hosting](0008-generation-safe-capability-hosting.md)
 - [0009 — Direct argv and owned process groups](0009-direct-argv-and-owned-process-groups.md)
 - [0010 — Host-owned materialization and artifact publication](0010-host-owned-materialization.md)
+- [0011 — Exact causal context manifests](0011-causal-context-manifests.md)
+- [0012 — Provider-neutral model contracts with explicit endpoint mappings](0012-provider-neutral-model-endpoints.md)

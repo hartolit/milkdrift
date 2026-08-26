@@ -308,6 +308,8 @@ pub struct InvocationRequest {
     operation: OperationId,
     provider_profile: Option<ProviderProfileRef>,
     idempotency_key: Option<IdempotencyKey>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_manifest: Option<ArtifactReference>,
     inputs: Vec<InputReference>,
     extensions: BTreeMap<ExtensionKey, BoundedJson>,
 }
@@ -320,6 +322,8 @@ struct InvocationRequestWire {
     operation: OperationId,
     provider_profile: Option<ProviderProfileRef>,
     idempotency_key: Option<IdempotencyKey>,
+    #[serde(default)]
+    context_manifest: Option<ArtifactReference>,
     inputs: Vec<InputReference>,
     extensions: BTreeMap<ExtensionKey, BoundedJson>,
 }
@@ -330,7 +334,7 @@ impl<'de> Deserialize<'de> for InvocationRequest {
         D: serde::Deserializer<'de>,
     {
         let wire = InvocationRequestWire::deserialize(deserializer)?;
-        Self::new(
+        let mut request = Self::new(
             wire.invocation,
             wire.capability,
             wire.operation,
@@ -339,7 +343,13 @@ impl<'de> Deserialize<'de> for InvocationRequest {
             wire.inputs,
             wire.extensions,
         )
-        .map_err(serde::de::Error::custom)
+        .map_err(serde::de::Error::custom)?;
+        if let Some(reference) = wire.context_manifest {
+            request = request
+                .with_context_manifest(reference)
+                .map_err(serde::de::Error::custom)?;
+        }
+        Ok(request)
     }
 }
 
@@ -378,6 +388,7 @@ impl InvocationRequest {
             operation,
             provider_profile,
             idempotency_key,
+            context_manifest: None,
             inputs,
             extensions,
         })
@@ -411,6 +422,29 @@ impl InvocationRequest {
     #[must_use]
     pub const fn idempotency_key(&self) -> Option<&IdempotencyKey> {
         self.idempotency_key.as_ref()
+    }
+
+    /// Binds an exact, already persisted context manifest before external dispatch.
+    pub fn with_context_manifest(
+        mut self,
+        reference: ArtifactReference,
+    ) -> Result<Self, ContractError> {
+        reference.validate()?;
+        if reference.media_type() != Some("application/vnd.milkdrift.context-manifest.v1+json")
+            || reference.size_bytes().is_none()
+        {
+            return Err(ContractError::InvalidContract(
+                "context manifest reference requires exact v1 media type and byte size".to_owned(),
+            ));
+        }
+        self.context_manifest = Some(reference);
+        Ok(self)
+    }
+
+    /// Exact immutable context manifest bound to this request, when applicable.
+    #[must_use]
+    pub const fn context_manifest(&self) -> Option<&ArtifactReference> {
+        self.context_manifest.as_ref()
     }
 
     /// Bounded named input references in caller-defined order.

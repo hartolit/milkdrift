@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    BLUEPRINT_SCHEMA_VERSION_V1, BlueprintMetadata, Diagnostic, DiagnosticCode, Edge, EdgeId,
+    BLUEPRINT_SCHEMA_VERSION_V2, BlueprintMetadata, Diagnostic, DiagnosticCode, Edge, EdgeId,
     MutationBatchId, Node, NodeId, NodeKind, PinnedSubworkflow, RevisionId, SemanticBlueprint,
     ValidationError, WorkflowInterface, validation::validate_semantic,
 };
@@ -12,7 +12,7 @@ use crate::{
 const MAX_BATCH_OPERATIONS: usize = 512;
 const MAX_MERGE_PARENTS: usize = 16;
 
-/// Closed schema-v1 command set for every semantic blueprint edit.
+/// Closed schema-v2 command set for every semantic blueprint edit.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum Mutation {
@@ -99,10 +99,10 @@ impl<'de> Deserialize<'de> for MutationBatch {
         D: serde::Deserializer<'de>,
     {
         let wire = MutationBatchWire::deserialize(deserializer)?;
-        if wire.schema_version != BLUEPRINT_SCHEMA_VERSION_V1 {
+        if wire.schema_version != BLUEPRINT_SCHEMA_VERSION_V2 {
             return Err(serde::de::Error::custom(format!(
                 "unsupported mutation schema version {}; supported version is {}",
-                wire.schema_version, BLUEPRINT_SCHEMA_VERSION_V1
+                wire.schema_version, BLUEPRINT_SCHEMA_VERSION_V2
             )));
         }
         Self::from_parts(wire.id, wire.operations).map_err(serde::de::Error::custom)
@@ -125,7 +125,7 @@ impl MutationBatch {
             )));
         }
         let batch = Self {
-            schema_version: BLUEPRINT_SCHEMA_VERSION_V1,
+            schema_version: BLUEPRINT_SCHEMA_VERSION_V2,
             id,
             operations,
         };

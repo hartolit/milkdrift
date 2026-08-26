@@ -137,7 +137,7 @@ fn command_fault_boundaries_are_atomic_and_replayable() -> Result<(), Box<dyn st
 #[test]
 fn revision_fault_boundaries_are_atomic_and_idempotent() -> Result<(), Box<dyn std::error::Error>> {
     let revision_bytes =
-        include_bytes!("../../../../crates/blueprint/tests/fixtures/revision-v1.json");
+        include_bytes!("../../../../crates/blueprint/tests/fixtures/revision-v2.json");
     let (_document, revision) = BlueprintRevisionDocument::from_json(revision_bytes)?;
     for point in [
         FaultPoint::BeforeRevisionCommit,

@@ -14,21 +14,20 @@ RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps
 cargo deny check
 ```
 
-Focused Pass-03B checks are:
+Focused Pass-03C checks are:
 
 ```sh
-cargo test -p milkdrift-authority --test contracts -- --nocapture
-cargo test -p milkdrift-capability-host --test registry -- --nocapture
-cargo test -p milkdrift-capability-host --test materialization -- --nocapture
-cargo test -p milkdrift-capability-host --test effect_worker -- --nocapture
-cargo test -p milkdrift-local-process --test process_execution -- --nocapture
-cargo test -p milkdrift-secret-env -- --nocapture
-cargo test -p milkdrift-persistence --test authorization_result -- --nocapture
-cargo test -p milkdrift-runtime --test durable_runtime -- --nocapture
-cargo test -p milkdrift-runtime --test structured_runtime -- --nocapture
+cargo test -p milkdrift-blueprint --test kernel -- --nocapture
+cargo test -p milkdrift-model --test contracts -- --nocapture
+cargo test -p milkdrift-runtime --test causal_context -- --nocapture
+cargo test -p milkdrift-model-provider --test mock_endpoints -- --nocapture
 ```
 
-The process suite uses a small Rust helper binary rather than shell scripts or a real coding
+The model-provider suite binds local ephemeral loopback listeners and uses fixed mock
+OpenAI-compatible/Anthropic payloads. It performs no internet requests and needs no real
+credentials. The context suite proves deterministic ordering across candidate page order,
+branch isolation, exact budget behavior, fail-closed authority, and restart-safe manifest
+publication. The process suite uses a small Rust helper binary rather than shell scripts or a real coding
 agent. It has no network or credential dependency. After cancellation/tree tests on Unix, check
 that no helper survived with `pgrep -af milkdrift-process-test-helper`; a match belonging to the
 test command itself is not a surviving child. Live-host/worker coordination uses condition

@@ -7,7 +7,7 @@ fn malformed_and_stale_integrity_cursors_are_rejected() -> Result<(), Box<dyn st
 
     let directory = TempDir::new()?;
     let revision_bytes =
-        include_bytes!("../../../../crates/blueprint/tests/fixtures/revision-v1.json");
+        include_bytes!("../../../../crates/blueprint/tests/fixtures/revision-v2.json");
     let (_document, revision) = BlueprintRevisionDocument::from_json(revision_bytes)?;
     let request = accepted_request(
         "run-stale-integrity-cursor",
@@ -70,7 +70,7 @@ fn revision_lookup_and_integrity_scan_detect_physical_key_mismatches()
 
     let directory = TempDir::new()?;
     let revision_bytes =
-        include_bytes!("../../../../crates/blueprint/tests/fixtures/revision-v1.json");
+        include_bytes!("../../../../crates/blueprint/tests/fixtures/revision-v2.json");
     let (_document, revision) = BlueprintRevisionDocument::from_json(revision_bytes)?;
     let request = accepted_request(
         "run-key-audit",

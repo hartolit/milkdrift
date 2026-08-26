@@ -144,17 +144,22 @@ fn assert_golden(
 }
 
 #[test]
-fn executor_documents_round_trip_with_golden_v1_bytes() -> Result<(), Box<dyn std::error::Error>> {
+fn executor_documents_round_trip_with_golden_bytes() -> Result<(), Box<dyn std::error::Error>> {
     let request = InvocationRequestDocument::new(invocation_request()?);
     assert_golden(
         request.to_canonical_json()?,
-        include_bytes!("fixtures/invocation-request-v1.json"),
+        include_bytes!("fixtures/invocation-request-v2.json"),
         "invocation request",
     )?;
     assert_eq!(
         InvocationRequestDocument::from_json(&request.to_canonical_json()?)?,
         request
     );
+    let migrated = InvocationRequestDocument::from_json(include_bytes!(
+        "fixtures/invocation-request-v1.json"
+    ))?;
+    assert_eq!(migrated.schema_version(), 2);
+    assert_eq!(migrated.body(), request.body());
 
     let event = InvocationEventDocument::new(invocation_event()?);
     assert_golden(

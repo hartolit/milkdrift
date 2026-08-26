@@ -146,9 +146,9 @@ fn revision() -> TestResult<BlueprintRevision> {
     let terminal_id = NodeId::new("done")?;
     let task = Node::new(
         task_id.clone(),
-        NodeKind::Task {
-            requirement: CapabilityRequirement::new(OperationId::new("model.generate")?),
-        },
+        NodeKind::task_direct_inputs(CapabilityRequirement::new(OperationId::new(
+            "model.generate",
+        )?))?,
     )?
     .with_control_output(PortId::new("next")?)?;
     let terminal = Node::new(

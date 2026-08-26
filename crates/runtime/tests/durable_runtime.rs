@@ -71,9 +71,9 @@ fn sequence_revision() -> TestResult<BlueprintRevision> {
     let input = PortId::new("in")?;
     let task = Node::new(
         task_id.clone(),
-        NodeKind::Task {
-            requirement: CapabilityRequirement::new(OperationId::new("model.generate")?),
-        },
+        NodeKind::task_direct_inputs(CapabilityRequirement::new(OperationId::new(
+            "model.generate",
+        )?))?,
     )?
     .with_control_output(next.clone())?;
     let terminal = Node::new(

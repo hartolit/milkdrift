@@ -84,7 +84,11 @@ Structured concurrency means a parent scope owns its children, branch-local reso
 
 Each concurrent branch receives an isolated logical workspace. Cross-branch values move only through declared data edges, artifacts, joins, reducers, or explicit merge operations. An artifact has identity, digest, media contract, size, producer, causal inputs, and retention class; large bytes stay outside semantic documents and ordinary events.
 
-Context is selected from graph causality, declared inputs, chosen artifacts, scoped memory, and explicit byte/token/item budgets. Chronological whole-history dumping is not a fallback. Provenance connects every node execution to revision/node, actor, resolved capability/descriptor, invocation, inputs and selectors, outputs, artifacts, approvals, signals, effects, errors, and parent causal events. Retention policy may expire payloads while preserving safe metadata and integrity evidence; deletion is explicit and auditable.
+Each task revision owns a private-invariant context policy. The runtime's pure causal builder considers declared inputs, explicit control/data ancestry, exact node/semantic-role selectors, authority-filtered workspace and artifact metadata, and paged journal evidence. Sibling scopes remain invisible until an edge, join, or reducer exposes them. Stable order is causal depth, semantic kind, source node, then canonical source-reference bytes; item, reference-byte, artifact-byte, and optional provider-neutral unit estimates are admitted incrementally before content is read. Optional losses receive stable omission codes and required losses fail before dispatch. There is no chronological whole-history fallback.
+
+The result is canonical context-manifest schema v1, bound to one run/revision/node execution/attempt and to the exact policy version/digest. It records ordered sources, causal evidence, sensitivity/authority facts, reasons, omissions, totals, budget, and a domain-separated digest. The exact restricted manifest artifact is committed before external entry and its immutable reference is carried once by invocation-request schema v2; retries of the same frozen request reuse it. For a Fresh model request the adapter verifies that artifact against the exact attempt, then inserts those same canonical bytes as the first system context block before encoding either provider protocol. References remain references: independently selected model-task content parts control any artifact byte transfer. Provenance connects every node execution to revision/node, actor, resolved capability/descriptor, invocation, inputs and selectors, outputs, artifacts, approvals, signals, effects, errors, and parent causal events. Retention policy may expire payloads while preserving safe metadata and integrity evidence; deletion is explicit and auditable.
+
+`milkdrift-model` owns canonical provider-neutral model-task/response schema v1. Model identity and endpoint selection belong to exact capability profiles, not blueprints or the model contract. `milkdrift-model-provider` is an outer adapter with separate OpenAI-compatible and native Anthropic mappings over one bounded rustls/HTTP stack. It rejects unadvertised roles, parts, tools, schemas, reasoning, streaming, sessions, and encoded request bodies over the profile bound before provider entry. Model outputs and tool calls are data artifacts; no returned call is executed automatically.
 
 ## 10. Durable persistence and crash recovery
 
@@ -112,13 +116,14 @@ from a stable contract to a crate that consumes it:
 ```text
 milkdrift-contracts   -> {capability, blueprint, workspace, authority, persistence, runtime}
 milkdrift-capability  -> {blueprint, workspace, authority, persistence, runtime, capability-host}
-milkdrift-blueprint   -> {authority, persistence, runtime, redb-store}
+milkdrift-blueprint   -> {authority, persistence, model, runtime, redb-store}
 milkdrift-workspace   -> {authority, persistence, runtime, redb-store}
 milkdrift-authority   -> {persistence, runtime, capability-host}
 milkdrift-persistence -> {runtime, redb-store}
+milkdrift-model       -> {runtime, model-provider}
 milkdrift-runtime     -> {capability-host}
-milkdrift-capability-host -> {local-process}
-milkdrift-authority   -> {secret-env, local-process}
+milkdrift-capability-host -> {local-process, model-provider}
+milkdrift-authority   -> {secret-env, local-process, model-provider}
 ```
 
 `milkdrift-contracts` owns only cross-domain implementation mechanics with
@@ -151,7 +156,7 @@ Credentials and secret values never appear in blueprints, descriptors, requireme
 
 ## 15. Disk/wire schemas and compatibility
 
-Portable capability and blueprint documents use canonical schema-v1 JSON envelopes with an explicit numeric `schema_version`. Digest inputs use recursively key-sorted deterministic JSON and deterministic collections. Unknown core variants, malformed typed identities, invalid derived fields, and unsupported future versions fail clearly. Explicit bounded DNS-namespaced extension maps are the only forward-compatible unknown field mechanism.
+Portable documents use explicit numeric schema versions: blueprint revision/mutation and invocation request are currently v2; other capability documents, context manifests, model contracts, and endpoint profiles are v1. Digest inputs use recursively key-sorted deterministic JSON and deterministic collections. Unknown core variants, malformed typed identities, invalid derived fields, and unsupported future versions fail clearly. Explicit bounded DNS-namespaced extension maps are the only forward-compatible unknown field mechanism.
 
 Readers support only versions they can interpret without guessing. A writer emits one current canonical version. Adding optional meaning still requires a schema review; changing existing meaning or canonical bytes requires a new version and fixtures. Old golden fixtures remain read tests for every supported version. Disk events, projections, daemon commands, peer messages, and artifacts will each declare independent version ownership rather than sharing one global version.
 
@@ -195,6 +200,9 @@ milkdrift/
 │   │   ├── materialization-and-publication-port
 │   │   ├── bounded-effect-worker-owner
 │   │   └── adapter-and-secret-ports
+│   ├── model/
+│   │   ├── context-manifest
+│   │   └── task-and-response-contracts
 │   ├── workspace/
 │   │   ├── context
 │   │   ├── artifacts
@@ -207,7 +215,7 @@ milkdrift/
 │       ├── protocol
 │       └── capability-advertisement
 ├── adapters/
-│   ├── model/
+│   ├── model-provider/
 │   ├── local-process/
 │   ├── secret-env/
 │   ├── filesystem/
@@ -238,7 +246,7 @@ The logical map is the long-lived ownership reference. Its exact current physica
 | `capability/resolution` | Pure matching and exact snapshots remain in `milkdrift-capability`; deterministic authority/policy/health/capacity selection and the runtime executor bridge are in `milkdrift-capability-host` |
 | `capability/effect-host` | `milkdrift-capability-host::worker` owns explicit fixed execution/control threads, bounded queues, bounded claim pages, health, panic containment, and deadline-driven drain/cancel/retain shutdown |
 | `capability/materialization` | `milkdrift-capability-host::materialization` owns the exact workspace/artifact port and `RuntimeStore` bridge; concrete adapters see only isolated roots and capability-domain references |
-| `workspace/context` | Scoped immutable values/budgets in `milkdrift-workspace`; causal context construction remains Pass 3 |
+| `workspace/context` | Immutable task policy in `milkdrift-blueprint::context`, exact manifest contracts in `milkdrift-model::context`, pure selection/publication in `milkdrift-runtime::context`, and scoped values/budgets in `milkdrift-workspace` |
 | `workspace/artifacts` | Metadata/contracts in `milkdrift-workspace` and durable bytes in `milkdrift-redb-store` |
 | `workspace/branches` | `milkdrift-workspace::scope` plus runtime branch/iteration/subworkflow projections |
 | `persistence/events` | `milkdrift-persistence::{event,document}` with schema-v1 golden fixtures |
@@ -246,7 +254,8 @@ The logical map is the long-lived ownership reference. Its exact current physica
 | `persistence/projections` | Pure `milkdrift-runtime::projection`; optional checked snapshots use persistence envelope v2 around runtime projection payload v3 |
 | `peer/protocol` | Not implemented |
 | `peer/capability-advertisement` | Generic descriptor contract exists; peer protocol/advertisement is not implemented |
-| `adapters/model` | Not implemented |
+| `model/contracts` | `milkdrift-model::{task,context,document}` owns provider-neutral schema-v1 model tasks/responses and exact causal manifests without HTTP, runtime, provider SDK, or secret dependencies |
+| `adapters/model` | `milkdrift-model-provider::{adapter,profile,http,stream,openai_compatible,anthropic}` owns endpoint policy, feature negotiation, bounded transport, two independent wire mappings, and artifact publication |
 | `adapters/process` | `milkdrift-local-process::{config,process}` owns profile schema v1, direct argv entry, environment mediation, bounded pipes, declared imports, timeout/cancellation, and platform process ownership |
 | `adapters/secret-env` | `milkdrift-secret-env` maps explicitly configured opaque references to exact environment names without enumerating or retaining values |
 | `adapters/filesystem` | Content-addressed artifact ownership in `milkdrift-redb-store::artifact::{accounting,cleanup,path,publication}` |

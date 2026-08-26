@@ -684,9 +684,7 @@ mod tests {
     fn task(name: &str, operation: &str) -> TestResult<Node> {
         Ok(Node::new(
             NodeId::new(name)?,
-            NodeKind::Task {
-                requirement: CapabilityRequirement::new(OperationId::new(operation)?),
-            },
+            NodeKind::task_direct_inputs(CapabilityRequirement::new(OperationId::new(operation)?))?,
         )?)
     }
 

@@ -1,0 +1,32 @@
+[package]
+name = "milkdrift-model-provider"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+base64.workspace = true
+blake3.workspace = true
+milkdrift-authority = { version = "=0.1.0", path = "../../crates/authority" }
+milkdrift-capability = { version = "=0.1.0", path = "../../crates/capability" }
+milkdrift-capability-host = { version = "=0.1.0", path = "../../crates/capability-host" }
+milkdrift-contracts.workspace = true
+milkdrift-model = { version = "=0.1.0", path = "../../crates/model" }
+milkdrift-workspace = { version = "=0.1.0", path = "../../crates/workspace" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+milkdrift-blueprint = { version = "=0.1.0", path = "../../crates/blueprint" }
+milkdrift-persistence = { version = "=0.1.0", path = "../../crates/persistence" }
+milkdrift-redb-store = { version = "=0.1.0", path = "../redb-store", features = ["test-admin"] }
+milkdrift-runtime = { version = "=0.1.0", path = "../../crates/runtime" }
+tempfile.workspace = true
+
+[lints]
+workspace = true

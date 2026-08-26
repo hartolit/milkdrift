@@ -10,7 +10,7 @@ use milkdrift_contracts::{
 };
 
 use crate::{
-    AuthorRef, BLUEPRINT_SCHEMA_VERSION_V1, BlueprintId, BlueprintMetadata, BlueprintRevision,
+    AuthorRef, BLUEPRINT_SCHEMA_VERSION_V2, BlueprintId, BlueprintMetadata, BlueprintRevision,
     ContentDigest, Edge, EdgeId, MutationError, Node, NodeFingerprint, NodeId, RevisionId,
     SemanticBlueprint, ValidationError, WorkflowId, WorkflowInterface,
 };
@@ -126,7 +126,7 @@ struct RevisionReadWire {
     semantic: SemanticWire,
 }
 
-/// Canonical schema-v1 compatibility envelope for an immutable blueprint revision.
+/// Canonical schema-v2 envelope for an immutable blueprint revision.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct BlueprintRevisionDocument {
     schema_version: u32,
@@ -145,7 +145,7 @@ impl BlueprintRevisionDocument {
     #[must_use]
     pub fn new(revision: &BlueprintRevision) -> Self {
         Self {
-            schema_version: BLUEPRINT_SCHEMA_VERSION_V1,
+            schema_version: BLUEPRINT_SCHEMA_VERSION_V2,
             revision: RevisionWire::from_revision(revision),
         }
     }
@@ -176,17 +176,17 @@ impl BlueprintRevisionDocument {
             .and_then(Value::as_u64)
             .and_then(|value| u32::try_from(value).ok())
             .ok_or_else(|| DocumentError::Integrity("missing numeric schema_version".to_owned()))?;
-        if version != BLUEPRINT_SCHEMA_VERSION_V1 {
+        if version != BLUEPRINT_SCHEMA_VERSION_V2 {
             return Err(DocumentError::UnsupportedVersion {
                 found: version,
-                supported: BLUEPRINT_SCHEMA_VERSION_V1,
+                supported: BLUEPRINT_SCHEMA_VERSION_V2,
             });
         }
         let wire: BlueprintDocumentWire = serde_json::from_value(value)?;
-        if wire.schema_version != BLUEPRINT_SCHEMA_VERSION_V1 {
+        if wire.schema_version != BLUEPRINT_SCHEMA_VERSION_V2 {
             return Err(DocumentError::UnsupportedVersion {
                 found: wire.schema_version,
-                supported: BLUEPRINT_SCHEMA_VERSION_V1,
+                supported: BLUEPRINT_SCHEMA_VERSION_V2,
             });
         }
         let semantic = SemanticBlueprint::from_parts(
@@ -210,16 +210,16 @@ impl BlueprintRevisionDocument {
     }
 }
 
-/// Calculates the schema-v1 domain-separated fingerprint of one immutable node definition.
+/// Calculates the schema-v2 domain-separated fingerprint of one immutable node definition.
 pub fn node_configuration_fingerprint(node: &Node) -> Result<NodeFingerprint, DocumentError> {
     let bytes = canonical_value_bytes(node)?;
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"milkdrift.blueprint.node-configuration.v1\0");
+    hasher.update(b"milkdrift.blueprint.node-configuration.v2\0");
     hasher.update(&bytes);
     Ok(NodeFingerprint::from_hash(hasher.finalize()))
 }
 
-/// Calculates a schema-v1 fingerprint of every dependency incident to one node.
+/// Calculates a schema-v2 fingerprint of every dependency incident to one node.
 ///
 /// The fingerprint is independent of map insertion order and deliberately excludes
 /// the node configuration, allowing reconciliation to classify dependency-only edits.
@@ -234,7 +234,7 @@ pub fn node_dependency_fingerprint(
         .collect();
     let bytes = canonical_value_bytes(&(node, incident))?;
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"milkdrift.blueprint.node-dependencies.v1\0");
+    hasher.update(b"milkdrift.blueprint.node-dependencies.v2\0");
     hasher.update(&bytes);
     Ok(NodeFingerprint::from_hash(hasher.finalize()))
 }

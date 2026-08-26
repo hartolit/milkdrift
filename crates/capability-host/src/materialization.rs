@@ -139,6 +139,19 @@ pub trait MaterializedExecution: Send {
 
 /// Narrow host-owned input/materialization/output port used by process adapters.
 pub trait InvocationDataAccess: Send + Sync {
+    /// Reads and verifies one exact durable artifact without exposing store layout.
+    fn read_artifact_bytes(
+        &self,
+        _context: &AdapterExecutionContext,
+        reference: &CapabilityArtifactReference,
+        _limits: MaterializationLimits,
+    ) -> Result<Vec<u8>, InvocationDataError> {
+        let _ = reference;
+        Err(InvocationDataError::Rejected(
+            "direct artifact reading is unsupported by this data-access implementation".to_owned(),
+        ))
+    }
+
     /// Reads exact durable inputs and creates one isolated execution workspace.
     fn materialize(
         &self,
@@ -419,6 +432,15 @@ impl StoreInvocationDataAccess {
 }
 
 impl InvocationDataAccess for StoreInvocationDataAccess {
+    fn read_artifact_bytes(
+        &self,
+        _context: &AdapterExecutionContext,
+        reference: &CapabilityArtifactReference,
+        limits: MaterializationLimits,
+    ) -> Result<Vec<u8>, InvocationDataError> {
+        self.read_artifact(durable_artifact_reference(reference)?, limits.validate()?)
+    }
+
     fn materialize(
         &self,
         _context: &AdapterExecutionContext,

@@ -774,7 +774,7 @@ fn artifact_and_revision_primary_digest_pairs_fail_closed_after_deletion()
 
     for delete_primary in [true, false] {
         let directory = TempDir::new()?;
-        let fixture = include_bytes!("../../../crates/blueprint/tests/fixtures/revision-v1.json");
+        let fixture = include_bytes!("../../../crates/blueprint/tests/fixtures/revision-v2.json");
         let (_, revision) = BlueprintRevisionDocument::from_json(fixture)?;
         {
             let store = RedbStore::open(directory.path())?;

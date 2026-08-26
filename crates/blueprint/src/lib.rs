@@ -38,6 +38,7 @@
 //! ```
 
 mod condition;
+mod context;
 mod document;
 mod identity;
 mod model;
@@ -47,6 +48,11 @@ mod validation;
 
 pub use condition::{
     Comparison, Condition, ConditionError, ConditionOperand, PathSegment, PathSelector,
+};
+pub use context::{
+    ContextArtifactRetention, ContextArtifactSelector, ContextArtifactSensitivity, ContextBudget,
+    ContextCategory, ContextOrdering, ContextProvenanceClass, ContextSemanticRole,
+    ContextSessionPolicy, ContextTruncation, TaskContextPolicy,
 };
 pub use document::{
     BlueprintRevisionDocument, DocumentError, node_configuration_fingerprint,
@@ -60,11 +66,14 @@ pub use model::{
     BindingSource, BlueprintMetadata, BranchConfig, CostCurrencyCode, DataPort, Edge, EdgeKind,
     ForkConfig, InterfaceField, JoinConfig, JoinPolicy, ModelError, Node, NodeKind,
     PinnedSubworkflow, ReducerConfig, ReducerStrategy, RepeatBudget, RepeatConfig,
-    RepeatTermination, SchemaRef, SemanticBlueprint, TerminalOutcome, WorkflowInterface,
+    RepeatTermination, SchemaRef, SemanticBlueprint, TaskConfig, TerminalOutcome,
+    WorkflowInterface,
 };
 pub use mutation::{Mutation, MutationBatch, MutationError};
 pub use revision::BlueprintRevision;
 pub use validation::{Diagnostic, DiagnosticCode, ValidationError};
 
-/// Portable blueprint document schema implemented by this crate.
+/// Legacy portable blueprint schema, deliberately not read after task-context semantics changed.
 pub const BLUEPRINT_SCHEMA_VERSION_V1: u32 = 1;
+/// Portable blueprint document schema with explicit task context policy.
+pub const BLUEPRINT_SCHEMA_VERSION_V2: u32 = 2;

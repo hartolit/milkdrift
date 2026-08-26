@@ -15,11 +15,11 @@ use milkdrift_capability::{
     InvocationRequest, SideEffectClass,
 };
 use milkdrift_persistence::{
-    AtomicRunCommitOutcome, BoundedDetail, NodeExecutionId, PersistenceError, Reason, RunEventKind,
-    RunnableIndexEntry, TimestampMillis,
+    AtomicRunCommitOutcome, AttemptId, BoundedDetail, NodeExecutionId, PersistenceError, Reason,
+    RunEventKind, RunnableIndexEntry, TimestampMillis,
 };
-use milkdrift_workspace::{RunId, ScopeKind, ScopeReference};
-use std::collections::BTreeMap;
+use milkdrift_workspace::{ArtifactId, ArtifactSensitivity, RunId, ScopeKind, ScopeReference};
+use std::collections::{BTreeMap, BTreeSet};
 use tracing::{info, warn};
 
 impl RuntimeService {
@@ -62,7 +62,7 @@ impl RuntimeService {
             .get(execution.node())
             .ok_or_else(|| RuntimeError::InvalidHistory("runnable node is absent".to_owned()))?;
         let requirement = match node.kind() {
-            NodeKind::Task { requirement } => requirement.clone(),
+            NodeKind::Task { config } => config.requirement().clone(),
             NodeKind::Reducer { config } => match config.strategy() {
                 ReducerStrategy::Capability(operation) => {
                     milkdrift_capability::CapabilityRequirement::new(operation.clone())
@@ -166,6 +166,8 @@ impl RuntimeService {
             &projection,
             node,
             execution.scope(),
+            execution.execution(),
+            &attempt,
             invocation.clone(),
             resolution.snapshot().capability().clone(),
             resolution.snapshot().provider_profile().cloned(),
@@ -288,6 +290,8 @@ impl RuntimeService {
         projection: &RunProjection,
         node: &Node,
         occurrence_scope: &ScopeReference,
+        execution: &NodeExecutionId,
+        attempt: &AttemptId,
         invocation: InvocationId,
         capability: milkdrift_capability::CapabilityId,
         provider_profile: Option<milkdrift_capability::ProviderProfileRef>,
@@ -366,11 +370,11 @@ impl RuntimeService {
                     .map_err(|error| RuntimeError::Scheduling(error.to_string()))?,
             );
         }
-        InvocationRequest::new(
+        let request = InvocationRequest::new(
             invocation,
             capability,
             match node.kind() {
-                NodeKind::Task { requirement } => requirement.operation().clone(),
+                NodeKind::Task { config } => config.requirement().operation().clone(),
                 NodeKind::Reducer { config } => match config.strategy() {
                     ReducerStrategy::Capability(operation) => operation.clone(),
                     ReducerStrategy::Collect | ReducerStrategy::First => {
@@ -398,7 +402,119 @@ impl RuntimeService {
             inputs,
             BTreeMap::new(),
         )
-        .map_err(|error| RuntimeError::Scheduling(error.to_string()))
+        .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
+        let NodeKind::Task { config } = node.kind() else {
+            return Ok(request);
+        };
+        if config.requirement().operation().as_str() != milkdrift_model::MODEL_GENERATE_OPERATION {
+            return Ok(request);
+        }
+        let mut candidates = Vec::with_capacity(request.inputs().len());
+        for input in request.inputs() {
+            let selected_bytes = u64::try_from(
+                serde_json::to_vec(input.value())
+                    .map_err(|error| RuntimeError::Scheduling(error.to_string()))?
+                    .len(),
+            )
+            .map_err(|_| RuntimeError::Scheduling("context input size overflow".to_owned()))?;
+            let (artifact_bytes, sensitivity, authority, available) = match input.value() {
+                milkdrift_capability::InvocationValueReference::Artifact { reference } => {
+                    let metadata = self
+                        .store
+                        .metadata(
+                            &ArtifactId::new(reference.identity())
+                                .map_err(|error| RuntimeError::Scheduling(error.to_string()))?,
+                        )?
+                        .filter(|metadata| {
+                            reference.size_bytes() == Some(metadata.reference().size_bytes())
+                                && reference.digest() == metadata.reference().digest().to_hex()
+                                && reference.media_type()
+                                    == Some(metadata.reference().media_type().as_str())
+                        });
+                    let sensitivity = metadata
+                        .as_ref()
+                        .map_or(ArtifactSensitivity::Restricted, |value| value.sensitivity());
+                    (
+                        reference.size_bytes().unwrap_or(0),
+                        sensitivity,
+                        milkdrift_model::AuthorityFact {
+                            required: sensitivity != ArtifactSensitivity::Public,
+                            authorized: metadata.is_some(),
+                            authority_reference: None,
+                        },
+                        metadata.is_some(),
+                    )
+                }
+                milkdrift_capability::InvocationValueReference::Inline { .. }
+                | milkdrift_capability::InvocationValueReference::WorkspaceValue { .. } => (
+                    0,
+                    ArtifactSensitivity::Restricted,
+                    milkdrift_model::AuthorityFact {
+                        required: false,
+                        authorized: true,
+                        authority_reference: None,
+                    },
+                    true,
+                ),
+            };
+            candidates.push(crate::ContextCandidate {
+                kind: milkdrift_model::ContextSemanticKind::DirectInput,
+                source: Some(milkdrift_model::ContextSource::DirectInput {
+                    name: input.name().to_owned(),
+                    reference: input.value().clone(),
+                }),
+                node: None,
+                roles: BTreeSet::new(),
+                scope: Some(occurrence_scope.clone()),
+                exposed_across_scope: false,
+                required: node
+                    .data_inputs()
+                    .iter()
+                    .find(|(port, _)| port.as_str() == input.name())
+                    .is_some_and(|(_, declaration)| declaration.is_required()),
+                available,
+                selected_bytes,
+                selected_artifact_bytes: artifact_bytes,
+                estimated_model_input_units: None,
+                sensitivity,
+                authority,
+                artifact: None,
+                causal_parents: Vec::new(),
+            });
+        }
+        let visible_scopes = self
+            .store
+            .scope_lineage(occurrence_scope)?
+            .into_iter()
+            .map(|scope| scope.reference().clone())
+            .collect();
+        let run = projection.run_id().ok_or_else(|| {
+            RuntimeError::InvalidHistory("run projection has no identity".to_owned())
+        })?;
+        let manifest = crate::CausalContextBuilder::build(crate::ContextBuildRequest {
+            identity: crate::ContextBuildIdentity {
+                run: run.clone(),
+                revision: revision.id().clone(),
+                node: node.id().clone(),
+                execution: execution.clone(),
+                attempt: attempt.clone(),
+            },
+            semantic: revision.semantic(),
+            policy: config.context_policy(),
+            visible_scopes,
+            candidates,
+        })
+        .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
+        let budget = projection.workspace_budget().ok_or_else(|| {
+            RuntimeError::InvalidHistory("run has no workspace budget".to_owned())
+        })?;
+        let usage = self.store.workspace_usage(run)?;
+        let manifest =
+            crate::persist_context_manifest(self.store.as_ref(), &manifest, budget.clone(), usage)
+                .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
+        request
+            .with_context_manifest(manifest)
+            .map_err(|error| RuntimeError::Scheduling(error.to_string()))
     }
 
     pub(super) fn commit_internal_plan(

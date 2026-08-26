@@ -1089,12 +1089,18 @@ impl RunEventKind {
     pub fn required_artifacts(&self) -> Result<Vec<ArtifactReference>, PersistenceError> {
         match self {
             Self::RunTerminal { artifacts, .. } => Ok(artifacts.clone()),
-            Self::NodeScheduled { request, .. } => request
-                .inputs()
-                .iter()
-                .filter_map(|input| input.value().artifact())
-                .map(workspace_artifact_reference)
-                .collect(),
+            Self::NodeScheduled { request, .. } => {
+                let mut references = request
+                    .inputs()
+                    .iter()
+                    .filter_map(|input| input.value().artifact())
+                    .map(workspace_artifact_reference)
+                    .collect::<Result<Vec<_>, _>>()?;
+                if let Some(manifest) = request.context_manifest() {
+                    references.push(workspace_artifact_reference(manifest)?);
+                }
+                Ok(references)
+            }
             Self::NodeOutputPublished {
                 artifact: Some(reference),
                 ..
@@ -1641,6 +1647,46 @@ mod tests {
                 .required_artifacts()
                 .is_err()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn scheduled_context_manifest_is_an_exact_atomic_ownership_requirement()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let invocation = InvocationId::new("invocation-context")?;
+        let request = InvocationRequest::new(
+            invocation.clone(),
+            CapabilityId::new("model-provider")?,
+            OperationId::new("model.generate")?,
+            None,
+            None,
+            Vec::new(),
+            BTreeMap::new(),
+        )?
+        .with_context_manifest(CapabilityArtifactReference::new(
+            "artifact-context",
+            "b".repeat(64),
+            Some("application/vnd.milkdrift.context-manifest.v1+json".to_owned()),
+            Some(42),
+        )?)?;
+        let event = RunEventKind::NodeScheduled {
+            node: NodeId::new("generate")?,
+            execution: NodeExecutionId::new("execution-generate")?,
+            attempt: AttemptId::new("attempt-generate")?,
+            invocation,
+            idempotency_key: None,
+            request,
+        };
+
+        let artifacts = event.required_artifacts()?;
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].artifact().as_str(), "artifact-context");
+        assert_eq!(artifacts[0].digest().to_hex(), "b".repeat(64));
+        assert_eq!(
+            artifacts[0].media_type().as_str(),
+            "application/vnd.milkdrift.context-manifest.v1+json"
+        );
+        assert_eq!(artifacts[0].size_bytes(), 42);
         Ok(())
     }
 }

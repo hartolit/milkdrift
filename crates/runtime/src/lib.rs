@@ -9,6 +9,7 @@
 
 mod boundary;
 mod command;
+mod context;
 mod engine;
 mod error;
 mod executor;
@@ -24,6 +25,10 @@ pub use command::{
     AUTHORIZED_RUN_COMMAND_SCHEMA_VERSION_V1, CommandAuthorityClaim, ExternalWorkAction,
     MAX_COMMAND_ITEMS, RUN_COMMAND_SCHEMA_VERSION_V1, RunCommand, RunCommandDocument,
     SystemTransition, WorkerReport,
+};
+pub use context::{
+    CausalContextBuilder, ContextBuildError, ContextBuildIdentity, ContextBuildRequest,
+    ContextCandidate, ContextCandidateArtifactFacts, persist_context_manifest,
 };
 pub use engine::{
     CommandExecution, EffectExecutionResult, EffectTickResult, RecoveryResult, RuntimeConfig,

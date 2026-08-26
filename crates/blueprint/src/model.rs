@@ -8,7 +8,8 @@ use milkdrift_capability::{
 };
 
 use crate::{
-    BlueprintId, Condition, FieldId, NodeId, PathSelector, PortId, RevisionId, WorkflowId,
+    BlueprintId, Condition, FieldId, NodeId, PathSelector, PortId, RevisionId, TaskContextPolicy,
+    WorkflowId,
 };
 
 pub(crate) const MAX_NODES: usize = 1_024;
@@ -993,14 +994,73 @@ pub enum TerminalOutcome {
     Cancelled,
 }
 
+/// Private-invariant configuration for an externally executed task.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskConfig {
+    requirement: CapabilityRequirement,
+    context_policy: TaskContextPolicy,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TaskConfigWire {
+    requirement: CapabilityRequirement,
+    context_policy: TaskContextPolicy,
+}
+
+impl<'de> Deserialize<'de> for TaskConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = TaskConfigWire::deserialize(deserializer)?;
+        Self::new(wire.requirement, wire.context_policy).map_err(serde::de::Error::custom)
+    }
+}
+
+impl TaskConfig {
+    /// Constructs a task from one capability requirement and immutable context policy.
+    pub fn new(
+        requirement: CapabilityRequirement,
+        context_policy: TaskContextPolicy,
+    ) -> Result<Self, ModelError> {
+        requirement
+            .validate()
+            .map_err(|error| ModelError::new("task.requirement", error.to_string()))?;
+        let _digest = context_policy.digest()?;
+        Ok(Self {
+            requirement,
+            context_policy,
+        })
+    }
+
+    /// Constructs a task using the deliberate v2 direct-input-only default policy.
+    pub fn direct_inputs(requirement: CapabilityRequirement) -> Result<Self, ModelError> {
+        Self::new(requirement, TaskContextPolicy::default())
+    }
+
+    /// Capability requirement resolved by the live host.
+    #[must_use]
+    pub const fn requirement(&self) -> &CapabilityRequirement {
+        &self.requirement
+    }
+
+    /// Immutable causal context selection policy.
+    #[must_use]
+    pub const fn context_policy(&self) -> &TaskContextPolicy {
+        &self.context_policy
+    }
+}
+
 /// Complete semantic behavior of one definition-time node.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum NodeKind {
     /// Invoke an operation through capability selection.
     Task {
-        /// Requirement matched later by a registry.
-        requirement: CapabilityRequirement,
+        /// Requirement and causal context policy.
+        config: TaskConfig,
     },
     /// Select one typed control arm.
     Branch {
@@ -1049,43 +1109,38 @@ pub enum NodeKind {
     },
 }
 
+impl NodeKind {
+    /// Constructs a task with an explicit immutable context policy.
+    pub fn task(
+        requirement: CapabilityRequirement,
+        context_policy: TaskContextPolicy,
+    ) -> Result<Self, ModelError> {
+        Ok(Self::Task {
+            config: TaskConfig::new(requirement, context_policy)?,
+        })
+    }
+
+    /// Constructs a task with the deliberate direct-declared-inputs-only policy.
+    pub fn task_direct_inputs(requirement: CapabilityRequirement) -> Result<Self, ModelError> {
+        Ok(Self::Task {
+            config: TaskConfig::direct_inputs(requirement)?,
+        })
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 enum NodeKindWire {
-    Task {
-        requirement: CapabilityRequirement,
-        // Pass 1 encoded the operation twice. Accept that legacy v1 spelling only
-        // when it agrees, then migrate to the requirement-owned representation.
-        #[serde(default)]
-        operation: Option<OperationId>,
-    },
-    Branch {
-        config: BranchConfig,
-    },
-    Fork {
-        config: ForkConfig,
-    },
-    Join {
-        config: JoinConfig,
-    },
-    Reducer {
-        config: ReducerConfig,
-    },
-    Repeat {
-        config: RepeatConfig,
-    },
-    Wait {
-        duration_ms: u64,
-    },
-    SignalWait {
-        signal: OperationId,
-    },
-    Subworkflow {
-        reference: PinnedSubworkflow,
-    },
-    Terminal {
-        outcome: TerminalOutcome,
-    },
+    Task { config: TaskConfig },
+    Branch { config: BranchConfig },
+    Fork { config: ForkConfig },
+    Join { config: JoinConfig },
+    Reducer { config: ReducerConfig },
+    Repeat { config: RepeatConfig },
+    Wait { duration_ms: u64 },
+    SignalWait { signal: OperationId },
+    Subworkflow { reference: PinnedSubworkflow },
+    Terminal { outcome: TerminalOutcome },
 }
 
 impl<'de> Deserialize<'de> for NodeKind {
@@ -1095,20 +1150,7 @@ impl<'de> Deserialize<'de> for NodeKind {
     {
         let wire = NodeKindWire::deserialize(deserializer)?;
         match wire {
-            NodeKindWire::Task {
-                requirement,
-                operation,
-            } => {
-                if operation
-                    .as_ref()
-                    .is_some_and(|legacy| legacy != requirement.operation())
-                {
-                    return Err(serde::de::Error::custom(
-                        "legacy task operation conflicts with its capability requirement",
-                    ));
-                }
-                Ok(Self::Task { requirement })
-            }
+            NodeKindWire::Task { config } => Ok(Self::Task { config }),
             NodeKindWire::Branch { config } => Ok(Self::Branch { config }),
             NodeKindWire::Fork { config } => Ok(Self::Fork { config }),
             NodeKindWire::Join { config } => Ok(Self::Join { config }),
@@ -1291,10 +1333,12 @@ impl Node {
 
     fn validate_kind(&self) -> Result<(), ModelError> {
         match &self.kind {
-            NodeKind::Task { requirement } => {
-                requirement
+            NodeKind::Task { config } => {
+                config
+                    .requirement()
                     .validate()
                     .map_err(|error| ModelError::new("node.task.requirement", error.to_string()))?;
+                let _digest = config.context_policy().digest()?;
                 Ok(())
             }
             NodeKind::Wait { duration_ms: 0 } => Err(ModelError::new(

@@ -308,6 +308,20 @@ fn validate_bounds_and_local(semantic: &SemanticBlueprint, diagnostics: &mut Vec
                 ),
             );
         }
+        if let NodeKind::Task { config } = node.kind() {
+            for selected in config.context_policy().selected_nodes() {
+                if !semantic.nodes().contains_key(selected) {
+                    push(
+                        diagnostics,
+                        Diagnostic::new(
+                            DiagnosticCode::DanglingReference,
+                            format!("nodes.{identity}.task.context_policy.selected_nodes"),
+                            format!("selected context node `{selected}` does not exist"),
+                        ),
+                    );
+                }
+            }
+        }
         let input_overlap = node
             .control_inputs()
             .iter()

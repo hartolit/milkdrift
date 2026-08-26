@@ -68,10 +68,21 @@ fn precreated_run_artifact_is_charged_once_across_initial_input_and_later_reuse(
         harness.runtime.projection(&run)?.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Succeeded)
     );
+    let context_bytes = harness
+        .runtime
+        .history(&run)?
+        .iter()
+        .find_map(|event| match event.kind() {
+            RunEventKind::NodeScheduled { request, .. } => request
+                .context_manifest()
+                .and_then(InvocationArtifactReference::size_bytes),
+            _ => None,
+        })
+        .ok_or("model invocation did not bind a context manifest")?;
     assert_eq!(
         harness.store.workspace_usage(&run)?,
-        WorkspaceUsage::new(2, 0, 1, artifact_bytes),
-        "reusing the same artifact may charge a value version but not artifact counters"
+        WorkspaceUsage::new(2, 0, 2, artifact_bytes + context_bytes),
+        "the reused input is charged once and the frozen context manifest is a distinct artifact"
     );
     Ok(())
 }
@@ -257,9 +268,20 @@ fn direct_artifact_input_is_owned_accounted_and_optional_absence_is_omitted() ->
             if reference.identity() == artifact.artifact().as_str()
     ));
     assert!(harness.store.is_referenced_by_run(&run, &artifact)?);
+    let context = request
+        .context_manifest()
+        .ok_or("model invocation did not bind a context manifest")?;
     assert_eq!(
         harness.store.workspace_usage(&run)?,
-        WorkspaceUsage::new(0, 0, 1, u64::try_from(bytes.len())?)
+        WorkspaceUsage::new(
+            0,
+            0,
+            2,
+            u64::try_from(bytes.len())?
+                + context
+                    .size_bytes()
+                    .ok_or("context manifest has no exact size")?
+        )
     );
     Ok(())
 }

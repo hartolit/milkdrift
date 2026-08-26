@@ -71,9 +71,7 @@ fn task_node(name: &str) -> TestResult<Node> {
     let operation = OperationId::new("tool.execute")?;
     Ok(Node::new(
         id(name)?,
-        NodeKind::Task {
-            requirement: CapabilityRequirement::new(operation),
-        },
+        NodeKind::task_direct_inputs(CapabilityRequirement::new(operation))?,
     )?)
 }
 
@@ -245,21 +243,16 @@ fn standalone_output_port_deserialization_cannot_smuggle_an_input_binding() -> T
 }
 
 #[test]
-fn legacy_duplicated_task_operation_migrates_but_conflicts_are_rejected() -> TestResult {
-    let kind = NodeKind::Task {
-        requirement: CapabilityRequirement::new(OperationId::new("tool.execute")?),
-    };
+fn task_context_policy_is_required_and_unknown_legacy_fields_are_rejected() -> TestResult {
+    let kind = NodeKind::task_direct_inputs(CapabilityRequirement::new(OperationId::new(
+        "tool.execute",
+    )?))?;
     let mut wire = serde_json::to_value(&kind)?;
     assert!(wire.get("operation").is_none());
 
     wire.as_object_mut()
         .ok_or("task kind must encode as an object")?
         .insert("operation".to_owned(), serde_json::json!("tool.execute"));
-    assert_eq!(serde_json::from_value::<NodeKind>(wire.clone())?, kind);
-
-    wire.as_object_mut()
-        .ok_or("task kind must encode as an object")?
-        .insert("operation".to_owned(), serde_json::json!("tool.other"));
     assert!(serde_json::from_value::<NodeKind>(wire).is_err());
     Ok(())
 }
@@ -726,10 +719,10 @@ fn hostile_depth_path_and_future_version_are_rejected() -> TestResult {
         .collect();
     assert!(PathSelector::new(segments).is_err());
 
-    let future = br#"{"schema_version":2,"revision":{}}"#;
+    let future = br#"{"schema_version":3,"revision":{}}"#;
     assert!(matches!(
         BlueprintRevisionDocument::from_json(future),
-        Err(DocumentError::UnsupportedVersion { found: 2, .. })
+        Err(DocumentError::UnsupportedVersion { found: 3, .. })
     ));
     let mut nested = "null".to_owned();
     for _ in 0..70 {
@@ -873,7 +866,7 @@ proptest! {
 fn blueprint_golden_fixture_is_exact_and_canonical() -> TestResult {
     let revision = simple_sequence("golden", false)?;
     let bytes = BlueprintRevisionDocument::new(&revision).to_canonical_json()?;
-    let fixture = include_bytes!("fixtures/revision-v1.json").trim_ascii_end();
+    let fixture = include_bytes!("fixtures/revision-v2.json").trim_ascii_end();
     if fixture.is_empty() {
         eprintln!("{}", String::from_utf8(bytes.clone())?);
     }
@@ -881,6 +874,10 @@ fn blueprint_golden_fixture_is_exact_and_canonical() -> TestResult {
     let (document, decoded) = BlueprintRevisionDocument::from_json(fixture)?;
     assert_eq!(decoded, revision);
     assert_eq!(document.to_canonical_json()?, fixture);
+    assert!(matches!(
+        BlueprintRevisionDocument::from_json(include_bytes!("fixtures/revision-v1.json")),
+        Err(DocumentError::UnsupportedVersion { found: 1, .. })
+    ));
     Ok(())
 }
 

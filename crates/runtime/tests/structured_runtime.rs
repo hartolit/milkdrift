@@ -756,10 +756,10 @@ fn block_first_runnable_operation(
         .nodes()
         .get(execution.node())
         .ok_or("runnable execution node is absent from its revision")?;
-    let NodeKind::Task { requirement } = node.kind() else {
+    let NodeKind::Task { config } = node.kind() else {
         return Err("first runnable execution is not a task".into());
     };
-    executor.block_operation(requirement.operation().clone())
+    executor.block_operation(config.requirement().operation().clone())
 }
 
 impl Harness {
@@ -1172,9 +1172,7 @@ fn terminal(id: &str, outcome: TerminalOutcome) -> TestResult<Node> {
 fn task(id: &str, operation: &str) -> TestResult<Node> {
     Ok(Node::new(
         NodeId::new(id)?,
-        NodeKind::Task {
-            requirement: CapabilityRequirement::new(OperationId::new(operation)?),
-        },
+        NodeKind::task_direct_inputs(CapabilityRequirement::new(OperationId::new(operation)?))?,
     )?
     .with_control_input(PortId::new("in")?)?
     .with_control_output(PortId::new("out")?)?)

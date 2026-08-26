@@ -191,7 +191,9 @@ pub struct AdapterInvocation<'a> {
 }
 
 impl<'a> AdapterInvocation<'a> {
-    pub(crate) const fn new(
+    /// Constructs an immutable invocation view without durable execution provenance.
+    #[must_use]
+    pub const fn new(
         resolution: &'a ResolvedCapabilitySnapshot,
         request: &'a InvocationRequest,
     ) -> Self {
@@ -202,7 +204,9 @@ impl<'a> AdapterInvocation<'a> {
         }
     }
 
-    pub(crate) const fn with_context(
+    /// Constructs an immutable invocation view with exact durable execution provenance.
+    #[must_use]
+    pub const fn with_context(
         resolution: &'a ResolvedCapabilitySnapshot,
         request: &'a InvocationRequest,
         context: &'a AdapterExecutionContext,

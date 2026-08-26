@@ -11,6 +11,8 @@ use crate::{
 
 /// Schema version implemented by the first capability contract format.
 pub const SCHEMA_VERSION_V1: u32 = 1;
+/// Invocation request schema adding an explicit frozen context-manifest reference.
+pub const INVOCATION_REQUEST_SCHEMA_VERSION_V2: u32 = 2;
 
 pub(crate) fn canonical_json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, ContractError> {
     let bytes =
@@ -134,13 +136,103 @@ document!(
     descriptor,
     "capability descriptor"
 );
-document!(
-    /// Versioned portable invocation request.
-    InvocationRequestDocument,
-    InvocationRequest,
-    request,
-    "invocation request"
-);
+/// Versioned portable invocation request with explicit context binding in v2.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InvocationRequestDocument {
+    schema_version: u32,
+    request: InvocationRequest,
+}
+
+impl InvocationRequestDocument {
+    /// Wraps a request in the current v2 envelope.
+    #[must_use]
+    pub const fn new(request: InvocationRequest) -> Self {
+        Self {
+            schema_version: INVOCATION_REQUEST_SCHEMA_VERSION_V2,
+            request,
+        }
+    }
+
+    /// Current envelope version.
+    #[must_use]
+    pub const fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    /// Immutable request body.
+    #[must_use]
+    pub const fn body(&self) -> &InvocationRequest {
+        &self.request
+    }
+
+    /// Deterministic canonical JSON.
+    pub fn to_canonical_json(&self) -> Result<Vec<u8>, ContractError> {
+        canonical_json_bytes(self)
+    }
+
+    /// Reads v2 and deliberately migrates unambiguous context-free v1 requests.
+    pub fn from_json(bytes: &[u8]) -> Result<Self, ContractError> {
+        if bytes.len() > MAX_DOCUMENT_BYTES {
+            return Err(ContractError::Bounds {
+                location: "$".to_owned(),
+                reason: format!("document exceeds {MAX_DOCUMENT_BYTES} bytes"),
+            });
+        }
+        let value = milkdrift_contracts::parse_json_without_duplicates(bytes)?;
+        validate_document_value(&value)?;
+        let version = value
+            .get("schema_version")
+            .and_then(Value::as_u64)
+            .and_then(|version| u32::try_from(version).ok())
+            .ok_or_else(|| {
+                ContractError::InvalidContract("missing numeric schema_version".to_owned())
+            })?;
+        if !matches!(
+            version,
+            SCHEMA_VERSION_V1 | INVOCATION_REQUEST_SCHEMA_VERSION_V2
+        ) {
+            return Err(ContractError::UnsupportedVersion {
+                document: "invocation request",
+                found: version,
+                supported: INVOCATION_REQUEST_SCHEMA_VERSION_V2,
+            });
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            schema_version: u32,
+            request: InvocationRequest,
+        }
+        let wire: Wire = serde_json::from_value(value)?;
+        debug_assert_eq!(wire.schema_version, version);
+        Ok(Self::new(wire.request))
+    }
+}
+
+impl<'de> Deserialize<'de> for InvocationRequestDocument {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            schema_version: u32,
+            request: InvocationRequest,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        if !matches!(
+            wire.schema_version,
+            SCHEMA_VERSION_V1 | INVOCATION_REQUEST_SCHEMA_VERSION_V2
+        ) {
+            return Err(serde::de::Error::custom(
+                "unsupported invocation request schema version",
+            ));
+        }
+        Ok(Self::new(wire.request))
+    }
+}
 document!(
     /// Versioned portable invocation event.
     InvocationEventDocument,
