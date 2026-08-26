@@ -19,8 +19,8 @@ pub use materialization::{
     StoreInvocationDataAccess,
 };
 pub use registry::{
-    CapabilityHost, CapabilitySelectionPolicy, GenerationHealth, GenerationView, HostConfig,
-    HostError, RegistrationOutcome, ShutdownReport,
+    CapabilityHost, CapabilitySelectionPolicy, CatalogGenerationView, GenerationHealth,
+    GenerationView, HostConfig, HostError, RegistrationOutcome, ShutdownReport,
 };
 pub use secret::{InMemorySecretResolver, SecretResolver, SecretResolverError};
 pub use worker::{

@@ -12,7 +12,7 @@ mod secret;
 pub use document::{AUTHORITY_GRANT_SCHEMA_VERSION_V1, MAX_AUTHORITY_DOCUMENT_BYTES};
 pub use evaluator::{AuthorityEvaluator, GrantSetEvaluator};
 pub use identity::{
-    ActorRef, AuthorityError, DecisionId, GrantId, NetworkProfileRef, PolicyId, SecretRef,
+    ActorRef, AuthorityError, DecisionId, GrantId, NetworkProfileRef, PeerId, PolicyId, SecretRef,
 };
 pub use model::{
     AccessMode, AuthorityBudget, AuthorityDecisionSnapshot, AuthorityGrant, AuthorityGrantBuilder,

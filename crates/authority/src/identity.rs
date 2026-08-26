@@ -93,6 +93,8 @@ identity_type!(/// Stable identity of one authorization decision.
     DecisionId);
 identity_type!(/// Non-secret network configuration profile reference.
     NetworkProfileRef);
+identity_type!(/// Stable authenticated identity of one Milkdrift peer daemon.
+    PeerId);
 
 /// Opaque reference to secret material owned by a later resolver boundary.
 ///

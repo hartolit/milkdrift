@@ -126,6 +126,21 @@ pub struct GenerationView {
     pub last_failure: Option<String>,
 }
 
+/// Immutable descriptor plus live state used by an external catalog adapter.
+///
+/// This is an observation of adapter-host state, never durable workflow truth.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CatalogGenerationView {
+    /// Exact immutable descriptor generation.
+    pub descriptor: CapabilityDescriptor,
+    /// Latest live health observation, when recorded.
+    pub observation: Option<CapabilityObservation>,
+    /// Whether this generation is selected for unpinned local resolution.
+    pub current: bool,
+    /// Whether new resolution is closed while exact owners drain.
+    pub draining: bool,
+}
+
 /// Honest result of forced shutdown when exact invocations remained unresolved.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShutdownReport {
@@ -696,6 +711,36 @@ impl CapabilityHost {
             .collect())
     }
 
+    /// Returns exact descriptor/observation pairs filtered by an explicit authority scope.
+    ///
+    /// Peer transports use this narrow snapshot to derive a further relationship-filtered,
+    /// expiring advertisement. The returned values do not expose adapter handles.
+    pub fn catalog_generations(
+        &self,
+        visible: &CapabilityAuthorityScope,
+    ) -> Result<Vec<CatalogGenerationView>, HostError> {
+        let state = self.lock_state()?;
+        Ok(state
+            .generations
+            .iter()
+            .filter(|(_key, generation)| {
+                generation
+                    .descriptor
+                    .operations()
+                    .values()
+                    .any(|operation| {
+                        scope_allows(visible, &generation.descriptor, operation.side_effect())
+                    })
+            })
+            .map(|(key, generation)| CatalogGenerationView {
+                descriptor: generation.descriptor.clone(),
+                observation: generation.observation.clone(),
+                current: state.current.get(&key.capability) == Some(&key.revision),
+                draining: generation.draining,
+            })
+            .collect())
+    }
+
     fn validate_registration_capacity(
         &self,
         state: &RegistryState,
@@ -764,6 +809,40 @@ impl CapabilityHost {
                 permit.failure = Some("adapter panicked".to_owned());
                 Err(ExecutorError::AdapterPanicked { after_entry: true })
             }
+        }
+    }
+
+    /// Routes cancellation to the exact registered generation currently owning an invocation.
+    ///
+    /// This inherent boundary lets capability adapters such as peer transports reuse host
+    /// ownership semantics without depending on the runtime trait that also exposes it.
+    pub fn cancel_exact(
+        &self,
+        request: &CancellationRequest,
+    ) -> Result<CancellationAcknowledgement, ExecutorError> {
+        let adapter = {
+            let state = self.core.state.lock().map_err(|_error| {
+                ExecutorError::BoundaryBeforeEntry("registry unavailable".to_owned())
+            })?;
+            let key = state.in_flight.get(request.invocation()).ok_or_else(|| {
+                ExecutorError::Unavailable(
+                    "no exact generation owns the cancellation invocation".to_owned(),
+                )
+            })?;
+            state
+                .generations
+                .get(key)
+                .ok_or_else(|| ExecutorError::UnavailableGeneration {
+                    capability: key.capability.clone(),
+                    descriptor_revision: key.revision,
+                })?
+                .adapter
+                .clone()
+        };
+        match catch_unwind(AssertUnwindSafe(|| adapter.cancel(request))) {
+            Ok(Ok(acknowledgement)) => Ok(acknowledgement),
+            Ok(Err(error)) => Err(executor_error_from_adapter(&error)),
+            Err(_panic) => Err(ExecutorError::AdapterPanicked { after_entry: true }),
         }
     }
 
@@ -861,30 +940,7 @@ impl TaskExecutor for CapabilityHost {
         &self,
         request: &CancellationRequest,
     ) -> Result<CancellationAcknowledgement, ExecutorError> {
-        let adapter = {
-            let state = self.core.state.lock().map_err(|_error| {
-                ExecutorError::BoundaryBeforeEntry("registry unavailable".to_owned())
-            })?;
-            let key = state.in_flight.get(request.invocation()).ok_or_else(|| {
-                ExecutorError::Unavailable(
-                    "no exact generation owns the cancellation invocation".to_owned(),
-                )
-            })?;
-            state
-                .generations
-                .get(key)
-                .ok_or_else(|| ExecutorError::UnavailableGeneration {
-                    capability: key.capability.clone(),
-                    descriptor_revision: key.revision,
-                })?
-                .adapter
-                .clone()
-        };
-        match catch_unwind(AssertUnwindSafe(|| adapter.cancel(request))) {
-            Ok(Ok(acknowledgement)) => Ok(acknowledgement),
-            Ok(Err(error)) => Err(executor_error_from_adapter(&error)),
-            Err(_panic) => Err(ExecutorError::AdapterPanicked { after_entry: true }),
-        }
+        self.cancel_exact(request)
     }
 }
 

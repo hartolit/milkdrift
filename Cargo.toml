@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "adapters/local-process",
     "adapters/model-provider",
+    "adapters/peer-http",
     "adapters/redb-store",
     "adapters/secret-env",
     "crates/authority",
@@ -15,6 +16,7 @@ members = [
     "crates/control-protocol",
     "crates/model",
     "crates/persistence",
+    "crates/peer-protocol",
     "crates/runtime",
     "crates/workspace",
     "apps/cli",

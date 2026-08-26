@@ -4,11 +4,52 @@ Milkdrift is a local-first foundation for durable, live-editable workflows whose
 
 Milkdrift currently has a headless Rust execution center. It stores immutable workflow revisions, authorizes versioned idempotent run commands against exact scoped grant revisions, records the decision atomically with each external command result, rebuilds pure projections, schedules bounded work through exact capability snapshots, keeps branch-local workspace values, publishes content-addressed artifacts, recovers local runs after restart, and applies compatible revision changes prospectively through persisted reconciliation plans. Its workflow-control application layer accepts bounded digest-bound proposals from humans, services, processes, or models; creates immutable prospective revisions; classifies risk; and uses the same authorized runtime reconciliation path for approval and apply.
 
-The production local backend uses redb plus a filesystem artifact directory. `milkdrift-daemon` is the single durable owner: it validates versioned host configuration, authenticates local clients, recovers the runtime with admission closed, registers the generation-safe process/model/workflow-control capability host, runs bounded effect workers, and serves a versioned loopback control API. A dedicated bounded owner thread keeps synchronous redb/runtime work off the async HTTP reactor. `milkdrift-cli` and the reusable control client use only that API; they never open storage or resolve adapter secrets. Remote peers and the desktop UI are not implemented.
+The production local backend uses redb plus a filesystem artifact directory. `milkdrift-daemon` is the single durable owner: it validates versioned host configuration, authenticates local clients and configured peers, recovers the runtime with admission closed, registers the generation-safe process/model/workflow-control/remote-peer capability host, runs bounded effect workers, and serves separate versioned control and peer authentication realms. A dedicated bounded owner thread keeps synchronous redb/runtime work off the async HTTP reactor. `milkdrift-cli` and the reusable control client use only that API; they never open storage or resolve adapter secrets. The desktop UI is not implemented.
 
 ```sh
 cargo test --workspace
 ```
+
+## Two-daemon peer example
+
+Peer support is disabled unless `peers.enabled` and explicit relationships are configured. For a local test, daemon B can point at daemon A with:
+
+```json
+"peers": {
+  "enabled": true,
+  "local_peer_id": "peer-b",
+  "relationships": [{
+    "peer_id": "peer-a",
+    "endpoint": "http://127.0.0.1:9734/",
+    "credential_ref": "credential:peer-a",
+    "insecure_loopback_development": true,
+    "actions": ["read_catalog", "invoke", "cancel"],
+    "capability_allow": ["my-process-capability"],
+    "capability_deny": [],
+    "operation_allow": ["process.execute"],
+    "maximum_side_effect": "read_only",
+    "maximum_concurrent": 2,
+    "maximum_requests_per_minute": 600,
+    "maximum_artifact_bytes": 1048576,
+    "maximum_duration_ms": 30000,
+    "maximum_observations": 128,
+    "trust_zone": "operator-wireguard",
+    "delegation_ref": "delegation:peer-a-b",
+    "expires_at_unix_ms": 1798761600000
+  }]
+}
+```
+
+The peer credential remains in `secret_sources`, is resolved at each request, and is never printed. Configure the inverse relationship on daemon A, start both daemons, then run:
+
+```sh
+milkdrift peer list
+milkdrift --yes peer connect peer-a
+milkdrift capability list
+milkdrift peer show peer-a
+```
+
+The insecure mode refuses non-loopback URLs. Use ordinary HTTPS directly or terminate TLS in an operator-controlled reverse proxy; WireGuard and Tailscale are possible connectivity choices, not Milkdrift dependencies. See `docs/operator-peers.md` and `docs/reference/peer-protocol.md`.
 
 ## Local daemon quick start
 

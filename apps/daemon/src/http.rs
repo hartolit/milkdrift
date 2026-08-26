@@ -22,6 +22,7 @@ use axum::{
     routing::{get, post},
 };
 use futures_util::Stream;
+use milkdrift_authority::PeerId;
 use milkdrift_control_protocol::{
     AuthorityRead, CapabilityRead, Command, CommandRequest, Cursor, ErrorCode, ErrorEnvelope,
     Observation, ObservationEnvelope, PageRequest, ProtocolVersion, ResponseEnvelope,
@@ -103,6 +104,7 @@ impl IntoResponse for ApiError {
 
 /// Builds the bounded version-one router. CORS is intentionally absent.
 pub fn router(host: DaemonHost) -> Router {
+    let peer_service = host.peer_service();
     let state = AppState {
         host,
         request_sequence: Arc::new(AtomicU64::new(1)),
@@ -111,7 +113,7 @@ pub fn router(host: DaemonHost) -> Router {
             ..CapabilityFeed::default()
         })),
     };
-    Router::new()
+    let router = Router::new()
         .route("/v1/version", post(version))
         .route("/v1/health", get(health))
         .route("/v1/readiness", get(readiness))
@@ -128,6 +130,13 @@ pub fn router(host: DaemonHost) -> Router {
         .route("/v1/runs/{run}/proposals", get(proposals))
         .route("/v1/runs/{run}/proposals/{proposal}", get(proposal))
         .route("/v1/capabilities", get(capabilities))
+        .route("/v1/peers", get(peers))
+        .route("/v1/peers/{peer}", get(peer))
+        .route("/v1/peers/{peer}/connect", post(peer_connect))
+        .route("/v1/peers/{peer}/reload", post(peer_connect))
+        .route("/v1/peers/{peer}/disconnect", post(peer_disconnect))
+        .route("/v1/peers/{peer}/drain", post(peer_disconnect))
+        .route("/v1/peers/{peer}/revoke", post(peer_revoke))
         .route("/v1/authority", get(authority))
         .route("/v1/artifacts/{artifact}", get(artifact_metadata))
         .route("/v1/artifacts/{artifact}/content", get(artifact_content))
@@ -142,7 +151,149 @@ pub fn router(host: DaemonHost) -> Router {
                 .layer(CatchPanicLayer::new())
                 .layer(TraceLayer::new_for_http()),
         )
-        .with_state(state)
+        .with_state(state);
+    if let Some(service) = peer_service {
+        router.merge(milkdrift_peer_http::peer_router(service))
+    } else {
+        router
+    }
+}
+
+async fn peers(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
+    let (request_id, _session) = authenticate(&state, &headers)?;
+    success(request_id, state.host.peers())
+}
+
+async fn peer(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(peer): Path<String>,
+) -> Result<Response, ApiError> {
+    let (request_id, _session) = authenticate(&state, &headers)?;
+    let status = state
+        .host
+        .peers()
+        .into_iter()
+        .find(|status| status.peer_id == peer)
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                ErrorCode::NotFound,
+                "configured peer was not found",
+                false,
+                Some(request_id.clone()),
+            )
+        })?;
+    success(request_id, status)
+}
+
+async fn peer_connect(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(peer): Path<String>,
+) -> Result<Response, ApiError> {
+    let (request_id, session) = authenticate(&state, &headers)?;
+    require_peer_admin(&session, &request_id)?;
+    let peer = PeerId::new(peer).map_err(|error| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidInput,
+            error.to_string(),
+            false,
+            Some(request_id.clone()),
+        )
+    })?;
+    let status = state.host.connect_peer(&peer).await.map_err(|error| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::Unavailable,
+            bounded_http(&error.to_string()),
+            true,
+            Some(request_id.clone()),
+        )
+    })?;
+    success(request_id, status)
+}
+
+async fn peer_disconnect(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(peer): Path<String>,
+) -> Result<Response, ApiError> {
+    let (request_id, session) = authenticate(&state, &headers)?;
+    require_peer_admin(&session, &request_id)?;
+    let peer = PeerId::new(peer).map_err(|error| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidInput,
+            error.to_string(),
+            false,
+            Some(request_id.clone()),
+        )
+    })?;
+    let status = state.host.disconnect_peer(&peer).await.map_err(|error| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::Unavailable,
+            bounded_http(&error.to_string()),
+            true,
+            Some(request_id.clone()),
+        )
+    })?;
+    success(request_id, status)
+}
+
+async fn peer_revoke(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(peer): Path<String>,
+) -> Result<Response, ApiError> {
+    let (request_id, session) = authenticate(&state, &headers)?;
+    require_peer_admin(&session, &request_id)?;
+    let peer = PeerId::new(peer).map_err(|error| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidInput,
+            error.to_string(),
+            false,
+            Some(request_id.clone()),
+        )
+    })?;
+    let status = state.host.revoke_peer(&peer).await.map_err(|error| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::Unavailable,
+            bounded_http(&error.to_string()),
+            false,
+            Some(request_id.clone()),
+        )
+    })?;
+    success(request_id, status)
+}
+
+fn require_peer_admin(session: &ActorSession, request_id: &str) -> Result<(), ApiError> {
+    if session.preset == crate::AuthorityPresetConfig::Controller {
+        Ok(())
+    } else {
+        Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            ErrorCode::Unauthorized,
+            "peer lifecycle administration requires controller authority",
+            false,
+            Some(request_id.to_owned()),
+        ))
+    }
+}
+
+fn bounded_http(value: &str) -> String {
+    if value.len() <= 1_024 {
+        return value.to_owned();
+    }
+    let mut end = 1_024;
+    while !value.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    value[..end].to_owned()
 }
 
 /// Serves until `shutdown` resolves, then closes admission, drains the host, and joins it.

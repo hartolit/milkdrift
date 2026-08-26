@@ -93,6 +93,11 @@ enum TopCommand {
         #[command(subcommand)]
         command: CapabilityCommand,
     },
+    /// Authenticated remote peer lifecycle and catalog status.
+    Peer {
+        #[command(subcommand)]
+        command: PeerCommand,
+    },
     /// Artifact metadata and bounded downloads.
     Artifact {
         #[command(subcommand)]
@@ -251,6 +256,24 @@ enum CapabilityCommand {
     List,
     /// Show all generations for one capability identity.
     Show { capability: String },
+}
+
+#[derive(Subcommand)]
+enum PeerCommand {
+    /// List configured peer health and catalog expiry.
+    List,
+    /// Show one authenticated peer relationship.
+    Show { peer: String },
+    /// Authenticate and refresh one remote catalog.
+    Connect { peer: String },
+    /// Re-authenticate and replace registrations from the current remote catalog.
+    Reload { peer: String },
+    /// Drain and remove one peer's local remote registrations.
+    Disconnect { peer: String },
+    /// Gracefully drain one peer's local remote registrations.
+    Drain { peer: String },
+    /// Revoke the live relationship until configuration is reloaded/restarted.
+    Revoke { peer: String },
 }
 
 #[derive(Subcommand)]
@@ -492,6 +515,50 @@ async fn execute(cli: Cli) -> Result<(), CliError> {
                 }
             }
         }
+        TopCommand::Peer { command } => match command {
+            PeerCommand::List => output(&cli, "peer.list", &client.peers().await?)?,
+            PeerCommand::Show { peer } => {
+                output(&cli, "peer.show", &client.peer(peer).await?)?;
+            }
+            PeerCommand::Connect { peer } => {
+                output(
+                    &cli,
+                    "peer.connect",
+                    &client.peer_action(peer, "connect").await?,
+                )?;
+            }
+            PeerCommand::Reload { peer } => {
+                output(
+                    &cli,
+                    "peer.reload",
+                    &client.peer_action(peer, "reload").await?,
+                )?;
+            }
+            PeerCommand::Disconnect { peer } => {
+                confirm(&cli, "disconnect and drain this peer")?;
+                output(
+                    &cli,
+                    "peer.disconnect",
+                    &client.peer_action(peer, "disconnect").await?,
+                )?;
+            }
+            PeerCommand::Drain { peer } => {
+                confirm(&cli, "drain this peer")?;
+                output(
+                    &cli,
+                    "peer.drain",
+                    &client.peer_action(peer, "drain").await?,
+                )?;
+            }
+            PeerCommand::Revoke { peer } => {
+                confirm(&cli, "revoke this live peer relationship")?;
+                output(
+                    &cli,
+                    "peer.revoke",
+                    &client.peer_action(peer, "revoke").await?,
+                )?;
+            }
+        },
         TopCommand::Artifact { command } => match command {
             ArtifactCommand::Metadata { artifact } => output(
                 &cli,

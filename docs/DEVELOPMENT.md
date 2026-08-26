@@ -30,6 +30,16 @@ cargo test -p milkdrift-daemon --test control_plane daemon_startup_corruption_re
 cargo test -p milkdrift-cli --all-features -- --nocapture
 ```
 
+Focused peer protocol, durability, artifact, reconnect, and real two-daemon checks are:
+
+```sh
+cargo test -p milkdrift-peer-protocol --all-features --test protocol -- --nocapture
+cargo test -p milkdrift-peer-http --all-features --test peer_service -- --nocapture
+cargo test -p milkdrift-daemon --all-features --test two_daemon_peer -- --nocapture
+```
+
+They use temporary stores, ephemeral loopback listeners, local bearer files, and a fake capability adapter. They require no internet, VPN, provider credential, or manual peer service. Coverage includes incompatible major negotiation, hostile bounds/duplicates, HTTPS/loopback safety, authenticated identity cross-checking and live revocation, authority-filtered catalogs, request-rate/concurrency/terminal-reserved observation bounds, generation-safe remote registration, durable acceptance replay/conflict, acceptance response loss, observation-append failure, contiguous resume cursors, restart uncertainty after adapter-entry intent, terminal cancellation evidence, verified/deduplicated/interrupted/mismatched artifact transfer, artifact-publication recovery, path/content/quota rejection, auth-realm separation, request-time peer credential rotation, disconnect, and graceful two-daemon shutdown.
+
 These tests use temporary redb/artifact roots and ephemeral loopback listeners only. They cover fail-closed configuration/authentication, server-owned actor mapping, ordinary authority denial, queue overload, durable command replay across restart, stale guards, exact-cursor SSE resume, credential rotation, startup corruption, and ordered shutdown. They require no internet or real credential. Run the daemon manually with `cargo run -p milkdrift-daemon -- --config PATH`; run the client with `cargo run -p milkdrift-cli -- [GLOBAL OPTIONS] COMMAND`. Keep bearer values in a private file or a referenced environment variable, never a command argument.
 
 Focused Pass-03C checks are:

@@ -9,7 +9,7 @@ use std::{fmt, pin::Pin, time::Duration};
 use futures_util::{Stream, StreamExt};
 use milkdrift_control_protocol::{
     ArtifactMetadataRead, AuthorityRead, CapabilityRead, CommandAccepted, CommandRequest, Cursor,
-    ErrorEnvelope, HealthRead, LayoutDocument, ObservationEnvelope, Page, PageRequest,
+    ErrorEnvelope, HealthRead, LayoutDocument, ObservationEnvelope, Page, PageRequest, PeerRead,
     ProposalRead, ProtocolError, ProtocolVersion, ResponseEnvelope, RevisionDiffRead, RevisionRead,
     RevisionSummary, RunRead, TimelineEntry, VersionRequest, VersionResponse, decode_json,
 };
@@ -314,6 +314,36 @@ impl ControlClient {
     /// Lists capability generation observations visible to the actor.
     pub async fn capabilities(&self) -> Result<Vec<CapabilityRead>, ClientError> {
         self.safe_get("v1/capabilities").await
+    }
+
+    /// Lists configured peer health and live catalog status without secret values.
+    pub async fn peers(&self) -> Result<Vec<PeerRead>, ClientError> {
+        self.safe_get("v1/peers").await
+    }
+
+    /// Reads one configured peer relationship status.
+    pub async fn peer(&self, peer: &str) -> Result<PeerRead, ClientError> {
+        self.safe_get(&format!("v1/peers/{}", path_segment(peer)?))
+            .await
+    }
+
+    /// Requests one explicit mutable peer lifecycle action.
+    pub async fn peer_action(&self, peer: &str, action: &str) -> Result<PeerRead, ClientError> {
+        if !matches!(
+            action,
+            "connect" | "reload" | "disconnect" | "drain" | "revoke"
+        ) {
+            return Err(ClientError::Configuration(
+                "unsupported peer lifecycle action".to_owned(),
+            ));
+        }
+        self.json_request::<(), PeerRead>(
+            Method::POST,
+            &format!("v1/peers/{}/{}", path_segment(peer)?, action),
+            None,
+            false,
+        )
+        .await
     }
 
     /// Lists one bounded proposal page for an exact run.

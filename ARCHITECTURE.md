@@ -64,11 +64,21 @@ Blueprint tasks carry capability requirements. `milkdrift-capability-host` resol
 
 Invocation requests, progress/output events, cancellation exchange, terminal outcome, usage, retryability, side-effect status, and uncertainty are versioned provider-neutral contracts. Values and artifacts use bounded references. Adapters translate and report; they never decide run state.
 
+### Peer-as-capability boundary
+
+`milkdrift-peer-protocol` owns only v1.0 bounded transport-neutral session, catalog, invocation, observation, cancellation, delegation, and artifact-transfer messages. `milkdrift-peer-http` owns configured HTTPS/loopback transport, relationship authentication, durable accepted-execution records, resumable observations, verified artifact staging, and the ordinary remote `CapabilityAdapter`. Runtime, control, and persistence cores do not depend on either package or HTTP/TLS crates.
+
+The serving daemon derives an expiring authority-filtered catalog from its live capability host. The consuming daemon remaps each exact remote identity/generation into a collision-resistant local identity with `Locality::Remote`, trust zone, and exact peer/catalog provenance, then registers it through `milkdrift-capability-host`. The catalog is live observation only. A run still records one exact local `ResolvedCapabilitySnapshot`; neither peer reads the other's database or shares mutable workflow state.
+
+Remote acceptance is durably recorded before it is reported. Reusing an idempotency key with identical canonical facts returns the same remote execution; different facts conflict. Observation sequence/cursors survive response loss. Connection closure proves neither cancellation nor terminal outcome. After accepted adapter-entry intent, missing restart evidence becomes explicit uncertainty instead of replacement execution. External side effects are never advertised as globally exactly once.
+
+Connectivity is operator supplied through a reachable HTTPS path or an explicitly enabled loopback development route. Milkdrift does not discover peers, traverse NAT, create certificates, run a hosted coordinator, provide an overlay/VPN, synchronize models/tensors, share databases, or implement consensus.
+
 ## 7. Actors, authority, proposals, and AI control
 
 Actor identity and scoped authority are distinct from revision authorship. Canonical `ActorRef` ownership is in `milkdrift-authority`; blueprint `AuthorRef` remains provenance only. Immutable schema-v1 grant revisions constrain commands by workflow/run, typed operation, capability identity/category/operation/profile/trust/locality, normalized filesystem roots and access, credential-free network profiles/destinations, opaque secret references, side-effect class, cost, duration, invocation, artifact, concurrency, validity, and revocation generation. Pure policy evaluation records the actor, exact grant revision, evaluator policy/version, request facts, stable reason codes, evaluated constraints, caller-supplied boundary time, result, and deterministic digest.
 
-Every external run command presents an exact grant revision to the runtime's injected evaluator before semantic acceptance. The exact decision is part of command-result schema v2 and is committed in the same transaction as acceptance events or denial-without-events; exact redelivery returns that original decision/result without reevaluation. System transitions and worker observations use separate private runtime-owned receipt paths. The local daemon authenticates a referenced bearer secret at request time and supplies the configured immutable actor/grant context; actor identity is absent from command JSON. Peer authentication remains a separate future boundary.
+Every external run command presents an exact grant revision to the runtime's injected evaluator before semantic acceptance. The exact decision is part of command-result schema v2 and is committed in the same transaction as acceptance events or denial-without-events; exact redelivery returns that original decision/result without reevaluation. System transitions and worker observations use separate private runtime-owned receipt paths. The local daemon authenticates referenced bearer secrets at request time and supplies configured immutable actor/grant context; actor identity is absent from command JSON. Peer transport authentication separately establishes a stable configured `PeerId`. A hostname, display name, payload claim, descriptor, or valid credential never grants capability authority by itself.
 
 An actor may inspect or propose without authority to apply. Approval is an explicit command/event linking proposal, exact revision or effect, approver, and policy. An AI controller is an ordinary task using a workflow-control capability under a scoped grant. It uses the same closed mutations, optimistic checks, proposals, approvals, and audit trail as a human; it has no hidden privileged node kind or mutable backdoor.
 
@@ -282,17 +292,17 @@ The logical map is the long-lived ownership reference. Its exact current physica
 | `persistence/events` | `milkdrift-persistence::{event,document}` with schema-v1 golden fixtures |
 | `persistence/journal` | Narrow `milkdrift-persistence` ports implemented by `milkdrift-redb-store::journal::{append,discovery,queries,workspace}` |
 | `persistence/projections` | Pure `milkdrift-runtime::projection`; optional checked snapshots use persistence envelope v2 around runtime projection payload v3 |
-| `peer/protocol` | Not implemented |
-| `peer/capability-advertisement` | Generic descriptor contract exists; peer protocol/advertisement is not implemented |
+| `peer/protocol` | `milkdrift-peer-protocol::{document,identity,session,catalog,execution,artifact}` owns bounded transport-neutral protocol 1.0 messages and semantic state |
+| `peer/capability-advertisement` | `milkdrift-peer-http::{service,remote}` derives authority-filtered expiring catalogs and maps exact remote generations into ordinary local capability registrations |
 | `model/contracts` | `milkdrift-model::{task,context,document}` owns provider-neutral schema-v1 model tasks/responses and exact causal manifests without HTTP, runtime, provider SDK, or secret dependencies |
 | `adapters/model` | `milkdrift-model-provider::{adapter,profile,http,stream,openai_compatible,anthropic}` owns endpoint policy, feature negotiation, bounded transport, two independent wire mappings, and artifact publication |
 | `adapters/process` | `milkdrift-local-process::{config,process}` owns profile schema v1, direct argv entry, environment mediation, bounded pipes, declared imports, timeout/cancellation, and platform process ownership |
 | `adapters/secret-env` | `milkdrift-secret-env` maps explicitly configured opaque references to exact environment names without enumerating or retaining values |
 | `adapters/filesystem` | Content-addressed artifact ownership in `milkdrift-redb-store::artifact::{accounting,cleanup,path,publication}` |
 | `adapters/redb` | The transactional local adapter, split across `milkdrift-redb-store::{admin,journal,store}` facades and their private child modules |
-| `adapters/peer-transport` | Not implemented |
+| `adapters/peer-transport` | `milkdrift-peer-http::{auth,config,http,client,store,artifact,remote,service}` owns fixed HTTPS/loopback transport, bearer identity, durable idempotency/observations, quotas, verified staging, and remote adapters |
 | `apps/desktop-iced` | Not implemented |
-| `apps/daemon` | `milkdrift-daemon::{config,auth,host,http}` owns validated local configuration, credential-to-actor mapping, redb/runtime/capability/effect lifecycles, the bounded owner boundary, loopback HTTP/SSE, readiness, and ordered shutdown |
+| `apps/daemon` | `milkdrift-daemon::{config,auth,host,http}` owns validated local/peer configuration, credential-to-actor/peer mapping, redb/runtime/capability/effect/peer lifecycles, the bounded owner boundary, separated control/peer HTTP realms, readiness, and ordered shutdown |
 | `apps/cli` | `milkdrift-cli` is a thin argument/presentation layer over `milkdrift-control-client`; it owns confirmations, stable JSON schema 1, output/download policy, and exit codes, never durable truth |
 
 Physical crates are extracted only for a real dependency, lifecycle, host, publication, or multiple-consumer boundary. No empty crate or placeholder directory may be created merely to resemble the diagram. A later pass may merge or split physical packages when it preserves logical ownership and reduces coupling. Within a cohesive crate, private modules are preferred until extraction creates a measurable boundary; conversely, a growing module must split when unrelated invariants, dependencies, lifecycle, or test ownership become entangled.

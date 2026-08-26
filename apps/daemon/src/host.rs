@@ -12,13 +12,13 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use milkdrift_authority::{ActorRef, GrantSetEvaluator, PolicyId};
+use milkdrift_authority::{ActorRef, GrantSetEvaluator, PeerId, PolicyId, SecretRef};
 use milkdrift_blueprint::{BlueprintRevisionDocument, RevisionId, WorkflowId};
 use milkdrift_capability::{CapabilityId, ErrorClass, SideEffectClass};
 use milkdrift_capability_host::{
     AdapterInvocation, CapabilityHost, CapabilitySelectionPolicy, EffectShutdownMode,
     EffectWorkerConfig, EffectWorkerHost, HostConfig, InvocationDataAccess, MaterializationLimits,
-    StoreInvocationDataAccess,
+    SecretResolver, StoreInvocationDataAccess,
 };
 use milkdrift_control::{
     AuthorityContextRef, AuthorityContextResolver, ControlCommand, ControlCommandDocument,
@@ -28,12 +28,21 @@ use milkdrift_control::{
 };
 use milkdrift_control_protocol::{
     ArtifactMetadataRead, AttemptRead, CapabilityRead, Command, CommandAccepted, CommandRequest,
-    Cursor, DaemonState, ErrorCode, HealthRead, LayoutDocument, NodeRead, Page, ProposalDecision,
-    ProposalRead, ResolveAction, RevisionChange, RevisionDiffRead, RevisionRead,
+    Cursor, DaemonState, ErrorCode, HealthRead, LayoutDocument, NodeRead, Page, PeerRead,
+    ProposalDecision, ProposalRead, ResolveAction, RevisionChange, RevisionDiffRead, RevisionRead,
     RevisionSummary as PublicRevisionSummary, RunRead, TimelineCategory, TimelineEntry,
 };
 use milkdrift_local_process::{LocalProcessAdapter, ProcessProfileDocument};
 use milkdrift_model_provider::{EndpointProfile, ModelEndpointAdapter, descriptor_for_profile};
+use milkdrift_peer_http::{
+    FilePeerArtifactStore, FilePeerExecutionStore, InsecureLoopbackMode, PeerAuthenticator,
+    PeerClientConfig, PeerCredentialSource, PeerHttpClient, PeerHttpError, PeerRegistry,
+    PeerRelationship, PeerServerConfig, PeerService, SystemPeerClock,
+};
+use milkdrift_peer_protocol::{
+    DelegationRef, ExecutionLimits, HardLimits, HeartbeatLease, PeerAuthority, ProtocolVersion,
+    ProtocolVersionRange, SessionId,
+};
 use milkdrift_persistence::{
     ArtifactReadAuthority, ArtifactReadRequest, ArtifactStore, AttemptId, CorrelationKey,
     EvidenceId, EvidenceKind, EvidenceReference, IndexedRunState, PageSize, PersistenceError,
@@ -51,13 +60,14 @@ use milkdrift_workspace::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use subtle::ConstantTimeEq as _;
 use thiserror::Error;
 use tokio::sync::oneshot;
 use tracing::{info, warn};
 
 use crate::{
     auth::{ActorSession, AuthRegistry, ConfiguredSecretResolver},
-    config::{ShutdownEffectPolicy, ValidatedDaemonConfig},
+    config::{PeerSideEffectConfig, ShutdownEffectPolicy, ValidatedDaemonConfig},
 };
 
 const LOCAL_STATE_SCHEMA_VERSION: u32 = 1;
@@ -191,6 +201,9 @@ pub struct DaemonHost {
     mutating_admission: Arc<AtomicBool>,
     join: Arc<Mutex<Option<JoinHandle<()>>>>,
     shutdown_deadline: Duration,
+    peer_service: Option<Arc<PeerService>>,
+    peer_registries: Arc<BTreeMap<PeerId, Arc<PeerRegistry>>>,
+    revoked_peers: Arc<Mutex<BTreeSet<PeerId>>>,
 }
 
 impl std::fmt::Debug for DaemonHost {
@@ -244,20 +257,27 @@ impl DaemonHost {
                         return;
                     }
                 };
+                let startup = PeerRuntime {
+                    service: owner.peer_service.clone(),
+                    registries: owner.peer_registries.clone(),
+                };
                 thread_health.set_lifecycle(Lifecycle::Ready);
-                let _ = startup_sender.send(Ok(()));
+                let _ = startup_sender.send(Ok(startup));
                 info!(phase = "ready", "runtime owner ready after recovery");
                 owner.run(receiver, maintenance, &thread_health);
             })
             .map_err(|error| HostError::Startup(error.to_string()))?;
         match startup_receiver.recv() {
-            Ok(Ok(())) => Ok(Self {
+            Ok(Ok(peer_runtime)) => Ok(Self {
                 sender,
                 health,
                 auth,
                 mutating_admission: Arc::new(AtomicBool::new(true)),
                 join: Arc::new(Mutex::new(Some(join))),
                 shutdown_deadline,
+                peer_service: peer_runtime.service,
+                peer_registries: Arc::new(peer_runtime.registries),
+                revoked_peers: Arc::new(Mutex::new(BTreeSet::new())),
             }),
             Ok(Err(error)) => {
                 let _ = join.join();
@@ -297,6 +317,111 @@ impl DaemonHost {
     pub fn begin_draining(&self) {
         self.mutating_admission.store(false, Ordering::SeqCst);
         self.health.set_lifecycle(Lifecycle::Draining);
+        if let Some(service) = &self.peer_service {
+            service.begin_drain();
+        }
+        for registry in self.peer_registries.values() {
+            let _ = registry.disconnect();
+        }
+    }
+
+    /// Returns the optional distinct peer route service for router composition.
+    #[must_use]
+    pub fn peer_service(&self) -> Option<Arc<PeerService>> {
+        self.peer_service.clone()
+    }
+
+    /// Returns stable sorted peer health/catalog observations without secret values.
+    #[must_use]
+    pub fn peers(&self) -> Vec<PeerRead> {
+        let revoked = self.revoked_peers.lock().ok();
+        self.peer_registries
+            .values()
+            .map(|registry| {
+                let status = registry.status();
+                let registered_capabilities = registry.registration_count();
+                let is_revoked = revoked
+                    .as_ref()
+                    .is_some_and(|peers| peers.contains(registry.remote_peer()));
+                PeerRead {
+                    peer_id: registry.remote_peer().as_str().to_owned(),
+                    connected: status.connected && !is_revoked,
+                    health: if is_revoked {
+                        "revoked".to_owned()
+                    } else {
+                        status.health
+                    },
+                    session_id: status
+                        .remote_session
+                        .map(|session| session.as_str().to_owned()),
+                    catalog_generation: status.catalog_generation,
+                    catalog_digest: status
+                        .catalog_digest
+                        .map(|digest| digest.as_str().to_owned()),
+                    registered_capabilities,
+                    catalog_expires_at_unix_ms: status.catalog_expires_at_unix_ms,
+                    revoked: is_revoked,
+                }
+            })
+            .collect()
+    }
+
+    /// Manually authenticates and refreshes one configured remote peer catalog.
+    pub async fn connect_peer(&self, peer: &PeerId) -> Result<PeerRead, HostError> {
+        if self
+            .revoked_peers
+            .lock()
+            .map_err(|_| HostError::Configuration("peer revocation state unavailable".to_owned()))?
+            .contains(peer)
+        {
+            return Err(HostError::Configuration(
+                "peer is revoked until daemon configuration reload/restart".to_owned(),
+            ));
+        }
+        let registry = self
+            .peer_registries
+            .get(peer)
+            .cloned()
+            .ok_or_else(|| HostError::Configuration("peer is not configured".to_owned()))?;
+        tokio::task::spawn_blocking(move || registry.connect())
+            .await
+            .map_err(|_| HostError::Startup("peer connector task failed".to_owned()))?
+            .map_err(|error| HostError::Startup(error.to_string()))?;
+        self.peers()
+            .into_iter()
+            .find(|status| status.peer_id == peer.as_str())
+            .ok_or_else(|| HostError::Startup("peer status disappeared".to_owned()))
+    }
+
+    /// Explicitly disconnects and drains one peer's local adapter registrations.
+    pub async fn disconnect_peer(&self, peer: &PeerId) -> Result<PeerRead, HostError> {
+        let registry = self
+            .peer_registries
+            .get(peer)
+            .cloned()
+            .ok_or_else(|| HostError::Configuration("peer is not configured".to_owned()))?;
+        tokio::task::spawn_blocking(move || registry.disconnect())
+            .await
+            .map_err(|_| HostError::Shutdown("peer disconnect task failed".to_owned()))?
+            .map_err(|error| HostError::Shutdown(error.to_string()))?;
+        self.peers()
+            .into_iter()
+            .find(|status| status.peer_id == peer.as_str())
+            .ok_or_else(|| HostError::Shutdown("peer status disappeared".to_owned()))
+    }
+
+    /// Revokes one live relationship and drains its registrations until reload/restart.
+    pub async fn revoke_peer(&self, peer: &PeerId) -> Result<PeerRead, HostError> {
+        self.revoked_peers
+            .lock()
+            .map_err(|_| HostError::Configuration("peer revocation state unavailable".to_owned()))?
+            .insert(peer.clone());
+        if let Some(service) = &self.peer_service {
+            service
+                .revoke_peer(peer)
+                .map_err(|error| HostError::Configuration(error.to_string()))?;
+        }
+        self.disconnect_peer(peer).await
     }
 
     /// Runs ordered shutdown and joins the owner thread.
@@ -514,6 +639,13 @@ struct Owner {
     capability_host: CapabilityHost,
     effect_workers: Option<EffectWorkerHost>,
     persistent: LocalState,
+    peer_service: Option<Arc<PeerService>>,
+    peer_registries: BTreeMap<PeerId, Arc<PeerRegistry>>,
+}
+
+struct PeerRuntime {
+    service: Option<Arc<PeerService>>,
+    registries: BTreeMap<PeerId, Arc<PeerRegistry>>,
 }
 
 impl Owner {
@@ -626,6 +758,7 @@ impl Owner {
             data.clone(),
         )?;
         register_configured_adapters(&config, &capability_host, data, auth.resolver())?;
+        let peer_runtime = build_peer_runtime(&config, &capability_host, auth.resolver())?;
         runtime
             .initialize_startup()
             .map_err(|error| error.to_string())?;
@@ -644,6 +777,9 @@ impl Owner {
             config.document.data_root.join("control-state-v1.json"),
             config.document.command_ledger_bound,
         )?;
+        if let Some(service) = &peer_runtime.service {
+            service.recover(1_024).map_err(|error| error.to_string())?;
+        }
         health.active_effects.store(0, Ordering::SeqCst);
         Ok(Self {
             config,
@@ -653,6 +789,8 @@ impl Owner {
             capability_host,
             effect_workers: Some(effect_workers),
             persistent,
+            peer_service: peer_runtime.service,
+            peer_registries: peer_runtime.registries,
         })
     }
 
@@ -809,6 +947,12 @@ impl Owner {
     fn shutdown(&mut self, health: &SharedHealth) -> Result<OwnerValue, PublicFailure> {
         info!(phase = "draining", "runtime owner closing admission");
         health.set_lifecycle(Lifecycle::Draining);
+        if let Some(service) = &self.peer_service {
+            service.begin_shutdown();
+        }
+        for registry in self.peer_registries.values() {
+            let _ = registry.disconnect();
+        }
         self.runtime.begin_shutdown();
         let mode = match self.config.document.shutdown.effect_policy {
             ShutdownEffectPolicy::Drain => EffectShutdownMode::Drain,
@@ -1958,6 +2102,242 @@ fn register_configured_adapters(
             .map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+fn build_peer_runtime(
+    config: &ValidatedDaemonConfig,
+    host: &CapabilityHost,
+    secrets: Arc<ConfiguredSecretResolver>,
+) -> Result<PeerRuntime, String> {
+    if !config.document.peers.enabled {
+        return Ok(PeerRuntime {
+            service: None,
+            registries: BTreeMap::new(),
+        });
+    }
+    let local_peer = PeerId::new(
+        config
+            .document
+            .peers
+            .local_peer_id
+            .clone()
+            .ok_or_else(|| "enabled peer support lacks local identity".to_owned())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let mut session_hasher = blake3::Hasher::new();
+    session_hasher.update(b"milkdrift.peer.session.v1\0");
+    session_hasher.update(local_peer.as_str().as_bytes());
+    session_hasher.update(&unix_millis().to_be_bytes());
+    let session = SessionId::new(format!("session:{}", session_hasher.finalize().to_hex()))
+        .map_err(|error| error.to_string())?;
+    let versions = ProtocolVersionRange::new(
+        ProtocolVersion { major: 1, minor: 0 },
+        ProtocolVersion { major: 1, minor: 0 },
+    )
+    .map_err(|error| error.to_string())?;
+    let mut relationships = Vec::new();
+    let mut clients = Vec::new();
+    let mut authentication = Vec::new();
+    for configured in &config.document.peers.relationships {
+        let reference =
+            SecretRef::new(configured.credential_ref.clone()).map_err(|error| error.to_string())?;
+        let credential = Arc::new(
+            secrets
+                .resolve(&reference)
+                .map_err(|error| error.to_string())?,
+        );
+        let credential_source = Arc::new(ConfiguredPeerCredential {
+            resolver: secrets.clone(),
+            reference: reference.clone(),
+        });
+        let remote_peer =
+            PeerId::new(configured.peer_id.clone()).map_err(|error| error.to_string())?;
+        let relationship_versions = ProtocolVersionRange::new(
+            ProtocolVersion {
+                major: 1,
+                minor: configured.minimum_minor,
+            },
+            ProtocolVersion {
+                major: 1,
+                minor: configured.maximum_minor,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        let capability_allow = configured
+            .capability_allow
+            .iter()
+            .cloned()
+            .map(CapabilityId::new)
+            .collect::<Result<BTreeSet<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        let capability_deny = configured
+            .capability_deny
+            .iter()
+            .cloned()
+            .map(CapabilityId::new)
+            .collect::<Result<BTreeSet<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        let operation_allow = configured
+            .operation_allow
+            .iter()
+            .cloned()
+            .map(milkdrift_capability::OperationId::new)
+            .collect::<Result<BTreeSet<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        let maximum_side_effect = match configured.maximum_side_effect {
+            PeerSideEffectConfig::None => SideEffectClass::None,
+            PeerSideEffectConfig::ReadOnly => SideEffectClass::ReadOnly,
+            PeerSideEffectConfig::IdempotentWrite => SideEffectClass::IdempotentWrite,
+            PeerSideEffectConfig::NonIdempotentWrite => SideEffectClass::NonIdempotentWrite,
+            PeerSideEffectConfig::Unknown => SideEffectClass::Unknown,
+        };
+        let relationship = PeerRelationship {
+            remote_peer: remote_peer.clone(),
+            bearer_credential: credential.clone(),
+            versions: relationship_versions,
+            authority: PeerAuthority {
+                actions: configured.actions.clone(),
+            },
+            capability_allow,
+            capability_deny,
+            operation_allow,
+            maximum_side_effect,
+            execution_limits: ExecutionLimits {
+                artifact_bytes: configured.maximum_artifact_bytes,
+                duration_ms: configured.maximum_duration_ms,
+                cost_micros: configured.maximum_cost_micros,
+                observations: configured.maximum_observations,
+            },
+            maximum_concurrent: configured.maximum_concurrent,
+            maximum_requests_per_minute: configured.maximum_requests_per_minute,
+            maximum_artifact_bytes: configured.maximum_artifact_bytes,
+            catalog_ttl_ms: configured.catalog_ttl_ms,
+            trust_zone: milkdrift_capability::TrustZone::new(configured.trust_zone.clone())
+                .map_err(|error| error.to_string())?,
+            delegation: DelegationRef::new(configured.delegation_ref.clone())
+                .map_err(|error| error.to_string())?,
+            revocation_generation: configured.revocation_generation,
+            expires_at_unix_ms: configured.expires_at_unix_ms,
+            enabled: configured.enabled,
+        };
+        relationship.validate().map_err(|error| error.to_string())?;
+        let endpoint = url::Url::parse(&configured.endpoint).map_err(|error| error.to_string())?;
+        let client = PeerHttpClient::new_with_credential_source(
+            PeerClientConfig {
+                endpoint,
+                local_peer: local_peer.clone(),
+                expected_remote_peer: remote_peer,
+                session: session.clone(),
+                versions: relationship_versions,
+                bearer_credential: credential,
+                insecure_loopback: if configured.insecure_loopback_development {
+                    InsecureLoopbackMode::AllowInsecureLoopbackDevelopment
+                } else {
+                    InsecureLoopbackMode::Disabled
+                },
+                request_timeout: Duration::from_secs(30),
+                observation_poll_interval: Duration::from_millis(100),
+            },
+            credential_source,
+        )
+        .map_err(|error| error.to_string())?;
+        authentication.push(ConfiguredPeerAuthentication {
+            peer: relationship.remote_peer.clone(),
+            reference,
+            enabled: relationship.enabled,
+            expires_at_unix_ms: relationship.expires_at_unix_ms,
+        });
+        clients.push((client, relationship.clone()));
+        relationships.push(relationship);
+    }
+    let service = PeerService::new_with_artifacts_and_authenticator(
+        PeerServerConfig {
+            local_peer,
+            session,
+            versions,
+            limits: HardLimits::default(),
+            lease: HeartbeatLease {
+                heartbeat_ms: 5_000,
+                idle_timeout_ms: 20_000,
+                execution_lease_ms: config.document.runtime.lease_duration_ms,
+            },
+            relationships,
+        },
+        host.clone(),
+        Arc::new(
+            FilePeerExecutionStore::open(config.document.data_root.join("peer-executions-v1"))
+                .map_err(|error| error.to_string())?,
+        ),
+        Arc::new(
+            FilePeerArtifactStore::open(config.document.data_root.join("peer-artifacts-v1"))
+                .map_err(|error| error.to_string())?,
+        ),
+        Some(Arc::new(ConfiguredPeerAuthenticator {
+            resolver: secrets,
+            relationships: authentication,
+        })),
+        Arc::new(SystemPeerClock),
+    )
+    .map_err(|error| error.to_string())?;
+    let mut registries = BTreeMap::new();
+    for (client, relationship) in clients {
+        let peer = relationship.remote_peer.clone();
+        let registry = Arc::new(
+            PeerRegistry::new(host.clone(), client, relationship)
+                .map_err(|error| error.to_string())?,
+        );
+        registries.insert(peer, registry);
+    }
+    Ok(PeerRuntime {
+        service: Some(service),
+        registries,
+    })
+}
+
+struct ConfiguredPeerCredential {
+    resolver: Arc<ConfiguredSecretResolver>,
+    reference: SecretRef,
+}
+
+impl PeerCredentialSource for ConfiguredPeerCredential {
+    fn resolve(&self) -> Result<milkdrift_authority::SensitiveSecret, PeerHttpError> {
+        self.resolver.resolve(&self.reference).map_err(|_| {
+            PeerHttpError::Unavailable("peer credential source unavailable".to_owned())
+        })
+    }
+}
+
+struct ConfiguredPeerAuthentication {
+    peer: PeerId,
+    reference: SecretRef,
+    enabled: bool,
+    expires_at_unix_ms: u64,
+}
+
+struct ConfiguredPeerAuthenticator {
+    resolver: Arc<ConfiguredSecretResolver>,
+    relationships: Vec<ConfiguredPeerAuthentication>,
+}
+
+impl PeerAuthenticator for ConfiguredPeerAuthenticator {
+    fn authenticate(&self, supplied: &[u8], now_unix_ms: u64) -> Option<PeerId> {
+        self.relationships
+            .iter()
+            .filter(|relationship| {
+                relationship.enabled && now_unix_ms <= relationship.expires_at_unix_ms
+            })
+            .find(|relationship| {
+                self.resolver
+                    .resolve(&relationship.reference)
+                    .ok()
+                    .is_some_and(|expected| {
+                        expected.expose(|bytes| {
+                            bytes.len() == supplied.len() && bool::from(bytes.ct_eq(supplied))
+                        })
+                    })
+            })
+            .map(|relationship| relationship.peer.clone())
+    }
 }
 
 fn default_workspace_budget() -> Result<WorkspaceBudget, milkdrift_workspace::WorkspaceError> {

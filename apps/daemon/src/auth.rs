@@ -284,7 +284,9 @@ fn os_bytes(value: std::ffi::OsString) -> Result<Vec<u8>, SecretResolverError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{AdapterConfig, DaemonConfig, RuntimeHostConfig, ShutdownConfig};
+    use crate::config::{
+        AdapterConfig, DaemonConfig, PeerHostConfig, RuntimeHostConfig, ShutdownConfig,
+    };
     use std::{collections::BTreeMap, net::SocketAddr};
 
     fn config(root: &std::path::Path, token: &std::path::Path) -> DaemonConfig {
@@ -309,6 +311,7 @@ mod tests {
             }],
             runtime: RuntimeHostConfig::default(),
             adapters: AdapterConfig::default(),
+            peers: PeerHostConfig::default(),
             shutdown: ShutdownConfig::default(),
             command_ledger_bound: 100,
         }

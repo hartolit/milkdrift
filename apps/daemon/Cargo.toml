@@ -21,6 +21,8 @@ milkdrift-control = { version = "=0.1.0", path = "../../crates/control" }
 milkdrift-control-protocol = { version = "=0.1.0", path = "../../crates/control-protocol" }
 milkdrift-local-process = { version = "=0.1.0", path = "../../adapters/local-process" }
 milkdrift-model-provider = { version = "=0.1.0", path = "../../adapters/model-provider" }
+milkdrift-peer-http = { version = "=0.1.0", path = "../../adapters/peer-http" }
+milkdrift-peer-protocol = { version = "=0.1.0", path = "../../crates/peer-protocol" }
 milkdrift-persistence = { version = "=0.1.0", path = "../../crates/persistence" }
 milkdrift-redb-store = { version = "=0.1.0", path = "../../adapters/redb-store" }
 milkdrift-runtime = { version = "=0.1.0", path = "../../crates/runtime" }
@@ -35,6 +37,7 @@ tower.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 milkdrift-control-client = { version = "=0.1.0", path = "../../crates/control-client" }

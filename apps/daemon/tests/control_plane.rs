@@ -20,7 +20,8 @@ use milkdrift_control_protocol::{
 };
 use milkdrift_daemon::{
     ActorBindingConfig, AdapterConfig, AuthorityPresetConfig, DaemonConfig, DaemonHost,
-    RuntimeHostConfig, SecretSourceConfig, ShutdownConfig, ValidatedDaemonConfig, serve,
+    PeerHostConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig, ValidatedDaemonConfig,
+    serve,
 };
 use tempfile::TempDir;
 use tokio::{sync::oneshot, task::JoinHandle};
@@ -133,6 +134,7 @@ fn configuration_with_process_profiles(
             process_profiles,
             ..AdapterConfig::default()
         },
+        peers: PeerHostConfig::default(),
         shutdown: ShutdownConfig::default(),
         command_ledger_bound: 1_000,
     }

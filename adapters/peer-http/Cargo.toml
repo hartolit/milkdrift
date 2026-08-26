@@ -1,0 +1,34 @@
+[package]
+name = "milkdrift-peer-http"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-stream.workspace = true
+axum.workspace = true
+blake3.workspace = true
+futures-util.workspace = true
+milkdrift-authority = { version = "=0.1.0", path = "../../crates/authority" }
+milkdrift-capability = { version = "=0.1.0", path = "../../crates/capability" }
+milkdrift-capability-host = { version = "=0.1.0", path = "../../crates/capability-host" }
+milkdrift-contracts.workspace = true
+milkdrift-peer-protocol = { version = "=0.1.0", path = "../../crates/peer-protocol" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

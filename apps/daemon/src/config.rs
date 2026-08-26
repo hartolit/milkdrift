@@ -6,6 +6,7 @@ use std::{
 };
 
 use milkdrift_control_protocol::MAX_DOCUMENT_BYTES;
+use milkdrift_peer_protocol::PeerAction;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -196,6 +197,134 @@ pub struct AdapterConfig {
     pub model_profiles: Vec<ModelProfileConfig>,
 }
 
+/// Default-disabled peer listener/client configuration.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeerHostConfig {
+    /// Enables the separate `/peer/v1` authentication realm.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Stable identity of this daemon when peer support is enabled.
+    pub local_peer_id: Option<String>,
+    /// Explicit operator-configured relationships. Empty exposes nothing.
+    #[serde(default)]
+    pub relationships: Vec<PeerRelationshipConfig>,
+}
+
+/// One operator-configured authenticated remote peer relationship.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeerRelationshipConfig {
+    /// Exact authenticated remote peer identity.
+    pub peer_id: String,
+    /// Fixed endpoint; workflow/model input cannot replace it.
+    pub endpoint: String,
+    /// Key into [`DaemonConfig::secret_sources`].
+    pub credential_ref: String,
+    /// Explicit development-only plaintext loopback exception.
+    #[serde(default)]
+    pub insecure_loopback_development: bool,
+    /// Allowed protocol minimum minor on major version one.
+    #[serde(default)]
+    pub minimum_minor: u16,
+    /// Allowed protocol maximum minor on major version one.
+    #[serde(default)]
+    pub maximum_minor: u16,
+    /// Exact allowed protocol action families; empty denies all.
+    #[serde(default)]
+    pub actions: BTreeSet<PeerAction>,
+    /// Exact capability allowlist; empty advertises and invokes nothing.
+    #[serde(default)]
+    pub capability_allow: BTreeSet<String>,
+    /// Exact capability denylist applied after allow matching.
+    #[serde(default)]
+    pub capability_deny: BTreeSet<String>,
+    /// Exact operation allowlist; empty advertises and invokes nothing.
+    #[serde(default)]
+    pub operation_allow: BTreeSet<String>,
+    /// Maximum side-effect class accepted from this peer.
+    #[serde(default)]
+    pub maximum_side_effect: PeerSideEffectConfig,
+    /// Maximum simultaneous accepted remote executions.
+    #[serde(default = "default_peer_concurrency")]
+    pub maximum_concurrent: u16,
+    /// Maximum authenticated requests per minute for each action/operation bucket.
+    #[serde(default = "default_peer_requests_per_minute")]
+    pub maximum_requests_per_minute: u32,
+    /// Maximum artifact bytes per execution.
+    #[serde(default = "default_peer_artifact_bytes")]
+    pub maximum_artifact_bytes: u64,
+    /// Maximum execution duration.
+    #[serde(default = "default_peer_duration_ms")]
+    pub maximum_duration_ms: u64,
+    /// Maximum observed cost in millionths.
+    #[serde(default)]
+    pub maximum_cost_micros: u64,
+    /// Maximum semantic observations retained for one execution.
+    #[serde(default = "default_peer_observations")]
+    pub maximum_observations: u32,
+    /// Expiring catalog TTL.
+    #[serde(default = "default_peer_catalog_ttl_ms")]
+    pub catalog_ttl_ms: u64,
+    /// Policy trust zone added to local remote adapter registrations.
+    pub trust_zone: String,
+    /// Opaque configured server-side delegation reference.
+    pub delegation_ref: String,
+    /// Relationship revocation generation.
+    #[serde(default)]
+    pub revocation_generation: u64,
+    /// Hard relationship expiration in Unix epoch milliseconds.
+    pub expires_at_unix_ms: u64,
+    /// False revokes authentication while retaining audit configuration.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+/// Configuration representation of the maximum permitted side effect.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PeerSideEffectConfig {
+    /// Pure operation only.
+    #[default]
+    None,
+    /// Protected or external reads.
+    ReadOnly,
+    /// Keyed idempotent writes.
+    IdempotentWrite,
+    /// Potentially non-idempotent writes.
+    NonIdempotentWrite,
+    /// Unknown side effects.
+    Unknown,
+}
+
+const fn default_peer_concurrency() -> u16 {
+    4
+}
+
+const fn default_peer_requests_per_minute() -> u32 {
+    600
+}
+
+const fn default_peer_artifact_bytes() -> u64 {
+    64 * 1_048_576
+}
+
+const fn default_peer_duration_ms() -> u64 {
+    300_000
+}
+
+const fn default_peer_observations() -> u32 {
+    10_000
+}
+
+const fn default_peer_catalog_ttl_ms() -> u64 {
+    30_000
+}
+
+const fn default_true() -> bool {
+    true
+}
+
 /// One model capability and provider-neutral endpoint profile source.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -257,6 +386,9 @@ pub struct DaemonConfig {
     /// Explicit adapter sources.
     #[serde(default)]
     pub adapters: AdapterConfig,
+    /// Explicit default-disabled authenticated peer relationships.
+    #[serde(default)]
+    pub peers: PeerHostConfig,
     /// Ordered shutdown policy.
     #[serde(default)]
     pub shutdown: ShutdownConfig,
@@ -387,6 +519,7 @@ impl DaemonConfig {
             validate_safe_identity("model capability", &model.capability_id)?;
             model.profile = normalize_existing_file(&base, &model.profile)?;
         }
+        validate_peers(&self.peers, &self.secret_sources)?;
         Ok(ValidatedDaemonConfig {
             document: self,
             configuration_directory: base,
@@ -405,6 +538,98 @@ impl DaemonConfig {
         }
         Ok(value)
     }
+}
+
+fn validate_peers(
+    peers: &PeerHostConfig,
+    secrets: &BTreeMap<String, SecretSourceConfig>,
+) -> Result<(), ConfigError> {
+    if !peers.enabled {
+        if peers.local_peer_id.is_some() || !peers.relationships.is_empty() {
+            return Err(ConfigError::Invalid(
+                "peer relationships require peers.enabled=true".to_owned(),
+            ));
+        }
+        return Ok(());
+    }
+    let local = peers.local_peer_id.as_deref().ok_or_else(|| {
+        ConfigError::Invalid("enabled peer support requires local_peer_id".to_owned())
+    })?;
+    validate_safe_identity("local_peer_id", local)?;
+    if peers.relationships.len() > 256 {
+        return Err(ConfigError::Invalid(
+            "peer relationship count must not exceed 256".to_owned(),
+        ));
+    }
+    let mut identities = BTreeSet::new();
+    for relationship in &peers.relationships {
+        validate_safe_identity("peer_id", &relationship.peer_id)?;
+        validate_safe_identity("peer credential_ref", &relationship.credential_ref)?;
+        validate_safe_identity("peer trust_zone", &relationship.trust_zone)?;
+        validate_safe_identity("peer delegation_ref", &relationship.delegation_ref)?;
+        if relationship.peer_id == local
+            || !identities.insert(&relationship.peer_id)
+            || !secrets.contains_key(&relationship.credential_ref)
+            || relationship.maximum_minor < relationship.minimum_minor
+            || relationship.maximum_concurrent == 0
+            || relationship.maximum_requests_per_minute == 0
+            || relationship.maximum_requests_per_minute > 100_000
+            || relationship.maximum_artifact_bytes == 0
+            || relationship.maximum_duration_ms == 0
+            || relationship.maximum_observations == 0
+            || relationship.catalog_ttl_ms == 0
+            || relationship.catalog_ttl_ms > 300_000
+            || relationship.expires_at_unix_ms == 0
+        {
+            return Err(ConfigError::Invalid(
+                "peer identity, credential, version, quota, TTL, or expiry is invalid".to_owned(),
+            ));
+        }
+        for capability in relationship
+            .capability_allow
+            .iter()
+            .chain(&relationship.capability_deny)
+        {
+            validate_safe_identity("peer capability filter", capability)?;
+        }
+        for operation in &relationship.operation_allow {
+            validate_safe_identity("peer operation filter", operation)?;
+        }
+        let endpoint = url::Url::parse(&relationship.endpoint)
+            .map_err(|error| ConfigError::Invalid(format!("invalid peer endpoint: {error}")))?;
+        let plaintext_loopback = endpoint.scheme() == "http"
+            && relationship.insecure_loopback_development
+            && matches!(
+                endpoint.host(),
+                Some(url::Host::Ipv4(address)) if address.is_loopback()
+            )
+            || endpoint.scheme() == "http"
+                && relationship.insecure_loopback_development
+                && matches!(
+                    endpoint.host(),
+                    Some(url::Host::Ipv6(address)) if address.is_loopback()
+                )
+            || endpoint.scheme() == "http"
+                && relationship.insecure_loopback_development
+                && endpoint
+                    .host_str()
+                    .is_some_and(|host| host.eq_ignore_ascii_case("localhost"));
+        if endpoint.scheme() != "https" && !plaintext_loopback {
+            return Err(ConfigError::Invalid(
+                "peer endpoint must use HTTPS unless insecure loopback development mode is explicit"
+                    .to_owned(),
+            ));
+        }
+        if !endpoint.username().is_empty()
+            || endpoint.password().is_some()
+            || endpoint.fragment().is_some()
+        {
+            return Err(ConfigError::Invalid(
+                "peer endpoint must not contain credentials or fragments".to_owned(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_runtime(config: &RuntimeHostConfig) -> Result<(), ConfigError> {
@@ -509,6 +734,7 @@ mod tests {
             }],
             runtime: RuntimeHostConfig::default(),
             adapters: AdapterConfig::default(),
+            peers: PeerHostConfig::default(),
             shutdown: ShutdownConfig::default(),
             command_ledger_bound: 100,
         };

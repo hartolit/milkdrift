@@ -733,6 +733,30 @@ pub struct CapabilityRead {
     pub permit_limit: u32,
 }
 
+/// Safe authenticated peer/catalog status without credentials or transport internals.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeerRead {
+    /// Configured authenticated remote peer identity.
+    pub peer_id: String,
+    /// Whether an authenticated session and live verified catalog are current.
+    pub connected: bool,
+    /// Stable redacted health classification.
+    pub health: String,
+    /// Current authenticated remote daemon session identity.
+    pub session_id: Option<String>,
+    /// Current verified catalog generation.
+    pub catalog_generation: Option<u64>,
+    /// Current verified catalog digest.
+    pub catalog_digest: Option<String>,
+    /// Current ordinary capability-host registration count.
+    pub registered_capabilities: usize,
+    /// Current catalog hard expiry, when connected.
+    pub catalog_expires_at_unix_ms: Option<u64>,
+    /// Whether the live relationship was administratively revoked.
+    pub revoked: bool,
+}
+
 /// Safe artifact metadata without a filesystem path.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
