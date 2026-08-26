@@ -55,6 +55,34 @@ impl RuntimeService {
     /// dispatch. Only the call that first commits that transition receives an action;
     /// idempotent command replay never authorizes duplicate execution.
     pub fn claim_effects(&self, maximum: PageSize) -> Result<Vec<EffectAction>, RuntimeError> {
+        self.claim_effects_filtered(maximum, true, true)
+    }
+
+    /// Claims only invocation-entry effects for a bounded execution-worker queue.
+    ///
+    /// This split lets a caller reserve independent cancellation capacity even while
+    /// every process-execution worker is occupied.
+    pub fn claim_execution_effects(
+        &self,
+        maximum: PageSize,
+    ) -> Result<Vec<EffectAction>, RuntimeError> {
+        self.claim_effects_filtered(maximum, true, false)
+    }
+
+    /// Claims only cancellation effects for a bounded control-worker queue.
+    pub fn claim_cancellation_effects(
+        &self,
+        maximum: PageSize,
+    ) -> Result<Vec<EffectAction>, RuntimeError> {
+        self.claim_effects_filtered(maximum, false, true)
+    }
+
+    fn claim_effects_filtered(
+        &self,
+        maximum: PageSize,
+        executions: bool,
+        cancellations: bool,
+    ) -> Result<Vec<EffectAction>, RuntimeError> {
         let _claim_guard = self.effect_claim_gate.lock().map_err(|_error| {
             RuntimeError::Scheduling("effect claim coordination lock is poisoned".to_owned())
         })?;
@@ -94,21 +122,23 @@ impl RuntimeService {
                 RuntimeError::InvalidHistory("active lease names an absent attempt".to_owned())
             })?;
             match attempt.state() {
-                AttemptState::Leased => {
+                AttemptState::Leased if executions => {
                     if let Some(dispatch) =
                         self.claim_invocation(&indexed.run, &indexed.lease, &indexed.attempt, now)?
                     {
                         actions.push(EffectAction::Execute(Box::new(dispatch)));
                     }
                 }
-                AttemptState::Running => {
+                AttemptState::Running if cancellations => {
                     if let Some(cancellation) =
                         self.cancellation_dispatch(&indexed.run, &projection, &indexed.attempt)?
                     {
                         actions.push(EffectAction::Cancel(cancellation));
                     }
                 }
-                AttemptState::AwaitingRetryTimer
+                AttemptState::Leased
+                | AttemptState::Running
+                | AttemptState::AwaitingRetryTimer
                 | AttemptState::ReadyToSchedule
                 | AttemptState::Scheduled
                 | AttemptState::Terminal(_)

@@ -9,9 +9,17 @@ rust-version.workspace = true
 [dependencies]
 blake3.workspace = true
 milkdrift-authority = { version = "=0.1.0", path = "../authority" }
+milkdrift-blueprint = { version = "=0.1.0", path = "../blueprint" }
 milkdrift-capability = { version = "=0.1.0", path = "../capability" }
+milkdrift-persistence = { version = "=0.1.0", path = "../persistence" }
 milkdrift-runtime = { version = "=0.1.0", path = "../runtime" }
+milkdrift-workspace = { version = "=0.1.0", path = "../workspace" }
+serde_json.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+milkdrift-redb-store = { version = "=0.1.0", path = "../../adapters/redb-store" }
 
 [lints]
 workspace = true

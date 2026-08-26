@@ -1,0 +1,37 @@
+[package]
+name = "milkdrift-local-process"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "milkdrift-process-test-helper"
+path = "tests/fixtures/process_helper.rs"
+test = false
+bench = false
+
+[dependencies]
+milkdrift-authority = { version = "=0.1.0", path = "../../crates/authority" }
+milkdrift-capability = { version = "=0.1.0", path = "../../crates/capability" }
+milkdrift-capability-host = { version = "=0.1.0", path = "../../crates/capability-host" }
+milkdrift-contracts.workspace = true
+milkdrift-workspace = { version = "=0.1.0", path = "../../crates/workspace" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.4", features = ["process"] }
+
+[dev-dependencies]
+blake3.workspace = true
+milkdrift-blueprint = { version = "=0.1.0", path = "../../crates/blueprint" }
+milkdrift-persistence = { version = "=0.1.0", path = "../../crates/persistence" }
+milkdrift-redb-store = { version = "=0.1.0", path = "../redb-store", features = ["test-admin"] }
+milkdrift-runtime = { version = "=0.1.0", path = "../../crates/runtime" }
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -50,7 +50,7 @@ Compaction means removal from active operational state only. This pass never del
 
 "Bounded" is relative to semantic liveness, not a universal constant-memory claim. Projection and checkpoint size may grow with workflow shape, intentionally active branches, unresolved safety obligations, retained outputs/artifacts/context, bounded worker ownership evidence, and configured workspace limits. For fixed workflow shape and bounded active concurrency, settled event count and elapsed iterations do not by themselves increase active state.
 
-The headless runtime owns transition decisions, projections, leases, scheduling, recovery, and reconciliation through narrow persistence/execution ports. A future daemon owns their lifecycle plus secrets mediation and real effect dispatch. Clients request commands and render projections; they do not own truth.
+The headless runtime owns transition decisions, projections, leases, scheduling, recovery, and reconciliation through narrow persistence/execution ports. `milkdrift-capability-host::EffectWorkerHost` is the explicit embeddable owner of bounded caller-created effect and cancellation workers; it has no singleton or async runtime. A future daemon will own that object together with registry, secret, and persistence lifecycles. Clients request commands and render projections; they do not own truth.
 
 ## 5. Prospective live reconciliation
 
@@ -117,6 +117,8 @@ milkdrift-workspace   -> {authority, persistence, runtime, redb-store}
 milkdrift-authority   -> {persistence, runtime, capability-host}
 milkdrift-persistence -> {runtime, redb-store}
 milkdrift-runtime     -> {capability-host}
+milkdrift-capability-host -> {local-process}
+milkdrift-authority   -> {secret-env, local-process}
 ```
 
 `milkdrift-contracts` owns only cross-domain implementation mechanics with
@@ -132,8 +134,11 @@ no runtime decisions. Runtime and the redb/filesystem adapter are sibling
 consumers of persistence and the immutable domain contracts; runtime uses the
 adapter only as a development dependency in adapter-backed integration tests.
 `milkdrift-capability-host` is an outer embeddable host implementing the runtime
-`TaskExecutor` port; it contains live handles but no redb, process, model, peer,
-network-stack, or UI dependency. Apps later depend on daemon protocols. Dependencies
+`TaskExecutor` port. It owns the narrow materialization/publication port and its
+`RuntimeStore` bridge, but knows no redb table or filesystem artifact layout.
+`milkdrift-local-process` depends outward on that port and owns process/filesystem APIs;
+it never depends on redb or mutates runtime state. `milkdrift-secret-env` is a separate
+concrete secret boundary. Apps later depend on daemon protocols. Dependencies
 may point toward stable semantics, never from semantics toward a host.
 
 Forbidden in the semantic crates are Tokio or another executor, HTTP clients/servers, databases, Iced, provider SDKs, subprocess/OS APIs, transport types, secret values, tensor/inference types, live handles, clocks, randomness that affects identity, and mutable singleton registries. Project-authored code is safe Rust unless an independently proven requirement has a focused safety contract and tests.
@@ -142,7 +147,7 @@ Forbidden in the semantic crates are Tokio or another executor, HTTP clients/ser
 
 Every disk, wire, provider, tool, peer, imported blueprint, artifact, path, signal, and AI-produced proposal is untrusted input. Readers enforce schema version, byte/count/depth/string/path bounds before expensive work; reject unknown core semantics; and preserve only bounded namespaced extensions. Conditions are data ASTs, not scripts.
 
-Credentials and secret values never appear in blueprints, descriptors, requirements, events, diagnostics, logs, or peer advertisements. `SecretRef` serializes only an opaque reference, while resolved `SensitiveSecret` values are non-serializable, non-clone, redacted, and exposed only through a narrow closure. The host owns the resolver port; Pass 03A supplies only deterministic in-memory test infrastructure and Pass 03B supplies concrete sources. Filesystem/network/process effects require normalized allowlists and resist traversal, symlink, redirect, shell-injection, and confused-deputy attacks. Side effects, authority decisions, approvals, hostile provider output, and uncertain outcomes are provenance facts. Budget and termination controls are enforced by the owning runtime, not trusted to an AI prompt.
+Credentials and secret values never appear in blueprints, descriptors, requirements, events, diagnostics, logs, or peer advertisements. `SecretRef` serializes only an opaque reference, while resolved `SensitiveSecret` values are non-serializable, non-clone, redacted, and exposed only through a narrow closure. The host owns the resolver port; `milkdrift-secret-env` resolves only explicitly mapped references and never enumerates the environment. Local-process profiles are argv templates, never shell command strings; each substitution remains one OS argument. The child begins from `env_clear`, receives only allowlisted ambient names and resolved secret refs, and secret-bearing profiles cannot stream process text. Filesystem/process effects require canonical allowlisted roots, isolated materialization, bounded regular files, traversal/symlink/hardlink rejection, and declared output imports. Side effects, authority decisions, hostile output, cancellation observations, and uncertain outcomes are provenance facts. Budget and termination controls are enforced by their owning boundary, not trusted to an AI prompt.
 
 ## 15. Disk/wire schemas and compatibility
 
@@ -187,6 +192,8 @@ milkdrift/
 │   ├── capability-host/
 │   │   ├── registry-and-health
 │   │   ├── admission-and-generation-lifecycle
+│   │   ├── materialization-and-publication-port
+│   │   ├── bounded-effect-worker-owner
 │   │   └── adapter-and-secret-ports
 │   ├── workspace/
 │   │   ├── context
@@ -201,7 +208,8 @@ milkdrift/
 │       └── capability-advertisement
 ├── adapters/
 │   ├── model/
-│   ├── process/
+│   ├── local-process/
+│   ├── secret-env/
 │   ├── filesystem/
 │   └── peer-transport/
 ├── apps/
@@ -228,6 +236,8 @@ The logical map is the long-lived ownership reference. Its exact current physica
 | `capability/contracts` | `milkdrift-capability::{descriptor,invocation,document,identity,bounded}` |
 | `capability/registry` | `milkdrift-capability-host::registry` owns bounded live registrations, observations, actual permit ownership, generation lifecycle, and queries |
 | `capability/resolution` | Pure matching and exact snapshots remain in `milkdrift-capability`; deterministic authority/policy/health/capacity selection and the runtime executor bridge are in `milkdrift-capability-host` |
+| `capability/effect-host` | `milkdrift-capability-host::worker` owns explicit fixed execution/control threads, bounded queues, bounded claim pages, health, panic containment, and deadline-driven drain/cancel/retain shutdown |
+| `capability/materialization` | `milkdrift-capability-host::materialization` owns the exact workspace/artifact port and `RuntimeStore` bridge; concrete adapters see only isolated roots and capability-domain references |
 | `workspace/context` | Scoped immutable values/budgets in `milkdrift-workspace`; causal context construction remains Pass 3 |
 | `workspace/artifacts` | Metadata/contracts in `milkdrift-workspace` and durable bytes in `milkdrift-redb-store` |
 | `workspace/branches` | `milkdrift-workspace::scope` plus runtime branch/iteration/subworkflow projections |
@@ -237,7 +247,8 @@ The logical map is the long-lived ownership reference. Its exact current physica
 | `peer/protocol` | Not implemented |
 | `peer/capability-advertisement` | Generic descriptor contract exists; peer protocol/advertisement is not implemented |
 | `adapters/model` | Not implemented |
-| `adapters/process` | Not implemented |
+| `adapters/process` | `milkdrift-local-process::{config,process}` owns profile schema v1, direct argv entry, environment mediation, bounded pipes, declared imports, timeout/cancellation, and platform process ownership |
+| `adapters/secret-env` | `milkdrift-secret-env` maps explicitly configured opaque references to exact environment names without enumerating or retaining values |
 | `adapters/filesystem` | Content-addressed artifact ownership in `milkdrift-redb-store::artifact::{accounting,cleanup,path,publication}` |
 | `adapters/redb` | The transactional local adapter, split across `milkdrift-redb-store::{admin,journal,store}` facades and their private child modules |
 | `adapters/peer-transport` | Not implemented |

@@ -12,3 +12,5 @@ Do not write an ADR for a local refactor, a choice obvious from a small piece of
 - [0006 — Shared contract mechanics without shared domain meaning](0006-shared-contract-mechanics.md)
 - [0007 — Scoped authority and one human/AI command path](0007-scoped-authority-and-shared-command-path.md)
 - [0008 — Generation-safe live capability hosting](0008-generation-safe-capability-hosting.md)
+- [0009 — Direct argv and owned process groups](0009-direct-argv-and-owned-process-groups.md)
+- [0010 — Host-owned materialization and artifact publication](0010-host-owned-materialization.md)

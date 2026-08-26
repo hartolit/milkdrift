@@ -14,18 +14,26 @@ RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps
 cargo deny check
 ```
 
-Focused Pass-03A checks are:
+Focused Pass-03B checks are:
 
 ```sh
 cargo test -p milkdrift-authority --test contracts -- --nocapture
 cargo test -p milkdrift-capability-host --test registry -- --nocapture
+cargo test -p milkdrift-capability-host --test materialization -- --nocapture
+cargo test -p milkdrift-capability-host --test effect_worker -- --nocapture
+cargo test -p milkdrift-local-process --test process_execution -- --nocapture
+cargo test -p milkdrift-secret-env -- --nocapture
 cargo test -p milkdrift-persistence --test authorization_result -- --nocapture
 cargo test -p milkdrift-runtime --test durable_runtime -- --nocapture
 cargo test -p milkdrift-runtime --test structured_runtime -- --nocapture
 ```
 
-The live-host tests use condition variables and explicit ownership facts rather than sleeps,
-subprocesses, networks, environment secrets, or wall-clock reads.
+The process suite uses a small Rust helper binary rather than shell scripts or a real coding
+agent. It has no network or credential dependency. After cancellation/tree tests on Unix, check
+that no helper survived with `pgrep -af milkdrift-process-test-helper`; a match belonging to the
+test command itself is not a surviving child. Live-host/worker coordination uses condition
+variables and bounded queues. Timing loops are limited to OS-process observation and always have
+hard deadlines.
 
 Apply formatting with `cargo fmt --all`. Golden JSON is hand-reviewed compatibility data under each crate's `tests/fixtures` directory. To update a fixture, change the schema implementation and fixture in one review, run its exact canonical re-encoding test, and record any compatibility decision that changes reader behavior in an ADR. Never regenerate fixtures merely to make a failing test disappear.
 

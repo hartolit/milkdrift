@@ -16,7 +16,8 @@ use milkdrift_runtime::{
 use thiserror::Error;
 
 use crate::{
-    AdapterError, AdapterFailureKind, AdapterInvocation, AdapterReporter, CapabilityAdapter,
+    AdapterError, AdapterExecutionContext, AdapterFailureKind, AdapterInvocation, AdapterReporter,
+    CapabilityAdapter,
 };
 
 /// Bounded host configuration; no hidden queue is implemented in this pass.
@@ -631,6 +632,31 @@ impl CapabilityHost {
         })
     }
 
+    /// Forcibly removes every generation and asks each adapter to release live resources.
+    ///
+    /// Returned invocation identities remain unresolved unless their executing worker
+    /// subsequently records terminal evidence. This operation never invents completion.
+    pub fn force_shutdown(&self) -> Result<ShutdownReport, HostError> {
+        self.begin_shutdown()?;
+        let (adapters, unresolved_invocations) = {
+            let mut state = self.lock_state()?;
+            let unresolved_invocations = state.in_flight.keys().cloned().collect::<Vec<_>>();
+            state.in_flight.clear();
+            state.current.clear();
+            let adapters = std::mem::take(&mut state.generations)
+                .into_values()
+                .map(|generation| generation.adapter)
+                .collect::<Vec<_>>();
+            (adapters, unresolved_invocations)
+        };
+        for adapter in adapters {
+            lifecycle_call(|| adapter.shutdown())?;
+        }
+        Ok(ShutdownReport {
+            unresolved_invocations,
+        })
+    }
+
     /// Returns a stable sorted generation view, filtered by authority scope.
     pub fn generations(
         &self,
@@ -718,6 +744,51 @@ impl CapabilityHost {
         }
     }
 
+    /// Executes one already-persisted exact snapshot with explicit durable provenance.
+    pub fn execute_exact_with_context(
+        &self,
+        snapshot: &ResolvedCapabilitySnapshot,
+        request: &InvocationRequest,
+        context: &AdapterExecutionContext,
+        reporter: &dyn AdapterReporter,
+    ) -> Result<(), ExecutorError> {
+        let (adapter, mut permit) = self.acquire(snapshot, request)?;
+        let invocation = AdapterInvocation::with_context(snapshot, request, context);
+        match catch_unwind(AssertUnwindSafe(|| adapter.execute(&invocation, reporter))) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => {
+                permit.failure = Some(error.summary().to_owned());
+                Err(executor_error_from_adapter(&error))
+            }
+            Err(_panic) => {
+                permit.failure = Some("adapter panicked".to_owned());
+                Err(ExecutorError::AdapterPanicked { after_entry: true })
+            }
+        }
+    }
+
+    fn execute_dispatch_exact(
+        &self,
+        dispatch: &ExecutionDispatch,
+        reporter: &dyn AdapterReporter,
+    ) -> Result<(), ExecutorError> {
+        let (adapter, mut permit) = self.acquire(dispatch.resolution(), dispatch.request())?;
+        let context = AdapterExecutionContext::from_dispatch(dispatch);
+        let invocation =
+            AdapterInvocation::with_context(dispatch.resolution(), dispatch.request(), &context);
+        match catch_unwind(AssertUnwindSafe(|| adapter.execute(&invocation, reporter))) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => {
+                permit.failure = Some(error.summary().to_owned());
+                Err(executor_error_from_adapter(&error))
+            }
+            Err(_panic) => {
+                permit.failure = Some("adapter panicked".to_owned());
+                Err(ExecutorError::AdapterPanicked { after_entry: true })
+            }
+        }
+    }
+
     fn acquire(
         &self,
         snapshot: &ResolvedCapabilitySnapshot,
@@ -783,7 +854,7 @@ impl TaskExecutor for CapabilityHost {
         reporter: &dyn ExecutionReporter,
     ) -> Result<(), ExecutorError> {
         let bridge = ReporterBridge { reporter };
-        self.execute_exact(dispatch.resolution(), dispatch.request(), &bridge)
+        self.execute_dispatch_exact(dispatch, &bridge)
     }
 
     fn cancel(

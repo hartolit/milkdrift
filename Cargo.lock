@@ -212,8 +212,14 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "milkdrift-authority",
+ "milkdrift-blueprint",
  "milkdrift-capability",
+ "milkdrift-persistence",
+ "milkdrift-redb-store",
  "milkdrift-runtime",
+ "milkdrift-workspace",
+ "serde_json",
+ "tempfile",
  "thiserror",
 ]
 
@@ -223,6 +229,27 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "milkdrift-local-process"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "milkdrift-authority",
+ "milkdrift-blueprint",
+ "milkdrift-capability",
+ "milkdrift-capability-host",
+ "milkdrift-contracts",
+ "milkdrift-persistence",
+ "milkdrift-redb-store",
+ "milkdrift-runtime",
+ "milkdrift-workspace",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -276,6 +303,15 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tracing",
+]
+
+[[package]]
+name = "milkdrift-secret-env"
+version = "0.1.0"
+dependencies = [
+ "milkdrift-authority",
+ "milkdrift-capability-host",
+ "thiserror",
 ]
 
 [[package]]

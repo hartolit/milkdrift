@@ -1,7 +1,10 @@
+use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_capability::{
     CancellationAcknowledgement, CancellationRequest, CapabilityObservation, InvocationEvent,
     InvocationRequest, ResolvedCapabilitySnapshot,
 };
+use milkdrift_persistence::{AttemptId, NodeExecutionId};
+use milkdrift_workspace::RunId;
 use thiserror::Error;
 
 /// Stable class of a bounded adapter failure summary.
@@ -110,10 +113,81 @@ impl AdapterError {
 #[error("adapter failure summary must contain 1..=512 bytes")]
 pub struct HostAdapterContractError;
 
+/// Exact durable execution provenance supplied to materializing adapters.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdapterExecutionContext {
+    run: RunId,
+    revision: RevisionId,
+    node: NodeId,
+    execution: NodeExecutionId,
+    attempt: AttemptId,
+}
+
+impl AdapterExecutionContext {
+    /// Constructs exact durable provenance for an already validated execution dispatch.
+    #[must_use]
+    pub const fn new(
+        run: RunId,
+        revision: RevisionId,
+        node: NodeId,
+        execution: NodeExecutionId,
+        attempt: AttemptId,
+    ) -> Self {
+        Self {
+            run,
+            revision,
+            node,
+            execution,
+            attempt,
+        }
+    }
+
+    pub(crate) fn from_dispatch(dispatch: &milkdrift_runtime::ExecutionDispatch) -> Self {
+        Self::new(
+            dispatch.run().clone(),
+            dispatch.revision().clone(),
+            dispatch.node().clone(),
+            dispatch.execution().clone(),
+            dispatch.attempt().clone(),
+        )
+    }
+
+    /// Owning durable run.
+    #[must_use]
+    pub const fn run(&self) -> &RunId {
+        &self.run
+    }
+
+    /// Exact immutable workflow revision.
+    #[must_use]
+    pub const fn revision(&self) -> &RevisionId {
+        &self.revision
+    }
+
+    /// Stable semantic node identity.
+    #[must_use]
+    pub const fn node(&self) -> &NodeId {
+        &self.node
+    }
+
+    /// Logical node execution identity.
+    #[must_use]
+    pub const fn execution(&self) -> &NodeExecutionId {
+        &self.execution
+    }
+
+    /// Immutable execution-attempt identity.
+    #[must_use]
+    pub const fn attempt(&self) -> &AttemptId {
+        &self.attempt
+    }
+}
+
 /// Narrow immutable invocation view supplied to a concrete adapter.
 pub struct AdapterInvocation<'a> {
     resolution: &'a ResolvedCapabilitySnapshot,
     request: &'a InvocationRequest,
+    context: Option<&'a AdapterExecutionContext>,
 }
 
 impl<'a> AdapterInvocation<'a> {
@@ -124,6 +198,19 @@ impl<'a> AdapterInvocation<'a> {
         Self {
             resolution,
             request,
+            context: None,
+        }
+    }
+
+    pub(crate) const fn with_context(
+        resolution: &'a ResolvedCapabilitySnapshot,
+        request: &'a InvocationRequest,
+        context: &'a AdapterExecutionContext,
+    ) -> Self {
+        Self {
+            resolution,
+            request,
+            context: Some(context),
         }
     }
 
@@ -137,6 +224,12 @@ impl<'a> AdapterInvocation<'a> {
     #[must_use]
     pub const fn request(&self) -> &InvocationRequest {
         self.request
+    }
+
+    /// Exact durable execution provenance when invoked through `RuntimeService`.
+    #[must_use]
+    pub const fn context(&self) -> Option<&AdapterExecutionContext> {
+        self.context
     }
 }
 

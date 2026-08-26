@@ -4,7 +4,7 @@ Milkdrift is a local-first foundation for durable, live-editable workflows whose
 
 Milkdrift currently has a headless Rust execution center. It stores immutable workflow revisions, authorizes versioned idempotent run commands against exact scoped grant revisions, records the decision atomically with each external command result, rebuilds pure projections, schedules bounded work through exact capability snapshots, keeps branch-local workspace values, publishes content-addressed artifacts, recovers local runs after restart, and applies compatible revision changes prospectively through persisted reconciliation plans.
 
-The production local backend uses redb plus a filesystem artifact directory. A generation-safe live capability host now owns deterministic policy-constrained resolution, health staleness, immediate bounded admission, exact dispatch/cancellation routing, drain, and shutdown. It has deterministic fake adapters and an in-memory secret resolver for tests; real process/model/provider adapters, concrete secret sources, causal context construction, authentication, peers, daemon APIs, CLI, and desktop UI remain outside this pass.
+The production local backend uses redb plus a filesystem artifact directory. A generation-safe live capability host owns deterministic policy-constrained resolution, exact dispatch/cancellation routing, and an explicit bounded effect-worker lifecycle. The first real capability is a versioned generic local-process adapter: it materializes selected durable inputs into an isolated directory, spawns an argv directly without a shell, mediates an allowlisted environment and opaque secrets, drains bounded stdout/stderr concurrently, publishes declared outputs through the artifact store, and preserves uncertain outcomes across restart. `milkdrift-secret-env` supplies the minimal opt-in environment secret source. Model/provider adapters, causal context construction, authentication, peers, daemon APIs, CLI, and desktop UI remain outside this pass.
 
 ```sh
 cargo test --workspace
@@ -22,6 +22,8 @@ A minimal revision is constructed through a validated mutation batch; see the cr
 - `crates/persistence`: versioned events and narrow journal/revision/snapshot/workspace/artifact ports.
 - `crates/runtime`: commands, pure projections, scheduling, execution ownership, recovery, and reconciliation.
 - `adapters/redb-store`: transactional local redb storage and content-addressed artifact bytes.
+- `adapters/local-process`: versioned safe-argv profiles and the production local process adapter.
+- `adapters/secret-env`: explicit opaque-secret-reference to environment-name resolution.
 - `docs`: status, roadmap, development commands, and durable decisions.
 - `.github/workflows/quality.yml`: the primary format/check/test/lint/documentation workflow.
 - `.github/workflows/stress.yml`: weekly and manually triggered long-run storage/projection boundary evidence.
