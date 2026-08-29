@@ -9,19 +9,19 @@ use crate::projection::{
     AttemptState, BranchState, NodeExecutionState, RunLifecycle, RunProjection,
 };
 use crate::{
-    AdmissionRequest, CapabilityResolutionContext, ExecutorError, RunCommand, RunCommandDocument,
-    RuntimeError, SystemTransition,
+    AdmissionRequest, CapabilityResolutionContext, ContextCandidateSource, ExecutorError,
+    RunCommand, RunCommandDocument, RuntimeError, SystemTransition,
 };
 use milkdrift_blueprint::{BlueprintRevision, Node, NodeKind, ReducerStrategy};
 use milkdrift_capability::{
-    BoundedJson, ErrorClass, IdempotencyBehavior, IdempotencyKey, InputReference, InvocationId,
-    InvocationRequest, SideEffectClass,
+    BoundedJson, CapabilityCategory, ErrorClass, IdempotencyBehavior, IdempotencyKey,
+    InputReference, InvocationId, InvocationRequest, SideEffectClass,
 };
 use milkdrift_persistence::{
-    AtomicRunCommitOutcome, AttemptId, BoundedDetail, NodeExecutionId, PersistenceError, Reason,
-    RunEventKind, RunnableIndexEntry, TimestampMillis,
+    ArtifactReadAuthority, AtomicRunCommitOutcome, AttemptId, BoundedDetail, EvidenceId,
+    NodeExecutionId, PersistenceError, Reason, RunEventKind, RunnableIndexEntry, TimestampMillis,
 };
-use milkdrift_workspace::{ArtifactId, ArtifactSensitivity, RunId, ScopeKind, ScopeReference};
+use milkdrift_workspace::{RunId, ScopeKind, ScopeReference};
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::{info, warn};
 
@@ -204,6 +204,11 @@ impl RuntimeService {
             resolution.snapshot().capability().clone(),
             resolution.snapshot().provider_profile().cloned(),
             idempotency_key.clone(),
+            matches!(
+                resolution.descriptor().category(),
+                CapabilityCategory::Model | CapabilityCategory::Process
+            ),
+            now,
         ) {
             Ok(request) => request,
             Err(RuntimeError::Scheduling(_)) => {
@@ -230,42 +235,65 @@ impl RuntimeService {
         }
         let lease = self.next_lease_id()?;
         let expires_at = checked_timestamp_add(now, self.config.lease_duration_ms)?;
+        let mut schedule_events = Vec::new();
+        if let Some(manifest) = request.context_manifest() {
+            let artifact = milkdrift_workspace::ArtifactId::new(manifest.identity())
+                .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
+            if !projection.artifacts().contains_key(&artifact) {
+                let metadata = self.store.metadata(&artifact)?.ok_or_else(|| {
+                    RuntimeError::InvalidHistory(
+                        "persisted context manifest metadata is absent".to_owned(),
+                    )
+                })?;
+                if manifest.digest() != metadata.reference().digest().to_hex()
+                    || manifest.size_bytes() != Some(metadata.reference().size_bytes())
+                    || manifest.media_type() != Some(metadata.reference().media_type().as_str())
+                {
+                    return Err(RuntimeError::InvalidHistory(
+                        "persisted context manifest metadata contradicts its request reference"
+                            .to_owned(),
+                    ));
+                }
+                schedule_events.push(RunEventKind::ArtifactPublished { metadata });
+            }
+        }
+        schedule_events.extend([
+            RunEventKind::NodeScheduled {
+                node: node.id().clone(),
+                execution: execution.execution().clone(),
+                attempt: attempt.clone(),
+                invocation: invocation.clone(),
+                idempotency_key: idempotency_key.clone(),
+                request: request.clone(),
+            },
+            RunEventKind::CapabilityResolutionDecisionRecorded {
+                execution: execution.execution().clone(),
+                attempt: attempt.clone(),
+                snapshot: resolution.snapshot().clone(),
+                authorization: resolution_authorization.clone(),
+            },
+            RunEventKind::CapabilityResolved {
+                execution: execution.execution().clone(),
+                attempt: attempt.clone(),
+                requirement: requirement.clone(),
+                snapshot: resolution.snapshot().clone(),
+            },
+            RunEventKind::SideEffectClassified {
+                attempt: attempt.clone(),
+                side_effect: contract.side_effect(),
+                idempotency: contract.idempotency(),
+                idempotency_key: idempotency_key.clone(),
+            },
+            RunEventKind::LeaseGranted {
+                lease: lease.clone(),
+                execution: execution.execution().clone(),
+                attempt: attempt.clone(),
+                worker: self.config.worker.clone(),
+                expires_at,
+            },
+        ]);
         let schedule = CommandPlan {
-            events: vec![
-                RunEventKind::NodeScheduled {
-                    node: node.id().clone(),
-                    execution: execution.execution().clone(),
-                    attempt: attempt.clone(),
-                    invocation: invocation.clone(),
-                    idempotency_key: idempotency_key.clone(),
-                    request: request.clone(),
-                },
-                RunEventKind::CapabilityResolutionDecisionRecorded {
-                    execution: execution.execution().clone(),
-                    attempt: attempt.clone(),
-                    snapshot: resolution.snapshot().clone(),
-                    authorization: resolution_authorization.clone(),
-                },
-                RunEventKind::CapabilityResolved {
-                    execution: execution.execution().clone(),
-                    attempt: attempt.clone(),
-                    requirement: requirement.clone(),
-                    snapshot: resolution.snapshot().clone(),
-                },
-                RunEventKind::SideEffectClassified {
-                    attempt: attempt.clone(),
-                    side_effect: contract.side_effect(),
-                    idempotency: contract.idempotency(),
-                    idempotency_key: idempotency_key.clone(),
-                },
-                RunEventKind::LeaseGranted {
-                    lease: lease.clone(),
-                    execution: execution.execution().clone(),
-                    attempt: attempt.clone(),
-                    worker: self.config.worker.clone(),
-                    expires_at,
-                },
-            ],
+            events: schedule_events,
             expected_lease_revision: Some(lease_revision),
             ..CommandPlan::default()
         };
@@ -356,6 +384,8 @@ impl RuntimeService {
         capability: milkdrift_capability::CapabilityId,
         provider_profile: Option<milkdrift_capability::ProviderProfileRef>,
         idempotency_key: Option<IdempotencyKey>,
+        context_capable: bool,
+        now: TimestampMillis,
     ) -> Result<InvocationRequest, RuntimeError> {
         self.validate_projected_scope(projection, occurrence_scope, &[])?;
         let mut inputs = Vec::new();
@@ -466,81 +496,8 @@ impl RuntimeService {
         let NodeKind::Task { config } = node.kind() else {
             return Ok(request);
         };
-        if config.requirement().operation().as_str() != milkdrift_model::MODEL_GENERATE_OPERATION {
+        if !context_capable {
             return Ok(request);
-        }
-        let mut candidates = Vec::with_capacity(request.inputs().len());
-        for input in request.inputs() {
-            let selected_bytes = u64::try_from(
-                serde_json::to_vec(input.value())
-                    .map_err(|error| RuntimeError::Scheduling(error.to_string()))?
-                    .len(),
-            )
-            .map_err(|_| RuntimeError::Scheduling("context input size overflow".to_owned()))?;
-            let (artifact_bytes, sensitivity, authority, available) = match input.value() {
-                milkdrift_capability::InvocationValueReference::Artifact { reference } => {
-                    let metadata = self
-                        .store
-                        .metadata(
-                            &ArtifactId::new(reference.identity())
-                                .map_err(|error| RuntimeError::Scheduling(error.to_string()))?,
-                        )?
-                        .filter(|metadata| {
-                            reference.size_bytes() == Some(metadata.reference().size_bytes())
-                                && reference.digest() == metadata.reference().digest().to_hex()
-                                && reference.media_type()
-                                    == Some(metadata.reference().media_type().as_str())
-                        });
-                    let sensitivity = metadata
-                        .as_ref()
-                        .map_or(ArtifactSensitivity::Restricted, |value| value.sensitivity());
-                    (
-                        reference.size_bytes().unwrap_or(0),
-                        sensitivity,
-                        milkdrift_model::AuthorityFact {
-                            required: sensitivity != ArtifactSensitivity::Public,
-                            authorized: metadata.is_some(),
-                            authority_reference: None,
-                        },
-                        metadata.is_some(),
-                    )
-                }
-                milkdrift_capability::InvocationValueReference::Inline { .. }
-                | milkdrift_capability::InvocationValueReference::WorkspaceValue { .. } => (
-                    0,
-                    ArtifactSensitivity::Restricted,
-                    milkdrift_model::AuthorityFact {
-                        required: false,
-                        authorized: true,
-                        authority_reference: None,
-                    },
-                    true,
-                ),
-            };
-            candidates.push(crate::ContextCandidate {
-                kind: milkdrift_model::ContextSemanticKind::DirectInput,
-                source: Some(milkdrift_model::ContextSource::DirectInput {
-                    name: input.name().to_owned(),
-                    reference: input.value().clone(),
-                }),
-                node: None,
-                roles: BTreeSet::new(),
-                scope: Some(occurrence_scope.clone()),
-                exposed_across_scope: false,
-                required: node
-                    .data_inputs()
-                    .iter()
-                    .find(|(port, _)| port.as_str() == input.name())
-                    .is_some_and(|(_, declaration)| declaration.is_required()),
-                available,
-                selected_bytes,
-                selected_artifact_bytes: artifact_bytes,
-                estimated_model_input_units: None,
-                sensitivity,
-                authority,
-                artifact: None,
-                causal_parents: Vec::new(),
-            });
         }
         let visible_scopes = self
             .store
@@ -551,29 +508,93 @@ impl RuntimeService {
         let run = projection.run_id().ok_or_else(|| {
             RuntimeError::InvalidHistory("run projection has no identity".to_owned())
         })?;
-        let manifest = crate::CausalContextBuilder::build(crate::ContextBuildRequest {
-            identity: crate::ContextBuildIdentity {
-                run: run.clone(),
-                revision: revision.id().clone(),
-                node: node.id().clone(),
-                execution: execution.clone(),
-                attempt: attempt.clone(),
-            },
-            semantic: revision.semantic(),
-            policy: config.context_policy(),
-            visible_scopes,
-            candidates,
-        })
-        .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
+        let identity = crate::ContextBuildIdentity {
+            run: run.clone(),
+            revision: revision.id().clone(),
+            node: node.id().clone(),
+            execution: execution.clone(),
+            attempt: attempt.clone(),
+        };
+        let previous_manifest = projection
+            .retries()
+            .values()
+            .find(|retry| retry.next_attempt() == attempt)
+            .and_then(|retry| projection.attempts().get(retry.previous_attempt()))
+            .and_then(|attempt| attempt.request())
+            .and_then(InvocationRequest::context_manifest);
+        let manifest = if let Some(previous) = previous_manifest {
+            let basis = projection.execution_authority().ok_or_else(|| {
+                RuntimeError::InvalidHistory("retry has no execution-authority basis".to_owned())
+            })?;
+            let old = crate::read_context_manifest(
+                self.store.as_ref(),
+                previous,
+                ArtifactReadAuthority::Authorized {
+                    actor: basis.actor().clone(),
+                    evidence: EvidenceId::new(format!("context-retry:{}", attempt.as_str()))?,
+                },
+            )
+            .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
+            if old.run() != run
+                || old.revision() != revision.id()
+                || old.node() != node.id()
+                || old.execution() != execution
+            {
+                return Err(RuntimeError::InvalidHistory(
+                    "retry context manifest contradicts its logical execution".to_owned(),
+                ));
+            }
+            old.rebind_attempt(attempt.clone())
+                .map_err(|error| RuntimeError::Scheduling(error.to_string()))?
+        } else {
+            let required_direct_inputs = node
+                .data_inputs()
+                .iter()
+                .filter(|(_port, declaration)| declaration.is_required())
+                .map(|(port, _declaration)| port.as_str().to_owned())
+                .collect::<BTreeSet<_>>();
+            let basis = projection.execution_authority().ok_or_else(|| {
+                RuntimeError::InvalidHistory(
+                    "context assembly has no execution-authority basis".to_owned(),
+                )
+            })?;
+            let source = crate::DurableContextCandidateSource::new(
+                self.store.as_ref(),
+                self.authority.as_ref(),
+            );
+            let candidates = source
+                .discover(crate::ContextSourceRequest {
+                    identity: identity.clone(),
+                    revision,
+                    policy: config.context_policy(),
+                    scope: occurrence_scope,
+                    direct_inputs: request.inputs(),
+                    required_direct_inputs: &required_direct_inputs,
+                    through_sequence: projection.sequence(),
+                    authority: basis,
+                    evaluated_at_ms: now.get(),
+                })
+                .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
+            crate::CausalContextBuilder::build(crate::ContextBuildRequest {
+                identity,
+                semantic: revision.semantic(),
+                policy: config.context_policy(),
+                visible_scopes,
+                candidates,
+            })
+            .map_err(|error| RuntimeError::Scheduling(error.to_string()))?
+        };
         let budget = projection.workspace_budget().ok_or_else(|| {
             RuntimeError::InvalidHistory("run has no workspace budget".to_owned())
         })?;
         let usage = self.store.workspace_usage(run)?;
-        let manifest =
+        let manifest_reference =
             crate::persist_context_manifest(self.store.as_ref(), &manifest, budget.clone(), usage)
                 .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
+        let selected = crate::materialize_selected_context(self.store.as_ref(), &manifest)
+            .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
         request
-            .with_context_manifest(manifest)
+            .with_context_materialization(manifest_reference, selected)
             .map_err(|error| RuntimeError::Scheduling(error.to_string()))
     }
 

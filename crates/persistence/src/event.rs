@@ -1728,7 +1728,7 @@ mod tests {
         .with_context_manifest(CapabilityArtifactReference::new(
             "artifact-context",
             "b".repeat(64),
-            Some("application/vnd.milkdrift.context-manifest.v1+json".to_owned()),
+            Some("application/vnd.milkdrift.context-manifest.v2+json".to_owned()),
             Some(42),
         )?)?;
         let event = RunEventKind::NodeScheduled {
@@ -1746,7 +1746,7 @@ mod tests {
         assert_eq!(artifacts[0].digest().to_hex(), "b".repeat(64));
         assert_eq!(
             artifacts[0].media_type().as_str(),
-            "application/vnd.milkdrift.context-manifest.v1+json"
+            "application/vnd.milkdrift.context-manifest.v2+json"
         );
         assert_eq!(artifacts[0].size_bytes(), 42);
         Ok(())

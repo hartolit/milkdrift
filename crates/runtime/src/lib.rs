@@ -28,7 +28,9 @@ pub use command::{
 };
 pub use context::{
     CausalContextBuilder, ContextBuildError, ContextBuildIdentity, ContextBuildRequest,
-    ContextCandidate, ContextCandidateArtifactFacts, persist_context_manifest,
+    ContextCandidate, ContextCandidateArtifactFacts, ContextCandidateAvailability,
+    ContextCandidateSource, ContextSourceRequest, DurableContextCandidateSource,
+    materialize_selected_context, persist_context_manifest, read_context_manifest,
 };
 pub use engine::{
     CommandExecution, EffectExecutionResult, EffectTickResult, RecoveryResult, RuntimeConfig,

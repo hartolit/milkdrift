@@ -50,6 +50,8 @@ cargo test -p milkdrift-blueprint --test kernel -- --nocapture
 cargo test -p milkdrift-model --test contracts -- --nocapture
 cargo test -p milkdrift-runtime --test causal_context -- --nocapture
 cargo test -p milkdrift-model-provider --test mock_endpoints -- --nocapture
+cargo test -p milkdrift-runtime --test structured_runtime causal_context_production -- --nocapture
+cargo test -p milkdrift-capability-host --test materialization -- --nocapture
 ```
 
 Focused Pass-03D workflow-control checks are:
@@ -69,9 +71,13 @@ credential is required.
 
 The model-provider suite binds local ephemeral loopback listeners and uses fixed mock
 OpenAI-compatible/Anthropic payloads. It performs no internet requests and needs no real
-credentials. The context suite proves deterministic ordering across candidate page order,
-branch isolation, exact budget behavior, fail-closed authority, and restart-safe manifest
-publication. The process suite uses a small Rust helper binary rather than shell scripts or a real coding
+credentials. The context suites prove deterministic ordering across candidate page order,
+branch isolation, exact budget behavior, fail-closed authority, schema/hostile decode, and
+restart-safe manifest publication. The production vertical additionally exercises architecture and
+implementation artifacts, a failed verification plus retry, an isolated sibling branch, join
+exposure, reviewer materialization, exact output provenance, and redb reopen. The host
+materialization suite proves that a process profile can explicitly request the reserved manifest
+input without changing ordinary invocation inputs. The process suite uses a small Rust helper binary rather than shell scripts or a real coding
 agent. It has no network or credential dependency. After cancellation/tree tests on Unix, check
 that no helper survived with `pgrep -af milkdrift-process-test-helper`; a match belonging to the
 test command itself is not a surviving child. Live-host/worker coordination uses condition

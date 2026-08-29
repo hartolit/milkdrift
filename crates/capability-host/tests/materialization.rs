@@ -21,9 +21,9 @@ use milkdrift_capability_host::{
 };
 use milkdrift_persistence::{
     ActorRef, ArtifactReadAuthority, ArtifactStore, AtomicRunCommitRequest, AttemptId,
-    CommandDisposition, CommandId, CommandReceipt, CommandResultDocument, EventId, IndexedRunState,
-    NodeExecutionId, PersistenceError, RunEventEnvelope, RunEventKind, RunIndexUpdate, RunJournal,
-    RunSequence, RunSummaryIndex, TimestampMillis, WorkspaceAccounting,
+    CommandDisposition, CommandId, CommandReceipt, CommandResultDocument, EventId, EvidenceId,
+    IndexedRunState, NodeExecutionId, PersistenceError, RunEventEnvelope, RunEventKind,
+    RunIndexUpdate, RunJournal, RunSequence, RunSummaryIndex, TimestampMillis, WorkspaceAccounting,
 };
 use milkdrift_redb_store::{
     FaultInjector, FaultPoint, RedbStore, RedbStoreConfig, injected_failure,
@@ -268,6 +268,46 @@ fn isolated_inputs_and_outputs_use_the_durable_artifact_protocol() -> TestResult
         reference.size_bytes().ok_or("missing size")?,
     );
     assert!(store.is_committed(&durable)?);
+    Ok(())
+}
+
+#[test]
+fn configured_process_input_can_materialize_the_exact_context_manifest() -> TestResult {
+    let store_owner = tempfile::tempdir()?;
+    let execution_owner = tempfile::tempdir()?;
+    let store = Arc::new(RedbStore::open(store_owner.path())?);
+    let budget = WorkspaceBudget::new(16, 1024, 4096, 16, 1024, 4096)?;
+    let context = context()?;
+    let base_request = request()?;
+    seed_invocation(store.as_ref(), &context, &base_request, budget.clone())?;
+    let authorized = ArtifactReadAuthority::Authorized {
+        actor: ActorRef::new("actor-materialization")?,
+        evidence: EvidenceId::new("evidence-materialization")?,
+    };
+    let access = StoreInvocationDataAccess::new(store, execution_owner.path(), authorized, budget)?;
+    let manifest_bytes = br#"{"schema_version":2,"selection":"frozen"}"#;
+    let manifest = access.publish_bytes(
+        &context,
+        &base_request,
+        "context-manifest",
+        "application/vnd.milkdrift.context-manifest.v2+json",
+        manifest_bytes,
+        limits(),
+    )?;
+    let request = request()?.with_context_manifest(manifest)?;
+    let workspace = access.materialize(
+        &context,
+        &request,
+        &[InputMaterialization::new(
+            milkdrift_capability::CONTEXT_MANIFEST_INPUT_NAME,
+            "context/manifest.json",
+        )?],
+        limits(),
+    )?;
+    let path = workspace
+        .input_path(milkdrift_capability::CONTEXT_MANIFEST_INPUT_NAME)
+        .ok_or("missing context manifest path")?;
+    assert_eq!(fs::read(path)?, manifest_bytes);
     Ok(())
 }
 

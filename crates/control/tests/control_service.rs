@@ -308,7 +308,7 @@ fn reviewer_proposal(
     let context_manifest = ArtifactReference::new(
         "artifact:controller-context",
         "a".repeat(64),
-        Some("application/vnd.milkdrift.context-manifest.v1+json".to_owned()),
+        Some("application/vnd.milkdrift.context-manifest.v2+json".to_owned()),
         Some(512),
     )?;
     let response_artifact = ArtifactReference::new(

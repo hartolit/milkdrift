@@ -91,7 +91,7 @@ fn context_manifest_has_exact_golden_bytes_and_verified_digest() -> TestResult {
     let bytes = document.to_canonical_json()?;
     assert_eq!(
         bytes,
-        include_bytes!("fixtures/context-manifest-v1.json").trim_ascii_end()
+        include_bytes!("fixtures/context-manifest-v2.json").trim_ascii_end()
     );
     assert_eq!(ContextManifestDocument::from_json(&bytes)?, document);
     let mut tampered: serde_json::Value = serde_json::from_slice(&bytes)?;

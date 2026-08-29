@@ -28,9 +28,9 @@ pub use identity::{
     ProviderProfileRef, SchemaId, TrustZone,
 };
 pub use invocation::{
-    ArtifactReference, CancellationAcknowledgement, CancellationRequest, ErrorClass,
-    InputReference, InvocationEvent, InvocationEventKind, InvocationFailure, InvocationRequest,
-    InvocationTerminal, InvocationValueReference, MAX_DURABLE_REFERENCE_BYTES, TerminalStatus,
-    UsageObservation,
+    ArtifactReference, CONTEXT_ITEM_INPUT_PREFIX, CONTEXT_MANIFEST_INPUT_NAME,
+    CancellationAcknowledgement, CancellationRequest, ErrorClass, InputReference, InvocationEvent,
+    InvocationEventKind, InvocationFailure, InvocationRequest, InvocationTerminal,
+    InvocationValueReference, MAX_DURABLE_REFERENCE_BYTES, TerminalStatus, UsageObservation,
 };
 pub use resolved::ResolvedCapabilitySnapshot;

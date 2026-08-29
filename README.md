@@ -160,10 +160,10 @@ A minimal revision is constructed through a validated mutation batch; see the cr
 - `crates/control-client`: authenticated typed HTTP queries, exact command submission, bounded artifact ranges, and resumable SSE.
 - `crates/capability-host`: live adapter generations, resolution, admission, cancellation, health, drain, and shutdown.
 - `crates/blueprint`: immutable workflow definitions, fingerprints, and revision transactions.
-- `crates/model`: provider-neutral model task/response and exact causal-context manifest contracts.
+- `crates/model`: provider-neutral model task/response and exact schema-v2 causal-context manifest contracts.
 - `crates/workspace`: scoped immutable values, branch lineage, artifact metadata, and budgets.
 - `crates/persistence`: versioned events and narrow journal/revision/snapshot/workspace/artifact ports.
-- `crates/runtime`: commands, pure projections, scheduling, execution ownership, recovery, and reconciliation.
+- `crates/runtime`: commands, pure projections, scheduling, execution ownership, recovery, reconciliation, and authoritative causal-context discovery/materialization.
 - `adapters/redb-store`: transactional local redb storage and content-addressed artifact bytes.
 - `adapters/local-process`: versioned safe-argv profiles and the production local process adapter.
 - `adapters/model-provider`: bounded HTTP endpoint profiles plus OpenAI-compatible and native Anthropic mappings.

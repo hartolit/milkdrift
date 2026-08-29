@@ -8,8 +8,8 @@ use milkdrift_capability::{
 };
 
 use crate::{
-    BlueprintId, Condition, FieldId, NodeId, PathSelector, PortId, RevisionId, TaskContextPolicy,
-    WorkflowId,
+    BlueprintId, Condition, ContextSemanticRole, FieldId, NodeId, PathSelector, PortId, RevisionId,
+    TaskContextPolicy, WorkflowId,
 };
 
 pub(crate) const MAX_NODES: usize = 1_024;
@@ -1000,6 +1000,8 @@ pub enum TerminalOutcome {
 pub struct TaskConfig {
     requirement: CapabilityRequirement,
     context_policy: TaskContextPolicy,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    output_context_roles: BTreeSet<ContextSemanticRole>,
 }
 
 #[derive(Deserialize)]
@@ -1007,6 +1009,8 @@ pub struct TaskConfig {
 struct TaskConfigWire {
     requirement: CapabilityRequirement,
     context_policy: TaskContextPolicy,
+    #[serde(default)]
+    output_context_roles: BTreeSet<ContextSemanticRole>,
 }
 
 impl<'de> Deserialize<'de> for TaskConfig {
@@ -1015,7 +1019,9 @@ impl<'de> Deserialize<'de> for TaskConfig {
         D: serde::Deserializer<'de>,
     {
         let wire = TaskConfigWire::deserialize(deserializer)?;
-        Self::new(wire.requirement, wire.context_policy).map_err(serde::de::Error::custom)
+        Self::new(wire.requirement, wire.context_policy)
+            .and_then(|config| config.with_output_context_roles(wire.output_context_roles))
+            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -1032,7 +1038,23 @@ impl TaskConfig {
         Ok(Self {
             requirement,
             context_policy,
+            output_context_roles: BTreeSet::new(),
         })
+    }
+
+    /// Declares the canonical semantic roles of this task's published outputs.
+    pub fn with_output_context_roles(
+        mut self,
+        roles: BTreeSet<ContextSemanticRole>,
+    ) -> Result<Self, ModelError> {
+        if roles.len() > 256 {
+            return Err(ModelError::new(
+                "task.output_context_roles",
+                "at most 256 output context roles are supported",
+            ));
+        }
+        self.output_context_roles = roles;
+        Ok(self)
     }
 
     /// Constructs a task using the deliberate v2 direct-input-only default policy.
@@ -1050,6 +1072,12 @@ impl TaskConfig {
     #[must_use]
     pub const fn context_policy(&self) -> &TaskContextPolicy {
         &self.context_policy
+    }
+
+    /// Canonical semantic roles attached to every output occurrence of this task.
+    #[must_use]
+    pub const fn output_context_roles(&self) -> &BTreeSet<ContextSemanticRole> {
+        &self.output_context_roles
     }
 }
 

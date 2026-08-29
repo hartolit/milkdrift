@@ -91,7 +91,7 @@ Every route is authenticated and authority-filtered. List queries constrain or f
 | `GET /v1/runs?limit=&cursor=&state=&workflow=` | Stable bounded compact-run page. |
 | `GET /v1/runs/{run}` | Compact current run status and retained execution frontier. |
 | `GET /v1/runs/{run}/nodes/{execution}` | One retained node execution. |
-| `GET /v1/runs/{run}/attempts/{attempt}` | One retained latest attempt, including exact capability/context-manifest provenance when present. |
+| `GET /v1/runs/{run}/attempts/{attempt}` | One exact current or historical attempt; journal paging supplies older attempts without retaining lifetime history in the compact run model. Includes capability/provider/peer linkage and separately authorized context-manifest detail when present. |
 | `GET /v1/runs/{run}/timeline?limit=&cursor=` | Paged external timeline projection with exact durable sequence anchors. |
 | `GET /v1/runs/{run}/proposals?limit=&cursor=` | Bounded proposal identities/statuses discovered from the durable command ledger. |
 | `GET /v1/runs/{run}/proposals/{proposal}?revision={revision}` | Exact status from `milkdrift-control`. |
@@ -112,7 +112,9 @@ Artifact metadata and content are separately authorized against the exact immuta
 
 External timeline entries use the stable categories `lifecycle`, `execution`, `progress`, `artifact`, `coordination`, `authority`, `recovery`, `reconciliation`, and `uncertainty`. An entry carries the exact durable sequence, timestamp, bounded actor and run/node/attempt/revision references, stable summary, and bounded structured detail. It is deliberately not an internal `RunEventKind` document.
 
-Run models carry aggregate sequence, stable lifecycle, optional terminal outcome, workflow/revision/digest, a compact retained node frontier, and unresolved-uncertainty count. Node and attempt models carry immutable execution/revision/attempt anchors, current state, exact resolved capability, optional context-manifest artifact metadata, terminal summary, and uncertainty. Complete lifetime history remains the paged journal-backed timeline.
+Run models carry aggregate sequence, stable lifecycle, optional terminal outcome, workflow/revision/digest, a compact retained node frontier, and unresolved-uncertainty count. Node models retain the latest attempt for compact status, while the exact-attempt route pages authoritative history for an older identity. Attempt models carry immutable attempt state, exact capability/descriptor/provider/peer linkage, optional context-manifest artifact metadata, terminal summary, and uncertainty.
+
+When a manifest exists, the daemon separately evaluates `read_artifact_content` for that exact restricted artifact. An allowed read verifies its schema, digest, size, and attempt binding, then returns a bounded context object containing the immutable task policy, selected causal/provenance metadata, stable omissions, totals, applied budget, and a truncation flag. A denial sets `context_access` to `denied` and returns neither policy nor entry/omission detail; `metadata_only` means only the compact manifest reference was disclosed. Artifact bytes remain available only through the separately authorized bounded range route. Complete lifetime history remains the paged journal-backed timeline.
 
 ## Cursors and SSE
 

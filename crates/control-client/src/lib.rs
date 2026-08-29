@@ -281,7 +281,7 @@ impl ControlClient {
         .await
     }
 
-    /// Reads one exact retained attempt from a current run projection.
+    /// Reads one exact current or historical attempt with authorized context provenance.
     pub async fn attempt(
         &self,
         run: &str,

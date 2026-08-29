@@ -13,18 +13,18 @@ use milkdrift_capability::{
     BoundedJson, CapabilityRequirement, InvocationValueReference, OperationId,
 };
 use milkdrift_model::{
-    AuthorityFact, ContextInclusionReason, ContextOmissionReason, ContextSemanticKind,
-    ContextSource,
+    AuthorityFact, ContextInclusionReason, ContextOmissionReason, ContextProducerFact,
+    ContextSemanticKind, ContextSource,
 };
 use milkdrift_persistence::{ArtifactStore, AttemptId, NodeExecutionId};
 use milkdrift_redb_store::RedbStore;
 use milkdrift_runtime::{
     CausalContextBuilder, ContextBuildIdentity, ContextBuildRequest, ContextCandidate,
-    persist_context_manifest,
+    ContextCandidateAvailability, persist_context_manifest,
 };
 use milkdrift_workspace::{
-    ArtifactId, ArtifactSensitivity, RunId, ScopeId, ScopeReference, WorkspaceBudget,
-    WorkspaceScope, WorkspaceUsage,
+    ArtifactId, ArtifactSensitivity, ContentDigest, RunId, ScopeId, ScopeReference,
+    WorkspaceBudget, WorkspaceScope, WorkspaceUsage,
 };
 use serde_json::json;
 
@@ -142,12 +142,22 @@ fn candidate(
                 event_sequence: None,
             }
         }),
+        content_digest: ContentDigest::for_bytes(name.as_bytes()),
+        source_revision: serde_json::from_str(
+            "\"rev_0000000000000000000000000000000000000000000000000000000000000000\"",
+        )?,
+        execution: Some(NodeExecutionId::new(format!("execution-{name}"))?),
+        attempt: Some(AttemptId::new(format!("attempt-{name}"))?),
+        source_sequence: None,
+        occurred_at_ms: None,
+        causal_distance: None,
+        producer: ContextProducerFact::default(),
         node,
         roles: BTreeSet::new(),
         scope: None,
         exposed_across_scope: false,
         required: false,
-        available: true,
+        availability: ContextCandidateAvailability::Available,
         selected_bytes: bytes,
         selected_artifact_bytes: 0,
         estimated_model_input_units: Some(bytes),
@@ -234,13 +244,13 @@ fn branch_siblings_are_omitted_until_explicitly_exposed() -> TestResult {
 
 #[test]
 fn exact_budget_boundary_and_required_fail_closed_are_stable() -> TestResult {
-    let policy = policy(ContextBudget::new(1, 10, 1, Some(10))?)?;
-    let revision = revision(policy.clone())?;
+    let base_policy = policy(ContextBudget::new(1, 10, 1, Some(10))?)?;
+    let base_revision = revision(base_policy.clone())?;
     let exact = candidate("prompt", ContextSemanticKind::DirectInput, None, 10)?;
     let manifest = CausalContextBuilder::build(ContextBuildRequest {
-        identity: identity(&revision)?,
-        semantic: revision.semantic(),
-        policy: &policy,
+        identity: identity(&base_revision)?,
+        semantic: base_revision.semantic(),
+        policy: &base_policy,
         visible_scopes: BTreeSet::new(),
         candidates: vec![exact],
     })?;
@@ -248,12 +258,12 @@ fn exact_budget_boundary_and_required_fail_closed_are_stable() -> TestResult {
 
     let mut missing = candidate("required", ContextSemanticKind::DirectInput, None, 1)?;
     missing.required = true;
-    missing.available = false;
+    missing.availability = ContextCandidateAvailability::MissingOrCorrupt;
     assert!(
         CausalContextBuilder::build(ContextBuildRequest {
-            identity: identity(&revision)?,
-            semantic: revision.semantic(),
-            policy: &policy,
+            identity: identity(&base_revision)?,
+            semantic: base_revision.semantic(),
+            policy: &base_policy,
             visible_scopes: BTreeSet::new(),
             candidates: vec![missing],
         })
@@ -270,13 +280,71 @@ fn exact_budget_boundary_and_required_fail_closed_are_stable() -> TestResult {
     };
     assert!(
         CausalContextBuilder::build(ContextBuildRequest {
-            identity: identity(&revision)?,
-            semantic: revision.semantic(),
-            policy: &policy,
+            identity: identity(&base_revision)?,
+            semantic: base_revision.semantic(),
+            policy: &base_policy,
             visible_scopes: BTreeSet::new(),
             candidates: vec![denied],
         })
         .is_err()
+    );
+
+    let unit_policy = policy(ContextBudget::new(1, 10, 1, Some(9))?)?;
+    let unit_revision = revision(unit_policy.clone())?;
+    let mut over_units = candidate(
+        "provider-observation",
+        ContextSemanticKind::DirectInput,
+        None,
+        1,
+    )?;
+    over_units.required = true;
+    over_units.estimated_model_input_units = Some(10);
+    assert!(matches!(
+        CausalContextBuilder::build(ContextBuildRequest {
+            identity: identity(&unit_revision)?,
+            semantic: unit_revision.semantic(),
+            policy: &unit_policy,
+            visible_scopes: BTreeSet::new(),
+            candidates: vec![over_units],
+        }),
+        Err(milkdrift_runtime::ContextBuildError::RequiredBudget(
+            "model-input-unit"
+        ))
+    ));
+
+    let zero_budget =
+        ContextBudget::new(2, 10, 1, None)?.with_discovery_limits(16, 1, 10, 8, 32_768)?;
+    let zero_policy = policy(zero_budget)?;
+    let zero_revision = revision(zero_policy.clone())?;
+    let mut first = candidate("zero-a", ContextSemanticKind::DirectInput, None, 0)?;
+    let mut second = candidate("zero-b", ContextSemanticKind::DirectInput, None, 0)?;
+    for (candidate, identity) in [(&mut first, "zero-a"), (&mut second, "zero-b")] {
+        candidate.source = Some(ContextSource::DirectInput {
+            name: identity.to_owned(),
+            reference: InvocationValueReference::Artifact {
+                reference: milkdrift_capability::ArtifactReference::new(
+                    identity,
+                    ContentDigest::for_bytes(&[]).to_hex(),
+                    Some("application/octet-stream".to_owned()),
+                    Some(0),
+                )?,
+            },
+        });
+        candidate.content_digest = ContentDigest::for_bytes(&[]);
+        candidate.estimated_model_input_units = Some(0);
+    }
+    let zero_manifest = CausalContextBuilder::build(ContextBuildRequest {
+        identity: identity(&zero_revision)?,
+        semantic: zero_revision.semantic(),
+        policy: &zero_policy,
+        visible_scopes: BTreeSet::new(),
+        candidates: vec![second, first],
+    })?;
+    assert_eq!(zero_manifest.totals().artifacts, 1);
+    assert!(zero_manifest.entries()[0].selected_artifact());
+    assert_eq!(
+        zero_manifest.omissions()[0].reason,
+        ContextOmissionReason::ArtifactItemBudget
     );
     Ok(())
 }

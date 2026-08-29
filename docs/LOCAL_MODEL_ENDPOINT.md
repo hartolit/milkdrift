@@ -22,9 +22,13 @@ the host secret boundary; never place a token in the URL.
 
 The adapter uses chat-completions semantics. Tools, image parts, developer roles, reasoning
 controls, structured output, and streaming must be advertised by the exact profile or the request
-is rejected before connection. For Fresh requests, it verifies the persisted causal manifest and
-sends the exact canonical manifest as the first system context block; artifact references are not
-silently dereferenced unless they are also explicit supported model-task content parts. Generic
-file/artifact parts, explicit continuation artifacts, and provider-managed sessions currently have
-no OpenAI-compatible mapping. Cancellation signals cause the response reader to close at its next
-observable read boundary; the acknowledgement truthfully does not claim provider-side termination.
+is rejected before connection. For Fresh requests, it verifies the persisted schema-v2 causal
+manifest against the exact attempt, sends the canonical manifest as the first system context block,
+then reads only the manifest-selected reserved inputs. Selected text/JSON becomes explicitly
+delimited untrusted user evidence; supported selected images remain image parts. Every selected
+input is checked against its manifest digest, size, and media facts, extra reserved inputs are
+rejected, and unsupported generic binary evidence fails before connection. This path does not
+dereference arbitrary model-task references or unselected artifacts. Generic file parts, explicit
+continuation artifacts, and provider-managed sessions currently have no OpenAI-compatible mapping.
+Cancellation signals cause the response reader to close at its next observable read boundary; the
+acknowledgement truthfully does not claim provider-side termination.

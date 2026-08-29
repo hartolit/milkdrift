@@ -8,8 +8,8 @@ use milkdrift_blueprint::{
     EdgeId, EdgeKind, FieldId, ForkConfig, InterfaceField, JoinConfig, JoinPolicy, Mutation,
     MutationBatch, MutationError, Node, NodeId, NodeKind, PathSegment, PathSelector,
     PinnedSubworkflow, PortId, ReducerConfig, ReducerStrategy, RepeatBudget, RepeatConfig,
-    RepeatTermination, RevisionId, SchemaRef, TerminalOutcome, WorkflowId, WorkflowInterface,
-    node_configuration_fingerprint, node_dependency_fingerprint,
+    RepeatTermination, RevisionId, SchemaRef, TaskContextPolicy, TerminalOutcome, WorkflowId,
+    WorkflowInterface, node_configuration_fingerprint, node_dependency_fingerprint,
 };
 use milkdrift_capability::{
     CapabilityRequirement, MAX_DURABLE_REFERENCE_BYTES, OperationId, SchemaId,
@@ -254,6 +254,18 @@ fn task_context_policy_is_required_and_unknown_legacy_fields_are_rejected() -> T
         .ok_or("task kind must encode as an object")?
         .insert("operation".to_owned(), serde_json::json!("tool.execute"));
     assert!(serde_json::from_value::<NodeKind>(wire).is_err());
+
+    let mut hostile = serde_json::to_value(TaskContextPolicy::default())?;
+    hostile["ancestor_depth"] = serde_json::json!(0);
+    assert!(serde_json::from_value::<TaskContextPolicy>(hostile).is_err());
+
+    let mut hostile = serde_json::to_value(TaskContextPolicy::default())?;
+    hostile["explicit_evidence"] = serde_json::json!([""]);
+    assert!(serde_json::from_value::<TaskContextPolicy>(hostile).is_err());
+
+    let mut hostile = serde_json::to_value(TaskContextPolicy::default())?;
+    hostile["budget"]["max_candidate_records"] = serde_json::json!(0);
+    assert!(serde_json::from_value::<TaskContextPolicy>(hostile).is_err());
     Ok(())
 }
 

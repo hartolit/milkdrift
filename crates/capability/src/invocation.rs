@@ -17,6 +17,10 @@ const MAX_INPUT_NAME: usize = 128;
 pub const MAX_DURABLE_REFERENCE_BYTES: usize = 1_024;
 const MAX_ARTIFACT_MEDIA_TYPE_BYTES: usize = 255;
 const MAX_EVENT_TEXT: usize = 4_096;
+/// Reserved request-input name for an exact durable context manifest.
+pub const CONTEXT_MANIFEST_INPUT_NAME: &str = "milkdrift.context_manifest";
+/// Prefix for ordinal-bound materialized items from a frozen context manifest.
+pub const CONTEXT_ITEM_INPUT_PREFIX: &str = "milkdrift.context.";
 
 /// Reference to an immutable artifact rather than its unbounded bytes.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -430,15 +434,50 @@ impl InvocationRequest {
         reference: ArtifactReference,
     ) -> Result<Self, ContractError> {
         reference.validate()?;
-        if reference.media_type() != Some("application/vnd.milkdrift.context-manifest.v1+json")
+        if reference.media_type() != Some("application/vnd.milkdrift.context-manifest.v2+json")
             || reference.size_bytes().is_none()
         {
             return Err(ContractError::InvalidContract(
-                "context manifest reference requires exact v1 media type and byte size".to_owned(),
+                "context manifest reference requires exact v2 media type and byte size".to_owned(),
             ));
         }
         self.context_manifest = Some(reference);
         Ok(self)
+    }
+
+    /// Binds the durable manifest and appends only its selected materialized inputs.
+    ///
+    /// Context inputs use a reserved name prefix so adapters can distinguish them
+    /// from workflow-declared task inputs without an implicit global file.
+    pub fn with_context_materialization(
+        mut self,
+        reference: ArtifactReference,
+        context_inputs: Vec<InputReference>,
+    ) -> Result<Self, ContractError> {
+        if self.inputs.len().saturating_add(context_inputs.len()) > MAX_INPUTS {
+            return Err(ContractError::Bounds {
+                location: "invocation.inputs".to_owned(),
+                reason: format!("at most {MAX_INPUTS} inputs are allowed"),
+            });
+        }
+        let mut names = self
+            .inputs
+            .iter()
+            .map(InputReference::name)
+            .collect::<std::collections::BTreeSet<_>>();
+        for input in &context_inputs {
+            input.validate()?;
+            if !input.name().starts_with(CONTEXT_ITEM_INPUT_PREFIX)
+                || input.name() == CONTEXT_MANIFEST_INPUT_NAME
+                || !names.insert(input.name())
+            {
+                return Err(ContractError::InvalidContract(
+                    "materialized context inputs require unique reserved names".to_owned(),
+                ));
+            }
+        }
+        self.inputs.extend(context_inputs);
+        self.with_context_manifest(reference)
     }
 
     /// Exact immutable context manifest bound to this request, when applicable.

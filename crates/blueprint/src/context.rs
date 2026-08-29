@@ -8,9 +8,10 @@ use crate::{ContentDigest, ModelError, NodeId};
 
 const MAX_SELECTORS: usize = 256;
 const MAX_SELECTOR_TEXT_BYTES: usize = 255;
+const MAX_EXACT_SOURCE_BYTES: usize = 1_024;
 const POLICY_JSON_LIMITS: JsonLimits = JsonLimits {
     maximum_depth: 16,
-    maximum_string_bytes: MAX_SELECTOR_TEXT_BYTES,
+    maximum_string_bytes: MAX_EXACT_SOURCE_BYTES,
     maximum_key_bytes: 128,
     maximum_container_items: MAX_SELECTORS,
 };
@@ -31,6 +32,14 @@ pub enum ContextSemanticRole {
     Decision,
     /// Failure or uncertainty evidence.
     FailureEvidence,
+    /// Product or workflow requirement.
+    Requirement,
+    /// Implementation or source change.
+    Implementation,
+    /// Verification result, successful or failed.
+    Verification,
+    /// Reviewer or controller result.
+    Review,
 }
 
 /// Context categories that can be explicitly included or excluded.
@@ -100,7 +109,7 @@ pub enum ContextProvenanceClass {
 }
 
 /// Declarative artifact metadata filter. Empty sets are wildcards.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextArtifactSelector {
     names: BTreeSet<String>,
@@ -108,6 +117,33 @@ pub struct ContextArtifactSelector {
     sensitivities: BTreeSet<ContextArtifactSensitivity>,
     retentions: BTreeSet<ContextArtifactRetention>,
     provenance: BTreeSet<ContextProvenanceClass>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextArtifactSelectorWire {
+    names: BTreeSet<String>,
+    media_types: BTreeSet<String>,
+    sensitivities: BTreeSet<ContextArtifactSensitivity>,
+    retentions: BTreeSet<ContextArtifactRetention>,
+    provenance: BTreeSet<ContextProvenanceClass>,
+}
+
+impl<'de> Deserialize<'de> for ContextArtifactSelector {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = ContextArtifactSelectorWire::deserialize(deserializer)?;
+        Self::new(
+            wire.names,
+            wire.media_types,
+            wire.sensitivities,
+            wire.retentions,
+            wire.provenance,
+        )
+        .map_err(serde::de::Error::custom)
+    }
 }
 
 impl ContextArtifactSelector {
@@ -171,7 +207,7 @@ impl ContextArtifactSelector {
 }
 
 /// Hard manifest-selection budgets checked before content is loaded.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextBudget {
     /// Maximum selected entries.
@@ -182,6 +218,77 @@ pub struct ContextBudget {
     pub max_artifact_bytes: u64,
     /// Optional provider-neutral model-input-unit estimate.
     pub max_model_input_units: Option<u64>,
+    /// Maximum durable journal records examined while discovering candidates.
+    #[serde(
+        default = "default_max_candidate_records",
+        skip_serializing_if = "is_default_max_candidate_records"
+    )]
+    pub max_candidate_records: u32,
+    /// Maximum selected artifacts, independent of aggregate artifact bytes.
+    #[serde(
+        default = "default_max_artifacts",
+        skip_serializing_if = "is_default_max_artifacts"
+    )]
+    pub max_artifacts: u32,
+    /// Maximum materialized bytes for one selected item.
+    #[serde(
+        default = "default_max_per_item_bytes",
+        skip_serializing_if = "is_default_max_per_item_bytes"
+    )]
+    pub max_per_item_bytes: u64,
+    /// Maximum bounded historical event summaries admitted as candidates.
+    #[serde(
+        default = "default_max_event_summaries",
+        skip_serializing_if = "is_default_max_event_summaries"
+    )]
+    pub max_event_summaries: u32,
+    /// Maximum canonical bytes in the frozen manifest document.
+    #[serde(
+        default = "default_max_manifest_bytes",
+        skip_serializing_if = "is_default_max_manifest_bytes"
+    )]
+    pub max_manifest_bytes: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextBudgetWire {
+    max_items: u32,
+    max_bytes: u64,
+    max_artifact_bytes: u64,
+    max_model_input_units: Option<u64>,
+    #[serde(default = "default_max_candidate_records")]
+    max_candidate_records: u32,
+    #[serde(default = "default_max_artifacts")]
+    max_artifacts: u32,
+    #[serde(default = "default_max_per_item_bytes")]
+    max_per_item_bytes: u64,
+    #[serde(default = "default_max_event_summaries")]
+    max_event_summaries: u32,
+    #[serde(default = "default_max_manifest_bytes")]
+    max_manifest_bytes: u64,
+}
+
+impl<'de> Deserialize<'de> for ContextBudget {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = ContextBudgetWire::deserialize(deserializer)?;
+        let budget = Self {
+            max_items: wire.max_items,
+            max_bytes: wire.max_bytes,
+            max_artifact_bytes: wire.max_artifact_bytes,
+            max_model_input_units: wire.max_model_input_units,
+            max_candidate_records: wire.max_candidate_records,
+            max_artifacts: wire.max_artifacts,
+            max_per_item_bytes: wire.max_per_item_bytes,
+            max_event_summaries: wire.max_event_summaries,
+            max_manifest_bytes: wire.max_manifest_bytes,
+        };
+        budget.validate().map_err(serde::de::Error::custom)?;
+        Ok(budget)
+    }
 }
 
 impl ContextBudget {
@@ -208,8 +315,91 @@ impl ContextBudget {
             max_bytes,
             max_artifact_bytes,
             max_model_input_units,
+            max_artifacts: default_max_artifacts().min(max_items),
+            ..Self::default()
         })
     }
+
+    /// Replaces discovery, per-item, artifact-count, event, and manifest bounds.
+    pub fn with_discovery_limits(
+        mut self,
+        max_candidate_records: u32,
+        max_artifacts: u32,
+        max_per_item_bytes: u64,
+        max_event_summaries: u32,
+        max_manifest_bytes: u64,
+    ) -> Result<Self, ModelError> {
+        self.max_candidate_records = max_candidate_records;
+        self.max_artifacts = max_artifacts;
+        self.max_per_item_bytes = max_per_item_bytes;
+        self.max_event_summaries = max_event_summaries;
+        self.max_manifest_bytes = max_manifest_bytes;
+        self.validate()?;
+        Ok(self)
+    }
+
+    fn validate(&self) -> Result<(), ModelError> {
+        if self.max_items == 0
+            || self.max_items > 65_536
+            || self.max_bytes == 0
+            || self.max_artifact_bytes == 0
+            || self.max_model_input_units == Some(0)
+            || self.max_candidate_records == 0
+            || self.max_candidate_records > 65_536
+            || self.max_artifacts == 0
+            || self.max_artifacts > self.max_items
+            || self.max_per_item_bytes == 0
+            || self.max_event_summaries > self.max_candidate_records
+            || self.max_manifest_bytes == 0
+            || self.max_manifest_bytes > 2_097_152
+        {
+            return Err(ModelError::new(
+                "context.budget",
+                "invalid item, byte, discovery, artifact, event-summary, or manifest bound",
+            ));
+        }
+        Ok(())
+    }
+}
+
+const fn default_max_candidate_records() -> u32 {
+    4_096
+}
+
+const fn is_default_max_candidate_records(value: &u32) -> bool {
+    *value == default_max_candidate_records()
+}
+
+const fn default_max_artifacts() -> u32 {
+    32
+}
+
+const fn is_default_max_artifacts(value: &u32) -> bool {
+    *value == default_max_artifacts()
+}
+
+const fn default_max_per_item_bytes() -> u64 {
+    1_048_576
+}
+
+const fn is_default_max_per_item_bytes(value: &u64) -> bool {
+    *value == default_max_per_item_bytes()
+}
+
+const fn default_max_event_summaries() -> u32 {
+    128
+}
+
+const fn is_default_max_event_summaries(value: &u32) -> bool {
+    *value == default_max_event_summaries()
+}
+
+const fn default_max_manifest_bytes() -> u64 {
+    524_288
+}
+
+const fn is_default_max_manifest_bytes(value: &u64) -> bool {
+    *value == default_max_manifest_bytes()
 }
 
 impl Default for ContextBudget {
@@ -219,6 +409,11 @@ impl Default for ContextBudget {
             max_bytes: 262_144,
             max_artifact_bytes: 16_777_216,
             max_model_input_units: None,
+            max_candidate_records: 4_096,
+            max_artifacts: 32,
+            max_per_item_bytes: 1_048_576,
+            max_event_summaries: 128,
+            max_manifest_bytes: 524_288,
         }
     }
 }
@@ -257,12 +452,14 @@ pub enum ContextSessionPolicy {
 }
 
 /// Immutable, declarative context policy owned by a task definition.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskContextPolicy {
     include_direct_inputs: bool,
     ancestor_depth: Option<u16>,
     selected_nodes: BTreeSet<NodeId>,
+    #[serde(flatten)]
+    exact_sources: Box<ExactContextSources>,
     selected_roles: BTreeSet<ContextSemanticRole>,
     include_categories: BTreeSet<ContextCategory>,
     exclude_categories: BTreeSet<ContextCategory>,
@@ -274,12 +471,76 @@ pub struct TaskContextPolicy {
     fail_closed: bool,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+struct ExactContextSources {
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    selected_executions: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    selected_workspace_values: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    explicit_evidence: BTreeSet<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TaskContextPolicyWire {
+    include_direct_inputs: bool,
+    ancestor_depth: Option<u16>,
+    selected_nodes: BTreeSet<NodeId>,
+    #[serde(default)]
+    selected_executions: BTreeSet<String>,
+    #[serde(default)]
+    selected_workspace_values: BTreeSet<String>,
+    #[serde(default)]
+    explicit_evidence: BTreeSet<String>,
+    selected_roles: BTreeSet<ContextSemanticRole>,
+    include_categories: BTreeSet<ContextCategory>,
+    exclude_categories: BTreeSet<ContextCategory>,
+    artifact_selector: Option<ContextArtifactSelector>,
+    budget: ContextBudget,
+    ordering: ContextOrdering,
+    truncation: ContextTruncation,
+    session: ContextSessionPolicy,
+    fail_closed: bool,
+}
+
+impl<'de> Deserialize<'de> for TaskContextPolicy {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = TaskContextPolicyWire::deserialize(deserializer)?;
+        let policy = Self {
+            include_direct_inputs: wire.include_direct_inputs,
+            ancestor_depth: wire.ancestor_depth,
+            selected_nodes: wire.selected_nodes,
+            exact_sources: Box::new(ExactContextSources {
+                selected_executions: wire.selected_executions,
+                selected_workspace_values: wire.selected_workspace_values,
+                explicit_evidence: wire.explicit_evidence,
+            }),
+            selected_roles: wire.selected_roles,
+            include_categories: wire.include_categories,
+            exclude_categories: wire.exclude_categories,
+            artifact_selector: wire.artifact_selector,
+            budget: wire.budget,
+            ordering: wire.ordering,
+            truncation: wire.truncation,
+            session: wire.session,
+            fail_closed: wire.fail_closed,
+        };
+        policy.validate().map_err(serde::de::Error::custom)?;
+        Ok(policy)
+    }
+}
+
 impl Default for TaskContextPolicy {
     fn default() -> Self {
         Self {
             include_direct_inputs: true,
             ancestor_depth: None,
             selected_nodes: BTreeSet::new(),
+            exact_sources: Box::default(),
             selected_roles: BTreeSet::new(),
             include_categories: BTreeSet::from([ContextCategory::DirectInput]),
             exclude_categories: BTreeSet::from([
@@ -315,43 +576,11 @@ impl TaskContextPolicy {
         session: ContextSessionPolicy,
         fail_closed: bool,
     ) -> Result<Self, ModelError> {
-        if ancestor_depth == Some(0) {
-            return Err(ModelError::new(
-                "context.ancestor_depth",
-                "maximum ancestor depth must be nonzero when supplied",
-            ));
-        }
-        if selected_nodes.len() > MAX_SELECTORS || selected_roles.len() > MAX_SELECTORS {
-            return Err(ModelError::new(
-                "context.selectors",
-                "at most 256 exact nodes and roles are supported",
-            ));
-        }
-        if include_categories.len() > MAX_SELECTORS || exclude_categories.len() > MAX_SELECTORS {
-            return Err(ModelError::new(
-                "context.categories",
-                "category selector cardinality exceeds the supported bound",
-            ));
-        }
-        if include_categories
-            .iter()
-            .any(|category| exclude_categories.contains(category))
-        {
-            return Err(ModelError::new(
-                "context.categories",
-                "a category cannot be both included and excluded",
-            ));
-        }
-        ContextBudget::new(
-            budget.max_items,
-            budget.max_bytes,
-            budget.max_artifact_bytes,
-            budget.max_model_input_units,
-        )?;
-        Ok(Self {
+        let policy = Self {
             include_direct_inputs,
             ancestor_depth,
             selected_nodes,
+            exact_sources: Box::default(),
             selected_roles,
             include_categories,
             exclude_categories,
@@ -361,7 +590,9 @@ impl TaskContextPolicy {
             truncation,
             session,
             fail_closed,
-        })
+        };
+        policy.validate()?;
+        Ok(policy)
     }
 
     /// Whether exact declared task inputs are eligible.
@@ -380,6 +611,45 @@ impl TaskContextPolicy {
     #[must_use]
     pub const fn selected_nodes(&self) -> &BTreeSet<NodeId> {
         &self.selected_nodes
+    }
+
+    /// Exact execution-occurrence identities selected in addition to semantic nodes.
+    #[must_use]
+    pub const fn selected_executions(&self) -> &BTreeSet<String> {
+        &self.exact_sources.selected_executions
+    }
+
+    /// Exact canonical workspace-value references selected by policy.
+    #[must_use]
+    pub const fn selected_workspace_values(&self) -> &BTreeSet<String> {
+        &self.exact_sources.selected_workspace_values
+    }
+
+    /// Explicit bounded durable evidence identities supplied by workflow/operator policy.
+    #[must_use]
+    pub const fn explicit_evidence(&self) -> &BTreeSet<String> {
+        &self.exact_sources.explicit_evidence
+    }
+
+    /// Adds exact execution, workspace-value, and evidence selectors.
+    pub fn with_exact_sources(
+        mut self,
+        selected_executions: BTreeSet<String>,
+        selected_workspace_values: BTreeSet<String>,
+        explicit_evidence: BTreeSet<String>,
+    ) -> Result<Self, ModelError> {
+        validate_exact_source_set("context.selected_executions", &selected_executions)?;
+        validate_exact_source_set(
+            "context.selected_workspace_values",
+            &selected_workspace_values,
+        )?;
+        validate_exact_source_set("context.explicit_evidence", &explicit_evidence)?;
+        self.exact_sources = Box::new(ExactContextSources {
+            selected_executions,
+            selected_workspace_values,
+            explicit_evidence,
+        });
+        Ok(self)
     }
 
     /// Explicitly selected known semantic roles.
@@ -445,6 +715,52 @@ impl TaskContextPolicy {
         hasher.update(&bytes);
         Ok(ContentDigest::from_hash(hasher.finalize()))
     }
+
+    fn validate(&self) -> Result<(), ModelError> {
+        if self.ancestor_depth == Some(0) {
+            return Err(ModelError::new(
+                "context.ancestor_depth",
+                "maximum ancestor depth must be nonzero when supplied",
+            ));
+        }
+        if self.selected_nodes.len() > MAX_SELECTORS || self.selected_roles.len() > MAX_SELECTORS {
+            return Err(ModelError::new(
+                "context.selectors",
+                "at most 256 exact nodes and roles are supported",
+            ));
+        }
+        validate_exact_source_set(
+            "context.selected_executions",
+            &self.exact_sources.selected_executions,
+        )?;
+        validate_exact_source_set(
+            "context.selected_workspace_values",
+            &self.exact_sources.selected_workspace_values,
+        )?;
+        validate_exact_source_set(
+            "context.explicit_evidence",
+            &self.exact_sources.explicit_evidence,
+        )?;
+        if self.include_categories.len() > MAX_SELECTORS
+            || self.exclude_categories.len() > MAX_SELECTORS
+        {
+            return Err(ModelError::new(
+                "context.categories",
+                "category selector cardinality exceeds the supported bound",
+            ));
+        }
+        if self
+            .include_categories
+            .iter()
+            .any(|category| self.exclude_categories.contains(category))
+        {
+            return Err(ModelError::new(
+                "context.categories",
+                "a category cannot be both included and excluded",
+            ));
+        }
+        self.budget.validate()
+    }
 }
 
 fn validate_text_set(location: &'static str, values: &BTreeSet<String>) -> Result<(), ModelError> {
@@ -456,6 +772,23 @@ fn validate_text_set(location: &'static str, values: &BTreeSet<String>) -> Resul
         return Err(ModelError::new(
             location,
             "selector values must contain 1..=255 bytes and at most 256 entries",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_exact_source_set(
+    location: &'static str,
+    values: &BTreeSet<String>,
+) -> Result<(), ModelError> {
+    if values.len() > MAX_SELECTORS
+        || values
+            .iter()
+            .any(|value| value.is_empty() || value.len() > MAX_EXACT_SOURCE_BYTES)
+    {
+        return Err(ModelError::new(
+            location,
+            "exact source values must contain 1..=1024 bytes and at most 256 entries",
         ));
     }
     Ok(())

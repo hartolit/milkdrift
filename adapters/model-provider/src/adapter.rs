@@ -22,10 +22,11 @@ use milkdrift_capability_host::{
     MaterializationLimits, SecretResolver,
 };
 use milkdrift_model::{
-    ContentPart, ContextManifestDocument, MAX_MODEL_OUTPUT_UNITS, MODEL_GENERATE_OPERATION,
-    MODEL_TASK_INPUT_NAME, ModelResponse, ModelResponseDocument, ModelTaskRequest,
-    ModelTaskRequestDocument, SessionSelection,
+    ContentPart, ContextManifest, ContextManifestDocument, ContextSource, MAX_MODEL_OUTPUT_UNITS,
+    MODEL_GENERATE_OPERATION, MODEL_TASK_INPUT_NAME, ModelResponse, ModelResponseDocument,
+    ModelTaskRequest, ModelTaskRequestDocument, SessionSelection,
 };
+use milkdrift_workspace::ContentDigest;
 use reqwest::header::{HeaderName, HeaderValue};
 use serde_json::json;
 
@@ -36,12 +37,44 @@ use crate::{
     profile::AuthMode,
 };
 
-const CONTEXT_MEDIA: &str = "application/vnd.milkdrift.context-manifest.v1+json";
+const CONTEXT_MEDIA: &str = "application/vnd.milkdrift.context-manifest.v2+json";
 const RESPONSE_MEDIA: &str = "application/vnd.milkdrift.model-response+json;version=1";
 const TOOL_CALLS_MEDIA: &str = "application/vnd.milkdrift.model-tool-calls+json;version=1";
 const STRUCTURED_MEDIA: &str = "application/vnd.milkdrift.model-structured-output+json;version=1";
 const PROVIDER_METADATA_MEDIA: &str =
     "application/vnd.milkdrift.model-provider-metadata+json;version=1";
+
+fn verify_context_bytes(
+    entry: &milkdrift_model::ContextManifestEntry,
+    bytes: &[u8],
+) -> Result<(), AdapterError> {
+    let expected_bytes = if entry.selected_artifact_bytes() > 0 {
+        entry.selected_artifact_bytes()
+    } else {
+        entry.selected_bytes()
+    };
+    if u64::try_from(bytes.len()) != Ok(expected_bytes)
+        || ContentDigest::for_bytes(bytes) != entry.content_digest()
+    {
+        return Err(AdapterError::rejected(
+            "selected context content contradicts the frozen manifest",
+        ));
+    }
+    Ok(())
+}
+
+/// Exact selected content after host-owned integrity verification.
+pub(crate) enum MaterializedContextPart {
+    Text {
+        label: String,
+        text: String,
+    },
+    Image {
+        label: String,
+        media_type: String,
+        bytes: Vec<u8>,
+    },
+}
 
 /// One synchronous host adapter for an exact endpoint-profile revision.
 pub struct ModelEndpointAdapter {
@@ -158,6 +191,7 @@ impl ModelEndpointAdapter {
         }
         let manifest_text = std::str::from_utf8(&manifest_bytes)
             .map_err(|_| AdapterError::rejected("context manifest is not canonical UTF-8"))?;
+        let context_parts = self.load_context_parts(context, request, manifest.body(), limits)?;
         let task = self.load_task(context, request, limits)?;
         self.negotiate(&task)?;
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -177,6 +211,7 @@ impl ModelEndpointAdapter {
                 request,
                 &task,
                 manifest_text,
+                &context_parts,
                 None,
                 &cancelled,
                 reporter,
@@ -196,6 +231,7 @@ impl ModelEndpointAdapter {
                             request,
                             &task,
                             manifest_text,
+                            &context_parts,
                             Some(bytes),
                             &cancelled,
                             reporter,
@@ -218,6 +254,7 @@ impl ModelEndpointAdapter {
         request: &InvocationRequest,
         task: &ModelTaskRequest,
         context_manifest: &str,
+        context_parts: &[MaterializedContextPart],
         secret: Option<&[u8]>,
         cancelled: &AtomicBool,
         reporter: &dyn AdapterReporter,
@@ -233,6 +270,7 @@ impl ModelEndpointAdapter {
                 task,
                 self.profile.model(),
                 context_manifest,
+                context_parts,
                 self.profile.provider_options(),
                 load,
             ),
@@ -240,6 +278,7 @@ impl ModelEndpointAdapter {
                 task,
                 self.profile.model(),
                 context_manifest,
+                context_parts,
                 self.profile.provider_options(),
                 load,
             ),
@@ -358,6 +397,98 @@ impl ModelEndpointAdapter {
             }
         };
         self.publish_response(context, request, reporter, response, sequence, started)
+    }
+
+    fn load_context_parts(
+        &self,
+        context: &milkdrift_capability_host::AdapterExecutionContext,
+        request: &InvocationRequest,
+        manifest: &ContextManifest,
+        limits: MaterializationLimits,
+    ) -> Result<Vec<MaterializedContextPart>, AdapterError> {
+        let mut expected = BTreeSet::new();
+        let mut parts = Vec::new();
+        for entry in manifest.entries() {
+            if let ContextSource::DirectInput { name, reference } = entry.source() {
+                let input = request
+                    .inputs()
+                    .iter()
+                    .find(|input| input.name() == name && input.value() == reference)
+                    .ok_or_else(|| {
+                        AdapterError::rejected(
+                            "direct context input contradicts the frozen manifest",
+                        )
+                    })?;
+                let bytes = self
+                    .data
+                    .read_input_bytes(context, input, limits)
+                    .map_err(|_| AdapterError::rejected("direct context content is unavailable"))?;
+                verify_context_bytes(entry, &bytes)?;
+                continue;
+            }
+            let name = format!(
+                "{}{:04}",
+                milkdrift_capability::CONTEXT_ITEM_INPUT_PREFIX,
+                entry.ordinal()
+            );
+            expected.insert(name.clone());
+            let input = request
+                .inputs()
+                .iter()
+                .find(|input| input.name() == name)
+                .ok_or_else(|| AdapterError::rejected("selected context input is missing"))?;
+            let bytes = self
+                .data
+                .read_input_bytes(context, input, limits)
+                .map_err(|_| AdapterError::rejected("selected context content is unavailable"))?;
+            verify_context_bytes(entry, &bytes)?;
+            let media_type = match entry.source() {
+                ContextSource::Artifact { reference } => reference.media_type().as_str(),
+                ContextSource::DirectInput { .. }
+                | ContextSource::NodeExecution { .. }
+                | ContextSource::Event { .. }
+                | ContextSource::WorkspaceValue { .. } => "application/json",
+            };
+            let label = serde_json::to_string(&serde_json::json!({
+                "ordinal": entry.ordinal(),
+                "kind": entry.kind(),
+                "semantic_roles": entry.semantic_roles(),
+                "source": entry.source(),
+                "content_digest": entry.content_digest(),
+            }))
+            .map_err(|_| AdapterError::rejected("context provenance encoding failed"))?;
+            if media_type.starts_with("text/")
+                || media_type == "application/json"
+                || media_type.ends_with("+json")
+            {
+                let text = String::from_utf8(bytes).map_err(|_| {
+                    AdapterError::rejected("selected textual context is not valid UTF-8")
+                })?;
+                parts.push(MaterializedContextPart::Text { label, text });
+            } else if media_type.starts_with("image/") {
+                parts.push(MaterializedContextPart::Image {
+                    label,
+                    media_type: media_type.to_owned(),
+                    bytes,
+                });
+            } else {
+                return Err(AdapterError::rejected(
+                    "selected binary context has no safe provider mapping",
+                ));
+            }
+        }
+        if request.inputs().iter().any(|input| {
+            input
+                .name()
+                .starts_with(milkdrift_capability::CONTEXT_ITEM_INPUT_PREFIX)
+                && input.name() != milkdrift_model::CONTEXT_MANIFEST_INPUT_NAME
+                && !expected.contains(input.name())
+        }) {
+            return Err(AdapterError::rejected(
+                "invocation contains context outside the frozen manifest",
+            ));
+        }
+        Ok(parts)
     }
 
     fn publish_response(

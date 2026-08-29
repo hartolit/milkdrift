@@ -9,8 +9,8 @@ use milkdrift_blueprint::{
 };
 use milkdrift_model::{
     AuthorityFact, ContextEvidenceReference, ContextInclusionReason, ContextManifest,
-    ContextManifestEntry, ContextOmission, ContextOmissionReason, ContextSemanticKind,
-    ContextSource, ContextTotals, ModelContractError,
+    ContextManifestEntry, ContextOmission, ContextOmissionReason, ContextProducerFact,
+    ContextSemanticKind, ContextSource, ContextTotals, ModelContractError,
 };
 use milkdrift_persistence::{AttemptId, NodeExecutionId};
 use milkdrift_workspace::{
@@ -20,6 +20,13 @@ use milkdrift_workspace::{
     WorkspaceUsage,
 };
 use thiserror::Error;
+
+mod source;
+
+pub use source::{
+    ContextCandidateSource, ContextSourceRequest, DurableContextCandidateSource,
+    materialize_selected_context, read_context_manifest,
+};
 
 /// Immutable identities frozen into one manifest.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -58,6 +65,22 @@ pub struct ContextCandidate {
     pub kind: ContextSemanticKind,
     /// Exact immutable source reference.
     pub source: Option<ContextSource>,
+    /// Digest of exact bytes that will be loaded only if selected.
+    pub content_digest: ContentDigest,
+    /// Immutable revision governing the source occurrence.
+    pub source_revision: RevisionId,
+    /// Exact source execution when execution-backed.
+    pub execution: Option<NodeExecutionId>,
+    /// Exact source attempt when the evidence is attempt-specific.
+    pub attempt: Option<AttemptId>,
+    /// Source journal sequence.
+    pub source_sequence: Option<milkdrift_persistence::RunSequence>,
+    /// Source timestamp when semantically relevant.
+    pub occurred_at_ms: Option<u64>,
+    /// Causal distance computed under the source occurrence's immutable revision.
+    pub causal_distance: Option<u16>,
+    /// Exact bounded producer provenance.
+    pub producer: ContextProducerFact,
     /// Source node when graph causality applies.
     pub node: Option<NodeId>,
     /// Tagged known roles.
@@ -68,13 +91,13 @@ pub struct ContextCandidate {
     pub exposed_across_scope: bool,
     /// Whether policy resolution requires this candidate.
     pub required: bool,
-    /// Whether the referenced source exists exactly.
-    pub available: bool,
+    /// Availability/integrity classification determined without loading large content.
+    pub availability: ContextCandidateAvailability,
     /// Estimated small/reference bytes.
     pub selected_bytes: u64,
     /// Exact referenced artifact bytes from metadata.
     pub selected_artifact_bytes: u64,
-    /// Optional adapter-supplied provider-neutral unit estimate.
+    /// Optional provider-neutral unit estimate supplied or derived without a tokenizer.
     pub estimated_model_input_units: Option<u64>,
     /// Sensitivity propagated to model output handling.
     pub sensitivity: ArtifactSensitivity,
@@ -84,6 +107,19 @@ pub struct ContextCandidate {
     pub artifact: Option<ContextCandidateArtifactFacts>,
     /// Exact causal/evidence parents.
     pub causal_parents: Vec<ContextEvidenceReference>,
+}
+
+/// Stable metadata-only availability classification used before selection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContextCandidateAvailability {
+    /// Exact source and immutable metadata are available.
+    Available,
+    /// Source is missing or contradicts its durable reference.
+    MissingOrCorrupt,
+    /// Source kind cannot be represented by the configured invocation boundary.
+    Unsupported,
+    /// A later exact fact superseded this optional candidate.
+    Superseded,
 }
 
 /// Complete immutable input to the pure builder.
@@ -163,9 +199,13 @@ impl CausalContextBuilder {
                 &candidate,
             );
             let depth = candidate
-                .node
-                .as_ref()
-                .and_then(|node| ancestor_depths.get(node).copied())
+                .causal_distance
+                .or_else(|| {
+                    candidate
+                        .node
+                        .as_ref()
+                        .and_then(|node| ancestor_depths.get(node).copied())
+                })
                 .unwrap_or(u16::MAX);
             let source_key = candidate
                 .source
@@ -196,6 +236,15 @@ impl CausalContextBuilder {
         let mut stopped = false;
         for (_, _, _, _, eligible, reason, omission_reason, candidate) in ranked {
             if !eligible || stopped {
+                if !eligible
+                    && candidate.required
+                    && request.policy.fail_closed()
+                    && exact_source_requested(request.policy, &candidate)
+                {
+                    return Err(ContextBuildError::RequiredUnavailable(
+                        "exact context source is excluded or not visible",
+                    ));
+                }
                 omissions.push(omission(
                     &candidate,
                     if stopped {
@@ -206,13 +255,21 @@ impl CausalContextBuilder {
                 ));
                 continue;
             }
-            if !candidate.available {
+            if candidate.availability != ContextCandidateAvailability::Available {
                 if candidate.required && request.policy.fail_closed() {
                     return Err(ContextBuildError::RequiredUnavailable(
                         "missing exact source",
                     ));
                 }
-                omissions.push(omission(&candidate, ContextOmissionReason::Missing));
+                let reason = match candidate.availability {
+                    ContextCandidateAvailability::Available => unreachable!(),
+                    ContextCandidateAvailability::MissingOrCorrupt => {
+                        ContextOmissionReason::MissingOrCorrupt
+                    }
+                    ContextCandidateAvailability::Unsupported => ContextOmissionReason::Unsupported,
+                    ContextCandidateAvailability::Superseded => ContextOmissionReason::Superseded,
+                };
+                omissions.push(omission(&candidate, reason));
                 continue;
             }
             if candidate.authority.required && !candidate.authority.authorized {
@@ -243,6 +300,13 @@ impl CausalContextBuilder {
                 .artifact_bytes
                 .checked_add(candidate.selected_artifact_bytes)
                 .ok_or(ContextBuildError::AccountingOverflow)?;
+            let selected_artifact = candidate_is_artifact(&candidate);
+            if selected_artifact {
+                totals.artifacts = totals
+                    .artifacts
+                    .checked_add(1)
+                    .ok_or(ContextBuildError::AccountingOverflow)?;
+            }
             if let Some(units) = candidate.estimated_model_input_units {
                 totals.model_input_units = Some(
                     totals
@@ -263,8 +327,19 @@ impl CausalContextBuilder {
             entries.push(ContextManifestEntry::new(
                 ordinal,
                 candidate.kind,
+                candidate.roles,
                 source,
+                candidate.content_digest,
+                candidate.source_revision,
+                candidate.execution,
+                candidate.attempt,
+                candidate.scope,
+                candidate.causal_distance,
+                candidate.source_sequence,
+                candidate.occurred_at_ms,
+                candidate.producer,
                 candidate.causal_parents,
+                selected_artifact,
                 candidate.selected_bytes,
                 candidate.selected_artifact_bytes,
                 candidate.estimated_model_input_units,
@@ -277,7 +352,7 @@ impl CausalContextBuilder {
             .policy
             .digest()
             .map_err(|error| ContextBuildError::Policy(error.to_string()))?;
-        ContextManifest::new(
+        let manifest = ContextManifest::new(
             request.identity.run,
             request.identity.revision,
             request.identity.node,
@@ -289,8 +364,15 @@ impl CausalContextBuilder {
             omissions,
             totals,
             budget,
-        )
-        .map_err(Into::into)
+        )?;
+        let encoded =
+            milkdrift_model::ContextManifestDocument::new(manifest.clone()).to_canonical_json()?;
+        if u64::try_from(encoded.len()).map_or(true, |size| size > budget.max_manifest_bytes) {
+            return Err(ContextBuildError::RequiredBudget(
+                "serialized manifest byte",
+            ));
+        }
+        Ok(manifest)
     }
 }
 
@@ -315,7 +397,7 @@ pub fn persist_context_manifest(
         ArtifactId::new(identity.clone())
             .map_err(|error| ContextBuildError::Persistence(error.to_string()))?,
         ContentDigest::for_bytes(&bytes),
-        MediaType::new("application/vnd.milkdrift.context-manifest.v1+json")
+        MediaType::new("application/vnd.milkdrift.context-manifest.v2+json")
             .map_err(|error| ContextBuildError::Persistence(error.to_string()))?,
         u64::try_from(bytes.len()).map_err(|_| ContextBuildError::AccountingOverflow)?,
     );
@@ -358,6 +440,12 @@ pub fn persist_context_manifest(
         }
     };
     let start = usize::try_from(offset).map_err(|_| ContextBuildError::AccountingOverflow)?;
+    if start > bytes.len() {
+        let _abort = store.abort_publication(&publication);
+        return Err(ContextBuildError::Persistence(
+            "resumed manifest publication exceeds its exact content size".to_owned(),
+        ));
+    }
     for (index, chunk) in bytes[start..].chunks(MAX_ARTIFACT_CHUNK_BYTES).enumerate() {
         let chunk_offset = offset
             .checked_add(
@@ -462,16 +550,58 @@ fn eligibility(
         return (true, Some(ContextInclusionReason::SelectedNode), None);
     }
     if candidate
+        .execution
+        .as_ref()
+        .is_some_and(|execution| policy.selected_executions().contains(execution.as_str()))
+    {
+        return (true, Some(ContextInclusionReason::SelectedNode), None);
+    }
+    if candidate.source.as_ref().is_some_and(|source| {
+        policy.explicit_evidence().iter().any(|selector| {
+            serde_json::from_str::<ContextSource>(selector)
+                .is_ok_and(|selected| selected == *source)
+        })
+    }) {
+        return (true, Some(ContextInclusionReason::ExplicitEvidence), None);
+    }
+    if candidate.source.as_ref().is_some_and(|source| {
+        let reference = match source {
+            ContextSource::WorkspaceValue { reference } => Some(reference),
+            _ => None,
+        };
+        reference.is_some_and(|reference| {
+            serde_json::to_string(reference)
+                .is_ok_and(|reference| policy.selected_workspace_values().contains(&reference))
+        })
+    }) || candidate.causal_parents.iter().any(|parent| {
+        let ContextEvidenceReference::Workspace {
+            reference: CausalReference::WorkspaceValue { reference },
+        } = parent
+        else {
+            return false;
+        };
+        serde_json::to_string(reference)
+            .is_ok_and(|reference| policy.selected_workspace_values().contains(&reference))
+    }) {
+        return (true, Some(ContextInclusionReason::IncludedCategory), None);
+    }
+    if candidate
         .roles
         .iter()
         .any(|role| policy.selected_roles().contains(role))
     {
         return (true, Some(ContextInclusionReason::SelectedRole), None);
     }
-    if candidate
-        .node
-        .as_ref()
-        .is_some_and(|node| ancestors.contains_key(node))
+    if candidate.kind != ContextSemanticKind::DirectInput
+        && policy.ancestor_depth().is_some()
+        && (candidate
+            .causal_distance
+            .is_some_and(|distance| distance > 0)
+            || (candidate.causal_distance.is_none()
+                && candidate
+                    .node
+                    .as_ref()
+                    .is_some_and(|node| ancestors.contains_key(node))))
     {
         return (true, Some(ContextInclusionReason::CausalAncestor), None);
     }
@@ -499,11 +629,51 @@ fn artifact_matches(policy: &TaskContextPolicy, candidate: &ContextCandidate) ->
         && (selector.provenance().is_empty() || selector.provenance().contains(&facts.provenance))
 }
 
+fn exact_source_requested(policy: &TaskContextPolicy, candidate: &ContextCandidate) -> bool {
+    candidate
+        .execution
+        .as_ref()
+        .is_some_and(|execution| policy.selected_executions().contains(execution.as_str()))
+        || candidate.source.as_ref().is_some_and(|source| {
+            policy.explicit_evidence().iter().any(|selector| {
+                serde_json::from_str::<ContextSource>(selector)
+                    .is_ok_and(|selected| selected == *source)
+            })
+        })
+        || candidate.source.as_ref().is_some_and(|source| {
+            let ContextSource::WorkspaceValue { reference } = source else {
+                return false;
+            };
+            serde_json::to_string(reference)
+                .is_ok_and(|reference| policy.selected_workspace_values().contains(&reference))
+        })
+        || candidate.causal_parents.iter().any(|parent| {
+            let ContextEvidenceReference::Workspace {
+                reference: CausalReference::WorkspaceValue { reference },
+            } = parent
+            else {
+                return false;
+            };
+            serde_json::to_string(reference)
+                .is_ok_and(|reference| policy.selected_workspace_values().contains(&reference))
+        })
+}
+
 fn budget_overflow(
     budget: milkdrift_blueprint::ContextBudget,
     totals: ContextTotals,
     candidate: &ContextCandidate,
 ) -> Result<Option<(ContextOmissionReason, &'static str)>, ContextBuildError> {
+    let item_bytes = candidate
+        .selected_bytes
+        .checked_add(candidate.selected_artifact_bytes)
+        .ok_or(ContextBuildError::AccountingOverflow)?;
+    if item_bytes > budget.max_per_item_bytes {
+        return Ok(Some((
+            ContextOmissionReason::PerItemByteBudget,
+            "per-item byte",
+        )));
+    }
     if totals
         .items
         .checked_add(1)
@@ -511,6 +681,18 @@ fn budget_overflow(
         > budget.max_items
     {
         return Ok(Some((ContextOmissionReason::ItemBudget, "item")));
+    }
+    if candidate_is_artifact(candidate)
+        && totals
+            .artifacts
+            .checked_add(1)
+            .ok_or(ContextBuildError::AccountingOverflow)?
+            > budget.max_artifacts
+    {
+        return Ok(Some((
+            ContextOmissionReason::ArtifactItemBudget,
+            "artifact item",
+        )));
     }
     if totals
         .bytes
@@ -547,14 +729,38 @@ fn budget_overflow(
     Ok(None)
 }
 
+fn candidate_is_artifact(candidate: &ContextCandidate) -> bool {
+    candidate.artifact.is_some()
+        || candidate.kind == ContextSemanticKind::Artifact
+        || matches!(
+            candidate.source.as_ref(),
+            Some(ContextSource::DirectInput {
+                reference: milkdrift_capability::InvocationValueReference::Artifact { .. },
+                ..
+            })
+        )
+}
+
 fn omission(candidate: &ContextCandidate, reason: ContextOmissionReason) -> ContextOmission {
+    let redacted = matches!(
+        reason,
+        ContextOmissionReason::BranchIsolated | ContextOmissionReason::AuthorityDenied
+    );
     ContextOmission {
-        source: candidate.source.clone(),
+        source: (!redacted).then(|| candidate.source.clone()).flatten(),
         kind: candidate.kind,
         reason,
         required: candidate.required,
-        omitted_bytes: candidate.selected_bytes,
-        omitted_artifact_bytes: candidate.selected_artifact_bytes,
+        omitted_bytes: if redacted {
+            0
+        } else {
+            candidate.selected_bytes
+        },
+        omitted_artifact_bytes: if redacted {
+            0
+        } else {
+            candidate.selected_artifact_bytes
+        },
     }
 }
 

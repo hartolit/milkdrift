@@ -33,10 +33,10 @@ use milkdrift_control::{
 };
 use milkdrift_control_protocol::{
     ArtifactMetadataRead, AttemptRead, CapabilityRead, Command, CommandAccepted, CommandRequest,
-    Cursor, CursorBinding, DaemonState, ErrorCode, HealthRead, LayoutDocument, NodeRead, Page,
-    PeerRead, ProposalDecision, ProposalRead, ResolveAction, RevisionChange, RevisionDiffRead,
-    RevisionRead, RevisionSummary as PublicRevisionSummary, RunRead, TimelineCategory,
-    TimelineEntry,
+    ContextManifestRead, Cursor, CursorBinding, DaemonState, ErrorCode, HealthRead, LayoutDocument,
+    NodeRead, Page, PeerRead, ProposalDecision, ProposalRead, ResolveAction, RevisionChange,
+    RevisionDiffRead, RevisionRead, RevisionSummary as PublicRevisionSummary, RunRead,
+    TimelineCategory, TimelineEntry,
 };
 use milkdrift_local_process::{LocalProcessAdapter, ProcessProfileDocument};
 use milkdrift_model_provider::{EndpointProfile, ModelEndpointAdapter, descriptor_for_profile};
@@ -51,10 +51,11 @@ use milkdrift_peer_protocol::{
 };
 use milkdrift_persistence::{
     ArtifactReadAuthority, ArtifactReadRequest, ArtifactStore, AttemptId, CorrelationKey,
-    EvidenceId, EvidenceKind, EvidenceReference, IndexedRunState, PageSize, PersistenceError,
-    Reason, ReconciliationDecisionId, RevisionCursor, RevisionFilter, RevisionPageQuery,
-    RevisionStore, RunQueryStore, RunSequence, RunSummaryCursor, RunSummaryFilter,
-    RunSummaryPageQuery, SignalDeliveryMode, SignalId, SignalTypeId, TimestampMillis, WorkerId,
+    EventPageQuery, EvidenceId, EvidenceKind, EvidenceReference, IndexedRunState, PageSize,
+    PersistenceError, Reason, ReconciliationDecisionId, RevisionCursor, RevisionFilter,
+    RevisionPageQuery, RevisionStore, RunEventKind, RunQueryStore, RunSequence, RunSummaryCursor,
+    RunSummaryFilter, RunSummaryPageQuery, SignalDeliveryMode, SignalId, SignalTypeId,
+    TimestampMillis, WorkerId,
 };
 use milkdrift_redb_store::RedbStore;
 use milkdrift_runtime::{
@@ -1922,7 +1923,7 @@ impl Owner {
     }
 
     fn attempt_read(
-        &self,
+        &mut self,
         session: &ActorSession,
         run: &str,
         attempt: &str,
@@ -1933,12 +1934,299 @@ impl Owner {
             AuthorityOperation::InspectAttempt,
             "read:attempt",
         )?;
-        self.run_read(session, run)?
+        let current = self
+            .run_read(session, run)?
             .nodes
             .into_iter()
-            .filter_map(|node| node.latest_attempt)
-            .find(|value| value.attempt_id == attempt)
-            .ok_or_else(not_found)
+            .find(|node| {
+                node.latest_attempt
+                    .as_ref()
+                    .is_some_and(|value| value.attempt_id == attempt)
+            })
+            .and_then(|node| {
+                node.latest_attempt
+                    .map(|attempt| (node.node_id, node.revision_id, attempt))
+            });
+        let (node_id, revision_id, mut value) = match current {
+            Some((node, revision, mut value)) => {
+                if let Ok((_, _, historical)) = self.historical_attempt_read(run, attempt) {
+                    value.peer_id = historical.peer_id;
+                }
+                (node, revision, value)
+            }
+            None => self.historical_attempt_read(run, attempt)?,
+        };
+        let Some(reference) = value.context_manifest.as_ref() else {
+            return Ok(value);
+        };
+        let artifact = ArtifactId::new(reference.artifact_id.clone())
+            .map_err(|error| invalid(&error.to_string()))?;
+        let metadata = self
+            .store
+            .metadata(&artifact)
+            .map_err(public_persistence)?
+            .ok_or_else(not_found)?;
+        let mut resources = RequestedResourceFacts::empty();
+        resources.artifact = Some(artifact);
+        resources.artifact_sensitivity = Some(metadata.sensitivity());
+        let decision = self.evaluate_authority(
+            session,
+            AuthorityOperation::ReadArtifactContent,
+            resources,
+            "read:attempt-context-manifest",
+        )?;
+        self.record_security_decision(&decision)?;
+        if !decision.is_allowed() {
+            value.context_access = "denied".to_owned();
+            self.persistent
+                .flush()
+                .map_err(|error| PublicFailure::new(ErrorCode::Corruption, error, false))?;
+            return Ok(value);
+        }
+        let reference = milkdrift_capability::ArtifactReference::new(
+            reference.artifact_id.clone(),
+            reference.digest.clone(),
+            Some(reference.content_type.clone()),
+            Some(reference.size),
+        )
+        .map_err(|error| invalid(&error.to_string()))?;
+        let manifest = milkdrift_runtime::read_context_manifest(
+            self.store.as_ref(),
+            &reference,
+            ArtifactReadAuthority::Authorized {
+                actor: session.actor.clone(),
+                evidence: EvidenceId::new(format!("attempt-context:{}", &decision.digest()[..32]))
+                    .map_err(public_persistence)?,
+            },
+        )
+        .map_err(|error| PublicFailure::new(ErrorCode::Corruption, error.to_string(), false))?;
+        if manifest.attempt().as_str() != attempt {
+            return Err(PublicFailure::new(
+                ErrorCode::Corruption,
+                "context manifest is bound to another attempt",
+                false,
+            ));
+        }
+        let revision = parse_revision_id(&revision_id)?;
+        let stored = self
+            .store
+            .revision(&revision)
+            .map_err(public_persistence)?
+            .ok_or_else(not_found)?;
+        let policy = stored
+            .semantic()
+            .nodes()
+            .get(
+                &milkdrift_blueprint::NodeId::new(node_id)
+                    .map_err(|error| invalid(&error.to_string()))?,
+            )
+            .and_then(|node| match node.kind() {
+                milkdrift_blueprint::NodeKind::Task { config } => Some(config.context_policy()),
+                _ => None,
+            })
+            .ok_or_else(not_found)?;
+        const MAX_CONTEXT_READ_ITEMS: usize = 256;
+        let truncated = manifest.entries().len() > MAX_CONTEXT_READ_ITEMS
+            || manifest.omissions().len() > MAX_CONTEXT_READ_ITEMS;
+        value.context = Some(ContextManifestRead {
+            schema_version: manifest.schema_version(),
+            digest: manifest.digest().as_str().to_owned(),
+            policy: serde_json::to_value(policy).map_err(|_| internal())?,
+            entries: manifest
+                .entries()
+                .iter()
+                .take(MAX_CONTEXT_READ_ITEMS)
+                .map(serde_json::to_value)
+                .collect::<Result<_, _>>()
+                .map_err(|_| internal())?,
+            omissions: manifest
+                .omissions()
+                .iter()
+                .take(MAX_CONTEXT_READ_ITEMS)
+                .map(serde_json::to_value)
+                .collect::<Result<_, _>>()
+                .map_err(|_| internal())?,
+            totals: serde_json::to_value(manifest.totals()).map_err(|_| internal())?,
+            budget: serde_json::to_value(manifest.budget()).map_err(|_| internal())?,
+            truncated,
+        });
+        value.context_access = "authorized".to_owned();
+        self.persistent
+            .flush()
+            .map_err(|error| PublicFailure::new(ErrorCode::Corruption, error, false))?;
+        Ok(value)
+    }
+
+    fn historical_attempt_read(
+        &self,
+        run: &str,
+        attempt: &str,
+    ) -> Result<(String, String, AttemptRead), PublicFailure> {
+        let run_id = RunId::new(run.to_owned()).map_err(|error| invalid(&error.to_string()))?;
+        let attempt_id =
+            AttemptId::new(attempt.to_owned()).map_err(|error| invalid(&error.to_string()))?;
+        let page_size = PageSize::new(256).map_err(public_persistence)?;
+        let mut cursor = None;
+        let mut current_revision = None::<RevisionId>;
+        let mut executions = BTreeMap::new();
+        let mut retry_timer = None;
+        let mut located = None::<(String, String, AttemptRead)>;
+        loop {
+            let query = EventPageQuery::new(run_id.clone(), cursor, page_size)
+                .map_err(public_persistence)?;
+            let page = self.store.events(&query).map_err(public_persistence)?;
+            for event in page.events {
+                match event.kind() {
+                    RunEventKind::RunCreated { revision, .. }
+                    | RunEventKind::RevisionPinned { revision, .. } => {
+                        current_revision = Some(revision.clone());
+                    }
+                    RunEventKind::NodeBecameEligible {
+                        node, execution, ..
+                    } => {
+                        if let Some(revision) = current_revision.as_ref() {
+                            executions.insert(
+                                execution.clone(),
+                                (node.as_str().to_owned(), revision.as_str().to_owned()),
+                            );
+                        }
+                    }
+                    RunEventKind::NodeRetryScheduled {
+                        execution,
+                        next_attempt,
+                        timer,
+                        ..
+                    } if next_attempt == &attempt_id => {
+                        let (node, revision) = executions
+                            .get(execution)
+                            .cloned()
+                            .ok_or_else(|| corruption("retry attempt has no owning execution"))?;
+                        retry_timer = Some(timer.clone());
+                        located = Some((
+                            node,
+                            revision,
+                            empty_attempt_read(attempt, "awaiting_retry_timer"),
+                        ));
+                    }
+                    RunEventKind::TimerFired { timer, .. }
+                        if retry_timer.as_ref() == Some(timer) =>
+                    {
+                        if let Some((_, _, value)) = located.as_mut() {
+                            value.state = "ready_to_schedule".to_owned();
+                        }
+                    }
+                    RunEventKind::NodeScheduled {
+                        node,
+                        execution,
+                        attempt: scheduled,
+                        invocation,
+                        request,
+                        ..
+                    } if scheduled == &attempt_id => {
+                        let revision = executions
+                            .get(execution)
+                            .map(|(_, revision)| revision.clone())
+                            .or_else(|| {
+                                current_revision
+                                    .as_ref()
+                                    .map(|revision| revision.as_str().to_owned())
+                            })
+                            .ok_or_else(|| corruption("scheduled attempt has no revision"))?;
+                        let mut value = empty_attempt_read(attempt, "scheduled");
+                        value.invocation_id = Some(invocation.as_str().to_owned());
+                        value.context_manifest =
+                            request.context_manifest().map(public_invocation_artifact);
+                        value.context_access = if value.context_manifest.is_some() {
+                            "metadata_only".to_owned()
+                        } else {
+                            "absent".to_owned()
+                        };
+                        located = Some((node.as_str().to_owned(), revision, value));
+                    }
+                    RunEventKind::CapabilityResolutionDecisionRecorded {
+                        attempt: resolved,
+                        authorization,
+                        ..
+                    } if resolved == &attempt_id => {
+                        if let Some((_, _, value)) = located.as_mut() {
+                            value.peer_id = authorization
+                                .request()
+                                .resources
+                                .peer
+                                .as_ref()
+                                .map(|peer| peer.as_str().to_owned())
+                                .or_else(|| {
+                                    authorization
+                                        .request()
+                                        .provenance
+                                        .peer
+                                        .as_ref()
+                                        .map(|peer| peer.as_str().to_owned())
+                                });
+                        }
+                    }
+                    RunEventKind::CapabilityResolved {
+                        attempt: resolved,
+                        snapshot,
+                        ..
+                    } if resolved == &attempt_id => {
+                        if let Some((_, _, value)) = located.as_mut() {
+                            value.capability_id = Some(snapshot.capability().as_str().to_owned());
+                            value.descriptor_revision = Some(snapshot.descriptor_revision());
+                            value.provider_profile = snapshot
+                                .provider_profile()
+                                .map(|profile| profile.as_str().to_owned());
+                        }
+                    }
+                    RunEventKind::LeaseGranted {
+                        attempt: leased, ..
+                    } if leased == &attempt_id => {
+                        if let Some((_, _, value)) = located.as_mut() {
+                            value.state = "leased".to_owned();
+                        }
+                    }
+                    RunEventKind::NodeStarted {
+                        attempt: started, ..
+                    } if started == &attempt_id => {
+                        if let Some((_, _, value)) = located.as_mut() {
+                            value.state = "running".to_owned();
+                        }
+                    }
+                    RunEventKind::NodeTerminal {
+                        attempt: terminal,
+                        outcome,
+                        ..
+                    } if terminal == &attempt_id => {
+                        if let Some((_, _, value)) = located.as_mut() {
+                            value.state = "terminal".to_owned();
+                            value.terminal = Some(snake_debug(outcome));
+                        }
+                    }
+                    RunEventKind::ExternalOutcomeUncertain {
+                        attempt: uncertain, ..
+                    } if uncertain == &attempt_id => {
+                        if let Some((_, _, value)) = located.as_mut() {
+                            value.state = "uncertain".to_owned();
+                            value.uncertain = true;
+                        }
+                    }
+                    RunEventKind::ExternalOutcomeRetained {
+                        attempt: retained, ..
+                    } if retained == &attempt_id => {
+                        if let Some((_, _, value)) = located.as_mut() {
+                            value.state = "retained".to_owned();
+                            value.uncertain = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            cursor = page.next;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        located.ok_or_else(not_found)
     }
 
     fn authorize_run_read(
@@ -3165,12 +3453,27 @@ fn public_run(value: milkdrift_control::RunInspection) -> RunRead {
     }
 }
 
-fn public_attempt(value: milkdrift_control::AttemptInspection) -> AttemptRead {
-    let capability_id = value
-        .capability
-        .as_ref()
-        .map(|capability| capability.capability().as_str().to_owned());
-    let context_manifest = value.context_manifest.map(|artifact| ArtifactMetadataRead {
+fn empty_attempt_read(attempt: &str, state: &str) -> AttemptRead {
+    AttemptRead {
+        attempt_id: attempt.to_owned(),
+        invocation_id: None,
+        state: state.to_owned(),
+        capability_id: None,
+        descriptor_revision: None,
+        provider_profile: None,
+        peer_id: None,
+        context_manifest: None,
+        context: None,
+        context_access: "absent".to_owned(),
+        terminal: None,
+        uncertain: false,
+    }
+}
+
+fn public_invocation_artifact(
+    artifact: &milkdrift_capability::ArtifactReference,
+) -> ArtifactMetadataRead {
+    ArtifactMetadataRead {
         artifact_id: artifact.identity().to_owned(),
         digest: artifact.digest().to_owned(),
         size: artifact.size_bytes().unwrap_or(0),
@@ -3180,7 +3483,28 @@ fn public_attempt(value: milkdrift_control::AttemptInspection) -> AttemptRead {
             .to_owned(),
         disposition_name: None,
         sensitivity: "restricted".to_owned(),
+    }
+}
+
+fn public_attempt(value: milkdrift_control::AttemptInspection) -> AttemptRead {
+    let has_context_manifest = value.context_manifest.is_some();
+    let capability_id = value
+        .capability
+        .as_ref()
+        .map(|capability| capability.capability().as_str().to_owned());
+    let descriptor_revision = value
+        .capability
+        .as_ref()
+        .map(milkdrift_capability::ResolvedCapabilitySnapshot::descriptor_revision);
+    let provider_profile = value.capability.as_ref().and_then(|capability| {
+        capability
+            .provider_profile()
+            .map(|profile| profile.as_str().to_owned())
     });
+    let context_manifest = value
+        .context_manifest
+        .as_ref()
+        .map(public_invocation_artifact);
     AttemptRead {
         attempt_id: value.attempt.as_str().to_owned(),
         invocation_id: value
@@ -3188,7 +3512,16 @@ fn public_attempt(value: milkdrift_control::AttemptInspection) -> AttemptRead {
             .map(|invocation| invocation.as_str().to_owned()),
         state: snake_debug(&value.state),
         capability_id,
+        descriptor_revision,
+        provider_profile,
+        peer_id: None,
         context_manifest,
+        context: None,
+        context_access: if has_context_manifest {
+            "metadata_only".to_owned()
+        } else {
+            "absent".to_owned()
+        },
         terminal: value.terminal.as_ref().map(snake_debug),
         uncertain: value.external_outcome.is_some(),
     }
@@ -3419,6 +3752,10 @@ fn not_found() -> PublicFailure {
         "requested resource was not found",
         false,
     )
+}
+
+fn corruption(message: &str) -> PublicFailure {
+    PublicFailure::new(ErrorCode::Corruption, message, false)
 }
 
 fn internal() -> PublicFailure {

@@ -139,6 +139,18 @@ pub trait MaterializedExecution: Send {
 
 /// Narrow host-owned input/materialization/output port used by process adapters.
 pub trait InvocationDataAccess: Send + Sync {
+    /// Reads and verifies one exact invocation input through the host-owned ports.
+    fn read_input_bytes(
+        &self,
+        _context: &AdapterExecutionContext,
+        _input: &InputReference,
+        _limits: MaterializationLimits,
+    ) -> Result<Vec<u8>, InvocationDataError> {
+        Err(InvocationDataError::Rejected(
+            "direct input reading is unsupported by this data-access implementation".to_owned(),
+        ))
+    }
+
     /// Reads and verifies one exact durable artifact without exposing store layout.
     fn read_artifact_bytes(
         &self,
@@ -432,6 +444,16 @@ impl StoreInvocationDataAccess {
 }
 
 impl InvocationDataAccess for StoreInvocationDataAccess {
+    fn read_input_bytes(
+        &self,
+        _context: &AdapterExecutionContext,
+        input: &InputReference,
+        limits: MaterializationLimits,
+    ) -> Result<Vec<u8>, InvocationDataError> {
+        self.input_bytes(input, limits.validate()?)
+            .map(|(bytes, _cause)| bytes)
+    }
+
     fn read_artifact_bytes(
         &self,
         _context: &AdapterExecutionContext,
@@ -480,24 +502,39 @@ impl InvocationDataAccess for StoreInvocationDataAccess {
         let mut materialized = BTreeMap::new();
         let mut total = 0_u64;
         for specification in inputs {
-            let input = request
-                .inputs()
-                .iter()
-                .find(|input| input.name() == specification.input_name())
-                .ok_or_else(|| {
-                    InvocationDataError::Rejected(format!(
-                        "required invocation input '{}' is missing",
-                        specification.input_name()
-                    ))
+            let (bytes, input_name) = if specification.input_name()
+                == milkdrift_capability::CONTEXT_MANIFEST_INPUT_NAME
+            {
+                let reference = request.context_manifest().ok_or_else(|| {
+                    InvocationDataError::Rejected(
+                        "configured context manifest input is absent".to_owned(),
+                    )
                 })?;
-            let (bytes, _cause) = self.input_bytes(input, limits)?;
+                (
+                    self.read_artifact(durable_artifact_reference(reference)?, limits)?,
+                    specification.input_name(),
+                )
+            } else {
+                let input = request
+                    .inputs()
+                    .iter()
+                    .find(|input| input.name() == specification.input_name())
+                    .ok_or_else(|| {
+                        InvocationDataError::Rejected(format!(
+                            "required invocation input '{}' is missing",
+                            specification.input_name()
+                        ))
+                    })?;
+                let (bytes, _cause) = self.input_bytes(input, limits)?;
+                (bytes, input.name())
+            };
             let size = u64::try_from(bytes.len()).map_err(|_error| {
                 InvocationDataError::Rejected("materialized input size overflow".to_owned())
             })?;
             if size > limits.max_file_bytes {
                 return Err(InvocationDataError::Rejected(format!(
                     "input '{}' exceeds the per-file materialization bound",
-                    input.name()
+                    input_name
                 )));
             }
             total = total.checked_add(size).ok_or_else(|| {
@@ -513,7 +550,7 @@ impl InvocationDataAccess for StoreInvocationDataAccess {
             file.write_all(&bytes)
                 .and_then(|()| file.sync_all())
                 .map_err(|error| fs_error("write materialized input", &error))?;
-            materialized.insert(input.name().to_owned(), destination.0);
+            materialized.insert(input_name.to_owned(), destination.0);
         }
         Ok(Box::new(StoreMaterializedExecution {
             _directory: directory,
@@ -672,6 +709,11 @@ fn publication_causes(
         external_cause("execution", context.execution().as_str())?,
         external_cause("attempt", context.attempt().as_str())?,
     ];
+    if let Some(manifest) = request.context_manifest() {
+        causes.push(CausalReference::Artifact {
+            reference: durable_artifact_reference(manifest)?,
+        });
+    }
     for input in request.inputs() {
         let cause = match input.value() {
             InvocationValueReference::WorkspaceValue { identity, .. } => {

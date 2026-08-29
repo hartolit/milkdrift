@@ -884,12 +884,44 @@ pub struct AttemptRead {
     pub state: String,
     /// Resolved capability identity.
     pub capability_id: Option<String>,
+    /// Exact resolved capability descriptor revision.
+    pub descriptor_revision: Option<u64>,
+    /// Exact provider profile selected for this attempt.
+    pub provider_profile: Option<String>,
+    /// Authenticated peer identity when remote execution recorded one.
+    pub peer_id: Option<String>,
     /// Exact immutable context manifest.
     pub context_manifest: Option<ArtifactMetadataRead>,
+    /// Authorized bounded contents of the exact context manifest.
+    pub context: Option<ContextManifestRead>,
+    /// `absent`, `metadata_only`, `authorized`, or `denied` without leaking contents.
+    pub context_access: String,
     /// Stable terminal summary.
     pub terminal: Option<String>,
     /// Whether external outcome remains unresolved.
     pub uncertain: bool,
+}
+
+/// Bounded authorized context policy, selection, omissions, and accounting.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextManifestRead {
+    /// Inner context-manifest schema.
+    pub schema_version: u32,
+    /// Domain-separated canonical manifest digest.
+    pub digest: String,
+    /// Exact immutable task context policy.
+    pub policy: Value,
+    /// Selected entry metadata and causal provenance, capped by the read model.
+    pub entries: Vec<Value>,
+    /// Stable omission/denial/missing records, capped by the read model.
+    pub omissions: Vec<Value>,
+    /// Applied totals.
+    pub totals: Value,
+    /// Applied deterministic limits.
+    pub budget: Value,
+    /// Whether entry or omission detail exceeded the response cap.
+    pub truncated: bool,
 }
 
 /// Public timeline category; never an internal event enum.

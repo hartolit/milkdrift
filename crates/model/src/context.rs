@@ -1,16 +1,19 @@
 use serde::{Deserialize, Serialize};
 
-use milkdrift_blueprint::{ContentDigest as PolicyDigest, NodeId, RevisionId};
+use milkdrift_blueprint::{ContentDigest as PolicyDigest, ContextSemanticRole, NodeId, RevisionId};
 use milkdrift_capability::InvocationValueReference;
 use milkdrift_persistence::{AttemptId, EventId, NodeExecutionId, RunSequence};
 use milkdrift_workspace::{
-    ArtifactReference, ArtifactSensitivity, CausalReference, RunId, WorkspaceValueReference,
+    ArtifactReference, ArtifactSensitivity, CausalReference, ContentDigest, RunId, ScopeReference,
+    WorkspaceValueReference,
 };
 
 use crate::{ModelContractError, document::encode};
 
-/// Current exact context-manifest schema.
+/// Legacy metadata-only context-manifest schema, deliberately refused by current readers.
 pub const CONTEXT_MANIFEST_SCHEMA_VERSION_V1: u32 = 1;
+/// Current context-manifest schema with materialization digests and exact producer provenance.
+pub const CONTEXT_MANIFEST_SCHEMA_VERSION_V2: u32 = 2;
 const MAX_ENTRIES: usize = 4_096;
 const MAX_OMISSIONS: usize = 4_096;
 const MAX_EVIDENCE: usize = 256;
@@ -223,6 +226,46 @@ pub struct AuthorityFact {
     pub authority_reference: Option<String>,
 }
 
+/// Exact bounded producer facts known when evidence was created.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextProducerFact {
+    /// Actor/controller identity when recorded by the typed source fact.
+    pub actor: Option<String>,
+    /// Exact capability generation identity when executor-backed.
+    pub capability: Option<String>,
+    /// Exact descriptor generation when executor-backed.
+    pub descriptor_revision: Option<u64>,
+    /// Exact provider profile, when one governed production.
+    pub provider_profile: Option<String>,
+    /// Authenticated peer identity, when production was remote.
+    pub peer: Option<String>,
+    /// Exact provider-neutral invocation identity.
+    pub invocation: Option<String>,
+}
+
+impl ContextProducerFact {
+    fn validate(&self) -> Result<(), ModelContractError> {
+        if self.descriptor_revision == Some(0)
+            || [
+                &self.actor,
+                &self.capability,
+                &self.provider_profile,
+                &self.peer,
+                &self.invocation,
+            ]
+            .into_iter()
+            .flatten()
+            .any(|value| value.is_empty() || value.len() > 192 || !value.is_ascii())
+        {
+            return Err(ModelContractError::Invalid(
+                "invalid bounded context producer provenance".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Why an entry was included.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -241,6 +284,8 @@ pub enum ContextInclusionReason {
     ArtifactSelector,
     /// Explicit continuation reference.
     Continuation,
+    /// Exact durable evidence reference declared by workflow or operator policy.
+    ExplicitEvidence,
 }
 
 /// Stable omission/truncation reason.
@@ -255,8 +300,12 @@ pub enum ContextOmissionReason {
     BranchIsolated,
     /// Required authority was absent.
     AuthorityDenied,
-    /// Referenced evidence was missing.
-    Missing,
+    /// Referenced evidence was missing or contradicted its immutable integrity facts.
+    MissingOrCorrupt,
+    /// The source or provider cannot represent this evidence safely.
+    Unsupported,
+    /// An exact newer durable fact superseded this optional candidate.
+    Superseded,
     /// Item count budget would be crossed.
     ItemBudget,
     /// Inline/reference-byte budget would be crossed.
@@ -265,6 +314,10 @@ pub enum ContextOmissionReason {
     ArtifactByteBudget,
     /// Optional model-input-unit budget would be crossed.
     ModelInputUnitBudget,
+    /// One item exceeded its materialization byte ceiling.
+    PerItemByteBudget,
+    /// Selected artifact count would be crossed.
+    ArtifactItemBudget,
     /// Selection stopped after an earlier deterministic overflow.
     SelectionStopped,
 }
@@ -275,8 +328,19 @@ pub enum ContextOmissionReason {
 pub struct ContextManifestEntry {
     ordinal: u32,
     kind: ContextSemanticKind,
+    semantic_roles: std::collections::BTreeSet<ContextSemanticRole>,
     source: ContextSource,
+    content_digest: ContentDigest,
+    source_revision: RevisionId,
+    source_execution: Option<NodeExecutionId>,
+    source_attempt: Option<AttemptId>,
+    source_scope: Option<ScopeReference>,
+    causal_distance: Option<u16>,
+    source_sequence: Option<RunSequence>,
+    occurred_at_ms: Option<u64>,
+    producer: ContextProducerFact,
     causal_parents: Vec<ContextEvidenceReference>,
+    selected_artifact: bool,
     selected_bytes: u64,
     selected_artifact_bytes: u64,
     estimated_model_input_units: Option<u64>,
@@ -291,8 +355,19 @@ impl ContextManifestEntry {
     pub fn new(
         ordinal: u32,
         kind: ContextSemanticKind,
+        semantic_roles: std::collections::BTreeSet<ContextSemanticRole>,
         source: ContextSource,
+        content_digest: ContentDigest,
+        source_revision: RevisionId,
+        source_execution: Option<NodeExecutionId>,
+        source_attempt: Option<AttemptId>,
+        source_scope: Option<ScopeReference>,
+        causal_distance: Option<u16>,
+        source_sequence: Option<RunSequence>,
+        occurred_at_ms: Option<u64>,
+        producer: ContextProducerFact,
         causal_parents: Vec<ContextEvidenceReference>,
+        selected_artifact: bool,
         selected_bytes: u64,
         selected_artifact_bytes: u64,
         estimated_model_input_units: Option<u64>,
@@ -301,8 +376,46 @@ impl ContextManifestEntry {
         reason: ContextInclusionReason,
     ) -> Result<Self, ModelContractError> {
         source.validate()?;
+        producer.validate()?;
+        let source_consistent = match &source {
+            ContextSource::Artifact { reference } => {
+                selected_artifact
+                    && reference.digest() == content_digest
+                    && reference.size_bytes() == selected_artifact_bytes
+            }
+            ContextSource::DirectInput {
+                reference: InvocationValueReference::Artifact { reference },
+                ..
+            } => {
+                selected_artifact
+                    && reference.digest() == content_digest.to_hex()
+                    && reference.size_bytes() == Some(selected_artifact_bytes)
+            }
+            ContextSource::NodeExecution {
+                execution, attempt, ..
+            } => {
+                source_execution.as_ref() == Some(execution)
+                    && source_attempt.as_ref() == attempt.as_ref()
+            }
+            ContextSource::DirectInput { .. }
+            | ContextSource::Event { .. }
+            | ContextSource::WorkspaceValue { .. } => true,
+        };
         if ordinal == 0
+            || semantic_roles.len() > MAX_EVIDENCE
             || causal_parents.len() > MAX_EVIDENCE
+            || !source_consistent
+            || source_attempt.is_some() && source_execution.is_none()
+            || !selected_artifact && selected_artifact_bytes != 0
+            || !selected_artifact
+                && matches!(
+                    &source,
+                    ContextSource::Artifact { .. }
+                        | ContextSource::DirectInput {
+                            reference: InvocationValueReference::Artifact { .. },
+                            ..
+                        }
+                )
             || authority.required && !authority.authorized
             || authority
                 .authority_reference
@@ -316,8 +429,19 @@ impl ContextManifestEntry {
         Ok(Self {
             ordinal,
             kind,
+            semantic_roles,
             source,
+            content_digest,
+            source_revision,
+            source_execution,
+            source_attempt,
+            source_scope,
+            causal_distance,
+            source_sequence,
+            occurred_at_ms,
+            producer,
             causal_parents,
+            selected_artifact,
             selected_bytes,
             selected_artifact_bytes,
             estimated_model_input_units,
@@ -336,15 +460,70 @@ impl ContextManifestEntry {
     pub const fn kind(&self) -> ContextSemanticKind {
         self.kind
     }
+    /// Semantic roles published by the source task or assigned to this durable fact.
+    #[must_use]
+    pub const fn semantic_roles(&self) -> &std::collections::BTreeSet<ContextSemanticRole> {
+        &self.semantic_roles
+    }
     /// Exact source.
     #[must_use]
     pub const fn source(&self) -> &ContextSource {
         &self.source
     }
+    /// Digest of the exact bytes materialized for this item.
+    #[must_use]
+    pub const fn content_digest(&self) -> ContentDigest {
+        self.content_digest
+    }
+    /// Revision governing the source occurrence.
+    #[must_use]
+    pub const fn source_revision(&self) -> &RevisionId {
+        &self.source_revision
+    }
+    /// Exact source execution when execution-backed.
+    #[must_use]
+    pub const fn source_execution(&self) -> Option<&NodeExecutionId> {
+        self.source_execution.as_ref()
+    }
+    /// Exact source attempt when the evidence is attempt-specific.
+    #[must_use]
+    pub const fn source_attempt(&self) -> Option<&AttemptId> {
+        self.source_attempt.as_ref()
+    }
+    /// Exact source workspace scope.
+    #[must_use]
+    pub const fn source_scope(&self) -> Option<&ScopeReference> {
+        self.source_scope.as_ref()
+    }
+    /// Frozen causal graph distance under the source occurrence's revision.
+    #[must_use]
+    pub const fn causal_distance(&self) -> Option<u16> {
+        self.causal_distance
+    }
+    /// Exact source journal sequence.
+    #[must_use]
+    pub const fn source_sequence(&self) -> Option<RunSequence> {
+        self.source_sequence
+    }
+    /// Source timestamp when semantically relevant.
+    #[must_use]
+    pub const fn occurred_at_ms(&self) -> Option<u64> {
+        self.occurred_at_ms
+    }
+    /// Exact bounded producer provenance.
+    #[must_use]
+    pub const fn producer(&self) -> &ContextProducerFact {
+        &self.producer
+    }
     /// Causal/evidence references.
     #[must_use]
     pub fn causal_parents(&self) -> &[ContextEvidenceReference] {
         &self.causal_parents
+    }
+    /// Whether this selection materializes an artifact, including a zero-byte artifact.
+    #[must_use]
+    pub const fn selected_artifact(&self) -> bool {
+        self.selected_artifact
     }
     /// Selected small/reference bytes.
     #[must_use]
@@ -388,8 +567,19 @@ impl<'de> Deserialize<'de> for ContextManifestEntry {
         struct Wire {
             ordinal: u32,
             kind: ContextSemanticKind,
+            semantic_roles: std::collections::BTreeSet<ContextSemanticRole>,
             source: ContextSource,
+            content_digest: ContentDigest,
+            source_revision: RevisionId,
+            source_execution: Option<NodeExecutionId>,
+            source_attempt: Option<AttemptId>,
+            source_scope: Option<ScopeReference>,
+            causal_distance: Option<u16>,
+            source_sequence: Option<RunSequence>,
+            occurred_at_ms: Option<u64>,
+            producer: ContextProducerFact,
             causal_parents: Vec<ContextEvidenceReference>,
+            selected_artifact: bool,
             selected_bytes: u64,
             selected_artifact_bytes: u64,
             estimated_model_input_units: Option<u64>,
@@ -401,8 +591,19 @@ impl<'de> Deserialize<'de> for ContextManifestEntry {
         Self::new(
             w.ordinal,
             w.kind,
+            w.semantic_roles,
             w.source,
+            w.content_digest,
+            w.source_revision,
+            w.source_execution,
+            w.source_attempt,
+            w.source_scope,
+            w.causal_distance,
+            w.source_sequence,
+            w.occurred_at_ms,
+            w.producer,
             w.causal_parents,
+            w.selected_artifact,
             w.selected_bytes,
             w.selected_artifact_bytes,
             w.estimated_model_input_units,
@@ -442,6 +643,8 @@ pub struct ContextTotals {
     pub bytes: u64,
     /// Selected artifact bytes.
     pub artifact_bytes: u64,
+    /// Selected artifact-reference count.
+    pub artifacts: u32,
     /// Sum of supplied model-unit estimates; absent if no estimate was supplied.
     pub model_input_units: Option<u64>,
 }
@@ -520,6 +723,7 @@ impl ContextManifest {
             || totals.items > budget.max_items
             || totals.bytes > budget.max_bytes
             || totals.artifact_bytes > budget.max_artifact_bytes
+            || totals.artifacts > budget.max_artifacts
             || budget
                 .max_model_input_units
                 .zip(totals.model_input_units)
@@ -530,7 +734,7 @@ impl ContextManifest {
             ));
         }
         let input = DigestInput {
-            schema_version: CONTEXT_MANIFEST_SCHEMA_VERSION_V1,
+            schema_version: CONTEXT_MANIFEST_SCHEMA_VERSION_V2,
             run: &run,
             revision: &revision,
             node: &node,
@@ -545,11 +749,11 @@ impl ContextManifest {
         };
         let bytes = encode(&input)?;
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"milkdrift.context-manifest.v1\0");
+        hasher.update(b"milkdrift.context-manifest.v2\0");
         hasher.update(&bytes);
         let digest = ContextManifestDigest::new(format!("b3_{}", hasher.finalize()))?;
         Ok(Self {
-            schema_version: CONTEXT_MANIFEST_SCHEMA_VERSION_V1,
+            schema_version: CONTEXT_MANIFEST_SCHEMA_VERSION_V2,
             run,
             revision,
             node,
@@ -624,6 +828,28 @@ impl ContextManifest {
     pub const fn digest(&self) -> &ContextManifestDigest {
         &self.digest
     }
+    /// Exact manifest schema version.
+    #[must_use]
+    pub const fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    /// Rebinds the exact frozen selection to a deliberate new attempt without consulting history.
+    pub fn rebind_attempt(&self, attempt: AttemptId) -> Result<Self, ModelContractError> {
+        Self::new(
+            self.run.clone(),
+            self.revision.clone(),
+            self.node.clone(),
+            self.execution.clone(),
+            attempt,
+            self.policy_version,
+            self.policy_digest.clone(),
+            self.entries.clone(),
+            self.omissions.clone(),
+            self.totals,
+            self.budget,
+        )
+    }
 }
 
 impl<'de> Deserialize<'de> for ContextManifest {
@@ -649,7 +875,7 @@ impl<'de> Deserialize<'de> for ContextManifest {
             digest: ContextManifestDigest,
         }
         let w = Wire::deserialize(deserializer)?;
-        if w.schema_version != CONTEXT_MANIFEST_SCHEMA_VERSION_V1 {
+        if w.schema_version != CONTEXT_MANIFEST_SCHEMA_VERSION_V2 {
             return Err(serde::de::Error::custom(
                 "unsupported context manifest version",
             ));
@@ -693,6 +919,11 @@ fn totals_for(entries: &[ContextManifestEntry]) -> Result<ContextTotals, ModelCo
             .artifact_bytes
             .checked_add(entry.selected_artifact_bytes())
             .ok_or_else(|| ModelContractError::Invalid("artifact total overflow".to_owned()))?;
+        if entry.selected_artifact() {
+            totals.artifacts = totals.artifacts.checked_add(1).ok_or_else(|| {
+                ModelContractError::Invalid("artifact item total overflow".to_owned())
+            })?;
+        }
         if let Some(value) = entry.estimated_model_input_units() {
             any_units = true;
             units = units.checked_add(value).ok_or_else(|| {

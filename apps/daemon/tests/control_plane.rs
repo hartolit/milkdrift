@@ -756,7 +756,7 @@ async fn daemon_configured_process_adapter_executes_to_terminal() -> TestResult 
     let config = configuration_with_process_profiles(&directory, 16, vec![profile])?;
     let (artifact_id, artifact_bytes) =
         publish_restricted_test_artifact(&config.document.data_root)?;
-    let daemon = start(config, CONTROLLER_TOKEN).await?;
+    let daemon = start(config.clone(), CONTROLLER_TOKEN).await?;
     assert!(
         daemon
             .client
@@ -821,6 +821,44 @@ async fn daemon_configured_process_adapter_executes_to_terminal() -> TestResult 
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+    let attempt_id = daemon
+        .client
+        .timeline(
+            "run-process",
+            &PageRequest {
+                cursor: None,
+                limit: 100,
+            },
+        )
+        .await?
+        .items
+        .into_iter()
+        .find(|entry| entry.node_id.as_deref() == Some("process") && entry.attempt_id.is_some())
+        .and_then(|entry| entry.attempt_id)
+        .ok_or("process run omitted its exact attempt")?;
+    let attempt = daemon.client.attempt("run-process", &attempt_id).await?;
+    assert_eq!(attempt.context_access, "authorized");
+    assert_eq!(
+        attempt.capability_id.as_deref(),
+        Some("golden-local-process")
+    );
+    assert_eq!(attempt.descriptor_revision, Some(1));
+    let manifest_metadata = attempt
+        .context_manifest
+        .as_ref()
+        .ok_or("process attempt omitted context manifest metadata")?;
+    assert_eq!(
+        manifest_metadata.content_type,
+        "application/vnd.milkdrift.context-manifest.v2+json"
+    );
+    let inspected_context = attempt
+        .context
+        .clone()
+        .ok_or("authorized process attempt omitted context details")?;
+    assert_eq!(inspected_context.schema_version, 2);
+    assert!(inspected_context.digest.starts_with("b3_"));
+    assert!(inspected_context.entries.is_empty());
+    assert!(!inspected_context.truncated);
     let metadata = daemon.client.artifact_metadata(&artifact_id).await?;
     assert_eq!(metadata.artifact_id, artifact_id);
     let range = daemon
@@ -850,7 +888,13 @@ async fn daemon_configured_process_adapter_executes_to_terminal() -> TestResult 
                 .as_str()
                 .is_some_and(|digest| digest.starts_with("b3_"))
     }));
-    daemon.stop().await
+    daemon.stop().await?;
+    let restarted = start(config, CONTROLLER_TOKEN).await?;
+    let reopened = restarted.client.attempt("run-process", &attempt_id).await?;
+    assert_eq!(reopened.context_access, "authorized");
+    assert_eq!(reopened.context, Some(inspected_context));
+    assert_eq!(reopened.context_manifest, attempt.context_manifest);
+    restarted.stop().await
 }
 
 #[test]
