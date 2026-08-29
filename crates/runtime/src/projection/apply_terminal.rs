@@ -88,6 +88,44 @@ impl RunProjection {
                 self.eligible_executions.remove(execution);
                 self.deactivate_execution(execution, event)?;
             }
+            RunEventKind::CapabilityResolutionDenied {
+                execution,
+                authorization,
+            } => {
+                let execution_view = self.execution(execution, event)?;
+                if execution_view.state != NodeExecutionState::Eligible
+                    || execution_view.mode != NodeExecutionMode::Executor
+                    || !execution_view.attempts.is_empty()
+                    || execution_view.cancellation.is_some()
+                    || execution_view.deterministic_terminal.is_some()
+                    || authorization.is_allowed()
+                    || authorization.request().provenance.execution.as_deref()
+                        != Some(execution.as_str())
+                {
+                    return Err(invalid_at(
+                        event,
+                        "resolution denial requires an attempt-free eligible execution and exact denied decision",
+                    ));
+                }
+                let detail = milkdrift_persistence::BoundedDetail::new(format!(
+                    "authority decision {} denied capability resolution",
+                    authorization.digest(),
+                ))?;
+                let terminal = DeterministicNodeTerminalProjection {
+                    outcome: NodeOutcome::Rejected,
+                    error_class: Some(milkdrift_capability::ErrorClass::Authorization),
+                    detail: Some(detail),
+                    sequence,
+                };
+                let execution_view = self
+                    .node_executions
+                    .get_mut(execution)
+                    .ok_or_else(|| invalid_at(event, "unknown execution"))?;
+                execution_view.deterministic_terminal = Some(terminal);
+                execution_view.state = NodeExecutionState::Terminal(NodeOutcome::Rejected);
+                self.eligible_executions.remove(execution);
+                self.deactivate_execution(execution, event)?;
+            }
             RunEventKind::StructuredSuccessorScanCompleted { execution } => {
                 if self.node_executions.get(execution).is_none_or(|execution| {
                     execution.state != NodeExecutionState::Terminal(NodeOutcome::Succeeded)

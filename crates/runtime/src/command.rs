@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use milkdrift_authority::{
-    ActorRef, AuthorityBudget, AuthorityOperation, AuthorityRequest, BoundaryTimeMillis,
-    DecisionId, GrantId, RequestedResourceFacts,
+    ActorRef, AuthorityBudget, AuthorityExecutionProvenance, AuthorityOperation, AuthorityRequest,
+    BoundaryTimeMillis, DecisionId, GrantDigest, GrantId, RequestedResourceFacts,
 };
 use milkdrift_blueprint::{NodeId, RevisionId, WorkflowId};
 use milkdrift_capability::{
@@ -63,6 +63,8 @@ pub enum WorkerReport {
         lease: LeaseId,
         /// Immutable attempt.
         attempt: AttemptId,
+        /// Fresh exact-candidate decision evaluated immediately before entry.
+        authorization: Box<milkdrift_authority::AuthorityDecisionSnapshot>,
     },
     /// Extend a valid lease using a boundary-clock fact.
     Heartbeat {
@@ -124,6 +126,18 @@ pub enum SystemTransition {
         /// Logical execution terminalized by the runtime.
         execution: NodeExecutionId,
     },
+    /// A structured child inherited its parent's frozen execution authority.
+    InheritExecutionAuthority,
+    /// Current authority denied one exact leased attempt before adapter entry.
+    DenyCapabilityEntry {
+        /// Immutable denied attempt.
+        attempt: AttemptId,
+    },
+    /// The effect host made the final durable decision directly before adapter entry.
+    DecideCapabilityAdapterEntry {
+        /// Immutable attempt at the boundary.
+        attempt: AttemptId,
+    },
     /// The runtime advanced deterministic structured-control state.
     DriveStructuredProgress,
     /// A cancelled execution was restarted under an applied prospective revision.
@@ -144,6 +158,9 @@ impl SystemTransition {
             Self::ScheduleAndLease { .. } => "schedule_and_lease",
             Self::DispatchOutcomeUncertain { .. } => "dispatch_outcome_uncertain",
             Self::TerminalizePreDispatchFailure { .. } => "terminalize_pre_dispatch_failure",
+            Self::InheritExecutionAuthority => "inherit_execution_authority",
+            Self::DenyCapabilityEntry { .. } => "deny_capability_entry",
+            Self::DecideCapabilityAdapterEntry { .. } => "decide_capability_adapter_entry",
             Self::DriveStructuredProgress => "drive_structured_progress",
             Self::RestartReconciledExecution => "restart_reconciled_execution",
             Self::ObserveChildTerminal => "observe_child_terminal",
@@ -263,14 +280,16 @@ pub enum RunCommand {
 pub struct CommandAuthorityClaim {
     grant: GrantId,
     grant_revision: u64,
+    grant_digest: GrantDigest,
     revocation_generation: u64,
 }
 
 impl CommandAuthorityClaim {
-    /// Constructs an exact nonzero grant revision claim.
+    /// Constructs a production claim bound to the authenticated immutable grant digest.
     pub fn new(
         grant: GrantId,
         grant_revision: u64,
+        grant_digest: GrantDigest,
         revocation_generation: u64,
     ) -> Result<Self, RuntimeError> {
         if grant_revision == 0 {
@@ -281,6 +300,7 @@ impl CommandAuthorityClaim {
         Ok(Self {
             grant,
             grant_revision,
+            grant_digest,
             revocation_generation,
         })
     }
@@ -295,6 +315,12 @@ impl CommandAuthorityClaim {
     #[must_use]
     pub const fn grant_revision(&self) -> u64 {
         self.grant_revision
+    }
+
+    /// Exact immutable digest authenticated with the grant revision.
+    #[must_use]
+    pub const fn grant_digest(&self) -> &GrantDigest {
+        &self.grant_digest
     }
 
     /// Exact revocation generation observed by the caller boundary.
@@ -539,6 +565,14 @@ impl RunCommandDocument {
         &self,
         claim: &CommandAuthorityClaim,
     ) -> Result<AuthorityRequest, RuntimeError> {
+        self.authority_request_in_workflow(claim, None)
+    }
+
+    pub(crate) fn authority_request_in_workflow(
+        &self,
+        claim: &CommandAuthorityClaim,
+        workflow_context: Option<WorkflowId>,
+    ) -> Result<AuthorityRequest, RuntimeError> {
         let (operation, workflow, budget) = match &self.command {
             RunCommand::CreateRun {
                 workflow,
@@ -554,38 +588,50 @@ impl RunCommandDocument {
             ),
             RunCommand::StartRun => (
                 AuthorityOperation::StartRun,
-                None,
+                workflow_context.clone(),
                 AuthorityBudget::default(),
             ),
-            RunCommand::PauseRun => (AuthorityOperation::Pause, None, AuthorityBudget::default()),
-            RunCommand::ResumeRun => (AuthorityOperation::Resume, None, AuthorityBudget::default()),
-            RunCommand::RequestCancellation => {
-                (AuthorityOperation::Cancel, None, AuthorityBudget::default())
-            }
+            RunCommand::PauseRun => (
+                AuthorityOperation::Pause,
+                workflow_context.clone(),
+                AuthorityBudget::default(),
+            ),
+            RunCommand::ResumeRun => (
+                AuthorityOperation::Resume,
+                workflow_context.clone(),
+                AuthorityBudget::default(),
+            ),
+            RunCommand::RequestCancellation => (
+                AuthorityOperation::Cancel,
+                workflow_context.clone(),
+                AuthorityBudget::default(),
+            ),
             RunCommand::DeliverSignal { .. } => (
                 AuthorityOperation::DeliverSignal,
-                None,
+                workflow_context.clone(),
                 AuthorityBudget::default(),
             ),
             RunCommand::FireTimer { .. } => (
                 AuthorityOperation::FireTimer,
-                None,
+                workflow_context.clone(),
                 AuthorityBudget::default(),
             ),
             RunCommand::RequestRevisionAdoption { .. } => (
                 AuthorityOperation::Propose,
-                None,
+                workflow_context.clone(),
                 AuthorityBudget::default(),
             ),
             RunCommand::DecideReconciliation { .. }
             | RunCommand::DecideRepeatContinuation { .. } => (
                 AuthorityOperation::Approve,
-                None,
+                workflow_context.clone(),
                 AuthorityBudget::default(),
             ),
-            RunCommand::ApplyReconciliation { .. } => {
-                (AuthorityOperation::Apply, None, AuthorityBudget::default())
-            }
+            RunCommand::ApplyReconciliation { .. } => (
+                AuthorityOperation::Apply,
+                workflow_context.clone(),
+                AuthorityBudget::default(),
+            ),
             RunCommand::ResolveExternalWork { action, .. } => (
                 match action {
                     ExternalWorkAction::Retry => AuthorityOperation::Retry,
@@ -596,7 +642,7 @@ impl RunCommandDocument {
                         AuthorityOperation::Terminate
                     }
                 },
-                None,
+                workflow_context,
                 AuthorityBudget::default(),
             ),
             RunCommand::SystemTransition { .. } | RunCommand::WorkerReport { .. } => {
@@ -615,11 +661,13 @@ impl RunCommandDocument {
             actor: self.actor.clone(),
             grant: claim.grant.clone(),
             grant_revision: claim.grant_revision,
+            grant_digest: claim.grant_digest.clone(),
             revocation_generation: claim.revocation_generation,
             operation,
             resources,
             budget,
             evaluated_at: BoundaryTimeMillis::new(self.issued_at.get()),
+            provenance: AuthorityExecutionProvenance::default(),
         })
     }
 

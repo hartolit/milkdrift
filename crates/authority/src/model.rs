@@ -1,15 +1,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use milkdrift_blueprint::WorkflowId;
+use milkdrift_blueprint::{NodeId, RevisionId, WorkflowId};
 use milkdrift_capability::{
-    BoundedJson, CapabilityCategory, CapabilityId, Locality, OperationId, ProviderProfileRef,
-    SideEffectClass, TrustZone,
+    BoundedJson, CapabilityCategory, CapabilityId, IdempotencyBehavior, Locality, OperationId,
+    ProviderProfileRef, SideEffectClass, TrustZone,
 };
 use milkdrift_workspace::RunId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ActorRef, AuthorityError, DecisionId, GrantId, NetworkProfileRef, PolicyId, SecretRef,
+    ActorRef, AuthorityError, DecisionId, GrantDigest, GrantId, NetworkProfileRef, PeerId,
+    PolicyId, SecretRef,
     document::{AUTHORITY_GRANT_SCHEMA_VERSION_V1, canonical_json},
 };
 
@@ -128,6 +129,15 @@ pub struct FilesystemScope {
 }
 
 impl FilesystemScope {
+    /// Deliberately broad root scope for explicitly acknowledged administration.
+    #[must_use]
+    pub fn dangerous_all_access_root() -> Self {
+        Self {
+            root: "/".to_owned(),
+            access: BTreeSet::from([AccessMode::Read, AccessMode::Write, AccessMode::Execute]),
+        }
+    }
+
     /// Constructs a lexical absolute root without `.` or `..` segments.
     pub fn new(
         root: impl Into<String>,
@@ -172,6 +182,15 @@ pub struct NetworkScope {
 }
 
 impl NetworkScope {
+    /// Empty network scope granting no profiles or destinations.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            profiles: BTreeSet::new(),
+            destinations: BTreeSet::new(),
+        }
+    }
+
     /// Constructs a bounded non-secret network scope.
     pub fn new(
         profiles: BTreeSet<NetworkProfileRef>,
@@ -221,6 +240,8 @@ pub struct CapabilityAuthorityScope {
     provider_profiles: BTreeSet<ProviderProfileRef>,
     trust_zones: BTreeSet<TrustZone>,
     localities: BTreeSet<Locality>,
+    #[serde(default)]
+    peers: BTreeSet<PeerId>,
     maximum_side_effect: SideEffectClass,
 }
 
@@ -259,6 +280,7 @@ impl CapabilityAuthorityScope {
             provider_profiles,
             trust_zones,
             localities,
+            peers: BTreeSet::new(),
             maximum_side_effect,
         })
     }
@@ -273,8 +295,21 @@ impl CapabilityAuthorityScope {
             provider_profiles: BTreeSet::new(),
             trust_zones: BTreeSet::new(),
             localities: BTreeSet::new(),
+            peers: BTreeSet::new(),
             maximum_side_effect,
         }
+    }
+
+    /// Narrows remote selection to exact authenticated peer identities.
+    pub fn with_peers(mut self, peers: BTreeSet<PeerId>) -> Result<Self, AuthorityError> {
+        if peers.len() > MAX_SCOPE_ITEMS {
+            return Err(AuthorityError::Bounds {
+                location: "grant.capability_scope.peers",
+                reason: format!("at most {MAX_SCOPE_ITEMS} peers are allowed"),
+            });
+        }
+        self.peers = peers;
+        Ok(self)
     }
 
     /// Allowed capability identities; empty means any.
@@ -307,6 +342,11 @@ impl CapabilityAuthorityScope {
     pub const fn localities(&self) -> &BTreeSet<Locality> {
         &self.localities
     }
+    /// Allowed authenticated remote peers; empty means any peer within other constraints.
+    #[must_use]
+    pub const fn peers(&self) -> &BTreeSet<PeerId> {
+        &self.peers
+    }
     /// Maximum permitted side-effect class.
     #[must_use]
     pub const fn maximum_side_effect(&self) -> SideEffectClass {
@@ -326,8 +366,28 @@ pub struct AuthorityBudget {
     pub invocations: Option<u64>,
     /// Maximum artifact bytes.
     pub artifact_bytes: Option<u64>,
+    /// Maximum provider-defined input/output units.
+    pub units: Option<u64>,
     /// Maximum concurrent work.
     pub concurrency: Option<u32>,
+}
+
+/// Immutable adapter-declared resource facts added to every exact candidate request.
+///
+/// These values contain references and ceilings only. Secret values and live health do not
+/// cross the authority boundary.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CapabilityExecutionRequirements {
+    /// Normalized host filesystem roots and access modes used by this generation.
+    pub filesystem: Vec<FilesystemScope>,
+    /// Credential-free network profiles used by this generation.
+    pub network_profiles: BTreeSet<NetworkProfileRef>,
+    /// Credential-free host or host-and-port destinations used by this generation.
+    pub network_destinations: BTreeSet<String>,
+    /// Opaque secret references resolved only after authorization.
+    pub secrets: BTreeSet<SecretRef>,
+    /// Per-invocation resource ceilings declared by the adapter profile.
+    pub budget: AuthorityBudget,
 }
 
 impl AuthorityBudget {
@@ -336,6 +396,7 @@ impl AuthorityBudget {
             && within(self.duration_ms, ceiling.duration_ms)
             && within(self.invocations, ceiling.invocations)
             && within(self.artifact_bytes, ceiling.artifact_bytes)
+            && within(self.units, ceiling.units)
             && within(
                 self.concurrency.map(u64::from),
                 ceiling.concurrency.map(u64::from),
@@ -473,6 +534,10 @@ impl AuthorityGrant {
     /// Canonical bounded JSON encoding.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, AuthorityError> {
         canonical_json(self)
+    }
+    /// Domain-separated digest of this exact immutable grant revision.
+    pub fn digest(&self) -> Result<GrantDigest, AuthorityError> {
+        Ok(GrantDigest::for_bytes(&self.to_canonical_json()?))
     }
     /// Strictly decodes and validates one schema-v1 grant.
     pub fn from_json(bytes: &[u8]) -> Result<Self, AuthorityError> {
@@ -618,7 +683,8 @@ impl AuthorityGrantBuilder {
             grant.resources.capability.trust_zones.clone(),
             grant.resources.capability.localities.clone(),
             grant.resources.capability.maximum_side_effect,
-        )?;
+        )?
+        .with_peers(grant.resources.capability.peers.clone())?;
         NetworkScope::new(
             grant.resources.network.profiles.clone(),
             grant.resources.network.destinations.clone(),
@@ -641,6 +707,319 @@ impl AuthorityGrantBuilder {
     }
 }
 
+/// Exact execution coordinates bound into a future authority decision.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityExecutionProvenance {
+    /// Immutable revision whose node requests the capability.
+    pub revision: Option<RevisionId>,
+    /// Stable semantic node identity.
+    pub node: Option<NodeId>,
+    /// Exact runtime execution identity in safe canonical text.
+    pub execution: Option<String>,
+    /// Exact runtime attempt identity in safe canonical text.
+    pub attempt: Option<String>,
+    /// Exact descriptor generation considered at resolution or entry.
+    pub descriptor_revision: Option<u64>,
+    /// Authenticated remote peer when the candidate is remote.
+    pub peer: Option<PeerId>,
+    /// Exact idempotency behavior advertised by the selected operation.
+    pub idempotency: Option<IdempotencyBehavior>,
+}
+
+impl AuthorityExecutionProvenance {
+    fn validate(&self) -> Result<(), AuthorityError> {
+        if self.descriptor_revision == Some(0)
+            || self
+                .execution
+                .as_ref()
+                .is_some_and(|value| !safe_reference(value))
+            || self
+                .attempt
+                .as_ref()
+                .is_some_and(|value| !safe_reference(value))
+        {
+            return Err(AuthorityError::InvalidContract(
+                "authority execution provenance contains an invalid identity or generation"
+                    .to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn safe_reference(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 192
+        && value.is_ascii()
+        && value.as_bytes()[0].is_ascii_alphanumeric()
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
+        })
+}
+
+/// Immutable run-level authority pinned when external execution is accepted.
+///
+/// The basis stores exact references and digests, not a duplicate grant document. Every
+/// capability attempt derives a fresh request from it and is evaluated against the current
+/// revocation state while historical acceptance remains unchanged.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionAuthorityBasis {
+    schema_version: u32,
+    actor: ActorRef,
+    grant: GrantId,
+    grant_revision: u64,
+    grant_digest: GrantDigest,
+    policy: PolicyId,
+    policy_version: u32,
+    workflow: WorkflowId,
+    root_run: RunId,
+    lineage_revision: RevisionId,
+    accepted_decision: DecisionId,
+    accepted_decision_digest: String,
+    revocation_generation: u64,
+    digest: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExecutionAuthorityBasisWire {
+    schema_version: u32,
+    actor: ActorRef,
+    grant: GrantId,
+    grant_revision: u64,
+    grant_digest: GrantDigest,
+    policy: PolicyId,
+    policy_version: u32,
+    workflow: WorkflowId,
+    root_run: RunId,
+    lineage_revision: RevisionId,
+    accepted_decision: DecisionId,
+    accepted_decision_digest: String,
+    revocation_generation: u64,
+    digest: String,
+}
+
+impl<'de> Deserialize<'de> for ExecutionAuthorityBasis {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = ExecutionAuthorityBasisWire::deserialize(deserializer)?;
+        let value = Self {
+            schema_version: wire.schema_version,
+            actor: wire.actor,
+            grant: wire.grant,
+            grant_revision: wire.grant_revision,
+            grant_digest: wire.grant_digest,
+            policy: wire.policy,
+            policy_version: wire.policy_version,
+            workflow: wire.workflow,
+            root_run: wire.root_run,
+            lineage_revision: wire.lineage_revision,
+            accepted_decision: wire.accepted_decision,
+            accepted_decision_digest: wire.accepted_decision_digest,
+            revocation_generation: wire.revocation_generation,
+            digest: wire.digest,
+        };
+        value.validate().map_err(serde::de::Error::custom)?;
+        Ok(value)
+    }
+}
+
+impl ExecutionAuthorityBasis {
+    /// Freezes the exact allowed start decision as the run's execution basis.
+    pub fn from_start_decision(
+        decision: &AuthorityDecisionSnapshot,
+        workflow: WorkflowId,
+        root_run: RunId,
+        lineage_revision: RevisionId,
+    ) -> Result<Self, AuthorityError> {
+        let request = decision.request();
+        if !decision.is_allowed() || request.operation != AuthorityOperation::StartRun {
+            return Err(AuthorityError::InvalidContract(
+                "execution authority requires an allowed start-run decision".to_owned(),
+            ));
+        }
+        let mut value = Self {
+            schema_version: 1,
+            actor: request.actor.clone(),
+            grant: request.grant.clone(),
+            grant_revision: request.grant_revision,
+            grant_digest: request.grant_digest.clone(),
+            policy: decision.policy().clone(),
+            policy_version: decision.policy_version(),
+            workflow,
+            root_run,
+            lineage_revision,
+            accepted_decision: request.decision.clone(),
+            accepted_decision_digest: decision.digest().to_owned(),
+            revocation_generation: request.revocation_generation,
+            digest: String::new(),
+        };
+        value.digest = value.compute_digest()?;
+        value.validate()?;
+        Ok(value)
+    }
+
+    /// Derives a new exact request without widening the frozen grant reference.
+    pub fn request(
+        &self,
+        decision: DecisionId,
+        operation: AuthorityOperation,
+        mut resources: RequestedResourceFacts,
+        budget: AuthorityBudget,
+        evaluated_at: BoundaryTimeMillis,
+        provenance: AuthorityExecutionProvenance,
+    ) -> AuthorityRequest {
+        resources.workflow = Some(self.workflow.clone());
+        resources.run = Some(self.root_run.clone());
+        AuthorityRequest {
+            decision,
+            actor: self.actor.clone(),
+            grant: self.grant.clone(),
+            grant_revision: self.grant_revision,
+            grant_digest: self.grant_digest.clone(),
+            revocation_generation: self.revocation_generation,
+            operation,
+            resources,
+            budget,
+            evaluated_at,
+            provenance,
+        }
+    }
+
+    /// Actor whose grant is carried into execution.
+    #[must_use]
+    pub const fn actor(&self) -> &ActorRef {
+        &self.actor
+    }
+    /// Exact grant lineage.
+    #[must_use]
+    pub const fn grant(&self) -> &GrantId {
+        &self.grant
+    }
+    /// Exact grant revision.
+    #[must_use]
+    pub const fn grant_revision(&self) -> u64 {
+        self.grant_revision
+    }
+    /// Exact immutable grant digest.
+    #[must_use]
+    pub const fn grant_digest(&self) -> &GrantDigest {
+        &self.grant_digest
+    }
+    /// Evaluator policy lineage.
+    #[must_use]
+    pub const fn policy(&self) -> &PolicyId {
+        &self.policy
+    }
+    /// Exact evaluator version used at acceptance.
+    #[must_use]
+    pub const fn policy_version(&self) -> u32 {
+        self.policy_version
+    }
+    /// Root workflow authority scope.
+    #[must_use]
+    pub const fn workflow(&self) -> &WorkflowId {
+        &self.workflow
+    }
+    /// Root run authority scope inherited by structured child runs.
+    #[must_use]
+    pub const fn root_run(&self) -> &RunId {
+        &self.root_run
+    }
+    /// Initial accepted revision-lineage boundary.
+    #[must_use]
+    pub const fn lineage_revision(&self) -> &RevisionId {
+        &self.lineage_revision
+    }
+    /// Command authorization decision that established the basis.
+    #[must_use]
+    pub const fn accepted_decision(&self) -> &DecisionId {
+        &self.accepted_decision
+    }
+    /// Digest of the accepted command authorization decision.
+    #[must_use]
+    pub fn accepted_decision_digest(&self) -> &str {
+        &self.accepted_decision_digest
+    }
+    /// Acceptance-time revocation generation.
+    #[must_use]
+    pub const fn revocation_generation(&self) -> u64 {
+        self.revocation_generation
+    }
+    /// Domain-separated digest of this complete minimal basis.
+    #[must_use]
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+
+    fn validate(&self) -> Result<(), AuthorityError> {
+        if self.schema_version != 1
+            || self.grant_revision == 0
+            || self.policy_version == 0
+            || !valid_digest(&self.accepted_decision_digest)
+            || self.digest != self.compute_digest()?
+        {
+            return Err(AuthorityError::InvalidContract(
+                "execution authority basis invariant or digest mismatch".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn compute_digest(&self) -> Result<String, AuthorityError> {
+        #[derive(Serialize)]
+        struct Digest<'a> {
+            domain: &'static str,
+            schema_version: u32,
+            actor: &'a ActorRef,
+            grant: &'a GrantId,
+            grant_revision: u64,
+            grant_digest: &'a GrantDigest,
+            policy: &'a PolicyId,
+            policy_version: u32,
+            workflow: &'a WorkflowId,
+            root_run: &'a RunId,
+            lineage_revision: &'a RevisionId,
+            accepted_decision: &'a DecisionId,
+            accepted_decision_digest: &'a str,
+            revocation_generation: u64,
+        }
+        let bytes = canonical_json(&Digest {
+            domain: "milkdrift.execution-authority-basis.v1",
+            schema_version: self.schema_version,
+            actor: &self.actor,
+            grant: &self.grant,
+            grant_revision: self.grant_revision,
+            grant_digest: &self.grant_digest,
+            policy: &self.policy,
+            policy_version: self.policy_version,
+            workflow: &self.workflow,
+            root_run: &self.root_run,
+            lineage_revision: &self.lineage_revision,
+            accepted_decision: &self.accepted_decision,
+            accepted_decision_digest: &self.accepted_decision_digest,
+            revocation_generation: self.revocation_generation,
+        })?;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"milkdrift.execution-authority-basis.v1\0");
+        hasher.update(&bytes);
+        Ok(format!("b3_{}", hasher.finalize()))
+    }
+}
+
+fn valid_digest(value: &str) -> bool {
+    value.strip_prefix("b3_").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
+}
+
 /// Exact resource facts requested at one authorization boundary.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -659,8 +1038,15 @@ pub struct RequestedResourceFacts {
     pub provider_profile: Option<ProviderProfileRef>,
     /// Trust zone requested or selected.
     pub trust_zone: Option<TrustZone>,
+    /// Complete trust-zone set advertised by an exact candidate.
+    #[serde(default)]
+    pub trust_zones: BTreeSet<TrustZone>,
     /// Execution locality when known.
     pub locality: Option<Locality>,
+    /// Authenticated remote peer when a remote candidate is exact.
+    pub peer: Option<PeerId>,
+    /// Semantic selection envelope at workflow acceptance; absent for exact candidates.
+    pub capability_envelope: Option<CapabilityAuthorityScope>,
     /// Maximum side effect of the requested operation.
     pub side_effect: SideEffectClass,
     /// Filesystem scopes requested.
@@ -685,7 +1071,10 @@ impl RequestedResourceFacts {
             capability_operation: None,
             provider_profile: None,
             trust_zone: None,
+            trust_zones: BTreeSet::new(),
             locality: None,
+            peer: None,
+            capability_envelope: None,
             side_effect: SideEffectClass::None,
             filesystem: Vec::new(),
             network_profiles: BTreeSet::new(),
@@ -724,6 +1113,8 @@ pub struct AuthorityRequest {
     pub grant: GrantId,
     /// Exact grant revision requested.
     pub grant_revision: u64,
+    /// Exact immutable grant digest observed by the trusted authentication boundary.
+    pub grant_digest: GrantDigest,
     /// Revocation generation observed by the trusted caller boundary.
     pub revocation_generation: u64,
     /// Closed requested operation.
@@ -734,6 +1125,8 @@ pub struct AuthorityRequest {
     pub budget: AuthorityBudget,
     /// Caller-supplied validity boundary.
     pub evaluated_at: BoundaryTimeMillis,
+    /// Execution coordinates and exact candidate generation bound into this decision.
+    pub provenance: AuthorityExecutionProvenance,
 }
 
 impl AuthorityRequest {
@@ -743,6 +1136,7 @@ impl AuthorityRequest {
                 "authority request grant revision must be nonzero".to_owned(),
             ));
         }
+        self.provenance.validate()?;
         self.resources.validate()
     }
 }
@@ -767,6 +1161,8 @@ pub enum DecisionReasonCode {
     GrantNotFound,
     /// Requested revision is stale or absent.
     GrantRevisionMismatch,
+    /// Configured content for the identity/revision differs from the frozen digest.
+    GrantDigestMismatch,
     /// Actor differs from the grant subject.
     WrongActor,
     /// Revocation generation differs.

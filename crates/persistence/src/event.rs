@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use milkdrift_authority::ActorRef;
+use milkdrift_authority::{ActorRef, AuthorityDecisionSnapshot, ExecutionAuthorityBasis};
 use milkdrift_blueprint::{ContentDigest, NodeId, PortId, RevisionId, WorkflowId};
 use milkdrift_capability::{
     BoundedJson, CancellationAcknowledgement, CapabilityRequirement, ErrorClass,
@@ -379,6 +379,11 @@ pub enum RunEventKind {
         /// Exact bounded input references.
         inputs: Vec<WorkspaceValueReference>,
     },
+    /// Exact immutable authority inherited by every capability-backed child of this run.
+    ExecutionAuthorityEstablished {
+        /// Minimal frozen actor/grant/policy/run basis.
+        basis: ExecutionAuthorityBasis,
+    },
     /// A prospective revision became the pin from a recorded sequence onward.
     RevisionPinned {
         /// Previous exact revision.
@@ -485,6 +490,17 @@ pub enum RunEventKind {
         /// Exact canonical capability/operation snapshot supplied before dispatch.
         snapshot: ResolvedCapabilitySnapshot,
     },
+    /// Exact canonical decision allowing one generation to be selected.
+    CapabilityResolutionDecisionRecorded {
+        /// Owning execution.
+        execution: NodeExecutionId,
+        /// Owning immutable attempt.
+        attempt: AttemptId,
+        /// Exact generation bound by the decision.
+        snapshot: ResolvedCapabilitySnapshot,
+        /// Fresh canonical authorization decision.
+        authorization: AuthorityDecisionSnapshot,
+    },
     /// Side-effect and idempotency facts were frozen before dispatch.
     SideEffectClassified {
         /// Owning attempt.
@@ -508,6 +524,20 @@ pub enum RunEventKind {
         worker: WorkerId,
         /// Boundary-clock expiration fact.
         expires_at: TimestampMillis,
+    },
+    /// Canonical exact-candidate decision made when a leased effect is claimed.
+    CapabilityEntryDecisionRecorded {
+        /// Immutable attempt at the entry boundary.
+        attempt: AttemptId,
+        /// Fresh allow or deny decision under claim-time revocation/validity state.
+        authorization: AuthorityDecisionSnapshot,
+    },
+    /// Final canonical decision committed immediately before adapter code is called.
+    CapabilityAdapterEntryDecisionRecorded {
+        /// Immutable running attempt at the adapter boundary.
+        attempt: AttemptId,
+        /// Fresh allow or deny decision under current revocation/validity state.
+        authorization: AuthorityDecisionSnapshot,
     },
     /// A valid lease was extended by an authenticated heartbeat.
     LeaseHeartbeatRecorded {
@@ -615,6 +645,13 @@ pub enum RunEventKind {
         error_class: ErrorClass,
         /// Bounded deterministic failure detail.
         detail: Option<BoundedDetail>,
+    },
+    /// Exact candidate authority denied before an attempt could be scheduled.
+    CapabilityResolutionDenied {
+        /// Logical execution that remains attempt-free.
+        execution: NodeExecutionId,
+        /// Exact canonical denied candidate decision.
+        authorization: AuthorityDecisionSnapshot,
     },
     /// Runtime successor planning durably examined one successful execution.
     StructuredSuccessorScanCompleted {
@@ -1328,6 +1365,31 @@ impl RunEventKind {
                             .to_owned(),
                     ));
                 }
+            }
+            Self::CapabilityResolutionDecisionRecorded {
+                attempt,
+                snapshot,
+                authorization,
+                ..
+            } if !authorization.is_allowed()
+                || authorization.request().resources.capability.as_ref()
+                    != Some(snapshot.capability())
+                || authorization
+                    .request()
+                    .resources
+                    .capability_operation
+                    .as_ref()
+                    != Some(snapshot.operation())
+                || authorization.request().resources.provider_profile.as_ref()
+                    != snapshot.provider_profile()
+                || authorization.request().provenance.descriptor_revision
+                    != Some(snapshot.descriptor_revision())
+                || authorization.request().provenance.attempt.as_deref()
+                    != Some(attempt.as_str()) =>
+            {
+                return Err(PersistenceError::InvalidDocument(
+                    "capability authorization does not bind the resolved generation".to_owned(),
+                ));
             }
             Self::NodeProgressRecorded {
                 completed_units,

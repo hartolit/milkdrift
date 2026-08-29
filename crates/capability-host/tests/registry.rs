@@ -8,12 +8,19 @@ use std::{
     },
 };
 
-use milkdrift_authority::{AuthorityBudget, CapabilityAuthorityScope, SecretRef};
+use milkdrift_authority::{
+    ActorRef, AuthorityBudget, AuthorityEvaluator, AuthorityExecutionProvenance,
+    AuthorityGrantBuilder, AuthorityOperation, AuthorityRequest, BoundaryTimeMillis,
+    CapabilityAuthorityScope, CapabilityExecutionRequirements, DecisionId, DecisionReasonCode,
+    ExecutionAuthorityBasis, GrantId, GrantSetEvaluator, NetworkScope, PeerId, PolicyId,
+    RequestedResourceFacts, ResourceScope, SecretRef, WorkflowRunScope,
+};
+use milkdrift_blueprint::{NodeId, RevisionId, WorkflowId};
 use milkdrift_capability::{
     AdmissionConstraints, CancellationAcknowledgement, CancellationRequest, CapabilityDescriptor,
     CapabilityDescriptorDocument, CapabilityId, CapabilityObservation, CapabilityRequirement,
     DescriptorBuilder, InvocationEvent, InvocationEventKind, InvocationId, InvocationRequest,
-    InvocationTerminal, OperationId, ProviderProfileRef, ResolvedCapabilitySnapshot,
+    InvocationTerminal, Locality, OperationId, ProviderProfileRef, ResolvedCapabilitySnapshot,
     SideEffectClass, TerminalStatus,
 };
 use milkdrift_capability_host::{
@@ -21,7 +28,9 @@ use milkdrift_capability_host::{
     CapabilityHost, CapabilitySelectionPolicy, GenerationHealth, HostConfig, HostError,
     InMemorySecretResolver, RegistrationOutcome, SecretResolver,
 };
-use milkdrift_runtime::ExecutorError;
+use milkdrift_persistence::{AttemptId, NodeExecutionId};
+use milkdrift_runtime::{CapabilityResolutionContext, ExecutorError};
+use milkdrift_workspace::RunId;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -77,14 +86,7 @@ fn host(
             max_concurrent_per_generation: 2,
             observation_stale_after_ms: 100,
         },
-        CapabilitySelectionPolicy::new(
-            CapabilityAuthorityScope::any(SideEffectClass::Unknown),
-            AuthorityBudget {
-                concurrency: Some(8),
-                ..AuthorityBudget::default()
-            },
-            priorities,
-        ),
+        CapabilitySelectionPolicy::priorities(priorities),
     )?)
 }
 
@@ -100,6 +102,7 @@ struct FakeAdapter {
     cancel_count: AtomicUsize,
     panic_execute: AtomicBool,
     block: Option<Arc<(Mutex<AdapterControl>, Condvar)>>,
+    authority_requirements: CapabilityExecutionRequirements,
 }
 
 impl FakeAdapter {
@@ -110,6 +113,7 @@ impl FakeAdapter {
             cancel_count: AtomicUsize::new(0),
             panic_execute: AtomicBool::new(false),
             block: None,
+            authority_requirements: CapabilityExecutionRequirements::default(),
         }
     }
 
@@ -119,9 +123,23 @@ impl FakeAdapter {
             ..Self::new(capability)
         }
     }
+
+    fn with_authority_requirements(
+        capability: CapabilityId,
+        authority_requirements: CapabilityExecutionRequirements,
+    ) -> Self {
+        Self {
+            authority_requirements,
+            ..Self::new(capability)
+        }
+    }
 }
 
 impl CapabilityAdapter for FakeAdapter {
+    fn authority_requirements(&self) -> CapabilityExecutionRequirements {
+        self.authority_requirements.clone()
+    }
+
     fn execute(
         &self,
         invocation: &AdapterInvocation<'_>,
@@ -187,6 +205,106 @@ impl CapabilityAdapter for FakeAdapter {
         )
         .map_err(|error| AdapterError::external_failure(error.to_string()))
     }
+}
+
+fn placed_descriptor(
+    identity: &str,
+    profile: &str,
+    locality: Locality,
+    peer: Option<PeerId>,
+) -> TestResult<CapabilityDescriptor> {
+    let base = descriptor(identity, 1, profile, 2)?;
+    Ok(DescriptorBuilder::new(
+        base.identity().clone(),
+        base.descriptor_revision(),
+        base.category().clone(),
+        base.admission().clone(),
+        locality,
+    )
+    .peer(peer)
+    .provider_profile(base.provider_profile().cloned())
+    .operations(base.operations().clone())
+    .trust_zones(base.trust_zones().clone())
+    .resource_observations(base.resource_observations().cloned())
+    .labels(base.labels().clone())
+    .extensions(base.extensions().clone())
+    .build()?)
+}
+
+fn exact_authority(
+    capability: CapabilityAuthorityScope,
+    secrets: BTreeSet<SecretRef>,
+) -> TestResult<(GrantSetEvaluator, CapabilityResolutionContext)> {
+    let actor = ActorRef::new("human:host-authority-test")?;
+    let grant_id = GrantId::new("grant:host-authority-test")?;
+    let workflow = WorkflowId::new("host-authority-test")?;
+    let run = RunId::new("run-host-authority-test")?;
+    let budget = AuthorityBudget {
+        cost_minor: Some(u64::MAX),
+        duration_ms: Some(u64::MAX),
+        invocations: Some(u64::MAX),
+        artifact_bytes: Some(u64::MAX),
+        units: Some(u64::MAX),
+        concurrency: Some(u32::MAX),
+    };
+    let grant = AuthorityGrantBuilder::new(grant_id.clone(), 1, actor.clone())
+        .operations(BTreeSet::from([
+            AuthorityOperation::StartRun,
+            AuthorityOperation::InvokeCapability,
+        ]))
+        .resources(ResourceScope {
+            workflow_run: WorkflowRunScope::Workflow {
+                workflow: workflow.clone(),
+            },
+            capability,
+            filesystem: Vec::new(),
+            network: NetworkScope::empty(),
+            secrets,
+        })
+        .budget(budget)
+        .validity(BoundaryTimeMillis::new(0), BoundaryTimeMillis::new(1_000))
+        .build()?;
+    let digest = grant.digest()?;
+    let evaluator = GrantSetEvaluator::new(
+        PolicyId::new("test.host-exact-authority")?,
+        1,
+        [grant],
+        BTreeMap::new(),
+    )?;
+    let mut resources = RequestedResourceFacts::empty();
+    resources.workflow = Some(workflow.clone());
+    resources.run = Some(run.clone());
+    let start = AuthorityRequest {
+        decision: DecisionId::new("decision:host-start")?,
+        actor,
+        grant: grant_id,
+        grant_revision: 1,
+        grant_digest: digest,
+        revocation_generation: 0,
+        operation: AuthorityOperation::StartRun,
+        resources,
+        budget: AuthorityBudget::default(),
+        evaluated_at: BoundaryTimeMillis::new(100),
+        provenance: AuthorityExecutionProvenance::default(),
+    };
+    let start_decision = evaluator.evaluate(&start)?;
+    assert!(start_decision.is_allowed());
+    let revision: RevisionId =
+        serde_json::from_value(serde_json::json!(format!("rev_{}", "1".repeat(64))))?;
+    let basis = ExecutionAuthorityBasis::from_start_decision(
+        &start_decision,
+        workflow,
+        run,
+        revision.clone(),
+    )?;
+    let context = CapabilityResolutionContext::new(
+        basis,
+        revision,
+        NodeId::new("task")?,
+        NodeExecutionId::new("execution-host-authority")?,
+        AttemptId::new("attempt-host-authority")?,
+    );
+    Ok((evaluator, context))
 }
 
 struct FailingAdapter {
@@ -343,22 +461,7 @@ fn resolution_is_stable_policy_constrained_and_health_aware() -> TestResult {
             max_concurrent_per_generation: 2,
             observation_stale_after_ms: 100,
         },
-        CapabilitySelectionPolicy::new(
-            CapabilityAuthorityScope::new(
-                BTreeSet::from([b.identity().clone()]),
-                BTreeSet::new(),
-                BTreeSet::new(),
-                BTreeSet::new(),
-                BTreeSet::new(),
-                BTreeSet::new(),
-                SideEffectClass::Unknown,
-            )?,
-            AuthorityBudget {
-                concurrency: Some(8),
-                ..AuthorityBudget::default()
-            },
-            BTreeMap::new(),
-        ),
+        CapabilitySelectionPolicy::priorities(BTreeMap::new()),
     )?;
     constrained_host.register(
         a.clone(),
@@ -375,7 +478,7 @@ fn resolution_is_stable_policy_constrained_and_health_aware() -> TestResult {
             .resolve_at(&requirement, 150)?
             .snapshot()
             .capability(),
-        b.identity()
+        a.identity()
     );
     assert_eq!(
         constrained_host
@@ -394,6 +497,186 @@ fn resolution_is_stable_policy_constrained_and_health_aware() -> TestResult {
             .len(),
         1
     );
+    Ok(())
+}
+
+#[test]
+fn exact_actor_authority_filters_identity_profile_locality_and_peer_before_health() -> TestResult {
+    let operation = OperationId::new("model.generate")?;
+    let requirement = CapabilityRequirement::new(operation.clone());
+
+    let a = placed_descriptor("cap-a", "profile-a", Locality::Local, None)?;
+    let b = placed_descriptor("cap-b", "profile-b", Locality::Local, None)?;
+    let identity_host = host(BTreeMap::new(), 2)?;
+    identity_host.register(
+        a.clone(),
+        Arc::new(FakeAdapter::new(a.identity().clone())),
+        Some(observation(&a, 100, true)?),
+    )?;
+    identity_host.register(
+        b.clone(),
+        Arc::new(FakeAdapter::new(b.identity().clone())),
+        Some(observation(&b, 100, true)?),
+    )?;
+    let identity_scope = CapabilityAuthorityScope::new(
+        BTreeSet::from([b.identity().clone()]),
+        BTreeSet::new(),
+        BTreeSet::from([operation.clone()]),
+        BTreeSet::new(),
+        BTreeSet::new(),
+        BTreeSet::new(),
+        SideEffectClass::Unknown,
+    )?;
+    let (identity_evaluator, identity_context) = exact_authority(identity_scope, BTreeSet::new())?;
+    assert_eq!(
+        identity_host
+            .resolve_authorized_at(&requirement, &identity_context, &identity_evaluator, 150)?
+            .snapshot()
+            .capability(),
+        b.identity()
+    );
+
+    let profile_scope = CapabilityAuthorityScope::new(
+        BTreeSet::new(),
+        BTreeSet::new(),
+        BTreeSet::from([operation.clone()]),
+        BTreeSet::from([ProviderProfileRef::new("profile-a")?]),
+        BTreeSet::new(),
+        BTreeSet::new(),
+        SideEffectClass::Unknown,
+    )?;
+    let (profile_evaluator, profile_context) = exact_authority(profile_scope, BTreeSet::new())?;
+    assert_eq!(
+        identity_host
+            .resolve_authorized_at(&requirement, &profile_context, &profile_evaluator, 150)?
+            .snapshot()
+            .provider_profile(),
+        Some(&ProviderProfileRef::new("profile-a")?)
+    );
+
+    let remote_peer = PeerId::new("peer:remote-a")?;
+    let local = placed_descriptor("cap-local", "profile-local", Locality::Local, None)?;
+    let peer = placed_descriptor(
+        "cap-peer",
+        "profile-peer",
+        Locality::Peer,
+        Some(remote_peer.clone()),
+    )?;
+    let placement_host = host(BTreeMap::new(), 2)?;
+    placement_host.register(
+        local.clone(),
+        Arc::new(FakeAdapter::new(local.identity().clone())),
+        Some(observation(&local, 100, false)?),
+    )?;
+    placement_host.register(
+        peer.clone(),
+        Arc::new(FakeAdapter::new(peer.identity().clone())),
+        Some(observation(&peer, 100, true)?),
+    )?;
+    let local_scope = CapabilityAuthorityScope::new(
+        BTreeSet::new(),
+        BTreeSet::new(),
+        BTreeSet::from([operation.clone()]),
+        BTreeSet::new(),
+        BTreeSet::new(),
+        BTreeSet::from([Locality::Local]),
+        SideEffectClass::Unknown,
+    )?;
+    let (local_evaluator, local_context) = exact_authority(local_scope, BTreeSet::new())?;
+    assert!(matches!(
+        placement_host.resolve_authorized_at(&requirement, &local_context, &local_evaluator, 150,),
+        Err(ExecutorError::Unavailable(_))
+    ));
+
+    placement_host.update_observation(
+        local.identity(),
+        local.descriptor_revision(),
+        observation(&local, 110, true)?,
+    )?;
+    placement_host.update_observation(
+        peer.identity(),
+        peer.descriptor_revision(),
+        observation(&peer, 110, false)?,
+    )?;
+    let peer_scope = CapabilityAuthorityScope::new(
+        BTreeSet::new(),
+        BTreeSet::new(),
+        BTreeSet::from([operation]),
+        BTreeSet::new(),
+        BTreeSet::new(),
+        BTreeSet::from([Locality::Peer]),
+        SideEffectClass::Unknown,
+    )?
+    .with_peers(BTreeSet::from([remote_peer]))?;
+    let (peer_evaluator, peer_context) = exact_authority(peer_scope, BTreeSet::new())?;
+    assert!(matches!(
+        placement_host.resolve_authorized_at(&requirement, &peer_context, &peer_evaluator, 150,),
+        Err(ExecutorError::Unavailable(_))
+    ));
+    Ok(())
+}
+
+#[test]
+fn declared_adapter_resources_are_denied_before_unavailable_health() -> TestResult {
+    let capability = placed_descriptor(
+        "cap-secret-model",
+        "profile-secret-model",
+        Locality::Remote,
+        None,
+    )?;
+    let required_secret = SecretRef::new("secret:model-api")?;
+    let resource_host = host(BTreeMap::new(), 2)?;
+    resource_host.register(
+        capability.clone(),
+        Arc::new(FakeAdapter::with_authority_requirements(
+            capability.identity().clone(),
+            CapabilityExecutionRequirements {
+                secrets: BTreeSet::from([required_secret.clone()]),
+                ..CapabilityExecutionRequirements::default()
+            },
+        )),
+        Some(observation(&capability, 100, false)?),
+    )?;
+    let scope = CapabilityAuthorityScope::new(
+        BTreeSet::from([capability.identity().clone()]),
+        BTreeSet::new(),
+        BTreeSet::from([OperationId::new("model.generate")?]),
+        BTreeSet::new(),
+        BTreeSet::new(),
+        BTreeSet::new(),
+        SideEffectClass::Unknown,
+    )?;
+    let (denying_evaluator, denying_context) = exact_authority(scope.clone(), BTreeSet::new())?;
+    let denied = resource_host.resolve_authorized_at(
+        &CapabilityRequirement::new(OperationId::new("model.generate")?),
+        &denying_context,
+        &denying_evaluator,
+        150,
+    );
+    match denied {
+        Err(ExecutorError::AuthorityDenied { reasons, decision }) => {
+            assert!(reasons.contains(&DecisionReasonCode::SecretScopeMismatch));
+            assert!(
+                decision
+                    .request()
+                    .resources
+                    .secrets
+                    .contains(&required_secret)
+            );
+        }
+        other => return Err(format!("expected typed authority denial, got {other:?}").into()),
+    }
+    let (allowing_evaluator, allowing_context) =
+        exact_authority(scope, BTreeSet::from([required_secret]))?;
+    assert!(matches!(
+        resource_host.resolve_authorized_at(
+            &CapabilityRequirement::new(OperationId::new("model.generate")?),
+            &allowing_context,
+            &allowing_evaluator,
+            150,
+        ),
+        Err(ExecutorError::Unavailable(_))
+    ));
     Ok(())
 }
 

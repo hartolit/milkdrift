@@ -8,7 +8,10 @@ use super::{CommandExecution, MAX_DURABLE_INVOCATION_REQUEST_BYTES, RuntimeServi
 use crate::projection::{
     AttemptState, BranchState, NodeExecutionState, RunLifecycle, RunProjection,
 };
-use crate::{AdmissionRequest, RunCommand, RunCommandDocument, RuntimeError, SystemTransition};
+use crate::{
+    AdmissionRequest, CapabilityResolutionContext, ExecutorError, RunCommand, RunCommandDocument,
+    RuntimeError, SystemTransition,
+};
 use milkdrift_blueprint::{BlueprintRevision, Node, NodeKind, ReducerStrategy};
 use milkdrift_capability::{
     BoundedJson, ErrorClass, IdempotencyBehavior, IdempotencyKey, InputReference, InvocationId,
@@ -98,8 +101,6 @@ impl RuntimeService {
         if !self.config.scheduler_limits.allows(&admission, &usage) {
             return Ok(DispatchOutcome::Deferred);
         }
-        let resolution = self.executor.resolve(&requirement, now.get())?;
-        let contract = resolution.snapshot().operation_contract();
         let attempt = match execution.state() {
             NodeExecutionState::Eligible => self.next_attempt_id()?,
             NodeExecutionState::RetryPending(attempt)
@@ -118,6 +119,37 @@ impl RuntimeService {
             | NodeExecutionState::RemovedProspectively(_)
             | NodeExecutionState::Terminal(_) => return Ok(DispatchOutcome::Deferred),
         };
+        let basis = projection.execution_authority().ok_or_else(|| {
+            RuntimeError::InvalidHistory(
+                "runnable execution has no frozen execution-authority basis".to_owned(),
+            )
+        })?;
+        let authority = CapabilityResolutionContext::new(
+            basis.clone(),
+            revision.id().clone(),
+            node.id().clone(),
+            execution.execution().clone(),
+            attempt.clone(),
+        );
+        let resolution = match self.executor.resolve_authorized(
+            &requirement,
+            &authority,
+            self.authority.as_ref(),
+            now.get(),
+        ) {
+            Ok(resolution) => resolution,
+            Err(ExecutorError::AuthorityDenied { decision, .. }) => {
+                self.commit_resolution_denial(&entry.run, now, execution.execution(), *decision)?;
+                return Ok(DispatchOutcome::PreDispatchFailed);
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let resolution_authorization = resolution.authorization().ok_or_else(|| {
+            RuntimeError::InvalidHistory(
+                "authorized executor resolution omitted its authority decision".to_owned(),
+            )
+        })?;
+        let contract = resolution.snapshot().operation_contract();
         let invocation = self.next_invocation_id()?;
         let idempotency_key = match contract.idempotency() {
             IdempotencyBehavior::Unsupported => None,
@@ -208,6 +240,12 @@ impl RuntimeService {
                     idempotency_key: idempotency_key.clone(),
                     request: request.clone(),
                 },
+                RunEventKind::CapabilityResolutionDecisionRecorded {
+                    execution: execution.execution().clone(),
+                    attempt: attempt.clone(),
+                    snapshot: resolution.snapshot().clone(),
+                    authorization: resolution_authorization.clone(),
+                },
                 RunEventKind::CapabilityResolved {
                     execution: execution.execution().clone(),
                     attempt: attempt.clone(),
@@ -271,6 +309,28 @@ impl RuntimeService {
             execution: execution.clone(),
             error_class: ErrorClass::InvalidRequest,
             detail: Some(BoundedDetail::new(detail)?),
+        });
+        let _ = self.commit_internal_plan(
+            run,
+            occurred_at,
+            SystemTransition::TerminalizePreDispatchFailure {
+                execution: execution.clone(),
+            },
+            plan,
+        )?;
+        Ok(())
+    }
+
+    fn commit_resolution_denial(
+        &self,
+        run: &RunId,
+        occurred_at: TimestampMillis,
+        execution: &NodeExecutionId,
+        authorization: milkdrift_authority::AuthorityDecisionSnapshot,
+    ) -> Result<(), RuntimeError> {
+        let plan = CommandPlan::one(RunEventKind::CapabilityResolutionDenied {
+            execution: execution.clone(),
+            authorization,
         });
         let _ = self.commit_internal_plan(
             run,

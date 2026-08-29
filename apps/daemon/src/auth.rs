@@ -1,10 +1,8 @@
 use std::{collections::BTreeMap, env, fmt, fs, sync::Arc};
 
 use milkdrift_authority::{
-    ActorRef, AuthorityBudget, AuthorityGrant, CapabilityAuthorityScope, GrantId, SecretRef,
-    SensitiveSecret, WorkflowRunScope,
+    ActorRef, AuthorityGrant, GrantDigest, GrantId, SecretRef, SensitiveSecret,
 };
-use milkdrift_capability::SideEffectClass;
 use milkdrift_capability_host::{SecretResolver, SecretResolverError};
 use milkdrift_control::{ActorAuthorityContext, AuthorityPreset};
 use milkdrift_runtime::CommandAuthorityClaim;
@@ -74,6 +72,7 @@ pub(crate) struct AuthRegistry {
     bindings: Arc<Vec<Binding>>,
     resolver: Arc<ConfiguredSecretResolver>,
     grants: Arc<Vec<AuthorityGrant>>,
+    revocations: Arc<BTreeMap<GrantId, u64>>,
 }
 
 impl fmt::Debug for AuthRegistry {
@@ -93,9 +92,18 @@ impl AuthRegistry {
         ));
         let mut bindings = Vec::with_capacity(config.document.actors.len());
         let mut grants = Vec::with_capacity(config.document.actors.len());
+        let mut revocations = BTreeMap::new();
         for configured in &config.document.actors {
-            let session = session(configured)?;
-            let grant = grant(configured, &session.actor)?;
+            let actor = ActorRef::new(configured.actor.clone())
+                .map_err(|error| ConfigError::Invalid(error.to_string()))?;
+            let grant = grant(configured, &actor)?;
+            let session = session(
+                configured,
+                actor,
+                grant
+                    .digest()
+                    .map_err(|error| ConfigError::Invalid(error.to_string()))?,
+            )?;
             let source = config
                 .document
                 .secret_sources
@@ -124,11 +132,19 @@ impl AuthRegistry {
                 enabled: configured.enabled,
             });
             grants.push(grant);
+            if !configured.enabled {
+                revocations.insert(
+                    GrantId::new(configured.grant_id.clone())
+                        .map_err(|error| ConfigError::Invalid(error.to_string()))?,
+                    configured.revocation_generation.saturating_add(1),
+                );
+            }
         }
         Ok(Self {
             bindings: Arc::new(bindings),
             resolver,
             grants: Arc::new(grants),
+            revocations: Arc::new(revocations),
         })
     }
 
@@ -170,6 +186,10 @@ impl AuthRegistry {
         self.resolver.clone()
     }
 
+    pub fn revocations(&self) -> BTreeMap<GrantId, u64> {
+        self.revocations.as_ref().clone()
+    }
+
     pub fn contexts(&self) -> BTreeMap<String, ActorAuthorityContext> {
         self.bindings
             .iter()
@@ -183,14 +203,17 @@ impl AuthRegistry {
     }
 }
 
-fn session(config: &ActorBindingConfig) -> Result<ActorSession, ConfigError> {
-    let actor = ActorRef::new(config.actor.clone())
-        .map_err(|error| ConfigError::Invalid(error.to_string()))?;
+fn session(
+    config: &ActorBindingConfig,
+    actor: ActorRef,
+    grant_digest: GrantDigest,
+) -> Result<ActorSession, ConfigError> {
     let grant_id = GrantId::new(config.grant_id.clone())
         .map_err(|error| ConfigError::Invalid(error.to_string()))?;
     let claim = CommandAuthorityClaim::new(
         grant_id,
         config.grant_revision,
+        grant_digest,
         config.revocation_generation,
     )
     .map_err(|error| ConfigError::Invalid(error.to_string()))?;
@@ -211,23 +234,18 @@ fn grant(config: &ActorBindingConfig, actor: &ActorRef) -> Result<AuthorityGrant
         AuthorityPresetConfig::Supervisor => AuthorityPreset::Supervisor,
         AuthorityPresetConfig::Controller => AuthorityPreset::Controller,
     };
-    let budget = AuthorityBudget {
-        cost_minor: Some(u64::MAX),
-        duration_ms: Some(u64::MAX),
-        invocations: Some(u64::MAX),
-        artifact_bytes: Some(u64::MAX),
-        concurrency: Some(u32::MAX),
-    };
     preset
         .template(
             GrantId::new(config.grant_id.clone())
                 .map_err(|error| ConfigError::Invalid(error.to_string()))?,
             config.grant_revision,
             actor.clone(),
-            WorkflowRunScope::Any,
-            CapabilityAuthorityScope::any(SideEffectClass::Unknown),
-            budget,
+            config.authority.resources.workflow_run.clone(),
+            config.authority.resources.capability.clone(),
+            config.authority.budget,
         )
+        .resources(config.authority.resources.clone())
+        .validity(config.authority.valid_from, config.authority.valid_until)
         .revocation_generation(config.revocation_generation)
         .build()
         .map_err(|error| ConfigError::Invalid(error.to_string()))
@@ -291,7 +309,7 @@ mod tests {
 
     fn config(root: &std::path::Path, token: &std::path::Path) -> DaemonConfig {
         DaemonConfig {
-            schema_version: 1,
+            schema_version: 2,
             data_root: root.join("data"),
             bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             secret_sources: BTreeMap::from([(
@@ -307,6 +325,7 @@ mod tests {
                 grant_revision: 1,
                 revocation_generation: 0,
                 preset: AuthorityPresetConfig::Controller,
+                authority: crate::config::ActorGrantConfig::dangerous_administrator(),
                 enabled: true,
             }],
             runtime: RuntimeHostConfig::default(),

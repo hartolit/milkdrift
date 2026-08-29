@@ -10,9 +10,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use milkdrift_authority::{
-    ActorRef, AuthorityBudget, CapabilityAuthorityScope, PeerId, SensitiveSecret,
-};
+use milkdrift_authority::{ActorRef, CapabilityAuthorityScope, PeerId, SensitiveSecret};
 use milkdrift_capability::{
     AdmissionConstraints, BoundedJson, CancellationAcknowledgement, CancellationBehavior,
     CancellationRequest, CapabilityCategory, CapabilityDescriptor, CapabilityId,
@@ -229,17 +227,7 @@ fn empty_host() -> TestResult<CapabilityHost> {
             max_concurrent_per_generation: 4,
             observation_stale_after_ms: 60_000,
         },
-        CapabilitySelectionPolicy::new(
-            CapabilityAuthorityScope::any(SideEffectClass::Unknown),
-            AuthorityBudget {
-                cost_minor: Some(u64::MAX),
-                duration_ms: Some(u64::MAX),
-                invocations: Some(u64::MAX),
-                artifact_bytes: Some(u64::MAX),
-                concurrency: Some(32),
-            },
-            BTreeMap::new(),
-        ),
+        CapabilitySelectionPolicy::priorities(BTreeMap::new()),
     )?)
 }
 
@@ -911,7 +899,7 @@ async fn remote_catalog_registration_executes_through_peer_http_once() -> TestRe
             .catalog_generations(&scope)
             .map_err(|error| error.to_string())?
             .into_iter()
-            .find(|generation| generation.descriptor.locality() == Locality::Remote)
+            .find(|generation| generation.descriptor.locality() == Locality::Peer)
             .ok_or_else(|| "remote generation was not registered".to_owned())?;
         let operation = OperationId::new("test.execute").map_err(|error| error.to_string())?;
         let snapshot =

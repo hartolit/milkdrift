@@ -9,8 +9,8 @@ use std::{
 
 use milkdrift_control_client::{BearerCredential, ClientConfig, ControlClient};
 use milkdrift_daemon::{
-    ActorBindingConfig, AdapterConfig, AuthorityPresetConfig, DaemonConfig, DaemonHost,
-    PeerHostConfig, PeerRelationshipConfig, PeerSideEffectConfig, RuntimeHostConfig,
+    ActorBindingConfig, ActorGrantConfig, AdapterConfig, AuthorityPresetConfig, DaemonConfig,
+    DaemonHost, PeerHostConfig, PeerRelationshipConfig, PeerSideEffectConfig, RuntimeHostConfig,
     SecretSourceConfig, ShutdownConfig, ValidatedDaemonConfig, serve,
 };
 use milkdrift_peer_protocol::PeerAction;
@@ -151,7 +151,7 @@ fn configuration(
         .saturating_add(600_000);
     let expires = u64::try_from(expires)?;
     DaemonConfig {
-        schema_version: 1,
+        schema_version: 2,
         data_root: root.path().join("data"),
         bind: "127.0.0.1:0".parse()?,
         secret_sources: BTreeMap::from([
@@ -171,6 +171,7 @@ fn configuration(
             grant_revision: 1,
             revocation_generation: 0,
             preset: AuthorityPresetConfig::Controller,
+            authority: ActorGrantConfig::dangerous_administrator(),
             enabled: true,
         }],
         runtime: RuntimeHostConfig {

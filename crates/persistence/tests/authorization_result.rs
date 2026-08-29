@@ -1,8 +1,9 @@
 //! Golden schema evidence for authorization-bearing command results.
 
 use milkdrift_authority::{
-    ActorRef, AuthorityBudget, AuthorityDecisionSnapshot, AuthorityOperation, AuthorityRequest,
-    BoundaryTimeMillis, DecisionId, DecisionReasonCode, GrantId, PolicyId, RequestedResourceFacts,
+    ActorRef, AuthorityBudget, AuthorityDecisionSnapshot, AuthorityExecutionProvenance,
+    AuthorityOperation, AuthorityRequest, BoundaryTimeMillis, DecisionId, DecisionReasonCode,
+    GrantDigest, GrantId, PolicyId, RequestedResourceFacts,
 };
 use milkdrift_capability::{BoundedJson, SideEffectClass};
 use milkdrift_persistence::{
@@ -18,11 +19,13 @@ fn authorized_result() -> TestResult<CommandResultDocument> {
         actor: ActorRef::new("human:golden")?,
         grant: GrantId::new("grant:golden")?,
         grant_revision: 1,
+        grant_digest: GrantDigest::new(format!("b3_{}", "0".repeat(64)))?,
         revocation_generation: 0,
         operation: AuthorityOperation::Inspect,
         resources: RequestedResourceFacts::empty(),
         budget: AuthorityBudget::default(),
         evaluated_at: BoundaryTimeMillis::new(1_000),
+        provenance: AuthorityExecutionProvenance::default(),
     };
     let decision = AuthorityDecisionSnapshot::from_evaluation(
         PolicyId::new("policy:golden")?,

@@ -1,3 +1,4 @@
+use milkdrift_authority::AuthorityDecisionSnapshot;
 use serde::{Deserialize, Serialize};
 
 use milkdrift_blueprint::{NodeId, PortId, RevisionId};
@@ -496,6 +497,8 @@ pub enum AttemptState {
 pub struct CapabilityResolution {
     pub(super) requirement: milkdrift_capability::CapabilityRequirement,
     pub(super) snapshot: ResolvedCapabilitySnapshot,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) authorization: Option<AuthorityDecisionSnapshot>,
 }
 
 impl CapabilityResolution {
@@ -509,6 +512,12 @@ impl CapabilityResolution {
     #[must_use]
     pub const fn snapshot(&self) -> &ResolvedCapabilitySnapshot {
         &self.snapshot
+    }
+
+    /// Exact canonical decision that allowed this generation to be selected.
+    #[must_use]
+    pub const fn authorization(&self) -> Option<&AuthorityDecisionSnapshot> {
+        self.authorization.as_ref()
     }
 }
 
@@ -788,6 +797,12 @@ pub struct NodeAttemptProjection {
     pub(super) scheduled_sequence: Option<RunSequence>,
     pub(super) state: AttemptState,
     pub(super) capability: Option<CapabilityResolution>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) resolution_authorization: Option<AuthorityDecisionSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) entry_authorization: Option<AuthorityDecisionSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) adapter_entry_authorization: Option<AuthorityDecisionSnapshot>,
     pub(super) side_effect: Option<SideEffectClassification>,
     pub(super) leases: Vec<LeaseId>,
     /// The latest worker that durably crossed `NodeStarted` for this attempt.
@@ -861,6 +876,18 @@ impl NodeAttemptProjection {
     #[must_use]
     pub const fn capability(&self) -> Option<&CapabilityResolution> {
         self.capability.as_ref()
+    }
+
+    /// Fresh exact-candidate decision recorded when the leased effect was claimed.
+    #[must_use]
+    pub const fn entry_authorization(&self) -> Option<&AuthorityDecisionSnapshot> {
+        self.entry_authorization.as_ref()
+    }
+
+    /// Final decision recorded directly before adapter code was entered or denied.
+    #[must_use]
+    pub const fn adapter_entry_authorization(&self) -> Option<&AuthorityDecisionSnapshot> {
+        self.adapter_entry_authorization.as_ref()
     }
 
     /// Frozen side-effect and idempotency classification.

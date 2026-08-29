@@ -22,3 +22,4 @@ Do not write an ADR for a local refactor, a choice obvious from a small piece of
 - [0016 — External clients consume projected read models](0016-external-control-read-models.md)
 - [0017 — Layout is outside semantic revision identity](0017-layout-outside-semantic-identity.md)
 - [0018 — Peer execution uses durable idempotency and truthful uncertainty](0018-peer-idempotency-and-uncertainty.md)
+- [0019 — Runs freeze authority and record exact per-entry decisions](0019-frozen-execution-authority.md)

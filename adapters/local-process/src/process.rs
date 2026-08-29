@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ffi::{OsStr, OsString},
     fs,
     io::{Read, Write},
@@ -14,7 +14,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use milkdrift_authority::SensitiveSecret;
+use milkdrift_authority::{
+    AccessMode, AuthorityBudget, CapabilityExecutionRequirements, FilesystemScope, SensitiveSecret,
+};
 use milkdrift_capability::{
     CancellationAcknowledgement, CancellationRequest, CapabilityObservation, ErrorClass,
     InvocationEvent, InvocationEventKind, InvocationFailure, InvocationId, InvocationTerminal,
@@ -40,6 +42,7 @@ pub struct LocalProcessAdapter {
     executable: PathBuf,
     executable_roots: Vec<PathBuf>,
     writable_roots: Vec<PathBuf>,
+    authority_requirements: CapabilityExecutionRequirements,
     data: Arc<dyn InvocationDataAccess>,
     secrets: Arc<dyn SecretResolver>,
     lifecycle: AtomicU8,
@@ -66,6 +69,7 @@ impl LocalProcessAdapter {
         }
         let mut executable_roots = Vec::new();
         let mut writable_roots = Vec::new();
+        let mut authority_filesystem = Vec::new();
         for configured in &profile.filesystem_roots {
             let root = configured.path.canonicalize().map_err(|error| {
                 ProcessProfileError::Invalid(format!(
@@ -78,12 +82,48 @@ impl LocalProcessAdapter {
                     "configured filesystem root is not a directory".to_owned(),
                 ));
             }
-            match configured.access {
-                FilesystemAccessMode::Execute => executable_roots.push(root),
-                FilesystemAccessMode::ReadWrite => writable_roots.push(root),
-                FilesystemAccessMode::ReadOnly => {}
-            }
+            let access = match configured.access {
+                FilesystemAccessMode::Execute => {
+                    executable_roots.push(root.clone());
+                    BTreeSet::from([AccessMode::Execute])
+                }
+                FilesystemAccessMode::ReadWrite => {
+                    writable_roots.push(root.clone());
+                    BTreeSet::from([AccessMode::Read, AccessMode::Write])
+                }
+                FilesystemAccessMode::ReadOnly => BTreeSet::from([AccessMode::Read]),
+            };
+            let root_text = root.to_str().ok_or_else(|| {
+                ProcessProfileError::Invalid(
+                    "canonical filesystem root is not valid UTF-8 for authority".to_owned(),
+                )
+            })?;
+            authority_filesystem.push(
+                FilesystemScope::new(root_text, access)
+                    .map_err(|error| ProcessProfileError::Invalid(error.to_string()))?,
+            );
         }
+        let artifact_bytes = profile
+            .limits
+            .max_total_materialized_bytes
+            .checked_add(profile.limits.max_total_output_bytes)
+            .ok_or_else(|| {
+                ProcessProfileError::Invalid(
+                    "process artifact authority byte ceiling overflows".to_owned(),
+                )
+            })?;
+        let authority_requirements = CapabilityExecutionRequirements {
+            filesystem: authority_filesystem,
+            secrets: profile.environment.secrets.values().cloned().collect(),
+            budget: AuthorityBudget {
+                duration_ms: Some(profile.limits.wall_timeout_ms),
+                invocations: Some(1),
+                artifact_bytes: Some(artifact_bytes),
+                concurrency: Some(1),
+                ..AuthorityBudget::default()
+            },
+            ..CapabilityExecutionRequirements::default()
+        };
         if !executable_roots
             .iter()
             .any(|root| executable.starts_with(root))
@@ -97,6 +137,7 @@ impl LocalProcessAdapter {
             executable,
             executable_roots,
             writable_roots,
+            authority_requirements,
             data,
             secrets,
             lifecycle: AtomicU8::new(Lifecycle::Created as u8),
@@ -664,6 +705,10 @@ impl LocalProcessAdapter {
 }
 
 impl CapabilityAdapter for LocalProcessAdapter {
+    fn authority_requirements(&self) -> CapabilityExecutionRequirements {
+        self.authority_requirements.clone()
+    }
+
     fn start(&self) -> Result<(), AdapterError> {
         self.lifecycle
             .compare_exchange(

@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BoundedJson, CapabilityId, ContractError, ExtensionKey, FeatureId, OperationId,
+    BoundedJson, CapabilityId, ContractError, ExtensionKey, FeatureId, OperationId, PeerId,
     ProviderProfileRef, SchemaId, TrustZone, bounded::validate_extensions,
 };
 
@@ -521,6 +521,8 @@ pub struct CapabilityDescriptor {
     operations: BTreeMap<OperationId, OperationContract>,
     admission: AdmissionConstraints,
     locality: Locality,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    peer: Option<PeerId>,
     trust_zones: BTreeSet<TrustZone>,
     resource_observations: Option<ResourceObservations>,
     labels: BTreeSet<String>,
@@ -537,6 +539,8 @@ struct DescriptorWire {
     operations: BTreeMap<OperationId, OperationContract>,
     admission: AdmissionConstraints,
     locality: Locality,
+    #[serde(default)]
+    peer: Option<PeerId>,
     trust_zones: BTreeSet<TrustZone>,
     resource_observations: Option<ResourceObservations>,
     labels: BTreeSet<String>,
@@ -558,6 +562,7 @@ impl<'de> Deserialize<'de> for CapabilityDescriptor {
         )
         .provider_profile(wire.provider_profile)
         .operations(wire.operations)
+        .peer(wire.peer)
         .trust_zones(wire.trust_zones)
         .resource_observations(wire.resource_observations)
         .labels(wire.labels)
@@ -614,6 +619,12 @@ impl CapabilityDescriptor {
     #[must_use]
     pub const fn locality(&self) -> Locality {
         self.locality
+    }
+
+    /// Authenticated peer owning this generation, present only for peer capabilities.
+    #[must_use]
+    pub const fn peer(&self) -> Option<&PeerId> {
+        self.peer.as_ref()
     }
 
     /// Trust zones in which this capability may execute.
@@ -717,6 +728,7 @@ impl DescriptorBuilder {
                 operations: BTreeMap::new(),
                 admission,
                 locality,
+                peer: None,
                 trust_zones: BTreeSet::new(),
                 resource_observations: None,
                 labels: BTreeSet::new(),
@@ -736,6 +748,13 @@ impl DescriptorBuilder {
     #[must_use]
     pub fn operations(mut self, value: BTreeMap<OperationId, OperationContract>) -> Self {
         self.descriptor.operations = value;
+        self
+    }
+
+    /// Binds this descriptor to one authenticated peer identity.
+    #[must_use]
+    pub fn peer(mut self, value: Option<PeerId>) -> Self {
+        self.descriptor.peer = value;
         self
     }
 
@@ -787,6 +806,11 @@ impl DescriptorBuilder {
         if descriptor.admission.max_concurrent == 0 {
             return Err(ContractError::InvalidContract(
                 "max_concurrent must be nonzero".to_owned(),
+            ));
+        }
+        if descriptor.peer.is_some() != (descriptor.locality == Locality::Peer) {
+            return Err(ContractError::InvalidContract(
+                "peer identity must be present exactly for peer-locality descriptors".to_owned(),
             ));
         }
         if descriptor.labels.len() > MAX_LABELS

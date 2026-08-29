@@ -24,7 +24,7 @@ pub use document::{
     ResolvedCapabilitySnapshotDocument, SCHEMA_VERSION_V1,
 };
 pub use identity::{
-    CapabilityId, ExtensionKey, FeatureId, IdempotencyKey, InvocationId, OperationId,
+    CapabilityId, ExtensionKey, FeatureId, IdempotencyKey, InvocationId, OperationId, PeerId,
     ProviderProfileRef, SchemaId, TrustZone,
 };
 pub use invocation::{

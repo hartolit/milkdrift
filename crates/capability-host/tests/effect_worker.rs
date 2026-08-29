@@ -11,7 +11,7 @@ use std::{
 
 use milkdrift_authority::{
     AuthorityBudget, AuthorityDecisionSnapshot, AuthorityError, AuthorityEvaluator,
-    CapabilityAuthorityScope, DecisionReasonCode, GrantId, PolicyId,
+    CapabilityAuthorityScope, DecisionReasonCode, GrantDigest, GrantId, PolicyId,
 };
 use milkdrift_blueprint::{
     AuthorRef, BlueprintRevision, Edge, EdgeId, EdgeKind, Mutation, MutationBatch, Node, NodeId,
@@ -60,6 +60,7 @@ impl AuthorityEvaluator for AllowAuthority {
 struct BlockingAdapter {
     gate: Arc<(Mutex<bool>, Condvar)>,
     entered: AtomicUsize,
+    exact_authority_seen: std::sync::atomic::AtomicBool,
 }
 
 impl BlockingAdapter {
@@ -67,6 +68,7 @@ impl BlockingAdapter {
         Self {
             gate,
             entered: AtomicUsize::new(0),
+            exact_authority_seen: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -77,6 +79,29 @@ impl CapabilityAdapter for BlockingAdapter {
         invocation: &AdapterInvocation<'_>,
         reporter: &dyn AdapterReporter,
     ) -> Result<(), AdapterError> {
+        let context = invocation
+            .context()
+            .ok_or_else(|| AdapterError::rejected("durable adapter context is absent"))?;
+        let basis = context
+            .authority()
+            .ok_or_else(|| AdapterError::rejected("execution authority basis is absent"))?;
+        let resolution = context
+            .resolution_authorization()
+            .ok_or_else(|| AdapterError::rejected("resolution authorization is absent"))?;
+        let entry = context
+            .entry_authorization()
+            .ok_or_else(|| AdapterError::rejected("entry authorization is absent"))?;
+        if !resolution.is_allowed()
+            || !entry.is_allowed()
+            || resolution.request().grant != *basis.grant()
+            || entry.request().grant_digest != *basis.grant_digest()
+            || entry.request().provenance.attempt.as_deref() != Some(context.attempt().as_str())
+        {
+            return Err(AdapterError::rejected(
+                "adapter authority provenance does not bind the exact attempt",
+            ));
+        }
+        self.exact_authority_seen.store(true, Ordering::SeqCst);
         self.entered.fetch_add(1, Ordering::SeqCst);
         let (lock, changed) = &*self.gate;
         let mut released = lock
@@ -186,6 +211,7 @@ fn authority_claim() -> TestResult<CommandAuthorityClaim> {
     Ok(CommandAuthorityClaim::new(
         GrantId::new("grant:effect-worker-test")?,
         1,
+        GrantDigest::new(format!("b3_{}", "0".repeat(64)))?,
         0,
     )?)
 }
@@ -250,11 +276,7 @@ fn bounded_queues_backpressure_and_forced_shutdown_preserves_unresolved_truth() 
             max_concurrent_per_generation: 4,
             observation_stale_after_ms: 10_000,
         },
-        CapabilitySelectionPolicy::new(
-            CapabilityAuthorityScope::any(SideEffectClass::Unknown),
-            AuthorityBudget::default(),
-            BTreeMap::new(),
-        ),
+        CapabilitySelectionPolicy::priorities(BTreeMap::new()),
     )?;
     let gate = Arc::new((Mutex::new(false), Condvar::new()));
     let adapter = Arc::new(BlockingAdapter::new(gate));
@@ -305,6 +327,7 @@ fn bounded_queues_backpressure_and_forced_shutdown_preserves_unresolved_truth() 
         std::thread::sleep(Duration::from_millis(5));
     }
     assert_eq!(adapter.entered.load(Ordering::SeqCst), 1);
+    assert!(adapter.exact_authority_seen.load(Ordering::SeqCst));
     assert_eq!(workers.poll()?.executions, 1);
     assert_eq!(workers.poll()?.executions, 0);
     let health = workers.health()?;

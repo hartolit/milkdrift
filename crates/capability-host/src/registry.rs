@@ -4,14 +4,18 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use milkdrift_authority::{AuthorityBudget, CapabilityAuthorityScope};
+use milkdrift_authority::{
+    AuthorityDecisionSnapshot, AuthorityEvaluator, CapabilityAuthorityScope,
+    CapabilityExecutionRequirements,
+};
 use milkdrift_capability::{
     CancellationAcknowledgement, CancellationRequest, CapabilityDescriptor,
     CapabilityDescriptorDocument, CapabilityId, CapabilityObservation, CapabilityRequirement,
     InvocationEvent, InvocationId, InvocationRequest, ResolvedCapabilitySnapshot, SideEffectClass,
 };
 use milkdrift_runtime::{
-    ExecutionDispatch, ExecutionReporter, ExecutorError, ResolvedCapability, TaskExecutor,
+    CapabilityResolutionContext, ExecutionDispatch, ExecutionReporter, ExecutorError,
+    ResolvedCapability, TaskExecutor,
 };
 use thiserror::Error;
 
@@ -50,30 +54,14 @@ impl HostConfig {
 /// Authority and deterministic priority facts applied during live resolution.
 #[derive(Clone, Debug)]
 pub struct CapabilitySelectionPolicy {
-    authority: CapabilityAuthorityScope,
-    budget: AuthorityBudget,
     priorities: BTreeMap<CapabilityId, i32>,
 }
 
 impl CapabilitySelectionPolicy {
-    /// Constructs a policy; absent priorities are zero.
+    /// Constructs deterministic host priorities without any host-wide authority policy.
     #[must_use]
-    pub fn new(
-        authority: CapabilityAuthorityScope,
-        budget: AuthorityBudget,
-        priorities: BTreeMap<CapabilityId, i32>,
-    ) -> Self {
-        Self {
-            authority,
-            budget,
-            priorities,
-        }
-    }
-
-    /// Capability authority constraints.
-    #[must_use]
-    pub const fn authority(&self) -> &CapabilityAuthorityScope {
-        &self.authority
+    pub fn priorities(priorities: BTreeMap<CapabilityId, i32>) -> Self {
+        Self { priorities }
     }
 }
 
@@ -206,6 +194,7 @@ struct Generation {
     descriptor: CapabilityDescriptor,
     descriptor_digest: String,
     adapter: Arc<dyn CapabilityAdapter>,
+    authority_requirements: CapabilityExecutionRequirements,
     observation: Option<CapabilityObservation>,
     draining: bool,
     active: u32,
@@ -287,6 +276,7 @@ impl CapabilityHost {
             .to_canonical_json()
             .map_err(|error| HostError::Descriptor(error.to_string()))?;
         let descriptor_digest = format!("b3_{}", blake3::hash(&bytes));
+        let authority_requirements = adapter.authority_requirements();
         let permit_limit = descriptor
             .admission()
             .max_concurrent()
@@ -324,6 +314,7 @@ impl CapabilityHost {
                 descriptor,
                 descriptor_digest,
                 adapter,
+                authority_requirements,
                 observation,
                 draining: false,
                 active: 0,
@@ -394,9 +385,11 @@ impl CapabilityHost {
     }
 
     /// Resolves against one mutex-protected registry snapshot and explicit boundary time.
-    pub fn resolve_at(
+    pub fn resolve_authorized_at(
         &self,
         requirement: &CapabilityRequirement,
+        authority: &CapabilityResolutionContext,
+        evaluator: &dyn AuthorityEvaluator,
         observed_at_unix_ms: u64,
     ) -> Result<ResolvedCapability, ExecutorError> {
         let state = self.core.state.lock().map_err(|_error| {
@@ -408,6 +401,7 @@ impl CapabilityHost {
         let mut candidates = Vec::new();
         let mut semantic_match = false;
         let mut authority_match = false;
+        let mut denied_decision: Option<AuthorityDecisionSnapshot> = None;
         let mut availability_match = false;
         let mut capacity_match = false;
         let mut mismatch_reasons = BTreeSet::new();
@@ -421,15 +415,21 @@ impl CapabilityHost {
                 continue;
             }
             semantic_match = true;
-            let Some(contract) = generation.descriptor.operation(requirement.operation()) else {
+            let Some(_contract) = generation.descriptor.operation(requirement.operation()) else {
                 continue;
             };
-            if !policy_allows(
-                &self.core.policy,
+            let request = authority.candidate_request(
                 &generation.descriptor,
                 requirement.operation(),
-                contract.side_effect(),
-            ) {
+                &generation.authority_requirements,
+                observed_at_unix_ms,
+                "resolve",
+            )?;
+            let decision = evaluator
+                .evaluate(&request)
+                .map_err(|error| ExecutorError::BoundaryBeforeEntry(error.to_string()))?;
+            if !decision.is_allowed() {
+                denied_decision.get_or_insert(decision);
                 continue;
             }
             authority_match = true;
@@ -454,6 +454,7 @@ impl CapabilityHost {
                     .unwrap_or(0),
                 key.clone(),
                 generation.descriptor.clone(),
+                decision,
             ));
         }
         if candidates.is_empty() {
@@ -463,10 +464,15 @@ impl CapabilityHost {
                 });
             }
             if !authority_match {
-                return Err(ExecutorError::AuthorityDenied(
-                    "no semantically matching descriptor is within the configured grant scope"
-                        .to_owned(),
-                ));
+                let decision = denied_decision.ok_or_else(|| {
+                    ExecutorError::BoundaryBeforeEntry(
+                        "authority denial had no exact candidate decision".to_owned(),
+                    )
+                })?;
+                return Err(ExecutorError::AuthorityDenied {
+                    reasons: decision.reason_codes().to_vec(),
+                    decision: Box::new(decision),
+                });
             }
             if !availability_match {
                 return Err(ExecutorError::Unavailable(
@@ -478,6 +484,87 @@ impl CapabilityHost {
                     "matching generations have no immediate permit".to_owned(),
                 ));
             }
+        }
+        candidates.sort_by(|left, right| {
+            right
+                .0
+                .cmp(&left.0)
+                .then_with(|| left.1.capability.cmp(&right.1.capability))
+                .then_with(|| right.1.revision.cmp(&left.1.revision))
+        });
+        let (_priority, _key, descriptor, authorization) = candidates
+            .into_iter()
+            .next()
+            .ok_or_else(|| ExecutorError::BoundaryBeforeEntry("candidate vanished".to_owned()))?;
+        let snapshot =
+            ResolvedCapabilitySnapshot::from_descriptor(&descriptor, requirement.operation())?;
+        ResolvedCapability::new_authorized(descriptor, snapshot, authorization)
+    }
+
+    /// Resolves semantic/health/capacity state for registry inspection only.
+    ///
+    /// The returned value has no authority decision and cannot be dispatched by the runtime.
+    pub fn resolve_at(
+        &self,
+        requirement: &CapabilityRequirement,
+        observed_at_unix_ms: u64,
+    ) -> Result<ResolvedCapability, ExecutorError> {
+        let state = self.core.state.lock().map_err(|_error| {
+            ExecutorError::BoundaryBeforeEntry("registry unavailable".to_owned())
+        })?;
+        if !state.admission_open || state.shutdown {
+            return Err(ExecutorError::AdmissionClosed);
+        }
+        let mut candidates = Vec::new();
+        let mut mismatch_reasons = BTreeSet::new();
+        let mut semantic_match = false;
+        let mut availability_match = false;
+        for (key, generation) in &state.generations {
+            if state.current.get(&key.capability) != Some(&key.revision) || generation.draining {
+                continue;
+            }
+            let matched = generation.descriptor.matches(requirement);
+            if !matched.is_match() {
+                mismatch_reasons.extend(matched.mismatch_reasons().iter().cloned());
+                continue;
+            }
+            semantic_match = true;
+            if !observation_available(
+                generation.observation.as_ref(),
+                observed_at_unix_ms,
+                self.core.config.observation_stale_after_ms,
+            ) {
+                continue;
+            }
+            availability_match = true;
+            if generation.active >= generation.permit_limit {
+                continue;
+            }
+            candidates.push((
+                self.core
+                    .policy
+                    .priorities
+                    .get(&key.capability)
+                    .copied()
+                    .unwrap_or(0),
+                key.clone(),
+                generation.descriptor.clone(),
+            ));
+        }
+        if candidates.is_empty() {
+            if !semantic_match {
+                return Err(ExecutorError::ResolutionMismatch {
+                    reasons: mismatch_reasons.into_iter().collect(),
+                });
+            }
+            if !availability_match {
+                return Err(ExecutorError::Unavailable(
+                    "matching generations are unavailable or stale".to_owned(),
+                ));
+            }
+            return Err(ExecutorError::Overloaded(
+                "matching generations have no immediate permit".to_owned(),
+            ));
         }
         candidates.sort_by(|left, right| {
             right
@@ -921,10 +1008,22 @@ impl CapabilityHost {
 impl TaskExecutor for CapabilityHost {
     fn resolve(
         &self,
+        _requirement: &CapabilityRequirement,
+        _observed_at_unix_ms: u64,
+    ) -> Result<ResolvedCapability, ExecutorError> {
+        Err(ExecutorError::BoundaryBeforeEntry(
+            "capability host resolution requires an execution-authority context".to_owned(),
+        ))
+    }
+
+    fn resolve_authorized(
+        &self,
         requirement: &CapabilityRequirement,
+        authority: &CapabilityResolutionContext,
+        evaluator: &dyn AuthorityEvaluator,
         observed_at_unix_ms: u64,
     ) -> Result<ResolvedCapability, ExecutorError> {
-        self.resolve_at(requirement, observed_at_unix_ms)
+        self.resolve_authorized_at(requirement, authority, evaluator, observed_at_unix_ms)
     }
 
     fn execute_streaming(
@@ -1038,45 +1137,6 @@ fn observation_available(
     )
 }
 
-fn policy_allows(
-    policy: &CapabilitySelectionPolicy,
-    descriptor: &CapabilityDescriptor,
-    operation: &milkdrift_capability::OperationId,
-    side_effect: SideEffectClass,
-) -> bool {
-    if !scope_allows(&policy.authority, descriptor, side_effect) {
-        return false;
-    }
-    if !policy.authority.operations().is_empty()
-        && !policy.authority.operations().contains(operation)
-    {
-        return false;
-    }
-    let observations = descriptor.resource_observations();
-    if let Some(ceiling) = policy.budget.duration_ms
-        && observations
-            .and_then(|value| value.estimated_duration_ms())
-            .is_some_and(|estimate| estimate > ceiling)
-    {
-        return false;
-    }
-    if let Some(ceiling_minor) = policy.budget.cost_minor {
-        let ceiling_micros = ceiling_minor.saturating_mul(10_000);
-        if observations
-            .and_then(|value| value.estimated_cost_micros())
-            .is_some_and(|estimate| estimate > ceiling_micros)
-        {
-            return false;
-        }
-    }
-    if let Some(concurrency) = policy.budget.concurrency
-        && descriptor.admission().max_concurrent() > concurrency
-    {
-        return false;
-    }
-    true
-}
-
 fn scope_allows(
     scope: &CapabilityAuthorityScope,
     descriptor: &CapabilityDescriptor,
@@ -1094,6 +1154,10 @@ fn scope_allows(
                 .provider_profile()
                 .is_some_and(|profile| scope.provider_profiles().contains(profile)))
         && (scope.localities().is_empty() || scope.localities().contains(&descriptor.locality()))
+        && (scope.peers().is_empty()
+            || descriptor
+                .peer()
+                .is_some_and(|peer| scope.peers().contains(peer)))
         && (scope.trust_zones().is_empty()
             || descriptor
                 .trust_zones()

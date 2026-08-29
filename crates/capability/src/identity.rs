@@ -135,3 +135,9 @@ identity_type!(
     96,
     IdRule::Simple
 );
+identity_type!(
+    /// Stable authenticated identity of one Milkdrift peer daemon.
+    PeerId,
+    128,
+    IdRule::Simple
+);

@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use milkdrift_authority::{
-    ActorRef, AuthorityBudget, AuthorityEvaluator, AuthorityOperation, AuthorityRequest,
-    BoundaryTimeMillis, CapabilityAuthorityScope, DecisionId, GrantId, GrantSetEvaluator, PolicyId,
-    RequestedResourceFacts, WorkflowRunScope,
+    ActorRef, AuthorityBudget, AuthorityEvaluator, AuthorityExecutionProvenance,
+    AuthorityOperation, AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope, DecisionId,
+    GrantDigest, GrantId, GrantSetEvaluator, PolicyId, RequestedResourceFacts, WorkflowRunScope,
 };
 use milkdrift_blueprint::{
     AuthorRef, Condition, Mutation, MutationBatch, Node, NodeId, NodeKind, PinnedSubworkflow,
@@ -24,6 +24,7 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 fn request(
     actor: &ActorRef,
     grant: &GrantId,
+    grant_digest: GrantDigest,
     workflow: &WorkflowId,
     run: &RunId,
     operation: AuthorityOperation,
@@ -36,11 +37,13 @@ fn request(
         actor: actor.clone(),
         grant: grant.clone(),
         grant_revision: 1,
+        grant_digest,
         revocation_generation: 0,
         operation,
         resources,
         budget: AuthorityBudget::default(),
         evaluated_at: BoundaryTimeMillis::new(10),
+        provenance: AuthorityExecutionProvenance::default(),
     })
 }
 
@@ -92,7 +95,7 @@ fn every_preset_is_an_ordinary_scoped_grant() -> TestResult {
     let evaluator = GrantSetEvaluator::new(
         PolicyId::new("test.preset-scope")?,
         1,
-        [grant_a],
+        [grant_a.clone()],
         BTreeMap::new(),
     )?;
     assert!(
@@ -100,6 +103,7 @@ fn every_preset_is_an_ordinary_scoped_grant() -> TestResult {
             .evaluate(&request(
                 &actor,
                 &grant_id,
+                grant_a.digest()?,
                 &workflow,
                 &run_a,
                 AuthorityOperation::Propose,
@@ -111,6 +115,7 @@ fn every_preset_is_an_ordinary_scoped_grant() -> TestResult {
             .evaluate(&request(
                 &actor,
                 &grant_id,
+                grant_a.digest()?,
                 &workflow,
                 &run_b,
                 AuthorityOperation::Propose,
@@ -153,13 +158,14 @@ fn preset_never_bypasses_provider_or_budget_scope() -> TestResult {
     let evaluator = GrantSetEvaluator::new(
         PolicyId::new("test.preset-resource-scope")?,
         1,
-        [grant],
+        [grant.clone()],
         BTreeMap::new(),
     )?;
 
     let mut provider_request = request(
         &actor,
         &grant_id,
+        grant.digest()?,
         &workflow,
         &run,
         AuthorityOperation::Propose,
@@ -171,6 +177,7 @@ fn preset_never_bypasses_provider_or_budget_scope() -> TestResult {
     let mut budget_request = request(
         &actor,
         &grant_id,
+        grant.digest()?,
         &workflow,
         &run,
         AuthorityOperation::Propose,

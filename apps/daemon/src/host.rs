@@ -664,12 +664,10 @@ impl Owner {
                 PolicyId::new("daemon.authority.v1").map_err(|error| error.to_string())?,
                 1,
                 auth.grants(),
-                BTreeMap::new(),
+                auth.revocations(),
             )
             .map_err(|error| error.to_string())?,
         );
-        let capability_scope =
-            milkdrift_authority::CapabilityAuthorityScope::any(SideEffectClass::Unknown);
         let capability_host = CapabilityHost::new(
             HostConfig {
                 max_registrations: 1_024,
@@ -677,17 +675,7 @@ impl Owner {
                 max_concurrent_per_generation: config.document.runtime.global_concurrency,
                 observation_stale_after_ms: 60_000,
             },
-            CapabilitySelectionPolicy::new(
-                capability_scope,
-                milkdrift_authority::AuthorityBudget {
-                    cost_minor: Some(u64::MAX),
-                    duration_ms: Some(u64::MAX),
-                    invocations: Some(u64::MAX),
-                    artifact_bytes: Some(u64::MAX),
-                    concurrency: Some(config.document.runtime.global_concurrency),
-                },
-                BTreeMap::new(),
-            ),
+            CapabilitySelectionPolicy::priorities(BTreeMap::new()),
         )
         .map_err(|error| error.to_string())?;
         let scheduler = SchedulerLimits::new(

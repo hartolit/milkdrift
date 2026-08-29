@@ -261,6 +261,7 @@ pub struct RuntimeService {
     structured_scan_budget: AtomicUsize,
 }
 
+mod authority;
 mod command_planning;
 mod completion;
 mod dispatch;
@@ -595,7 +596,9 @@ impl RuntimeService {
         if let Some(replayed) = self.replay_if_present(command, &receipt)? {
             return Ok(replayed);
         }
-        let request = command.authority_request(claim)?;
+        let projection = self.projection(command.run_id())?;
+        let request =
+            command.authority_request_in_workflow(claim, projection.workflow().cloned())?;
         let decision = self.authority.evaluate(&request)?;
         let forced_rejection =
             (!decision.is_allowed()).then(|| RuntimeError::AuthorizationDenied {
@@ -680,6 +683,7 @@ impl RuntimeService {
             .into());
         }
 
+        let mut durable_authorization = authorization;
         let planned = if let Some(error) = forced_rejection {
             Err(error)
         } else if !self.command_allowed_while_draining(command.command()) {
@@ -688,17 +692,39 @@ impl RuntimeService {
             ))
         } else {
             self.plan_command(command, &projection)
+                .and_then(|mut plan| {
+                    match self.bind_execution_authority(
+                        command,
+                        &projection,
+                        durable_authorization.as_ref(),
+                        &mut plan,
+                    ) {
+                        Ok(()) => Ok(plan),
+                        Err(rejection) => {
+                            if let Some(decision) = rejection.decision {
+                                durable_authorization = Some(*decision);
+                            }
+                            Err(rejection.error)
+                        }
+                    }
+                })
         };
         let (outcome, rejection) = match planned {
             Ok(plan) => (
-                self.commit_accepted(command, receipt, projection, plan, authorization.clone())?,
+                self.commit_accepted(
+                    command,
+                    receipt,
+                    projection,
+                    plan,
+                    durable_authorization.clone(),
+                )?,
                 None,
             ),
             Err(error) if durable_rejection(&error) => {
                 warn!(reason = %error, "command rejected durably");
                 let detail = error.to_string();
                 (
-                    self.commit_rejected(command, receipt, &detail, authorization)?,
+                    self.commit_rejected(command, receipt, &detail, durable_authorization)?,
                     Some(error),
                 )
             }

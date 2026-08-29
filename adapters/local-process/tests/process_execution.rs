@@ -12,12 +12,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use milkdrift_authority::{AuthorityBudget, CapabilityAuthorityScope, SecretRef};
+use milkdrift_authority::SecretRef;
 use milkdrift_blueprint::NodeId;
 use milkdrift_capability::{
     ArtifactReference, CancellationRequest, CapabilityObservation, InputReference, InvocationEvent,
     InvocationId, InvocationRequest, InvocationValueReference, ResolvedCapabilitySnapshot,
-    SideEffectClass, TerminalStatus,
+    TerminalStatus,
 };
 use milkdrift_capability_host::{
     AdapterError, AdapterExecutionContext, AdapterReporter, CapabilityHost,
@@ -359,11 +359,7 @@ fn setup(
             max_concurrent_per_generation: 4,
             observation_stale_after_ms: 10_000,
         },
-        CapabilitySelectionPolicy::new(
-            CapabilityAuthorityScope::any(SideEffectClass::Unknown),
-            AuthorityBudget::default(),
-            BTreeMap::new(),
-        ),
+        CapabilitySelectionPolicy::priorities(BTreeMap::new()),
     )?;
     let observation =
         CapabilityObservation::new(descriptor.identity().clone(), 1, true, 0, "fixture ready")?;

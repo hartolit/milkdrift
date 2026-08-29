@@ -133,6 +133,50 @@ impl RunProjection {
                 self.eligible_executions.remove(execution);
                 self.invocations.insert(invocation.clone());
             }
+            RunEventKind::CapabilityResolutionDecisionRecorded {
+                execution,
+                attempt,
+                snapshot,
+                authorization,
+            } => {
+                let attempt_view = self.attempt(attempt, event)?;
+                let basis = self.execution_authority.as_ref().ok_or_else(|| {
+                    invalid_at(event, "capability resolution has no run authority basis")
+                })?;
+                if attempt_view.execution != *execution
+                    || attempt_view.state != AttemptState::Scheduled
+                    || attempt_view.capability.is_some()
+                    || attempt_view.resolution_authorization.is_some()
+                    || !authorization.is_allowed()
+                    || authorization.policy() != basis.policy()
+                    || authorization.policy_version() != basis.policy_version()
+                    || authorization.request().actor != *basis.actor()
+                    || authorization.request().grant != *basis.grant()
+                    || authorization.request().grant_revision != basis.grant_revision()
+                    || authorization.request().grant_digest != *basis.grant_digest()
+                    || authorization.request().revocation_generation
+                        != basis.revocation_generation()
+                    || authorization.request().resources.capability.as_ref()
+                        != Some(snapshot.capability())
+                    || authorization
+                        .request()
+                        .resources
+                        .capability_operation
+                        .as_ref()
+                        != Some(snapshot.operation())
+                    || authorization.request().provenance.attempt.as_deref()
+                        != Some(attempt.as_str())
+                {
+                    return Err(invalid_at(
+                        event,
+                        "capability resolution decision is duplicate or incompatible",
+                    ));
+                }
+                self.attempts
+                    .get_mut(attempt)
+                    .ok_or_else(|| invalid_at(event, "unknown attempt"))?
+                    .resolution_authorization = Some(authorization.clone());
+            }
             RunEventKind::CapabilityResolved {
                 execution,
                 attempt,
@@ -198,12 +242,14 @@ impl RunProjection {
                         "capability resolution is duplicate or incompatible",
                     ));
                 }
+                let resolution_authorization = attempt_view.resolution_authorization.clone();
                 self.attempts
                     .get_mut(attempt)
                     .ok_or_else(|| invalid_at(event, "unknown attempt"))?
                     .capability = Some(CapabilityResolution {
                     requirement: requirement.clone(),
                     snapshot: snapshot.clone(),
+                    authorization: resolution_authorization,
                 });
             }
             RunEventKind::SideEffectClassified {

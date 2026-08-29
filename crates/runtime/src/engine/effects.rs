@@ -6,6 +6,7 @@
 
 use std::sync::Mutex;
 
+use milkdrift_authority::{BoundaryTimeMillis, DecisionId};
 use milkdrift_capability::{
     CancellationAcknowledgement, CancellationRequest, ErrorClass, InvocationEvent,
 };
@@ -267,7 +268,74 @@ impl RuntimeService {
         let capability = attempt_view.capability().ok_or_else(|| {
             RuntimeError::InvalidHistory("claimed attempt has no capability snapshot".to_owned())
         })?;
-        let dispatch = ExecutionDispatch::from_snapshot(
+        let resolution_authorization = capability.authorization().ok_or_else(|| {
+            RuntimeError::InvalidHistory(
+                "claimed attempt has no durable resolution authorization".to_owned(),
+            )
+        })?;
+        let basis = projection.execution_authority().ok_or_else(|| {
+            RuntimeError::InvalidHistory(
+                "leased attempt has no frozen execution-authority basis".to_owned(),
+            )
+        })?;
+        let mut entry_request = resolution_authorization.request().clone();
+        let entry_identity = format!("{}:entry", resolution_authorization.digest());
+        entry_request.decision = DecisionId::new(format!(
+            "decision:{}",
+            blake3::hash(entry_identity.as_bytes())
+        ))?;
+        entry_request.evaluated_at = BoundaryTimeMillis::new(now.get());
+        let entry_authorization = self.authority.evaluate(&entry_request)?;
+        if !entry_authorization.is_allowed() {
+            let detail = milkdrift_persistence::BoundedDetail::new(format!(
+                "authority decision {} denied capability entry",
+                entry_authorization.digest(),
+            ))?;
+            let plan = CommandPlan {
+                events: vec![
+                    RunEventKind::CapabilityEntryDecisionRecorded {
+                        attempt: attempt.clone(),
+                        authorization: entry_authorization,
+                    },
+                    RunEventKind::NodeTerminal {
+                        execution: execution.execution().clone(),
+                        attempt: attempt.clone(),
+                        report_sequence: 1,
+                        outcome: milkdrift_persistence::NodeOutcome::Rejected,
+                        error_class: Some(ErrorClass::Authorization),
+                        detail: Some(detail),
+                    },
+                ],
+                ..CommandPlan::default()
+            };
+            let _ = self.commit_internal_plan(
+                run,
+                now,
+                SystemTransition::DenyCapabilityEntry {
+                    attempt: attempt.clone(),
+                },
+                plan,
+            )?;
+            return Ok(None);
+        }
+        let report = WorkerReport::LeaseAccepted {
+            lease: lease.clone(),
+            attempt: attempt.clone(),
+            authorization: Box::new(entry_authorization.clone()),
+        };
+        let (command_execution, _rejection) = self.commit_worker_report(
+            run,
+            stable_effect_command_id(run, attempt, &report)?,
+            now,
+            Reason::new("effect host accepted a durable dispatch lease")?,
+            report,
+        )?;
+        if command_execution.result().disposition() != CommandDisposition::Accepted
+            || command_execution.replayed()
+        {
+            return Ok(None);
+        }
+        Ok(Some(ExecutionDispatch::from_snapshot(
             run.clone(),
             revision.clone(),
             execution.node().clone(),
@@ -276,24 +344,11 @@ impl RuntimeService {
             lease.clone(),
             lease_view.expires_at(),
             capability.snapshot().clone(),
+            basis.clone(),
+            resolution_authorization.clone(),
+            entry_authorization,
             request.clone(),
-        )?;
-        let report = WorkerReport::LeaseAccepted {
-            lease: lease.clone(),
-            attempt: attempt.clone(),
-        };
-        let (execution, _rejection) = self.commit_worker_report(
-            run,
-            stable_effect_command_id(run, attempt, &report)?,
-            now,
-            Reason::new("effect host accepted a durable dispatch lease")?,
-            report,
-        )?;
-        if execution.result().disposition() != CommandDisposition::Accepted || execution.replayed()
-        {
-            return Ok(None);
-        }
-        Ok(Some(dispatch))
+        )?))
     }
 
     fn cancellation_dispatch(
@@ -379,6 +434,10 @@ impl RuntimeService {
             || attempt.execution() != dispatch.execution()
             || attempt.request() != Some(dispatch.request())
             || attempt.capability().map(|value| value.snapshot()) != Some(dispatch.resolution())
+            || attempt.capability().and_then(|value| value.authorization())
+                != Some(dispatch.resolution_authorization())
+            || attempt.entry_authorization() != Some(dispatch.entry_authorization())
+            || projection.execution_authority() != Some(dispatch.execution_authority())
             || !matches!(execution.state(), NodeExecutionState::Running(active) if active == dispatch.attempt())
             || execution.node() != dispatch.node()
             || projection.revision_for_attempt(dispatch.attempt()) != Some(dispatch.revision())
@@ -400,22 +459,73 @@ impl RuntimeService {
             .ok_or_else(|| {
                 RuntimeError::InvalidTransition("report sequence overflow".to_owned())
             })?;
-        let reporter = DurableExecutionReporter::new(self, dispatch, next_sequence);
-        let boundary = self.executor.execute_streaming(dispatch, &reporter);
+        let mut adapter_entry_request = dispatch.resolution_authorization().request().clone();
+        let adapter_entry_identity =
+            format!("{}:adapter-entry", dispatch.entry_authorization().digest());
+        adapter_entry_request.decision = DecisionId::new(format!(
+            "decision:{}",
+            blake3::hash(adapter_entry_identity.as_bytes())
+        ))?;
+        adapter_entry_request.evaluated_at = BoundaryTimeMillis::new(now.get());
+        let adapter_entry_authorization = self.authority.evaluate(&adapter_entry_request)?;
+        let mut events = vec![RunEventKind::CapabilityAdapterEntryDecisionRecorded {
+            attempt: dispatch.attempt().clone(),
+            authorization: adapter_entry_authorization.clone(),
+        }];
+        if !adapter_entry_authorization.is_allowed() {
+            events.push(RunEventKind::NodeTerminal {
+                execution: dispatch.execution().clone(),
+                attempt: dispatch.attempt().clone(),
+                report_sequence: next_sequence,
+                outcome: milkdrift_persistence::NodeOutcome::Rejected,
+                error_class: Some(ErrorClass::Authorization),
+                detail: Some(milkdrift_persistence::BoundedDetail::new(format!(
+                    "authority decision {} denied final adapter entry",
+                    adapter_entry_authorization.digest(),
+                ))?),
+            });
+        }
+        let transition = SystemTransition::DecideCapabilityAdapterEntry {
+            attempt: dispatch.attempt().clone(),
+        };
+        let decision_commit = self.commit_internal_plan(
+            dispatch.run(),
+            now,
+            transition,
+            CommandPlan {
+                events,
+                ..CommandPlan::default()
+            },
+        )?;
+        if decision_commit.result().disposition() != CommandDisposition::Accepted
+            || decision_commit.replayed()
+        {
+            return Err(RuntimeError::InvalidTransition(
+                "final adapter-entry decision was not newly committed".to_owned(),
+            ));
+        }
+        if !adapter_entry_authorization.is_allowed() {
+            return Ok(EffectExecutionResult::Completed { observations: 0 });
+        }
+        let adapter_dispatch = dispatch.with_entry_authorization(adapter_entry_authorization)?;
+        let reporter = DurableExecutionReporter::new(self, &adapter_dispatch, next_sequence);
+        let boundary = self
+            .executor
+            .execute_streaming(&adapter_dispatch, &reporter);
         let outcome = reporter.finish()?;
         if outcome.terminal_seen {
             if let Some(failure) = outcome.failure {
                 let error = failure.into_runtime_error();
                 warn!(
-                    run = %dispatch.run(),
-                    attempt = %dispatch.attempt(),
+                    run = %adapter_dispatch.run(),
+                    attempt = %adapter_dispatch.attempt(),
                     reason = %error,
                     "executor reported an error after a terminal observation was already durable"
                 );
             } else if let Err(error) = boundary {
                 warn!(
-                    run = %dispatch.run(),
-                    attempt = %dispatch.attempt(),
+                    run = %adapter_dispatch.run(),
+                    attempt = %adapter_dispatch.attempt(),
                     reason = %error,
                     "executor returned an error after a terminal observation was already durable"
                 );
@@ -437,12 +547,12 @@ impl RuntimeService {
                 | ExecutorError::AdapterPanicked { after_entry: true }),
             ) => {
                 warn!(
-                    run = %dispatch.run(),
-                    attempt = %dispatch.attempt(),
+                    run = %adapter_dispatch.run(),
+                    attempt = %adapter_dispatch.attempt(),
                     reason = %error,
                     "external effect boundary returned without a terminal observation"
                 );
-                self.record_effect_uncertainty(dispatch.run(), dispatch.attempt())?;
+                self.record_effect_uncertainty(adapter_dispatch.run(), adapter_dispatch.attempt())?;
                 Ok(EffectExecutionResult::Uncertain {
                     observations: outcome.observations,
                 })

@@ -85,6 +85,19 @@ impl PeerHttpClient {
         &self.config.expected_remote_peer
     }
 
+    pub(crate) fn endpoint_destination(&self) -> String {
+        let host = match self.config.endpoint.host() {
+            Some(url::Host::Ipv6(address)) => format!("[{address}]"),
+            Some(url::Host::Ipv4(address)) => address.to_string(),
+            Some(url::Host::Domain(name)) => name.to_owned(),
+            None => "invalid-peer-endpoint".to_owned(),
+        };
+        self.config
+            .endpoint
+            .port_or_known_default()
+            .map_or(host.clone(), |port| format!("{host}:{port}"))
+    }
+
     /// Performs identity cross-checking and version/hard-limit negotiation.
     pub fn handshake(&self) -> Result<HandshakeResponse, PeerHttpError> {
         let request = HandshakeRequest {

@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use milkdrift_authority::ExecutionAuthorityBasis;
 use milkdrift_blueprint::{ContentDigest, NodeId, PortId, RevisionId, WorkflowId};
 use milkdrift_capability::InvocationId;
 use milkdrift_persistence::{
@@ -286,6 +287,8 @@ pub struct RunProjection {
     pub(super) root_scope: Option<WorkspaceScope>,
     pub(super) workspace_budget: Option<WorkspaceBudget>,
     pub(super) inputs: Vec<WorkspaceValueReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) execution_authority: Option<ExecutionAuthorityBasis>,
     #[serde(with = "super::serde_map")]
     pub(super) scopes: BTreeMap<ScopeReference, WorkspaceScope>,
     pub(super) workspace_values: BTreeSet<WorkspaceValueReference>,

@@ -110,6 +110,11 @@ impl RuntimeService {
             RuntimeError::InvalidHistory("parent run has no workspace budget".to_owned())
         })?;
         let child_head = self.store.head(&child.run)?;
+        let parent_authority = parent.execution_authority().ok_or_else(|| {
+            RuntimeError::InvalidHistory(
+                "structured child has no parent execution-authority basis".to_owned(),
+            )
+        })?;
         if child_head != RunSequence::ZERO {
             let existing = self.projection(&child.run)?;
             let expected_references: Vec<_> = inputs
@@ -138,7 +143,26 @@ impl RuntimeService {
                     ));
                 }
             }
-            return Ok(child_head);
+            return match existing.execution_authority() {
+                Some(existing) if existing == parent_authority => Ok(child_head),
+                Some(_) => Err(RuntimeError::InvalidHistory(
+                    "pre-existing child run has a different execution-authority basis".to_owned(),
+                )),
+                None if existing.lifecycle() == RunLifecycle::Created => {
+                    let execution = self.commit_internal_plan(
+                        &child.run,
+                        now,
+                        SystemTransition::InheritExecutionAuthority,
+                        CommandPlan::one(RunEventKind::ExecutionAuthorityEstablished {
+                            basis: parent_authority.clone(),
+                        }),
+                    )?;
+                    Ok(execution.result().resulting_sequence())
+                }
+                None => Err(RuntimeError::InvalidHistory(
+                    "started child run has no inherited execution-authority basis".to_owned(),
+                )),
+            };
         }
         let create = RunCommandDocument::new(
             self.next_command_id()?,
@@ -162,7 +186,15 @@ impl RuntimeService {
                 "pinned child run creation was durably rejected".to_owned(),
             ));
         }
-        Ok(created.result().resulting_sequence())
+        let execution = self.commit_internal_plan(
+            &child.run,
+            now,
+            SystemTransition::InheritExecutionAuthority,
+            CommandPlan::one(RunEventKind::ExecutionAuthorityEstablished {
+                basis: parent_authority.clone(),
+            }),
+        )?;
+        Ok(execution.result().resulting_sequence())
     }
 
     fn advance_child_lifecycle(

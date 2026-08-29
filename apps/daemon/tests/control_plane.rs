@@ -19,9 +19,9 @@ use milkdrift_control_protocol::{
     Command, CommandRequest, ErrorCode, Observation, PageRequest, ProtocolVersion, decode_json,
 };
 use milkdrift_daemon::{
-    ActorBindingConfig, AdapterConfig, AuthorityPresetConfig, DaemonConfig, DaemonHost,
-    PeerHostConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig, ValidatedDaemonConfig,
-    serve,
+    ActorBindingConfig, ActorGrantConfig, AdapterConfig, AuthorityPresetConfig, DaemonConfig,
+    DaemonHost, PeerHostConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig,
+    ValidatedDaemonConfig, serve,
 };
 use tempfile::TempDir;
 use tokio::{sync::oneshot, task::JoinHandle};
@@ -92,7 +92,7 @@ fn configuration_with_process_profiles(
         ..RuntimeHostConfig::default()
     };
     DaemonConfig {
-        schema_version: 1,
+        schema_version: 2,
         data_root: directory.path().join("data"),
         bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         secret_sources: BTreeMap::from([
@@ -117,6 +117,7 @@ fn configuration_with_process_profiles(
                 grant_revision: 1,
                 revocation_generation: 0,
                 preset: AuthorityPresetConfig::Controller,
+                authority: ActorGrantConfig::dangerous_administrator(),
                 enabled: true,
             },
             ActorBindingConfig {
@@ -126,6 +127,7 @@ fn configuration_with_process_profiles(
                 grant_revision: 1,
                 revocation_generation: 0,
                 preset: AuthorityPresetConfig::Observer,
+                authority: ActorGrantConfig::dangerous_administrator(),
                 enabled: true,
             },
         ],

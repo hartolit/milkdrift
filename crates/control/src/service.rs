@@ -1,8 +1,8 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use milkdrift_authority::{
-    AuthorityBudget, AuthorityEvaluator, AuthorityOperation, AuthorityRequest, BoundaryTimeMillis,
-    DecisionId, RequestedResourceFacts,
+    AuthorityBudget, AuthorityEvaluator, AuthorityExecutionProvenance, AuthorityOperation,
+    AuthorityRequest, BoundaryTimeMillis, DecisionId, RequestedResourceFacts,
 };
 use milkdrift_blueprint::{AuthorRef, BlueprintRevision, NodeKind, RevisionId};
 use milkdrift_capability::{CapabilityCategory, TrustZone};
@@ -920,11 +920,13 @@ impl ControlService {
             actor: document.context().actor().clone(),
             grant: claim.grant().clone(),
             grant_revision: claim.grant_revision(),
+            grant_digest: claim.grant_digest().clone(),
             revocation_generation: claim.revocation_generation(),
             operation,
             resources,
             budget,
             evaluated_at: BoundaryTimeMillis::new(document.issued_at().get()),
+            provenance: AuthorityExecutionProvenance::default(),
         };
         Ok(self.authority.evaluate(&request)?)
     }
@@ -1140,6 +1142,7 @@ fn revision_budget(revision: &BlueprintRevision) -> AuthorityBudget {
         duration_ms,
         invocations: (invocations > 0).then_some(invocations),
         artifact_bytes: None,
+        units: None,
         concurrency: None,
     }
 }

@@ -12,7 +12,7 @@ use std::{
 
 use milkdrift_authority::{
     AuthorityBudget, AuthorityDecisionSnapshot, AuthorityError, AuthorityEvaluator,
-    DecisionReasonCode, GrantId, PolicyId,
+    DecisionReasonCode, GrantDigest, GrantId, PolicyId,
 };
 use milkdrift_blueprint::{
     AuthorRef, BindingSource, BlueprintRevision, BranchConfig, Comparison, Condition,
@@ -85,6 +85,7 @@ impl AuthorityEvaluator for TestAuthorityEvaluator {
                 duration_ms: Some(u64::MAX),
                 invocations: Some(u64::MAX),
                 artifact_bytes: Some(u64::MAX),
+                units: Some(u64::MAX),
                 concurrency: Some(u32::MAX),
             },
             SideEffectClass::Unknown,
@@ -100,6 +101,7 @@ fn test_authority_claim() -> TestResult<CommandAuthorityClaim> {
     Ok(CommandAuthorityClaim::new(
         GrantId::new("grant:structured-runtime-test")?,
         1,
+        GrantDigest::new(format!("b3_{}", "0".repeat(64)))?,
         0,
     )?)
 }

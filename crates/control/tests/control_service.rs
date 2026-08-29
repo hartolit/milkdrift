@@ -161,6 +161,7 @@ fn grant(
                 duration_ms: Some(3_600_000),
                 invocations: Some(1_000),
                 artifact_bytes: Some(16_777_216),
+                units: Some(1_000_000),
                 concurrency: Some(32),
             },
         )
@@ -198,6 +199,7 @@ fn services_with_grant(
     Arc<ControlService>,
     ActorAuthorityContext,
 )> {
+    let grant_digest = grant.digest()?;
     let authority = Arc::new(GrantSetEvaluator::new(
         PolicyId::new("test.control-service")?,
         1,
@@ -227,7 +229,7 @@ fn services_with_grant(
     let service = Arc::new(ControlService::new(store, runtime.clone(), authority));
     let context = ActorAuthorityContext::new(
         actor.clone(),
-        CommandAuthorityClaim::new(grant_id.clone(), 1, 0)?,
+        CommandAuthorityClaim::new(grant_id.clone(), 1, grant_digest, 0)?,
     );
     Ok((runtime, service, context))
 }

@@ -8,6 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use milkdrift_authority::{AuthorityBudget, CapabilityExecutionRequirements, NetworkProfileRef};
 use milkdrift_capability::{
     BoundedJson, CancellationAcknowledgement, CancellationRequest, CapabilityDescriptor,
     CapabilityId, CapabilityObservation, DescriptorBuilder, ErrorClass, ExtensionKey,
@@ -218,6 +219,8 @@ impl PeerRegistry {
             )?;
             let local_capability = descriptor.identity().clone();
             let local_revision = descriptor.descriptor_revision();
+            let authority_requirements =
+                remote_authority_requirements(self.client.as_ref(), &self.relationship)?;
             let adapter = Arc::new(RemoteCapabilityAdapter {
                 client: self.client.clone(),
                 relationship: self.relationship.clone(),
@@ -226,6 +229,7 @@ impl PeerRegistry {
                 catalog_expires_at_unix_ms: catalog.expires_at_unix_ms,
                 remote_descriptor: entry.descriptor.clone(),
                 local_capability: local_capability.clone(),
+                authority_requirements,
                 active: Mutex::new(BTreeMap::new()),
                 draining: AtomicBool::new(false),
             });
@@ -329,11 +333,16 @@ struct RemoteCapabilityAdapter {
     catalog_expires_at_unix_ms: u64,
     remote_descriptor: CapabilityDescriptor,
     local_capability: CapabilityId,
+    authority_requirements: CapabilityExecutionRequirements,
     active: Mutex<BTreeMap<InvocationId, PeerExecutionId>>,
     draining: AtomicBool,
 }
 
 impl CapabilityAdapter for RemoteCapabilityAdapter {
+    fn authority_requirements(&self) -> CapabilityExecutionRequirements {
+        self.authority_requirements.clone()
+    }
+
     fn execute(
         &self,
         invocation: &AdapterInvocation<'_>,
@@ -523,6 +532,39 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
     }
 }
 
+fn remote_authority_requirements(
+    client: &PeerHttpClient,
+    relationship: &PeerRelationship,
+) -> Result<CapabilityExecutionRequirements, PeerHttpError> {
+    let network_profile =
+        NetworkProfileRef::new(format!("peer:{}", relationship.remote_peer.as_str()))
+            .map_err(|error| PeerHttpError::Configuration(error.to_string()))?;
+    Ok(CapabilityExecutionRequirements {
+        network_profiles: BTreeSet::from([network_profile]),
+        network_destinations: BTreeSet::from([client.endpoint_destination()]),
+        budget: AuthorityBudget {
+            cost_minor: Some(
+                relationship
+                    .execution_limits
+                    .cost_micros
+                    .saturating_add(9_999)
+                    / 10_000,
+            ),
+            duration_ms: Some(relationship.execution_limits.duration_ms),
+            invocations: Some(1),
+            artifact_bytes: Some(
+                relationship
+                    .execution_limits
+                    .artifact_bytes
+                    .max(relationship.maximum_artifact_bytes),
+            ),
+            concurrency: Some(1),
+            ..AuthorityBudget::default()
+        },
+        ..CapabilityExecutionRequirements::default()
+    })
+}
+
 fn remap_request(
     request: &InvocationRequest,
     remote_capability: &CapabilityId,
@@ -572,8 +614,9 @@ fn local_descriptor(
         revision,
         remote.category().clone(),
         remote.admission().clone(),
-        Locality::Remote,
+        Locality::Peer,
     )
+    .peer(Some(relationship.remote_peer.clone()))
     .provider_profile(remote.provider_profile().cloned())
     .operations(operations)
     .trust_zones(trust_zones)

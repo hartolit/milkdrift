@@ -138,6 +138,14 @@ impl RunProjection {
         &self.inputs
     }
 
+    /// Frozen execution authority established when this run was allowed to start.
+    #[must_use]
+    pub const fn execution_authority(
+        &self,
+    ) -> Option<&milkdrift_authority::ExecutionAuthorityBasis> {
+        self.execution_authority.as_ref()
+    }
+
     /// Workspace scopes still referenced by active state or retained values.
     #[must_use]
     pub const fn scopes(&self) -> &BTreeMap<ScopeReference, WorkspaceScope> {

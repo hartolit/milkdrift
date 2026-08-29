@@ -782,6 +782,7 @@ pub(super) fn command_kind_name(command: &RunCommand) -> &'static str {
 pub(super) fn event_kind_name(event: &RunEventKind) -> &'static str {
     match event {
         RunEventKind::RunCreated { .. } => "run_created",
+        RunEventKind::ExecutionAuthorityEstablished { .. } => "execution_authority_established",
         RunEventKind::RevisionPinned { .. } => "revision_pinned",
         RunEventKind::RunStarted => "run_started",
         RunEventKind::RunPaused { .. } => "run_paused",
@@ -798,8 +799,17 @@ pub(super) fn event_kind_name(event: &RunEventKind) -> &'static str {
         }
         RunEventKind::NodeScheduled { .. } => "node_scheduled",
         RunEventKind::CapabilityResolved { .. } => "capability_resolved",
+        RunEventKind::CapabilityResolutionDecisionRecorded { .. } => {
+            "capability_resolution_decision_recorded"
+        }
         RunEventKind::SideEffectClassified { .. } => "side_effect_classified",
         RunEventKind::LeaseGranted { .. } => "lease_granted",
+        RunEventKind::CapabilityEntryDecisionRecorded { .. } => {
+            "capability_entry_decision_recorded"
+        }
+        RunEventKind::CapabilityAdapterEntryDecisionRecorded { .. } => {
+            "capability_adapter_entry_decision_recorded"
+        }
         RunEventKind::LeaseHeartbeatRecorded { .. } => "lease_heartbeat_recorded",
         RunEventKind::LeaseExpired { .. } => "lease_expired",
         RunEventKind::NodeReLeased { .. } => "node_re_leased",
@@ -813,6 +823,7 @@ pub(super) fn event_kind_name(event: &RunEventKind) -> &'static str {
         RunEventKind::DeterministicOutputPublished { .. } => "deterministic_output_published",
         RunEventKind::DeterministicNodeTerminal { .. } => "deterministic_node_terminal",
         RunEventKind::NodePreDispatchFailed { .. } => "node_pre_dispatch_failed",
+        RunEventKind::CapabilityResolutionDenied { .. } => "capability_resolution_denied",
         RunEventKind::StructuredSuccessorScanCompleted { .. } => {
             "structured_successor_scan_completed"
         }

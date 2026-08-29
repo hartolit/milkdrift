@@ -7,6 +7,7 @@ use std::{
     time::Instant,
 };
 
+use milkdrift_authority::{AuthorityBudget, CapabilityExecutionRequirements, NetworkProfileRef};
 use milkdrift_capability::{
     AdmissionConstraints, BoundedJson, CancellationAcknowledgement, CancellationBehavior,
     CancellationRequest, CapabilityCategory, CapabilityDescriptor, CapabilityId,
@@ -21,9 +22,9 @@ use milkdrift_capability_host::{
     MaterializationLimits, SecretResolver,
 };
 use milkdrift_model::{
-    ContentPart, ContextManifestDocument, MODEL_GENERATE_OPERATION, MODEL_TASK_INPUT_NAME,
-    ModelResponse, ModelResponseDocument, ModelTaskRequest, ModelTaskRequestDocument,
-    SessionSelection,
+    ContentPart, ContextManifestDocument, MAX_MODEL_OUTPUT_UNITS, MODEL_GENERATE_OPERATION,
+    MODEL_TASK_INPUT_NAME, ModelResponse, ModelResponseDocument, ModelTaskRequest,
+    ModelTaskRequestDocument, SessionSelection,
 };
 use reqwest::header::{HeaderName, HeaderValue};
 use serde_json::json;
@@ -52,6 +53,7 @@ pub struct ModelEndpointAdapter {
     active: Mutex<BTreeMap<milkdrift_capability::InvocationId, Arc<AtomicBool>>>,
     started: AtomicBool,
     draining: AtomicBool,
+    authority_requirements: CapabilityExecutionRequirements,
 }
 
 impl ModelEndpointAdapter {
@@ -64,6 +66,37 @@ impl ModelEndpointAdapter {
     ) -> Result<Self, AdapterError> {
         let client =
             http::client(&profile).map_err(|error| AdapterError::rejected(error.to_string()))?;
+        let endpoint = profile
+            .endpoint_url()
+            .map_err(|error| AdapterError::rejected(error.to_string()))?;
+        let destination = network_destination(&endpoint)?;
+        let network_profile = NetworkProfileRef::new(profile.identity().as_str().to_owned())
+            .map_err(|error| AdapterError::rejected(error.to_string()))?;
+        let limits = profile.limits();
+        let artifact_bytes = limits
+            .max_request_bytes
+            .checked_add(limits.max_response_bytes)
+            .ok_or_else(|| AdapterError::rejected("model artifact byte ceiling overflows"))?;
+        let required_secrets = match profile.auth() {
+            AuthMode::NoAuth => BTreeSet::new(),
+            AuthMode::Bearer { secret } | AuthMode::AnthropicApiKey { secret } => {
+                BTreeSet::from([secret.clone()])
+            }
+        };
+        let authority_requirements = CapabilityExecutionRequirements {
+            network_profiles: BTreeSet::from([network_profile]),
+            network_destinations: BTreeSet::from([destination]),
+            secrets: required_secrets,
+            budget: AuthorityBudget {
+                duration_ms: Some(limits.request_timeout_ms),
+                invocations: Some(1),
+                artifact_bytes: Some(artifact_bytes),
+                units: Some(MAX_MODEL_OUTPUT_UNITS),
+                concurrency: Some(1),
+                ..AuthorityBudget::default()
+            },
+            ..CapabilityExecutionRequirements::default()
+        };
         Ok(Self {
             capability,
             profile,
@@ -73,6 +106,7 @@ impl ModelEndpointAdapter {
             active: Mutex::new(BTreeMap::new()),
             started: AtomicBool::new(false),
             draining: AtomicBool::new(false),
+            authority_requirements,
         })
     }
 
@@ -714,6 +748,10 @@ impl ModelEndpointAdapter {
 }
 
 impl CapabilityAdapter for ModelEndpointAdapter {
+    fn authority_requirements(&self) -> CapabilityExecutionRequirements {
+        self.authority_requirements.clone()
+    }
+
     fn start(&self) -> Result<(), AdapterError> {
         self.started.store(true, Ordering::SeqCst);
         Ok(())
@@ -789,6 +827,21 @@ impl CapabilityAdapter for ModelEndpointAdapter {
         }
         Ok(())
     }
+}
+
+fn network_destination(endpoint: &url::Url) -> Result<String, AdapterError> {
+    let host = endpoint
+        .host()
+        .ok_or_else(|| AdapterError::rejected("model endpoint host is absent"))?;
+    let host = match host {
+        url::Host::Ipv6(address) => format!("[{address}]"),
+        url::Host::Ipv4(address) => address.to_string(),
+        url::Host::Domain(name) => name.to_owned(),
+    };
+    let port = endpoint
+        .port_or_known_default()
+        .ok_or_else(|| AdapterError::rejected("model endpoint port is absent"))?;
+    Ok(format!("{host}:{port}"))
 }
 
 /// Creates the immutable capability descriptor corresponding exactly to a profile.

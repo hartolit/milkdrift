@@ -18,9 +18,9 @@ pub use document::{
     ModelResponseDocument, ModelTaskRequestDocument,
 };
 pub use task::{
-    ContentPart, FinishReason, Message, MessageRole, ModelResponse, ModelStreamEvent,
-    ModelTaskRequest, ReasoningControl, ReasoningEffort, SessionSelection, StructuredOutput,
-    ToolCall, ToolDefinition, Usage,
+    ContentPart, FinishReason, MAX_MODEL_OUTPUT_UNITS, Message, MessageRole, ModelResponse,
+    ModelStreamEvent, ModelTaskRequest, ReasoningControl, ReasoningEffort, SessionSelection,
+    StructuredOutput, ToolCall, ToolDefinition, Usage,
 };
 
 /// Reserved invocation input containing the versioned model task request.

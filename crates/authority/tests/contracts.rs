@@ -6,10 +6,10 @@ use std::{
 };
 
 use milkdrift_authority::{
-    AccessMode, ActorRef, AuthorityBudget, AuthorityEvaluator, AuthorityGrant,
-    AuthorityGrantBuilder, AuthorityOperation, AuthorityRequest, BoundaryTimeMillis,
-    CapabilityAuthorityScope, DecisionId, DecisionReasonCode, FilesystemScope, GrantId,
-    GrantSetEvaluator, NetworkProfileRef, NetworkScope, PolicyId, RequestedResourceFacts,
+    AccessMode, ActorRef, AuthorityBudget, AuthorityEvaluator, AuthorityExecutionProvenance,
+    AuthorityGrant, AuthorityGrantBuilder, AuthorityOperation, AuthorityRequest,
+    BoundaryTimeMillis, CapabilityAuthorityScope, DecisionId, DecisionReasonCode, FilesystemScope,
+    GrantId, GrantSetEvaluator, NetworkProfileRef, NetworkScope, PolicyId, RequestedResourceFacts,
     ResourceScope, SecretRef, SensitiveSecret, WorkflowRunScope,
 };
 use milkdrift_blueprint::{AuthorRef, WorkflowId};
@@ -58,6 +58,7 @@ fn grant() -> TestResult<AuthorityGrant> {
         duration_ms: Some(10_000),
         invocations: Some(5),
         artifact_bytes: Some(1_024),
+        units: Some(10_000),
         concurrency: Some(2),
     })
     .validity(BoundaryTimeMillis::new(100), BoundaryTimeMillis::new(200))
@@ -66,11 +67,13 @@ fn grant() -> TestResult<AuthorityGrant> {
 }
 
 fn request() -> TestResult<AuthorityRequest> {
+    let grant_digest = grant()?.digest()?;
     Ok(AuthorityRequest {
         decision: DecisionId::new("decision:a")?,
         actor: ActorRef::new("human:alice")?,
         grant: GrantId::new("grant:alice")?,
         grant_revision: 3,
+        grant_digest,
         revocation_generation: 4,
         operation: AuthorityOperation::Approve,
         resources: RequestedResourceFacts {
@@ -81,7 +84,10 @@ fn request() -> TestResult<AuthorityRequest> {
             capability_operation: Some(OperationId::new("model.generate")?),
             provider_profile: Some(ProviderProfileRef::new("profile-a")?),
             trust_zone: Some(TrustZone::new("trusted")?),
+            trust_zones: set(TrustZone::new("trusted")?),
             locality: Some(Locality::Remote),
+            peer: None,
+            capability_envelope: None,
             side_effect: SideEffectClass::ReadOnly,
             filesystem: vec![FilesystemScope::new(
                 "/workspace/input",
@@ -96,9 +102,11 @@ fn request() -> TestResult<AuthorityRequest> {
             duration_ms: Some(1_000),
             invocations: Some(1),
             artifact_bytes: Some(128),
+            units: Some(100),
             concurrency: Some(1),
         },
         evaluated_at: BoundaryTimeMillis::new(150),
+        provenance: AuthorityExecutionProvenance::default(),
     })
 }
 

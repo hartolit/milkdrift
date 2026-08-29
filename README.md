@@ -2,7 +2,7 @@
 
 Milkdrift is a local-first foundation for durable, live-editable workflows whose tasks can be satisfied by explicitly constrained capabilities: hosted AI providers, local servers, coding agents, tools, humans, or peer machines. Its semantic core keeps workflow meaning independent of any executor, UI, database, network, or provider.
 
-Milkdrift currently has a headless Rust execution center. It stores immutable workflow revisions, authorizes versioned idempotent run commands against exact scoped grant revisions, records the decision atomically with each external command result, rebuilds pure projections, schedules bounded work through exact capability snapshots, keeps branch-local workspace values, publishes content-addressed artifacts, recovers local runs after restart, and applies compatible revision changes prospectively through persisted reconciliation plans. Its workflow-control application layer accepts bounded digest-bound proposals from humans, services, processes, or models; creates immutable prospective revisions; classifies risk; and uses the same authorized runtime reconciliation path for approval and apply.
+Milkdrift currently has a headless Rust execution center. It stores immutable workflow revisions, authorizes versioned idempotent run commands against exact scoped grant revisions, freezes the accepted actor/grant/policy basis into each started run, and records canonical decisions at capability resolution, exact-generation claim, and final adapter entry. It rebuilds pure projections, schedules bounded work through exact authorized capability snapshots, keeps branch-local workspace values, publishes content-addressed artifacts, recovers local runs after restart, and applies compatible revision changes prospectively through persisted reconciliation plans. Its workflow-control application layer accepts bounded digest-bound proposals from humans, services, processes, or models; creates immutable prospective revisions; classifies risk; and uses the same authorized runtime reconciliation path for approval and apply.
 
 The production local backend uses redb plus a filesystem artifact directory. `milkdrift-daemon` is the single durable owner: it validates versioned host configuration, authenticates local clients and configured peers, recovers the runtime with admission closed, registers the generation-safe process/model/workflow-control/remote-peer capability host, runs bounded effect workers, and serves separate versioned control and peer authentication realms. A dedicated bounded owner thread keeps synchronous redb/runtime work off the async HTTP reactor. `milkdrift-cli` and the reusable control client use only that API; they never open storage or resolve adapter secrets. The desktop UI is not implemented.
 
@@ -53,14 +53,14 @@ The insecure mode refuses non-loopback URLs. Use ordinary HTTPS directly or term
 
 ## Local daemon quick start
 
-Create a private bearer-token file and a version-one daemon configuration. Relative paths are resolved from the configuration file directory.
+Create a private bearer-token file and a version-two daemon configuration. Relative paths are resolved from the configuration file directory. Presets select command operations only; the required `authority` object supplies the actual resource scope, ceilings, and validity.
 
 ```sh
 install -m 600 /dev/null operator.token
 printf '%s' 'replace-with-a-long-random-local-token' > operator.token
 cat > daemon.json <<'JSON'
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "data_root": "./milkdrift-data",
   "bind": "127.0.0.1:9734",
   "secret_sources": {
@@ -73,6 +73,35 @@ cat > daemon.json <<'JSON'
     "grant_revision": 1,
     "revocation_generation": 0,
     "preset": "controller",
+    "authority": {
+      "resources": {
+        "workflow_run": { "type": "workflow", "workflow": "example-workflow" },
+        "capability": {
+          "identities": ["local-example"],
+          "categories": [],
+          "operations": ["process.execute"],
+          "provider_profiles": [],
+          "trust_zones": ["local-process"],
+          "localities": ["local"],
+          "peers": [],
+          "maximum_side_effect": "read_only"
+        },
+        "filesystem": [],
+        "network": { "profiles": [], "destinations": [] },
+        "secrets": []
+      },
+      "budget": {
+        "cost_minor": 1000,
+        "duration_ms": 300000,
+        "invocations": 1000,
+        "artifact_bytes": 67108864,
+        "units": 1000000,
+        "concurrency": 4
+      },
+      "valid_from": 0,
+      "valid_until": 4102444800000,
+      "dangerous_allow_broad_authority": false
+    },
     "enabled": true
   }],
   "runtime": {
@@ -106,7 +135,7 @@ cargo run -p milkdrift-cli -- --json capability list
 cargo run -p milkdrift-cli -- blueprint import crates/blueprint/tests/fixtures/revision-v2.json
 ```
 
-The daemon refuses non-loopback plaintext binds and permissive CORS is not enabled. See [the control API reference](docs/reference/control-api.md) for protocol and cursor contracts.
+The daemon refuses non-loopback plaintext binds and permissive CORS is not enabled. Schema 1 configuration is not silently migrated, and broad/unbounded authority requires an explicit dangerous acknowledgement. See [the authority configuration guide](docs/operator-authority.md) and [the control API reference](docs/reference/control-api.md).
 
 A minimal revision is constructed through a validated mutation batch; see the crate-level example in `milkdrift-blueprint` and the integration tests under `crates/blueprint/tests`.
 

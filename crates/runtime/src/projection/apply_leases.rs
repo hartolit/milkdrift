@@ -67,6 +67,87 @@ impl RunProjection {
                 attempt_view.leases.push(lease.clone());
                 attempt_view.state = AttemptState::Leased;
             }
+            RunEventKind::CapabilityEntryDecisionRecorded {
+                attempt,
+                authorization,
+            } => {
+                let attempt_view = self.attempt(attempt, event)?;
+                let basis = self.execution_authority.as_ref().ok_or_else(|| {
+                    invalid_at(
+                        event,
+                        "capability entry decision has no run authority basis",
+                    )
+                })?;
+                let request = authorization.request();
+                if attempt_view.state != AttemptState::Leased
+                    || attempt_view.entry_authorization.is_some()
+                    || request.operation
+                        != milkdrift_authority::AuthorityOperation::InvokeCapability
+                    || request.actor != *basis.actor()
+                    || request.grant != *basis.grant()
+                    || request.grant_revision != basis.grant_revision()
+                    || request.grant_digest != *basis.grant_digest()
+                    || request.provenance.attempt.as_deref() != Some(attempt.as_str())
+                {
+                    return Err(invalid_at(
+                        event,
+                        "capability entry decision is duplicate or outside the frozen run basis",
+                    ));
+                }
+                self.attempts
+                    .get_mut(attempt)
+                    .ok_or_else(|| invalid_at(event, "unknown attempt"))?
+                    .entry_authorization = Some(authorization.clone());
+            }
+            RunEventKind::CapabilityAdapterEntryDecisionRecorded {
+                attempt,
+                authorization,
+            } => {
+                let attempt_view = self.attempt(attempt, event)?;
+                let basis = self.execution_authority.as_ref().ok_or_else(|| {
+                    invalid_at(
+                        event,
+                        "capability adapter-entry decision has no run authority basis",
+                    )
+                })?;
+                let resolution = attempt_view
+                    .resolution_authorization
+                    .as_ref()
+                    .ok_or_else(|| invalid_at(event, "attempt has no resolution decision"))?;
+                let claim_entry = attempt_view
+                    .entry_authorization
+                    .as_ref()
+                    .ok_or_else(|| invalid_at(event, "attempt has no claim-entry decision"))?;
+                let request = authorization.request();
+                let resolution_request = resolution.request();
+                if attempt_view.state != AttemptState::Running
+                    || attempt_view.adapter_entry_authorization.is_some()
+                    || !claim_entry.is_allowed()
+                    || authorization.policy() != basis.policy()
+                    || authorization.policy_version() != basis.policy_version()
+                    || request.operation
+                        != milkdrift_authority::AuthorityOperation::InvokeCapability
+                    || request.actor != *basis.actor()
+                    || request.grant != *basis.grant()
+                    || request.grant_revision != basis.grant_revision()
+                    || request.grant_digest != *basis.grant_digest()
+                    || request.revocation_generation != basis.revocation_generation()
+                    || request.resources != resolution_request.resources
+                    || request.budget != resolution_request.budget
+                    || request.provenance != resolution_request.provenance
+                    || request.provenance.attempt.as_deref() != Some(attempt.as_str())
+                    || request.evaluated_at < claim_entry.request().evaluated_at
+                {
+                    return Err(invalid_at(
+                        event,
+                        "capability adapter-entry decision is duplicate or not the exact frozen candidate",
+                    ));
+                }
+                self.attempts
+                    .get_mut(attempt)
+                    .ok_or_else(|| invalid_at(event, "unknown attempt"))?
+                    .adapter_entry_authorization = Some(authorization.clone());
+            }
             RunEventKind::LeaseHeartbeatRecorded { lease, expires_at } => {
                 let lease_view = self
                     .leases

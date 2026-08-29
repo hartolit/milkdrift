@@ -78,6 +78,15 @@ impl RunProjection {
                     self.record_workspace_value(input, event)?;
                 }
             }
+            RunEventKind::ExecutionAuthorityEstablished { basis } => {
+                if self.lifecycle != RunLifecycle::Created || self.execution_authority.is_some() {
+                    return Err(invalid_at(
+                        event,
+                        "execution authority may be established exactly once before start",
+                    ));
+                }
+                self.execution_authority = Some(basis.clone());
+            }
             RunEventKind::RevisionPinned {
                 previous,
                 revision,

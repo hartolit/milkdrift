@@ -1,3 +1,6 @@
+use milkdrift_authority::{
+    AuthorityDecisionSnapshot, CapabilityExecutionRequirements, ExecutionAuthorityBasis,
+};
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_capability::{
     CancellationAcknowledgement, CancellationRequest, CapabilityObservation, InvocationEvent,
@@ -114,13 +117,16 @@ impl AdapterError {
 pub struct HostAdapterContractError;
 
 /// Exact durable execution provenance supplied to materializing adapters.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AdapterExecutionContext {
     run: RunId,
     revision: RevisionId,
     node: NodeId,
     execution: NodeExecutionId,
     attempt: AttemptId,
+    authority: Option<ExecutionAuthorityBasis>,
+    resolution_authorization: Option<AuthorityDecisionSnapshot>,
+    entry_authorization: Option<AuthorityDecisionSnapshot>,
 }
 
 impl AdapterExecutionContext {
@@ -139,17 +145,23 @@ impl AdapterExecutionContext {
             node,
             execution,
             attempt,
+            authority: None,
+            resolution_authorization: None,
+            entry_authorization: None,
         }
     }
 
     pub(crate) fn from_dispatch(dispatch: &milkdrift_runtime::ExecutionDispatch) -> Self {
-        Self::new(
-            dispatch.run().clone(),
-            dispatch.revision().clone(),
-            dispatch.node().clone(),
-            dispatch.execution().clone(),
-            dispatch.attempt().clone(),
-        )
+        Self {
+            run: dispatch.run().clone(),
+            revision: dispatch.revision().clone(),
+            node: dispatch.node().clone(),
+            execution: dispatch.execution().clone(),
+            attempt: dispatch.attempt().clone(),
+            authority: Some(dispatch.execution_authority().clone()),
+            resolution_authorization: Some(dispatch.resolution_authorization().clone()),
+            entry_authorization: Some(dispatch.entry_authorization().clone()),
+        }
     }
 
     /// Owning durable run.
@@ -180,6 +192,24 @@ impl AdapterExecutionContext {
     #[must_use]
     pub const fn attempt(&self) -> &AttemptId {
         &self.attempt
+    }
+
+    /// Frozen actor/grant/policy basis inherited from run acceptance.
+    #[must_use]
+    pub const fn authority(&self) -> Option<&ExecutionAuthorityBasis> {
+        self.authority.as_ref()
+    }
+
+    /// Exact decision that allowed this capability generation to be selected.
+    #[must_use]
+    pub const fn resolution_authorization(&self) -> Option<&AuthorityDecisionSnapshot> {
+        self.resolution_authorization.as_ref()
+    }
+
+    /// Fresh decision committed immediately before adapter entry.
+    #[must_use]
+    pub const fn entry_authorization(&self) -> Option<&AuthorityDecisionSnapshot> {
+        self.entry_authorization.as_ref()
     }
 }
 
@@ -248,6 +278,11 @@ pub trait AdapterReporter: Send + Sync {
 
 /// Object-safe boundary implemented by later process, model, peer, or human adapters.
 pub trait CapabilityAdapter: Send + Sync {
+    /// Returns immutable filesystem/network/secret and budget facts for canonical evaluation.
+    fn authority_requirements(&self) -> CapabilityExecutionRequirements {
+        CapabilityExecutionRequirements::default()
+    }
+
     /// Starts adapter-owned live resources before registration becomes visible.
     fn start(&self) -> Result<(), AdapterError> {
         Ok(())

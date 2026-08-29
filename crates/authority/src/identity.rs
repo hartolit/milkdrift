@@ -93,8 +93,70 @@ identity_type!(/// Stable identity of one authorization decision.
     DecisionId);
 identity_type!(/// Non-secret network configuration profile reference.
     NetworkProfileRef);
-identity_type!(/// Stable authenticated identity of one Milkdrift peer daemon.
-    PeerId);
+/// Domain-separated digest of one exact immutable grant revision.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct GrantDigest(String);
+
+impl GrantDigest {
+    pub(crate) fn for_bytes(bytes: &[u8]) -> Self {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"milkdrift.authority-grant.v1\0");
+        hasher.update(bytes);
+        Self(format!("b3_{}", hasher.finalize()))
+    }
+
+    /// Parses one lowercase BLAKE3 grant digest.
+    pub fn new(value: impl Into<String>) -> Result<Self, AuthorityError> {
+        let value = value.into();
+        let Some(hex) = value.strip_prefix("b3_") else {
+            return Err(AuthorityError::InvalidIdentity {
+                kind: "GrantDigest",
+                reason: "missing b3_ prefix".to_owned(),
+            });
+        };
+        if hex.len() != 64
+            || !hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(AuthorityError::InvalidIdentity {
+                kind: "GrantDigest",
+                reason: "expected 64 lowercase hexadecimal characters".to_owned(),
+            });
+        }
+        Ok(Self(value))
+    }
+
+    /// Canonical digest text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for GrantDigest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl Serialize for GrantDigest {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for GrantDigest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
 
 /// Opaque reference to secret material owned by a later resolver boundary.
 ///

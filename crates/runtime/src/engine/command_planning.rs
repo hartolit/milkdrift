@@ -558,7 +558,11 @@ impl RuntimeService {
             ));
         }
         match report {
-            WorkerReport::LeaseAccepted { lease, attempt } => {
+            WorkerReport::LeaseAccepted {
+                lease,
+                attempt,
+                authorization,
+            } => {
                 let lease_view = projection.leases().get(lease).ok_or_else(|| {
                     RuntimeError::InvalidTransition(format!("unknown lease {lease}"))
                 })?;
@@ -595,11 +599,37 @@ impl RuntimeService {
                 let invocation = attempt_view.invocation().ok_or_else(|| {
                     RuntimeError::InvalidHistory("leased attempt has no invocation".to_owned())
                 })?;
-                Ok(CommandPlan::one(RunEventKind::NodeStarted {
-                    execution: attempt_view.execution().clone(),
-                    attempt: attempt.clone(),
-                    invocation: invocation.clone(),
-                }))
+                let resolution_authorization = attempt_view
+                    .capability()
+                    .and_then(crate::projection::CapabilityResolution::authorization)
+                    .ok_or_else(|| {
+                        RuntimeError::InvalidHistory(
+                            "leased attempt has no resolution authorization".to_owned(),
+                        )
+                    })?;
+                let mut expected = resolution_authorization.request().clone();
+                expected.decision = authorization.request().decision.clone();
+                expected.evaluated_at = authorization.request().evaluated_at;
+                if !authorization.is_allowed() || authorization.request() != &expected {
+                    return Err(RuntimeError::InvalidTransition(
+                        "lease acceptance authorization does not re-evaluate the exact resolved generation"
+                            .to_owned(),
+                    ));
+                }
+                Ok(CommandPlan {
+                    events: vec![
+                        RunEventKind::CapabilityEntryDecisionRecorded {
+                            attempt: attempt.clone(),
+                            authorization: authorization.as_ref().clone(),
+                        },
+                        RunEventKind::NodeStarted {
+                            execution: attempt_view.execution().clone(),
+                            attempt: attempt.clone(),
+                            invocation: invocation.clone(),
+                        },
+                    ],
+                    ..CommandPlan::default()
+                })
             }
             WorkerReport::Heartbeat { lease, expires_at } => {
                 let lease_view = projection.leases().get(lease).ok_or_else(|| {
@@ -632,6 +662,15 @@ impl RuntimeService {
                 if !lease_is_current {
                     return Err(RuntimeError::InvalidTransition(
                         "worker start requires an unexpired active lease".to_owned(),
+                    ));
+                }
+                if attempt_view
+                    .entry_authorization()
+                    .is_none_or(|decision| !decision.is_allowed())
+                {
+                    return Err(RuntimeError::InvalidTransition(
+                        "worker start requires a durable allowed capability-entry decision"
+                            .to_owned(),
                     ));
                 }
                 let invocation = attempt_view.invocation().ok_or_else(|| {

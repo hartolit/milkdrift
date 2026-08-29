@@ -44,6 +44,7 @@ impl AuthorityPreset {
             actor,
             workflow_run,
             capability,
+            resources: None,
             budget,
             valid_from: BoundaryTimeMillis::new(0),
             valid_until: BoundaryTimeMillis::new(u64::MAX),
@@ -53,8 +54,8 @@ impl AuthorityPreset {
 
     fn operations(self) -> BTreeSet<AuthorityOperation> {
         use AuthorityOperation::{
-            Apply, Approve, Cancel, CreateRun, DeliverSignal, Inspect, Pause, Propose, Resume,
-            Retry, StartRun, Terminate,
+            Apply, Approve, Cancel, CreateRun, DeliverSignal, Inspect, InvokeCapability, Pause,
+            Propose, Resume, Retry, StartRun, Terminate,
         };
         match self {
             Self::Observer => BTreeSet::from([Inspect]),
@@ -77,6 +78,7 @@ impl AuthorityPreset {
                 Apply,
                 CreateRun,
                 StartRun,
+                InvokeCapability,
                 Pause,
                 Resume,
                 Cancel,
@@ -91,6 +93,7 @@ impl AuthorityPreset {
                 Apply,
                 CreateRun,
                 StartRun,
+                InvokeCapability,
                 Pause,
                 Resume,
                 Cancel,
@@ -110,6 +113,7 @@ pub struct GrantTemplate {
     actor: ActorRef,
     workflow_run: WorkflowRunScope,
     capability: CapabilityAuthorityScope,
+    resources: Option<ResourceScope>,
     budget: AuthorityBudget,
     valid_from: BoundaryTimeMillis,
     valid_until: BoundaryTimeMillis,
@@ -117,6 +121,13 @@ pub struct GrantTemplate {
 }
 
 impl GrantTemplate {
+    /// Replaces the complete ordinary resource scope, including path/network/secret facts.
+    #[must_use]
+    pub fn resources(mut self, resources: ResourceScope) -> Self {
+        self.resources = Some(resources);
+        self
+    }
+
     /// Narrows or replaces the inclusive validity interval.
     #[must_use]
     pub const fn validity(
@@ -138,12 +149,15 @@ impl GrantTemplate {
 
     /// Publishes the template as a normal immutable authority grant.
     pub fn build(self) -> Result<AuthorityGrant, ControlError> {
-        let resources = ResourceScope {
-            workflow_run: self.workflow_run,
-            capability: self.capability,
-            filesystem: Vec::new(),
-            network: NetworkScope::new(BTreeSet::new(), BTreeSet::new())?,
-            secrets: BTreeSet::new(),
+        let resources = match self.resources {
+            Some(resources) => resources,
+            None => ResourceScope {
+                workflow_run: self.workflow_run,
+                capability: self.capability,
+                filesystem: Vec::new(),
+                network: NetworkScope::new(BTreeSet::new(), BTreeSet::new())?,
+                secrets: BTreeSet::new(),
+            },
         };
         Ok(
             AuthorityGrantBuilder::new(self.identity, self.revision, self.actor)

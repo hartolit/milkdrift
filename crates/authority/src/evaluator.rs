@@ -88,6 +88,9 @@ impl AuthorityEvaluator for GrantSetEvaluator {
             }
         };
 
+        if grant.digest()? != request.grant_digest {
+            reasons.push(DecisionReasonCode::GrantDigestMismatch);
+        }
         if grant.actor() != &request.actor {
             reasons.push(DecisionReasonCode::WrongActor);
         }
@@ -146,10 +149,27 @@ impl AuthorityEvaluator for GrantSetEvaluator {
         }
         if request.resources.trust_zone.as_ref().is_some_and(|zone| {
             !capability.trust_zones().is_empty() && !capability.trust_zones().contains(zone)
-        }) || request.resources.locality.is_some_and(|locality| {
-            !capability.localities().is_empty() && !capability.localities().contains(&locality)
-        }) {
+        }) || (!capability.trust_zones().is_empty()
+            && !request
+                .resources
+                .trust_zones
+                .is_subset(capability.trust_zones()))
+            || request.resources.locality.is_some_and(|locality| {
+                !capability.localities().is_empty() && !capability.localities().contains(&locality)
+            })
+            || request.resources.peer.as_ref().is_some_and(|peer| {
+                !capability.peers().is_empty() && !capability.peers().contains(peer)
+            })
+        {
             reasons.push(DecisionReasonCode::PlacementMismatch);
+        }
+        if request
+            .resources
+            .capability_envelope
+            .as_ref()
+            .is_some_and(|requested| !scope_within(requested, capability))
+        {
+            reasons.push(DecisionReasonCode::CapabilityMismatch);
         }
         if request.resources.side_effect > capability.maximum_side_effect() {
             reasons.push(DecisionReasonCode::SideEffectExcess);
@@ -196,6 +216,27 @@ impl AuthorityEvaluator for GrantSetEvaluator {
             capability.maximum_side_effect(),
         )
     }
+}
+
+fn scope_within(
+    requested: &crate::CapabilityAuthorityScope,
+    allowed: &crate::CapabilityAuthorityScope,
+) -> bool {
+    set_within(requested.identities(), allowed.identities())
+        && set_within(requested.categories(), allowed.categories())
+        && set_within(requested.operations(), allowed.operations())
+        && set_within(requested.provider_profiles(), allowed.provider_profiles())
+        && set_within(requested.trust_zones(), allowed.trust_zones())
+        && set_within(requested.localities(), allowed.localities())
+        && set_within(requested.peers(), allowed.peers())
+        && requested.maximum_side_effect() <= allowed.maximum_side_effect()
+}
+
+fn set_within<T: Ord>(
+    requested: &std::collections::BTreeSet<T>,
+    allowed: &std::collections::BTreeSet<T>,
+) -> bool {
+    requested.is_empty() || allowed.is_empty() || requested.is_subset(allowed)
 }
 
 fn filesystem_contains(allowed: &FilesystemScope, requested: &FilesystemScope) -> bool {

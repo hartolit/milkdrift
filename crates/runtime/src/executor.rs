@@ -1,5 +1,10 @@
 use std::{collections::BTreeMap, sync::Mutex};
 
+use milkdrift_authority::{
+    AuthorityBudget, AuthorityDecisionSnapshot, AuthorityEvaluator, AuthorityExecutionProvenance,
+    AuthorityOperation, BoundaryTimeMillis, CapabilityExecutionRequirements, DecisionId,
+    DecisionReasonCode, ExecutionAuthorityBasis, RequestedResourceFacts,
+};
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_capability::{
     CancellationAcknowledgement, CancellationRequest, CapabilityDescriptor, CapabilityRequirement,
@@ -25,9 +30,14 @@ pub enum ExecutorError {
         /// Stable mismatch fields.
         reasons: Vec<String>,
     },
-    /// Authority policy denied capability selection.
-    #[error("capability selection denied by authority policy: {0}")]
-    AuthorityDenied(String),
+    /// The canonical evaluator denied one exact semantically matching candidate.
+    #[error("capability selection denied: {reasons:?}")]
+    AuthorityDenied {
+        /// Stable typed denial reasons.
+        reasons: Vec<DecisionReasonCode>,
+        /// Exact denied candidate decision when one was considered.
+        decision: Box<AuthorityDecisionSnapshot>,
+    },
     /// The exact persisted descriptor generation is no longer hosted.
     #[error("capability generation {capability}/{descriptor_revision} is unavailable")]
     UnavailableGeneration {
@@ -73,6 +83,7 @@ pub enum ExecutorError {
 pub struct ResolvedCapability {
     descriptor: CapabilityDescriptor,
     snapshot: ResolvedCapabilitySnapshot,
+    authorization: Option<AuthorityDecisionSnapshot>,
 }
 
 impl ResolvedCapability {
@@ -85,6 +96,38 @@ impl ResolvedCapability {
         Ok(Self {
             descriptor,
             snapshot,
+            authorization: None,
+        })
+    }
+
+    /// Constructs an exact resolution with its canonical allowed decision.
+    pub fn new_authorized(
+        descriptor: CapabilityDescriptor,
+        snapshot: ResolvedCapabilitySnapshot,
+        authorization: AuthorityDecisionSnapshot,
+    ) -> Result<Self, ExecutorError> {
+        snapshot.validate_against(&descriptor)?;
+        if !authorization.is_allowed()
+            || authorization.request().resources.capability.as_ref() != Some(snapshot.capability())
+            || authorization
+                .request()
+                .resources
+                .capability_operation
+                .as_ref()
+                != Some(snapshot.operation())
+            || authorization.request().resources.provider_profile.as_ref()
+                != snapshot.provider_profile()
+            || authorization.request().provenance.descriptor_revision
+                != Some(snapshot.descriptor_revision())
+        {
+            return Err(ExecutorError::InvalidDispatch(
+                "resolution authorization does not bind the exact snapshot".to_owned(),
+            ));
+        }
+        Ok(Self {
+            descriptor,
+            snapshot,
+            authorization: Some(authorization),
         })
     }
 
@@ -99,6 +142,129 @@ impl ResolvedCapability {
     pub const fn snapshot(&self) -> &ResolvedCapabilitySnapshot {
         &self.snapshot
     }
+
+    /// Exact canonical decision allowing this generation to be selected.
+    #[must_use]
+    pub const fn authorization(&self) -> Option<&AuthorityDecisionSnapshot> {
+        self.authorization.as_ref()
+    }
+}
+
+/// Frozen run authority plus exact scheduling coordinates supplied to candidate resolution.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CapabilityResolutionContext {
+    basis: ExecutionAuthorityBasis,
+    revision: RevisionId,
+    node: NodeId,
+    execution: NodeExecutionId,
+    attempt: AttemptId,
+}
+
+impl CapabilityResolutionContext {
+    /// Constructs an exact candidate-evaluation context for one attempt.
+    #[must_use]
+    pub fn new(
+        basis: ExecutionAuthorityBasis,
+        revision: RevisionId,
+        node: NodeId,
+        execution: NodeExecutionId,
+        attempt: AttemptId,
+    ) -> Self {
+        Self {
+            basis,
+            revision,
+            node,
+            execution,
+            attempt,
+        }
+    }
+
+    /// Frozen run-level authority inherited by this attempt.
+    #[must_use]
+    pub const fn basis(&self) -> &ExecutionAuthorityBasis {
+        &self.basis
+    }
+
+    /// Builds the complete exact candidate request seen by the canonical evaluator.
+    pub fn candidate_request(
+        &self,
+        descriptor: &CapabilityDescriptor,
+        operation: &OperationId,
+        requirements: &CapabilityExecutionRequirements,
+        evaluated_at_unix_ms: u64,
+        boundary: &str,
+    ) -> Result<milkdrift_authority::AuthorityRequest, ExecutorError> {
+        let contract = descriptor.operation(operation).ok_or_else(|| {
+            ExecutorError::InvalidDispatch("candidate does not advertise the operation".to_owned())
+        })?;
+        let mut resources = RequestedResourceFacts::empty();
+        resources.capability = Some(descriptor.identity().clone());
+        resources.category = Some(descriptor.category().clone());
+        resources.capability_operation = Some(operation.clone());
+        resources.provider_profile = descriptor.provider_profile().cloned();
+        resources.trust_zones = descriptor.trust_zones().clone();
+        resources.locality = Some(descriptor.locality());
+        resources.peer = descriptor.peer().cloned();
+        resources.side_effect = contract.side_effect();
+        resources.filesystem = requirements.filesystem.clone();
+        resources.network_profiles = requirements.network_profiles.clone();
+        resources.network_destinations = requirements.network_destinations.clone();
+        resources.secrets = requirements.secrets.clone();
+        let observations = descriptor.resource_observations();
+        let budget = AuthorityBudget {
+            cost_minor: maximum_budget(
+                observations
+                    .and_then(|value| value.estimated_cost_micros())
+                    .map(|micros| micros.saturating_add(9_999) / 10_000),
+                requirements.budget.cost_minor,
+            ),
+            duration_ms: maximum_budget(
+                observations.and_then(|value| value.estimated_duration_ms()),
+                requirements.budget.duration_ms,
+            ),
+            invocations: maximum_budget(Some(1), requirements.budget.invocations),
+            artifact_bytes: requirements.budget.artifact_bytes,
+            units: requirements.budget.units,
+            concurrency: Some(requirements.budget.concurrency.unwrap_or(1).max(1)),
+        };
+        let identity = format!(
+            "{}:{}:{}:{}:{}:{}:{}",
+            self.basis.digest(),
+            self.revision,
+            self.node,
+            self.execution,
+            self.attempt,
+            descriptor.identity(),
+            boundary,
+        );
+        let digest = blake3::hash(identity.as_bytes());
+        let decision = DecisionId::new(format!("decision:{digest}"))
+            .map_err(|error| ExecutorError::BoundaryBeforeEntry(error.to_string()))?;
+        Ok(self.basis.request(
+            decision,
+            AuthorityOperation::InvokeCapability,
+            resources,
+            budget,
+            BoundaryTimeMillis::new(evaluated_at_unix_ms),
+            AuthorityExecutionProvenance {
+                revision: Some(self.revision.clone()),
+                node: Some(self.node.clone()),
+                execution: Some(self.execution.to_string()),
+                attempt: Some(self.attempt.to_string()),
+                descriptor_revision: Some(descriptor.descriptor_revision()),
+                peer: descriptor.peer().cloned(),
+                idempotency: Some(contract.idempotency()),
+            },
+        ))
+    }
+}
+
+fn maximum_budget(left: Option<u64>, right: Option<u64>) -> Option<u64> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.max(right)),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
 }
 
 /// Dispatch value delivered to an executor after schedule and lease facts are durable.
@@ -112,6 +278,9 @@ pub struct ExecutionDispatch {
     lease: LeaseId,
     lease_expires_at: TimestampMillis,
     resolution: ResolvedCapabilitySnapshot,
+    execution_authority: ExecutionAuthorityBasis,
+    resolution_authorization: AuthorityDecisionSnapshot,
+    entry_authorization: AuthorityDecisionSnapshot,
     request: InvocationRequest,
 }
 
@@ -126,6 +295,9 @@ impl ExecutionDispatch {
         lease: LeaseId,
         lease_expires_at: TimestampMillis,
         resolution: ResolvedCapabilitySnapshot,
+        execution_authority: ExecutionAuthorityBasis,
+        resolution_authorization: AuthorityDecisionSnapshot,
+        entry_authorization: AuthorityDecisionSnapshot,
         request: InvocationRequest,
     ) -> Result<Self, ExecutorError> {
         let snapshot = &resolution;
@@ -162,8 +334,51 @@ impl ExecutionDispatch {
             lease,
             lease_expires_at,
             resolution,
+            execution_authority,
+            resolution_authorization,
+            entry_authorization,
             request,
         })
+    }
+
+    /// Replaces the claim-time decision with the final durable decision made at the
+    /// last boundary before adapter code is called.
+    pub(crate) fn with_entry_authorization(
+        &self,
+        entry_authorization: AuthorityDecisionSnapshot,
+    ) -> Result<Self, ExecutorError> {
+        let prior = self.entry_authorization.request();
+        let final_request = entry_authorization.request();
+        if !entry_authorization.is_allowed()
+            || final_request.actor != prior.actor
+            || final_request.grant != prior.grant
+            || final_request.grant_revision != prior.grant_revision
+            || final_request.grant_digest != prior.grant_digest
+            || final_request.revocation_generation != prior.revocation_generation
+            || final_request.operation != prior.operation
+            || final_request.resources != prior.resources
+            || final_request.budget != prior.budget
+            || final_request.provenance != prior.provenance
+            || final_request.evaluated_at < prior.evaluated_at
+        {
+            return Err(ExecutorError::InvalidDispatch(
+                "adapter-entry authorization does not bind the exact claimed candidate".to_owned(),
+            ));
+        }
+        Self::from_snapshot(
+            self.run.clone(),
+            self.revision.clone(),
+            self.node.clone(),
+            self.execution.clone(),
+            self.attempt.clone(),
+            self.lease.clone(),
+            self.lease_expires_at,
+            self.resolution.clone(),
+            self.execution_authority.clone(),
+            self.resolution_authorization.clone(),
+            entry_authorization,
+            self.request.clone(),
+        )
     }
 
     /// Owning run.
@@ -212,6 +427,24 @@ impl ExecutionDispatch {
     #[must_use]
     pub const fn resolution(&self) -> &ResolvedCapabilitySnapshot {
         &self.resolution
+    }
+
+    /// Frozen authority basis inherited from the externally accepted run start.
+    #[must_use]
+    pub const fn execution_authority(&self) -> &ExecutionAuthorityBasis {
+        &self.execution_authority
+    }
+
+    /// Exact decision that allowed candidate selection.
+    #[must_use]
+    pub const fn resolution_authorization(&self) -> &AuthorityDecisionSnapshot {
+        &self.resolution_authorization
+    }
+
+    /// Fresh exact decision committed immediately before adapter entry.
+    #[must_use]
+    pub const fn entry_authorization(&self) -> &AuthorityDecisionSnapshot {
+        &self.entry_authorization
     }
 
     /// Validated provider-neutral invocation request.
@@ -353,6 +586,34 @@ pub trait TaskExecutor: Send + Sync {
         requirement: &CapabilityRequirement,
         observed_at_unix_ms: u64,
     ) -> Result<ResolvedCapability, ExecutorError>;
+
+    /// Resolves under one exact run/attempt authority context.
+    fn resolve_authorized(
+        &self,
+        requirement: &CapabilityRequirement,
+        authority: &CapabilityResolutionContext,
+        evaluator: &dyn AuthorityEvaluator,
+        observed_at_unix_ms: u64,
+    ) -> Result<ResolvedCapability, ExecutorError> {
+        let resolved = self.resolve(requirement, observed_at_unix_ms)?;
+        let request = authority.candidate_request(
+            resolved.descriptor(),
+            requirement.operation(),
+            &CapabilityExecutionRequirements::default(),
+            observed_at_unix_ms,
+            "resolve",
+        )?;
+        let decision = evaluator
+            .evaluate(&request)
+            .map_err(|error| ExecutorError::BoundaryBeforeEntry(error.to_string()))?;
+        if !decision.is_allowed() {
+            return Err(ExecutorError::AuthorityDenied {
+                reasons: decision.reason_codes().to_vec(),
+                decision: Box::new(decision),
+            });
+        }
+        ResolvedCapability::new_authorized(resolved.descriptor, resolved.snapshot, decision)
+    }
 
     /// Compatibility hook for bounded synchronous executors.
     ///

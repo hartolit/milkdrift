@@ -10,6 +10,7 @@ impl RunProjection {
     pub(super) fn apply_kind(&mut self, event: &RunEventEnvelope) -> Result<(), RuntimeError> {
         match event.kind() {
             RunEventKind::RunCreated { .. }
+            | RunEventKind::ExecutionAuthorityEstablished { .. }
             | RunEventKind::RevisionPinned { .. }
             | RunEventKind::RunStarted
             | RunEventKind::RunPaused { .. }
@@ -25,10 +26,13 @@ impl RunProjection {
             }
 
             RunEventKind::NodeScheduled { .. }
+            | RunEventKind::CapabilityResolutionDecisionRecorded { .. }
             | RunEventKind::CapabilityResolved { .. }
             | RunEventKind::SideEffectClassified { .. } => self.apply_execution_kind(event),
 
             RunEventKind::LeaseGranted { .. }
+            | RunEventKind::CapabilityEntryDecisionRecorded { .. }
+            | RunEventKind::CapabilityAdapterEntryDecisionRecorded { .. }
             | RunEventKind::LeaseHeartbeatRecorded { .. }
             | RunEventKind::LeaseExpired { .. }
             | RunEventKind::NodeReLeased { .. } => self.apply_lease_kind(event),
@@ -44,6 +48,7 @@ impl RunProjection {
 
             RunEventKind::DeterministicNodeTerminal { .. }
             | RunEventKind::NodePreDispatchFailed { .. }
+            | RunEventKind::CapabilityResolutionDenied { .. }
             | RunEventKind::StructuredSuccessorScanCompleted { .. }
             | RunEventKind::NodeTerminal { .. } => self.apply_terminal_kind(event),
 

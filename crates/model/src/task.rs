@@ -12,6 +12,9 @@ const MAX_TEXT_BYTES: usize = 1_048_576;
 const MAX_TOOLS: usize = 64;
 const MAX_TOOL_CALLS: usize = 128;
 
+/// Hard provider-neutral ceiling for requested model output units.
+pub const MAX_MODEL_OUTPUT_UNITS: u64 = 4_000_000;
+
 /// Provider-neutral message role. Adapters must reject roles they cannot map.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -407,7 +410,7 @@ impl ModelTaskRequest {
             || self.messages.len() > MAX_MESSAGES
             || self.tools.len() > MAX_TOOLS
             || self.maximum_output_units == 0
-            || self.maximum_output_units > 4_000_000
+            || self.maximum_output_units > MAX_MODEL_OUTPUT_UNITS
             || self.extensions.len() > 64
         {
             return Err(ModelContractError::Invalid(
