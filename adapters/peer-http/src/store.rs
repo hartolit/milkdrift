@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use milkdrift_authority::PeerId;
+use milkdrift_authority::{AuthorityDecisionSnapshot, PeerId};
 use milkdrift_peer_protocol::{
     InvocationAcceptance, InvocationLookup, PeerCancellationAcknowledgement, PeerExecutionId,
     PeerInvocationRequest, PeerObservation, PeerRequestId, RemoteExecutionStatus,
@@ -65,6 +65,10 @@ pub struct StoredExecution {
     pub owner_peer: PeerId,
     /// Exact canonical accepted request.
     pub request: PeerInvocationRequest,
+    /// Exact allow decision that admitted this consequential peer invocation. Legacy records
+    /// created before the unified authority boundary may omit it.
+    #[serde(default)]
+    pub authority: Option<AuthorityDecisionSnapshot>,
     /// Stable remote execution identity.
     pub execution: PeerExecutionId,
     /// Durable acceptance boundary.
@@ -113,6 +117,7 @@ pub trait PeerExecutionStore: Send + Sync {
         &self,
         owner_peer: &PeerId,
         request: &PeerInvocationRequest,
+        authority: Option<&AuthorityDecisionSnapshot>,
         execution: &PeerExecutionId,
         accepted_at_unix_ms: u64,
         lease_expires_at_unix_ms: u64,
@@ -277,6 +282,7 @@ impl PeerExecutionStore for FilePeerExecutionStore {
         &self,
         owner_peer: &PeerId,
         request: &PeerInvocationRequest,
+        authority: Option<&AuthorityDecisionSnapshot>,
         execution: &PeerExecutionId,
         accepted_at_unix_ms: u64,
         lease_expires_at_unix_ms: u64,
@@ -297,6 +303,7 @@ impl PeerExecutionStore for FilePeerExecutionStore {
         let record = StoredExecution {
             owner_peer: owner_peer.clone(),
             request: request.clone(),
+            authority: authority.cloned(),
             execution: execution.clone(),
             accepted_at_unix_ms,
             lease_expires_at_unix_ms,

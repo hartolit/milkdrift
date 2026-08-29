@@ -217,10 +217,11 @@ pub struct PeerAuthority {
 }
 
 impl PeerAuthority {
-    /// Returns whether the exact protocol action is granted.
+    /// Configuration-only shorthand expanded by the peer service into an immutable authority
+    /// grant before any request can execute.
     #[must_use]
-    pub fn permits(&self, action: PeerAction) -> bool {
-        self.actions.contains(&action)
+    pub const fn actions(&self) -> &BTreeSet<PeerAction> {
+        &self.actions
     }
 }
 

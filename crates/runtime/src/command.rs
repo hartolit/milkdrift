@@ -635,7 +635,7 @@ impl RunCommandDocument {
             RunCommand::ResolveExternalWork { action, .. } => (
                 match action {
                     ExternalWorkAction::Retry => AuthorityOperation::Retry,
-                    ExternalWorkAction::Query => AuthorityOperation::Inspect,
+                    ExternalWorkAction::Query => AuthorityOperation::InspectAttempt,
                     ExternalWorkAction::Compensate => AuthorityOperation::Apply,
                     ExternalWorkAction::Retain => AuthorityOperation::Approve,
                     ExternalWorkAction::ResolveSucceeded | ExternalWorkAction::ResolveFailed => {

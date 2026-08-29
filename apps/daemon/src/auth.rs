@@ -1,8 +1,6 @@
 use std::{collections::BTreeMap, env, fmt, fs, sync::Arc};
 
-use milkdrift_authority::{
-    ActorRef, AuthorityGrant, GrantDigest, GrantId, SecretRef, SensitiveSecret,
-};
+use milkdrift_authority::{ActorRef, AuthorityGrant, GrantId, SecretRef, SensitiveSecret};
 use milkdrift_capability_host::{SecretResolver, SecretResolverError};
 use milkdrift_control::{ActorAuthorityContext, AuthorityPreset};
 use milkdrift_runtime::CommandAuthorityClaim;
@@ -14,14 +12,30 @@ use crate::config::{
 };
 
 /// Immutable authenticated server-owned session facts.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct ActorSession {
     pub actor: ActorRef,
     pub context: ActorAuthorityContext,
-    pub preset: AuthorityPresetConfig,
-    pub grant_id: String,
-    pub grant_revision: u64,
-    pub revocation_generation: u64,
+    pub grant: AuthorityGrant,
+    cursor_key: [u8; 32],
+}
+
+impl ActorSession {
+    pub const fn cursor_key(&self) -> &[u8; 32] {
+        &self.cursor_key
+    }
+}
+
+impl fmt::Debug for ActorSession {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ActorSession")
+            .field("actor", &self.actor)
+            .field("context", &self.context)
+            .field("grant", &self.grant.identity())
+            .field("cursor_key", &"[redacted]")
+            .finish()
+    }
 }
 
 #[derive(Clone)]
@@ -97,13 +111,7 @@ impl AuthRegistry {
             let actor = ActorRef::new(configured.actor.clone())
                 .map_err(|error| ConfigError::Invalid(error.to_string()))?;
             let grant = grant(configured, &actor)?;
-            let session = session(
-                configured,
-                actor,
-                grant
-                    .digest()
-                    .map_err(|error| ConfigError::Invalid(error.to_string()))?,
-            )?;
+            let session = session(configured, actor, grant.clone())?;
             let source = config
                 .document
                 .secret_sources
@@ -175,7 +183,10 @@ impl AuthRegistry {
                 matched = Some(binding.session.clone());
             }
         }
-        matched
+        matched.map(|mut session| {
+            session.cursor_key = blake3::derive_key("milkdrift.cursor-key.v1", supplied);
+            session
+        })
     }
 
     pub fn grants(&self) -> Vec<AuthorityGrant> {
@@ -206,24 +217,24 @@ impl AuthRegistry {
 fn session(
     config: &ActorBindingConfig,
     actor: ActorRef,
-    grant_digest: GrantDigest,
+    grant: AuthorityGrant,
 ) -> Result<ActorSession, ConfigError> {
     let grant_id = GrantId::new(config.grant_id.clone())
         .map_err(|error| ConfigError::Invalid(error.to_string()))?;
     let claim = CommandAuthorityClaim::new(
         grant_id,
         config.grant_revision,
-        grant_digest,
+        grant
+            .digest()
+            .map_err(|error| ConfigError::Invalid(error.to_string()))?,
         config.revocation_generation,
     )
     .map_err(|error| ConfigError::Invalid(error.to_string()))?;
     Ok(ActorSession {
         actor: actor.clone(),
         context: ActorAuthorityContext::new(actor, claim),
-        preset: config.preset,
-        grant_id: config.grant_id.clone(),
-        grant_revision: config.grant_revision,
-        revocation_generation: config.revocation_generation,
+        grant,
+        cursor_key: [0; 32],
     })
 }
 
@@ -309,7 +320,7 @@ mod tests {
 
     fn config(root: &std::path::Path, token: &std::path::Path) -> DaemonConfig {
         DaemonConfig {
-            schema_version: 2,
+            schema_version: 3,
             data_root: root.join("data"),
             bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             secret_sources: BTreeMap::from([(

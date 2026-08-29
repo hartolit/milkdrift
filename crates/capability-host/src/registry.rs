@@ -4,14 +4,16 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use milkdrift_authority::PeerId;
 use milkdrift_authority::{
     AuthorityDecisionSnapshot, AuthorityEvaluator, CapabilityAuthorityScope,
     CapabilityExecutionRequirements,
 };
 use milkdrift_capability::{
-    CancellationAcknowledgement, CancellationRequest, CapabilityDescriptor,
+    CancellationAcknowledgement, CancellationRequest, CapabilityCategory, CapabilityDescriptor,
     CapabilityDescriptorDocument, CapabilityId, CapabilityObservation, CapabilityRequirement,
-    InvocationEvent, InvocationId, InvocationRequest, ResolvedCapabilitySnapshot, SideEffectClass,
+    InvocationEvent, InvocationId, InvocationRequest, Locality, OperationId, ProviderProfileRef,
+    ResolvedCapabilitySnapshot, SideEffectClass, TrustZone,
 };
 use milkdrift_runtime::{
     CapabilityResolutionContext, ExecutionDispatch, ExecutionReporter, ExecutorError,
@@ -96,6 +98,18 @@ pub struct GenerationView {
     pub descriptor_revision: u64,
     /// Canonical descriptor digest.
     pub descriptor_digest: String,
+    /// Discovery category used during scoped selection.
+    pub category: CapabilityCategory,
+    /// Exact advertised operation identities.
+    pub operations: BTreeSet<OperationId>,
+    /// Optional provider/model profile identity.
+    pub provider_profile: Option<ProviderProfileRef>,
+    /// Local, peer, remote-provider, or unspecified placement.
+    pub locality: Locality,
+    /// Authenticated owning peer for peer-local generations.
+    pub peer: Option<PeerId>,
+    /// Complete advertised trust-zone set.
+    pub trust_zones: BTreeSet<TrustZone>,
     /// Whether this is the current resolution generation.
     pub current: bool,
     /// Whether new unpinned resolution is closed.
@@ -776,6 +790,12 @@ impl CapabilityHost {
                 capability: key.capability.clone(),
                 descriptor_revision: key.revision,
                 descriptor_digest: generation.descriptor_digest.clone(),
+                category: generation.descriptor.category().clone(),
+                operations: generation.descriptor.operations().keys().cloned().collect(),
+                provider_profile: generation.descriptor.provider_profile().cloned(),
+                locality: generation.descriptor.locality(),
+                peer: generation.descriptor.peer().cloned(),
+                trust_zones: generation.descriptor.trust_zones().clone(),
                 current: state.current.get(&key.capability) == Some(&key.revision),
                 draining: generation.draining,
                 health: generation_health(
@@ -1142,7 +1162,8 @@ fn scope_allows(
     descriptor: &CapabilityDescriptor,
     side_effect: SideEffectClass,
 ) -> bool {
-    (scope.identities().is_empty() || scope.identities().contains(descriptor.identity()))
+    !scope.denies_all()
+        && (scope.identities().is_empty() || scope.identities().contains(descriptor.identity()))
         && (scope.categories().is_empty() || scope.categories().contains(descriptor.category()))
         && (scope.operations().is_empty()
             || descriptor

@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use milkdrift_authority::{
-    ActorRef, AuthorityBudget, AuthorityGrant, AuthorityGrantBuilder, AuthorityOperation,
-    BoundaryTimeMillis, CapabilityAuthorityScope, GrantId, NetworkScope, ResourceScope,
-    WorkflowRunScope,
+    ActorRef, ArtifactAuthorityScope, AuthorityBudget, AuthorityGrant, AuthorityGrantBuilder,
+    AuthorityOperation, BoundaryTimeMillis, CapabilityAuthorityScope, DaemonAuthorityScope,
+    GrantId, LayoutAuthorityScope, NetworkScope, PeerAuthorityScope, ResourceScope,
+    WorkflowRunScope, WorkspaceAuthorityScope,
 };
 use serde::{Deserialize, Serialize};
 
@@ -54,52 +55,90 @@ impl AuthorityPreset {
 
     fn operations(self) -> BTreeSet<AuthorityOperation> {
         use AuthorityOperation::{
-            Apply, Approve, Cancel, CreateRun, DeliverSignal, Inspect, InvokeCapability, Pause,
-            Propose, Resume, Retry, StartRun, Terminate,
+            AdministerPeer, Apply, Approve, Cancel, CreateRun, DeliverSignal, ImportBlueprint,
+            Inspect, InspectAttempt, InspectCapabilityHealth, InspectDaemonHealth,
+            InspectNodeExecution, InspectOwnAuthority, InspectPeer, InspectProposal,
+            InspectProviderProfile, InspectRevision, InspectRun, InspectTimeline, InvokeCapability,
+            ListCapabilities, NegotiateControlProtocol, Pause, Propose, ReadArtifactContent,
+            ReadArtifactMetadata, ReadLayout, ReadReadiness, Resume, Retry, StartRun, Terminate,
+            ValidateBlueprint, WriteLayout,
         };
+        let reads = [
+            Inspect,
+            ValidateBlueprint,
+            InspectRevision,
+            InspectRun,
+            InspectTimeline,
+            InspectNodeExecution,
+            InspectAttempt,
+            InspectProposal,
+            ListCapabilities,
+            InspectCapabilityHealth,
+            InspectProviderProfile,
+            ReadArtifactMetadata,
+            ReadArtifactContent,
+            ReadLayout,
+            NegotiateControlProtocol,
+            ReadReadiness,
+            InspectDaemonHealth,
+            InspectOwnAuthority,
+            InspectPeer,
+        ];
         match self {
-            Self::Observer => BTreeSet::from([Inspect]),
-            Self::Advisor => BTreeSet::from([Inspect, Propose]),
-            Self::Supervisor => BTreeSet::from([
-                Inspect,
-                Propose,
-                Approve,
-                Apply,
-                Pause,
-                Resume,
-                Cancel,
-                Retry,
-                DeliverSignal,
-            ]),
-            Self::Controller => BTreeSet::from([
-                Inspect,
-                Propose,
-                Approve,
-                Apply,
-                CreateRun,
-                StartRun,
-                InvokeCapability,
-                Pause,
-                Resume,
-                Cancel,
-                Retry,
-                DeliverSignal,
-                Terminate,
-            ]),
-            Self::Autonomous => BTreeSet::from([
-                Inspect,
-                Propose,
-                Approve,
-                Apply,
-                CreateRun,
-                StartRun,
-                InvokeCapability,
-                Pause,
-                Resume,
-                Cancel,
-                Retry,
-                DeliverSignal,
-            ]),
+            Self::Observer => reads.into_iter().collect(),
+            Self::Advisor => reads.into_iter().chain([Propose]).collect(),
+            Self::Supervisor => reads
+                .into_iter()
+                .chain([
+                    Propose,
+                    Approve,
+                    Apply,
+                    Pause,
+                    Resume,
+                    Cancel,
+                    Retry,
+                    DeliverSignal,
+                    WriteLayout,
+                ])
+                .collect(),
+            Self::Controller => reads
+                .into_iter()
+                .chain([
+                    Propose,
+                    Approve,
+                    Apply,
+                    ImportBlueprint,
+                    CreateRun,
+                    StartRun,
+                    InvokeCapability,
+                    Pause,
+                    Resume,
+                    Cancel,
+                    Retry,
+                    DeliverSignal,
+                    Terminate,
+                    WriteLayout,
+                    AdministerPeer,
+                ])
+                .collect(),
+            Self::Autonomous => reads
+                .into_iter()
+                .chain([
+                    Propose,
+                    Approve,
+                    Apply,
+                    ImportBlueprint,
+                    CreateRun,
+                    StartRun,
+                    InvokeCapability,
+                    Pause,
+                    Resume,
+                    Cancel,
+                    Retry,
+                    DeliverSignal,
+                    WriteLayout,
+                ])
+                .collect(),
         }
     }
 }
@@ -157,6 +196,11 @@ impl GrantTemplate {
                 filesystem: Vec::new(),
                 network: NetworkScope::new(BTreeSet::new(), BTreeSet::new())?,
                 secrets: BTreeSet::new(),
+                artifacts: ArtifactAuthorityScope::none(),
+                layouts: LayoutAuthorityScope::none(),
+                peers: PeerAuthorityScope::none(),
+                daemon: DaemonAuthorityScope::default(),
+                workspace: WorkspaceAuthorityScope::none(),
             },
         };
         Ok(

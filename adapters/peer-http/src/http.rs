@@ -12,6 +12,7 @@ use axum::{
     },
     routing::{get, post},
 };
+use milkdrift_authority::AuthorityOperation;
 use milkdrift_peer_protocol::{
     ArtifactChunk, ArtifactMetadataOffer, HandshakeRequest, PeerCancellationRequest,
     PeerExecutionId, PeerInvocationRequest, PeerRequestId, ProtocolEnvelope, TransferId,
@@ -26,6 +27,44 @@ use crate::{PeerHttpError, PeerService};
 #[derive(Clone)]
 struct AppState {
     service: Arc<PeerService>,
+}
+
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+enum PeerRouteAuthorityMapping {
+    Exact(AuthorityOperation),
+    QueryDerived,
+}
+
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+enum PeerRouteResourceMapping {
+    Relationship,
+    Capability,
+    Execution,
+    Artifact,
+}
+
+#[allow(dead_code)]
+struct AuthorizedPeerRouteDeclaration {
+    path: &'static str,
+    authority: PeerRouteAuthorityMapping,
+    resource: PeerRouteResourceMapping,
+}
+
+macro_rules! authorized_peer_routes {
+    ($router:expr; $(
+        $path:literal => $method:expr, $authority:expr, $resource:expr;
+    )+) => {{
+        $(
+            let _declaration = AuthorizedPeerRouteDeclaration {
+                path: $path,
+                authority: $authority,
+                resource: $resource,
+            };
+        )+
+        $router$(.route($path, $method))+
+    }};
 }
 
 #[derive(Debug, Serialize)]
@@ -79,26 +118,18 @@ impl IntoResponse for ApiError {
 
 /// Builds the distinct `/peer/v1` route and authentication realm. CORS is absent.
 pub fn peer_router(service: Arc<PeerService>) -> Router {
-    Router::new()
-        .route("/peer/v1/handshake", post(handshake))
-        .route("/peer/v1/catalog", get(catalog))
-        .route("/peer/v1/invocations", post(invoke))
-        .route("/peer/v1/requests/{request}", get(lookup))
-        .route(
-            "/peer/v1/executions/{execution}/observations",
-            get(observations),
-        )
-        .route(
-            "/peer/v1/executions/{execution}/stream",
-            get(observation_stream),
-        )
-        .route("/peer/v1/executions/{execution}/cancel", post(cancel))
-        .route("/peer/v1/artifacts/negotiate", post(artifact_negotiate))
-        .route(
-            "/peer/v1/artifacts/{transfer}/content",
-            get(artifact_read).post(artifact_write),
-        )
-        .route("/peer/v1/artifacts/{transfer}/abort", post(artifact_abort))
+    authorized_peer_routes! { Router::new();
+        "/peer/v1/handshake" => post(handshake), PeerRouteAuthorityMapping::Exact(AuthorityOperation::NegotiatePeerSession), PeerRouteResourceMapping::Relationship;
+        "/peer/v1/catalog" => get(catalog), PeerRouteAuthorityMapping::QueryDerived, PeerRouteResourceMapping::Capability;
+        "/peer/v1/invocations" => post(invoke), PeerRouteAuthorityMapping::Exact(AuthorityOperation::InvokePeerCapability), PeerRouteResourceMapping::Capability;
+        "/peer/v1/requests/{request}" => get(lookup), PeerRouteAuthorityMapping::Exact(AuthorityOperation::InspectPeerExecution), PeerRouteResourceMapping::Execution;
+        "/peer/v1/executions/{execution}/observations" => get(observations), PeerRouteAuthorityMapping::Exact(AuthorityOperation::InspectPeerExecution), PeerRouteResourceMapping::Execution;
+        "/peer/v1/executions/{execution}/stream" => get(observation_stream), PeerRouteAuthorityMapping::Exact(AuthorityOperation::InspectPeerExecution), PeerRouteResourceMapping::Execution;
+        "/peer/v1/executions/{execution}/cancel" => post(cancel), PeerRouteAuthorityMapping::Exact(AuthorityOperation::CancelPeerCapability), PeerRouteResourceMapping::Execution;
+        "/peer/v1/artifacts/negotiate" => post(artifact_negotiate), PeerRouteAuthorityMapping::QueryDerived, PeerRouteResourceMapping::Artifact;
+        "/peer/v1/artifacts/{transfer}/content" => get(artifact_read).post(artifact_write), PeerRouteAuthorityMapping::QueryDerived, PeerRouteResourceMapping::Artifact;
+        "/peer/v1/artifacts/{transfer}/abort" => post(artifact_abort), PeerRouteAuthorityMapping::QueryDerived, PeerRouteResourceMapping::Artifact;
+    }
         .layer(DefaultBodyLimit::max(
             milkdrift_peer_protocol::MAX_PEER_DOCUMENT_BYTES,
         ))
@@ -198,12 +229,22 @@ async fn observation_stream(
     Query(query): Query<ObservationQuery>,
 ) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>>, ApiError> {
     let peer = authenticate(&state, &headers)?;
+    let bearer = bearer_value(&headers)?.to_owned();
     let execution = PeerExecutionId::new(execution)
         .map_err(|error| ApiError(PeerHttpError::Protocol(error.to_string())))?;
     let service = state.service.clone();
     let output = stream! {
         let mut after = query.after;
         loop {
+            if !matches!(
+                service.authenticate_bearer(bearer.as_bytes()),
+                Ok(current) if current == peer
+            ) {
+                yield Ok(Event::default()
+                    .event("authorization_terminated")
+                    .data("peer credential or authority was revoked or rotated"));
+                break;
+            }
             match service.observations(&peer, &execution, after, query.limit) {
                 Ok(page) => {
                     let closed = page.closed;
@@ -338,16 +379,20 @@ fn authenticate(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<milkdrift_authority::PeerId, ApiError> {
-    let value = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .filter(|value| !value.is_empty() && value.len() <= 8_192)
-        .ok_or(ApiError(PeerHttpError::Unauthenticated))?;
+    let value = bearer_value(headers)?;
     state
         .service
         .authenticate_bearer(value.as_bytes())
         .map_err(ApiError)
+}
+
+fn bearer_value(headers: &HeaderMap) -> Result<&str, ApiError> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|value| !value.is_empty() && value.len() <= 8_192)
+        .ok_or(ApiError(PeerHttpError::Unauthenticated))
 }
 
 fn decode<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<ProtocolEnvelope<T>, ApiError> {
@@ -375,4 +420,18 @@ fn bounded(value: &str, maximum: usize) -> String {
         end = end.saturating_sub(1);
     }
     value[..end].to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn every_peer_external_route_declares_typed_authority_and_resource_mapping() {
+        let source = include_str!("http.rs");
+        let raw_route_marker = [".", "route("].concat();
+        assert_eq!(
+            source.match_indices(&raw_route_marker).count(),
+            1,
+            "add peer routes through authorized_peer_routes! with a typed authority mapping"
+        );
+    }
 }

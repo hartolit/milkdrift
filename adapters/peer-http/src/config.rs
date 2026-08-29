@@ -114,14 +114,6 @@ impl PeerRelationship {
         }
         Ok(())
     }
-
-    /// True only for capabilities and operations explicitly allowed by this relationship.
-    #[must_use]
-    pub fn permits_capability(&self, capability: &CapabilityId, operation: &OperationId) -> bool {
-        self.capability_allow.contains(capability)
-            && !self.capability_deny.contains(capability)
-            && self.operation_allow.contains(operation)
-    }
 }
 
 /// Server-side peer route configuration with a distinct authentication realm.

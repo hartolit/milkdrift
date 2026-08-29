@@ -4,7 +4,7 @@ This document is the implemented external contract for `milkdrift-daemon`. It de
 
 ## Transport, authentication, and negotiation
 
-The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintext configuration is rejected and CORS is not enabled. Every route, including health and version negotiation, requires `Authorization: Bearer …`. The credential is resolved from a configured file or exact environment-variable reference and maps to a server-owned actor and immutable grant facts; request JSON never supplies actor identity.
+The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintext configuration is rejected and CORS is not enabled. Every route, including health and version negotiation, requires `Authorization: Bearer …`. The credential is resolved from a configured file or exact environment-variable reference and maps to a server-owned actor and exact immutable grant revision; request JSON never supplies actor identity. Authentication alone grants no operation. Every route declares a typed authority operation and resource family, and the daemon's owner evaluates it before returning information or mutating state.
 
 Clients negotiate with `POST /v1/version`:
 
@@ -57,33 +57,34 @@ All mutations use `POST /v1/commands`. A command envelope has no actor field:
 }
 ```
 
-`command_id` is an actor-scoped idempotency key. Repeating the exact authenticated body returns the committed result with `replayed: true`; reusing the identity with different content returns `conflict`. The durable external ledger survives daemon restart and has a configured finite record bound. Mutating requests are not implicitly retried by `milkdrift-control-client`; a caller retry must preserve the exact body and idempotency identity.
+`command_id` is an actor-and-grant-scoped idempotency key. Repeating the exact body under the same actor and exact grant identity/revision/digest returns the committed result with `replayed: true`; reusing the identity with different content or after grant replacement returns `conflict`. The durable external ledger survives daemon restart and has a configured finite record bound. Mutating requests are not implicitly retried by `milkdrift-control-client`; a caller retry must preserve the exact body, idempotency identity, and authority basis.
 
 The closed command types are:
 
-| Type | Required body fields | Purpose |
-| --- | --- | --- |
-| `import_blueprint` | `document` | Validate and store an immutable blueprint revision. |
-| `validate_blueprint` | `document` | Validate without storing. |
-| `start_run` | `run_id`, `workflow_id`, `revision_id` | Atomically create then start at an exact revision through ordinary control authority. |
-| `pause_run`, `resume_run`, `cancel_run` | `run_id` | Durable run lifecycle control. |
-| `signal_run` | `run_id`, `signal_id`, `signal_type`, `correlation`, `broadcast`, `payload` | Deliver a typed bounded signal. |
-| `resolve_work` | `run_id`, `attempt_id`, `decision_id`, `action`, `remediation_node` | Query, retry, compensate, retain, or evidence-resolve uncertain work. |
-| `submit_proposal` | `document` | Submit an exact schema-1 workflow proposal through `milkdrift-control`. |
-| `decide_proposal` | `run_id`, `proposal_id`, `proposal_digest`, `proposed_revision`, `decision_id`, `decision` | Approve or reject an exact proposal. |
-| `apply_proposal` | `run_id`, `proposal_id`, `proposal_digest`, `proposed_revision` | Apply an approved prospective revision through reconciliation. |
-| `put_layout` | `layout` | Optimistically store presentation-only state. |
+| Type | Required body fields | Authority operation | Purpose |
+| --- | --- | --- | --- |
+| `import_blueprint` | `document` | `import_blueprint` | Validate and store an exact immutable workflow/revision. |
+| `validate_blueprint` | `document` | `validate_blueprint` | Validate one exact workflow/revision without storing it. |
+| `start_run` | `run_id`, `workflow_id`, `revision_id` | `create_run`, then `start_run` | Atomically create then start at an exact revision through ordinary control authority. |
+| `pause_run`, `resume_run`, `cancel_run` | `run_id` | `pause`, `resume`, `cancel` | Durable exact-run lifecycle control. |
+| `signal_run` | `run_id`, `signal_id`, `signal_type`, `correlation`, `broadcast`, `payload` | `deliver_signal` | Deliver a typed bounded signal to an exact run. |
+| `resolve_work` | `run_id`, `attempt_id`, `decision_id`, `action`, `remediation_node` | action-derived `inspect_attempt`, `retry`, `apply`, `approve`, or `terminate` | Query, retry, compensate, retain, or evidence-resolve uncertain work. |
+| `submit_proposal` | `document` | `propose` | Submit an exact schema-1 workflow proposal through `milkdrift-control`. |
+| `decide_proposal` | `run_id`, `proposal_id`, `proposal_digest`, `proposed_revision`, `decision_id`, `decision` | `approve` | Approve or reject an exact proposal. |
+| `apply_proposal` | `run_id`, `proposal_id`, `proposal_digest`, `proposed_revision` | `apply` | Apply an approved prospective revision through reconciliation. |
+| `put_layout` | `layout` | `write_layout` | Optimistically store presentation-only state for the exact workflow/revision/shared owner. |
 
 Evidence kinds accepted by the daemon are `authority_decision`, `worker_observation`, `external_receipt`, `artifact`, and `recovery_observation`. A success returns `CommandAccepted`: `command_id`, `replayed`, optional `resulting_sequence`, stable `result_type`, and a bounded command-specific `value`.
 
 ## Query routes
 
-Every route is authenticated and authority-filtered.
+Every route is authenticated and authority-filtered. List queries constrain or filter at the owner boundary before projection, so hidden identities do not appear in counts, gaps, or result payloads. A missing object is returned only after the caller is authorized for its supplied scope; an authorization failure remains the bounded `unauthorized` error.
 
 | Method and path | Result |
 | --- | --- |
-| `GET /v1/health` | Bounded liveness, lifecycle, queue, and worker health. |
-| `GET /v1/readiness` | The same model; returns 503 until startup recovery and required adapter initialization finish and while draining. |
+| `POST /v1/version` | Protocol negotiation under `negotiate_control_protocol`. |
+| `GET /v1/health` | Detailed lifecycle, queue, worker, and failure health under `inspect_daemon_health` plus daemon detailed-health scope. |
+| `GET /v1/readiness` | Coarse liveness/readiness with zeroed operational detail under `read_readiness`; returns 503 while not ready. |
 | `GET /v1/revisions?limit=&cursor=&workflow=` | Stable bounded revision-summary page. |
 | `GET /v1/revisions/{revision}` | Immutable revision summary, lineage, provenance, counts, and bounded document. |
 | `GET /v1/revisions/{from}/diff/{to}` | Bounded structured semantic diff with an explicit truncation flag. |
@@ -94,7 +95,10 @@ Every route is authenticated and authority-filtered.
 | `GET /v1/runs/{run}/timeline?limit=&cursor=` | Paged external timeline projection with exact durable sequence anchors. |
 | `GET /v1/runs/{run}/proposals?limit=&cursor=` | Bounded proposal identities/statuses discovered from the durable command ledger. |
 | `GET /v1/runs/{run}/proposals/{proposal}?revision={revision}` | Exact status from `milkdrift-control`. |
-| `GET /v1/capabilities` | Visible capability generations, descriptor digests, selection/drain/health/availability, and permit bounds. |
+| `GET /v1/capabilities` | Only generations within capability scope, with descriptor category/operations/locality/peer/trust, provider profile where allowed, and scoped health/availability. |
+| `GET /v1/peers` | Only configured peer identities within `inspect_peer` scope. |
+| `GET /v1/peers/{peer}` | One authorized configured peer status. |
+| `POST /v1/peers/{peer}/{connect|reload|disconnect|drain|revoke}` | Exact peer administration under `administer_peer`; the action is audit-recorded. |
 | `GET /v1/authority` | Current server-owned actor, grant, revision, revocation generation, and configured operation labels. |
 | `GET /v1/artifacts/{artifact}` | Safe digest, size, media type, disposition name, and sensitivity; never a server path. |
 | `GET /v1/artifacts/{artifact}/content` | One verified explicit byte range under artifact-read authority. |
@@ -102,7 +106,7 @@ Every route is authenticated and authority-filtered.
 
 `limit` defaults to 100 and must be within the protocol page bound. A page contains `items`, optional `next_cursor`, and optional feed-head `observed_cursor`. Clients must request subsequent pages explicitly; the client library never auto-loads a complete run lifetime.
 
-Artifact content accepts one `Range: bytes=start-end` request and returns 206 with `Content-Type`, `Accept-Ranges: bytes`, `Content-Range`, safe `Content-Disposition: attachment`, and `x-milkdrift-artifact-complete`. A server call returns at most 1 MiB. There is no arbitrary path access or public upload endpoint.
+Artifact metadata and content are separately authorized against the exact immutable artifact identity and stored sensitivity before either is disclosed. Content accepts one `Range: bytes=start-end` request and returns 206 with `Content-Type`, `Accept-Ranges: bytes`, `Content-Range`, safe `Content-Disposition: attachment`, and `x-milkdrift-artifact-complete`. A server call returns at most 1 MiB. There is no arbitrary path access or public upload endpoint. Protected metadata/content decisions are retained in the bounded security audit with actor, grant revision/digest, operation, resource digest, decision digest, outcome, and reason codes; raw credentials and content are absent.
 
 ## Read models
 
@@ -112,7 +116,7 @@ Run models carry aggregate sequence, stable lifecycle, optional terminal outcome
 
 ## Cursors and SSE
 
-Cursors are opaque Base64url schema-1 values bound to one exact feed and either a monotonic sequence or a stable key. A malformed cursor or one copied to a different feed fails explicitly. Clients must store only a successfully observed cursor and resume after it.
+Cursors are opaque bounded Base64url schema-2 values. They bind an exact feed and position/key to the authenticated actor, grant identity/revision/digest, authority decision, and a domain-separated digest of the complete resource/filter scope. A credential-derived keyed MAC prevents modification or reuse after credential rotation. A malformed, stale, cross-actor, cross-grant, cross-resource, or cross-filter cursor fails as bounded `invalid_input`; a broader replacement grant does not reinterpret an old continuation. Clients must store only a successfully observed cursor and resume after it.
 
 The daemon exposes:
 
@@ -120,9 +124,9 @@ The daemon exposes:
 - `GET /v1/stream/capabilities?cursor=…` for a bounded retained window of capability generation/health snapshots on feed `capability-health`.
 - `GET /v1/stream/health?cursor=…` for coarse daemon health on feed `daemon-health`.
 
-SSE `data` values are `ObservationEnvelope` documents with protocol, cursor, observation time, feed, and one closed external observation: `timeline`, `run_status`, `capability`, `daemon_health`, `stream_closing`, or `resync_required`. The capability feed records a new ordered snapshot only when its bounded public generation/health view changes and retains the latest 256 observations; an older continuation receives `resync_required`.
+SSE `data` values are `ObservationEnvelope` documents with protocol, cursor, observation time, feed, and one closed external observation: `timeline`, `run_status`, `capability`, `daemon_health`, `stream_closing`, or `resync_required`. Capability feed snapshots and retention windows are partitioned by authority-scope digest, so hidden generations cannot affect another actor's counts, ordering, or cursors. The feed retains the latest 256 observations per scope; an older continuation receives `resync_required`.
 
-Run-feed positions interleave durable timeline sequence (`2 × sequence`) and its following compact status (`2 × sequence + 1`). Transport heartbeats are SSE comments and are never durable events. Server generators and owner calls are bounded; backpressure retains no unbounded per-client event queue. Authentication is re-resolved on every polling cycle. Rotation/revocation, draining, invalid history, or authorization change closes the feed with an observable closing/resync item where possible.
+Run-feed positions interleave durable timeline sequence (`2 × sequence`) and its following compact status (`2 × sequence + 1`). Transport heartbeats are SSE comments and are never durable events. Server generators and owner calls are bounded; backpressure retains no unbounded per-client event queue. Authentication and exact authority are reevaluated on every bounded polling cycle. Rotation, revocation, narrowing, draining, invalid history, or authorization change stops future disclosure and closes the feed with an authorization closing/resync item where possible; already delivered history is not rewritten.
 
 `milkdrift-control-client::subscribe` reconnects retryable transport failures with its last successfully decoded cursor. Reconnect never submits or replays a command.
 
@@ -130,7 +134,7 @@ Run-feed positions interleave durable timeline sequence (`2 × sequence`) and it
 
 `LayoutDocument` contains `schema_version`, exact `workflow_id` and `revision_id`, positive optimistic `generation`, server-overwritten `author`, independent BLAKE3 `digest`, bounded `nodes` positions/dimensions, `collapsed_groups`, non-executable `annotations`, and optional `viewport`. The first generation is 1; a changed document must advance by exactly one. The daemon recomputes author and digest before storing.
 
-Layout cannot contain executable edges, node/task configuration, requirements, prompts, secrets, or semantic mutations. It is stored in the atomically synced schema-1 control sidecar, independently from the immutable blueprint revision. Layout edits therefore do not create a revision or alter its semantic digest.
+Layout cannot contain executable edges, node/task configuration, requirements, prompts, secrets, or semantic mutations. It is stored in the atomically synced schema-2 control sidecar, independently from the immutable blueprint revision. Layout edits therefore do not create a revision or alter its semantic digest.
 
 ## CLI automation contract
 

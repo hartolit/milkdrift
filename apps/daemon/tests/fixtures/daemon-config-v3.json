@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "data_root": "./test-data",
   "bind": "127.0.0.1:9734",
   "secret_sources": {
@@ -37,7 +37,31 @@
             "profiles": [],
             "destinations": []
           },
-          "secrets": []
+          "secrets": [],
+          "artifacts": {
+            "identities": [],
+            "sensitivities": []
+          },
+          "layouts": {
+            "revisions": [],
+            "actors": [],
+            "shared": false
+          },
+          "peers": {
+            "identities": [],
+            "allow_any": false
+          },
+          "daemon": {
+            "readiness": true,
+            "detailed_health": false,
+            "own_authority": true,
+            "configuration": false,
+            "audit": false
+          },
+          "workspace": {
+            "scopes": [],
+            "allow_any_in_run": false
+          }
         },
         "budget": {
           "cost_minor": 1000,

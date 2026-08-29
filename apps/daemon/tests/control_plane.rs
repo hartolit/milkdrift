@@ -9,19 +9,32 @@ use std::{
 };
 
 use futures_util::StreamExt as _;
+use milkdrift_authority::{
+    ArtifactAuthorityScope, AuthorityBudget, BoundaryTimeMillis, CapabilityAuthorityScope,
+    DaemonAuthorityScope, LayoutAuthorityScope, NetworkScope, PeerAuthorityScope, ResourceScope,
+    WorkflowRunScope, WorkspaceAuthorityScope,
+};
 use milkdrift_blueprint::{
     AuthorRef, BlueprintRevision, BlueprintRevisionDocument, Edge, EdgeId, EdgeKind, Mutation,
     MutationBatch, Node, NodeId, NodeKind, PortId, TerminalOutcome, WorkflowId,
 };
-use milkdrift_capability::{CapabilityRequirement, OperationId};
+use milkdrift_capability::{CapabilityId, CapabilityRequirement, OperationId, SideEffectClass};
 use milkdrift_control_client::{BearerCredential, ClientConfig, ClientError, ControlClient};
 use milkdrift_control_protocol::{
-    Command, CommandRequest, ErrorCode, Observation, PageRequest, ProtocolVersion, decode_json,
+    Command, CommandRequest, ErrorCode, LayoutDocument, LayoutPoint, Observation, PageRequest,
+    ProtocolVersion, decode_json,
 };
 use milkdrift_daemon::{
     ActorBindingConfig, ActorGrantConfig, AdapterConfig, AuthorityPresetConfig, DaemonConfig,
     DaemonHost, PeerHostConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig,
     ValidatedDaemonConfig, serve,
+};
+use milkdrift_persistence::{ArtifactPublicationId, ArtifactStore, BeginArtifactPublication};
+use milkdrift_redb_store::RedbStore;
+use milkdrift_workspace::{
+    ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactReference, ArtifactRetention,
+    ArtifactSensitivity, CausalId, CausalReference, ContentDigest, MediaType, RunId,
+    WorkspaceBudget, WorkspaceUsage,
 };
 use tempfile::TempDir;
 use tokio::{sync::oneshot, task::JoinHandle};
@@ -92,7 +105,7 @@ fn configuration_with_process_profiles(
         ..RuntimeHostConfig::default()
     };
     DaemonConfig {
-        schema_version: 2,
+        schema_version: 3,
         data_root: directory.path().join("data"),
         bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         secret_sources: BTreeMap::from([
@@ -127,7 +140,7 @@ fn configuration_with_process_profiles(
                 grant_revision: 1,
                 revocation_generation: 0,
                 preset: AuthorityPresetConfig::Observer,
-                authority: ActorGrantConfig::dangerous_administrator(),
+                authority: observer_authority()?,
                 enabled: true,
             },
         ],
@@ -144,6 +157,52 @@ fn configuration_with_process_profiles(
     .map_err(Into::into)
 }
 
+fn observer_authority() -> TestResult<ActorGrantConfig> {
+    Ok(ActorGrantConfig {
+        resources: ResourceScope {
+            workflow_run: WorkflowRunScope::Workflow {
+                workflow: WorkflowId::new("golden")?,
+            },
+            capability: CapabilityAuthorityScope::new(
+                std::collections::BTreeSet::from([CapabilityId::new(
+                    "milkdrift-workflow-control",
+                )?]),
+                std::collections::BTreeSet::new(),
+                std::collections::BTreeSet::from([OperationId::new("workflow.inspect")?]),
+                std::collections::BTreeSet::new(),
+                std::collections::BTreeSet::new(),
+                std::collections::BTreeSet::new(),
+                SideEffectClass::ReadOnly,
+            )?,
+            filesystem: Vec::new(),
+            network: NetworkScope::empty(),
+            secrets: std::collections::BTreeSet::new(),
+            artifacts: ArtifactAuthorityScope::none(),
+            layouts: LayoutAuthorityScope::none(),
+            peers: PeerAuthorityScope::none(),
+            daemon: DaemonAuthorityScope {
+                readiness: true,
+                detailed_health: false,
+                own_authority: true,
+                configuration: false,
+                audit: false,
+            },
+            workspace: WorkspaceAuthorityScope::none(),
+        },
+        budget: AuthorityBudget {
+            cost_minor: Some(1_000),
+            duration_ms: Some(300_000),
+            invocations: Some(1_000),
+            artifact_bytes: Some(67_108_864),
+            units: Some(1_000_000),
+            concurrency: Some(4),
+        },
+        valid_from: BoundaryTimeMillis::new(0),
+        valid_until: BoundaryTimeMillis::new(4_102_444_800_000),
+        dangerous_allow_broad_authority: false,
+    })
+}
+
 fn write_secret(path: &std::path::Path, value: &str) -> TestResult {
     fs::write(path, value)?;
     #[cfg(unix)]
@@ -152,6 +211,39 @@ fn write_secret(path: &std::path::Path, value: &str) -> TestResult {
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     }
     Ok(())
+}
+
+fn publish_restricted_test_artifact(root: &std::path::Path) -> TestResult<(String, Vec<u8>)> {
+    let artifact_id = "artifact-daemon-protected-read";
+    let bytes = b"protected daemon artifact".to_vec();
+    let metadata = ArtifactMetadata::new(
+        ArtifactReference::new(
+            ArtifactId::new(artifact_id)?,
+            ContentDigest::for_bytes(&bytes),
+            MediaType::new("application/octet-stream")?,
+            u64::try_from(bytes.len())?,
+        ),
+        ArtifactSensitivity::Restricted,
+        ArtifactRetention::WhileReferenced,
+        ArtifactProvenance::new(
+            CausalReference::External {
+                source: CausalId::new("daemon-authorization-integration")?,
+            },
+            Vec::new(),
+        )?,
+    )?;
+    let publication = BeginArtifactPublication::new(
+        ArtifactPublicationId::new("publication-daemon-protected-read")?,
+        RunId::new("run-daemon-protected-read")?,
+        metadata,
+        WorkspaceBudget::new(0, 0, 0, 1, 1_024, 1_024)?,
+        WorkspaceUsage::EMPTY,
+    )?;
+    let store = RedbStore::open(root)?;
+    store.begin_publication(&publication)?;
+    store.write_chunk(publication.publication(), 0, &bytes)?;
+    store.commit_publication(publication.publication())?;
+    Ok((artifact_id.to_owned(), bytes))
 }
 
 fn request(command_id: &str, expected_sequence: Option<u64>, command: Command) -> CommandRequest {
@@ -261,6 +353,211 @@ async fn daemon_auth_startup_readiness_and_authority() -> TestResult {
         Err(ClientError::Api(error)) if error.code == ErrorCode::Unauthorized
     ));
     daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scoped_read_matrix_and_continuations_fail_closed() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let profile = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../adapters/local-process/tests/fixtures/process-profile-v1.json")
+        .canonicalize()?;
+    let config = configuration_with_process_profiles(&directory, 16, vec![profile])?;
+    let daemon = start(config.clone(), CONTROLLER_TOKEN).await?;
+    let golden_revision = import_blueprint(&daemon.client, "matrix-import-golden").await?;
+    let process_import = daemon
+        .client
+        .submit(&request(
+            "matrix-import-process",
+            None,
+            Command::ImportBlueprint {
+                document: process_blueprint()?,
+            },
+        ))
+        .await?;
+    let process_revision = process_import
+        .value
+        .get("revision_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("process import omitted revision")?
+        .to_owned();
+    daemon
+        .client
+        .submit(&request(
+            "matrix-start-golden",
+            None,
+            Command::StartRun {
+                run_id: "run-matrix".to_owned(),
+                workflow_id: "golden".to_owned(),
+                revision_id: golden_revision.clone(),
+            },
+        ))
+        .await?;
+    let layout = LayoutDocument {
+        schema_version: 1,
+        workflow_id: "golden".to_owned(),
+        revision_id: golden_revision.clone(),
+        generation: 1,
+        author: "human:client-placeholder".to_owned(),
+        digest: String::new(),
+        nodes: BTreeMap::from([(
+            "first".to_owned(),
+            LayoutPoint {
+                x: 1.0,
+                y: 2.0,
+                width: None,
+                height: None,
+            },
+        )]),
+        collapsed_groups: std::collections::BTreeSet::new(),
+        annotations: BTreeMap::new(),
+        viewport: None,
+    }
+    .seal()?;
+    daemon
+        .client
+        .submit(&request(
+            "matrix-put-layout",
+            None,
+            Command::PutLayout { layout },
+        ))
+        .await?;
+
+    let observer = client(&daemon.endpoint, OBSERVER_TOKEN)?;
+    assert!(observer.readiness().await?.ready);
+    assert!(matches!(
+        observer.health().await,
+        Err(ClientError::Api(error)) if error.code == ErrorCode::Unauthorized
+    ));
+    let visible = observer.capabilities().await?;
+    assert_eq!(visible.len(), 1);
+    assert_eq!(visible[0].capability_id, "milkdrift-workflow-control");
+    assert!(visible[0].provider_profile.is_none());
+    assert_eq!(
+        observer
+            .revisions(
+                Some("golden"),
+                &PageRequest {
+                    cursor: None,
+                    limit: 10,
+                },
+            )
+            .await?
+            .items
+            .len(),
+        1
+    );
+    assert!(matches!(
+        observer.revision(&process_revision).await,
+        Err(ClientError::Api(error)) if error.code == ErrorCode::Unauthorized
+    ));
+    assert!(matches!(
+        observer.revisions(
+            Some("daemon-process"),
+            &PageRequest { cursor: None, limit: 10 },
+        ).await,
+        Err(ClientError::Api(error)) if error.code == ErrorCode::Unauthorized
+    ));
+    assert_eq!(
+        observer.run("run-matrix").await?.workflow_id.as_deref(),
+        Some("golden")
+    );
+    assert!(
+        observer
+            .timeline(
+                "run-matrix",
+                &PageRequest {
+                    cursor: None,
+                    limit: 10,
+                },
+            )
+            .await?
+            .items
+            .iter()
+            .all(|event| event.run_id == "run-matrix")
+    );
+    assert!(
+        observer
+            .proposals(
+                "run-matrix",
+                &PageRequest {
+                    cursor: None,
+                    limit: 10,
+                },
+            )
+            .await?
+            .items
+            .is_empty()
+    );
+    assert!(matches!(
+        observer.runs(
+            None,
+            Some("daemon-process"),
+            &PageRequest { cursor: None, limit: 10 },
+        ).await,
+        Err(ClientError::Api(error)) if error.code == ErrorCode::Unauthorized
+    ));
+    assert!(matches!(
+        observer.layout("golden", &golden_revision).await,
+        Err(ClientError::Api(error)) if error.code == ErrorCode::Unauthorized
+    ));
+
+    let first_page = daemon
+        .client
+        .revisions(
+            None,
+            &PageRequest {
+                cursor: None,
+                limit: 1,
+            },
+        )
+        .await?;
+    let cursor = first_page
+        .next_cursor
+        .ok_or("expected a second revision page")?;
+    assert!(matches!(
+        observer.revisions(
+            None,
+            &PageRequest {
+                cursor: Some(cursor.clone()),
+                limit: 1,
+            },
+        ).await,
+        Err(ClientError::Api(error)) if error.code == ErrorCode::InvalidInput
+    ));
+
+    let mut health = daemon.client.subscribe("v1/stream/health", None);
+    let health_cursor = tokio::time::timeout(Duration::from_secs(3), health.next())
+        .await?
+        .ok_or("health stream closed before an observation")??
+        .cursor;
+    drop(health);
+    daemon.stop().await?;
+
+    let mut narrowed = config;
+    narrowed.document.actors[0].grant_revision = 2;
+    narrowed.document.actors[0].authority.resources.capability =
+        CapabilityAuthorityScope::none(SideEffectClass::None);
+    let restarted = start(narrowed, CONTROLLER_TOKEN).await?;
+    assert!(matches!(
+        restarted.client.revisions(
+            None,
+            &PageRequest {
+                cursor: Some(cursor),
+                limit: 1,
+            },
+        ).await,
+        Err(ClientError::Api(error)) if error.code == ErrorCode::InvalidInput
+    ));
+    let mut reconnect = restarted
+        .client
+        .subscribe("v1/stream/health", Some(health_cursor));
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(3), reconnect.next())
+            .await?
+            .ok_or("narrowed stream ended without a typed error")?,
+        Err(ClientError::Api(error)) if error.code == ErrorCode::InvalidInput
+    ));
+    restarted.stop().await
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -456,11 +753,10 @@ async fn daemon_configured_process_adapter_executes_to_terminal() -> TestResult 
     let profile = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../adapters/local-process/tests/fixtures/process-profile-v1.json")
         .canonicalize()?;
-    let daemon = start(
-        configuration_with_process_profiles(&directory, 16, vec![profile])?,
-        CONTROLLER_TOKEN,
-    )
-    .await?;
+    let config = configuration_with_process_profiles(&directory, 16, vec![profile])?;
+    let (artifact_id, artifact_bytes) =
+        publish_restricted_test_artifact(&config.document.data_root)?;
+    let daemon = start(config, CONTROLLER_TOKEN).await?;
     assert!(
         daemon
             .client
@@ -525,6 +821,35 @@ async fn daemon_configured_process_adapter_executes_to_terminal() -> TestResult 
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+    let metadata = daemon.client.artifact_metadata(&artifact_id).await?;
+    assert_eq!(metadata.artifact_id, artifact_id);
+    let range = daemon
+        .client
+        .artifact_range(&artifact_id, 0, metadata.size.saturating_sub(1))
+        .await?;
+    assert_eq!(range.bytes, artifact_bytes);
+    let observer = client(&daemon.endpoint, OBSERVER_TOKEN)?;
+    assert!(matches!(
+        observer.artifact_metadata(&artifact_id).await,
+        Err(ClientError::Api(error)) if error.code == ErrorCode::Unauthorized
+    ));
+    assert!(matches!(
+        observer.artifact_range(&artifact_id, 0, 0).await,
+        Err(ClientError::Api(error)) if error.code == ErrorCode::Unauthorized
+    ));
+    let sidecar: serde_json::Value = serde_json::from_slice(&fs::read(
+        directory.path().join("data/control-state-v1.json"),
+    )?)?;
+    let audit = sidecar["audit"]
+        .as_array()
+        .ok_or("control sidecar omitted the bounded security audit")?;
+    assert!(audit.iter().any(|entry| {
+        entry["operation"] == serde_json::json!("read_artifact_content")
+            && entry["grant_revision"] == serde_json::json!(1)
+            && entry["decision_digest"]
+                .as_str()
+                .is_some_and(|digest| digest.starts_with("b3_"))
+    }));
     daemon.stop().await
 }
 

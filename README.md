@@ -53,14 +53,14 @@ The insecure mode refuses non-loopback URLs. Use ordinary HTTPS directly or term
 
 ## Local daemon quick start
 
-Create a private bearer-token file and a version-two daemon configuration. Relative paths are resolved from the configuration file directory. Presets select command operations only; the required `authority` object supplies the actual resource scope, ceilings, and validity.
+Create a private bearer-token file and a version-three daemon configuration. Relative paths are resolved from the configuration file directory. Presets are deterministic shorthand for exact operation sets only; the required `authority` object supplies every executable resource scope, ceiling, and validity boundary.
 
 ```sh
 install -m 600 /dev/null operator.token
 printf '%s' 'replace-with-a-long-random-local-token' > operator.token
 cat > daemon.json <<'JSON'
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "data_root": "./milkdrift-data",
   "bind": "127.0.0.1:9734",
   "secret_sources": {
@@ -77,6 +77,7 @@ cat > daemon.json <<'JSON'
       "resources": {
         "workflow_run": { "type": "workflow", "workflow": "example-workflow" },
         "capability": {
+          "deny_all": false,
           "identities": ["local-example"],
           "categories": [],
           "operations": ["process.execute"],
@@ -88,7 +89,18 @@ cat > daemon.json <<'JSON'
         },
         "filesystem": [],
         "network": { "profiles": [], "destinations": [] },
-        "secrets": []
+        "secrets": [],
+        "artifacts": { "identities": [], "sensitivities": [] },
+        "layouts": { "revisions": [], "actors": [], "shared": false },
+        "peers": { "identities": [], "allow_any": false },
+        "daemon": {
+          "readiness": true,
+          "detailed_health": false,
+          "own_authority": true,
+          "configuration": false,
+          "audit": false
+        },
+        "workspace": { "scopes": [], "allow_any_in_run": false }
       },
       "budget": {
         "cost_minor": 1000,
@@ -135,7 +147,7 @@ cargo run -p milkdrift-cli -- --json capability list
 cargo run -p milkdrift-cli -- blueprint import crates/blueprint/tests/fixtures/revision-v2.json
 ```
 
-The daemon refuses non-loopback plaintext binds and permissive CORS is not enabled. Schema 1 configuration is not silently migrated, and broad/unbounded authority requires an explicit dangerous acknowledgement. See [the authority configuration guide](docs/operator-authority.md) and [the control API reference](docs/reference/control-api.md).
+The daemon refuses non-loopback plaintext binds and permissive CORS is not enabled. Older configuration schemas are not silently migrated, and broad/unbounded authority requires an explicit dangerous acknowledgement. Empty artifact, layout, peer, and workspace scopes deny access. See [the authority configuration guide](docs/operator-authority.md) and [the control API reference](docs/reference/control-api.md).
 
 A minimal revision is constructed through a validated mutation batch; see the crate-level example in `milkdrift-blueprint` and the integration tests under `crates/blueprint/tests`.
 

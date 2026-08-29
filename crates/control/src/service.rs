@@ -51,10 +51,14 @@ impl ControlService {
     ) -> Result<ControlResult, ControlError> {
         match document.command() {
             ControlCommand::InspectRun { run } => {
-                self.authorize_simple(document, AuthorityOperation::Inspect, None, Some(run))?;
-                Ok(ControlResult::RunInspection {
-                    value: self.inspect_run(run, document.guard())?,
-                })
+                let value = self.inspect_run(run, document.guard())?;
+                self.authorize_simple(
+                    document,
+                    AuthorityOperation::InspectRun,
+                    value.workflow.as_ref(),
+                    Some(run),
+                )?;
+                Ok(ControlResult::RunInspection { value })
             }
             ControlCommand::InspectRevision { revision } => {
                 let value = self
@@ -63,7 +67,7 @@ impl ControlService {
                     .ok_or(ControlError::BaseRevisionNotFound)?;
                 self.authorize_simple(
                     document,
-                    AuthorityOperation::Inspect,
+                    AuthorityOperation::InspectRevision,
                     Some(value.semantic().workflow()),
                     None,
                 )?;
@@ -82,7 +86,13 @@ impl ControlService {
                 })
             }
             ControlCommand::InspectTimeline { run, after, limit } => {
-                self.authorize_simple(document, AuthorityOperation::Inspect, None, Some(run))?;
+                let run_value = self.inspect_run(run, &OptimisticGuard::default())?;
+                self.authorize_simple(
+                    document,
+                    AuthorityOperation::InspectTimeline,
+                    run_value.workflow.as_ref(),
+                    Some(run),
+                )?;
                 Ok(ControlResult::Timeline {
                     value: self.timeline(run, *after, *limit)?,
                 })
@@ -131,7 +141,13 @@ impl ControlService {
                 proposal,
                 proposed_revision,
             } => {
-                self.authorize_simple(document, AuthorityOperation::Inspect, None, Some(run))?;
+                let run_value = self.inspect_run(run, &OptimisticGuard::default())?;
+                self.authorize_simple(
+                    document,
+                    AuthorityOperation::InspectProposal,
+                    run_value.workflow.as_ref(),
+                    Some(run),
+                )?;
                 Ok(ControlResult::ProposalStatus {
                     value: self.proposal_status(run, proposal, proposed_revision)?,
                 })
@@ -798,6 +814,7 @@ impl ControlService {
         } else {
             Err(ControlError::AuthorizationDenied {
                 reasons: vec![milkdrift_authority::DecisionReasonCode::CapabilityMismatch],
+                decision_digest: None,
             })
         }
     }
@@ -887,6 +904,7 @@ impl ControlService {
         } else {
             Err(ControlError::AuthorizationDenied {
                 reasons: decision.reason_codes().to_vec(),
+                decision_digest: Some(decision.digest().to_owned()),
             })
         }
     }
@@ -941,6 +959,7 @@ fn ensure_accepted(execution: &milkdrift_runtime::CommandExecution) -> Result<()
     {
         return Err(ControlError::AuthorizationDenied {
             reasons: decision.reason_codes().to_vec(),
+            decision_digest: Some(decision.digest().to_owned()),
         });
     }
     Err(ControlError::ProposalState(format!(

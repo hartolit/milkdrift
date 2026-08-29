@@ -17,10 +17,11 @@ workflow/revision association and contains only bounded node presentation geomet
 presentation groups, non-executable annotations, an optional viewport, server-authenticated author,
 positive optimistic generation, and a domain-separated digest.
 
-The daemon stores layout in its atomically synced schema-1 control sidecar rather than in immutable
-revision bytes. The first generation is 1 and each changed update advances exactly once. On write,
-the daemon replaces the untrusted author with the authenticated actor, recomputes the digest,
-checks the durable workflow/revision association, and applies ordinary configured authority.
+The daemon stores layout in its atomically synced control sidecar rather than in immutable revision
+bytes. ADR 0020 advances that sidecar to schema 2 to add bounded security-decision audit while
+preserving the layout contract. The first generation is 1 and each changed update advances exactly
+once. On write, the daemon replaces the untrusted author with the authenticated actor, recomputes
+the digest, checks the durable workflow/revision association, and applies ordinary grant authority.
 
 Layout cannot contain edges, task/node configuration, capability requirements, prompts, secrets,
 or semantic mutation instructions. A layout update never creates a revision and cannot affect the

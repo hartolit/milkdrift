@@ -18,11 +18,13 @@ runs/nodes/attempts, proposal status, bounded timeline categories, capabilities,
 artifact metadata, and health. Timeline entries retain exact durable sequence/provenance anchors
 but never expose an internal event discriminant or complete event body.
 
-Queries are page- and byte-bounded. Opaque cursor schema 1 binds a continuation to one exact feed.
-Run SSE interleaves projected timeline and compact status positions; capability health uses a
-bounded retained observation window; daemon health is coarse and in-process. Heartbeats are
-transport comments. Establishment and polling recheck authentication, and an invalid/old/wrong-feed
-cursor produces an explicit error or resync observation.
+Queries are page- and byte-bounded. Authenticated cursor schema 2 binds a continuation to one exact
+feed, actor, grant identity/revision/digest, decision, resource/filter digest, and credential MAC.
+Run SSE interleaves projected timeline and compact status positions; capability health uses bounded
+retained observation windows partitioned by authority scope; daemon health is separate from coarse
+readiness. Heartbeats are transport comments. Establishment and polling recheck authentication and
+authority, and an invalid, stale, cross-actor, cross-grant, cross-filter, or wrong-feed cursor
+produces an explicit error or resync observation.
 
 `milkdrift-control-client` is the only HTTP/SSE mapping used by the CLI and future Iced client.
 Safe queries may follow a bounded retry policy. Mutation retry is caller-explicit and must reuse the

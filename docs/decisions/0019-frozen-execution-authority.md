@@ -56,13 +56,15 @@ actor's authority.
 Drafts and proposals may be stored without gaining execution authority, but start/adoption fails
 closed when their reachable requirements exceed the run envelope. Availability remains a separate
 mutable concern after semantic authority succeeds. Restart can prove the same basis and resolution
-decision from the journal. Configuration schema 2 requires explicit scopes, ceilings, and validity;
-broad or unbounded administration requires a conspicuous dangerous acknowledgement and schema 1 is
-not silently migrated.
+decision from the journal. ADR 0020 advances authority grants to schema 2 and daemon configuration
+to schema 3 for explicit read/resource scopes; broad or unbounded administration still requires a
+conspicuous dangerous acknowledgement and older schemas are not silently migrated.
 
 ## Reconsideration triggers
 
 Introduce delegated or per-node grants only with an explicit, durable narrowing relation to the run
 basis. Add cached decisions only if cache identity includes every canonical request, grant digest,
 policy version, revocation generation, and evaluation boundary needed to preserve the three entry
-checks. Do not combine read/query authorization with this execution contract merely for reuse.
+checks. Read/query authorization uses the same canonical evaluator and grant vocabulary, but remains
+a distinct typed request/continuation contract under ADR 0020; it does not alter the frozen
+execution basis or per-entry decision rules here.

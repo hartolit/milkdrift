@@ -241,6 +241,11 @@ fn exact_grant_service(
             filesystem: Vec::new(),
             network: NetworkScope::empty(),
             secrets: BTreeSet::new(),
+            artifacts: milkdrift_authority::ArtifactAuthorityScope::none(),
+            layouts: milkdrift_authority::LayoutAuthorityScope::none(),
+            peers: milkdrift_authority::PeerAuthorityScope::none(),
+            daemon: milkdrift_authority::DaemonAuthorityScope::default(),
+            workspace: milkdrift_authority::WorkspaceAuthorityScope::none(),
         })
         .budget(budget)
         .validity(BoundaryTimeMillis::new(0), BoundaryTimeMillis::new(10_000))

@@ -151,7 +151,7 @@ fn configuration(
         .saturating_add(600_000);
     let expires = u64::try_from(expires)?;
     DaemonConfig {
-        schema_version: 2,
+        schema_version: 3,
         data_root: root.path().join("data"),
         bind: "127.0.0.1:0".parse()?,
         secret_sources: BTreeMap::from([

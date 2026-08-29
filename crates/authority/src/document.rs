@@ -3,7 +3,7 @@ use serde::Serialize;
 use crate::AuthorityError;
 
 /// Version of the immutable authority grant contract.
-pub const AUTHORITY_GRANT_SCHEMA_VERSION_V1: u32 = 1;
+pub const AUTHORITY_GRANT_SCHEMA_VERSION_V2: u32 = 2;
 /// Maximum canonical bytes in a grant or decision document.
 pub const MAX_AUTHORITY_DOCUMENT_BYTES: usize = 262_144;
 

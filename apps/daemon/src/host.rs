@@ -12,7 +12,12 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use milkdrift_authority::{ActorRef, GrantSetEvaluator, PeerId, PolicyId, SecretRef};
+use milkdrift_authority::{
+    ActorRef, AuthorityBudget, AuthorityDecisionSnapshot, AuthorityEvaluator,
+    AuthorityExecutionProvenance, AuthorityOperation, AuthorityRequest, BoundaryTimeMillis,
+    DecisionId, GrantSetEvaluator, LayoutOwner, PeerId, PolicyId, RequestedResourceFacts,
+    SecretRef, WorkflowRunScope,
+};
 use milkdrift_blueprint::{BlueprintRevisionDocument, RevisionId, WorkflowId};
 use milkdrift_capability::{CapabilityId, ErrorClass, SideEffectClass};
 use milkdrift_capability_host::{
@@ -28,9 +33,10 @@ use milkdrift_control::{
 };
 use milkdrift_control_protocol::{
     ArtifactMetadataRead, AttemptRead, CapabilityRead, Command, CommandAccepted, CommandRequest,
-    Cursor, DaemonState, ErrorCode, HealthRead, LayoutDocument, NodeRead, Page, PeerRead,
-    ProposalDecision, ProposalRead, ResolveAction, RevisionChange, RevisionDiffRead, RevisionRead,
-    RevisionSummary as PublicRevisionSummary, RunRead, TimelineCategory, TimelineEntry,
+    Cursor, CursorBinding, DaemonState, ErrorCode, HealthRead, LayoutDocument, NodeRead, Page,
+    PeerRead, ProposalDecision, ProposalRead, ResolveAction, RevisionChange, RevisionDiffRead,
+    RevisionRead, RevisionSummary as PublicRevisionSummary, RunRead, TimelineCategory,
+    TimelineEntry,
 };
 use milkdrift_local_process::{LocalProcessAdapter, ProcessProfileDocument};
 use milkdrift_model_provider::{EndpointProfile, ModelEndpointAdapter, descriptor_for_profile};
@@ -55,9 +61,8 @@ use milkdrift_runtime::{
     ExternalWorkAction, RetryPolicy, RuntimeConfig, RuntimeService, SchedulerLimits,
     SequentialIdGenerator, SystemBoundaryClock,
 };
-use milkdrift_workspace::{
-    ArtifactId, ArtifactSensitivity, RunId, ScopeId, WorkspaceBudget, WorkspaceScope,
-};
+use milkdrift_workspace::ArtifactSensitivity;
+use milkdrift_workspace::{ArtifactId, RunId, ScopeId, WorkspaceBudget, WorkspaceScope};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use subtle::ConstantTimeEq as _;
@@ -70,7 +75,7 @@ use crate::{
     config::{PeerSideEffectConfig, ShutdownEffectPolicy, ValidatedDaemonConfig},
 };
 
-const LOCAL_STATE_SCHEMA_VERSION: u32 = 1;
+const LOCAL_STATE_SCHEMA_VERSION: u32 = 2;
 const OWNER_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Daemon construction, owner-thread, or orderly-shutdown failure.
@@ -294,13 +299,13 @@ impl DaemonHost {
 
     /// Returns current bounded liveness/readiness state without entering runtime storage.
     #[must_use]
-    pub fn health(&self) -> HealthRead {
+    pub(crate) fn health(&self) -> HealthRead {
         self.health.read()
     }
 
     /// Monotonic in-process health feed generation; not a durable run event.
     #[must_use]
-    pub fn health_generation(&self) -> u64 {
+    pub(crate) fn health_generation(&self) -> u64 {
         self.health.generation.load(Ordering::SeqCst)
     }
 
@@ -314,7 +319,7 @@ impl DaemonHost {
     }
 
     /// Closes mutation admission synchronously before graceful HTTP shutdown begins.
-    pub fn begin_draining(&self) {
+    pub(crate) fn begin_draining(&self) {
         self.mutating_admission.store(false, Ordering::SeqCst);
         self.health.set_lifecycle(Lifecycle::Draining);
         if let Some(service) = &self.peer_service {
@@ -333,7 +338,7 @@ impl DaemonHost {
 
     /// Returns stable sorted peer health/catalog observations without secret values.
     #[must_use]
-    pub fn peers(&self) -> Vec<PeerRead> {
+    pub(crate) fn peers(&self) -> Vec<PeerRead> {
         let revoked = self.revoked_peers.lock().ok();
         self.peer_registries
             .values()
@@ -367,7 +372,7 @@ impl DaemonHost {
     }
 
     /// Manually authenticates and refreshes one configured remote peer catalog.
-    pub async fn connect_peer(&self, peer: &PeerId) -> Result<PeerRead, HostError> {
+    pub(crate) async fn connect_peer(&self, peer: &PeerId) -> Result<PeerRead, HostError> {
         if self
             .revoked_peers
             .lock()
@@ -394,7 +399,7 @@ impl DaemonHost {
     }
 
     /// Explicitly disconnects and drains one peer's local adapter registrations.
-    pub async fn disconnect_peer(&self, peer: &PeerId) -> Result<PeerRead, HostError> {
+    pub(crate) async fn disconnect_peer(&self, peer: &PeerId) -> Result<PeerRead, HostError> {
         let registry = self
             .peer_registries
             .get(peer)
@@ -411,7 +416,7 @@ impl DaemonHost {
     }
 
     /// Revokes one live relationship and drains its registrations until reload/restart.
-    pub async fn revoke_peer(&self, peer: &PeerId) -> Result<PeerRead, HostError> {
+    pub(crate) async fn revoke_peer(&self, peer: &PeerId) -> Result<PeerRead, HostError> {
         self.revoked_peers
             .lock()
             .map_err(|_| HostError::Configuration("peer revocation state unavailable".to_owned()))?
@@ -425,7 +430,7 @@ impl DaemonHost {
     }
 
     /// Runs ordered shutdown and joins the owner thread.
-    pub async fn shutdown(&self) -> Result<(), HostError> {
+    pub(crate) async fn shutdown(&self) -> Result<(), HostError> {
         self.begin_draining();
         let result = self
             .request(OwnerOperation::Shutdown, true)
@@ -532,6 +537,33 @@ impl DaemonHost {
 }
 
 pub(crate) enum OwnerOperation {
+    Version {
+        session: ActorSession,
+    },
+    Health {
+        session: ActorSession,
+    },
+    Readiness {
+        session: ActorSession,
+    },
+    Authority {
+        session: ActorSession,
+    },
+    Peers {
+        session: ActorSession,
+    },
+    Peer {
+        session: ActorSession,
+        peer: String,
+    },
+    AdministerPeer {
+        session: ActorSession,
+        peer: String,
+    },
+    StreamAuthority {
+        session: ActorSession,
+        stream: StreamAuthority,
+    },
     Command {
         session: ActorSession,
         request: Box<CommandRequest>,
@@ -554,6 +586,16 @@ pub(crate) enum OwnerOperation {
     Run {
         session: ActorSession,
         run: String,
+    },
+    Node {
+        session: ActorSession,
+        run: String,
+        execution: String,
+    },
+    Attempt {
+        session: ActorSession,
+        run: String,
+        attempt: String,
     },
     Runs {
         session: ActorSession,
@@ -603,11 +645,16 @@ pub(crate) enum OwnerOperation {
 }
 
 pub(crate) enum OwnerValue {
+    Authorized(String),
+    Authority(milkdrift_control_protocol::AuthorityRead),
+    PeerIds(BTreeSet<String>),
     Command(CommandAccepted),
     Revision(RevisionRead),
     Revisions(Page<PublicRevisionSummary>),
     RevisionDiff(RevisionDiffRead),
     Run(RunRead),
+    Node(NodeRead),
+    Attempt(AttemptRead),
     Runs(Page<RunRead>),
     Timeline(Page<TimelineEntry>),
     Proposals(Page<ProposalRead>),
@@ -626,6 +673,12 @@ pub(crate) enum OwnerValue {
     },
 }
 
+pub(crate) enum StreamAuthority {
+    Run(String),
+    Capabilities,
+    Health,
+}
+
 struct OwnerRequest {
     operation: OwnerOperation,
     reply: oneshot::Sender<Result<OwnerValue, PublicFailure>>,
@@ -637,6 +690,7 @@ struct Owner {
     runtime: Arc<RuntimeService>,
     control: Arc<ControlService>,
     capability_host: CapabilityHost,
+    authority: Arc<GrantSetEvaluator>,
     effect_workers: Option<EffectWorkerHost>,
     persistent: LocalState,
     peer_service: Option<Arc<PeerService>>,
@@ -723,7 +777,7 @@ impl Owner {
         let control = Arc::new(ControlService::new(
             store.clone(),
             runtime.clone(),
-            authority,
+            authority.clone(),
         ));
         let data = Arc::new(
             StoreInvocationDataAccess::new(
@@ -775,6 +829,7 @@ impl Owner {
             runtime,
             control,
             capability_host,
+            authority,
             effect_workers: Some(effect_workers),
             persistent,
             peer_service: peer_runtime.service,
@@ -845,6 +900,144 @@ impl Owner {
 
     fn execute(&mut self, operation: OwnerOperation) -> Result<OwnerValue, PublicFailure> {
         match operation {
+            OwnerOperation::Version { session } => self
+                .authorize(
+                    &session,
+                    AuthorityOperation::NegotiateControlProtocol,
+                    RequestedResourceFacts::empty(),
+                    "read:version",
+                )
+                .map(|decision| OwnerValue::Authorized(decision.digest().to_owned())),
+            OwnerOperation::Health { session } => {
+                let mut resources = RequestedResourceFacts::empty();
+                resources.daemon_detailed_health = true;
+                self.authorize(
+                    &session,
+                    AuthorityOperation::InspectDaemonHealth,
+                    resources,
+                    "read:health",
+                )
+                .map(|decision| OwnerValue::Authorized(decision.digest().to_owned()))
+            }
+            OwnerOperation::Readiness { session } => {
+                let mut resources = RequestedResourceFacts::empty();
+                resources.daemon_readiness = true;
+                self.authorize(
+                    &session,
+                    AuthorityOperation::ReadReadiness,
+                    resources,
+                    "read:readiness",
+                )
+                .map(|decision| OwnerValue::Authorized(decision.digest().to_owned()))
+            }
+            OwnerOperation::Authority { session } => {
+                let mut resources = RequestedResourceFacts::empty();
+                resources.daemon_own_authority = true;
+                self.authorize(
+                    &session,
+                    AuthorityOperation::InspectOwnAuthority,
+                    resources,
+                    "read:own-authority",
+                )?;
+                let operations = session
+                    .grant
+                    .operations()
+                    .iter()
+                    .filter_map(|operation| serde_json::to_value(operation).ok())
+                    .filter_map(|value| value.as_str().map(str::to_owned))
+                    .collect();
+                Ok(OwnerValue::Authority(
+                    milkdrift_control_protocol::AuthorityRead {
+                        actor: session.actor.as_str().to_owned(),
+                        grant_id: session.grant.identity().as_str().to_owned(),
+                        grant_revision: session.grant.revision(),
+                        revocation_generation: session.grant.revocation_generation(),
+                        operations,
+                    },
+                ))
+            }
+            OwnerOperation::Peers { session } => {
+                let mut visible = BTreeSet::new();
+                for peer in self.peer_registries.keys() {
+                    let mut resources = RequestedResourceFacts::empty();
+                    resources.peer = Some(peer.clone());
+                    if self
+                        .evaluate_authority(
+                            &session,
+                            AuthorityOperation::InspectPeer,
+                            resources,
+                            "read:peers",
+                        )?
+                        .is_allowed()
+                    {
+                        visible.insert(peer.as_str().to_owned());
+                    }
+                }
+                Ok(OwnerValue::PeerIds(visible))
+            }
+            OwnerOperation::Peer { session, peer } => {
+                self.authorize_peer(
+                    &session,
+                    &peer,
+                    AuthorityOperation::InspectPeer,
+                    "read:peer",
+                )?;
+                Ok(OwnerValue::Authorized(String::new()))
+            }
+            OwnerOperation::AdministerPeer { session, peer } => {
+                let decision = self.authorize_peer(
+                    &session,
+                    &peer,
+                    AuthorityOperation::AdministerPeer,
+                    "command:administer-peer",
+                )?;
+                self.record_security_decision(&decision)?;
+                self.persistent
+                    .flush()
+                    .map_err(|error| PublicFailure::new(ErrorCode::Corruption, error, false))?;
+                Ok(OwnerValue::Authorized(String::new()))
+            }
+            OwnerOperation::StreamAuthority { session, stream } => {
+                let decision = match stream {
+                    StreamAuthority::Run(run) => self.authorize_run_read(
+                        &session,
+                        &run,
+                        AuthorityOperation::InspectTimeline,
+                        "stream:run",
+                    )?,
+                    StreamAuthority::Capabilities => {
+                        self.authorize(
+                            &session,
+                            AuthorityOperation::ListCapabilities,
+                            RequestedResourceFacts::empty(),
+                            "stream:capabilities",
+                        )?;
+                        self.authorize(
+                            &session,
+                            AuthorityOperation::InspectCapabilityHealth,
+                            RequestedResourceFacts::empty(),
+                            "stream:capability-health",
+                        )?;
+                        self.authorize(
+                            &session,
+                            AuthorityOperation::InspectProviderProfile,
+                            RequestedResourceFacts::empty(),
+                            "stream:provider-profile",
+                        )?
+                    }
+                    StreamAuthority::Health => {
+                        let mut resources = RequestedResourceFacts::empty();
+                        resources.daemon_detailed_health = true;
+                        self.authorize(
+                            &session,
+                            AuthorityOperation::InspectDaemonHealth,
+                            resources,
+                            "stream:daemon-health",
+                        )?
+                    }
+                };
+                Ok(OwnerValue::Authorized(decision.digest().to_owned()))
+            }
             OwnerOperation::Command { session, request } => {
                 self.command(&session, *request).map(OwnerValue::Command)
             }
@@ -865,6 +1058,20 @@ impl Owner {
             OwnerOperation::Run { session, run } => {
                 self.run_read(&session, &run).map(OwnerValue::Run)
             }
+            OwnerOperation::Node {
+                session,
+                run,
+                execution,
+            } => self
+                .node_read(&session, &run, &execution)
+                .map(OwnerValue::Node),
+            OwnerOperation::Attempt {
+                session,
+                run,
+                attempt,
+            } => self
+                .attempt_read(&session, &run, &attempt)
+                .map(OwnerValue::Attempt),
             OwnerOperation::Runs {
                 session,
                 state,
@@ -930,6 +1137,69 @@ impl Owner {
                 false,
             )),
         }
+    }
+
+    fn authorize(
+        &self,
+        session: &ActorSession,
+        operation: AuthorityOperation,
+        resources: RequestedResourceFacts,
+        boundary: &str,
+    ) -> Result<AuthorityDecisionSnapshot, PublicFailure> {
+        let decision = self.evaluate_authority(session, operation, resources, boundary)?;
+        if decision.is_allowed() {
+            Ok(decision)
+        } else {
+            Err(unauthorized_decision(&decision))
+        }
+    }
+
+    fn evaluate_authority(
+        &self,
+        session: &ActorSession,
+        operation: AuthorityOperation,
+        resources: RequestedResourceFacts,
+        boundary: &str,
+    ) -> Result<AuthorityDecisionSnapshot, PublicFailure> {
+        let claim = session.context.authority();
+        let now = unix_millis();
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"milkdrift.daemon-authority.v1\0");
+        hasher.update(session.actor.as_str().as_bytes());
+        hasher.update(boundary.as_bytes());
+        hasher.update(format!("{operation:?}{resources:?}{now}").as_bytes());
+        let request = AuthorityRequest {
+            decision: DecisionId::new(format!("decision:{}", hasher.finalize()))
+                .map_err(|error| invalid(&error.to_string()))?,
+            actor: session.actor.clone(),
+            grant: claim.grant().clone(),
+            grant_revision: claim.grant_revision(),
+            grant_digest: claim.grant_digest().clone(),
+            revocation_generation: claim.revocation_generation(),
+            operation,
+            resources,
+            budget: AuthorityBudget::default(),
+            evaluated_at: BoundaryTimeMillis::new(now),
+            provenance: AuthorityExecutionProvenance::default(),
+        };
+        self.authority.evaluate(&request).map_err(|_| internal())
+    }
+
+    fn authorize_peer(
+        &self,
+        session: &ActorSession,
+        peer: &str,
+        operation: AuthorityOperation,
+        boundary: &str,
+    ) -> Result<AuthorityDecisionSnapshot, PublicFailure> {
+        let peer = PeerId::new(peer.to_owned()).map_err(|error| invalid(&error.to_string()))?;
+        let mut resources = RequestedResourceFacts::empty();
+        resources.peer = Some(peer.clone());
+        let decision = self.authorize(session, operation, resources, boundary)?;
+        if !self.peer_registries.contains_key(&peer) {
+            return Err(not_found());
+        }
+        Ok(decision)
     }
 
     fn shutdown(&mut self, health: &SharedHealth) -> Result<OwnerValue, PublicFailure> {
@@ -1033,17 +1303,24 @@ impl Owner {
     ) -> Result<CommandAccepted, PublicFailure> {
         match &request.command {
             Command::ImportBlueprint { document } => {
-                if !session.preset.may_import_blueprint() {
-                    return Err(unauthorized());
-                }
                 let bytes =
                     serde_json::to_vec(document).map_err(|_| invalid("invalid blueprint JSON"))?;
                 let (_document, revision) = BlueprintRevisionDocument::from_json(&bytes)
                     .map_err(|error| invalid(&bounded(&error.to_string())))?;
+                let mut resources = RequestedResourceFacts::empty();
+                resources.workflow = Some(revision.semantic().workflow().clone());
+                resources.revision = Some(revision.id().clone());
+                let decision = self.authorize(
+                    session,
+                    AuthorityOperation::ImportBlueprint,
+                    resources,
+                    "command:import-blueprint",
+                )?;
                 let outcome = self
                     .store
                     .put_revision(&revision)
                     .map_err(public_persistence)?;
+                self.record_security_decision(&decision)?;
                 Ok(CommandAccepted {
                     command_id: request.command_id.clone(),
                     replayed: matches!(
@@ -1064,6 +1341,15 @@ impl Owner {
                     serde_json::to_vec(document).map_err(|_| invalid("invalid blueprint JSON"))?;
                 let (_document, revision) = BlueprintRevisionDocument::from_json(&bytes)
                     .map_err(|error| invalid(&bounded(&error.to_string())))?;
+                let mut resources = RequestedResourceFacts::empty();
+                resources.workflow = Some(revision.semantic().workflow().clone());
+                resources.revision = Some(revision.id().clone());
+                self.authorize(
+                    session,
+                    AuthorityOperation::ValidateBlueprint,
+                    resources,
+                    "command:validate-blueprint",
+                )?;
                 Ok(CommandAccepted {
                     command_id: request.command_id.clone(),
                     replayed: false,
@@ -1289,9 +1575,6 @@ impl Owner {
                 accepted_sequence(request, sequence, "proposal_applied")
             }
             Command::PutLayout { layout } => {
-                if !session.preset.may_write_layout() {
-                    return Err(unauthorized());
-                }
                 layout.validate().map_err(public_protocol)?;
                 let revision = parse_revision_id(&layout.revision_id)?;
                 let stored_revision = self
@@ -1304,6 +1587,16 @@ impl Owner {
                         "layout workflow/revision association does not match durable revision",
                     ));
                 }
+                let mut resources = RequestedResourceFacts::empty();
+                resources.workflow = Some(stored_revision.semantic().workflow().clone());
+                resources.revision = Some(revision);
+                resources.layout_owner = Some(LayoutOwner::Shared);
+                let decision = self.authorize(
+                    session,
+                    AuthorityOperation::WriteLayout,
+                    resources,
+                    "command:put-layout",
+                )?;
                 let key = layout_key(&layout.workflow_id, &layout.revision_id);
                 if let Some(current) = self.persistent.document.layouts.get(&key) {
                     if current.digest == layout.digest {
@@ -1322,6 +1615,7 @@ impl Owner {
                     return Err(conflict("first layout generation must be one"));
                 }
                 self.persistent.document.layouts.insert(key, layout.clone());
+                self.record_security_decision(&decision)?;
                 Ok(CommandAccepted {
                     command_id: request.command_id.clone(),
                     replayed: false,
@@ -1473,21 +1767,50 @@ impl Owner {
 
     fn revisions(
         &self,
-        _session: &ActorSession,
+        session: &ActorSession,
         workflow: Option<&str>,
         cursor: Option<&Cursor>,
         limit: u32,
     ) -> Result<Page<PublicRevisionSummary>, PublicFailure> {
-        let workflow_id = workflow
+        let requested_workflow = workflow
             .map(|value| WorkflowId::new(value.to_owned()))
             .transpose()
             .map_err(|error| invalid(&error.to_string()))?;
-        let feed = format!("revisions:{}", workflow.unwrap_or("*"));
+        let workflow_id = match &session.grant.resources().workflow_run {
+            WorkflowRunScope::Any => requested_workflow,
+            WorkflowRunScope::Workflow { workflow: allowed } => {
+                if requested_workflow
+                    .as_ref()
+                    .is_some_and(|value| value != allowed)
+                {
+                    return Err(unauthorized());
+                }
+                Some(allowed.clone())
+            }
+            WorkflowRunScope::Run { .. } => return Err(unauthorized()),
+        };
+        let feed = format!(
+            "revisions:{}",
+            workflow_id.as_ref().map_or("*", WorkflowId::as_str)
+        );
+        let mut resources = RequestedResourceFacts::empty();
+        resources.workflow = workflow_id.clone();
+        let decision = self.authorize(
+            session,
+            AuthorityOperation::InspectRevision,
+            resources,
+            "read:revisions",
+        )?;
+        let binding = cursor_binding(session, &feed)?;
         let filter = RevisionFilter {
             workflow: workflow_id,
         };
         let internal_cursor = cursor
-            .map(|cursor| cursor.key_for(&feed).map_err(public_protocol))
+            .map(|cursor| {
+                cursor
+                    .key_for_bound(&feed, &binding, session.cursor_key())
+                    .map_err(public_protocol)
+            })
             .transpose()?
             .map(|value| parse_revision_id(&value))
             .transpose()?
@@ -1504,7 +1827,14 @@ impl Owner {
             .next
             .as_ref()
             .map(|cursor| {
-                Cursor::new_key(&feed, cursor.after_revision().as_str()).map_err(public_protocol)
+                Cursor::new_bound_key(
+                    &feed,
+                    cursor.after_revision().as_str(),
+                    binding.clone(),
+                    decision.digest(),
+                    session.cursor_key(),
+                )
+                .map_err(public_protocol)
             })
             .transpose()?;
         Ok(Page {
@@ -1572,6 +1902,64 @@ impl Owner {
         Ok(public_run(value))
     }
 
+    fn node_read(
+        &self,
+        session: &ActorSession,
+        run: &str,
+        execution: &str,
+    ) -> Result<NodeRead, PublicFailure> {
+        self.authorize_run_read(
+            session,
+            run,
+            AuthorityOperation::InspectNodeExecution,
+            "read:node-execution",
+        )?;
+        self.run_read(session, run)?
+            .nodes
+            .into_iter()
+            .find(|node| node.execution_id == execution)
+            .ok_or_else(not_found)
+    }
+
+    fn attempt_read(
+        &self,
+        session: &ActorSession,
+        run: &str,
+        attempt: &str,
+    ) -> Result<AttemptRead, PublicFailure> {
+        self.authorize_run_read(
+            session,
+            run,
+            AuthorityOperation::InspectAttempt,
+            "read:attempt",
+        )?;
+        self.run_read(session, run)?
+            .nodes
+            .into_iter()
+            .filter_map(|node| node.latest_attempt)
+            .find(|value| value.attempt_id == attempt)
+            .ok_or_else(not_found)
+    }
+
+    fn authorize_run_read(
+        &self,
+        session: &ActorSession,
+        run: &str,
+        operation: AuthorityOperation,
+        boundary: &str,
+    ) -> Result<AuthorityDecisionSnapshot, PublicFailure> {
+        let run = RunId::new(run.to_owned()).map_err(|error| invalid(&error.to_string()))?;
+        let summary = self
+            .store
+            .run_summary(&run)
+            .map_err(public_persistence)?
+            .ok_or_else(not_found)?;
+        let mut resources = RequestedResourceFacts::empty();
+        resources.workflow = Some(summary.workflow);
+        resources.run = Some(run);
+        self.authorize(session, operation, resources, boundary)
+    }
+
     fn runs(
         &self,
         session: &ActorSession,
@@ -1581,17 +1969,82 @@ impl Owner {
         limit: u32,
     ) -> Result<Page<RunRead>, PublicFailure> {
         let indexed_state = state.map(parse_run_state).transpose()?;
-        let workflow_id = workflow
+        let requested_workflow = workflow
             .map(|value| WorkflowId::new(value.to_owned()))
             .transpose()
             .map_err(|error| invalid(&error.to_string()))?;
-        let feed = format!("runs:{}:{}", state.unwrap_or("*"), workflow.unwrap_or("*"));
+        if let WorkflowRunScope::Run {
+            run,
+            workflow: allowed_workflow,
+        } = &session.grant.resources().workflow_run
+        {
+            if cursor.is_some()
+                || requested_workflow.as_ref().is_some_and(|value| {
+                    allowed_workflow
+                        .as_ref()
+                        .is_some_and(|allowed| value != allowed)
+                })
+            {
+                return Err(unauthorized());
+            }
+            let summary = self
+                .store
+                .run_summary(run)
+                .map_err(public_persistence)?
+                .ok_or_else(not_found)?;
+            let state_matches =
+                state.is_none_or(|expected| snake_debug(&summary.state) == expected);
+            let value = self.run_read(session, run.as_str())?;
+            let workflow_matches = requested_workflow
+                .as_ref()
+                .is_none_or(|expected| value.workflow_id.as_deref() == Some(expected.as_str()));
+            return Ok(Page {
+                items: if state_matches && workflow_matches {
+                    vec![value]
+                } else {
+                    Vec::new()
+                },
+                next_cursor: None,
+                observed_cursor: None,
+            });
+        }
+        let workflow_id = match &session.grant.resources().workflow_run {
+            WorkflowRunScope::Any => requested_workflow,
+            WorkflowRunScope::Workflow { workflow: allowed } => {
+                if requested_workflow
+                    .as_ref()
+                    .is_some_and(|value| value != allowed)
+                {
+                    return Err(unauthorized());
+                }
+                Some(allowed.clone())
+            }
+            WorkflowRunScope::Run { .. } => unreachable!("exact run scope returned above"),
+        };
+        let feed = format!(
+            "runs:{}:{}",
+            state.unwrap_or("*"),
+            workflow_id.as_ref().map_or("*", WorkflowId::as_str)
+        );
+        let mut resources = RequestedResourceFacts::empty();
+        resources.workflow = workflow_id.clone();
+        let decision = self.authorize(
+            session,
+            AuthorityOperation::InspectRun,
+            resources,
+            "read:runs",
+        )?;
+        let binding = cursor_binding(session, &feed)?;
         let filter = RunSummaryFilter {
             state: indexed_state,
             workflow: workflow_id,
         };
         let internal_cursor = cursor
-            .map(|cursor| cursor.key_for(&feed).map_err(public_protocol))
+            .map(|cursor| {
+                cursor
+                    .key_for_bound(&feed, &binding, session.cursor_key())
+                    .map_err(public_protocol)
+            })
             .transpose()?
             .map(|value| RunId::new(value).map_err(|error| invalid(&error.to_string())))
             .transpose()?
@@ -1612,7 +2065,14 @@ impl Owner {
             .next
             .as_ref()
             .map(|cursor| {
-                Cursor::new_key(&feed, cursor.after_run().as_str()).map_err(public_protocol)
+                Cursor::new_bound_key(
+                    &feed,
+                    cursor.after_run().as_str(),
+                    binding.clone(),
+                    decision.digest(),
+                    session.cursor_key(),
+                )
+                .map_err(public_protocol)
             })
             .transpose()?;
         Ok(Page {
@@ -1631,8 +2091,28 @@ impl Owner {
     ) -> Result<Page<TimelineEntry>, PublicFailure> {
         let run_id = RunId::new(run.to_owned()).map_err(|error| invalid(&error.to_string()))?;
         let feed = format!("timeline:{run}");
+        let mut resources = RequestedResourceFacts::empty();
+        resources.run = Some(run_id.clone());
+        let workflow = self
+            .store
+            .run_summary(&run_id)
+            .map_err(public_persistence)?
+            .ok_or_else(not_found)?
+            .workflow;
+        resources.workflow = Some(workflow);
+        let decision = self.authorize(
+            session,
+            AuthorityOperation::InspectTimeline,
+            resources,
+            "read:timeline",
+        )?;
+        let binding = cursor_binding(session, &feed)?;
         let next_sequence = cursor
-            .map(|cursor| cursor.position_for(&feed).map_err(public_protocol))
+            .map(|cursor| {
+                cursor
+                    .position_for_bound(&feed, &binding, session.cursor_key())
+                    .map_err(public_protocol)
+            })
             .transpose()?
             .map(|position| position.saturating_add(1))
             .unwrap_or(1);
@@ -1653,13 +2133,29 @@ impl Owner {
         let next_cursor = value
             .next_sequence
             .map(|sequence| {
-                Cursor::new(&feed, sequence.get().saturating_sub(1)).map_err(public_protocol)
+                Cursor::new_bound(
+                    &feed,
+                    sequence.get().saturating_sub(1),
+                    binding.clone(),
+                    decision.digest(),
+                    session.cursor_key(),
+                )
+                .map_err(public_protocol)
             })
             .transpose()?;
         let observed_cursor = if value.observed_head == RunSequence::ZERO {
             None
         } else {
-            Some(Cursor::new(&feed, value.observed_head.get()).map_err(public_protocol)?)
+            Some(
+                Cursor::new_bound(
+                    &feed,
+                    value.observed_head.get(),
+                    binding,
+                    decision.digest(),
+                    session.cursor_key(),
+                )
+                .map_err(public_protocol)?,
+            )
         };
         Ok(Page {
             items,
@@ -1668,10 +2164,28 @@ impl Owner {
         })
     }
 
-    fn capabilities(&self, _session: &ActorSession) -> Result<Vec<CapabilityRead>, PublicFailure> {
-        let scope = milkdrift_authority::CapabilityAuthorityScope::any(SideEffectClass::Unknown);
+    fn capabilities(&self, session: &ActorSession) -> Result<Vec<CapabilityRead>, PublicFailure> {
+        self.authorize(
+            session,
+            AuthorityOperation::ListCapabilities,
+            RequestedResourceFacts::empty(),
+            "read:capabilities",
+        )?;
+        self.authorize(
+            session,
+            AuthorityOperation::InspectCapabilityHealth,
+            RequestedResourceFacts::empty(),
+            "read:capability-health",
+        )?;
+        self.authorize(
+            session,
+            AuthorityOperation::InspectProviderProfile,
+            RequestedResourceFacts::empty(),
+            "read:provider-profile",
+        )?;
+        let scope = &session.grant.resources().capability;
         self.capability_host
-            .generations(&scope, unix_millis())
+            .generations(scope, unix_millis())
             .map_err(|error| {
                 PublicFailure::new(ErrorCode::Unavailable, bounded(&error.to_string()), true)
             })
@@ -1682,6 +2196,22 @@ impl Owner {
                         capability_id: view.capability.as_str().to_owned(),
                         generation: view.descriptor_revision,
                         descriptor_digest: view.descriptor_digest,
+                        category: snake_debug(&view.category),
+                        operations: view
+                            .operations
+                            .iter()
+                            .map(|operation| operation.as_str().to_owned())
+                            .collect(),
+                        provider_profile: view
+                            .provider_profile
+                            .map(|profile| profile.as_str().to_owned()),
+                        locality: snake_debug(&view.locality),
+                        peer_id: view.peer.map(|peer| peer.as_str().to_owned()),
+                        trust_zones: view
+                            .trust_zones
+                            .iter()
+                            .map(|zone| zone.as_str().to_owned())
+                            .collect(),
                         current: view.current,
                         draining: view.draining,
                         health: snake_debug(&view.health),
@@ -1702,8 +2232,27 @@ impl Owner {
     ) -> Result<Page<ProposalRead>, PublicFailure> {
         let run_id = RunId::new(run.to_owned()).map_err(|error| invalid(&error.to_string()))?;
         let feed = format!("proposals:{run}");
+        let summary = self
+            .store
+            .run_summary(&run_id)
+            .map_err(public_persistence)?
+            .ok_or_else(not_found)?;
+        let mut resources = RequestedResourceFacts::empty();
+        resources.workflow = Some(summary.workflow);
+        resources.run = Some(run_id.clone());
+        let decision = self.authorize(
+            session,
+            AuthorityOperation::InspectProposal,
+            resources,
+            "read:proposals",
+        )?;
+        let binding = cursor_binding(session, &feed)?;
         let after = cursor
-            .map(|cursor| cursor.key_for(&feed).map_err(public_protocol))
+            .map(|cursor| {
+                cursor
+                    .key_for_bound(&feed, &binding, session.cursor_key())
+                    .map_err(public_protocol)
+            })
             .transpose()?;
         let limit = usize::try_from(PageSize::new(limit).map_err(public_persistence)?.get())
             .map_err(|_| invalid("proposal page limit exceeds platform"))?;
@@ -1731,8 +2280,17 @@ impl Owner {
             items.push(self.proposal(session, run, &proposal.proposal, &proposal.revision)?);
         }
         let next_cursor = if scanned == limit {
-            last.map(|key| Cursor::new_key(&feed, &key).map_err(public_protocol))
-                .transpose()?
+            last.map(|key| {
+                Cursor::new_bound_key(
+                    &feed,
+                    &key,
+                    binding.clone(),
+                    decision.digest(),
+                    session.cursor_key(),
+                )
+                .map_err(public_protocol)
+            })
+            .transpose()?
         } else {
             None
         };
@@ -1780,8 +2338,8 @@ impl Owner {
     }
 
     fn artifact_metadata(
-        &self,
-        _session: &ActorSession,
+        &mut self,
+        session: &ActorSession,
         artifact: &str,
     ) -> Result<ArtifactMetadataRead, PublicFailure> {
         let artifact =
@@ -1791,11 +2349,26 @@ impl Owner {
             .metadata(&artifact)
             .map_err(public_persistence)?
             .ok_or_else(not_found)?;
+        let mut resources = RequestedResourceFacts::empty();
+        resources.artifact = Some(artifact);
+        resources.artifact_sensitivity = Some(metadata.sensitivity());
+        let decision = self.authorize(
+            session,
+            AuthorityOperation::ReadArtifactMetadata,
+            resources,
+            "read:artifact-metadata",
+        )?;
+        if metadata.sensitivity() != ArtifactSensitivity::Public {
+            self.record_security_decision(&decision)?;
+            self.persistent
+                .flush()
+                .map_err(|error| PublicFailure::new(ErrorCode::Corruption, error, false))?;
+        }
         Ok(public_artifact_metadata(&metadata))
     }
 
     fn artifact_range(
-        &self,
+        &mut self,
         session: &ActorSession,
         artifact: &str,
         offset: u64,
@@ -1809,15 +2382,19 @@ impl Owner {
             .metadata(&artifact_id)
             .map_err(public_persistence)?
             .ok_or_else(not_found)?;
-        let authority = if metadata.sensitivity() == ArtifactSensitivity::Public {
-            ArtifactReadAuthority::PublicOnly
-        } else if session.preset.may_read_protected_artifact() {
-            ArtifactReadAuthority::Authorized {
-                actor: session.actor.clone(),
-                evidence: EvidenceId::new(evidence.to_owned()).map_err(public_persistence)?,
-            }
-        } else {
-            return Err(unauthorized());
+        let mut resources = RequestedResourceFacts::empty();
+        resources.artifact = Some(artifact_id);
+        resources.artifact_sensitivity = Some(metadata.sensitivity());
+        let decision = self.authorize(
+            session,
+            AuthorityOperation::ReadArtifactContent,
+            resources,
+            "read:artifact-content",
+        )?;
+        let authority = ArtifactReadAuthority::Authorized {
+            actor: session.actor.clone(),
+            evidence: EvidenceId::new(format!("{evidence}-{}", decision.digest()))
+                .map_err(public_persistence)?,
         };
         let chunk = self
             .store
@@ -1826,6 +2403,10 @@ impl Owner {
                     .map_err(public_persistence)?,
             )
             .map_err(public_persistence)?;
+        self.record_security_decision(&decision)?;
+        self.persistent
+            .flush()
+            .map_err(|error| PublicFailure::new(ErrorCode::Corruption, error, false))?;
         Ok(OwnerValue::ArtifactRange {
             metadata: public_artifact_metadata(&metadata),
             offset: chunk.offset,
@@ -1836,12 +2417,23 @@ impl Owner {
 
     fn layout(
         &self,
-        _session: &ActorSession,
+        session: &ActorSession,
         workflow: &str,
         revision: &str,
     ) -> Result<LayoutDocument, PublicFailure> {
-        WorkflowId::new(workflow.to_owned()).map_err(|error| invalid(&error.to_string()))?;
-        parse_revision_id(revision)?;
+        let workflow_id =
+            WorkflowId::new(workflow.to_owned()).map_err(|error| invalid(&error.to_string()))?;
+        let revision_id = parse_revision_id(revision)?;
+        let mut resources = RequestedResourceFacts::empty();
+        resources.workflow = Some(workflow_id);
+        resources.revision = Some(revision_id);
+        resources.layout_owner = Some(LayoutOwner::Shared);
+        self.authorize(
+            session,
+            AuthorityOperation::ReadLayout,
+            resources,
+            "read:layout",
+        )?;
         self.persistent
             .document
             .layouts
@@ -1876,6 +2468,41 @@ impl Owner {
         .map_err(public_control)?;
         self.control.execute(&document).map_err(public_control)
     }
+
+    fn record_security_decision(
+        &mut self,
+        decision: &AuthorityDecisionSnapshot,
+    ) -> Result<(), PublicFailure> {
+        let request = decision.request();
+        let operation = serde_json::to_value(request.operation)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .ok_or_else(internal)?;
+        let mut resource_hasher = blake3::Hasher::new();
+        resource_hasher.update(b"milkdrift.audit-resource.v1\0");
+        resource_hasher.update(format!("{:?}", request.resources).as_bytes());
+        let sequence = self.persistent.document.next_audit_sequence.max(1);
+        self.persistent.document.next_audit_sequence = sequence.saturating_add(1);
+        self.persistent.document.audit.push(SecurityDecisionRecord {
+            sequence,
+            evaluated_at_ms: request.evaluated_at.get(),
+            actor: request.actor.as_str().to_owned(),
+            grant_id: request.grant.as_str().to_owned(),
+            grant_revision: request.grant_revision,
+            grant_digest: request.grant_digest.as_str().to_owned(),
+            operation,
+            resource_digest: format!("b3_{}", resource_hasher.finalize()),
+            decision_digest: decision.digest().to_owned(),
+            outcome: snake_debug(&decision.outcome()),
+            reason_codes: decision.reason_codes().iter().map(snake_debug).collect(),
+        });
+        let bound = usize::try_from(self.persistent.command_bound).unwrap_or(usize::MAX);
+        if self.persistent.document.audit.len() > bound {
+            let excess = self.persistent.document.audit.len().saturating_sub(bound);
+            self.persistent.document.audit.drain(..excess);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1895,12 +2522,32 @@ struct ProposalLedgerRef {
     revision: String,
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SecurityDecisionRecord {
+    sequence: u64,
+    evaluated_at_ms: u64,
+    actor: String,
+    grant_id: String,
+    grant_revision: u64,
+    grant_digest: String,
+    operation: String,
+    resource_digest: String,
+    decision_digest: String,
+    outcome: String,
+    reason_codes: Vec<String>,
+}
+
 #[derive(Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct LocalStateDocument {
     schema_version: u32,
     layouts: BTreeMap<String, LayoutDocument>,
     commands: BTreeMap<String, LedgerEntry>,
+    #[serde(default)]
+    next_audit_sequence: u64,
+    #[serde(default)]
+    audit: Vec<SecurityDecisionRecord>,
 }
 
 struct LocalState {
@@ -1925,6 +2572,9 @@ impl LocalState {
                 }
                 if document.commands.len() > usize::try_from(command_bound).unwrap_or(usize::MAX) {
                     return Err("control command ledger exceeds configured bound".to_owned());
+                }
+                if document.audit.len() > usize::try_from(command_bound).unwrap_or(usize::MAX) {
+                    return Err("security decision audit exceeds configured bound".to_owned());
                 }
                 for layout in document.layouts.values() {
                     layout
@@ -1984,6 +2634,7 @@ impl AuthorityContextResolver for StaticContexts {
             .cloned()
             .ok_or_else(|| ControlError::AuthorizationDenied {
                 reasons: vec![milkdrift_authority::DecisionReasonCode::GrantNotFound],
+                decision_digest: None,
             })
     }
 }
@@ -2385,6 +3036,16 @@ fn command_fingerprint(
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"milkdrift.daemon-command.v1\0");
     hasher.update(session.actor.as_str().as_bytes());
+    hasher.update(session.grant.identity().as_str().as_bytes());
+    hasher.update(&session.grant.revision().to_le_bytes());
+    hasher.update(
+        session
+            .grant
+            .digest()
+            .map_err(|_| internal())?
+            .as_str()
+            .as_bytes(),
+    );
     hasher.update(&bytes);
     Ok(format!("b3_{}", hasher.finalize()))
 }
@@ -2698,6 +3359,27 @@ fn bounded(value: &str) -> String {
     value[..end].to_owned()
 }
 
+fn cursor_binding(
+    session: &ActorSession,
+    exact_resource_and_filter: &str,
+) -> Result<CursorBinding, PublicFailure> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"milkdrift.continuation-scope.v1\0");
+    hasher.update(exact_resource_and_filter.as_bytes());
+    Ok(CursorBinding {
+        actor: session.actor.as_str().to_owned(),
+        grant_id: session.grant.identity().as_str().to_owned(),
+        grant_revision: session.grant.revision(),
+        grant_digest: session
+            .grant
+            .digest()
+            .map_err(|_| internal())?
+            .as_str()
+            .to_owned(),
+        scope_digest: format!("b3_{}", hasher.finalize()),
+    })
+}
+
 fn invalid(message: &str) -> PublicFailure {
     PublicFailure::new(ErrorCode::InvalidInput, bounded(message), false)
 }
@@ -2712,6 +3394,23 @@ fn unauthorized() -> PublicFailure {
         "authority denied the operation",
         false,
     )
+}
+
+fn unauthorized_decision(decision: &AuthorityDecisionSnapshot) -> PublicFailure {
+    let mut failure = unauthorized();
+    failure
+        .details
+        .insert("decision_digest".to_owned(), decision.digest().to_owned());
+    failure.details.insert(
+        "reason_codes".to_owned(),
+        decision
+            .reason_codes()
+            .iter()
+            .map(snake_debug)
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    failure
 }
 
 fn not_found() -> PublicFailure {
@@ -2746,7 +3445,24 @@ fn public_protocol(error: milkdrift_control_protocol::ProtocolError) -> PublicFa
 
 fn public_control(error: ControlError) -> PublicFailure {
     match error {
-        ControlError::AuthorizationDenied { .. } => unauthorized(),
+        ControlError::AuthorizationDenied {
+            reasons,
+            decision_digest,
+        } => {
+            let mut failure = unauthorized();
+            if let Some(digest) = decision_digest {
+                failure.details.insert("decision_digest".to_owned(), digest);
+            }
+            failure.details.insert(
+                "reason_codes".to_owned(),
+                reasons
+                    .iter()
+                    .map(snake_debug)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+            failure
+        }
         ControlError::StaleRunSequence { expected, actual } => {
             let mut failure = conflict("run sequence guard is stale");
             failure

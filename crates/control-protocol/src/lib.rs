@@ -193,12 +193,49 @@ pub struct ResponseEnvelope<T> {
 #[serde(transparent)]
 pub struct Cursor(String);
 
+/// Server-verified authority and filter identity for one continuation family.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CursorBinding {
+    /// Authenticated actor identity.
+    pub actor: String,
+    /// Exact immutable grant lineage.
+    pub grant_id: String,
+    /// Exact immutable grant revision.
+    pub grant_revision: u64,
+    /// Digest of the exact immutable grant document.
+    pub grant_digest: String,
+    /// Domain-separated digest of every resource and query filter.
+    pub scope_digest: String,
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct CursorWire {
     version: u8,
     feed: String,
     position: CursorPosition,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct BoundCursorWire {
+    version: u8,
+    feed: String,
+    position: CursorPosition,
+    binding: CursorBinding,
+    decision_digest: String,
+    mac: String,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct CursorMacDocument<'a> {
+    version: u8,
+    feed: &'a str,
+    position: &'a CursorPosition,
+    binding: &'a CursorBinding,
+    decision_digest: &'a str,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -214,6 +251,131 @@ enum CursorPosition {
 }
 
 impl Cursor {
+    /// Creates an authenticated sequence continuation bound to one actor, exact grant, and scope.
+    pub fn new_bound(
+        feed: &str,
+        position: u64,
+        binding: CursorBinding,
+        decision_digest: &str,
+        key: &[u8; 32],
+    ) -> Result<Self, ProtocolError> {
+        Self::new_bound_position(
+            feed,
+            CursorPosition::Sequence(position),
+            binding,
+            decision_digest,
+            key,
+        )
+    }
+
+    /// Creates an authenticated key continuation bound to one actor, exact grant, and scope.
+    pub fn new_bound_key(
+        feed: &str,
+        position: &str,
+        binding: CursorBinding,
+        decision_digest: &str,
+        key: &[u8; 32],
+    ) -> Result<Self, ProtocolError> {
+        validate_identifier("cursor.key", position, 256)?;
+        Self::new_bound_position(
+            feed,
+            CursorPosition::Key(position.to_owned()),
+            binding,
+            decision_digest,
+            key,
+        )
+    }
+
+    fn new_bound_position(
+        feed: &str,
+        position: CursorPosition,
+        binding: CursorBinding,
+        decision_digest: &str,
+        key: &[u8; 32],
+    ) -> Result<Self, ProtocolError> {
+        validate_identifier("feed", feed, 256)?;
+        validate_cursor_binding(&binding)?;
+        validate_identifier("cursor.decision_digest", decision_digest, 256)?;
+        let mac = cursor_mac(feed, &position, &binding, decision_digest, key)?;
+        let bytes = serde_json::to_vec(&BoundCursorWire {
+            version: 2,
+            feed: feed.to_owned(),
+            position,
+            binding,
+            decision_digest: decision_digest.to_owned(),
+            mac,
+        })
+        .map_err(|error| ProtocolError::InvalidCursor(error.to_string()))?;
+        Ok(Self(URL_SAFE_NO_PAD.encode(bytes)))
+    }
+
+    /// Verifies an authenticated sequence continuation against the current request boundary.
+    pub fn position_for_bound(
+        &self,
+        expected_feed: &str,
+        expected_binding: &CursorBinding,
+        key: &[u8; 32],
+    ) -> Result<u64, ProtocolError> {
+        match self.bound_position(expected_feed, expected_binding, key)? {
+            CursorPosition::Sequence(position) => Ok(position),
+            CursorPosition::Key(_) => Err(ProtocolError::InvalidCursor(
+                "cursor is not a sequence continuation".to_owned(),
+            )),
+        }
+    }
+
+    /// Verifies an authenticated key continuation against the current request boundary.
+    pub fn key_for_bound(
+        &self,
+        expected_feed: &str,
+        expected_binding: &CursorBinding,
+        key: &[u8; 32],
+    ) -> Result<String, ProtocolError> {
+        match self.bound_position(expected_feed, expected_binding, key)? {
+            CursorPosition::Key(position) => Ok(position),
+            CursorPosition::Sequence(_) => Err(ProtocolError::InvalidCursor(
+                "cursor is not an identity continuation".to_owned(),
+            )),
+        }
+    }
+
+    fn bound_position(
+        &self,
+        expected_feed: &str,
+        expected_binding: &CursorBinding,
+        key: &[u8; 32],
+    ) -> Result<CursorPosition, ProtocolError> {
+        let bytes = URL_SAFE_NO_PAD
+            .decode(&self.0)
+            .map_err(|_| ProtocolError::InvalidCursor("malformed base64url".to_owned()))?;
+        if bytes.len() > 2_048 {
+            return Err(ProtocolError::InvalidCursor(
+                "cursor is too large".to_owned(),
+            ));
+        }
+        let value = parse_json_without_duplicates(&bytes)
+            .map_err(|_| ProtocolError::InvalidCursor("malformed payload".to_owned()))?;
+        let wire: BoundCursorWire = serde_json::from_value(value)
+            .map_err(|_| ProtocolError::InvalidCursor("malformed fields".to_owned()))?;
+        let expected_mac = cursor_mac(
+            &wire.feed,
+            &wire.position,
+            &wire.binding,
+            &wire.decision_digest,
+            key,
+        )?;
+        if wire.version != 2
+            || wire.feed != expected_feed
+            || &wire.binding != expected_binding
+            || wire.mac != expected_mac
+        {
+            return Err(ProtocolError::InvalidCursor(
+                "cursor authority, scope, feed, or integrity check failed".to_owned(),
+            ));
+        }
+        Ok(wire.position)
+    }
+
     /// Creates a cursor bound to one exact feed and monotonic position.
     pub fn new(feed: &str, position: u64) -> Result<Self, ProtocolError> {
         validate_identifier("feed", feed, 256)?;
@@ -231,21 +393,41 @@ impl Cursor {
         let bytes = URL_SAFE_NO_PAD
             .decode(&self.0)
             .map_err(|_| ProtocolError::InvalidCursor("malformed base64url".to_owned()))?;
-        if bytes.len() > 512 {
+        if bytes.len() > 2_048 {
             return Err(ProtocolError::InvalidCursor(
                 "cursor is too large".to_owned(),
             ));
         }
         let value = parse_json_without_duplicates(&bytes)
             .map_err(|_| ProtocolError::InvalidCursor("malformed payload".to_owned()))?;
-        let wire: CursorWire = serde_json::from_value(value)
-            .map_err(|_| ProtocolError::InvalidCursor("malformed fields".to_owned()))?;
-        if wire.version != 1 || wire.feed != expected_feed {
-            return Err(ProtocolError::InvalidCursor(
-                "cursor belongs to another feed or version".to_owned(),
-            ));
-        }
-        match wire.position {
+        let position = match value.get("version").and_then(serde_json::Value::as_u64) {
+            Some(1) => {
+                let wire: CursorWire = serde_json::from_value(value)
+                    .map_err(|_| ProtocolError::InvalidCursor("malformed fields".to_owned()))?;
+                if wire.feed != expected_feed {
+                    return Err(ProtocolError::InvalidCursor(
+                        "cursor belongs to another feed or version".to_owned(),
+                    ));
+                }
+                wire.position
+            }
+            Some(2) => {
+                let wire: BoundCursorWire = serde_json::from_value(value)
+                    .map_err(|_| ProtocolError::InvalidCursor("malformed fields".to_owned()))?;
+                if wire.feed != expected_feed {
+                    return Err(ProtocolError::InvalidCursor(
+                        "cursor belongs to another feed or version".to_owned(),
+                    ));
+                }
+                wire.position
+            }
+            _ => {
+                return Err(ProtocolError::InvalidCursor(
+                    "cursor belongs to another feed or version".to_owned(),
+                ));
+            }
+        };
+        match position {
             CursorPosition::Sequence(position) => Ok(position),
             CursorPosition::Key(_) => Err(ProtocolError::InvalidCursor(
                 "cursor is not a sequence continuation".to_owned(),
@@ -271,21 +453,41 @@ impl Cursor {
         let bytes = URL_SAFE_NO_PAD
             .decode(&self.0)
             .map_err(|_| ProtocolError::InvalidCursor("malformed base64url".to_owned()))?;
-        if bytes.len() > 512 {
+        if bytes.len() > 2_048 {
             return Err(ProtocolError::InvalidCursor(
                 "cursor is too large".to_owned(),
             ));
         }
         let value = parse_json_without_duplicates(&bytes)
             .map_err(|_| ProtocolError::InvalidCursor("malformed payload".to_owned()))?;
-        let wire: CursorWire = serde_json::from_value(value)
-            .map_err(|_| ProtocolError::InvalidCursor("malformed fields".to_owned()))?;
-        if wire.version != 1 || wire.feed != expected_feed {
-            return Err(ProtocolError::InvalidCursor(
-                "cursor belongs to another feed or version".to_owned(),
-            ));
-        }
-        match wire.position {
+        let position = match value.get("version").and_then(serde_json::Value::as_u64) {
+            Some(1) => {
+                let wire: CursorWire = serde_json::from_value(value)
+                    .map_err(|_| ProtocolError::InvalidCursor("malformed fields".to_owned()))?;
+                if wire.feed != expected_feed {
+                    return Err(ProtocolError::InvalidCursor(
+                        "cursor belongs to another feed or version".to_owned(),
+                    ));
+                }
+                wire.position
+            }
+            Some(2) => {
+                let wire: BoundCursorWire = serde_json::from_value(value)
+                    .map_err(|_| ProtocolError::InvalidCursor("malformed fields".to_owned()))?;
+                if wire.feed != expected_feed {
+                    return Err(ProtocolError::InvalidCursor(
+                        "cursor belongs to another feed or version".to_owned(),
+                    ));
+                }
+                wire.position
+            }
+            _ => {
+                return Err(ProtocolError::InvalidCursor(
+                    "cursor belongs to another feed or version".to_owned(),
+                ));
+            }
+        };
+        match position {
             CursorPosition::Key(key) => Ok(key),
             CursorPosition::Sequence(_) => Err(ProtocolError::InvalidCursor(
                 "cursor is not an identity continuation".to_owned(),
@@ -298,6 +500,37 @@ impl Cursor {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+fn validate_cursor_binding(binding: &CursorBinding) -> Result<(), ProtocolError> {
+    validate_identifier("cursor.actor", &binding.actor, 256)?;
+    validate_identifier("cursor.grant_id", &binding.grant_id, 256)?;
+    validate_identifier("cursor.grant_digest", &binding.grant_digest, 256)?;
+    validate_identifier("cursor.scope_digest", &binding.scope_digest, 256)?;
+    if binding.grant_revision == 0 {
+        return Err(ProtocolError::InvalidCursor(
+            "cursor grant revision must be nonzero".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn cursor_mac(
+    feed: &str,
+    position: &CursorPosition,
+    binding: &CursorBinding,
+    decision_digest: &str,
+    key: &[u8; 32],
+) -> Result<String, ProtocolError> {
+    let bytes = serde_json::to_vec(&CursorMacDocument {
+        version: 2,
+        feed,
+        position,
+        binding,
+        decision_digest,
+    })
+    .map_err(|error| ProtocolError::InvalidCursor(error.to_string()))?;
+    Ok(blake3::keyed_hash(key, &bytes).to_hex().to_string())
 }
 
 /// Explicit bounded page request.
@@ -719,6 +952,18 @@ pub struct CapabilityRead {
     pub generation: u64,
     /// Descriptor digest.
     pub descriptor_digest: String,
+    /// Stable discovery category.
+    pub category: String,
+    /// Exact advertised operation identities.
+    pub operations: Vec<String>,
+    /// Optional provider/model profile identity.
+    pub provider_profile: Option<String>,
+    /// Stable execution-locality label.
+    pub locality: String,
+    /// Authenticated remote peer identity, when peer-owned.
+    pub peer_id: Option<String>,
+    /// Complete advertised trust-zone labels.
+    pub trust_zones: Vec<String>,
     /// Whether this generation is selected for new work.
     pub current: bool,
     /// Whether new work is refused.
@@ -1065,6 +1310,50 @@ mod tests {
         assert!(
             Cursor("not-base64!".to_owned())
                 .position_for("run:alpha")
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bound_cursor_rejects_other_actor_grant_scope_and_rotated_credential()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let binding = CursorBinding {
+            actor: "human:alice".to_owned(),
+            grant_id: "grant:alice".to_owned(),
+            grant_revision: 3,
+            grant_digest: format!("b3_{}", "1".repeat(64)),
+            scope_digest: format!("b3_{}", "2".repeat(64)),
+        };
+        let key = [7_u8; 32];
+        let cursor = Cursor::new_bound(
+            "runs:active:workflow-a",
+            42,
+            binding.clone(),
+            &format!("b3_{}", "3".repeat(64)),
+            &key,
+        )?;
+        assert_eq!(
+            cursor.position_for_bound("runs:active:workflow-a", &binding, &key)?,
+            42
+        );
+        let mut other_actor = binding.clone();
+        other_actor.actor = "ai:alice".to_owned();
+        assert!(
+            cursor
+                .position_for_bound("runs:active:workflow-a", &other_actor, &key)
+                .is_err()
+        );
+        let mut narrower_scope = binding.clone();
+        narrower_scope.scope_digest = format!("b3_{}", "4".repeat(64));
+        assert!(
+            cursor
+                .position_for_bound("runs:active:workflow-a", &narrower_scope, &key)
+                .is_err()
+        );
+        assert!(
+            cursor
+                .position_for_bound("runs:active:workflow-a", &binding, &[8_u8; 32])
                 .is_err()
         );
         Ok(())

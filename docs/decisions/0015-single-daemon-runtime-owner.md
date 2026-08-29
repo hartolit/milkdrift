@@ -25,7 +25,7 @@ overload response when that queue is full. External adapter entry stays on fixed
 blocking notification interval drives scheduler/effect maintenance without busy polling.
 
 The daemon is the single shutdown owner. It closes mutation admission and readiness first, applies
-the configured drain/cancel/retain effect policy with a deadline, flushes the schema-1 sidecar,
+the configured drain/cancel/retain effect policy with a deadline, flushes the versioned sidecar,
 joins the owner thread, and then drops storage. Crash recovery uses the existing durable runtime
 semantics; no indispensable execution truth lives in HTTP tasks or stream buffers.
 

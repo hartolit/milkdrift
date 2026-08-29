@@ -62,6 +62,8 @@ pub enum ControlError {
     AuthorizationDenied {
         /// Stable evaluator reason codes.
         reasons: Vec<DecisionReasonCode>,
+        /// Exact deterministic decision digest when one evaluator request produced the denial.
+        decision_digest: Option<String>,
     },
     /// Policy requires a separate approval command before application.
     #[error("proposal risk {risk:?} requires an explicit approval")]

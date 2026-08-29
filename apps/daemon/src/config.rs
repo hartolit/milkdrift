@@ -6,8 +6,9 @@ use std::{
 };
 
 use milkdrift_authority::{
-    AuthorityBudget, BoundaryTimeMillis, CapabilityAuthorityScope, NetworkScope, ResourceScope,
-    WorkflowRunScope,
+    ArtifactAuthorityScope, AuthorityBudget, BoundaryTimeMillis, CapabilityAuthorityScope,
+    DaemonAuthorityScope, LayoutAuthorityScope, NetworkScope, PeerAuthorityScope, ResourceScope,
+    WorkflowRunScope, WorkspaceAuthorityScope,
 };
 use milkdrift_capability::SideEffectClass;
 use milkdrift_control_protocol::MAX_DOCUMENT_BYTES;
@@ -16,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Current daemon configuration document version.
-pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 2;
+pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 3;
 
 /// Configuration load or deterministic validation failure.
 #[derive(Debug, Error)]
@@ -28,7 +29,7 @@ pub enum ConfigError {
     #[error("invalid daemon configuration JSON: {0}")]
     Json(String),
     /// The schema version is unsupported.
-    #[error("unsupported daemon configuration version {0}; supported version is 2")]
+    #[error("unsupported daemon configuration version {0}; supported version is 3")]
     UnsupportedVersion(u32),
     /// A host-safety invariant is invalid.
     #[error("invalid daemon configuration: {0}")]
@@ -65,65 +66,6 @@ pub enum AuthorityPresetConfig {
     Controller,
 }
 
-impl AuthorityPresetConfig {
-    /// Stable operation labels disclosed by the authority read model.
-    #[must_use]
-    pub fn operations(self) -> Vec<String> {
-        let values: &[&str] = match self {
-            Self::Observer => &["inspect"],
-            Self::Advisor => &["inspect", "propose"],
-            Self::Supervisor => &[
-                "inspect",
-                "propose",
-                "approve",
-                "apply",
-                "pause",
-                "resume",
-                "cancel",
-                "retry",
-                "deliver_signal",
-            ],
-            Self::Controller => &[
-                "inspect",
-                "propose",
-                "approve",
-                "apply",
-                "create_run",
-                "start_run",
-                "invoke_capability",
-                "pause",
-                "resume",
-                "cancel",
-                "retry",
-                "deliver_signal",
-                "terminate",
-                "artifact_read",
-                "layout_write",
-                "blueprint_import",
-            ],
-        };
-        values.iter().map(|value| (*value).to_owned()).collect()
-    }
-
-    /// Whether this preset may import immutable semantic revisions.
-    #[must_use]
-    pub const fn may_import_blueprint(self) -> bool {
-        matches!(self, Self::Controller)
-    }
-
-    /// Whether this preset may update presentation-only layout state.
-    #[must_use]
-    pub const fn may_write_layout(self) -> bool {
-        matches!(self, Self::Supervisor | Self::Controller)
-    }
-
-    /// Whether this preset supplies explicit protected-artifact read authority.
-    #[must_use]
-    pub const fn may_read_protected_artifact(self) -> bool {
-        matches!(self, Self::Supervisor | Self::Controller)
-    }
-}
-
 /// One credential-reference to immutable actor/grant mapping.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -146,7 +88,7 @@ pub struct ActorBindingConfig {
     pub enabled: bool,
 }
 
-/// Explicit schema-v2 grant facts; preset names choose operations only.
+/// Explicit schema-v3 grant facts; preset names choose operations only.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActorGrantConfig {
@@ -174,6 +116,11 @@ impl ActorGrantConfig {
                 filesystem: vec![milkdrift_authority::FilesystemScope::dangerous_all_access_root()],
                 network: NetworkScope::empty(),
                 secrets: BTreeSet::new(),
+                artifacts: ArtifactAuthorityScope::dangerous_all(),
+                layouts: LayoutAuthorityScope::dangerous_all(),
+                peers: PeerAuthorityScope::dangerous_all(),
+                daemon: DaemonAuthorityScope::dangerous_all(),
+                workspace: WorkspaceAuthorityScope::dangerous_all_in_run(),
             },
             budget: AuthorityBudget {
                 cost_minor: Some(u64::MAX),
@@ -617,6 +564,27 @@ fn validate_actor_authority(authority: &ActorGrantConfig) -> Result<(), ConfigEr
         )
         .map_err(|error| ConfigError::Invalid(error.to_string()))?;
     }
+    ArtifactAuthorityScope::new(
+        authority.resources.artifacts.identities().clone(),
+        authority.resources.artifacts.sensitivities().clone(),
+    )
+    .map_err(|error| ConfigError::Invalid(error.to_string()))?;
+    LayoutAuthorityScope::new(
+        authority.resources.layouts.revisions().clone(),
+        authority.resources.layouts.actors().clone(),
+        authority.resources.layouts.shared(),
+    )
+    .map_err(|error| ConfigError::Invalid(error.to_string()))?;
+    PeerAuthorityScope::new(
+        authority.resources.peers.identities().clone(),
+        authority.resources.peers.allows_any(),
+    )
+    .map_err(|error| ConfigError::Invalid(error.to_string()))?;
+    WorkspaceAuthorityScope::new(
+        authority.resources.workspace.scopes().clone(),
+        authority.resources.workspace.allows_any_in_run(),
+    )
+    .map_err(|error| ConfigError::Invalid(error.to_string()))?;
     if authority.valid_from > authority.valid_until {
         return Err(ConfigError::Invalid(
             "actor authority validity interval is inverted".to_owned(),
@@ -627,10 +595,10 @@ fn validate_actor_authority(authority: &ActorGrantConfig) -> Result<(), ConfigEr
     }
     let capability = &authority.resources.capability;
     let broad_workflow = matches!(authority.resources.workflow_run, WorkflowRunScope::Any);
-    let broad_capability = (capability.identities().is_empty()
-        && capability.categories().is_empty())
-        || capability.operations().is_empty()
-        || capability.maximum_side_effect() == SideEffectClass::Unknown;
+    let broad_capability = !capability.denies_all()
+        && ((capability.identities().is_empty() && capability.categories().is_empty())
+            || capability.operations().is_empty()
+            || capability.maximum_side_effect() == SideEffectClass::Unknown);
     let unbounded_budget = authority.budget.cost_minor.is_none()
         || authority.budget.duration_ms.is_none()
         || authority.budget.invocations.is_none()
@@ -638,9 +606,20 @@ fn validate_actor_authority(authority: &ActorGrantConfig) -> Result<(), ConfigEr
         || authority.budget.units.is_none()
         || authority.budget.concurrency.is_none();
     let effectively_unbounded = authority.valid_until.get() == u64::MAX;
-    if broad_workflow || broad_capability || unbounded_budget || effectively_unbounded {
+    let broad_reads = (authority.resources.artifacts.identities().is_empty()
+        && !authority.resources.artifacts.sensitivities().is_empty())
+        || authority.resources.peers.allows_any()
+        || authority.resources.workspace.allows_any_in_run()
+        || (authority.resources.layouts.shared()
+            && authority.resources.layouts.revisions().is_empty());
+    if broad_workflow
+        || broad_capability
+        || broad_reads
+        || unbounded_budget
+        || effectively_unbounded
+    {
         return Err(ConfigError::Invalid(
-            "broad workflow/capability scope, unknown side effects, omitted ceilings, or infinite validity requires dangerous_allow_broad_authority=true"
+            "broad workflow/capability/read scope, unknown side effects, omitted ceilings, or infinite validity requires dangerous_allow_broad_authority=true"
                 .to_owned(),
         ));
     }
@@ -817,11 +796,11 @@ mod tests {
     use super::*;
 
     fn fixture_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v2.json")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v3.json")
     }
 
     #[test]
-    fn schema_v2_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>>
+    fn schema_v3_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>>
     {
         let validated = DaemonConfig::load(&fixture_path())?;
         let actor = &validated.document.actors[0];
@@ -847,7 +826,7 @@ mod tests {
     fn old_and_future_config_versions_are_rejected_truthfully()
     -> Result<(), Box<dyn std::error::Error>> {
         let source = fs::read(fixture_path())?;
-        for unsupported in [1_u32, 3_u32] {
+        for unsupported in [1_u32, 2_u32, 4_u32] {
             let directory = tempfile::tempdir()?;
             let mut value: serde_json::Value = serde_json::from_slice(&source)?;
             value["schema_version"] = serde_json::json!(unsupported);
@@ -886,7 +865,7 @@ mod tests {
         let secret = directory.path().join("token");
         fs::write(&secret, "secret")?;
         let config = DaemonConfig {
-            schema_version: 2,
+            schema_version: 3,
             data_root: directory.path().join("data"),
             bind: "0.0.0.0:9734".parse()?,
             secret_sources: BTreeMap::from([(

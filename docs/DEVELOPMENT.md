@@ -21,6 +21,7 @@ Focused daemon/control-plane checks are:
 cargo test -p milkdrift-control-protocol --all-features -- --nocapture
 cargo test -p milkdrift-control-client --all-features -- --nocapture
 cargo test -p milkdrift-daemon --test control_plane daemon_auth_startup_readiness_and_authority -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane scoped_read_matrix_and_continuations_fail_closed -- --exact --nocapture
 cargo test -p milkdrift-daemon --test control_plane daemon_command_idempotency_restart_and_stale_conflict -- --exact --nocapture
 cargo test -p milkdrift-daemon --test control_plane daemon_bounded_overload_returns_stable_error -- --exact --nocapture
 cargo test -p milkdrift-daemon --test control_plane daemon_stream_reconnect_auth_rotation_and_shutdown -- --exact --nocapture
@@ -40,7 +41,7 @@ cargo test -p milkdrift-daemon --all-features --test two_daemon_peer -- --nocapt
 
 They use temporary stores, ephemeral loopback listeners, local bearer files, and a fake capability adapter. They require no internet, VPN, provider credential, or manual peer service. Coverage includes incompatible major negotiation, hostile bounds/duplicates, HTTPS/loopback safety, authenticated identity cross-checking and live revocation, authority-filtered catalogs, request-rate/concurrency/terminal-reserved observation bounds, generation-safe remote registration, durable acceptance replay/conflict, acceptance response loss, observation-append failure, contiguous resume cursors, restart uncertainty after adapter-entry intent, terminal cancellation evidence, verified/deduplicated/interrupted/mismatched artifact transfer, artifact-publication recovery, path/content/quota rejection, auth-realm separation, request-time peer credential rotation, disconnect, and graceful two-daemon shutdown.
 
-These tests use temporary redb/artifact roots and ephemeral loopback listeners only. They cover fail-closed configuration/authentication, server-owned actor mapping, ordinary authority denial, queue overload, durable command replay across restart, stale guards, exact-cursor SSE resume, credential rotation, startup corruption, and ordered shutdown. They require no internet or real credential. Run the daemon manually with `cargo run -p milkdrift-daemon -- --config PATH`; run the client with `cargo run -p milkdrift-cli -- [GLOBAL OPTIONS] COMMAND`. Keep bearer values in a private file or a referenced environment variable, never a command argument.
+These tests use temporary redb/artifact roots and ephemeral loopback listeners only. They cover fail-closed configuration/authentication, server-owned actor mapping, workflow/run/revision/proposal/layout/artifact/capability/provider/health scope, protected metadata/content audit, cross-actor cursor rejection, grant-narrowing page and stream failure, queue overload, durable command replay across restart, stale guards, credential rotation, startup corruption, and ordered shutdown. They require no internet or real credential. Run the daemon manually with `cargo run -p milkdrift-daemon -- --config PATH`; run the client with `cargo run -p milkdrift-cli -- [GLOBAL OPTIONS] COMMAND`. Keep bearer values in a private file or a referenced environment variable, never a command argument.
 
 Focused Pass-03C checks are:
 

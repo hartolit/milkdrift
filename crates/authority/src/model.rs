@@ -5,13 +5,13 @@ use milkdrift_capability::{
     BoundedJson, CapabilityCategory, CapabilityId, IdempotencyBehavior, Locality, OperationId,
     ProviderProfileRef, SideEffectClass, TrustZone,
 };
-use milkdrift_workspace::RunId;
+use milkdrift_workspace::{ArtifactId, ArtifactSensitivity, RunId, ScopeId};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     ActorRef, AuthorityError, DecisionId, GrantDigest, GrantId, NetworkProfileRef, PeerId,
     PolicyId, SecretRef,
-    document::{AUTHORITY_GRANT_SCHEMA_VERSION_V1, canonical_json},
+    document::{AUTHORITY_GRANT_SCHEMA_VERSION_V2, canonical_json},
 };
 
 const MAX_SCOPE_ITEMS: usize = 128;
@@ -71,6 +71,84 @@ pub enum AuthorityOperation {
     InvokeCapability,
     /// Cancel an exact capability invocation.
     CancelCapability,
+    /// Validate an immutable blueprint document without storing it.
+    ValidateBlueprint,
+    /// Import an immutable blueprint/workflow revision.
+    ImportBlueprint,
+    /// Inspect one revision, its lineage, or a semantic diff.
+    InspectRevision,
+    /// Inspect one run summary.
+    InspectRun,
+    /// Inspect one run's append-only external timeline.
+    InspectTimeline,
+    /// Inspect one node execution in a run.
+    InspectNodeExecution,
+    /// Inspect one exact execution attempt and its provenance.
+    InspectAttempt,
+    /// Inspect reconciliation, proposal, or approval state.
+    InspectProposal,
+    /// List authority-filtered capability descriptor generations.
+    ListCapabilities,
+    /// Inspect mutable capability health, load, and admission limits.
+    InspectCapabilityHealth,
+    /// Inspect provider/model profile identity.
+    InspectProviderProfile,
+    /// Administer capability or provider registrations and configuration.
+    AdministerCapabilities,
+    /// Read protected artifact metadata, including sensitivity and provenance.
+    ReadArtifactMetadata,
+    /// Read an explicit verified artifact byte range.
+    ReadArtifactContent,
+    /// Publish or import artifact content.
+    PublishArtifact,
+    /// Export artifact content across an external boundary.
+    ExportArtifact,
+    /// Delete artifact content or metadata.
+    DeleteArtifact,
+    /// Change artifact retention policy.
+    AdministerArtifactRetention,
+    /// Read a scoped workspace value.
+    ReadWorkspaceValue,
+    /// Read presentation-only layout state.
+    ReadLayout,
+    /// Create or replace presentation-only layout state.
+    WriteLayout,
+    /// Delete presentation-only layout state.
+    DeleteLayout,
+    /// Inspect an exact configured peer relationship or filtered catalog.
+    InspectPeer,
+    /// Negotiate an authenticated peer session.
+    NegotiatePeerSession,
+    /// Inspect one peer-owned execution and its observations.
+    InspectPeerExecution,
+    /// Invoke one exact capability through an authenticated peer relationship.
+    InvokePeerCapability,
+    /// Cancel one exact peer-owned capability execution.
+    CancelPeerCapability,
+    /// Upload verified artifact content across a peer relationship.
+    PeerArtifactUpload,
+    /// Download verified artifact content across a peer relationship.
+    PeerArtifactDownload,
+    /// Administer peer trust, configuration, connection, or grants.
+    AdministerPeer,
+    /// Negotiate the local control protocol version.
+    NegotiateControlProtocol,
+    /// Read coarse liveness/readiness without detailed diagnostics.
+    ReadReadiness,
+    /// Read detailed daemon health and load diagnostics.
+    InspectDaemonHealth,
+    /// Inspect the authenticated actor's exact immutable grant identity.
+    InspectOwnAuthority,
+    /// Inspect bounded security audit/diagnostic views.
+    InspectAudit,
+    /// Inspect daemon configuration without credential values.
+    InspectConfiguration,
+    /// Reload validated daemon configuration.
+    ReloadConfiguration,
+    /// Begin an orderly daemon drain.
+    DrainDaemon,
+    /// Shut down the daemon owner.
+    ShutdownDaemon,
 }
 
 /// Workflow/run portion of an immutable grant.
@@ -234,6 +312,8 @@ impl NetworkScope {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CapabilityAuthorityScope {
+    #[serde(default)]
+    deny_all: bool,
     identities: BTreeSet<CapabilityId>,
     categories: BTreeSet<CapabilityCategory>,
     operations: BTreeSet<OperationId>,
@@ -274,6 +354,7 @@ impl CapabilityAuthorityScope {
             });
         }
         Ok(Self {
+            deny_all: false,
             identities,
             categories,
             operations,
@@ -289,6 +370,7 @@ impl CapabilityAuthorityScope {
     #[must_use]
     pub fn any(maximum_side_effect: SideEffectClass) -> Self {
         Self {
+            deny_all: false,
             identities: BTreeSet::new(),
             categories: BTreeSet::new(),
             operations: BTreeSet::new(),
@@ -298,6 +380,28 @@ impl CapabilityAuthorityScope {
             peers: BTreeSet::new(),
             maximum_side_effect,
         }
+    }
+
+    /// Explicitly denies every capability identity, descriptor, profile, and operation.
+    #[must_use]
+    pub fn none(maximum_side_effect: SideEffectClass) -> Self {
+        Self {
+            deny_all: true,
+            identities: BTreeSet::new(),
+            categories: BTreeSet::new(),
+            operations: BTreeSet::new(),
+            provider_profiles: BTreeSet::new(),
+            trust_zones: BTreeSet::new(),
+            localities: BTreeSet::new(),
+            peers: BTreeSet::new(),
+            maximum_side_effect,
+        }
+    }
+
+    /// Whether this scope is the explicit default-deny capability scope.
+    #[must_use]
+    pub const fn denies_all(&self) -> bool {
+        self.deny_all
     }
 
     /// Narrows remote selection to exact authenticated peer identities.
@@ -412,6 +516,298 @@ fn within(requested: Option<u64>, ceiling: Option<u64>) -> bool {
     }
 }
 
+/// Explicit artifact metadata/content scope. An empty sensitivity set grants no artifacts.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactAuthorityScope {
+    identities: BTreeSet<ArtifactId>,
+    sensitivities: BTreeSet<ArtifactSensitivity>,
+}
+
+impl ArtifactAuthorityScope {
+    /// Constructs a bounded artifact scope. Empty identities mean any identity, but at least one
+    /// sensitivity must be named for the scope to grant access.
+    pub fn new(
+        identities: BTreeSet<ArtifactId>,
+        sensitivities: BTreeSet<ArtifactSensitivity>,
+    ) -> Result<Self, AuthorityError> {
+        if identities.len() > MAX_SCOPE_ITEMS || sensitivities.len() > 3 {
+            return Err(AuthorityError::Bounds {
+                location: "grant.artifacts",
+                reason: "artifact identity or sensitivity scope exceeded".to_owned(),
+            });
+        }
+        Ok(Self {
+            identities,
+            sensitivities,
+        })
+    }
+
+    /// Grants no artifact metadata or content.
+    #[must_use]
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// Deliberately broad artifact scope for acknowledged administration.
+    #[must_use]
+    pub fn dangerous_all() -> Self {
+        Self {
+            identities: BTreeSet::new(),
+            sensitivities: BTreeSet::from([
+                ArtifactSensitivity::Public,
+                ArtifactSensitivity::Internal,
+                ArtifactSensitivity::Restricted,
+            ]),
+        }
+    }
+
+    /// Exact artifact identities; empty means any identity within the sensitivity scope.
+    #[must_use]
+    pub const fn identities(&self) -> &BTreeSet<ArtifactId> {
+        &self.identities
+    }
+
+    /// Explicitly visible sensitivity classes; empty denies all artifacts.
+    #[must_use]
+    pub const fn sensitivities(&self) -> &BTreeSet<ArtifactSensitivity> {
+        &self.sensitivities
+    }
+
+    pub(crate) fn matches(&self, artifact: &ArtifactId, sensitivity: ArtifactSensitivity) -> bool {
+        self.sensitivities.contains(&sensitivity)
+            && (self.identities.is_empty() || self.identities.contains(artifact))
+    }
+}
+
+/// Presentation-layout visibility within the separately evaluated workflow scope.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LayoutAuthorityScope {
+    revisions: BTreeSet<RevisionId>,
+    actors: BTreeSet<ActorRef>,
+    shared: bool,
+}
+
+impl LayoutAuthorityScope {
+    /// Constructs a bounded layout scope. Empty revisions mean any revision in the already
+    /// constrained workflow scope; empty actors grant no actor-owned layout.
+    pub fn new(
+        revisions: BTreeSet<RevisionId>,
+        actors: BTreeSet<ActorRef>,
+        shared: bool,
+    ) -> Result<Self, AuthorityError> {
+        if revisions.len() > MAX_SCOPE_ITEMS || actors.len() > MAX_SCOPE_ITEMS {
+            return Err(AuthorityError::Bounds {
+                location: "grant.layouts",
+                reason: "layout revision or actor scope exceeded".to_owned(),
+            });
+        }
+        Ok(Self {
+            revisions,
+            actors,
+            shared,
+        })
+    }
+
+    /// Grants no layout reads or writes.
+    #[must_use]
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// Deliberately broad shared and actor-owned layout scope.
+    #[must_use]
+    pub fn dangerous_all() -> Self {
+        Self {
+            revisions: BTreeSet::new(),
+            actors: BTreeSet::new(),
+            shared: true,
+        }
+    }
+
+    /// Explicit revision allowlist; empty means any revision in workflow scope.
+    #[must_use]
+    pub const fn revisions(&self) -> &BTreeSet<RevisionId> {
+        &self.revisions
+    }
+
+    /// Explicit actor-owned layout allowlist.
+    #[must_use]
+    pub const fn actors(&self) -> &BTreeSet<ActorRef> {
+        &self.actors
+    }
+
+    /// Whether shared layout state is visible.
+    #[must_use]
+    pub const fn shared(&self) -> bool {
+        self.shared
+    }
+
+    pub(crate) fn matches(&self, revision: &RevisionId, owner: &LayoutOwner) -> bool {
+        let revision_matches = self.revisions.is_empty() || self.revisions.contains(revision);
+        revision_matches
+            && match owner {
+                LayoutOwner::Shared => self.shared,
+                LayoutOwner::Actor(actor) => !self.actors.is_empty() && self.actors.contains(actor),
+            }
+    }
+}
+
+/// Exact owner class of one layout request.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(
+    rename_all = "snake_case",
+    tag = "type",
+    content = "actor",
+    deny_unknown_fields
+)]
+pub enum LayoutOwner {
+    /// Shared workflow/revision layout.
+    Shared,
+    /// Actor-owned private layout.
+    Actor(ActorRef),
+}
+
+/// Explicit configured-peer scope. Empty identities with `allow_any=false` denies all peers.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeerAuthorityScope {
+    identities: BTreeSet<PeerId>,
+    allow_any: bool,
+}
+
+impl PeerAuthorityScope {
+    /// Constructs an exact or explicitly broad peer scope.
+    pub fn new(identities: BTreeSet<PeerId>, allow_any: bool) -> Result<Self, AuthorityError> {
+        if identities.len() > MAX_SCOPE_ITEMS || (allow_any && !identities.is_empty()) {
+            return Err(AuthorityError::InvalidContract(
+                "peer scope must be either an allowlist or an explicit wildcard".to_owned(),
+            ));
+        }
+        Ok(Self {
+            identities,
+            allow_any,
+        })
+    }
+
+    /// Grants no peer relationship access.
+    #[must_use]
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// Deliberately broad peer scope.
+    #[must_use]
+    pub fn dangerous_all() -> Self {
+        Self {
+            identities: BTreeSet::new(),
+            allow_any: true,
+        }
+    }
+
+    /// Exact peer identities.
+    #[must_use]
+    pub const fn identities(&self) -> &BTreeSet<PeerId> {
+        &self.identities
+    }
+
+    /// Whether every configured peer is explicitly included.
+    #[must_use]
+    pub const fn allows_any(&self) -> bool {
+        self.allow_any
+    }
+
+    pub(crate) fn matches(&self, peer: &PeerId) -> bool {
+        self.allow_any || self.identities.contains(peer)
+    }
+}
+
+/// Daemon-local information scopes kept separate from authentication and workflow access.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DaemonAuthorityScope {
+    /// Coarse liveness/readiness.
+    pub readiness: bool,
+    /// Queue, worker, lifecycle, and failure detail.
+    pub detailed_health: bool,
+    /// The caller's own grant identity and operation vocabulary.
+    pub own_authority: bool,
+    /// Redacted effective configuration.
+    pub configuration: bool,
+    /// Bounded security audit/diagnostic records.
+    pub audit: bool,
+}
+
+impl DaemonAuthorityScope {
+    /// Deliberately broad daemon-local read scope.
+    #[must_use]
+    pub const fn dangerous_all() -> Self {
+        Self {
+            readiness: true,
+            detailed_health: true,
+            own_authority: true,
+            configuration: true,
+            audit: true,
+        }
+    }
+}
+
+/// Workspace scope allowlist for future externally projected values.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceAuthorityScope {
+    scopes: BTreeSet<ScopeId>,
+    allow_any_in_run: bool,
+}
+
+impl WorkspaceAuthorityScope {
+    /// Constructs an exact or explicitly run-wide workspace scope.
+    pub fn new(scopes: BTreeSet<ScopeId>, allow_any_in_run: bool) -> Result<Self, AuthorityError> {
+        if scopes.len() > MAX_SCOPE_ITEMS || (allow_any_in_run && !scopes.is_empty()) {
+            return Err(AuthorityError::InvalidContract(
+                "workspace scope must be either an allowlist or an explicit run wildcard"
+                    .to_owned(),
+            ));
+        }
+        Ok(Self {
+            scopes,
+            allow_any_in_run,
+        })
+    }
+
+    /// Grants no workspace values.
+    #[must_use]
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// Deliberately grants all scopes within an otherwise authorized run.
+    #[must_use]
+    pub fn dangerous_all_in_run() -> Self {
+        Self {
+            scopes: BTreeSet::new(),
+            allow_any_in_run: true,
+        }
+    }
+
+    /// Exact workspace scope identities.
+    #[must_use]
+    pub const fn scopes(&self) -> &BTreeSet<ScopeId> {
+        &self.scopes
+    }
+
+    /// Whether all scopes in an authorized run are included.
+    #[must_use]
+    pub const fn allows_any_in_run(&self) -> bool {
+        self.allow_any_in_run
+    }
+
+    pub(crate) fn matches(&self, scope: &ScopeId) -> bool {
+        self.allow_any_in_run || self.scopes.contains(scope)
+    }
+}
+
 /// All typed resources to which a grant applies.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -426,6 +822,16 @@ pub struct ResourceScope {
     pub network: NetworkScope,
     /// Opaque secret references that may be resolved.
     pub secrets: BTreeSet<SecretRef>,
+    /// Artifact identity and sensitivity scope. Empty sensitivity scope denies metadata and bytes.
+    pub artifacts: ArtifactAuthorityScope,
+    /// Presentation-layout revision/owner scope.
+    pub layouts: LayoutAuthorityScope,
+    /// Configured peer relationship scope.
+    pub peers: PeerAuthorityScope,
+    /// Daemon-local read/diagnostic scope.
+    pub daemon: DaemonAuthorityScope,
+    /// Workspace-value scope.
+    pub workspace: WorkspaceAuthorityScope,
 }
 
 /// Immutable, exact revision of one authority grant.
@@ -539,7 +945,7 @@ impl AuthorityGrant {
     pub fn digest(&self) -> Result<GrantDigest, AuthorityError> {
         Ok(GrantDigest::for_bytes(&self.to_canonical_json()?))
     }
-    /// Strictly decodes and validates one schema-v1 grant.
+    /// Strictly decodes and validates one schema-v2 grant.
     pub fn from_json(bytes: &[u8]) -> Result<Self, AuthorityError> {
         if bytes.len() > crate::MAX_AUTHORITY_DOCUMENT_BYTES {
             return Err(AuthorityError::Bounds {
@@ -556,11 +962,11 @@ impl AuthorityGrant {
             .ok_or_else(|| {
                 AuthorityError::InvalidContract("grant requires numeric schema_version".to_owned())
             })?;
-        if version != AUTHORITY_GRANT_SCHEMA_VERSION_V1 {
+        if version != AUTHORITY_GRANT_SCHEMA_VERSION_V2 {
             return Err(AuthorityError::UnsupportedVersion {
                 document: "authority_grant",
                 found: version,
-                supported: AUTHORITY_GRANT_SCHEMA_VERSION_V1,
+                supported: AUTHORITY_GRANT_SCHEMA_VERSION_V2,
             });
         }
         serde_json::from_value(value).map_err(|error| AuthorityError::Json(error.to_string()))
@@ -578,20 +984,25 @@ impl AuthorityGrantBuilder {
     pub fn new(identity: GrantId, revision: u64, actor: ActorRef) -> Self {
         Self {
             grant: AuthorityGrant {
-                schema_version: AUTHORITY_GRANT_SCHEMA_VERSION_V1,
+                schema_version: AUTHORITY_GRANT_SCHEMA_VERSION_V2,
                 identity,
                 revision,
                 actor,
                 operations: BTreeSet::new(),
                 resources: ResourceScope {
                     workflow_run: WorkflowRunScope::Any,
-                    capability: CapabilityAuthorityScope::any(SideEffectClass::None),
+                    capability: CapabilityAuthorityScope::none(SideEffectClass::None),
                     filesystem: Vec::new(),
                     network: NetworkScope {
                         profiles: BTreeSet::new(),
                         destinations: BTreeSet::new(),
                     },
                     secrets: BTreeSet::new(),
+                    artifacts: ArtifactAuthorityScope::none(),
+                    layouts: LayoutAuthorityScope::none(),
+                    peers: PeerAuthorityScope::none(),
+                    daemon: DaemonAuthorityScope::default(),
+                    workspace: WorkspaceAuthorityScope::none(),
                 },
                 budget: AuthorityBudget::default(),
                 valid_from: BoundaryTimeMillis::new(0),
@@ -645,11 +1056,11 @@ impl AuthorityGrantBuilder {
     /// Validates and publishes the immutable grant revision.
     pub fn build(self) -> Result<AuthorityGrant, AuthorityError> {
         let grant = self.grant;
-        if grant.schema_version != AUTHORITY_GRANT_SCHEMA_VERSION_V1 {
+        if grant.schema_version != AUTHORITY_GRANT_SCHEMA_VERSION_V2 {
             return Err(AuthorityError::UnsupportedVersion {
                 document: "authority_grant",
                 found: grant.schema_version,
-                supported: AUTHORITY_GRANT_SCHEMA_VERSION_V1,
+                supported: AUTHORITY_GRANT_SCHEMA_VERSION_V2,
             });
         }
         if grant.revision == 0
@@ -692,6 +1103,23 @@ impl AuthorityGrantBuilder {
         for scope in &grant.resources.filesystem {
             FilesystemScope::new(scope.root.clone(), scope.access.clone())?;
         }
+        ArtifactAuthorityScope::new(
+            grant.resources.artifacts.identities.clone(),
+            grant.resources.artifacts.sensitivities.clone(),
+        )?;
+        LayoutAuthorityScope::new(
+            grant.resources.layouts.revisions.clone(),
+            grant.resources.layouts.actors.clone(),
+            grant.resources.layouts.shared,
+        )?;
+        PeerAuthorityScope::new(
+            grant.resources.peers.identities.clone(),
+            grant.resources.peers.allow_any,
+        )?;
+        WorkspaceAuthorityScope::new(
+            grant.resources.workspace.scopes.clone(),
+            grant.resources.workspace.allow_any_in_run,
+        )?;
         if grant.extensions.keys().any(|key| {
             key.len() > 192
                 || !key
@@ -1057,6 +1485,40 @@ pub struct RequestedResourceFacts {
     pub network_destinations: BTreeSet<String>,
     /// Secret references requested.
     pub secrets: BTreeSet<SecretRef>,
+    /// Exact artifact identity, when artifact metadata or bytes are requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact: Option<ArtifactId>,
+    /// Exact artifact sensitivity obtained from immutable metadata before release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_sensitivity: Option<ArtifactSensitivity>,
+    /// Exact revision governing a revision/layout request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<RevisionId>,
+    /// Shared or actor-owned layout scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_owner: Option<LayoutOwner>,
+    /// Exact workspace scope identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_scope: Option<ScopeId>,
+    /// Whether the request asks for coarse readiness data.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub daemon_readiness: bool,
+    /// Whether the request asks for detailed daemon health/load data.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub daemon_detailed_health: bool,
+    /// Whether the request asks for the caller's own grant details.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub daemon_own_authority: bool,
+    /// Whether the request asks for redacted daemon configuration.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub daemon_configuration: bool,
+    /// Whether the request asks for security audit/diagnostic data.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub daemon_audit: bool,
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl RequestedResourceFacts {
@@ -1080,6 +1542,16 @@ impl RequestedResourceFacts {
             network_profiles: BTreeSet::new(),
             network_destinations: BTreeSet::new(),
             secrets: BTreeSet::new(),
+            artifact: None,
+            artifact_sensitivity: None,
+            revision: None,
+            layout_owner: None,
+            workspace_scope: None,
+            daemon_readiness: false,
+            daemon_detailed_health: false,
+            daemon_own_authority: false,
+            daemon_configuration: false,
+            daemon_audit: false,
         }
     }
 
@@ -1097,6 +1569,13 @@ impl RequestedResourceFacts {
             self.network_profiles.clone(),
             self.network_destinations.clone(),
         )?;
+        if self.artifact.is_some() != self.artifact_sensitivity.is_some()
+            || (self.layout_owner.is_some() && self.revision.is_none())
+        {
+            return Err(AuthorityError::InvalidContract(
+                "artifact sensitivity and layout revision facts must be complete".to_owned(),
+            ));
+        }
         Ok(())
     }
 }
@@ -1187,6 +1666,16 @@ pub enum DecisionReasonCode {
     NetworkMismatch,
     /// Secret reference is outside the allowlist.
     SecretScopeMismatch,
+    /// Artifact identity or sensitivity is outside the grant.
+    ArtifactScopeMismatch,
+    /// Layout revision or owner is outside the grant.
+    LayoutScopeMismatch,
+    /// Configured peer identity is outside the grant.
+    PeerScopeMismatch,
+    /// Daemon health, authority, configuration, or audit detail is outside the grant.
+    DaemonScopeMismatch,
+    /// Workspace scope identity is outside the grant.
+    WorkspaceScopeMismatch,
     /// Numeric ceiling is exceeded or ungranted.
     BudgetExcess,
 }

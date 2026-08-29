@@ -113,18 +113,27 @@ impl AuthorityEvaluator for GrantSetEvaluator {
         if !grant.operations().contains(&request.operation) {
             reasons.push(DecisionReasonCode::OperationMismatch);
         }
-        if !grant.resources().workflow_run.matches(&request.resources) {
+        if operation_uses_workflow_scope(request.operation)
+            && !grant.resources().workflow_run.matches(&request.resources)
+        {
             reasons.push(DecisionReasonCode::WorkflowRunMismatch);
         }
 
         let capability = &grant.resources().capability;
-        if request
-            .resources
-            .capability
-            .as_ref()
-            .is_some_and(|identity| {
-                !capability.identities().is_empty() && !capability.identities().contains(identity)
-            })
+        if (capability.denies_all()
+            && (request.resources.capability.is_some()
+                || request.resources.category.is_some()
+                || request.resources.capability_operation.is_some()
+                || request.resources.provider_profile.is_some()
+                || request.resources.capability_envelope.is_some()))
+            || request
+                .resources
+                .capability
+                .as_ref()
+                .is_some_and(|identity| {
+                    !capability.identities().is_empty()
+                        && !capability.identities().contains(identity)
+                })
             || request.resources.category.as_ref().is_some_and(|category| {
                 !capability.categories().is_empty() && !capability.categories().contains(category)
             })
@@ -201,6 +210,55 @@ impl AuthorityEvaluator for GrantSetEvaluator {
         {
             reasons.push(DecisionReasonCode::SecretScopeMismatch);
         }
+        if let (Some(artifact), Some(sensitivity)) = (
+            request.resources.artifact.as_ref(),
+            request.resources.artifact_sensitivity,
+        ) && !grant.resources().artifacts.matches(artifact, sensitivity)
+        {
+            reasons.push(DecisionReasonCode::ArtifactScopeMismatch);
+        }
+        if let (Some(revision), Some(owner)) = (
+            request.resources.revision.as_ref(),
+            request.resources.layout_owner.as_ref(),
+        ) && !grant.resources().layouts.matches(revision, owner)
+        {
+            reasons.push(DecisionReasonCode::LayoutScopeMismatch);
+        }
+        if matches!(
+            request.operation,
+            crate::AuthorityOperation::InspectPeer
+                | crate::AuthorityOperation::NegotiatePeerSession
+                | crate::AuthorityOperation::InspectPeerExecution
+                | crate::AuthorityOperation::InvokePeerCapability
+                | crate::AuthorityOperation::CancelPeerCapability
+                | crate::AuthorityOperation::PeerArtifactUpload
+                | crate::AuthorityOperation::PeerArtifactDownload
+                | crate::AuthorityOperation::AdministerPeer
+        ) && request
+            .resources
+            .peer
+            .as_ref()
+            .is_none_or(|peer| !grant.resources().peers.matches(peer))
+        {
+            reasons.push(DecisionReasonCode::PeerScopeMismatch);
+        }
+        let daemon = grant.resources().daemon;
+        if (request.resources.daemon_readiness && !daemon.readiness)
+            || (request.resources.daemon_detailed_health && !daemon.detailed_health)
+            || (request.resources.daemon_own_authority && !daemon.own_authority)
+            || (request.resources.daemon_configuration && !daemon.configuration)
+            || (request.resources.daemon_audit && !daemon.audit)
+        {
+            reasons.push(DecisionReasonCode::DaemonScopeMismatch);
+        }
+        if request
+            .resources
+            .workspace_scope
+            .as_ref()
+            .is_some_and(|scope| !grant.resources().workspace.matches(scope))
+        {
+            reasons.push(DecisionReasonCode::WorkspaceScopeMismatch);
+        }
         if !request.budget.fits_within(grant.budget()) {
             reasons.push(DecisionReasonCode::BudgetExcess);
         }
@@ -218,18 +276,53 @@ impl AuthorityEvaluator for GrantSetEvaluator {
     }
 }
 
+fn operation_uses_workflow_scope(operation: crate::AuthorityOperation) -> bool {
+    !matches!(
+        operation,
+        crate::AuthorityOperation::ListCapabilities
+            | crate::AuthorityOperation::InspectCapabilityHealth
+            | crate::AuthorityOperation::InspectProviderProfile
+            | crate::AuthorityOperation::AdministerCapabilities
+            | crate::AuthorityOperation::ReadArtifactMetadata
+            | crate::AuthorityOperation::ReadArtifactContent
+            | crate::AuthorityOperation::PublishArtifact
+            | crate::AuthorityOperation::ExportArtifact
+            | crate::AuthorityOperation::DeleteArtifact
+            | crate::AuthorityOperation::AdministerArtifactRetention
+            | crate::AuthorityOperation::InspectPeer
+            | crate::AuthorityOperation::NegotiatePeerSession
+            | crate::AuthorityOperation::InspectPeerExecution
+            | crate::AuthorityOperation::InvokePeerCapability
+            | crate::AuthorityOperation::CancelPeerCapability
+            | crate::AuthorityOperation::PeerArtifactUpload
+            | crate::AuthorityOperation::PeerArtifactDownload
+            | crate::AuthorityOperation::AdministerPeer
+            | crate::AuthorityOperation::NegotiateControlProtocol
+            | crate::AuthorityOperation::ReadReadiness
+            | crate::AuthorityOperation::InspectDaemonHealth
+            | crate::AuthorityOperation::InspectOwnAuthority
+            | crate::AuthorityOperation::InspectAudit
+            | crate::AuthorityOperation::InspectConfiguration
+            | crate::AuthorityOperation::ReloadConfiguration
+            | crate::AuthorityOperation::DrainDaemon
+            | crate::AuthorityOperation::ShutdownDaemon
+    )
+}
+
 fn scope_within(
     requested: &crate::CapabilityAuthorityScope,
     allowed: &crate::CapabilityAuthorityScope,
 ) -> bool {
-    set_within(requested.identities(), allowed.identities())
-        && set_within(requested.categories(), allowed.categories())
-        && set_within(requested.operations(), allowed.operations())
-        && set_within(requested.provider_profiles(), allowed.provider_profiles())
-        && set_within(requested.trust_zones(), allowed.trust_zones())
-        && set_within(requested.localities(), allowed.localities())
-        && set_within(requested.peers(), allowed.peers())
-        && requested.maximum_side_effect() <= allowed.maximum_side_effect()
+    requested.denies_all()
+        || (!allowed.denies_all()
+            && set_within(requested.identities(), allowed.identities())
+            && set_within(requested.categories(), allowed.categories())
+            && set_within(requested.operations(), allowed.operations())
+            && set_within(requested.provider_profiles(), allowed.provider_profiles())
+            && set_within(requested.trust_zones(), allowed.trust_zones())
+            && set_within(requested.localities(), allowed.localities())
+            && set_within(requested.peers(), allowed.peers())
+            && requested.maximum_side_effect() <= allowed.maximum_side_effect())
 }
 
 fn set_within<T: Ord>(

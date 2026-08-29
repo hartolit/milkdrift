@@ -6,18 +6,20 @@ use std::{
 };
 
 use milkdrift_authority::{
-    AccessMode, ActorRef, AuthorityBudget, AuthorityEvaluator, AuthorityExecutionProvenance,
-    AuthorityGrant, AuthorityGrantBuilder, AuthorityOperation, AuthorityRequest,
-    BoundaryTimeMillis, CapabilityAuthorityScope, DecisionId, DecisionReasonCode, FilesystemScope,
-    GrantId, GrantSetEvaluator, NetworkProfileRef, NetworkScope, PolicyId, RequestedResourceFacts,
-    ResourceScope, SecretRef, SensitiveSecret, WorkflowRunScope,
+    AccessMode, ActorRef, ArtifactAuthorityScope, AuthorityBudget, AuthorityEvaluator,
+    AuthorityExecutionProvenance, AuthorityGrant, AuthorityGrantBuilder, AuthorityOperation,
+    AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope, DaemonAuthorityScope,
+    DecisionId, DecisionReasonCode, FilesystemScope, GrantId, GrantSetEvaluator,
+    LayoutAuthorityScope, NetworkProfileRef, NetworkScope, PeerAuthorityScope, PolicyId,
+    RequestedResourceFacts, ResourceScope, SecretRef, SensitiveSecret, WorkflowRunScope,
+    WorkspaceAuthorityScope,
 };
 use milkdrift_blueprint::{AuthorRef, WorkflowId};
 use milkdrift_capability::{
     CapabilityCategory, CapabilityId, Locality, OperationId, ProviderProfileRef, SideEffectClass,
     TrustZone,
 };
-use milkdrift_workspace::RunId;
+use milkdrift_workspace::{ArtifactId, ArtifactSensitivity, RunId};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -52,6 +54,11 @@ fn grant() -> TestResult<AuthorityGrant> {
             set("example.com:443".to_owned()),
         )?,
         secrets: set(SecretRef::new("secret:provider-api")?),
+        artifacts: ArtifactAuthorityScope::none(),
+        layouts: LayoutAuthorityScope::none(),
+        peers: PeerAuthorityScope::none(),
+        daemon: DaemonAuthorityScope::default(),
+        workspace: WorkspaceAuthorityScope::none(),
     })
     .budget(AuthorityBudget {
         cost_minor: Some(100),
@@ -96,6 +103,16 @@ fn request() -> TestResult<AuthorityRequest> {
             network_profiles: set(NetworkProfileRef::new("network-default")?),
             network_destinations: set("example.com:443".to_owned()),
             secrets: set(SecretRef::new("secret:provider-api")?),
+            artifact: None,
+            artifact_sensitivity: None,
+            revision: None,
+            layout_owner: None,
+            workspace_scope: None,
+            daemon_readiness: false,
+            daemon_detailed_health: false,
+            daemon_own_authority: false,
+            daemon_configuration: false,
+            daemon_audit: false,
         },
         budget: AuthorityBudget {
             cost_minor: Some(10),
@@ -141,7 +158,7 @@ fn grant_schema_has_a_canonical_golden_fixture_and_hostile_bounds() -> TestResul
     .build()?;
     assert_eq!(
         grant.to_canonical_json()?,
-        String::from_utf8(include_bytes!("fixtures/authority-grant-v1.json").to_vec())?
+        String::from_utf8(include_bytes!("fixtures/authority-grant-v2.json").to_vec())?
             .trim()
             .as_bytes()
     );
@@ -149,6 +166,9 @@ fn grant_schema_has_a_canonical_golden_fixture_and_hostile_bounds() -> TestResul
         AuthorityGrant::from_json(&grant.to_canonical_json()?)?,
         grant
     );
+    let mut old: serde_json::Value = serde_json::from_slice(&grant.to_canonical_json()?)?;
+    old["schema_version"] = serde_json::json!(1);
+    assert!(AuthorityGrant::from_json(&serde_json::to_vec(&old)?).is_err());
     assert!(AuthorityGrant::from_json(br#"{"schema_version":1,"schema_version":1}"#).is_err());
     assert!(ActorRef::new("x".repeat(193)).is_err());
     assert!(FilesystemScope::new("/workspace/../secret", set(AccessMode::Read)).is_err());
@@ -272,5 +292,149 @@ fn decision_digest_is_deterministic_and_secret_formatting_is_redacted() -> TestR
     let secret = SensitiveSecret::new(b"resolved-secret-value".to_vec());
     assert!(!format!("{secret:?} {secret}").contains("resolved-secret-value"));
     assert_eq!(secret.expose(|bytes| bytes.len()), 21);
+    Ok(())
+}
+
+#[test]
+fn artifact_metadata_and_content_require_exact_identity_and_sensitivity_scope() -> TestResult {
+    let actor = ActorRef::new("human:artifact-reader")?;
+    let artifact = ArtifactId::new("artifact-allowed")?;
+    let grant =
+        AuthorityGrantBuilder::new(GrantId::new("grant:artifact-reader")?, 1, actor.clone())
+            .operations(BTreeSet::from([
+                AuthorityOperation::ReadArtifactMetadata,
+                AuthorityOperation::ReadArtifactContent,
+            ]))
+            .resources(ResourceScope {
+                workflow_run: WorkflowRunScope::Any,
+                capability: CapabilityAuthorityScope::none(SideEffectClass::None),
+                filesystem: Vec::new(),
+                network: NetworkScope::empty(),
+                secrets: BTreeSet::new(),
+                artifacts: ArtifactAuthorityScope::new(
+                    set(artifact.clone()),
+                    set(ArtifactSensitivity::Restricted),
+                )?,
+                layouts: LayoutAuthorityScope::none(),
+                peers: PeerAuthorityScope::none(),
+                daemon: DaemonAuthorityScope::default(),
+                workspace: WorkspaceAuthorityScope::none(),
+            })
+            .build()?;
+    let evaluator = GrantSetEvaluator::new(
+        PolicyId::new("policy:artifact")?,
+        1,
+        [grant.clone()],
+        BTreeMap::new(),
+    )?;
+    let mut resources = RequestedResourceFacts::empty();
+    resources.artifact = Some(artifact);
+    resources.artifact_sensitivity = Some(ArtifactSensitivity::Restricted);
+    let base = AuthorityRequest {
+        decision: DecisionId::new("decision:artifact-allowed")?,
+        actor,
+        grant: grant.identity().clone(),
+        grant_revision: grant.revision(),
+        grant_digest: grant.digest()?,
+        revocation_generation: 0,
+        operation: AuthorityOperation::ReadArtifactMetadata,
+        resources,
+        budget: AuthorityBudget::default(),
+        evaluated_at: BoundaryTimeMillis::new(1),
+        provenance: AuthorityExecutionProvenance::default(),
+    };
+    assert!(evaluator.evaluate(&base)?.is_allowed());
+
+    let mut content = base.clone();
+    content.decision = DecisionId::new("decision:artifact-content")?;
+    content.operation = AuthorityOperation::ReadArtifactContent;
+    assert!(evaluator.evaluate(&content)?.is_allowed());
+
+    let mut wrong_sensitivity = base.clone();
+    wrong_sensitivity.decision = DecisionId::new("decision:artifact-wrong-sensitivity")?;
+    wrong_sensitivity.resources.artifact_sensitivity = Some(ArtifactSensitivity::Internal);
+    assert!(
+        evaluator
+            .evaluate(&wrong_sensitivity)?
+            .reason_codes()
+            .contains(&DecisionReasonCode::ArtifactScopeMismatch)
+    );
+    let mut wrong_identity = base;
+    wrong_identity.decision = DecisionId::new("decision:artifact-wrong-identity")?;
+    wrong_identity.resources.artifact = Some(ArtifactId::new("artifact-hidden")?);
+    assert!(
+        evaluator
+            .evaluate(&wrong_identity)?
+            .reason_codes()
+            .contains(&DecisionReasonCode::ArtifactScopeMismatch)
+    );
+    Ok(())
+}
+
+#[test]
+fn human_and_ai_actors_receive_identical_results_for_equivalent_grants() -> TestResult {
+    let workflow = WorkflowId::new("workflow-shared")?;
+    let actors = [
+        ActorRef::new("human:shared-controller")?,
+        ActorRef::new("ai:shared-controller")?,
+    ];
+    let grants = actors
+        .iter()
+        .enumerate()
+        .map(|(index, actor)| {
+            AuthorityGrantBuilder::new(
+                GrantId::new(format!("grant:shared-{index}"))?,
+                1,
+                actor.clone(),
+            )
+            .operations(set(AuthorityOperation::InspectRun))
+            .resources(ResourceScope {
+                workflow_run: WorkflowRunScope::Workflow {
+                    workflow: workflow.clone(),
+                },
+                capability: CapabilityAuthorityScope::none(SideEffectClass::None),
+                filesystem: Vec::new(),
+                network: NetworkScope::empty(),
+                secrets: BTreeSet::new(),
+                artifacts: ArtifactAuthorityScope::none(),
+                layouts: LayoutAuthorityScope::none(),
+                peers: PeerAuthorityScope::none(),
+                daemon: DaemonAuthorityScope::default(),
+                workspace: WorkspaceAuthorityScope::none(),
+            })
+            .build()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let evaluator = GrantSetEvaluator::new(
+        PolicyId::new("policy:shared-human-ai")?,
+        1,
+        grants.clone(),
+        BTreeMap::new(),
+    )?;
+    let mut outcomes = Vec::new();
+    for (index, grant) in grants.iter().enumerate() {
+        let mut resources = RequestedResourceFacts::empty();
+        resources.workflow = Some(workflow.clone());
+        resources.run = Some(RunId::new("run-shared")?);
+        let decision = evaluator.evaluate(&AuthorityRequest {
+            decision: DecisionId::new(format!("decision:shared-{index}"))?,
+            actor: actors[index].clone(),
+            grant: grant.identity().clone(),
+            grant_revision: grant.revision(),
+            grant_digest: grant.digest()?,
+            revocation_generation: 0,
+            operation: AuthorityOperation::InspectRun,
+            resources,
+            budget: AuthorityBudget::default(),
+            evaluated_at: BoundaryTimeMillis::new(1),
+            provenance: AuthorityExecutionProvenance::default(),
+        })?;
+        outcomes.push((decision.outcome(), decision.reason_codes().to_vec()));
+    }
+    assert_eq!(outcomes[0], outcomes[1]);
+    assert!(matches!(
+        outcomes[0].0,
+        milkdrift_authority::DecisionOutcome::Allow
+    ));
     Ok(())
 }

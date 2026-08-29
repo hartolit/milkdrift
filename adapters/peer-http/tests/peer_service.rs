@@ -295,11 +295,11 @@ fn durable_acceptance_replays_and_conflicts_across_reopen() -> TestResult {
     let accepted_request = request(&peer, &PeerId::new("peer-b")?, descriptor()?, 1, None, None)?;
     let execution = PeerExecutionId::new("execution-1")?;
     assert!(matches!(
-        store.accept(&peer, &accepted_request, &execution, 10, 20)?,
+        store.accept(&peer, &accepted_request, None, &execution, 10, 20)?,
         StoreAcceptance::New(_)
     ));
     assert!(matches!(
-        store.accept(&peer, &accepted_request, &execution, 11, 21)?,
+        store.accept(&peer, &accepted_request, None, &execution, 11, 21)?,
         StoreAcceptance::Replay(_)
     ));
     drop(store);
@@ -318,7 +318,7 @@ fn durable_acceptance_replays_and_conflicts_across_reopen() -> TestResult {
         Some(now().saturating_add(90_000)),
     )?;
     assert!(matches!(
-        reopened.accept(&peer, &different, &execution, 12, 22)?,
+        reopened.accept(&peer, &different, None, &execution, 12, 22)?,
         StoreAcceptance::Conflict(_)
     ));
     Ok(())
@@ -355,13 +355,17 @@ fn lost_acceptance_response_keeps_one_durable_execution() -> TestResult {
         None,
     )?;
     let execution = PeerExecutionId::new("execution-one")?;
-    assert!(store.accept(&peer_a, &request, &execution, 10, 20).is_err());
+    assert!(
+        store
+            .accept(&peer_a, &request, None, &execution, 10, 20)
+            .is_err()
+    );
     let known = store
         .by_request(&peer_a, &request.request_id)?
         .ok_or("acceptance was not durable")?;
     assert_eq!(known.execution, execution);
     assert!(matches!(
-        store.accept(&peer_a, &request, &execution, 11, 21)?,
+        store.accept(&peer_a, &request, None, &execution, 11, 21)?,
         StoreAcceptance::Replay(_)
     ));
     Ok(())
@@ -394,7 +398,7 @@ fn failed_observation_append_never_exposes_a_sequence_gap() -> TestResult {
     let peer_b = PeerId::new("peer-b")?;
     let request = request(&peer_a, &peer_b, descriptor()?, 1, None, None)?;
     let execution = PeerExecutionId::new("execution-observation-fault")?;
-    store.accept(&peer_a, &request, &execution, 10, 20)?;
+    store.accept(&peer_a, &request, None, &execution, 10, 20)?;
     let event = InvocationEvent::new(
         request.request.invocation().clone(),
         1,
@@ -455,7 +459,7 @@ fn observation_quota_reserves_the_final_sequence_for_terminal_evidence() -> Test
         },
     )?;
     let execution = PeerExecutionId::new("execution-observation-limit")?;
-    store.accept(&peer_a, &request, &execution, 10, 20)?;
+    store.accept(&peer_a, &request, None, &execution, 10, 20)?;
     let progress = |sequence| -> TestResult<milkdrift_peer_protocol::PeerObservation> {
         Ok(milkdrift_peer_protocol::PeerObservation {
             execution: execution.clone(),
@@ -524,6 +528,7 @@ fn restart_after_entry_intent_records_uncertainty_without_reexecution() -> TestR
     store.accept(
         &peer_a,
         &request,
+        None,
         &execution,
         now(),
         now().saturating_add(30_000),
@@ -565,6 +570,9 @@ fn authenticated_identity_filters_catalog_and_executes_once() -> TestResult {
     let peer_b = PeerId::new("peer-b")?;
     let expiry = now().saturating_add(60_000);
     let relationship = relationship(peer_a.clone(), expiry)?;
+    let store = Arc::new(FilePeerExecutionStore::open(
+        root.path().join("executions"),
+    )?);
     let service = PeerService::new(
         PeerServerConfig {
             local_peer: peer_b.clone(),
@@ -579,9 +587,7 @@ fn authenticated_identity_filters_catalog_and_executes_once() -> TestResult {
             relationships: vec![relationship],
         },
         host,
-        Arc::new(FilePeerExecutionStore::open(
-            root.path().join("executions"),
-        )?),
+        store.clone(),
         Arc::new(SystemPeerClock),
     )?;
     assert_eq!(service.authenticate_bearer(b"peer-secret")?, peer_a);
@@ -608,6 +614,7 @@ fn authenticated_identity_filters_catalog_and_executes_once() -> TestResult {
         Some(catalog.digest.clone()),
         None,
     )?;
+    let request_id = invocation.request_id.clone();
     let execution = match service.invoke(&peer_a, invocation.clone())? {
         InvocationAcceptance::Accepted {
             execution,
@@ -633,6 +640,15 @@ fn authenticated_identity_filters_catalog_and_executes_once() -> TestResult {
     let resumed = service.observations(&peer_a, &execution, 1, 16)?;
     assert_eq!(resumed.observations.len(), 1);
     assert_eq!(resumed.observations[0].sequence, 2);
+    let stored = store
+        .by_request(&peer_a, &request_id)?
+        .ok_or("accepted peer execution was not durable")?;
+    assert!(
+        stored
+            .authority
+            .as_ref()
+            .is_some_and(|value| value.is_allowed())
+    );
     let cancellation = service.cancel(
         &peer_a,
         &PeerCancellationRequest {
@@ -763,6 +779,7 @@ fn concurrency_quota_rejects_before_second_acceptance() -> TestResult {
     store.accept(
         &peer_a,
         &first,
+        None,
         &PeerExecutionId::new("execution-overload-one")?,
         now(),
         now().saturating_add(30_000),

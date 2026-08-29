@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     convert::Infallible,
     future::Future,
     sync::{
@@ -22,9 +22,9 @@ use axum::{
     routing::{get, post},
 };
 use futures_util::Stream;
-use milkdrift_authority::PeerId;
+use milkdrift_authority::{AuthorityOperation, PeerId};
 use milkdrift_control_protocol::{
-    AuthorityRead, CapabilityRead, Command, CommandRequest, Cursor, ErrorCode, ErrorEnvelope,
+    CapabilityRead, Command, CommandRequest, Cursor, CursorBinding, ErrorCode, ErrorEnvelope,
     Observation, ObservationEnvelope, PageRequest, ProtocolVersion, ResponseEnvelope,
     VersionRequest, VersionResponse, decode_json,
 };
@@ -36,18 +36,61 @@ use tracing::{info, warn};
 use crate::{
     DaemonHost, HostError,
     auth::ActorSession,
-    host::{OwnerOperation, OwnerValue, PublicFailure},
+    host::{OwnerOperation, OwnerValue, PublicFailure, StreamAuthority},
 };
 
 const MAX_ARTIFACT_HTTP_RANGE: u32 = 1_048_576;
 const STREAM_PAGE_ITEMS: u32 = 128;
 const CAPABILITY_FEED_ITEMS: usize = 256;
 
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+enum RouteAuthorityMapping {
+    Exact(AuthorityOperation),
+    CommandDerived,
+    QueryDerived,
+    StreamDerived,
+}
+
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+enum RouteResourceMapping {
+    Daemon,
+    WorkflowRevision,
+    Run,
+    Capability,
+    Peer,
+    Artifact,
+    Layout,
+}
+
+#[allow(dead_code)]
+struct AuthorizedRouteDeclaration {
+    path: &'static str,
+    authority: RouteAuthorityMapping,
+    resource: RouteResourceMapping,
+}
+
+macro_rules! authorized_routes {
+    ($router:expr; $(
+        $path:literal => $method:expr, $authority:expr, $resource:expr;
+    )+) => {{
+        $(
+            let _declaration = AuthorizedRouteDeclaration {
+                path: $path,
+                authority: $authority,
+                resource: $resource,
+            };
+        )+
+        $router$(.route($path, $method))+
+    }};
+}
+
 #[derive(Clone)]
 struct AppState {
     host: DaemonHost,
     request_sequence: Arc<AtomicU64>,
-    capability_feed: Arc<tokio::sync::Mutex<CapabilityFeed>>,
+    capability_feeds: Arc<tokio::sync::Mutex<BTreeMap<String, CapabilityFeed>>>,
 }
 
 #[derive(Default)]
@@ -108,41 +151,39 @@ pub fn router(host: DaemonHost) -> Router {
     let state = AppState {
         host,
         request_sequence: Arc::new(AtomicU64::new(1)),
-        capability_feed: Arc::new(tokio::sync::Mutex::new(CapabilityFeed {
-            next_position: 1,
-            ..CapabilityFeed::default()
-        })),
+        capability_feeds: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
     };
-    let router = Router::new()
-        .route("/v1/version", post(version))
-        .route("/v1/health", get(health))
-        .route("/v1/readiness", get(readiness))
-        .route("/v1/commands", post(command))
-        .route("/v1/revisions", get(revisions))
-        .route("/v1/revisions/{revision}", get(revision))
-        .route("/v1/revisions/{from}/diff/{to}", get(revision_diff))
-        .route("/v1/runs", get(runs))
-        .route("/v1/runs/{run}", get(run))
-        .route("/v1/runs/{run}/nodes/{execution}", get(node))
-        .route("/v1/runs/{run}/attempts/{attempt}", get(attempt))
-        .route("/v1/runs/{run}/timeline", get(timeline))
-        .route("/v1/runs/{run}/stream", get(run_stream))
-        .route("/v1/runs/{run}/proposals", get(proposals))
-        .route("/v1/runs/{run}/proposals/{proposal}", get(proposal))
-        .route("/v1/capabilities", get(capabilities))
-        .route("/v1/peers", get(peers))
-        .route("/v1/peers/{peer}", get(peer))
-        .route("/v1/peers/{peer}/connect", post(peer_connect))
-        .route("/v1/peers/{peer}/reload", post(peer_connect))
-        .route("/v1/peers/{peer}/disconnect", post(peer_disconnect))
-        .route("/v1/peers/{peer}/drain", post(peer_disconnect))
-        .route("/v1/peers/{peer}/revoke", post(peer_revoke))
-        .route("/v1/authority", get(authority))
-        .route("/v1/artifacts/{artifact}", get(artifact_metadata))
-        .route("/v1/artifacts/{artifact}/content", get(artifact_content))
-        .route("/v1/layouts/{workflow}/{revision}", get(layout))
-        .route("/v1/stream/health", get(health_stream))
-        .route("/v1/stream/capabilities", get(capability_stream))
+    let router = authorized_routes! { Router::new();
+        "/v1/version" => post(version), RouteAuthorityMapping::Exact(AuthorityOperation::NegotiateControlProtocol), RouteResourceMapping::Daemon;
+        "/v1/health" => get(health), RouteAuthorityMapping::Exact(AuthorityOperation::InspectDaemonHealth), RouteResourceMapping::Daemon;
+        "/v1/readiness" => get(readiness), RouteAuthorityMapping::Exact(AuthorityOperation::ReadReadiness), RouteResourceMapping::Daemon;
+        "/v1/commands" => post(command), RouteAuthorityMapping::CommandDerived, RouteResourceMapping::Run;
+        "/v1/revisions" => get(revisions), RouteAuthorityMapping::Exact(AuthorityOperation::InspectRevision), RouteResourceMapping::WorkflowRevision;
+        "/v1/revisions/{revision}" => get(revision), RouteAuthorityMapping::Exact(AuthorityOperation::InspectRevision), RouteResourceMapping::WorkflowRevision;
+        "/v1/revisions/{from}/diff/{to}" => get(revision_diff), RouteAuthorityMapping::Exact(AuthorityOperation::InspectRevision), RouteResourceMapping::WorkflowRevision;
+        "/v1/runs" => get(runs), RouteAuthorityMapping::Exact(AuthorityOperation::InspectRun), RouteResourceMapping::Run;
+        "/v1/runs/{run}" => get(run), RouteAuthorityMapping::Exact(AuthorityOperation::InspectRun), RouteResourceMapping::Run;
+        "/v1/runs/{run}/nodes/{execution}" => get(node), RouteAuthorityMapping::Exact(AuthorityOperation::InspectNodeExecution), RouteResourceMapping::Run;
+        "/v1/runs/{run}/attempts/{attempt}" => get(attempt), RouteAuthorityMapping::Exact(AuthorityOperation::InspectAttempt), RouteResourceMapping::Run;
+        "/v1/runs/{run}/timeline" => get(timeline), RouteAuthorityMapping::Exact(AuthorityOperation::InspectTimeline), RouteResourceMapping::Run;
+        "/v1/runs/{run}/stream" => get(run_stream), RouteAuthorityMapping::StreamDerived, RouteResourceMapping::Run;
+        "/v1/runs/{run}/proposals" => get(proposals), RouteAuthorityMapping::Exact(AuthorityOperation::InspectProposal), RouteResourceMapping::Run;
+        "/v1/runs/{run}/proposals/{proposal}" => get(proposal), RouteAuthorityMapping::Exact(AuthorityOperation::InspectProposal), RouteResourceMapping::Run;
+        "/v1/capabilities" => get(capabilities), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Capability;
+        "/v1/peers" => get(peers), RouteAuthorityMapping::Exact(AuthorityOperation::InspectPeer), RouteResourceMapping::Peer;
+        "/v1/peers/{peer}" => get(peer), RouteAuthorityMapping::Exact(AuthorityOperation::InspectPeer), RouteResourceMapping::Peer;
+        "/v1/peers/{peer}/connect" => post(peer_connect), RouteAuthorityMapping::Exact(AuthorityOperation::AdministerPeer), RouteResourceMapping::Peer;
+        "/v1/peers/{peer}/reload" => post(peer_connect), RouteAuthorityMapping::Exact(AuthorityOperation::AdministerPeer), RouteResourceMapping::Peer;
+        "/v1/peers/{peer}/disconnect" => post(peer_disconnect), RouteAuthorityMapping::Exact(AuthorityOperation::AdministerPeer), RouteResourceMapping::Peer;
+        "/v1/peers/{peer}/drain" => post(peer_disconnect), RouteAuthorityMapping::Exact(AuthorityOperation::AdministerPeer), RouteResourceMapping::Peer;
+        "/v1/peers/{peer}/revoke" => post(peer_revoke), RouteAuthorityMapping::Exact(AuthorityOperation::AdministerPeer), RouteResourceMapping::Peer;
+        "/v1/authority" => get(authority), RouteAuthorityMapping::Exact(AuthorityOperation::InspectOwnAuthority), RouteResourceMapping::Daemon;
+        "/v1/artifacts/{artifact}" => get(artifact_metadata), RouteAuthorityMapping::Exact(AuthorityOperation::ReadArtifactMetadata), RouteResourceMapping::Artifact;
+        "/v1/artifacts/{artifact}/content" => get(artifact_content), RouteAuthorityMapping::Exact(AuthorityOperation::ReadArtifactContent), RouteResourceMapping::Artifact;
+        "/v1/layouts/{workflow}/{revision}" => get(layout), RouteAuthorityMapping::Exact(AuthorityOperation::ReadLayout), RouteResourceMapping::Layout;
+        "/v1/stream/health" => get(health_stream), RouteAuthorityMapping::Exact(AuthorityOperation::InspectDaemonHealth), RouteResourceMapping::Daemon;
+        "/v1/stream/capabilities" => get(capability_stream), RouteAuthorityMapping::StreamDerived, RouteResourceMapping::Capability;
+    }
         .layer(DefaultBodyLimit::max(
             milkdrift_control_protocol::MAX_DOCUMENT_BYTES,
         ))
@@ -160,8 +201,24 @@ pub fn router(host: DaemonHost) -> Router {
 }
 
 async fn peers(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
-    let (request_id, _session) = authenticate(&state, &headers)?;
-    success(request_id, state.host.peers())
+    let (request_id, session) = authenticate(&state, &headers)?;
+    let result = state
+        .host
+        .request(OwnerOperation::Peers { session }, false)
+        .await
+        .map_err(|error| owner_error(error, request_id.clone()))?;
+    let OwnerValue::PeerIds(visible) = result else {
+        return Err(internal_response(request_id));
+    };
+    success(
+        request_id,
+        state
+            .host
+            .peers()
+            .into_iter()
+            .filter(|peer| visible.contains(&peer.peer_id))
+            .collect::<Vec<_>>(),
+    )
 }
 
 async fn peer(
@@ -169,7 +226,18 @@ async fn peer(
     headers: HeaderMap,
     Path(peer): Path<String>,
 ) -> Result<Response, ApiError> {
-    let (request_id, _session) = authenticate(&state, &headers)?;
+    let (request_id, session) = authenticate(&state, &headers)?;
+    state
+        .host
+        .request(
+            OwnerOperation::Peer {
+                session,
+                peer: peer.clone(),
+            },
+            false,
+        )
+        .await
+        .map_err(|error| owner_error(error, request_id.clone()))?;
     let status = state
         .host
         .peers()
@@ -193,7 +261,7 @@ async fn peer_connect(
     Path(peer): Path<String>,
 ) -> Result<Response, ApiError> {
     let (request_id, session) = authenticate(&state, &headers)?;
-    require_peer_admin(&session, &request_id)?;
+    authorize_peer_admin(&state, session, &peer, &request_id).await?;
     let peer = PeerId::new(peer).map_err(|error| {
         ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -221,7 +289,7 @@ async fn peer_disconnect(
     Path(peer): Path<String>,
 ) -> Result<Response, ApiError> {
     let (request_id, session) = authenticate(&state, &headers)?;
-    require_peer_admin(&session, &request_id)?;
+    authorize_peer_admin(&state, session, &peer, &request_id).await?;
     let peer = PeerId::new(peer).map_err(|error| {
         ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -249,7 +317,7 @@ async fn peer_revoke(
     Path(peer): Path<String>,
 ) -> Result<Response, ApiError> {
     let (request_id, session) = authenticate(&state, &headers)?;
-    require_peer_admin(&session, &request_id)?;
+    authorize_peer_admin(&state, session, &peer, &request_id).await?;
     let peer = PeerId::new(peer).map_err(|error| {
         ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -271,18 +339,24 @@ async fn peer_revoke(
     success(request_id, status)
 }
 
-fn require_peer_admin(session: &ActorSession, request_id: &str) -> Result<(), ApiError> {
-    if session.preset == crate::AuthorityPresetConfig::Controller {
-        Ok(())
-    } else {
-        Err(ApiError::new(
-            StatusCode::FORBIDDEN,
-            ErrorCode::Unauthorized,
-            "peer lifecycle administration requires controller authority",
+async fn authorize_peer_admin(
+    state: &AppState,
+    session: ActorSession,
+    peer: &str,
+    request_id: &str,
+) -> Result<(), ApiError> {
+    state
+        .host
+        .request(
+            OwnerOperation::AdministerPeer {
+                session,
+                peer: peer.to_owned(),
+            },
             false,
-            Some(request_id.to_owned()),
-        ))
-    }
+        )
+        .await
+        .map_err(|error| owner_error(error, request_id.to_owned()))?;
+    Ok(())
 }
 
 fn bounded_http(value: &str) -> String {
@@ -328,7 +402,12 @@ async fn version(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    let (request_id, _session) = authenticate(&state, &headers)?;
+    let (request_id, session) = authenticate(&state, &headers)?;
+    state
+        .host
+        .request(OwnerOperation::Version { session }, false)
+        .await
+        .map_err(|error| owner_error(error, request_id.clone()))?;
     let request: VersionRequest =
         decode_json(&body).map_err(|error| protocol_error(error, request_id.clone()))?;
     let protocol = request
@@ -345,7 +424,12 @@ async fn version(
 }
 
 async fn health(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
-    let (request_id, _session) = authenticate(&state, &headers)?;
+    let (request_id, session) = authenticate(&state, &headers)?;
+    state
+        .host
+        .request(OwnerOperation::Health { session }, false)
+        .await
+        .map_err(|error| owner_error(error, request_id.clone()))?;
     success(request_id, state.host.health())
 }
 
@@ -353,7 +437,12 @@ async fn readiness(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    let (request_id, _session) = authenticate(&state, &headers)?;
+    let (request_id, session) = authenticate(&state, &headers)?;
+    state
+        .host
+        .request(OwnerOperation::Readiness { session }, false)
+        .await
+        .map_err(|error| owner_error(error, request_id.clone()))?;
     let health = state.host.health();
     if !health.ready {
         return Err(ApiError::new(
@@ -364,7 +453,19 @@ async fn readiness(
             Some(request_id),
         ));
     }
-    success(request_id, health)
+    success(
+        request_id,
+        milkdrift_control_protocol::HealthRead {
+            state: health.state,
+            live: health.live,
+            ready: health.ready,
+            draining: health.draining,
+            queued_requests: 0,
+            request_queue_capacity: 0,
+            active_effects: 0,
+            last_failure: None,
+        },
+    )
 }
 
 async fn command(
@@ -666,18 +767,20 @@ async fn node(
     let (request_id, session) = authenticate(&state, &headers)?;
     let result = state
         .host
-        .request(OwnerOperation::Run { session, run }, false)
+        .request(
+            OwnerOperation::Node {
+                session,
+                run,
+                execution,
+            },
+            false,
+        )
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
-    let OwnerValue::Run(run) = result else {
-        return Err(internal_response(request_id));
-    };
-    let value = run
-        .nodes
-        .into_iter()
-        .find(|node| node.execution_id == execution)
-        .ok_or_else(|| not_found_response(request_id.clone()))?;
-    success(request_id, value)
+    match result {
+        OwnerValue::Node(value) => success(request_id, value),
+        _ => Err(internal_response(request_id)),
+    }
 }
 
 async fn attempt(
@@ -688,19 +791,20 @@ async fn attempt(
     let (request_id, session) = authenticate(&state, &headers)?;
     let result = state
         .host
-        .request(OwnerOperation::Run { session, run }, false)
+        .request(
+            OwnerOperation::Attempt {
+                session,
+                run,
+                attempt,
+            },
+            false,
+        )
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
-    let OwnerValue::Run(run) = result else {
-        return Err(internal_response(request_id));
-    };
-    let value = run
-        .nodes
-        .into_iter()
-        .filter_map(|node| node.latest_attempt)
-        .find(|value| value.attempt_id == attempt)
-        .ok_or_else(|| not_found_response(request_id.clone()))?;
-    success(request_id, value)
+    match result {
+        OwnerValue::Attempt(value) => success(request_id, value),
+        _ => Err(internal_response(request_id)),
+    }
 }
 
 async fn timeline(
@@ -819,14 +923,15 @@ async fn authority(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let (request_id, session) = authenticate(&state, &headers)?;
-    let value = AuthorityRead {
-        actor: session.actor.as_str().to_owned(),
-        grant_id: session.grant_id,
-        grant_revision: session.grant_revision,
-        revocation_generation: session.revocation_generation,
-        operations: session.preset.operations(),
-    };
-    success(request_id, value)
+    let result = state
+        .host
+        .request(OwnerOperation::Authority { session }, false)
+        .await
+        .map_err(|error| owner_error(error, request_id.clone()))?;
+    match result {
+        OwnerValue::Authority(value) => success(request_id, value),
+        _ => Err(internal_response(request_id)),
+    }
 }
 
 async fn artifact_metadata(
@@ -944,14 +1049,24 @@ async fn run_stream(
     Path(run): Path<String>,
     Query(query): Query<ListQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    let (request_id, _session) = authenticate(&state, &headers)?;
+    let (request_id, initial_session) = authenticate(&state, &headers)?;
     let bearer =
         bearer_header(&headers).ok_or_else(|| ApiError::unauthenticated(request_id.clone()))?;
     let feed = format!("run:{run}");
+    let initial_decision = stream_authority(
+        &state,
+        initial_session.clone(),
+        StreamAuthority::Run(run.clone()),
+        &request_id,
+    )
+    .await?;
+    let initial_binding = stream_cursor_binding(&initial_session, &feed);
     let mut stream_position = query
         .cursor
         .as_ref()
-        .map(|cursor| cursor.position_for(&feed))
+        .map(|cursor| {
+            cursor.position_for_bound(&feed, &initial_binding, initial_session.cursor_key())
+        })
         .transpose()
         .map_err(|error| protocol_error(error, request_id.clone()))?
         .unwrap_or(0);
@@ -964,14 +1079,23 @@ async fn run_stream(
     let output = stream! {
         loop {
             let Some(current_session) = state.host.authenticate_header(Some(&bearer)) else {
-                if let Ok(event) = observation_event(&feed, stream_position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }) {
+                if let Ok(event) = observation_event(&feed, stream_position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision) {
                     yield Ok(event);
                 }
                 break;
             };
             let session = current_session;
+            let decision = match stream_authority(
+                &state,
+                session.clone(),
+                StreamAuthority::Run(run.clone()),
+                &request_id,
+            ).await {
+                Ok(decision) => decision,
+                Err(_) => break,
+            };
             if state.host.health().draining {
-                if let Ok(event) = observation_event(&feed, stream_position.saturating_add(1), Observation::StreamClosing { reason: "daemon is draining".to_owned() }) {
+                if let Ok(event) = observation_event(&feed, stream_position.saturating_add(1), Observation::StreamClosing { reason: "daemon is draining".to_owned() }, &session, &decision) {
                     yield Ok(event);
                 }
                 break;
@@ -981,7 +1105,7 @@ async fn run_stream(
                 match state.host.request(OwnerOperation::Run { session: session.clone(), run: run.clone() }, false).await {
                     Ok(OwnerValue::Run(status)) => {
                         stream_position = stream_position.saturating_add(1);
-                        if let Ok(event) = observation_event(&feed, stream_position, Observation::RunStatus(status)) {
+                        if let Ok(event) = observation_event(&feed, stream_position, Observation::RunStatus(status), &session, &decision) {
                             yield Ok(event);
                         }
                     }
@@ -991,7 +1115,15 @@ async fn run_stream(
             let timeline_cursor = if last_sequence == 0 {
                 None
             } else {
-                Cursor::new(&format!("timeline:{run}"), last_sequence).ok()
+                let timeline_feed = format!("timeline:{run}");
+                Some(stream_cursor_binding(&session, &timeline_feed))
+                    .and_then(|binding| Cursor::new_bound(
+                        &timeline_feed,
+                        last_sequence,
+                        binding,
+                        &decision,
+                        session.cursor_key(),
+                    ).ok())
             };
             match state.host.request(OwnerOperation::Timeline {
                 session: session.clone(),
@@ -1002,14 +1134,14 @@ async fn run_stream(
                 Ok(OwnerValue::Timeline(page)) if !page.items.is_empty() => {
                     for entry in page.items {
                         stream_position = entry.sequence.saturating_mul(2);
-                        if let Ok(event) = observation_event(&feed, stream_position, Observation::Timeline(entry)) {
+                        if let Ok(event) = observation_event(&feed, stream_position, Observation::Timeline(entry), &session, &decision) {
                             yield Ok(event);
                         }
                     }
                     match state.host.request(OwnerOperation::Run { session: session.clone(), run: run.clone() }, false).await {
                         Ok(OwnerValue::Run(status)) => {
                             stream_position = stream_position.saturating_add(1);
-                            if let Ok(event) = observation_event(&feed, stream_position, Observation::RunStatus(status)) {
+                            if let Ok(event) = observation_event(&feed, stream_position, Observation::RunStatus(status), &session, &decision) {
                                 yield Ok(event);
                             }
                         }
@@ -1019,7 +1151,7 @@ async fn run_stream(
                 Ok(OwnerValue::Timeline(_)) => tokio::time::sleep(Duration::from_millis(250)).await,
                 Err(error) => {
                     let reason = if error.code == ErrorCode::Unauthorized { "authorization changed" } else { "timeline cursor must be resynchronized" };
-                    if let Ok(event) = observation_event(&feed, stream_position.saturating_add(1), Observation::ResyncRequired { reason: reason.to_owned() }) {
+                    if let Ok(event) = observation_event(&feed, stream_position.saturating_add(1), Observation::ResyncRequired { reason: reason.to_owned() }, &session, &decision) {
                         yield Ok(event);
                     }
                     break;
@@ -1040,16 +1172,26 @@ async fn capability_stream(
     headers: HeaderMap,
     Query(query): Query<ListQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    let (request_id, _session) = authenticate(&state, &headers)?;
+    let (request_id, initial_session) = authenticate(&state, &headers)?;
     let bearer =
         bearer_header(&headers).ok_or_else(|| ApiError::unauthenticated(request_id.clone()))?;
     let feed = "capability-health".to_owned();
+    let initial_decision = stream_authority(
+        &state,
+        initial_session.clone(),
+        StreamAuthority::Capabilities,
+        &request_id,
+    )
+    .await?;
+    let initial_binding = stream_cursor_binding(&initial_session, &feed);
     let mut position = query
         .cursor
         .as_ref()
-        .map(|cursor| cursor.position_for(&feed))
+        .map(|cursor| {
+            cursor.position_for_bound(&feed, &initial_binding, initial_session.cursor_key())
+        })
         .transpose()
-        .map_err(|error| protocol_error(error, request_id))?
+        .map_err(|error| protocol_error(error, request_id.clone()))?
         .unwrap_or(0);
     info!(
         feed,
@@ -1059,24 +1201,40 @@ async fn capability_stream(
     let output = stream! {
         loop {
             let Some(session) = state.host.authenticate_header(Some(&bearer)) else {
-                if let Ok(event) = observation_event(&feed, position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }) {
+                if let Ok(event) = observation_event(&feed, position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision) {
                     yield Ok(event);
                 }
                 break;
             };
+            let decision = match stream_authority(
+                &state,
+                session.clone(),
+                StreamAuthority::Capabilities,
+                &request_id,
+            ).await {
+                Ok(decision) => decision,
+                Err(_) => break,
+            };
+            let binding = stream_cursor_binding(&session, &feed);
             if state.host.health().draining {
-                if let Ok(event) = observation_event(&feed, position.saturating_add(1), Observation::StreamClosing { reason: "daemon is draining".to_owned() }) {
+                if let Ok(event) = observation_event(&feed, position.saturating_add(1), Observation::StreamClosing { reason: "daemon is draining".to_owned() }, &session, &decision) {
                     yield Ok(event);
                 }
                 break;
             }
-            let capabilities = match state.host.request(OwnerOperation::Capabilities { session }, false).await {
+            let capabilities = match state.host.request(OwnerOperation::Capabilities { session: session.clone() }, false).await {
                 Ok(OwnerValue::Capabilities(values)) => values,
                 _ => break,
             };
             let (resync, entries) = {
-                let mut capability_feed = state.capability_feed.lock().await;
-                record_capability_snapshot(&mut capability_feed, &capabilities);
+                let mut capability_feeds = state.capability_feeds.lock().await;
+                let capability_feed = capability_feeds
+                    .entry(binding.scope_digest.clone())
+                    .or_insert_with(|| CapabilityFeed {
+                        next_position: 1,
+                        ..CapabilityFeed::default()
+                    });
+                record_capability_snapshot(capability_feed, &capabilities);
                 let latest = capability_feed.next_position.saturating_sub(1);
                 let oldest = capability_feed
                     .entries
@@ -1093,14 +1251,14 @@ async fn capability_stream(
                 (resync, entries)
             };
             if resync {
-                if let Ok(event) = observation_event(&feed, position.saturating_add(1), Observation::ResyncRequired { reason: "capability cursor is outside the retained health window".to_owned() }) {
+                if let Ok(event) = observation_event(&feed, position.saturating_add(1), Observation::ResyncRequired { reason: "capability cursor is outside the retained health window".to_owned() }, &session, &decision) {
                     yield Ok(event);
                 }
                 break;
             }
             for (entry_position, capability) in entries {
                 position = entry_position;
-                if let Ok(event) = observation_event(&feed, position, Observation::Capability(capability)) {
+                if let Ok(event) = observation_event(&feed, position, Observation::Capability(capability), &session, &decision) {
                     yield Ok(event);
                 }
             }
@@ -1138,16 +1296,26 @@ async fn health_stream(
     headers: HeaderMap,
     Query(query): Query<ListQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    let (request_id, _session) = authenticate(&state, &headers)?;
+    let (request_id, initial_session) = authenticate(&state, &headers)?;
     let bearer =
         bearer_header(&headers).ok_or_else(|| ApiError::unauthenticated(request_id.clone()))?;
     let feed = "daemon-health".to_owned();
+    let initial_decision = stream_authority(
+        &state,
+        initial_session.clone(),
+        StreamAuthority::Health,
+        &request_id,
+    )
+    .await?;
+    let initial_binding = stream_cursor_binding(&initial_session, &feed);
     let mut position = query
         .cursor
         .as_ref()
-        .map(|cursor| cursor.position_for(&feed))
+        .map(|cursor| {
+            cursor.position_for_bound(&feed, &initial_binding, initial_session.cursor_key())
+        })
         .transpose()
-        .map_err(|error| protocol_error(error, request_id))?
+        .map_err(|error| protocol_error(error, request_id.clone()))?
         .unwrap_or(0);
     info!(
         feed,
@@ -1156,16 +1324,25 @@ async fn health_stream(
     );
     let output = stream! {
         loop {
-            if state.host.authenticate_header(Some(&bearer)).is_none() {
-                if let Ok(event) = observation_event(&feed, position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }) {
+            let Some(session) = state.host.authenticate_header(Some(&bearer)) else {
+                if let Ok(event) = observation_event(&feed, position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision) {
                     yield Ok(event);
                 }
                 break;
-            }
+            };
+            let decision = match stream_authority(
+                &state,
+                session.clone(),
+                StreamAuthority::Health,
+                &request_id,
+            ).await {
+                Ok(decision) => decision,
+                Err(_) => break,
+            };
             let generation = state.host.health_generation();
             if generation > position {
                 position = generation;
-                if let Ok(event) = observation_event(&feed, position, Observation::DaemonHealth(state.host.health())) {
+                if let Ok(event) = observation_event(&feed, position, Observation::DaemonHealth(state.host.health()), &session, &decision) {
                     yield Ok(event);
                 }
             }
@@ -1180,6 +1357,38 @@ async fn health_stream(
             .interval(Duration::from_secs(15))
             .text("heartbeat"),
     ))
+}
+
+async fn stream_authority(
+    state: &AppState,
+    session: ActorSession,
+    stream: StreamAuthority,
+    request_id: &str,
+) -> Result<String, ApiError> {
+    let value = state
+        .host
+        .request(OwnerOperation::StreamAuthority { session, stream }, false)
+        .await
+        .map_err(|error| owner_error(error, request_id.to_owned()))?;
+    match value {
+        OwnerValue::Authorized(decision) if !decision.is_empty() => Ok(decision),
+        _ => Err(internal_response(request_id.to_owned())),
+    }
+}
+
+fn stream_cursor_binding(session: &ActorSession, exact_resource_and_filter: &str) -> CursorBinding {
+    let claim = session.context.authority();
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"milkdrift.continuation-scope.v1\0");
+    hasher.update(exact_resource_and_filter.as_bytes());
+    hasher.update(format!("{:?}", session.grant.resources()).as_bytes());
+    CursorBinding {
+        actor: session.actor.as_str().to_owned(),
+        grant_id: claim.grant().as_str().to_owned(),
+        grant_revision: claim.grant_revision(),
+        grant_digest: claim.grant_digest().as_str().to_owned(),
+        scope_digest: format!("b3_{}", hasher.finalize()),
+    }
 }
 
 fn authenticate(state: &AppState, headers: &HeaderMap) -> Result<(String, ActorSession), ApiError> {
@@ -1351,8 +1560,16 @@ fn observation_event(
     feed: &str,
     position: u64,
     observation: Observation,
+    session: &ActorSession,
+    decision_digest: &str,
 ) -> Result<Event, milkdrift_control_protocol::ProtocolError> {
-    let cursor = Cursor::new(feed, position)?;
+    let cursor = Cursor::new_bound(
+        feed,
+        position,
+        stream_cursor_binding(session, feed),
+        decision_digest,
+        session.cursor_key(),
+    )?;
     let envelope = ObservationEnvelope {
         protocol: ProtocolVersion::CURRENT,
         cursor: cursor.clone(),
@@ -1392,5 +1609,16 @@ mod tests {
         assert_eq!(start, 100);
         assert_eq!(maximum, MAX_ARTIFACT_HTTP_RANGE);
         Ok(())
+    }
+
+    #[test]
+    fn every_local_external_route_declares_typed_authority_and_resource_mapping() {
+        let source = include_str!("http.rs");
+        let raw_route_marker = [".", "route("].concat();
+        assert_eq!(
+            source.match_indices(&raw_route_marker).count(),
+            1,
+            "add external routes through authorized_routes! with a typed authority mapping"
+        );
     }
 }

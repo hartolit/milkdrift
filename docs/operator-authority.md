@@ -1,9 +1,11 @@
-# Daemon execution authority
+# Daemon control and execution authority
 
-Daemon configuration schema 2 requires every actor binding to contain an explicit `authority`
-object. Preset names choose command operations; they do not imply resource access. The resource
-scope, numeric ceilings, validity interval, grant identity/revision, and revocation generation are
-all independent inputs to the immutable grant.
+Daemon configuration schema 3 requires every actor binding to contain an explicit `authority`
+object. Preset names deterministically expand to typed operation sets; they do not imply resource
+access and are not retained as executable session policy. The resource scope, numeric ceilings,
+validity interval, grant identity/revision, and revocation generation are independent inputs to the
+immutable schema-2 grant. Authentication selects that exact actor and grant but grants nothing by
+itself.
 
 The following safe pattern grants one actor access to one workflow lineage and one local process
 capability. Adjust every value to the actual immutable capability profile and workflow you intend
@@ -21,6 +23,7 @@ to run:
     "resources": {
       "workflow_run": { "type": "workflow", "workflow": "example-workflow" },
       "capability": {
+        "deny_all": false,
         "identities": ["local-example"],
         "categories": [],
         "operations": ["process.execute"],
@@ -35,7 +38,18 @@ to run:
         { "root": "/var/lib/milkdrift/work", "access": ["read", "write"] }
       ],
       "network": { "profiles": [], "destinations": [] },
-      "secrets": []
+      "secrets": [],
+      "artifacts": { "identities": [], "sensitivities": [] },
+      "layouts": { "revisions": [], "actors": [], "shared": false },
+      "peers": { "identities": [], "allow_any": false },
+      "daemon": {
+        "readiness": true,
+        "detailed_health": false,
+        "own_authority": true,
+        "configuration": false,
+        "audit": false
+      },
+      "workspace": { "scopes": [], "allow_any_in_run": false }
     },
     "budget": {
       "cost_minor": 1000,
@@ -53,25 +67,37 @@ to run:
 }
 ```
 
-Capability scope fields are allowlists. An empty identity/category/profile/trust/locality/peer set
-means that dimension is not narrowed, but operations must be explicit in a safe configuration.
+Capability scope fields are allowlists. `deny_all: true` denies the complete capability scope.
+Otherwise an empty identity/category/profile/trust/locality/peer set means that dimension is not
+narrowed, but operations must be explicit in a safe configuration.
 Filesystem roots are normalized absolute lexical roots. Network destinations are credential-free
 `host:port` values and network profiles are named immutable transport profiles. Secret references
 are opaque names; secret values never belong in the document.
+
+Artifact access requires both an allowed immutable artifact identity (or an intentionally empty
+identity wildcard) and an explicitly named sensitivity; an empty sensitivity set denies metadata
+and bytes. Layout authority is evaluated separately from semantic revision authority and names
+exact revisions plus shared or actor-owned presentation state. Empty peer and workspace scopes
+deny access unless their explicit wildcard boolean is set. Daemon flags independently grant coarse
+readiness, detailed health, the caller's own authority view, redacted configuration, and bounded
+audit views. Protected artifact/provider/peer/health details are therefore not implied by workflow
+inspection.
 
 Every numeric ceiling must be present for a safe grant, including provider-neutral `units`. Use a
 finite `valid_until`, declare the strongest side effect the actor may cause, and grant only the
 filesystem, network, secret, locality, trust zone, and peer facts required by registered adapters.
 The daemon validates these facts before it opens storage.
 
-Wildcard workflow scope, unknown side effects, omitted capability operations, infinite validity,
-or missing ceilings are rejected unless `dangerous_allow_broad_authority` is `true`. That flag is a
-deliberate acknowledgement, not a shortcut for generating hidden wildcard facts. Broad grants
-remain limited by the resources written in the configuration.
+Wildcard workflow, artifact, peer, or workspace scope; unknown side effects; omitted capability
+operations; infinite validity; or missing ceilings are rejected unless
+`dangerous_allow_broad_authority` is `true`. That flag is a deliberate acknowledgement, not a
+shortcut for generating hidden wildcard facts. Broad grants remain limited by the resources
+written in the configuration.
 
-Schema 1 configurations are rejected. Migration is manual: add an explicit `authority` object,
-choose finite limits, advance `schema_version` to 2, run `milkdrift-daemon --config PATH
---check-config`, and inspect the redacted effective configuration before starting the daemon. When
-narrowing or revoking, advance the configured revocation generation or disable the actor and restart;
-already-entered external work keeps its truthful terminal history, while future resolution or entry
-is denied.
+Older configuration and authority-grant schemas are rejected. Migration is manual: add the
+artifact, layout, peer, daemon, and workspace scopes, choose finite limits, advance
+`schema_version` to 3, run `milkdrift-daemon --config PATH --check-config`, and inspect the redacted
+effective configuration before starting the daemon. When narrowing or revoking, advance the grant
+revision/revocation generation or disable the actor and restart. Existing page and reconnect
+cursors then fail closed; open streams stop future disclosure on their next bounded check;
+already-entered external work keeps its truthful terminal history.
