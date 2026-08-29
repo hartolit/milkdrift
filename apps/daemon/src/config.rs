@@ -7,8 +7,8 @@ use std::{
 
 use milkdrift_authority::{
     ArtifactAuthorityScope, AuthorityBudget, BoundaryTimeMillis, CapabilityAuthorityScope,
-    DaemonAuthorityScope, LayoutAuthorityScope, NetworkScope, PeerAuthorityScope, ResourceScope,
-    WorkflowRunScope, WorkspaceAuthorityScope,
+    DaemonAuthorityScope, FilesystemScope, LayoutAuthorityScope, NetworkProfileRef, NetworkScope,
+    PeerAuthorityScope, ResourceScope, SecretRef, WorkflowRunScope, WorkspaceAuthorityScope,
 };
 use milkdrift_capability::SideEffectClass;
 use milkdrift_control_protocol::MAX_DOCUMENT_BYTES;
@@ -244,6 +244,18 @@ pub struct PeerRelationshipConfig {
     /// Maximum side-effect class accepted from this peer.
     #[serde(default)]
     pub maximum_side_effect: PeerSideEffectConfig,
+    /// Explicit host filesystem authority available to allowed remote capabilities.
+    #[serde(default)]
+    pub execution_filesystem: Vec<FilesystemScope>,
+    /// Explicit credential-free network profiles available to allowed remote capabilities.
+    #[serde(default)]
+    pub execution_network_profiles: BTreeSet<NetworkProfileRef>,
+    /// Explicit network destinations available to allowed remote capabilities.
+    #[serde(default)]
+    pub execution_network_destinations: BTreeSet<String>,
+    /// Explicit daemon secret references available to allowed remote capabilities.
+    #[serde(default)]
+    pub execution_secrets: BTreeSet<SecretRef>,
     /// Maximum simultaneous accepted remote executions.
     #[serde(default = "default_peer_concurrency")]
     pub maximum_concurrent: u16,
@@ -371,7 +383,7 @@ pub enum ShutdownEffectPolicy {
 pub struct DaemonConfig {
     /// Exact configuration schema version.
     pub schema_version: u32,
-    /// Owned redb/artifact/layout/command-ledger root.
+    /// Owned redb/artifact/application-state root.
     pub data_root: PathBuf,
     /// Local plaintext HTTP listener.
     pub bind: SocketAddr,
@@ -392,11 +404,14 @@ pub struct DaemonConfig {
     #[serde(default)]
     pub shutdown: ShutdownConfig,
     /// Maximum durable external command-idempotency records.
-    #[serde(default = "default_command_ledger_bound")]
-    pub command_ledger_bound: u32,
+    #[serde(
+        rename = "command_ledger_bound",
+        default = "default_command_receipt_bound"
+    )]
+    pub command_receipt_bound: u32,
 }
 
-const fn default_command_ledger_bound() -> u32 {
+const fn default_command_receipt_bound() -> u32 {
     10_000
 }
 
@@ -463,9 +478,9 @@ impl DaemonConfig {
                 "shutdown deadline must be in 1..=300000 milliseconds".to_owned(),
             ));
         }
-        if self.command_ledger_bound == 0 || self.command_ledger_bound > 1_000_000 {
+        if self.command_receipt_bound == 0 || self.command_receipt_bound > 1_000_000 {
             return Err(ConfigError::Invalid(
-                "command ledger bound must be in 1..=1000000".to_owned(),
+                "application command receipt bound must be in 1..=1000000".to_owned(),
             ));
         }
         let base = base
@@ -690,6 +705,24 @@ fn validate_peers(
         for operation in &relationship.operation_allow {
             validate_safe_identity("peer operation filter", operation)?;
         }
+        for filesystem in &relationship.execution_filesystem {
+            FilesystemScope::new(filesystem.root(), filesystem.access().clone())
+                .map_err(|error| ConfigError::Invalid(error.to_string()))?;
+        }
+        NetworkScope::new(
+            relationship.execution_network_profiles.clone(),
+            relationship.execution_network_destinations.clone(),
+        )
+        .map_err(|error| ConfigError::Invalid(error.to_string()))?;
+        if relationship
+            .execution_secrets
+            .iter()
+            .any(|secret| !secrets.contains_key(secret.as_str()))
+        {
+            return Err(ConfigError::Invalid(
+                "peer execution authority references an unknown secret source".to_owned(),
+            ));
+        }
         let endpoint = url::Url::parse(&relationship.endpoint)
             .map_err(|error| ConfigError::Invalid(format!("invalid peer endpoint: {error}")))?;
         let plaintext_loopback = endpoint.scheme() == "http"
@@ -895,7 +928,7 @@ mod tests {
             adapters: AdapterConfig::default(),
             peers: PeerHostConfig::default(),
             shutdown: ShutdownConfig::default(),
-            command_ledger_bound: 100,
+            command_receipt_bound: 100,
         };
         assert!(config.validate(directory.path()).is_err());
         assert!(!directory.path().join("data").exists());

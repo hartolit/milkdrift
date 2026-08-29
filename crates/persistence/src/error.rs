@@ -85,6 +85,20 @@ pub enum PersistenceError {
         /// Fingerprint supplied by the conflicting delivery.
         supplied: IntegrityDigest,
     },
+    /// An actor-scoped external command identity was reused with different canonical content.
+    #[error(
+        "external command {command} idempotency conflict for actor {actor}: existing digest {existing}, supplied {supplied}"
+    )]
+    ExternalCommandIdempotencyConflict {
+        /// Authenticated actor whose command-key namespace was reused.
+        actor: milkdrift_authority::ActorRef,
+        /// Reused client command identity.
+        command: CommandId,
+        /// Digest stored by the first durable result.
+        existing: IntegrityDigest,
+        /// Digest supplied by the conflicting delivery.
+        supplied: IntegrityDigest,
+    },
     /// An immutable identity already exists with different bytes.
     #[error("immutable {entity} conflict for identity {identity}")]
     ImmutableConflict {

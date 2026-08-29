@@ -1,8 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::{self, File},
-    io::Write as _,
-    path::PathBuf,
+    fs,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering},
@@ -41,23 +39,27 @@ use milkdrift_control_protocol::{
 use milkdrift_local_process::{LocalProcessAdapter, ProcessProfileDocument};
 use milkdrift_model_provider::{EndpointProfile, ModelEndpointAdapter, descriptor_for_profile};
 use milkdrift_peer_http::{
-    FilePeerArtifactStore, FilePeerExecutionStore, InsecureLoopbackMode, PeerAuthenticator,
-    PeerClientConfig, PeerCredentialSource, PeerHttpClient, PeerHttpError, PeerRegistry,
-    PeerRelationship, PeerServerConfig, PeerService, SystemPeerClock,
+    CorePeerArtifactStore, InsecureLoopbackMode, PeerAuthenticator, PeerClientConfig,
+    PeerCredentialSource, PeerHttpClient, PeerHttpError, PeerRegistry, PeerRelationship,
+    PeerServerConfig, PeerService, PeerWorkerConfig, SystemPeerClock,
 };
 use milkdrift_peer_protocol::{
     DelegationRef, ExecutionLimits, HardLimits, HeartbeatLease, PeerAuthority, ProtocolVersion,
     ProtocolVersionRange, SessionId,
 };
 use milkdrift_persistence::{
-    ArtifactReadAuthority, ArtifactReadRequest, ArtifactStore, AttemptId, CorrelationKey,
-    EventPageQuery, EvidenceId, EvidenceKind, EvidenceReference, IndexedRunState, PageSize,
-    PersistenceError, Reason, ReconciliationDecisionId, RevisionCursor, RevisionFilter,
+    ApplicationCommandCommit, ApplicationCommandCommitOutcome, ApplicationCommandEffect,
+    ApplicationCommandReceipt, ApplicationCommandResult, ApplicationCommandStore,
+    ApplicationCursor, ApplicationEffectReference, ApplicationLayoutStore, ApplicationLayoutUpdate,
+    ApplicationPageQuery, ArtifactReadAuthority, ArtifactReadRequest, ArtifactStore, AttemptId,
+    CommandId, CorrelationKey, EventPageQuery, EvidenceId, EvidenceKind, EvidenceReference,
+    IndexedRunState, IntegrityDigest, PageSize, PersistenceError, ProposalIndexEntry,
+    ProposalIndexStore, Reason, ReconciliationDecisionId, RevisionCursor, RevisionFilter,
     RevisionPageQuery, RevisionStore, RunEventKind, RunQueryStore, RunSequence, RunSummaryCursor,
-    RunSummaryFilter, RunSummaryPageQuery, SignalDeliveryMode, SignalId, SignalTypeId,
-    TimestampMillis, WorkerId,
+    RunSummaryFilter, RunSummaryPageQuery, SecurityAuditEntry, SecurityAuditStore,
+    SignalDeliveryMode, SignalId, SignalTypeId, TimestampMillis, WorkerId,
 };
-use milkdrift_redb_store::RedbStore;
+use milkdrift_redb_store::{RedbStore, RedbStoreConfig};
 use milkdrift_runtime::{
     ExternalWorkAction, RetryPolicy, RuntimeConfig, RuntimeService, SchedulerLimits,
     SequentialIdGenerator, SystemBoundaryClock,
@@ -76,8 +78,19 @@ use crate::{
     config::{PeerSideEffectConfig, ShutdownEffectPolicy, ValidatedDaemonConfig},
 };
 
-const LOCAL_STATE_SCHEMA_VERSION: u32 = 2;
+mod artifacts;
+mod attempts;
+mod capabilities;
+mod commands;
+mod definitions;
+mod layouts;
+mod proposals;
+mod receipts;
+mod runs;
+
 const OWNER_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
+const APPLICATION_COMMAND_SCHEMA_VERSION: u32 = 1;
+const LEGACY_SIDECAR_FILE: &str = "control-state-v1.json";
 
 /// Daemon construction, owner-thread, or orderly-shutdown failure.
 #[derive(Debug, Error)]
@@ -99,7 +112,8 @@ pub enum HostError {
     Shutdown(String),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct PublicFailure {
     pub code: ErrorCode,
     pub message: String,
@@ -449,10 +463,13 @@ impl DaemonHost {
                 .map_err(|_| HostError::Shutdown("runtime owner panicked".to_owned()))?;
         }
         match result {
-            OwnerValue::Shutdown { clean: true } => Ok(()),
-            OwnerValue::Shutdown { clean: false } => Err(HostError::Shutdown(
-                "effect workers exceeded shutdown deadline".to_owned(),
-            )),
+            OwnerValue::Shutdown {
+                clean: true,
+                unresolved: 0,
+            } => Ok(()),
+            OwnerValue::Shutdown { clean, unresolved } => Err(HostError::Shutdown(format!(
+                "shutdown retained or could not resolve {unresolved} invocation(s); clean={clean}"
+            ))),
             _ => Err(HostError::Shutdown(
                 "runtime owner returned an invalid shutdown result".to_owned(),
             )),
@@ -671,6 +688,7 @@ pub(crate) enum OwnerValue {
     Layout(LayoutDocument),
     Shutdown {
         clean: bool,
+        unresolved: u32,
     },
 }
 
@@ -693,7 +711,6 @@ struct Owner {
     capability_host: CapabilityHost,
     authority: Arc<GrantSetEvaluator>,
     effect_workers: Option<EffectWorkerHost>,
-    persistent: LocalState,
     peer_service: Option<Arc<PeerService>>,
     peer_registries: BTreeMap<PeerId, Arc<PeerRegistry>>,
 }
@@ -711,8 +728,27 @@ impl Owner {
     ) -> Result<Self, String> {
         fs::create_dir_all(&config.document.data_root)
             .map_err(|error| format!("data root creation failed: {:?}", error.kind()))?;
+        if config.document.data_root.join(LEGACY_SIDECAR_FILE).exists() {
+            return Err(
+                "legacy control-state-v1.json is unsupported; this release refuses sidecar state instead of silently importing or ignoring idempotency truth"
+                    .to_owned(),
+            );
+        }
+        for prototype in ["peer-executions-v1", "peer-artifacts-v1"] {
+            if config.document.data_root.join(prototype).exists() {
+                return Err(format!(
+                    "prototype {prototype} storage is unsupported; this release refuses parallel peer authorities instead of partially importing them"
+                ));
+            }
+        }
         let store = Arc::new(
-            RedbStore::open(&config.document.data_root).map_err(|error| error.to_string())?,
+            RedbStore::open_with_config(
+                RedbStoreConfig::new(&config.document.data_root).with_application_limits(
+                    config.document.command_receipt_bound,
+                    config.document.command_receipt_bound,
+                ),
+            )
+            .map_err(|error| error.to_string())?,
         );
         let authority = Arc::new(
             GrantSetEvaluator::new(
@@ -794,17 +830,33 @@ impl Owner {
             )
             .map_err(|error| error.to_string())?,
         );
-        register_control(
+        runtime
+            .recover_startup_closed()
+            .map_err(|error| error.to_string())?;
+        store
+            .application_command_receipts(&ApplicationPageQuery {
+                after: None,
+                limit: PageSize::new(1).map_err(|error| error.to_string())?,
+            })
+            .map_err(|error| error.to_string())?;
+        store
+            .application_layouts(&ApplicationPageQuery {
+                after: None,
+                limit: PageSize::new(1).map_err(|error| error.to_string())?,
+            })
+            .map_err(|error| error.to_string())?;
+        capabilities::register_control(
             &capability_host,
             control.clone(),
             auth.contexts(),
             data.clone(),
         )?;
-        register_configured_adapters(&config, &capability_host, data, auth.resolver())?;
-        let peer_runtime = build_peer_runtime(&config, &capability_host, auth.resolver())?;
-        runtime
-            .initialize_startup()
-            .map_err(|error| error.to_string())?;
+        capabilities::register_configured(&config, &capability_host, data, auth.resolver())?;
+        let peer_runtime =
+            build_peer_runtime(&config, &capability_host, store.clone(), auth.resolver())?;
+        if let Some(service) = &peer_runtime.service {
+            service.recover(1_024).map_err(|error| error.to_string())?;
+        }
         let effect_workers = EffectWorkerHost::start(
             runtime.clone(),
             capability_host.clone(),
@@ -816,13 +868,9 @@ impl Owner {
             },
         )
         .map_err(|error| error.to_string())?;
-        let persistent = LocalState::load(
-            config.document.data_root.join("control-state-v1.json"),
-            config.document.command_ledger_bound,
-        )?;
-        if let Some(service) = &peer_runtime.service {
-            service.recover(1_024).map_err(|error| error.to_string())?;
-        }
+        runtime
+            .resume_admission()
+            .map_err(|error| error.to_string())?;
         health.active_effects.store(0, Ordering::SeqCst);
         Ok(Self {
             config,
@@ -832,7 +880,6 @@ impl Owner {
             capability_host,
             authority,
             effect_workers: Some(effect_workers),
-            persistent,
             peer_service: peer_runtime.service,
             peer_registries: peer_runtime.registries,
         })
@@ -993,9 +1040,6 @@ impl Owner {
                     "command:administer-peer",
                 )?;
                 self.record_security_decision(&decision)?;
-                self.persistent
-                    .flush()
-                    .map_err(|error| PublicFailure::new(ErrorCode::Corruption, error, false))?;
                 Ok(OwnerValue::Authorized(String::new()))
             }
             OwnerOperation::StreamAuthority { session, stream } => {
@@ -1219,6 +1263,10 @@ impl Owner {
             ShutdownEffectPolicy::Retain => EffectShutdownMode::Retain,
         };
         let deadline = Duration::from_millis(self.config.document.shutdown.deadline_ms);
+        let peer_shutdown = self
+            .peer_service
+            .as_ref()
+            .map(|service| service.shutdown_workers(deadline));
         let result = self
             .effect_workers
             .take()
@@ -1229,1289 +1277,36 @@ impl Owner {
             .map_err(|error| {
                 PublicFailure::new(ErrorCode::Unavailable, bounded(&error.to_string()), true)
             })?;
-        self.persistent
-            .flush()
-            .map_err(|error| PublicFailure::new(ErrorCode::Corruption, error, false))?;
         health.active_effects.store(0, Ordering::SeqCst);
         health.set_lifecycle(Lifecycle::Stopped);
+        let peer_retained = peer_shutdown.map_or(0, |report| report.retained_workers);
         info!(
             phase = "stopped",
-            clean = result.clean,
-            unresolved = result.unresolved_invocations.len(),
+            clean = result.clean && peer_retained == 0,
+            unresolved = result
+                .unresolved_invocations
+                .len()
+                .saturating_add(usize::from(peer_retained)),
             "runtime owner stopped"
         );
         Ok(OwnerValue::Shutdown {
-            clean: result.clean,
+            clean: result.clean && peer_retained == 0,
+            unresolved: u32::try_from(
+                result
+                    .unresolved_invocations
+                    .len()
+                    .saturating_add(usize::from(peer_retained)),
+            )
+            .unwrap_or(u32::MAX),
         })
     }
 
     fn command(
         &mut self,
         session: &ActorSession,
-        mut request: CommandRequest,
+        request: CommandRequest,
     ) -> Result<CommandAccepted, PublicFailure> {
-        request.validate().map_err(public_protocol)?;
-        let ledger_key = format!("{}|{}", session.actor.as_str(), request.command_id);
-        let fingerprint = command_fingerprint(session, &request)?;
-        if let Some(existing) = self.persistent.document.commands.get(&ledger_key) {
-            if existing.fingerprint != fingerprint {
-                return Err(PublicFailure::new(
-                    ErrorCode::Conflict,
-                    "command identity was already used with different content",
-                    false,
-                ));
-            }
-            let mut accepted = existing.result.clone();
-            accepted.replayed = true;
-            self.persistent
-                .flush()
-                .map_err(|error| PublicFailure::new(ErrorCode::Corruption, error, false))?;
-            return Ok(accepted);
-        }
-        if self.persistent.document.commands.len()
-            >= usize::try_from(self.persistent.command_bound).unwrap_or(usize::MAX)
-        {
-            return Err(PublicFailure::new(
-                ErrorCode::Overload,
-                "durable command idempotency ledger reached its configured bound",
-                false,
-            ));
-        }
-        if let Command::PutLayout { layout } = &mut request.command {
-            layout.author = session.actor.as_str().to_owned();
-            layout.digest = layout.computed_digest().map_err(public_protocol)?;
-        }
-        let result = self.execute_new_command(session, &request)?;
-        let proposal = proposal_ledger_ref(&request.command, &result)?;
-        self.persistent.document.commands.insert(
-            ledger_key,
-            LedgerEntry {
-                fingerprint,
-                result: result.clone(),
-                proposal,
-            },
-        );
-        self.persistent
-            .flush()
-            .map_err(|error| PublicFailure::new(ErrorCode::Corruption, error, false))?;
-        Ok(result)
-    }
-
-    fn execute_new_command(
-        &mut self,
-        session: &ActorSession,
-        request: &CommandRequest,
-    ) -> Result<CommandAccepted, PublicFailure> {
-        match &request.command {
-            Command::ImportBlueprint { document } => {
-                let bytes =
-                    serde_json::to_vec(document).map_err(|_| invalid("invalid blueprint JSON"))?;
-                let (_document, revision) = BlueprintRevisionDocument::from_json(&bytes)
-                    .map_err(|error| invalid(&bounded(&error.to_string())))?;
-                let mut resources = RequestedResourceFacts::empty();
-                resources.workflow = Some(revision.semantic().workflow().clone());
-                resources.revision = Some(revision.id().clone());
-                let decision = self.authorize(
-                    session,
-                    AuthorityOperation::ImportBlueprint,
-                    resources,
-                    "command:import-blueprint",
-                )?;
-                let outcome = self
-                    .store
-                    .put_revision(&revision)
-                    .map_err(public_persistence)?;
-                self.record_security_decision(&decision)?;
-                Ok(CommandAccepted {
-                    command_id: request.command_id.clone(),
-                    replayed: matches!(
-                        outcome,
-                        milkdrift_persistence::ImmutableRevisionPut::AlreadyPresent
-                    ),
-                    resulting_sequence: None,
-                    result_type: "blueprint_imported".to_owned(),
-                    value: json!({
-                        "revision_id": revision.id().as_str(),
-                        "workflow_id": revision.semantic().workflow().as_str(),
-                        "semantic_digest": revision.content_digest().as_str(),
-                    }),
-                })
-            }
-            Command::ValidateBlueprint { document } => {
-                let bytes =
-                    serde_json::to_vec(document).map_err(|_| invalid("invalid blueprint JSON"))?;
-                let (_document, revision) = BlueprintRevisionDocument::from_json(&bytes)
-                    .map_err(|error| invalid(&bounded(&error.to_string())))?;
-                let mut resources = RequestedResourceFacts::empty();
-                resources.workflow = Some(revision.semantic().workflow().clone());
-                resources.revision = Some(revision.id().clone());
-                self.authorize(
-                    session,
-                    AuthorityOperation::ValidateBlueprint,
-                    resources,
-                    "command:validate-blueprint",
-                )?;
-                Ok(CommandAccepted {
-                    command_id: request.command_id.clone(),
-                    replayed: false,
-                    resulting_sequence: None,
-                    result_type: "blueprint_valid".to_owned(),
-                    value: json!({"revision_id": revision.id().as_str(), "semantic_digest": revision.content_digest().as_str()}),
-                })
-            }
-            Command::StartRun {
-                run_id,
-                workflow_id,
-                revision_id,
-            } => {
-                let run =
-                    RunId::new(run_id.clone()).map_err(|error| invalid(&error.to_string()))?;
-                let workflow = WorkflowId::new(workflow_id.clone())
-                    .map_err(|error| invalid(&error.to_string()))?;
-                let revision = parse_revision_id(revision_id)?;
-                let root_scope = WorkspaceScope::run_root(
-                    run.clone(),
-                    ScopeId::new("root").map_err(|error| invalid(&error.to_string()))?,
-                );
-                let create = ControlCommand::CreateRun {
-                    run: run.clone(),
-                    workflow,
-                    revision,
-                    root_scope,
-                    workspace_budget: default_workspace_budget()
-                        .map_err(|error| invalid(&error.to_string()))?,
-                    inputs: Vec::new(),
-                };
-                let create_sequence =
-                    self.execute_control(session, request, Some(0), create, "create")?;
-                let start = ControlCommand::StartRun { run };
-                let sequence =
-                    self.execute_control(session, request, Some(create_sequence), start, "start")?;
-                accepted_sequence(request, sequence, "run_started")
-            }
-            Command::PauseRun { run_id } => {
-                self.simple_run_command(session, request, run_id, "pause", |run| {
-                    ControlCommand::PauseRun { run }
-                })
-            }
-            Command::ResumeRun { run_id } => {
-                self.simple_run_command(session, request, run_id, "resume", |run| {
-                    ControlCommand::ResumeRun { run }
-                })
-            }
-            Command::CancelRun { run_id } => {
-                self.simple_run_command(session, request, run_id, "cancel", |run| {
-                    ControlCommand::RequestCancellation { run }
-                })
-            }
-            Command::SignalRun {
-                run_id,
-                signal_id,
-                signal_type,
-                correlation,
-                broadcast,
-                payload,
-            } => {
-                let run =
-                    RunId::new(run_id.clone()).map_err(|error| invalid(&error.to_string()))?;
-                let command = ControlCommand::Signal {
-                    run,
-                    signal: SignalId::new(signal_id.clone())
-                        .map_err(|error| invalid(&error.to_string()))?,
-                    signal_type: SignalTypeId::new(signal_type.clone())
-                        .map_err(|error| invalid(&error.to_string()))?,
-                    correlation: correlation
-                        .as_ref()
-                        .map(|value| CorrelationKey::new(value.clone()))
-                        .transpose()
-                        .map_err(|error| invalid(&error.to_string()))?,
-                    mode: if *broadcast {
-                        SignalDeliveryMode::Broadcast
-                    } else {
-                        SignalDeliveryMode::OneShot
-                    },
-                    payload: milkdrift_capability::BoundedJson::new(payload.clone())
-                        .map_err(|error| invalid(&error.to_string()))?,
-                };
-                let sequence = self.execute_control(
-                    session,
-                    request,
-                    request.expected_sequence,
-                    command,
-                    "signal",
-                )?;
-                accepted_sequence(request, sequence, "signal_delivered")
-            }
-            Command::ResolveWork {
-                run_id,
-                attempt_id,
-                decision_id,
-                action,
-                remediation_node,
-            } => {
-                let run =
-                    RunId::new(run_id.clone()).map_err(|error| invalid(&error.to_string()))?;
-                let command = ControlCommand::ResolveExternalWork {
-                    run,
-                    attempt: AttemptId::new(attempt_id.clone())
-                        .map_err(|error| invalid(&error.to_string()))?,
-                    decision: ReconciliationDecisionId::new(decision_id.clone())
-                        .map_err(|error| invalid(&error.to_string()))?,
-                    action: map_resolve(*action),
-                    remediation_node: remediation_node
-                        .as_ref()
-                        .map(|value| milkdrift_blueprint::NodeId::new(value.clone()))
-                        .transpose()
-                        .map_err(|error| invalid(&error.to_string()))?,
-                };
-                let sequence = self.execute_control(
-                    session,
-                    request,
-                    request.expected_sequence,
-                    command,
-                    "resolve",
-                )?;
-                accepted_sequence(request, sequence, "external_work_resolved")
-            }
-            Command::SubmitProposal { document } => {
-                let bytes =
-                    serde_json::to_vec(document).map_err(|_| invalid("invalid proposal JSON"))?;
-                let proposal = WorkflowProposalDocument::from_json(&bytes)
-                    .map_err(|error| invalid(&bounded(&error.to_string())))?;
-                let digest = proposal.proposal().digest().clone();
-                let command = ControlCommand::SubmitProposal { proposal };
-                let value = self.execute_control_result(
-                    session,
-                    request,
-                    request.expected_sequence,
-                    Some(digest),
-                    command,
-                    "proposal",
-                )?;
-                match value {
-                    ControlResult::ProposalSubmitted { value } => Ok(CommandAccepted {
-                        command_id: request.command_id.clone(),
-                        replayed: false,
-                        resulting_sequence: value
-                            .reconciliation
-                            .as_ref()
-                            .and_then(|item| item.applied_sequence)
-                            .map(|sequence| sequence.get()),
-                        result_type: "proposal_submitted".to_owned(),
-                        value: serde_json::to_value(value).map_err(|_| internal())?,
-                    }),
-                    _ => Err(internal()),
-                }
-            }
-            Command::DecideProposal {
-                run_id,
-                proposal_id,
-                proposal_digest,
-                proposed_revision,
-                decision_id,
-                decision,
-            } => {
-                let run =
-                    RunId::new(run_id.clone()).map_err(|error| invalid(&error.to_string()))?;
-                let proposal = ProposalId::new(proposal_id.clone())
-                    .map_err(|error| invalid(&error.to_string()))?;
-                let digest: ProposalDigest =
-                    serde_json::from_value(Value::String(proposal_digest.clone()))
-                        .map_err(|error| invalid(&error.to_string()))?;
-                let revision = parse_revision_id(proposed_revision)?;
-                let decision_id = ReconciliationDecisionId::new(decision_id.clone())
-                    .map_err(|error| invalid(&error.to_string()))?;
-                let command = match decision {
-                    ProposalDecision::Approve => ControlCommand::ApproveProposal {
-                        run,
-                        proposal,
-                        proposal_digest: digest.clone(),
-                        proposed_revision: revision,
-                        decision: decision_id,
-                    },
-                    ProposalDecision::Reject => ControlCommand::RejectProposal {
-                        run,
-                        proposal,
-                        proposal_digest: digest.clone(),
-                        proposed_revision: revision,
-                        decision: decision_id,
-                    },
-                };
-                let sequence = self.execute_control_guarded(
-                    session,
-                    request,
-                    request.expected_sequence,
-                    Some(digest),
-                    command,
-                    "decision",
-                )?;
-                accepted_sequence(request, sequence, "proposal_decided")
-            }
-            Command::ApplyProposal {
-                run_id,
-                proposal_id,
-                proposal_digest,
-                proposed_revision,
-            } => {
-                let run =
-                    RunId::new(run_id.clone()).map_err(|error| invalid(&error.to_string()))?;
-                let digest: ProposalDigest =
-                    serde_json::from_value(Value::String(proposal_digest.clone()))
-                        .map_err(|error| invalid(&error.to_string()))?;
-                let command = ControlCommand::ApplyProposal {
-                    run,
-                    proposal: ProposalId::new(proposal_id.clone())
-                        .map_err(|error| invalid(&error.to_string()))?,
-                    proposal_digest: digest.clone(),
-                    proposed_revision: parse_revision_id(proposed_revision)?,
-                };
-                let sequence = self.execute_control_guarded(
-                    session,
-                    request,
-                    request.expected_sequence,
-                    Some(digest),
-                    command,
-                    "apply",
-                )?;
-                accepted_sequence(request, sequence, "proposal_applied")
-            }
-            Command::PutLayout { layout } => {
-                layout.validate().map_err(public_protocol)?;
-                let revision = parse_revision_id(&layout.revision_id)?;
-                let stored_revision = self
-                    .store
-                    .revision(&revision)
-                    .map_err(public_persistence)?
-                    .ok_or_else(not_found)?;
-                if stored_revision.semantic().workflow().as_str() != layout.workflow_id {
-                    return Err(invalid(
-                        "layout workflow/revision association does not match durable revision",
-                    ));
-                }
-                let mut resources = RequestedResourceFacts::empty();
-                resources.workflow = Some(stored_revision.semantic().workflow().clone());
-                resources.revision = Some(revision);
-                resources.layout_owner = Some(LayoutOwner::Shared);
-                let decision = self.authorize(
-                    session,
-                    AuthorityOperation::WriteLayout,
-                    resources,
-                    "command:put-layout",
-                )?;
-                let key = layout_key(&layout.workflow_id, &layout.revision_id);
-                if let Some(current) = self.persistent.document.layouts.get(&key) {
-                    if current.digest == layout.digest {
-                        return Ok(CommandAccepted {
-                            command_id: request.command_id.clone(),
-                            replayed: true,
-                            resulting_sequence: None,
-                            result_type: "layout_updated".to_owned(),
-                            value: serde_json::to_value(layout).map_err(|_| internal())?,
-                        });
-                    }
-                    if layout.generation != current.generation.saturating_add(1) {
-                        return Err(conflict("layout generation is stale"));
-                    }
-                } else if layout.generation != 1 {
-                    return Err(conflict("first layout generation must be one"));
-                }
-                self.persistent.document.layouts.insert(key, layout.clone());
-                self.record_security_decision(&decision)?;
-                Ok(CommandAccepted {
-                    command_id: request.command_id.clone(),
-                    replayed: false,
-                    resulting_sequence: None,
-                    result_type: "layout_updated".to_owned(),
-                    value: serde_json::to_value(layout).map_err(|_| internal())?,
-                })
-            }
-        }
-    }
-
-    fn simple_run_command<F>(
-        &self,
-        session: &ActorSession,
-        request: &CommandRequest,
-        run_id: &str,
-        suffix: &str,
-        build: F,
-    ) -> Result<CommandAccepted, PublicFailure>
-    where
-        F: FnOnce(RunId) -> ControlCommand,
-    {
-        let run = RunId::new(run_id.to_owned()).map_err(|error| invalid(&error.to_string()))?;
-        let sequence = self.execute_control(
-            session,
-            request,
-            request.expected_sequence,
-            build(run),
-            suffix,
-        )?;
-        accepted_sequence(request, sequence, &format!("run_{suffix}d"))
-    }
-
-    fn execute_control(
-        &self,
-        session: &ActorSession,
-        request: &CommandRequest,
-        expected_sequence: Option<u64>,
-        command: ControlCommand,
-        suffix: &str,
-    ) -> Result<u64, PublicFailure> {
-        let result = self.execute_control_result(
-            session,
-            request,
-            expected_sequence,
-            None,
-            command,
-            suffix,
-        )?;
-        match result {
-            ControlResult::RuntimeCommand { resulting_sequence } => Ok(resulting_sequence.get()),
-            _ => Err(internal()),
-        }
-    }
-
-    fn execute_control_guarded(
-        &self,
-        session: &ActorSession,
-        request: &CommandRequest,
-        expected_sequence: Option<u64>,
-        proposal_digest: Option<ProposalDigest>,
-        command: ControlCommand,
-        suffix: &str,
-    ) -> Result<u64, PublicFailure> {
-        let result = self.execute_control_result(
-            session,
-            request,
-            expected_sequence,
-            proposal_digest,
-            command,
-            suffix,
-        )?;
-        match result {
-            ControlResult::RuntimeCommand { resulting_sequence } => Ok(resulting_sequence.get()),
-            _ => Err(internal()),
-        }
-    }
-
-    fn execute_control_result(
-        &self,
-        session: &ActorSession,
-        request: &CommandRequest,
-        expected_sequence: Option<u64>,
-        proposal_digest: Option<ProposalDigest>,
-        command: ControlCommand,
-        suffix: &str,
-    ) -> Result<ControlResult, PublicFailure> {
-        let document = ControlCommandDocument::new(
-            internal_control_id(session, request, suffix)?,
-            session.context.clone(),
-            TimestampMillis::new(unix_millis()),
-            OptimisticGuard {
-                expected_run_sequence: expected_sequence.map(RunSequence::new),
-                expected_revision: request
-                    .expected_revision
-                    .as_deref()
-                    .map(parse_revision_id)
-                    .transpose()?,
-                expected_proposal_digest: proposal_digest,
-            },
-            Reason::new(request.reason.clone()).map_err(public_persistence)?,
-            evidence(request)?,
-            command,
-        )
-        .map_err(public_control)?;
-        self.control.execute(&document).map_err(public_control)
-    }
-
-    fn revision(
-        &self,
-        session: &ActorSession,
-        revision: &str,
-    ) -> Result<RevisionRead, PublicFailure> {
-        let revision_id = parse_revision_id(revision)?;
-        let command = ControlCommand::InspectRevision {
-            revision: revision_id.clone(),
-        };
-        let result = self.inspect_control(session, command, None, "revision")?;
-        let ControlResult::RevisionInspection { value } = result else {
-            return Err(internal());
-        };
-        let stored = self
-            .store
-            .revision(&revision_id)
-            .map_err(public_persistence)?
-            .ok_or_else(not_found)?;
-        let document = BlueprintRevisionDocument::new(&stored)
-            .to_canonical_json()
-            .map_err(|error| invalid(&error.to_string()))?;
-        Ok(RevisionRead {
-            summary: PublicRevisionSummary {
-                revision_id: value.revision.as_str().to_owned(),
-                workflow_id: value.workflow.as_str().to_owned(),
-                lineage_sequence: value.lineage_sequence,
-                semantic_digest: value.content_digest.as_str().to_owned(),
-                parents: value
-                    .parents
-                    .iter()
-                    .map(|parent| parent.as_str().to_owned())
-                    .collect(),
-            },
-            author: value.author.as_str().to_owned(),
-            reason: value.reason,
-            node_count: u32::try_from(value.node_count).unwrap_or(u32::MAX),
-            edge_count: u32::try_from(value.edge_count).unwrap_or(u32::MAX),
-            document: serde_json::from_slice(&document).ok(),
-        })
-    }
-
-    fn revisions(
-        &self,
-        session: &ActorSession,
-        workflow: Option<&str>,
-        cursor: Option<&Cursor>,
-        limit: u32,
-    ) -> Result<Page<PublicRevisionSummary>, PublicFailure> {
-        let requested_workflow = workflow
-            .map(|value| WorkflowId::new(value.to_owned()))
-            .transpose()
-            .map_err(|error| invalid(&error.to_string()))?;
-        let workflow_id = match &session.grant.resources().workflow_run {
-            WorkflowRunScope::Any => requested_workflow,
-            WorkflowRunScope::Workflow { workflow: allowed } => {
-                if requested_workflow
-                    .as_ref()
-                    .is_some_and(|value| value != allowed)
-                {
-                    return Err(unauthorized());
-                }
-                Some(allowed.clone())
-            }
-            WorkflowRunScope::Run { .. } => return Err(unauthorized()),
-        };
-        let feed = format!(
-            "revisions:{}",
-            workflow_id.as_ref().map_or("*", WorkflowId::as_str)
-        );
-        let mut resources = RequestedResourceFacts::empty();
-        resources.workflow = workflow_id.clone();
-        let decision = self.authorize(
-            session,
-            AuthorityOperation::InspectRevision,
-            resources,
-            "read:revisions",
-        )?;
-        let binding = cursor_binding(session, &feed)?;
-        let filter = RevisionFilter {
-            workflow: workflow_id,
-        };
-        let internal_cursor = cursor
-            .map(|cursor| {
-                cursor
-                    .key_for_bound(&feed, &binding, session.cursor_key())
-                    .map_err(public_protocol)
-            })
-            .transpose()?
-            .map(|value| parse_revision_id(&value))
-            .transpose()?
-            .map(|revision| RevisionCursor::new(revision, filter.clone()));
-        let page = self
-            .store
-            .revisions(&RevisionPageQuery {
-                filter,
-                cursor: internal_cursor,
-                limit: PageSize::new(limit).map_err(public_persistence)?,
-            })
-            .map_err(public_persistence)?;
-        let next_cursor = page
-            .next
-            .as_ref()
-            .map(|cursor| {
-                Cursor::new_bound_key(
-                    &feed,
-                    cursor.after_revision().as_str(),
-                    binding.clone(),
-                    decision.digest(),
-                    session.cursor_key(),
-                )
-                .map_err(public_protocol)
-            })
-            .transpose()?;
-        Ok(Page {
-            items: page.revisions.iter().map(public_revision_summary).collect(),
-            next_cursor,
-            observed_cursor: None,
-        })
-    }
-
-    fn revision_diff(
-        &self,
-        session: &ActorSession,
-        from: &str,
-        to: &str,
-    ) -> Result<RevisionDiffRead, PublicFailure> {
-        let left = self.revision(session, from)?;
-        let right = self.revision(session, to)?;
-        if left.summary.workflow_id != right.summary.workflow_id {
-            return Err(invalid("revision diff requires one workflow lineage"));
-        }
-        let left_revision = self
-            .store
-            .revision(&parse_revision_id(from)?)
-            .map_err(public_persistence)?
-            .ok_or_else(not_found)?;
-        let right_revision = self
-            .store
-            .revision(&parse_revision_id(to)?)
-            .map_err(public_persistence)?
-            .ok_or_else(not_found)?;
-        let mut changes = Vec::new();
-        diff_keys(
-            "node",
-            left_revision.semantic().nodes(),
-            right_revision.semantic().nodes(),
-            &mut changes,
-        );
-        diff_keys(
-            "edge",
-            left_revision.semantic().edges(),
-            right_revision.semantic().edges(),
-            &mut changes,
-        );
-        let truncated = changes.len() > 1_024;
-        changes.truncate(1_024);
-        Ok(RevisionDiffRead {
-            from_revision: from.to_owned(),
-            to_revision: to.to_owned(),
-            changes,
-            truncated,
-        })
-    }
-
-    fn run_read(&self, session: &ActorSession, run: &str) -> Result<RunRead, PublicFailure> {
-        let run_id = RunId::new(run.to_owned()).map_err(|error| invalid(&error.to_string()))?;
-        let result = self.inspect_control(
-            session,
-            ControlCommand::InspectRun { run: run_id },
-            None,
-            "run",
-        )?;
-        let ControlResult::RunInspection { value } = result else {
-            return Err(internal());
-        };
-        Ok(public_run(value))
-    }
-
-    fn node_read(
-        &self,
-        session: &ActorSession,
-        run: &str,
-        execution: &str,
-    ) -> Result<NodeRead, PublicFailure> {
-        self.authorize_run_read(
-            session,
-            run,
-            AuthorityOperation::InspectNodeExecution,
-            "read:node-execution",
-        )?;
-        self.run_read(session, run)?
-            .nodes
-            .into_iter()
-            .find(|node| node.execution_id == execution)
-            .ok_or_else(not_found)
-    }
-
-    fn attempt_read(
-        &mut self,
-        session: &ActorSession,
-        run: &str,
-        attempt: &str,
-    ) -> Result<AttemptRead, PublicFailure> {
-        self.authorize_run_read(
-            session,
-            run,
-            AuthorityOperation::InspectAttempt,
-            "read:attempt",
-        )?;
-        let current = self
-            .run_read(session, run)?
-            .nodes
-            .into_iter()
-            .find(|node| {
-                node.latest_attempt
-                    .as_ref()
-                    .is_some_and(|value| value.attempt_id == attempt)
-            })
-            .and_then(|node| {
-                node.latest_attempt
-                    .map(|attempt| (node.node_id, node.revision_id, attempt))
-            });
-        let (node_id, revision_id, mut value) = match current {
-            Some((node, revision, mut value)) => {
-                if let Ok((_, _, historical)) = self.historical_attempt_read(run, attempt) {
-                    value.peer_id = historical.peer_id;
-                }
-                (node, revision, value)
-            }
-            None => self.historical_attempt_read(run, attempt)?,
-        };
-        let Some(reference) = value.context_manifest.as_ref() else {
-            return Ok(value);
-        };
-        let artifact = ArtifactId::new(reference.artifact_id.clone())
-            .map_err(|error| invalid(&error.to_string()))?;
-        let metadata = self
-            .store
-            .metadata(&artifact)
-            .map_err(public_persistence)?
-            .ok_or_else(not_found)?;
-        let mut resources = RequestedResourceFacts::empty();
-        resources.artifact = Some(artifact);
-        resources.artifact_sensitivity = Some(metadata.sensitivity());
-        let decision = self.evaluate_authority(
-            session,
-            AuthorityOperation::ReadArtifactContent,
-            resources,
-            "read:attempt-context-manifest",
-        )?;
-        self.record_security_decision(&decision)?;
-        if !decision.is_allowed() {
-            value.context_access = "denied".to_owned();
-            self.persistent
-                .flush()
-                .map_err(|error| PublicFailure::new(ErrorCode::Corruption, error, false))?;
-            return Ok(value);
-        }
-        let reference = milkdrift_capability::ArtifactReference::new(
-            reference.artifact_id.clone(),
-            reference.digest.clone(),
-            Some(reference.content_type.clone()),
-            Some(reference.size),
-        )
-        .map_err(|error| invalid(&error.to_string()))?;
-        let manifest = milkdrift_runtime::read_context_manifest(
-            self.store.as_ref(),
-            &reference,
-            ArtifactReadAuthority::Authorized {
-                actor: session.actor.clone(),
-                evidence: EvidenceId::new(format!("attempt-context:{}", &decision.digest()[..32]))
-                    .map_err(public_persistence)?,
-            },
-        )
-        .map_err(|error| PublicFailure::new(ErrorCode::Corruption, error.to_string(), false))?;
-        if manifest.attempt().as_str() != attempt {
-            return Err(PublicFailure::new(
-                ErrorCode::Corruption,
-                "context manifest is bound to another attempt",
-                false,
-            ));
-        }
-        let revision = parse_revision_id(&revision_id)?;
-        let stored = self
-            .store
-            .revision(&revision)
-            .map_err(public_persistence)?
-            .ok_or_else(not_found)?;
-        let policy = stored
-            .semantic()
-            .nodes()
-            .get(
-                &milkdrift_blueprint::NodeId::new(node_id)
-                    .map_err(|error| invalid(&error.to_string()))?,
-            )
-            .and_then(|node| match node.kind() {
-                milkdrift_blueprint::NodeKind::Task { config } => Some(config.context_policy()),
-                _ => None,
-            })
-            .ok_or_else(not_found)?;
-        const MAX_CONTEXT_READ_ITEMS: usize = 256;
-        let truncated = manifest.entries().len() > MAX_CONTEXT_READ_ITEMS
-            || manifest.omissions().len() > MAX_CONTEXT_READ_ITEMS;
-        value.context = Some(ContextManifestRead {
-            schema_version: manifest.schema_version(),
-            digest: manifest.digest().as_str().to_owned(),
-            policy: serde_json::to_value(policy).map_err(|_| internal())?,
-            entries: manifest
-                .entries()
-                .iter()
-                .take(MAX_CONTEXT_READ_ITEMS)
-                .map(serde_json::to_value)
-                .collect::<Result<_, _>>()
-                .map_err(|_| internal())?,
-            omissions: manifest
-                .omissions()
-                .iter()
-                .take(MAX_CONTEXT_READ_ITEMS)
-                .map(serde_json::to_value)
-                .collect::<Result<_, _>>()
-                .map_err(|_| internal())?,
-            totals: serde_json::to_value(manifest.totals()).map_err(|_| internal())?,
-            budget: serde_json::to_value(manifest.budget()).map_err(|_| internal())?,
-            truncated,
-        });
-        value.context_access = "authorized".to_owned();
-        self.persistent
-            .flush()
-            .map_err(|error| PublicFailure::new(ErrorCode::Corruption, error, false))?;
-        Ok(value)
-    }
-
-    fn historical_attempt_read(
-        &self,
-        run: &str,
-        attempt: &str,
-    ) -> Result<(String, String, AttemptRead), PublicFailure> {
-        let run_id = RunId::new(run.to_owned()).map_err(|error| invalid(&error.to_string()))?;
-        let attempt_id =
-            AttemptId::new(attempt.to_owned()).map_err(|error| invalid(&error.to_string()))?;
-        let page_size = PageSize::new(256).map_err(public_persistence)?;
-        let mut cursor = None;
-        let mut current_revision = None::<RevisionId>;
-        let mut executions = BTreeMap::new();
-        let mut retry_timer = None;
-        let mut located = None::<(String, String, AttemptRead)>;
-        loop {
-            let query = EventPageQuery::new(run_id.clone(), cursor, page_size)
-                .map_err(public_persistence)?;
-            let page = self.store.events(&query).map_err(public_persistence)?;
-            for event in page.events {
-                match event.kind() {
-                    RunEventKind::RunCreated { revision, .. }
-                    | RunEventKind::RevisionPinned { revision, .. } => {
-                        current_revision = Some(revision.clone());
-                    }
-                    RunEventKind::NodeBecameEligible {
-                        node, execution, ..
-                    } => {
-                        if let Some(revision) = current_revision.as_ref() {
-                            executions.insert(
-                                execution.clone(),
-                                (node.as_str().to_owned(), revision.as_str().to_owned()),
-                            );
-                        }
-                    }
-                    RunEventKind::NodeRetryScheduled {
-                        execution,
-                        next_attempt,
-                        timer,
-                        ..
-                    } if next_attempt == &attempt_id => {
-                        let (node, revision) = executions
-                            .get(execution)
-                            .cloned()
-                            .ok_or_else(|| corruption("retry attempt has no owning execution"))?;
-                        retry_timer = Some(timer.clone());
-                        located = Some((
-                            node,
-                            revision,
-                            empty_attempt_read(attempt, "awaiting_retry_timer"),
-                        ));
-                    }
-                    RunEventKind::TimerFired { timer, .. }
-                        if retry_timer.as_ref() == Some(timer) =>
-                    {
-                        if let Some((_, _, value)) = located.as_mut() {
-                            value.state = "ready_to_schedule".to_owned();
-                        }
-                    }
-                    RunEventKind::NodeScheduled {
-                        node,
-                        execution,
-                        attempt: scheduled,
-                        invocation,
-                        request,
-                        ..
-                    } if scheduled == &attempt_id => {
-                        let revision = executions
-                            .get(execution)
-                            .map(|(_, revision)| revision.clone())
-                            .or_else(|| {
-                                current_revision
-                                    .as_ref()
-                                    .map(|revision| revision.as_str().to_owned())
-                            })
-                            .ok_or_else(|| corruption("scheduled attempt has no revision"))?;
-                        let mut value = empty_attempt_read(attempt, "scheduled");
-                        value.invocation_id = Some(invocation.as_str().to_owned());
-                        value.context_manifest =
-                            request.context_manifest().map(public_invocation_artifact);
-                        value.context_access = if value.context_manifest.is_some() {
-                            "metadata_only".to_owned()
-                        } else {
-                            "absent".to_owned()
-                        };
-                        located = Some((node.as_str().to_owned(), revision, value));
-                    }
-                    RunEventKind::CapabilityResolutionDecisionRecorded {
-                        attempt: resolved,
-                        authorization,
-                        ..
-                    } if resolved == &attempt_id => {
-                        if let Some((_, _, value)) = located.as_mut() {
-                            value.peer_id = authorization
-                                .request()
-                                .resources
-                                .peer
-                                .as_ref()
-                                .map(|peer| peer.as_str().to_owned())
-                                .or_else(|| {
-                                    authorization
-                                        .request()
-                                        .provenance
-                                        .peer
-                                        .as_ref()
-                                        .map(|peer| peer.as_str().to_owned())
-                                });
-                        }
-                    }
-                    RunEventKind::CapabilityResolved {
-                        attempt: resolved,
-                        snapshot,
-                        ..
-                    } if resolved == &attempt_id => {
-                        if let Some((_, _, value)) = located.as_mut() {
-                            value.capability_id = Some(snapshot.capability().as_str().to_owned());
-                            value.descriptor_revision = Some(snapshot.descriptor_revision());
-                            value.capability_provenance =
-                                Some(public_capability_provenance(snapshot));
-                            value.provider_profile = snapshot
-                                .provider_profile()
-                                .map(|profile| profile.as_str().to_owned());
-                        }
-                    }
-                    RunEventKind::LeaseGranted {
-                        attempt: leased, ..
-                    } if leased == &attempt_id => {
-                        if let Some((_, _, value)) = located.as_mut() {
-                            value.state = "leased".to_owned();
-                        }
-                    }
-                    RunEventKind::NodeStarted {
-                        attempt: started, ..
-                    } if started == &attempt_id => {
-                        if let Some((_, _, value)) = located.as_mut() {
-                            value.state = "running".to_owned();
-                        }
-                    }
-                    RunEventKind::NodeTerminal {
-                        attempt: terminal,
-                        outcome,
-                        ..
-                    } if terminal == &attempt_id => {
-                        if let Some((_, _, value)) = located.as_mut() {
-                            value.state = "terminal".to_owned();
-                            value.terminal = Some(snake_debug(outcome));
-                        }
-                    }
-                    RunEventKind::ExternalOutcomeUncertain {
-                        attempt: uncertain, ..
-                    } if uncertain == &attempt_id => {
-                        if let Some((_, _, value)) = located.as_mut() {
-                            value.state = "uncertain".to_owned();
-                            value.uncertain = true;
-                        }
-                    }
-                    RunEventKind::ExternalOutcomeRetained {
-                        attempt: retained, ..
-                    } if retained == &attempt_id => {
-                        if let Some((_, _, value)) = located.as_mut() {
-                            value.state = "retained".to_owned();
-                            value.uncertain = true;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            cursor = page.next;
-            if cursor.is_none() {
-                break;
-            }
-        }
-        located.ok_or_else(not_found)
-    }
-
-    fn authorize_run_read(
-        &self,
-        session: &ActorSession,
-        run: &str,
-        operation: AuthorityOperation,
-        boundary: &str,
-    ) -> Result<AuthorityDecisionSnapshot, PublicFailure> {
-        let run = RunId::new(run.to_owned()).map_err(|error| invalid(&error.to_string()))?;
-        let summary = self
-            .store
-            .run_summary(&run)
-            .map_err(public_persistence)?
-            .ok_or_else(not_found)?;
-        let mut resources = RequestedResourceFacts::empty();
-        resources.workflow = Some(summary.workflow);
-        resources.run = Some(run);
-        self.authorize(session, operation, resources, boundary)
-    }
-
-    fn runs(
-        &self,
-        session: &ActorSession,
-        state: Option<&str>,
-        workflow: Option<&str>,
-        cursor: Option<&Cursor>,
-        limit: u32,
-    ) -> Result<Page<RunRead>, PublicFailure> {
-        let indexed_state = state.map(parse_run_state).transpose()?;
-        let requested_workflow = workflow
-            .map(|value| WorkflowId::new(value.to_owned()))
-            .transpose()
-            .map_err(|error| invalid(&error.to_string()))?;
-        if let WorkflowRunScope::Run {
-            run,
-            workflow: allowed_workflow,
-        } = &session.grant.resources().workflow_run
-        {
-            if cursor.is_some()
-                || requested_workflow.as_ref().is_some_and(|value| {
-                    allowed_workflow
-                        .as_ref()
-                        .is_some_and(|allowed| value != allowed)
-                })
-            {
-                return Err(unauthorized());
-            }
-            let summary = self
-                .store
-                .run_summary(run)
-                .map_err(public_persistence)?
-                .ok_or_else(not_found)?;
-            let state_matches =
-                state.is_none_or(|expected| snake_debug(&summary.state) == expected);
-            let value = self.run_read(session, run.as_str())?;
-            let workflow_matches = requested_workflow
-                .as_ref()
-                .is_none_or(|expected| value.workflow_id.as_deref() == Some(expected.as_str()));
-            return Ok(Page {
-                items: if state_matches && workflow_matches {
-                    vec![value]
-                } else {
-                    Vec::new()
-                },
-                next_cursor: None,
-                observed_cursor: None,
-            });
-        }
-        let workflow_id = match &session.grant.resources().workflow_run {
-            WorkflowRunScope::Any => requested_workflow,
-            WorkflowRunScope::Workflow { workflow: allowed } => {
-                if requested_workflow
-                    .as_ref()
-                    .is_some_and(|value| value != allowed)
-                {
-                    return Err(unauthorized());
-                }
-                Some(allowed.clone())
-            }
-            WorkflowRunScope::Run { .. } => unreachable!("exact run scope returned above"),
-        };
-        let feed = format!(
-            "runs:{}:{}",
-            state.unwrap_or("*"),
-            workflow_id.as_ref().map_or("*", WorkflowId::as_str)
-        );
-        let mut resources = RequestedResourceFacts::empty();
-        resources.workflow = workflow_id.clone();
-        let decision = self.authorize(
-            session,
-            AuthorityOperation::InspectRun,
-            resources,
-            "read:runs",
-        )?;
-        let binding = cursor_binding(session, &feed)?;
-        let filter = RunSummaryFilter {
-            state: indexed_state,
-            workflow: workflow_id,
-        };
-        let internal_cursor = cursor
-            .map(|cursor| {
-                cursor
-                    .key_for_bound(&feed, &binding, session.cursor_key())
-                    .map_err(public_protocol)
-            })
-            .transpose()?
-            .map(|value| RunId::new(value).map_err(|error| invalid(&error.to_string())))
-            .transpose()?
-            .map(|run| RunSummaryCursor::for_query(run, filter.clone()));
-        let page = self
-            .store
-            .run_summaries(&RunSummaryPageQuery {
-                filter,
-                cursor: internal_cursor,
-                limit: PageSize::new(limit).map_err(public_persistence)?,
-            })
-            .map_err(public_persistence)?;
-        let mut runs = Vec::with_capacity(page.runs.len());
-        for summary in &page.runs {
-            runs.push(self.run_read(session, summary.run.as_str())?);
-        }
-        let next_cursor = page
-            .next
-            .as_ref()
-            .map(|cursor| {
-                Cursor::new_bound_key(
-                    &feed,
-                    cursor.after_run().as_str(),
-                    binding.clone(),
-                    decision.digest(),
-                    session.cursor_key(),
-                )
-                .map_err(public_protocol)
-            })
-            .transpose()?;
-        Ok(Page {
-            items: runs,
-            next_cursor,
-            observed_cursor: None,
-        })
-    }
-
-    fn timeline(
-        &self,
-        session: &ActorSession,
-        run: &str,
-        cursor: Option<&Cursor>,
-        limit: u32,
-    ) -> Result<Page<TimelineEntry>, PublicFailure> {
-        let run_id = RunId::new(run.to_owned()).map_err(|error| invalid(&error.to_string()))?;
-        let feed = format!("timeline:{run}");
-        let mut resources = RequestedResourceFacts::empty();
-        resources.run = Some(run_id.clone());
-        let workflow = self
-            .store
-            .run_summary(&run_id)
-            .map_err(public_persistence)?
-            .ok_or_else(not_found)?
-            .workflow;
-        resources.workflow = Some(workflow);
-        let decision = self.authorize(
-            session,
-            AuthorityOperation::InspectTimeline,
-            resources,
-            "read:timeline",
-        )?;
-        let binding = cursor_binding(session, &feed)?;
-        let next_sequence = cursor
-            .map(|cursor| {
-                cursor
-                    .position_for_bound(&feed, &binding, session.cursor_key())
-                    .map_err(public_protocol)
-            })
-            .transpose()?
-            .map(|position| position.saturating_add(1))
-            .unwrap_or(1);
-        let result = self.inspect_control(
-            session,
-            ControlCommand::InspectTimeline {
-                run: run_id,
-                after: Some(RunSequence::new(next_sequence)),
-                limit: PageSize::new(limit).map_err(public_persistence)?,
-            },
-            None,
-            "timeline",
-        )?;
-        let ControlResult::Timeline { value } = result else {
-            return Err(internal());
-        };
-        let items = value.events.iter().map(public_timeline).collect::<Vec<_>>();
-        let next_cursor = value
-            .next_sequence
-            .map(|sequence| {
-                Cursor::new_bound(
-                    &feed,
-                    sequence.get().saturating_sub(1),
-                    binding.clone(),
-                    decision.digest(),
-                    session.cursor_key(),
-                )
-                .map_err(public_protocol)
-            })
-            .transpose()?;
-        let observed_cursor = if value.observed_head == RunSequence::ZERO {
-            None
-        } else {
-            Some(
-                Cursor::new_bound(
-                    &feed,
-                    value.observed_head.get(),
-                    binding,
-                    decision.digest(),
-                    session.cursor_key(),
-                )
-                .map_err(public_protocol)?,
-            )
-        };
-        Ok(Page {
-            items,
-            next_cursor,
-            observed_cursor,
-        })
-    }
-
-    fn capabilities(&self, session: &ActorSession) -> Result<Vec<CapabilityRead>, PublicFailure> {
-        self.authorize(
-            session,
-            AuthorityOperation::ListCapabilities,
-            RequestedResourceFacts::empty(),
-            "read:capabilities",
-        )?;
-        self.authorize(
-            session,
-            AuthorityOperation::InspectCapabilityHealth,
-            RequestedResourceFacts::empty(),
-            "read:capability-health",
-        )?;
-        self.authorize(
-            session,
-            AuthorityOperation::InspectProviderProfile,
-            RequestedResourceFacts::empty(),
-            "read:provider-profile",
-        )?;
-        let scope = &session.grant.resources().capability;
-        self.capability_host
-            .generations(scope, unix_millis())
-            .map_err(|error| {
-                PublicFailure::new(ErrorCode::Unavailable, bounded(&error.to_string()), true)
-            })
-            .map(|views| {
-                views
-                    .into_iter()
-                    .map(|view| CapabilityRead {
-                        capability_id: view.capability.as_str().to_owned(),
-                        generation: view.descriptor_revision,
-                        descriptor_digest: view.descriptor_digest,
-                        category: snake_debug(&view.category),
-                        operations: view
-                            .operations
-                            .iter()
-                            .map(|operation| operation.as_str().to_owned())
-                            .collect(),
-                        provider_profile: view
-                            .provider_profile
-                            .map(|profile| profile.as_str().to_owned()),
-                        locality: snake_debug(&view.locality),
-                        peer_id: view.peer.map(|peer| peer.as_str().to_owned()),
-                        trust_zones: view
-                            .trust_zones
-                            .iter()
-                            .map(|zone| zone.as_str().to_owned())
-                            .collect(),
-                        execution_trust: snake_debug(&view.execution_trust),
-                        current: view.current,
-                        draining: view.draining,
-                        health: snake_debug(&view.health),
-                        available: view.available,
-                        active_permits: view.active_permits,
-                        permit_limit: view.permit_limit,
-                    })
-                    .collect()
-            })
+        receipts::execute(self, session, request)
     }
 
     fn proposals(
@@ -2521,75 +1316,7 @@ impl Owner {
         cursor: Option<&Cursor>,
         limit: u32,
     ) -> Result<Page<ProposalRead>, PublicFailure> {
-        let run_id = RunId::new(run.to_owned()).map_err(|error| invalid(&error.to_string()))?;
-        let feed = format!("proposals:{run}");
-        let summary = self
-            .store
-            .run_summary(&run_id)
-            .map_err(public_persistence)?
-            .ok_or_else(not_found)?;
-        let mut resources = RequestedResourceFacts::empty();
-        resources.workflow = Some(summary.workflow);
-        resources.run = Some(run_id.clone());
-        let decision = self.authorize(
-            session,
-            AuthorityOperation::InspectProposal,
-            resources,
-            "read:proposals",
-        )?;
-        let binding = cursor_binding(session, &feed)?;
-        let after = cursor
-            .map(|cursor| {
-                cursor
-                    .key_for_bound(&feed, &binding, session.cursor_key())
-                    .map_err(public_protocol)
-            })
-            .transpose()?;
-        let limit = usize::try_from(PageSize::new(limit).map_err(public_persistence)?.get())
-            .map_err(|_| invalid("proposal page limit exceeds platform"))?;
-        let mut scanned = 0_usize;
-        let mut last = None;
-        let mut items = Vec::new();
-        let start = after
-            .map(std::ops::Bound::Excluded)
-            .unwrap_or(std::ops::Bound::Unbounded);
-        for (key, entry) in self
-            .persistent
-            .document
-            .commands
-            .range((start, std::ops::Bound::Unbounded))
-            .take(limit)
-        {
-            scanned += 1;
-            last = Some(key.clone());
-            let Some(proposal) = &entry.proposal else {
-                continue;
-            };
-            if proposal.run != run_id.as_str() {
-                continue;
-            }
-            items.push(self.proposal(session, run, &proposal.proposal, &proposal.revision)?);
-        }
-        let next_cursor = if scanned == limit {
-            last.map(|key| {
-                Cursor::new_bound_key(
-                    &feed,
-                    &key,
-                    binding.clone(),
-                    decision.digest(),
-                    session.cursor_key(),
-                )
-                .map_err(public_protocol)
-            })
-            .transpose()?
-        } else {
-            None
-        };
-        Ok(Page {
-            items,
-            next_cursor,
-            observed_cursor: None,
-        })
+        proposals::page(self, session, run, cursor, limit)
     }
 
     fn proposal(
@@ -2599,111 +1326,7 @@ impl Owner {
         proposal: &str,
         revision: &str,
     ) -> Result<ProposalRead, PublicFailure> {
-        let run = RunId::new(run.to_owned()).map_err(|error| invalid(&error.to_string()))?;
-        let proposal =
-            ProposalId::new(proposal.to_owned()).map_err(|error| invalid(&error.to_string()))?;
-        let revision = parse_revision_id(revision)?;
-        let result = self.inspect_control(
-            session,
-            ControlCommand::QueryProposal {
-                run,
-                proposal,
-                proposed_revision: revision,
-            },
-            None,
-            "proposal-status",
-        )?;
-        let ControlResult::ProposalStatus { value } = result else {
-            return Err(internal());
-        };
-        Ok(ProposalRead {
-            proposal_id: value.proposal.as_str().to_owned(),
-            proposed_revision: value.proposed_revision.as_str().to_owned(),
-            status: snake_debug(&value.reconciliation.state),
-            approved: value.reconciliation.approved,
-            applied_sequence: value
-                .reconciliation
-                .applied_sequence
-                .map(|sequence| sequence.get()),
-        })
-    }
-
-    fn artifact_metadata(
-        &mut self,
-        session: &ActorSession,
-        artifact: &str,
-    ) -> Result<ArtifactMetadataRead, PublicFailure> {
-        let artifact =
-            ArtifactId::new(artifact.to_owned()).map_err(|error| invalid(&error.to_string()))?;
-        let metadata = self
-            .store
-            .metadata(&artifact)
-            .map_err(public_persistence)?
-            .ok_or_else(not_found)?;
-        let mut resources = RequestedResourceFacts::empty();
-        resources.artifact = Some(artifact);
-        resources.artifact_sensitivity = Some(metadata.sensitivity());
-        let decision = self.authorize(
-            session,
-            AuthorityOperation::ReadArtifactMetadata,
-            resources,
-            "read:artifact-metadata",
-        )?;
-        if metadata.sensitivity() != ArtifactSensitivity::Public {
-            self.record_security_decision(&decision)?;
-            self.persistent
-                .flush()
-                .map_err(|error| PublicFailure::new(ErrorCode::Corruption, error, false))?;
-        }
-        Ok(public_artifact_metadata(&metadata))
-    }
-
-    fn artifact_range(
-        &mut self,
-        session: &ActorSession,
-        artifact: &str,
-        offset: u64,
-        maximum: u32,
-        evidence: &str,
-    ) -> Result<OwnerValue, PublicFailure> {
-        let artifact_id =
-            ArtifactId::new(artifact.to_owned()).map_err(|error| invalid(&error.to_string()))?;
-        let metadata = self
-            .store
-            .metadata(&artifact_id)
-            .map_err(public_persistence)?
-            .ok_or_else(not_found)?;
-        let mut resources = RequestedResourceFacts::empty();
-        resources.artifact = Some(artifact_id);
-        resources.artifact_sensitivity = Some(metadata.sensitivity());
-        let decision = self.authorize(
-            session,
-            AuthorityOperation::ReadArtifactContent,
-            resources,
-            "read:artifact-content",
-        )?;
-        let authority = ArtifactReadAuthority::Authorized {
-            actor: session.actor.clone(),
-            evidence: EvidenceId::new(format!("{evidence}-{}", decision.digest()))
-                .map_err(public_persistence)?,
-        };
-        let chunk = self
-            .store
-            .read_chunk(
-                &ArtifactReadRequest::new(metadata.reference().clone(), offset, maximum, authority)
-                    .map_err(public_persistence)?,
-            )
-            .map_err(public_persistence)?;
-        self.record_security_decision(&decision)?;
-        self.persistent
-            .flush()
-            .map_err(|error| PublicFailure::new(ErrorCode::Corruption, error, false))?;
-        Ok(OwnerValue::ArtifactRange {
-            metadata: public_artifact_metadata(&metadata),
-            offset: chunk.offset,
-            bytes: chunk.bytes,
-            end: chunk.end_of_artifact,
-        })
+        proposals::exact(self, session, run, proposal, revision)
     }
 
     fn layout(
@@ -2712,25 +1335,7 @@ impl Owner {
         workflow: &str,
         revision: &str,
     ) -> Result<LayoutDocument, PublicFailure> {
-        let workflow_id =
-            WorkflowId::new(workflow.to_owned()).map_err(|error| invalid(&error.to_string()))?;
-        let revision_id = parse_revision_id(revision)?;
-        let mut resources = RequestedResourceFacts::empty();
-        resources.workflow = Some(workflow_id);
-        resources.revision = Some(revision_id);
-        resources.layout_owner = Some(LayoutOwner::Shared);
-        self.authorize(
-            session,
-            AuthorityOperation::ReadLayout,
-            resources,
-            "read:layout",
-        )?;
-        self.persistent
-            .document
-            .layouts
-            .get(&layout_key(workflow, revision))
-            .cloned()
-            .ok_or_else(not_found)
+        layouts::read(self, session, workflow, revision)
     }
 
     fn inspect_control(
@@ -2761,7 +1366,7 @@ impl Owner {
     }
 
     fn record_security_decision(
-        &mut self,
+        &self,
         decision: &AuthorityDecisionSnapshot,
     ) -> Result<(), PublicFailure> {
         let request = decision.request();
@@ -2772,143 +1377,21 @@ impl Owner {
         let mut resource_hasher = blake3::Hasher::new();
         resource_hasher.update(b"milkdrift.audit-resource.v1\0");
         resource_hasher.update(format!("{:?}", request.resources).as_bytes());
-        let sequence = self.persistent.document.next_audit_sequence.max(1);
-        self.persistent.document.next_audit_sequence = sequence.saturating_add(1);
-        self.persistent.document.audit.push(SecurityDecisionRecord {
-            sequence,
-            evaluated_at_ms: request.evaluated_at.get(),
-            actor: request.actor.as_str().to_owned(),
-            grant_id: request.grant.as_str().to_owned(),
-            grant_revision: request.grant_revision,
-            grant_digest: request.grant_digest.as_str().to_owned(),
-            operation,
-            resource_digest: format!("b3_{}", resource_hasher.finalize()),
-            decision_digest: decision.digest().to_owned(),
-            outcome: snake_debug(&decision.outcome()),
-            reason_codes: decision.reason_codes().iter().map(snake_debug).collect(),
-        });
-        let bound = usize::try_from(self.persistent.command_bound).unwrap_or(usize::MAX);
-        if self.persistent.document.audit.len() > bound {
-            let excess = self.persistent.document.audit.len().saturating_sub(bound);
-            self.persistent.document.audit.drain(..excess);
-        }
-        Ok(())
-    }
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct LedgerEntry {
-    fingerprint: String,
-    result: CommandAccepted,
-    #[serde(default)]
-    proposal: Option<ProposalLedgerRef>,
-}
-
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct ProposalLedgerRef {
-    run: String,
-    proposal: String,
-    revision: String,
-}
-
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct SecurityDecisionRecord {
-    sequence: u64,
-    evaluated_at_ms: u64,
-    actor: String,
-    grant_id: String,
-    grant_revision: u64,
-    grant_digest: String,
-    operation: String,
-    resource_digest: String,
-    decision_digest: String,
-    outcome: String,
-    reason_codes: Vec<String>,
-}
-
-#[derive(Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct LocalStateDocument {
-    schema_version: u32,
-    layouts: BTreeMap<String, LayoutDocument>,
-    commands: BTreeMap<String, LedgerEntry>,
-    #[serde(default)]
-    next_audit_sequence: u64,
-    #[serde(default)]
-    audit: Vec<SecurityDecisionRecord>,
-}
-
-struct LocalState {
-    path: PathBuf,
-    command_bound: u32,
-    document: LocalStateDocument,
-}
-
-impl LocalState {
-    fn load(path: PathBuf, command_bound: u32) -> Result<Self, String> {
-        let document = match fs::read(&path) {
-            Ok(bytes) => {
-                if bytes.len() > 64 * 1024 * 1024 {
-                    return Err("control state exceeds 64 MiB safety bound".to_owned());
-                }
-                let value = milkdrift_contracts::parse_json_without_duplicates(&bytes)
-                    .map_err(|error| format!("control state JSON failed verification: {error}"))?;
-                let document: LocalStateDocument = serde_json::from_value(value)
-                    .map_err(|error| format!("control state failed decoding: {error}"))?;
-                if document.schema_version != LOCAL_STATE_SCHEMA_VERSION {
-                    return Err("control state schema version is unsupported".to_owned());
-                }
-                if document.commands.len() > usize::try_from(command_bound).unwrap_or(usize::MAX) {
-                    return Err("control command ledger exceeds configured bound".to_owned());
-                }
-                if document.audit.len() > usize::try_from(command_bound).unwrap_or(usize::MAX) {
-                    return Err("security decision audit exceeds configured bound".to_owned());
-                }
-                for layout in document.layouts.values() {
-                    layout
-                        .validate()
-                        .map_err(|error| format!("stored layout failed verification: {error}"))?;
-                }
-                document
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => LocalStateDocument {
-                schema_version: LOCAL_STATE_SCHEMA_VERSION,
-                ..LocalStateDocument::default()
-            },
-            Err(error) => return Err(format!("control state read failed: {:?}", error.kind())),
-        };
-        Ok(Self {
-            path,
-            command_bound,
-            document,
-        })
-    }
-
-    fn flush(&self) -> Result<(), String> {
-        let bytes = serde_json::to_vec(&self.document)
-            .map_err(|_| "control state encoding failed".to_owned())?;
-        if bytes.len() > 64 * 1024 * 1024 {
-            return Err("control state exceeds 64 MiB safety bound".to_owned());
-        }
-        let temporary = self.path.with_extension("json.tmp");
-        let mut file = File::create(&temporary).map_err(|error| {
-            format!("control state temporary create failed: {:?}", error.kind())
-        })?;
-        file.write_all(&bytes)
-            .and_then(|()| file.sync_all())
-            .map_err(|error| format!("control state flush failed: {:?}", error.kind()))?;
-        fs::rename(&temporary, &self.path)
-            .map_err(|error| format!("control state publish failed: {:?}", error.kind()))?;
-        if let Some(parent) = self.path.parent() {
-            File::open(parent)
-                .and_then(|directory| directory.sync_all())
-                .map_err(|error| {
-                    format!("control state directory flush failed: {:?}", error.kind())
-                })?;
-        }
+        self.store
+            .append_security_audit(&SecurityAuditEntry {
+                evaluated_at: TimestampMillis::new(request.evaluated_at.get()),
+                actor: request.actor.clone(),
+                grant: request.grant.clone(),
+                grant_revision: request.grant_revision,
+                grant_digest: request.grant_digest.clone(),
+                operation,
+                resource_digest: IntegrityDigest::new(format!("b3_{}", resource_hasher.finalize()))
+                    .map_err(public_persistence)?,
+                decision_digest: decision.digest().to_owned(),
+                outcome: snake_debug(&decision.outcome()),
+                reason_codes: decision.reason_codes().iter().map(snake_debug).collect(),
+            })
+            .map_err(public_persistence)?;
         Ok(())
     }
 }
@@ -2967,76 +1450,10 @@ impl ControlResultSink for ResultSink {
     }
 }
 
-fn register_control(
-    host: &CapabilityHost,
-    control: Arc<ControlService>,
-    contexts: BTreeMap<String, milkdrift_control::ActorAuthorityContext>,
-    data: Arc<dyn InvocationDataAccess>,
-) -> Result<(), String> {
-    let adapter = Arc::new(WorkflowControlAdapter::new(
-        control,
-        Arc::new(StaticContexts(contexts)),
-        Arc::new(ResultSink { data }),
-    ));
-    let descriptor = workflow_control_descriptor().map_err(|error| error.to_string())?;
-    let capability = descriptor.identity().clone();
-    let revision = descriptor.descriptor_revision();
-    host.register(descriptor, adapter, None)
-        .map_err(|error| error.to_string())?;
-    host.refresh_health(&capability, revision, unix_millis())
-        .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-fn register_configured_adapters(
-    config: &ValidatedDaemonConfig,
-    host: &CapabilityHost,
-    data: Arc<dyn InvocationDataAccess>,
-    secrets: Arc<ConfiguredSecretResolver>,
-) -> Result<(), String> {
-    for path in &config.document.adapters.process_profiles {
-        let bytes = fs::read(path)
-            .map_err(|error| format!("process profile read failed: {:?}", error.kind()))?;
-        let profile = ProcessProfileDocument::from_json(&bytes)
-            .map_err(|error| error.to_string())?
-            .into_profile();
-        let adapter = Arc::new(
-            LocalProcessAdapter::new(profile, data.clone(), secrets.clone())
-                .map_err(|error| error.to_string())?,
-        );
-        let descriptor = adapter.descriptor().clone();
-        let capability = descriptor.identity().clone();
-        let revision = descriptor.descriptor_revision();
-        host.register(descriptor, adapter, None)
-            .map_err(|error| error.to_string())?;
-        host.refresh_health(&capability, revision, unix_millis())
-            .map_err(|error| error.to_string())?;
-    }
-    for configured in &config.document.adapters.model_profiles {
-        let bytes = fs::read(&configured.profile)
-            .map_err(|error| format!("model profile read failed: {:?}", error.kind()))?;
-        let profile = EndpointProfile::from_json(&bytes).map_err(|error| error.to_string())?;
-        let capability = CapabilityId::new(configured.capability_id.clone())
-            .map_err(|error| error.to_string())?;
-        let descriptor = descriptor_for_profile(capability.clone(), &profile)
-            .map_err(|error| error.to_string())?;
-        let adapter = Arc::new(
-            ModelEndpointAdapter::new(capability, profile, secrets.clone(), data.clone())
-                .map_err(|error| error.to_string())?,
-        );
-        let capability = descriptor.identity().clone();
-        let revision = descriptor.descriptor_revision();
-        host.register(descriptor, adapter, None)
-            .map_err(|error| error.to_string())?;
-        host.refresh_health(&capability, revision, unix_millis())
-            .map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
 fn build_peer_runtime(
     config: &ValidatedDaemonConfig,
     host: &CapabilityHost,
+    store: Arc<RedbStore>,
     secrets: Arc<ConfiguredSecretResolver>,
 ) -> Result<PeerRuntime, String> {
     if !config.document.peers.enabled {
@@ -3132,6 +1549,10 @@ fn build_peer_runtime(
             capability_deny,
             operation_allow,
             maximum_side_effect,
+            execution_filesystem: configured.execution_filesystem.clone(),
+            execution_network_profiles: configured.execution_network_profiles.clone(),
+            execution_network_destinations: configured.execution_network_destinations.clone(),
+            execution_secrets: configured.execution_secrets.clone(),
             execution_limits: ExecutionLimits {
                 artifact_bytes: configured.maximum_artifact_bytes,
                 duration_ms: configured.maximum_duration_ms,
@@ -3192,15 +1613,34 @@ fn build_peer_runtime(
                 execution_lease_ms: config.document.runtime.lease_duration_ms,
             },
             relationships,
+            workers: PeerWorkerConfig {
+                threads: config.document.runtime.effect_threads,
+                maximum_global_active: config.document.runtime.global_concurrency,
+                maximum_dispatch_queue: config.document.runtime.global_concurrency,
+                maximum_records: u64::from(config.document.command_receipt_bound)
+                    .max(u64::from(config.document.runtime.global_concurrency)),
+                recovery_page: config.document.runtime.maximum_effect_claim,
+                poll_interval: Duration::from_millis(
+                    config.document.runtime.maintenance_interval_ms,
+                ),
+            },
         },
         host.clone(),
+        store.clone(),
         Arc::new(
-            FilePeerExecutionStore::open(config.document.data_root.join("peer-executions-v1"))
-                .map_err(|error| error.to_string())?,
-        ),
-        Arc::new(
-            FilePeerArtifactStore::open(config.document.data_root.join("peer-artifacts-v1"))
-                .map_err(|error| error.to_string())?,
+            CorePeerArtifactStore::new(
+                store,
+                config
+                    .document
+                    .peers
+                    .relationships
+                    .iter()
+                    .map(|relationship| relationship.maximum_artifact_bytes)
+                    .max()
+                    .unwrap_or(1),
+                10 * 1_073_741_824,
+            )
+            .map_err(|error| error.to_string())?,
         ),
         Some(Arc::new(ConfiguredPeerAuthenticator {
             resolver: secrets,
@@ -3317,53 +1757,6 @@ fn internal_control_id(
         &hasher.finalize().to_hex().as_str()[..32]
     ))
     .map_err(public_control)
-}
-
-fn command_fingerprint(
-    session: &ActorSession,
-    request: &CommandRequest,
-) -> Result<String, PublicFailure> {
-    let bytes = milkdrift_control_protocol::encode_json(request).map_err(public_protocol)?;
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"milkdrift.daemon-command.v1\0");
-    hasher.update(session.actor.as_str().as_bytes());
-    hasher.update(session.grant.identity().as_str().as_bytes());
-    hasher.update(&session.grant.revision().to_le_bytes());
-    hasher.update(
-        session
-            .grant
-            .digest()
-            .map_err(|_| internal())?
-            .as_str()
-            .as_bytes(),
-    );
-    hasher.update(&bytes);
-    Ok(format!("b3_{}", hasher.finalize()))
-}
-
-fn proposal_ledger_ref(
-    command: &Command,
-    result: &CommandAccepted,
-) -> Result<Option<ProposalLedgerRef>, PublicFailure> {
-    let Command::SubmitProposal { document } = command else {
-        return Ok(None);
-    };
-    let bytes = serde_json::to_vec(document).map_err(|_| invalid("invalid proposal JSON"))?;
-    let proposal = WorkflowProposalDocument::from_json(&bytes)
-        .map_err(|error| invalid(&bounded(&error.to_string())))?;
-    let Some(run) = proposal.proposal().run() else {
-        return Ok(None);
-    };
-    let revision = result
-        .value
-        .get("proposed_revision")
-        .and_then(Value::as_str)
-        .ok_or_else(internal)?;
-    Ok(Some(ProposalLedgerRef {
-        run: run.as_str().to_owned(),
-        proposal: proposal.proposal().identity().as_str().to_owned(),
-        revision: revision.to_owned(),
-    }))
 }
 
 fn accepted_sequence(
@@ -3698,10 +2091,6 @@ fn parse_revision_id(value: &str) -> Result<RevisionId, PublicFailure> {
         .map_err(|error| invalid(&error.to_string()))
 }
 
-fn layout_key(workflow: &str, revision: &str) -> String {
-    format!("{workflow}\0{revision}")
-}
-
 fn unix_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -3889,6 +2278,7 @@ fn public_persistence(error: PersistenceError) -> PublicFailure {
             failure
         }
         PersistenceError::IdempotencyConflict { .. }
+        | PersistenceError::ExternalCommandIdempotencyConflict { .. }
         | PersistenceError::ImmutableConflict { .. }
         | PersistenceError::WorkspaceUsageConflict { .. }
         | PersistenceError::LeaseRevisionConflict { .. } => conflict(&bounded(&error.to_string())),
@@ -3924,6 +2314,14 @@ fn public_persistence(error: PersistenceError) -> PublicFailure {
                 matches!(code, ErrorCode::Unavailable | ErrorCode::Overload),
             )
         }
+        PersistenceError::Bounds {
+            location: "application_receipt_retention",
+            ..
+        } => PublicFailure::new(
+            ErrorCode::Overload,
+            "durable command receipt retention bound was reached",
+            false,
+        ),
         _ => invalid(&bounded(&error.to_string())),
     }
 }
@@ -3939,13 +2337,5 @@ mod tests {
             "node execution changed"
         );
         assert!(!timeline_summary(TimelineCategory::Execution).contains("NodeScheduled"));
-    }
-
-    #[test]
-    fn daemon_state_key_keeps_layout_outside_revision_identity() {
-        assert_ne!(
-            layout_key("workflow", "revision-a"),
-            layout_key("workflow", "revision-b")
-        );
     }
 }

@@ -4,8 +4,10 @@ This document owns ordered unfinished product slices. Each slice is an architect
 
 Execution and control/read authorization are complete in the current core: one exact immutable grant basis governs run entry, local commands, information-bearing queries, pages, streams, artifacts, layouts, capability/provider views, and peer operations. The remaining slices build on that single authority boundary rather than introducing role or transport privilege.
 
-1. **Daemon persistence ownership** — Converge the remaining bounded control sidecar facts into one durable ownership and recovery model without changing command/read authority semantics.
-2. **Peer worker recovery** — Harden remote execution ownership, restart, cancellation, storage, and transfer recovery under the same relationship grants and truthful uncertainty rules.
-3. **Public-surface contraction** — Review exported APIs and semantic change cones, remove bypass-capable helpers, and preserve typed route/authority registration guards.
-4. **Iced control center** — A thin native canvas over `milkdrift-control-client` with revision history, a virtualized timeline, peer/catalog provenance, inspector, schema-1 layout documents, live controls, and authenticated-cursor reconnect/resume behavior.
-5. **Dogfood and continuous remediation** — Imported prompt sequences, fresh coding-agent sessions, verification gates, live reviewer/remediation insertion, daemon-owned bounded controller lifecycles, authorized AI supervision, and historical provenance inspection.
+Daemon application persistence ownership is complete: external receipts, layouts, proposal discovery, and bounded security audit now use narrow redb-backed ports, and legacy sidecar state is refused.
+
+Peer worker recovery is complete: serving acceptance/admission/dispatch/observations are transactional redb state, fixed workers have truthful entry/restart/shutdown boundaries, artifact transfer uses core publication/read authority, and loopback process execution survives disconnect/reconnect generation replacement.
+
+1. **Public-surface contraction** — Review exported APIs and semantic change cones, remove bypass-capable helpers, and preserve typed route/authority registration guards.
+2. **Iced control center** — A thin native canvas over `milkdrift-control-client` with revision history, a virtualized timeline, peer/catalog provenance, inspector, schema-1 layout documents, live controls, and authenticated-cursor reconnect/resume behavior.
+3. **Dogfood and continuous remediation** — Imported prompt sequences, fresh coding-agent sessions, verification gates, live reviewer/remediation insertion, daemon-owned bounded controller lifecycles, authorized AI supervision, and historical provenance inspection.

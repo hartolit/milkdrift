@@ -1,11 +1,15 @@
 use redb::TableDefinition;
 
-pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 3;
+pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 5;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
-pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 6;
+pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 8;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
 pub(crate) const LEASE_SET_REVISION_KEY: &str = "lease_set_revision";
 pub(crate) const NONTERMINAL_SET_COUNT_KEY: &str = "nonterminal_set_count";
+pub(crate) const APPLICATION_RECEIPT_COUNT_KEY: &str = "application_receipt_count";
+pub(crate) const SECURITY_AUDIT_NEXT_SEQUENCE_KEY: &str = "security_audit_next_sequence";
+pub(crate) const SECURITY_AUDIT_COUNT_KEY: &str = "security_audit_count";
+pub(crate) const PEER_EXECUTION_GLOBAL_ACCOUNTING_KEY: &str = "global";
 
 // Every durable family has a distinct, permanently named table. Keys that need
 // ordering use the closed binary encodings in `codec`; documents are canonical
@@ -30,6 +34,21 @@ pub(crate) const RUN_HISTORY_HEADS: TableDefinition<'static, &'static str, &'sta
     TableDefinition::new("milkdrift.v2.runs.history_heads");
 pub(crate) const COMMAND_RESULTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
     TableDefinition::new("milkdrift.v1.commands.results");
+// Daemon-owned application receipts are separate from runtime aggregate command results.
+pub(crate) const APPLICATION_COMMAND_RECEIPTS: TableDefinition<
+    'static,
+    &'static [u8],
+    &'static [u8],
+> = TableDefinition::new("milkdrift.v1.application.command_receipts");
+// Presentation layout is authoritative application state but never semantic revision content.
+pub(crate) const APPLICATION_LAYOUTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
+    TableDefinition::new("milkdrift.v1.application.layouts");
+// Rebuildable proposal discovery projection. Exact state remains in control/runtime facts.
+pub(crate) const APPLICATION_PROPOSALS: TableDefinition<'static, &'static [u8], &'static [u8]> =
+    TableDefinition::new("milkdrift.v1.application.proposals");
+// Independently retained protected-operation audit. Receipt retention is never affected.
+pub(crate) const SECURITY_AUDIT: TableDefinition<'static, u64, &'static [u8]> =
+    TableDefinition::new("milkdrift.v1.application.security_audit");
 // Stable signal identities are indexed back to their authoritative receipt event.
 pub(crate) const SIGNAL_RECEIPTS: TableDefinition<'static, &'static [u8], u64> =
     TableDefinition::new("milkdrift.v1.runs.signal_receipts");
@@ -107,3 +126,28 @@ pub(crate) const WORKSPACE_USAGE: TableDefinition<'static, &'static str, &'stati
     TableDefinition::new("milkdrift.v1.workspace.usage");
 pub(crate) const WORKSPACE_BUDGETS: TableDefinition<'static, &'static str, &'static [u8]> =
     TableDefinition::new("milkdrift.v1.workspace.budgets");
+
+// Serving-peer durable acceptance, queue ownership, append-only observations and retention.
+pub(crate) const PEER_RELATIONSHIPS: TableDefinition<'static, &'static str, &'static [u8]> =
+    TableDefinition::new("milkdrift.v1.peers.relationships");
+pub(crate) const PEER_CATALOGS: TableDefinition<'static, &'static str, &'static [u8]> =
+    TableDefinition::new("milkdrift.v1.peers.catalogs");
+pub(crate) const PEER_EXECUTIONS: TableDefinition<'static, &'static str, &'static [u8]> =
+    TableDefinition::new("milkdrift.v1.peers.executions");
+pub(crate) const PEER_EXECUTIONS_BY_REQUEST: TableDefinition<'static, &'static [u8], &'static str> =
+    TableDefinition::new("milkdrift.v1.peers.executions_by_request");
+pub(crate) const PEER_OBSERVATIONS: TableDefinition<'static, &'static [u8], &'static [u8]> =
+    TableDefinition::new("milkdrift.v1.peers.observations");
+pub(crate) const PEER_OBSERVATION_ARTIFACTS: TableDefinition<
+    'static,
+    &'static [u8],
+    &'static [u8],
+> = TableDefinition::new("milkdrift.v1.peers.observation_artifacts");
+pub(crate) const PEER_DISPATCH_AVAILABLE: TableDefinition<'static, &'static [u8], &'static str> =
+    TableDefinition::new("milkdrift.v1.peers.dispatch_available");
+pub(crate) const PEER_ACTIVE_CLAIMS: TableDefinition<'static, &'static [u8], &'static str> =
+    TableDefinition::new("milkdrift.v1.peers.active_claims");
+pub(crate) const PEER_TERMINAL_INDEX: TableDefinition<'static, &'static [u8], &'static str> =
+    TableDefinition::new("milkdrift.v1.peers.terminal_retention");
+pub(crate) const PEER_EXECUTION_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
+    TableDefinition::new("milkdrift.v1.peers.accounting");

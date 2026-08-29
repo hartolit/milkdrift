@@ -7,13 +7,23 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use milkdrift_authority::{AccessMode, FilesystemScope, NetworkProfileRef, NetworkScope, PeerId};
+use milkdrift_blueprint::{
+    AuthorRef, BlueprintRevision, BlueprintRevisionDocument, Edge, EdgeId, EdgeKind, Mutation,
+    MutationBatch, Node, NodeId, NodeKind, PortId, TerminalOutcome, WorkflowId,
+};
+use milkdrift_capability::{CapabilityRequirement, OperationId};
 use milkdrift_control_client::{BearerCredential, ClientConfig, ControlClient};
+use milkdrift_control_protocol::{Command, CommandRequest, PageRequest, ProtocolVersion};
 use milkdrift_daemon::{
     ActorBindingConfig, ActorGrantConfig, AdapterConfig, AuthorityPresetConfig, DaemonConfig,
     DaemonHost, PeerHostConfig, PeerRelationshipConfig, PeerSideEffectConfig, RuntimeHostConfig,
     SecretSourceConfig, ShutdownConfig, ValidatedDaemonConfig, serve,
 };
 use milkdrift_peer_protocol::PeerAction;
+use milkdrift_peer_protocol::PeerRequestId;
+use milkdrift_persistence::{PageSize, PeerExecutionStore};
+use milkdrift_redb_store::RedbStore;
 use tempfile::TempDir;
 use tokio::{sync::oneshot, task::JoinHandle};
 use url::Url;
@@ -95,6 +105,121 @@ async fn authenticated_catalog_registers_and_disconnect_drains_remote_generation
     let reconnected = daemon_b.client.peer_action("peer-a", "connect").await?;
     assert!(reconnected.connected);
 
+    let imported = daemon_b
+        .client
+        .submit(&command(
+            "peer-process-import",
+            Command::ImportBlueprint {
+                document: process_blueprint()?,
+            },
+        ))
+        .await?;
+    let revision = imported
+        .value
+        .get("revision_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("peer process import omitted revision")?;
+    daemon_b
+        .client
+        .submit(&command(
+            "peer-process-start",
+            Command::StartRun {
+                run_id: "run-peer-process".to_owned(),
+                workflow_id: "daemon-peer-process".to_owned(),
+                revision_id: revision.to_owned(),
+            },
+        ))
+        .await?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    loop {
+        let run = daemon_b.client.run("run-peer-process").await?;
+        if run.lifecycle == "terminal" {
+            if run.terminal.as_deref() != Some("succeeded") {
+                let health_a = daemon_a.client.health().await?;
+                let health_b = daemon_b.client.health().await?;
+                let timeline = daemon_b
+                    .client
+                    .timeline(
+                        "run-peer-process",
+                        &PageRequest {
+                            cursor: None,
+                            limit: 100,
+                        },
+                    )
+                    .await?;
+                let attempt_id = timeline
+                    .items
+                    .iter()
+                    .find_map(|entry| entry.attempt_id.as_deref())
+                    .ok_or("failed peer run omitted attempt")?;
+                let attempt = daemon_b
+                    .client
+                    .attempt("run-peer-process", attempt_id)
+                    .await?;
+                let invocation = attempt
+                    .invocation_id
+                    .as_deref()
+                    .ok_or("failed peer attempt omitted invocation")?;
+                daemon_b.stop().await?;
+                daemon_a.stop().await?;
+                let peer_store = RedbStore::open(root_a.path().join("data"))?;
+                let record = peer_store
+                    .peer_execution_by_request(
+                        &PeerId::new("peer-b")?,
+                        &PeerRequestId::new(format!("request:{invocation}"))?,
+                    )?
+                    .ok_or("serving peer omitted accepted execution")?;
+                let observations = peer_store.peer_observations(
+                    &PeerId::new("peer-b")?,
+                    &record.execution,
+                    0,
+                    PageSize::new(128)?,
+                )?;
+                return Err(format!(
+                    "remote process run failed: run={run:?}, timeline={:?}, attempt={attempt:?}, remote_record={record:?}, remote_observations={:?}, health_a={health_a:?}, health_b={health_b:?}",
+                    timeline.items, observations.observations
+                )
+                .into());
+            }
+            let timeline = daemon_b
+                .client
+                .timeline(
+                    "run-peer-process",
+                    &PageRequest {
+                        cursor: None,
+                        limit: 100,
+                    },
+                )
+                .await?;
+            let attempt_id = timeline
+                .items
+                .iter()
+                .find_map(|entry| entry.attempt_id.as_deref())
+                .ok_or("peer process run omitted its attempt")?;
+            let attempt = daemon_b
+                .client
+                .attempt("run-peer-process", attempt_id)
+                .await?;
+            assert_eq!(attempt.peer_id.as_deref(), Some("peer-a"));
+            assert!(
+                attempt
+                    .capability_id
+                    .as_deref()
+                    .is_some_and(|identity| identity.starts_with("peer:"))
+            );
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            let capabilities = daemon_b.client.capabilities().await?;
+            let health = daemon_b.client.health().await?;
+            return Err(format!(
+                "remote process run did not terminate: run={run:?}, capabilities={capabilities:?}, health={health:?}"
+            )
+            .into());
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
     let revoked = daemon_b.client.peer_action("peer-a", "revoke").await?;
     assert!(!revoked.connected);
     assert!(revoked.revoked);
@@ -150,6 +275,25 @@ fn configuration(
         .as_millis()
         .saturating_add(600_000);
     let expires = u64::try_from(expires)?;
+    let remote_destination = format!(
+        "{}:{}",
+        remote_endpoint
+            .host_str()
+            .ok_or("peer endpoint host absent")?,
+        remote_endpoint
+            .port_or_known_default()
+            .ok_or("peer endpoint port absent")?
+    );
+    let mut operator_authority = ActorGrantConfig::dangerous_administrator();
+    operator_authority.resources.network = NetworkScope::new(
+        BTreeSet::from([NetworkProfileRef::new(format!("peer:{remote_peer}"))?]),
+        BTreeSet::from([remote_destination]),
+    )?;
+    let process_profiles = if local_peer == "peer-a" {
+        vec![configured_process_profile(root)?]
+    } else {
+        Vec::new()
+    };
     DaemonConfig {
         schema_version: 3,
         data_root: root.path().join("data"),
@@ -171,14 +315,17 @@ fn configuration(
             grant_revision: 1,
             revocation_generation: 0,
             preset: AuthorityPresetConfig::Controller,
-            authority: ActorGrantConfig::dangerous_administrator(),
+            authority: operator_authority,
             enabled: true,
         }],
         runtime: RuntimeHostConfig {
             maintenance_interval_ms: 10,
             ..RuntimeHostConfig::default()
         },
-        adapters: AdapterConfig::default(),
+        adapters: AdapterConfig {
+            process_profiles,
+            ..AdapterConfig::default()
+        },
         peers: PeerHostConfig {
             enabled: true,
             local_peer_id: Some(local_peer.to_owned()),
@@ -194,10 +341,20 @@ fn configuration(
                     PeerAction::Invoke,
                     PeerAction::Cancel,
                 ]),
-                capability_allow: BTreeSet::from(["milkdrift-workflow-control".to_owned()]),
+                capability_allow: BTreeSet::from(["golden-local-process".to_owned()]),
                 capability_deny: BTreeSet::new(),
-                operation_allow: BTreeSet::from(["workflow.inspect".to_owned()]),
-                maximum_side_effect: PeerSideEffectConfig::ReadOnly,
+                operation_allow: BTreeSet::from(["process.execute".to_owned()]),
+                maximum_side_effect: PeerSideEffectConfig::None,
+                execution_filesystem: vec![
+                    FilesystemScope::new("/usr/bin", BTreeSet::from([AccessMode::Execute]))?,
+                    FilesystemScope::new(
+                        "/tmp",
+                        BTreeSet::from([AccessMode::Read, AccessMode::Write]),
+                    )?,
+                ],
+                execution_network_profiles: BTreeSet::new(),
+                execution_network_destinations: BTreeSet::new(),
+                execution_secrets: BTreeSet::new(),
                 maximum_concurrent: 2,
                 maximum_requests_per_minute: 600,
                 maximum_artifact_bytes: 1_048_576,
@@ -213,10 +370,75 @@ fn configuration(
             }],
         },
         shutdown: ShutdownConfig::default(),
-        command_ledger_bound: 100,
+        command_receipt_bound: 100,
     }
     .validate(root.path())
     .map_err(Into::into)
+}
+
+fn configured_process_profile(directory: &TempDir) -> TestResult<std::path::PathBuf> {
+    let executable = std::path::Path::new("/bin/echo");
+    let bytes = fs::read(executable)?;
+    let mut profile: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../adapters/local-process/tests/fixtures/process-profile-v2.json"
+    ))?;
+    profile["profile"]["implementation"]["content_digest"] =
+        serde_json::json!(format!("b3_{}", blake3::hash(&bytes)));
+    profile["profile"]["implementation"]["size_bytes"] = serde_json::json!(bytes.len());
+    let path = directory.path().join("process-profile-v2.json");
+    fs::write(&path, serde_json::to_vec(&profile)?)?;
+    Ok(path)
+}
+
+fn command(identity: &str, command: Command) -> CommandRequest {
+    CommandRequest {
+        protocol: ProtocolVersion::CURRENT,
+        command_id: identity.to_owned(),
+        expected_sequence: None,
+        expected_revision: None,
+        reason: "two-daemon peer execution test".to_owned(),
+        evidence: Vec::new(),
+        command,
+    }
+}
+
+fn process_blueprint() -> TestResult<serde_json::Value> {
+    let task = Node::new(
+        NodeId::new("process")?,
+        NodeKind::task_direct_inputs(CapabilityRequirement::new(OperationId::new(
+            "process.execute",
+        )?))?,
+    )?
+    .with_control_output(PortId::new("next")?)?;
+    let terminal = Node::new(
+        NodeId::new("done")?,
+        NodeKind::Terminal {
+            outcome: TerminalOutcome::Success,
+        },
+    )?
+    .with_control_input(PortId::new("in")?)?;
+    let revision = BlueprintRevision::genesis(
+        WorkflowId::new("daemon-peer-process")?,
+        MutationBatch::new(vec![
+            Mutation::AddNode { node: task },
+            Mutation::AddNode { node: terminal },
+            Mutation::AddEdge {
+                edge: Edge::new(
+                    EdgeId::new("process-done")?,
+                    EdgeKind::Control,
+                    NodeId::new("process")?,
+                    PortId::new("next")?,
+                    NodeId::new("done")?,
+                    PortId::new("in")?,
+                ),
+            },
+        ])?,
+        AuthorRef::new("human:two-daemon-test")?,
+        "execute a process through the authenticated peer adapter",
+    )?;
+    Ok(serde_json::from_slice(
+        &BlueprintRevisionDocument::new(&revision).to_canonical_json()?,
+    )?)
 }
 
 fn write_secret(path: &std::path::Path, value: &str) -> TestResult {

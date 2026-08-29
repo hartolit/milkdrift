@@ -1,4 +1,5 @@
 use super::*;
+use redb::{ReadableTable as _, ReadableTableMetadata as _};
 pub(crate) fn initialize_schema(
     database: &Database,
     faults: &dyn FaultInjector,
@@ -20,6 +21,15 @@ pub(crate) fn initialize_schema(
             .map_err(error::redb)?;
         table
             .insert(NONTERMINAL_SET_COUNT_KEY, 0)
+            .map_err(error::redb)?;
+        table
+            .insert(APPLICATION_RECEIPT_COUNT_KEY, 0)
+            .map_err(error::redb)?;
+        table
+            .insert(SECURITY_AUDIT_NEXT_SEQUENCE_KEY, 1)
+            .map_err(error::redb)?;
+        table
+            .insert(SECURITY_AUDIT_COUNT_KEY, 0)
             .map_err(error::redb)?;
     }
     // Opening each definition records its exact key/value encoding in redb.
@@ -45,6 +55,22 @@ pub(crate) fn initialize_schema(
     }
     {
         let _table = write.open_table(COMMAND_RESULTS).map_err(error::redb)?;
+    }
+    {
+        let _table = write
+            .open_table(APPLICATION_COMMAND_RECEIPTS)
+            .map_err(error::redb)?;
+    }
+    {
+        let _table = write.open_table(APPLICATION_LAYOUTS).map_err(error::redb)?;
+    }
+    {
+        let _table = write
+            .open_table(APPLICATION_PROPOSALS)
+            .map_err(error::redb)?;
+    }
+    {
+        let _table = write.open_table(SECURITY_AUDIT).map_err(error::redb)?;
     }
     {
         let _table = write.open_table(SIGNAL_RECEIPTS).map_err(error::redb)?;
@@ -167,6 +193,51 @@ pub(crate) fn initialize_schema(
     {
         let _table = write.open_table(WORKSPACE_BUDGETS).map_err(error::redb)?;
     }
+    {
+        let _table = write.open_table(PEER_RELATIONSHIPS).map_err(error::redb)?;
+    }
+    {
+        let _table = write.open_table(PEER_CATALOGS).map_err(error::redb)?;
+    }
+    {
+        let _table = write.open_table(PEER_EXECUTIONS).map_err(error::redb)?;
+    }
+    {
+        let _table = write
+            .open_table(PEER_EXECUTIONS_BY_REQUEST)
+            .map_err(error::redb)?;
+    }
+    {
+        let _table = write.open_table(PEER_OBSERVATIONS).map_err(error::redb)?;
+    }
+    {
+        let _table = write
+            .open_table(PEER_OBSERVATION_ARTIFACTS)
+            .map_err(error::redb)?;
+    }
+    {
+        let _table = write
+            .open_table(PEER_DISPATCH_AVAILABLE)
+            .map_err(error::redb)?;
+    }
+    {
+        let _table = write.open_table(PEER_ACTIVE_CLAIMS).map_err(error::redb)?;
+    }
+    {
+        let _table = write.open_table(PEER_TERMINAL_INDEX).map_err(error::redb)?;
+    }
+    {
+        let mut table = write
+            .open_table(PEER_EXECUTION_ACCOUNTING)
+            .map_err(error::redb)?;
+        let bytes = crate::json::encode(
+            &crate::peer::GlobalPeerAccounting::EMPTY,
+            "peer global accounting",
+        )?;
+        table
+            .insert(PEER_EXECUTION_GLOBAL_ACCOUNTING_KEY, bytes.as_slice())
+            .map_err(error::redb)?;
+    }
     faults.check(crate::fault::FaultPoint::BeforeSchemaCommit)?;
     write.commit().map_err(error::redb)?;
     faults.check(crate::fault::FaultPoint::AfterSchemaCommit)
@@ -174,7 +245,15 @@ pub(crate) fn initialize_schema(
 
 pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceError> {
     let read = database.begin_read().map_err(error::redb)?;
-    let (found, internal_document_format, lease_set_revision, nonterminal_set_count) = {
+    let (
+        found,
+        internal_document_format,
+        lease_set_revision,
+        nonterminal_set_count,
+        application_receipt_count,
+        security_audit_next_sequence,
+        security_audit_count,
+    ) = {
         let table = read.open_table(METADATA).map_err(error::redb)?;
         let found = table
             .get(SCHEMA_VERSION_KEY)
@@ -193,11 +272,26 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
             .get(NONTERMINAL_SET_COUNT_KEY)
             .map_err(error::redb)?
             .map(|value| value.value());
+        let application_receipt_count = table
+            .get(APPLICATION_RECEIPT_COUNT_KEY)
+            .map_err(error::redb)?
+            .map(|value| value.value());
+        let security_audit_next_sequence = table
+            .get(SECURITY_AUDIT_NEXT_SEQUENCE_KEY)
+            .map_err(error::redb)?
+            .map(|value| value.value());
+        let security_audit_count = table
+            .get(SECURITY_AUDIT_COUNT_KEY)
+            .map_err(error::redb)?
+            .map(|value| value.value());
         (
             found,
             internal_document_format,
             lease_set_revision,
             nonterminal_set_count,
+            application_receipt_count,
+            security_audit_next_sequence,
+            security_audit_count,
         )
     };
     if found > STORAGE_SCHEMA_VERSION {
@@ -226,6 +320,12 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
     }
     lease_set_revision.ok_or_else(|| error::corruption("lease-set revision is missing"))?;
     nonterminal_set_count.ok_or_else(|| error::corruption("nonterminal-set count is missing"))?;
+    let application_receipt_count = application_receipt_count
+        .ok_or_else(|| error::corruption("application receipt count is missing"))?;
+    let security_audit_next_sequence = security_audit_next_sequence
+        .ok_or_else(|| error::corruption("security audit next sequence is missing"))?;
+    let security_audit_count =
+        security_audit_count.ok_or_else(|| error::corruption("security audit count is missing"))?;
     drop(read);
 
     let read = database.begin_read().map_err(error::redb)?;
@@ -253,6 +353,41 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
     }
     {
         let _table = read.open_table(COMMAND_RESULTS).map_err(error::redb)?;
+    }
+    {
+        let table = read
+            .open_table(APPLICATION_COMMAND_RECEIPTS)
+            .map_err(error::redb)?;
+        if table.len().map_err(error::redb)? != application_receipt_count {
+            return Err(error::corruption(
+                "application receipt count disagrees with its authoritative table",
+            ));
+        }
+    }
+    {
+        let _table = read.open_table(APPLICATION_LAYOUTS).map_err(error::redb)?;
+    }
+    {
+        let _table = read
+            .open_table(APPLICATION_PROPOSALS)
+            .map_err(error::redb)?;
+    }
+    {
+        let table = read.open_table(SECURITY_AUDIT).map_err(error::redb)?;
+        if table.len().map_err(error::redb)? != security_audit_count {
+            return Err(error::corruption(
+                "security audit count disagrees with its authoritative table",
+            ));
+        }
+        let expected_next = table
+            .last()
+            .map_err(error::redb)?
+            .map_or(1, |(sequence, _)| sequence.value().saturating_add(1));
+        if security_audit_next_sequence != expected_next {
+            return Err(error::corruption(
+                "security audit next sequence disagrees with its authoritative table",
+            ));
+        }
     }
     {
         let _table = read.open_table(SIGNAL_RECEIPTS).map_err(error::redb)?;
@@ -365,6 +500,50 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
     }
     {
         let _table = read.open_table(WORKSPACE_BUDGETS).map_err(error::redb)?;
+    }
+    {
+        let _table = read.open_table(PEER_RELATIONSHIPS).map_err(error::redb)?;
+    }
+    {
+        let _table = read.open_table(PEER_CATALOGS).map_err(error::redb)?;
+    }
+    {
+        let _table = read.open_table(PEER_EXECUTIONS).map_err(error::redb)?;
+    }
+    {
+        let _table = read
+            .open_table(PEER_EXECUTIONS_BY_REQUEST)
+            .map_err(error::redb)?;
+    }
+    {
+        let _table = read.open_table(PEER_OBSERVATIONS).map_err(error::redb)?;
+    }
+    {
+        let _table = read
+            .open_table(PEER_OBSERVATION_ARTIFACTS)
+            .map_err(error::redb)?;
+    }
+    {
+        let _table = read
+            .open_table(PEER_DISPATCH_AVAILABLE)
+            .map_err(error::redb)?;
+    }
+    {
+        let _table = read.open_table(PEER_ACTIVE_CLAIMS).map_err(error::redb)?;
+    }
+    {
+        let _table = read.open_table(PEER_TERMINAL_INDEX).map_err(error::redb)?;
+    }
+    {
+        let accounting = read
+            .open_table(PEER_EXECUTION_ACCOUNTING)
+            .map_err(error::redb)?;
+        let bytes = accounting
+            .get(PEER_EXECUTION_GLOBAL_ACCOUNTING_KEY)
+            .map_err(error::redb)?
+            .ok_or_else(|| error::corruption("peer global accounting is missing"))?;
+        let _: crate::peer::GlobalPeerAccounting =
+            crate::json::decode(bytes.value(), "peer global accounting")?;
     }
     Ok(())
 }

@@ -1,6 +1,8 @@
 use std::{collections::BTreeSet, fmt, sync::Arc, time::Duration};
 
-use milkdrift_authority::{PeerId, SensitiveSecret};
+use milkdrift_authority::{
+    FilesystemScope, NetworkProfileRef, NetworkScope, PeerId, SecretRef, SensitiveSecret,
+};
 use milkdrift_capability::{CapabilityId, OperationId, SideEffectClass, TrustZone};
 use milkdrift_peer_protocol::{
     DelegationRef, ExecutionLimits, HardLimits, HeartbeatLease, PeerAuthority,
@@ -39,6 +41,14 @@ pub struct PeerRelationship {
     pub operation_allow: BTreeSet<OperationId>,
     /// Maximum remote side-effect classification.
     pub maximum_side_effect: SideEffectClass,
+    /// Explicit host filesystem roots that allowed remote capabilities may require.
+    pub execution_filesystem: Vec<FilesystemScope>,
+    /// Explicit credential-free network profiles that allowed remote capabilities may require.
+    pub execution_network_profiles: BTreeSet<NetworkProfileRef>,
+    /// Explicit network destinations that allowed remote capabilities may require.
+    pub execution_network_destinations: BTreeSet<String>,
+    /// Explicit secret references that allowed remote capabilities may require.
+    pub execution_secrets: BTreeSet<SecretRef>,
     /// Relationship-level execution quotas.
     pub execution_limits: ExecutionLimits,
     /// Maximum concurrent accepted executions.
@@ -73,6 +83,16 @@ impl fmt::Debug for PeerRelationship {
             .field("capability_deny", &self.capability_deny)
             .field("operation_allow", &self.operation_allow)
             .field("maximum_side_effect", &self.maximum_side_effect)
+            .field("execution_filesystem", &self.execution_filesystem)
+            .field(
+                "execution_network_profiles",
+                &self.execution_network_profiles,
+            )
+            .field(
+                "execution_network_destinations",
+                &self.execution_network_destinations,
+            )
+            .field("execution_secrets", &self.execution_secrets)
             .field("execution_limits", &self.execution_limits)
             .field("maximum_concurrent", &self.maximum_concurrent)
             .field(
@@ -99,6 +119,11 @@ impl PeerRelationship {
         self.execution_limits
             .validate()
             .map_err(|error| PeerHttpError::Configuration(error.to_string()))?;
+        NetworkScope::new(
+            self.execution_network_profiles.clone(),
+            self.execution_network_destinations.clone(),
+        )
+        .map_err(|error| PeerHttpError::Configuration(error.to_string()))?;
         if self.bearer_credential.is_empty()
             || self.bearer_credential.len() > 8_192
             || self.maximum_concurrent == 0
@@ -131,6 +156,8 @@ pub struct PeerServerConfig {
     pub lease: HeartbeatLease,
     /// Configured inbound relationships.
     pub relationships: Vec<PeerRelationship>,
+    /// Fixed serving-worker and durable admission bounds.
+    pub workers: PeerWorkerConfig,
 }
 
 impl PeerServerConfig {
@@ -142,6 +169,7 @@ impl PeerServerConfig {
         self.lease
             .validate()
             .map_err(|error| PeerHttpError::Configuration(error.to_string()))?;
+        self.workers.validate()?;
         if self.relationships.len() > 256 {
             return Err(PeerHttpError::Configuration(
                 "at most 256 peer relationships are supported".to_owned(),
@@ -157,6 +185,56 @@ impl PeerServerConfig {
                     "peer relationships must have unique non-local identities".to_owned(),
                 ));
             }
+        }
+        Ok(())
+    }
+}
+
+/// Fixed bounded serving-peer worker, queue, recovery and retention policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PeerWorkerConfig {
+    /// Fixed worker thread count.
+    pub threads: u16,
+    /// Global accepted nonterminal ceiling across relationships.
+    pub maximum_global_active: u32,
+    /// Durable accepted pre-entry queue ceiling.
+    pub maximum_dispatch_queue: u32,
+    /// Total primary-record ceiling. Reaching it refuses new identities; nothing is evicted.
+    pub maximum_records: u64,
+    /// Maximum claims recovered in one transaction/page.
+    pub recovery_page: u16,
+    /// Idle durable-queue poll interval.
+    pub poll_interval: Duration,
+}
+
+impl Default for PeerWorkerConfig {
+    fn default() -> Self {
+        Self {
+            threads: 4,
+            maximum_global_active: 256,
+            maximum_dispatch_queue: 256,
+            maximum_records: 1_000_000,
+            recovery_page: 128,
+            poll_interval: Duration::from_millis(100),
+        }
+    }
+}
+
+impl PeerWorkerConfig {
+    fn validate(self) -> Result<(), PeerHttpError> {
+        if self.threads == 0
+            || self.threads > 256
+            || self.maximum_global_active == 0
+            || self.maximum_dispatch_queue == 0
+            || self.maximum_dispatch_queue > self.maximum_global_active
+            || self.maximum_records < u64::from(self.maximum_global_active)
+            || self.recovery_page == 0
+            || self.poll_interval.is_zero()
+            || self.poll_interval > Duration::from_secs(60)
+        {
+            return Err(PeerHttpError::Configuration(
+                "peer worker, queue, recovery, or retention bounds are invalid".to_owned(),
+            ));
         }
         Ok(())
     }

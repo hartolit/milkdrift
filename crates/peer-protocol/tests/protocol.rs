@@ -157,6 +157,13 @@ fn invocation_digest_binds_catalog_selection_delegation_and_request() -> TestRes
         limits,
         expires_at_unix_ms: 20_000,
         nonce: "nonce-1".to_owned(),
+        provenance: milkdrift_peer_protocol::PeerExecutionProvenance {
+            run: "run-1".to_owned(),
+            revision: "revision-1".to_owned(),
+            node: "node-1".to_owned(),
+            execution: "execution-1".to_owned(),
+            attempt: "attempt-1".to_owned(),
+        },
     };
     let catalog = CatalogSnapshot::new(1, 1_000, 20_000, Vec::new())?;
     let request = PeerInvocationRequest::new(

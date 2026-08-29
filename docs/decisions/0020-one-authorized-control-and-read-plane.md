@@ -41,10 +41,11 @@ that form. Open streams reauthenticate and reevaluate on every bounded poll; rec
 the complete binding. Capability stream caches are partitioned by scope digest.
 
 Consequential runtime/control mutations keep their existing durable decision provenance. The
-bounded daemon sidecar additionally records protected artifact releases, blueprint import, layout
-mutation, and peer administration. Peer accepted-execution records retain the exact allowing
-decision. Audit records contain actor, grant identity/revision/digest, operation, resource digest,
-decision digest, outcome, and stable reason codes, never credentials or protected payloads.
+bounded redb application-audit port additionally records protected artifact releases, blueprint
+import, layout mutation, and peer administration. ADR 0022 supersedes the former sidecar storage
+detail. Peer accepted-execution records retain the exact allowing decision. Audit records contain
+actor, grant identity/revision/digest, operation, resource digest, decision digest, outcome, and
+stable reason codes, never credentials or protected payloads.
 
 ## External operation inventory
 
@@ -112,12 +113,9 @@ Equal grants and requests yield equal deterministic decisions for human and AI a
 validity no longer implies broad reads. Narrowing, replacement, revocation, or credential rotation
 invalidates future pages and reconnects; open streams stop future disclosure without rewriting
 already delivered history. Provider, peer, artifact, layout, and detailed-health visibility must be
-granted explicitly. Grant/config/cursor/sidecar version changes are intentionally incompatible and
-require deliberate operator migration.
-
-The daemon sidecar remains a bounded temporary owner for layout, command idempotency, and read
-audit until persistence convergence; this ADR does not claim a general audit API or redesign daemon
-storage.
+granted explicitly. Grant/config/cursor/storage version changes are intentionally incompatible and
+require deliberate operator migration. ADR 0022 completes persistence convergence without claiming
+a general audit API.
 
 ## Reconsideration triggers
 

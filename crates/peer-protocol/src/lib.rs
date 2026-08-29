@@ -24,7 +24,8 @@ pub use document::{
 pub use execution::{
     CancellationDisposition, DelegatedAuthorization, ExecutionLimits, InvocationAcceptance,
     InvocationLookup, ObservationCategory, ObservationPage, PeerCancellationAcknowledgement,
-    PeerCancellationRequest, PeerInvocationRequest, PeerObservation, RemoteExecutionStatus,
+    PeerCancellationRequest, PeerExecutionProvenance, PeerInvocationRequest, PeerObservation,
+    RemoteExecutionStatus,
 };
 pub use identity::{
     CatalogDigest, DelegationRef, PeerExecutionId, PeerRequestId, SessionId, TransferId,

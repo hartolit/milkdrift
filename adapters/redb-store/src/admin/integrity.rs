@@ -1,10 +1,11 @@
 use super::cursor::{
     index_cursor_position, make_integrity_cursor, scan_binary_bytes_phase,
     scan_binary_string_phase, scan_binary_u8_phase, scan_binary_u64_phase, scan_string_bytes_phase,
-    scan_string_string_phase, scan_string_u8_phase, scan_string_u64_phase,
+    scan_string_string_phase, scan_string_u8_phase, scan_string_u64_phase, scan_u64_bytes_phase,
 };
 use super::*;
 
+mod application;
 mod artifacts;
 mod revisions;
 mod run;
@@ -51,6 +52,10 @@ pub(super) mod phase {
     pub(super) const ARTIFACT_PATHS: u8 = 33;
     pub(super) const ARTIFACT_DELETE_GUARDS: u8 = 34;
     pub(super) const ARTIFACT_DIGEST_RESERVATIONS: u8 = 35;
+    pub(super) const APPLICATION_RECEIPTS: u8 = 36;
+    pub(super) const APPLICATION_LAYOUTS: u8 = 37;
+    pub(super) const APPLICATION_PROPOSALS: u8 = 38;
+    pub(super) const SECURITY_AUDIT: u8 = 39;
 }
 
 /// Shared state for one ordered scan page. Domain modules own tables and validation.
@@ -140,6 +145,28 @@ impl ScanContext<'_, '_> {
         validate: impl FnMut(&[u8], u64) -> Result<(), PersistenceError>,
     ) -> Result<(), PersistenceError> {
         scan_binary_u64_phase(
+            phase,
+            self.start_phase,
+            self.start_key.as_deref(),
+            table,
+            self.maximum,
+            self.verify_artifact_content,
+            self.result,
+            self.last_cursor,
+            self.more_remaining,
+            component,
+            validate,
+        )
+    }
+
+    pub(super) fn u64_bytes(
+        &mut self,
+        phase: u8,
+        table: &impl redb::ReadableTable<u64, &'static [u8]>,
+        component: &str,
+        validate: impl FnMut(u64, &[u8]) -> Result<(), PersistenceError>,
+    ) -> Result<(), PersistenceError> {
+        scan_u64_bytes_phase(
             phase,
             self.start_phase,
             self.start_key.as_deref(),
@@ -286,5 +313,6 @@ pub(crate) fn scan_index_integrity(
     workspace::scan_value_heads(&mut context)?;
     run::scan_invocation_facts(&mut context)?;
     snapshots::scan(&mut context)?;
-    artifacts::scan_publications(&mut context)
+    artifacts::scan_publications(&mut context)?;
+    application::scan(&mut context)
 }

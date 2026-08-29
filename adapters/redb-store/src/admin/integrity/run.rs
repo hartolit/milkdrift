@@ -146,6 +146,9 @@ pub(super) fn scan_invocation_facts(
                     | crate::schema::INTERNAL_DOCUMENT_FORMAT_VERSION_KEY
                     | crate::schema::LEASE_SET_REVISION_KEY
                     | crate::schema::NONTERMINAL_SET_COUNT_KEY
+                    | crate::schema::APPLICATION_RECEIPT_COUNT_KEY
+                    | crate::schema::SECURITY_AUDIT_NEXT_SEQUENCE_KEY
+                    | crate::schema::SECURITY_AUDIT_COUNT_KEY
             ) {
                 Ok(())
             } else {

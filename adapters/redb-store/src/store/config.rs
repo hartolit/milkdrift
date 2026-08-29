@@ -5,6 +5,8 @@ pub(crate) const TEMP_DIRECTORY: &str = ".tmp";
 pub(crate) const DEFAULT_MAX_ARTIFACT_BYTES: u64 = 1_073_741_824;
 pub(crate) const DEFAULT_MAX_TOTAL_ARTIFACT_BYTES: u64 = 10_737_418_240;
 pub(crate) const DEFAULT_MAX_READ_BYTES: u64 = 1_073_741_824;
+pub(crate) const DEFAULT_MAX_APPLICATION_RECEIPTS: u32 = 1_000_000;
+pub(crate) const DEFAULT_MAX_SECURITY_AUDIT_RECORDS: u32 = 100_000;
 
 /// Injected boundary clock for artifact-publication facts that control cleanup.
 pub trait ArtifactClock: Send + Sync {
@@ -33,6 +35,8 @@ pub struct RedbStoreConfig {
     pub(crate) max_artifact_bytes: u64,
     pub(crate) max_total_artifact_bytes: u64,
     pub(crate) max_read_bytes: u64,
+    pub(crate) max_application_receipts: u32,
+    pub(crate) max_security_audit_records: u32,
     pub(crate) faults: Arc<dyn FaultInjector>,
     pub(crate) artifact_clock: Arc<dyn ArtifactClock>,
 }
@@ -45,6 +49,11 @@ impl fmt::Debug for RedbStoreConfig {
             .field("max_artifact_bytes", &self.max_artifact_bytes)
             .field("max_total_artifact_bytes", &self.max_total_artifact_bytes)
             .field("max_read_bytes", &self.max_read_bytes)
+            .field("max_application_receipts", &self.max_application_receipts)
+            .field(
+                "max_security_audit_records",
+                &self.max_security_audit_records,
+            )
             .finish_non_exhaustive()
     }
 }
@@ -58,9 +67,26 @@ impl RedbStoreConfig {
             max_artifact_bytes: DEFAULT_MAX_ARTIFACT_BYTES,
             max_total_artifact_bytes: DEFAULT_MAX_TOTAL_ARTIFACT_BYTES,
             max_read_bytes: DEFAULT_MAX_READ_BYTES,
+            max_application_receipts: DEFAULT_MAX_APPLICATION_RECEIPTS,
+            max_security_audit_records: DEFAULT_MAX_SECURITY_AUDIT_RECORDS,
             faults: no_faults(),
             artifact_clock: Arc::new(SystemArtifactClock),
         }
+    }
+
+    /// Applies independent application receipt and security-audit retention bounds.
+    ///
+    /// Receipts are never evicted: reaching their bound refuses new identities. The audit
+    /// family may evict only its oldest row and therefore cannot weaken idempotency/recovery.
+    #[must_use]
+    pub fn with_application_limits(
+        mut self,
+        max_application_receipts: u32,
+        max_security_audit_records: u32,
+    ) -> Self {
+        self.max_application_receipts = max_application_receipts;
+        self.max_security_audit_records = max_security_audit_records;
+        self
     }
 
     /// Applies adapter-wide content and verified-read bounds.
@@ -104,6 +130,8 @@ pub struct RedbStore {
     pub(crate) max_artifact_bytes: u64,
     pub(crate) max_total_artifact_bytes: u64,
     pub(crate) max_read_bytes: u64,
+    pub(crate) max_application_receipts: u32,
+    pub(crate) max_security_audit_records: u32,
     pub(crate) faults: Arc<dyn FaultInjector>,
     pub(crate) artifact_clock: Arc<dyn ArtifactClock>,
     pub(crate) artifact_serialization: Mutex<()>,

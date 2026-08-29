@@ -26,9 +26,9 @@ broken event checksums or cumulative history links; dangling or disagreeing dire
 invalid workspace ancestry/provenance/accounting; invalid snapshots; and missing, wrongly
 sized, or digest-invalid artifact content. Ordinary reads validate the rows they consume,
 and an explicit bounded, resumable scrub walks the remaining authoritative and derived
-families through run, scheduler, workspace, revision, snapshot, and artifact modules while
-preserving integrity-cursor schema v1 phase tags and ordering. A clean bounded health sample
-is not a complete-store proof.
+families through run, scheduler, workspace, revision, snapshot, artifact, application-receipt,
+layout, and proposal modules while preserving integrity-cursor schema v1 and physical phase
+ordering. A clean bounded health sample is not a complete-store proof.
 
 The adapter does not detect replacement or rollback of the entire database, nor an attacker
 who rewrites every affected row and recomputes unkeyed checksums. Those guarantees require a
@@ -53,7 +53,9 @@ atomically renames and synchronizes the directory, then commits metadata; reads 
 and digest. Durable path-inventory and delete-guard tables preserve crash-safe cleanup without
 walking an authenticated structure.
 
-Physical schema version 3 and internal document format 6 are exact-current only. Earlier and
+ADR 0022 extends the same narrow-port rule to daemon application receipts, layouts, proposal
+discovery, and security audit; ADR 0018 now applies it to peer admission, dispatch, observations,
+and retention. Physical schema version 5 and internal document format 8 are exact-current only. Earlier and
 future formats are refused; no migration is implemented. Pre-release users must create a new
 store or wait for an explicit future migration tool rather than reinterpret old bytes.
 
@@ -71,4 +73,4 @@ store or wait for an explicit future migration tool rather than reinterpret old 
 The integrity claim is deliberately limited and testable. Partial corruption remains explicit;
 whole-store authenticity and freshness do not. Runtime startup validates active durable state,
 while full historical and optional artifact-content verification remain operator-requested.
-The blocking adapter must be hosted behind a bounded executor in a future asynchronous daemon.
+The asynchronous daemon hosts the blocking adapter behind one bounded synchronous owner queue.

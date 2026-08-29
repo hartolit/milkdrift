@@ -11,6 +11,7 @@ blake3.workspace = true
 milkdrift-authority = { version = "=0.1.0", path = "../authority" }
 milkdrift-capability = { version = "=0.1.0", path = "../capability" }
 milkdrift-contracts.workspace = true
+milkdrift-workspace = { version = "=0.1.0", path = "../workspace" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

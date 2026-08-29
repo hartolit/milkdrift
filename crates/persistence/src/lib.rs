@@ -15,6 +15,7 @@
 //! command bytes is a typed conflict.
 
 mod admin;
+mod application;
 mod artifact;
 mod bounded;
 mod document;
@@ -22,6 +23,7 @@ mod error;
 mod event;
 mod identity;
 mod journal;
+mod peer;
 mod revision;
 mod snapshot;
 
@@ -29,6 +31,14 @@ pub use admin::{
     IntegrityScanCursor, IntegrityScanFamily, IntegrityScanRequest, IntegrityScanResult,
     MAX_INTEGRITY_SCAN_CURSOR_KEY_BYTES, StorageAdmin, StorageComponentHealth, StorageHealth,
     StorageHealthStatus, StorageSchemaCompatibility, StorageSchemaInfo,
+};
+pub use application::{
+    APPLICATION_COMMAND_RECEIPT_SCHEMA_VERSION_V1, APPLICATION_LAYOUT_RECORD_SCHEMA_VERSION_V1,
+    ApplicationCommandCommit, ApplicationCommandCommitOutcome, ApplicationCommandEffect,
+    ApplicationCommandReceipt, ApplicationCommandResult, ApplicationCommandStore,
+    ApplicationCursor, ApplicationEffectReference, ApplicationLayout, ApplicationLayoutStore,
+    ApplicationLayoutUpdate, ApplicationPage, ApplicationPageQuery, ProposalIndexEntry,
+    ProposalIndexStore, SecurityAuditEntry, SecurityAuditRecord, SecurityAuditStore,
 };
 pub use artifact::{
     ArtifactReadAuthority, ArtifactReadChunk, ArtifactReadRequest, ArtifactStore,
@@ -70,6 +80,14 @@ pub use journal::{
     RunQueryStore, RunSummaryCursor, RunSummaryFilter, RunSummaryIndex, RunSummaryPage,
     RunSummaryPageQuery, RunnableCursor, RunnableIndexEntry, RunnableIndexMutation, RunnablePage,
     TimerIndexEntry, TimerIndexMutation, WorkspaceAccounting, WorkspaceMutation, WorkspaceStore,
+};
+pub use peer::{
+    PEER_EXECUTION_RECORD_SCHEMA_VERSION_V1, PeerAdmission, PeerAdmissionOutcome,
+    PeerAdmissionRejection, PeerCancellationRecord, PeerCatalogState, PeerClaimOutcome,
+    PeerDispatchClaim, PeerDispatchClaimRequest, PeerEntryEvidence, PeerExecutionAccounting,
+    PeerExecutionPhase, PeerExecutionRecord, PeerExecutionRetention, PeerExecutionStore,
+    PeerObservationAppend, PeerObservationPage, PeerRecoveryResult, PeerRelationshipState,
+    PeerRetentionPage, PeerRetentionRequest,
 };
 pub use revision::{
     ImmutableRevisionPut, RevisionCursor, RevisionFilter, RevisionPage, RevisionPageQuery,

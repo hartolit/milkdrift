@@ -8,12 +8,14 @@
 //! transaction; artifact content is synchronized before its metadata can commit.
 
 mod admin;
+mod application;
 mod artifact;
 mod codec;
 mod error;
 mod fault;
 mod journal;
 mod json;
+mod peer;
 mod revision;
 mod schema;
 mod snapshot;

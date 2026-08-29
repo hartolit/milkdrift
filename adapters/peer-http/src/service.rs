@@ -4,23 +4,25 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicU8, Ordering},
     },
-    thread,
+    time::Duration,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use milkdrift_authority::{
-    ActorRef, ArtifactAuthorityScope, AuthorityBudget, AuthorityEvaluator, AuthorityGrant,
-    AuthorityGrantBuilder, AuthorityOperation, AuthorityRequest, BoundaryTimeMillis,
-    CapabilityAuthorityScope, DaemonAuthorityScope, DecisionId, GrantId, GrantSetEvaluator,
-    LayoutAuthorityScope, NetworkScope, PeerAuthorityScope, PeerId, PolicyId,
-    RequestedResourceFacts, ResourceScope, WorkflowRunScope, WorkspaceAuthorityScope,
+    ActorRef, ArtifactAuthorityScope, AuthorityBudget, AuthorityEvaluator,
+    AuthorityExecutionProvenance, AuthorityGrant, AuthorityGrantBuilder, AuthorityOperation,
+    AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope, DaemonAuthorityScope,
+    DecisionId, GrantId, GrantSetEvaluator, LayoutAuthorityScope, NetworkScope, PeerAuthorityScope,
+    PeerId, PolicyId, RequestedResourceFacts, ResourceScope, WorkflowRunScope,
+    WorkspaceAuthorityScope,
 };
+use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_capability::{
     CancellationBehavior, CancellationRequest, CapabilityDescriptor, DescriptorBuilder, ErrorClass,
     InvocationEvent, InvocationEventKind, InvocationFailure, InvocationTerminal, TerminalStatus,
 };
 use milkdrift_capability_host::{
-    AdapterError, AdapterReporter, CapabilityHost, CatalogGenerationView,
+    AdapterError, AdapterExecutionContext, AdapterReporter, CapabilityHost, CatalogGenerationView,
 };
 use milkdrift_peer_protocol::{
     ArtifactChunk, ArtifactMetadataOffer, ArtifactTransferDecision, ArtifactTransferDirection,
@@ -29,13 +31,20 @@ use milkdrift_peer_protocol::{
     ObservationPage, PeerAction, PeerCancellationAcknowledgement, PeerCancellationRequest,
     PeerExecutionId, PeerInvocationRequest, PeerObservation, RemoteExecutionStatus, TransferId,
 };
+use milkdrift_persistence::{
+    AttemptId, NodeExecutionId, PageSize, PeerAdmission, PeerAdmissionOutcome,
+    PeerAdmissionRejection, PeerCatalogState, PeerClaimOutcome, PeerDispatchClaimRequest,
+    PeerExecutionPhase, PeerExecutionRecord, PeerExecutionStore, PeerRelationshipState, WorkerId,
+};
+use milkdrift_workspace::RunId;
 use subtle::ConstantTimeEq as _;
 
 use crate::{
     PeerAuthenticator, PeerHttpError,
     artifact::{PeerArtifactError, PeerArtifactStore},
     config::{PeerRelationship, PeerServerConfig},
-    store::{PeerExecutionStore, PeerStoreError, StoreAcceptance, StoredExecution, acceptance},
+    dispatch::PeerDispatchWorkers,
+    store::{acceptance, lookup as execution_lookup, public_status},
 };
 
 /// Caller-supplied boundary clock for deterministic protocol and restart tests.
@@ -85,6 +94,18 @@ pub struct PeerService {
     drain: AtomicU8,
     artifacts: Arc<dyn PeerArtifactStore>,
     authenticator: Option<Arc<dyn PeerAuthenticator>>,
+    workers: Mutex<Option<PeerDispatchWorkers>>,
+}
+
+/// Fixed worker-owner shutdown result. A timeout reports retained owners instead of hiding them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PeerWorkerShutdownReport {
+    /// True when every fixed worker joined before the deadline.
+    pub clean: bool,
+    /// Workers joined during this call.
+    pub joined: u16,
+    /// Workers still owned after the timeout.
+    pub retained_workers: u16,
 }
 
 impl std::fmt::Debug for PeerService {
@@ -168,7 +189,19 @@ impl PeerService {
             BTreeMap::new(),
         )
         .map_err(|error| PeerHttpError::Configuration(error.to_string()))?;
-        Ok(Arc::new(Self {
+        for relationship in relationships.values() {
+            executions
+                .configure_peer_relationship(&PeerRelationshipState {
+                    peer: relationship.remote_peer.clone(),
+                    generation: relationship_generation(relationship),
+                    enabled: relationship.enabled,
+                    expires_at_unix_ms: relationship.expires_at_unix_ms,
+                    maximum_active: u32::from(relationship.maximum_concurrent),
+                })
+                .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+        }
+        let worker_config = config.workers;
+        let service = Arc::new(Self {
             config,
             relationships,
             grants,
@@ -182,7 +215,13 @@ impl PeerService {
             drain: AtomicU8::new(0),
             artifacts,
             authenticator,
-        }))
+            workers: Mutex::new(None),
+        });
+        let workers = PeerDispatchWorkers::start(Arc::downgrade(&service), worker_config)?;
+        *service.workers.lock().map_err(|_| {
+            PeerHttpError::Unavailable("peer worker owner unavailable".to_owned())
+        })? = Some(workers);
+        Ok(service)
     }
 
     /// Authenticates only the transport bearer value and returns its configured identity.
@@ -311,15 +350,35 @@ impl PeerService {
         {
             return Ok(cached.snapshot.clone());
         }
+        let durable_generation = self
+            .executions
+            .peer_catalog(authenticated_peer)
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+            .map_or(0, |catalog| catalog.generation);
         let generation = catalogs.get(authenticated_peer).map_or(
-            relationship.revocation_generation.saturating_add(1).max(1),
-            |cached| cached.snapshot.generation.saturating_add(1),
+            durable_generation.saturating_add(1).max(1),
+            |cached| {
+                cached
+                    .snapshot
+                    .generation
+                    .max(durable_generation)
+                    .saturating_add(1)
+            },
         );
         let expires_at = now
             .saturating_add(relationship.catalog_ttl_ms)
             .min(relationship.expires_at_unix_ms);
         let snapshot = CatalogSnapshot::new(generation, now, expires_at, entries)
             .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+        self.executions
+            .publish_peer_catalog(&PeerCatalogState {
+                peer: authenticated_peer.clone(),
+                relationship_generation: relationship_generation(&relationship),
+                generation: snapshot.generation,
+                digest: snapshot.digest.as_str().to_owned(),
+                expires_at_unix_ms: snapshot.expires_at_unix_ms,
+            })
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
         catalogs.insert(
             authenticated_peer.clone(),
             CachedCatalog {
@@ -330,7 +389,7 @@ impl PeerService {
         Ok(snapshot)
     }
 
-    /// Durably accepts one exact request before starting exactly one execution thread.
+    /// Atomically accepts one exact request into the durable bounded dispatch queue.
     pub fn invoke(
         self: &Arc<Self>,
         authenticated_peer: &PeerId,
@@ -351,22 +410,6 @@ impl PeerService {
             .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
         let authority_decision =
             self.authorize_invocation(&relationship, &request, self.clock.now_unix_ms())?;
-        if let Some(record) = self
-            .executions
-            .by_request(authenticated_peer, &request.request_id)?
-        {
-            return if record.request.request_digest == request.request_digest {
-                Ok(acceptance(&record, true))
-            } else {
-                Ok(rejection(
-                    &request,
-                    "idempotency_conflict",
-                    "idempotency key was previously accepted with different request bytes",
-                    false,
-                    Some(record.execution),
-                ))
-            };
-        }
         self.check_rate(
             &relationship,
             &format!("invoke:{}", request.selection.operation().as_str()),
@@ -418,43 +461,41 @@ impl PeerService {
                 "selected operation is not advertised".to_owned(),
             ));
         }
-        let active = self
-            .executions
-            .recoverable(10_000)?
-            .into_iter()
-            .filter(|record| record.owner_peer == *authenticated_peer)
-            .count();
-        if active >= usize::from(relationship.maximum_concurrent) {
-            return Ok(rejection(
-                &request,
-                "overload",
-                "peer execution quota reached",
-                true,
-                None,
-            ));
-        }
         let execution = execution_identity(authenticated_peer, &request)?;
-        let lease_expires = now.saturating_add(self.config.lease.execution_lease_ms);
-        match self.executions.accept(
-            authenticated_peer,
-            &request,
-            Some(&authority_decision),
-            &execution,
-            now,
-            lease_expires,
-        )? {
-            StoreAcceptance::Replay(record) => Ok(acceptance(&record, true)),
-            StoreAcceptance::Conflict(record) => Ok(rejection(
+        match self
+            .executions
+            .admit_peer_execution(&PeerAdmission {
+                owner_peer: authenticated_peer,
+                request: &request,
+                authority: &authority_decision,
+                execution: &execution,
+                relationship_generation: relationship_generation(&relationship),
+                accepted_at_unix_ms: now,
+                maximum_global_active: self.config.workers.maximum_global_active,
+                maximum_dispatch_queue: self.config.workers.maximum_dispatch_queue,
+                maximum_records: self.config.workers.maximum_records,
+            })
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+        {
+            PeerAdmissionOutcome::Replayed(record) => Ok(acceptance(&record, true)),
+            PeerAdmissionOutcome::Conflict(record) => Ok(rejection(
                 &request,
                 "idempotency_conflict",
                 "idempotency key was previously accepted with different request bytes",
                 false,
                 Some(record.execution),
             )),
-            StoreAcceptance::New(record) => {
-                self.spawn_execution(record.clone())?;
+            PeerAdmissionOutcome::Accepted(record) => {
+                self.notify_workers();
                 Ok(acceptance(&record, false))
             }
+            PeerAdmissionOutcome::Rejected(reason) => Ok(rejection(
+                &request,
+                admission_rejection_code(reason),
+                admission_rejection_detail(reason),
+                true,
+                None,
+            )),
         }
     }
 
@@ -474,8 +515,11 @@ impl PeerService {
         self.check_rate(&relationship, "lookup")?;
         Ok(self
             .executions
-            .by_request(authenticated_peer, request)?
-            .map_or(InvocationLookup::NotAccepted, |record| record.lookup()))
+            .peer_execution_by_request(authenticated_peer, request)
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+            .map_or(InvocationLookup::NotAccepted, |record| {
+                execution_lookup(&record)
+            }))
     }
 
     /// Returns a contiguous resumable observation page for one owned execution.
@@ -494,25 +538,22 @@ impl PeerService {
             AuthorityBudget::default(),
         )?;
         self.check_rate(&relationship, "observations")?;
-        let record = self
+        let maximum = maximum.min(usize::from(self.config.limits.observation_items));
+        let limit = PageSize::new(u32::try_from(maximum).unwrap_or(u32::MAX))
+            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+        let page = self
             .executions
-            .by_execution(authenticated_peer, execution)?
-            .ok_or_else(|| PeerHttpError::NotFound("remote execution was not found".to_owned()))?;
-        let observations = record
-            .observations
-            .iter()
-            .filter(|observation| observation.sequence > after_sequence)
-            .take(maximum.min(usize::from(self.config.limits.observation_items)))
-            .cloned()
-            .collect::<Vec<_>>();
-        let terminal = record.status == RemoteExecutionStatus::Terminal;
+            .peer_observations(authenticated_peer, execution, after_sequence, limit)
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+        let terminal = public_status(&page.record) == RemoteExecutionStatus::Terminal;
         let page = ObservationPage {
             execution: execution.clone(),
             after_sequence,
-            next_sequence: observations
+            next_sequence: page
+                .observations
                 .last()
                 .map_or(after_sequence, |observation| observation.sequence),
-            observations,
+            observations: page.observations,
             terminal,
             closed: terminal,
         };
@@ -534,28 +575,54 @@ impl PeerService {
                 "invalid peer cancellation request".to_owned(),
             ));
         }
-        let record = self
+        let before = self
             .executions
-            .by_execution(authenticated_peer, &request.execution)?
+            .peer_execution(authenticated_peer, &request.execution)
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
             .ok_or_else(|| PeerHttpError::NotFound("remote execution was not found".to_owned()))?;
         let mut resources = RequestedResourceFacts::empty();
-        resources.capability = Some(record.request.selection.capability().clone());
-        resources.capability_operation = Some(record.request.selection.operation().clone());
-        resources.side_effect = record.request.selection.operation_contract().side_effect();
+        resources.capability = Some(before.request.selection.capability().clone());
+        resources.capability_operation = Some(before.request.selection.operation().clone());
+        resources.side_effect = before.request.selection.operation_contract().side_effect();
         self.require_operation(
             &relationship,
             AuthorityOperation::CancelPeerCapability,
             resources,
             AuthorityBudget::default(),
         )?;
-        let acknowledgement = if record.status == RemoteExecutionStatus::Terminal {
+        let record = self
+            .executions
+            .request_peer_cancellation(authenticated_peer, request, self.clock.now_unix_ms().max(1))
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+        let acknowledgement = if matches!(before.phase, PeerExecutionPhase::Terminal { .. }) {
             PeerCancellationAcknowledgement {
                 request_id: request.request_id.clone(),
                 execution: request.execution.clone(),
                 disposition: CancellationDisposition::TooLate,
                 terminal_boundary: true,
-                terminal_evidence: record.observations.last().cloned(),
+                terminal_evidence: self.terminal_observation(authenticated_peer, &before)?,
                 detail: Some("terminal evidence was already durable".to_owned()),
+            }
+        } else if matches!(before.phase, PeerExecutionPhase::Uncertain { .. }) {
+            PeerCancellationAcknowledgement {
+                request_id: request.request_id.clone(),
+                execution: request.execution.clone(),
+                disposition: CancellationDisposition::Unknown,
+                terminal_boundary: false,
+                terminal_evidence: None,
+                detail: Some(
+                    "adapter entry is known but terminal evidence is unavailable".to_owned(),
+                ),
+            }
+        } else if record.phase.entry_evidence().is_none() {
+            let terminal = self.append_cancelled_before_entry(&record)?;
+            PeerCancellationAcknowledgement {
+                request_id: request.request_id.clone(),
+                execution: request.execution.clone(),
+                disposition: CancellationDisposition::Accepted,
+                terminal_boundary: true,
+                terminal_evidence: Some(terminal),
+                detail: Some("durable cancellation prevented adapter entry".to_owned()),
             }
         } else if record.request.selection.operation_contract().cancellation()
             == CancellationBehavior::Unsupported
@@ -601,11 +668,14 @@ impl PeerService {
         acknowledgement
             .validate()
             .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
-        self.executions.record_cancellation(
-            authenticated_peer,
-            &request.execution,
-            acknowledgement.clone(),
-        )?;
+        self.executions
+            .acknowledge_peer_cancellation(
+                authenticated_peer,
+                &acknowledgement,
+                self.clock.now_unix_ms().max(1),
+            )
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+        self.notify_workers();
         Ok(acknowledgement)
     }
 
@@ -625,7 +695,7 @@ impl PeerService {
             operation,
             RequestedResourceFacts::empty(),
             AuthorityBudget {
-                artifact_bytes: offer.artifact.size_bytes(),
+                artifact_bytes: Some(offer.artifact.size_bytes()),
                 ..AuthorityBudget::default()
             },
         )?;
@@ -735,11 +805,33 @@ impl PeerService {
     /// Marks all catalogs stale and stops accepting new peer invocations.
     pub fn begin_drain(&self) {
         self.drain.store(1, Ordering::SeqCst);
+        self.notify_workers();
     }
 
     /// Marks shutdown state for handshake and catalog consumers.
     pub fn begin_shutdown(&self) {
         self.drain.store(2, Ordering::SeqCst);
+        self.notify_workers();
+    }
+
+    /// Stops durable claims and joins the fixed worker owner up to the supplied deadline.
+    pub fn shutdown_workers(&self, timeout: Duration) -> PeerWorkerShutdownReport {
+        self.begin_shutdown();
+        let Ok(mut workers) = self.workers.lock() else {
+            return PeerWorkerShutdownReport {
+                clean: false,
+                joined: 0,
+                retained_workers: self.config.workers.threads,
+            };
+        };
+        workers.as_mut().map_or(
+            PeerWorkerShutdownReport {
+                clean: true,
+                joined: 0,
+                retained_workers: 0,
+            },
+            |owner| owner.shutdown(timeout),
+        )
     }
 
     /// Revokes one relationship immediately for inbound authentication and protocol actions.
@@ -762,21 +854,22 @@ impl PeerService {
         Ok(())
     }
 
-    /// Recovers durable acceptance after daemon restart without duplicating entered work.
-    /// Accepted-before-entry records may enter once; entered records become explicitly uncertain.
+    /// Recovers bounded prior-owner claims. Pre-entry work requeues; entered work becomes uncertain.
     pub fn recover(self: &Arc<Self>, maximum: usize) -> Result<(), PeerHttpError> {
-        for record in self.executions.recoverable(maximum)? {
-            match record.status {
-                RemoteExecutionStatus::Accepted => self.spawn_execution(record)?,
-                RemoteExecutionStatus::Running | RemoteExecutionStatus::OutcomeUnknown => {
-                    self.append_uncertainty(
-                        &record,
-                        "remote daemon restarted after adapter-entry intent; outcome is unknown",
-                    )?;
-                }
-                RemoteExecutionStatus::Terminal => {}
+        let configured = usize::from(self.config.workers.recovery_page);
+        let bounded = maximum.min(configured).max(1);
+        let limit = PageSize::new(u32::try_from(bounded).unwrap_or(u32::MAX))
+            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+        loop {
+            let recovered = self
+                .executions
+                .recover_peer_claims(self.clock.now_unix_ms().max(1), limit)
+                .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            if !recovered.more {
+                break;
             }
         }
+        self.notify_workers();
         Ok(())
     }
 
@@ -837,8 +930,25 @@ impl PeerService {
         &self,
         relationship: &PeerRelationship,
         operation: AuthorityOperation,
+        resources: RequestedResourceFacts,
+        budget: AuthorityBudget,
+    ) -> Result<milkdrift_authority::AuthorityDecisionSnapshot, PeerHttpError> {
+        self.evaluate_operation_with_provenance(
+            relationship,
+            operation,
+            resources,
+            budget,
+            AuthorityExecutionProvenance::default(),
+        )
+    }
+
+    fn evaluate_operation_with_provenance(
+        &self,
+        relationship: &PeerRelationship,
+        operation: AuthorityOperation,
         mut resources: RequestedResourceFacts,
         budget: AuthorityBudget,
+        provenance: AuthorityExecutionProvenance,
     ) -> Result<milkdrift_authority::AuthorityDecisionSnapshot, PeerHttpError> {
         let grant = self
             .grants
@@ -864,7 +974,7 @@ impl PeerService {
             resources,
             budget,
             evaluated_at: BoundaryTimeMillis::new(now),
-            provenance: Default::default(),
+            provenance,
         };
         self.authority
             .evaluate(&request)
@@ -976,6 +1086,7 @@ impl PeerService {
         request: &PeerInvocationRequest,
         now: u64,
     ) -> Result<milkdrift_authority::AuthorityDecisionSnapshot, PeerHttpError> {
+        let _validated_context = adapter_execution_context(request)?;
         if !relationship.execution_limits.contains(request.limits)
             || request.limits.artifact_bytes > relationship.maximum_artifact_bytes
         {
@@ -987,7 +1098,20 @@ impl PeerService {
         resources.capability = Some(request.selection.capability().clone());
         resources.capability_operation = Some(request.selection.operation().clone());
         resources.side_effect = request.selection.operation_contract().side_effect();
-        let decision = self.evaluate_operation(
+        let delegated = &request.delegation.provenance;
+        let provenance = AuthorityExecutionProvenance {
+            revision: Some(parse_revision(&delegated.revision)?),
+            node: Some(
+                NodeId::new(delegated.node.clone())
+                    .map_err(|error| PeerHttpError::Protocol(error.to_string()))?,
+            ),
+            execution: Some(delegated.execution.clone()),
+            attempt: Some(delegated.attempt.clone()),
+            descriptor_revision: Some(request.selection.descriptor_revision()),
+            peer: Some(relationship.remote_peer.clone()),
+            idempotency: Some(request.selection.operation_contract().idempotency()),
+        };
+        let decision = self.evaluate_operation_with_provenance(
             relationship,
             AuthorityOperation::InvokePeerCapability,
             resources,
@@ -998,6 +1122,7 @@ impl PeerService {
                 concurrency: Some(1),
                 ..AuthorityBudget::default()
             },
+            provenance,
         )?;
         if !decision.is_allowed() {
             return Err(PeerHttpError::Unauthorized(
@@ -1025,75 +1150,182 @@ impl PeerService {
         Ok(decision)
     }
 
-    fn spawn_execution(self: &Arc<Self>, record: StoredExecution) -> Result<(), PeerHttpError> {
-        self.executions
-            .mark_running(&record.owner_peer, &record.execution)?;
-        let service = self.clone();
-        thread::Builder::new()
-            .name(format!(
-                "milkdrift-peer-{}",
-                &record.execution.as_str()[..record.execution.as_str().len().min(48)]
-            ))
-            .spawn(move || service.run_execution(record))
-            .map_err(|error| PeerHttpError::Unavailable(error.to_string()))?;
-        Ok(())
+    pub(crate) fn worker_claims_enabled(&self) -> bool {
+        self.drain_state() == DrainState::Ready
     }
 
-    fn run_execution(self: Arc<Self>, record: StoredExecution) {
+    pub(crate) fn claim_for_worker(
+        &self,
+        worker: &WorkerId,
+    ) -> Result<PeerClaimOutcome, PeerHttpError> {
+        let now = self.clock.now_unix_ms().max(1);
+        self.executions
+            .claim_peer_dispatch(&PeerDispatchClaimRequest {
+                worker,
+                claimed_at_unix_ms: now,
+                lease_expires_at_unix_ms: now.saturating_add(self.config.lease.execution_lease_ms),
+            })
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))
+    }
+
+    pub(crate) fn run_claimed(&self, record: PeerExecutionRecord) -> Result<(), PeerHttpError> {
+        let claim = record.phase.claim().cloned().ok_or_else(|| {
+            PeerHttpError::Persistence("claimed peer work lacks a claim".to_owned())
+        })?;
+        if matches!(
+            &record.phase,
+            PeerExecutionPhase::CancellationRequested { evidence: None, .. }
+        ) {
+            let terminal = self.append_cancelled_before_entry(&record)?;
+            if record
+                .cancellation
+                .as_ref()
+                .is_some_and(|value| value.acknowledgement.is_none())
+            {
+                let cancellation = record.cancellation.as_ref().ok_or_else(|| {
+                    PeerHttpError::Persistence("cancellation facts disappeared".to_owned())
+                })?;
+                self.executions
+                    .acknowledge_peer_cancellation(
+                        &record.owner_peer,
+                        &PeerCancellationAcknowledgement {
+                            request_id: cancellation.request.request_id.clone(),
+                            execution: record.execution.clone(),
+                            disposition: CancellationDisposition::Accepted,
+                            terminal_boundary: true,
+                            terminal_evidence: Some(terminal),
+                            detail: Some("durable cancellation prevented adapter entry".to_owned()),
+                        },
+                        self.clock.now_unix_ms().max(1),
+                    )
+                    .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            }
+            return Ok(());
+        }
+        if self.clock.now_unix_ms() > record.request.deadline_unix_ms {
+            return self.append_pre_entry_failure(
+                &record,
+                "peer execution deadline elapsed before adapter entry",
+            );
+        }
+        let entered = self
+            .executions
+            .mark_peer_entered(
+                &record.owner_peer,
+                &record.execution,
+                &claim.worker,
+                claim.generation,
+                self.clock.now_unix_ms().max(1),
+            )
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
         let reporter = PeerStoreReporter {
-            owner_peer: record.owner_peer.clone(),
-            execution: record.execution.clone(),
+            owner_peer: entered.owner_peer.clone(),
+            execution: entered.execution.clone(),
             executions: self.executions.clone(),
             clock: self.clock.clone(),
             lease_ms: self.config.lease.execution_lease_ms,
-            limits: record.request.limits,
-            deadline_unix_ms: record.request.deadline_unix_ms,
+            limits: entered.request.limits,
+            deadline_unix_ms: entered.request.deadline_unix_ms,
+            worker: claim.worker.clone(),
+            claim_generation: claim.generation,
         };
-        if let Err(error) = self.capability_host.execute_exact(
-            &record.request.selection,
-            &record.request.request,
+        let context = adapter_execution_context(&entered.request)?;
+        let result = self.capability_host.execute_exact_with_context(
+            &entered.request.selection,
+            &entered.request.request,
+            &context,
             &reporter,
-        ) && self
+        );
+        let current = self
             .executions
-            .by_execution(&record.owner_peer, &record.execution)
-            .ok()
-            .flatten()
-            .is_some_and(|current| current.status != RemoteExecutionStatus::Terminal)
-        {
-            let _ = self.append_uncertainty(&record, &bounded(&error.to_string(), 2_048));
+            .peer_execution(&entered.owner_peer, &entered.execution)
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+            .ok_or_else(|| PeerHttpError::NotFound("remote execution was not found".to_owned()))?;
+        if matches!(
+            current.phase,
+            PeerExecutionPhase::Terminal { .. } | PeerExecutionPhase::Uncertain { .. }
+        ) {
+            return Ok(());
         }
+        let reason = result.map_or_else(
+            |error| bounded(&error.to_string(), 2_048),
+            |()| "peer adapter returned without terminal evidence".to_owned(),
+        );
+        self.executions
+            .mark_peer_uncertain(
+                &entered.owner_peer,
+                &entered.execution,
+                &claim.worker,
+                claim.generation,
+                self.clock.now_unix_ms().max(1),
+                &reason,
+            )
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+        Ok(())
     }
 
-    fn append_uncertainty(
+    pub(crate) fn recover_panicked_worker(
         &self,
-        record: &StoredExecution,
-        reason: &str,
+        claimed: &PeerExecutionRecord,
+        worker: &WorkerId,
     ) -> Result<(), PeerHttpError> {
         let current = self
             .executions
-            .by_execution(&record.owner_peer, &record.execution)?
+            .peer_execution(&claimed.owner_peer, &claimed.execution)
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
             .ok_or_else(|| PeerHttpError::NotFound("remote execution was not found".to_owned()))?;
-        if current.status == RemoteExecutionStatus::Terminal {
+        let Some(claim) = current.phase.claim() else {
+            return Ok(());
+        };
+        if claim.worker != *worker {
             return Ok(());
         }
-        let sequence = current
-            .observations
-            .last()
-            .map_or(1, |observation| observation.sequence.saturating_add(1));
+        if current.phase.entry_evidence().is_some() {
+            self.executions
+                .mark_peer_uncertain(
+                    &current.owner_peer,
+                    &current.execution,
+                    worker,
+                    claim.generation,
+                    self.clock.now_unix_ms().max(1),
+                    "peer worker panicked after durable adapter entry",
+                )
+                .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+        } else {
+            self.executions
+                .release_peer_claim(
+                    &current.owner_peer,
+                    &current.execution,
+                    worker,
+                    claim.generation,
+                    self.clock.now_unix_ms().max(1),
+                )
+                .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            self.notify_workers();
+        }
+        Ok(())
+    }
+
+    fn append_pre_entry_failure(
+        &self,
+        record: &PeerExecutionRecord,
+        reason: &str,
+    ) -> Result<(), PeerHttpError> {
+        let sequence = record.last_observation_sequence.saturating_add(1);
         let failure = InvocationFailure::new(
-            ErrorClass::Unknown,
+            ErrorClass::Adapter,
             false,
-            "remote_outcome_uncertain",
-            bounded(reason, 4_096),
+            "peer_host_failure_before_entry",
+            bounded(reason, 2_048),
             None,
         )
         .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
         let terminal = InvocationTerminal::new(
-            TerminalStatus::Uncertain,
+            TerminalStatus::Failure,
             Vec::new(),
             Some(failure),
             None,
-            record.request.selection.operation_contract().side_effect(),
+            milkdrift_capability::SideEffectClass::None,
         )
         .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
         let event = InvocationEvent::new(
@@ -1102,19 +1334,122 @@ impl PeerService {
             InvocationEventKind::Terminal { terminal },
         )
         .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
-        self.executions.append_observation(
-            &record.owner_peer,
-            &record.execution,
-            PeerObservation {
-                execution: record.execution.clone(),
-                sequence,
-                category: ObservationCategory::Uncertainty,
-                event,
-                observed_at_unix_ms: self.clock.now_unix_ms().max(1),
-            },
-        )?;
+        self.executions
+            .append_peer_observation(
+                &record.owner_peer,
+                &record.execution,
+                &PeerObservation {
+                    execution: record.execution.clone(),
+                    sequence,
+                    category: ObservationCategory::Terminal,
+                    event,
+                    observed_at_unix_ms: self.clock.now_unix_ms().max(1),
+                },
+            )
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
         Ok(())
     }
+
+    fn append_cancelled_before_entry(
+        &self,
+        record: &PeerExecutionRecord,
+    ) -> Result<PeerObservation, PeerHttpError> {
+        let current = self
+            .executions
+            .peer_execution(&record.owner_peer, &record.execution)
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+            .ok_or_else(|| PeerHttpError::NotFound("remote execution was not found".to_owned()))?;
+        if let PeerExecutionPhase::Terminal { sequence, .. } = current.phase {
+            return self
+                .terminal_observation(&record.owner_peer, &current)?
+                .filter(|observation| observation.sequence == sequence)
+                .ok_or_else(|| {
+                    PeerHttpError::Persistence(
+                        "terminal cancellation evidence is missing".to_owned(),
+                    )
+                });
+        }
+        let sequence = current.last_observation_sequence.saturating_add(1);
+        let terminal = InvocationTerminal::new(
+            TerminalStatus::Cancelled,
+            Vec::new(),
+            None,
+            None,
+            milkdrift_capability::SideEffectClass::None,
+        )
+        .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+        let event = InvocationEvent::new(
+            current.request.request.invocation().clone(),
+            sequence,
+            InvocationEventKind::Terminal { terminal },
+        )
+        .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+        let observation = PeerObservation {
+            execution: current.execution.clone(),
+            sequence,
+            category: ObservationCategory::Terminal,
+            event,
+            observed_at_unix_ms: self.clock.now_unix_ms().max(1),
+        };
+        self.executions
+            .append_peer_observation(&current.owner_peer, &current.execution, &observation)
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+        Ok(observation)
+    }
+
+    fn terminal_observation(
+        &self,
+        owner: &PeerId,
+        record: &PeerExecutionRecord,
+    ) -> Result<Option<PeerObservation>, PeerHttpError> {
+        if record.last_observation_sequence == 0 {
+            return Ok(None);
+        }
+        let page = self
+            .executions
+            .peer_observations(
+                owner,
+                &record.execution,
+                record.last_observation_sequence.saturating_sub(1),
+                PageSize::new(1).map_err(|error| PeerHttpError::Protocol(error.to_string()))?,
+            )
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+        Ok(page
+            .observations
+            .into_iter()
+            .next()
+            .filter(|observation| observation.event.kind().terminal().is_some()))
+    }
+
+    fn notify_workers(&self) {
+        if let Ok(workers) = self.workers.lock()
+            && let Some(workers) = workers.as_ref()
+        {
+            workers.notify();
+        }
+    }
+}
+
+fn adapter_execution_context(
+    request: &PeerInvocationRequest,
+) -> Result<AdapterExecutionContext, PeerHttpError> {
+    let provenance = &request.delegation.provenance;
+    Ok(AdapterExecutionContext::new(
+        RunId::new(provenance.run.clone())
+            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?,
+        parse_revision(&provenance.revision)?,
+        NodeId::new(provenance.node.clone())
+            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?,
+        NodeExecutionId::new(provenance.execution.clone())
+            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?,
+        AttemptId::new(provenance.attempt.clone())
+            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?,
+    ))
+}
+
+fn parse_revision(value: &str) -> Result<RevisionId, PeerHttpError> {
+    serde_json::from_value(serde_json::Value::String(value.to_owned()))
+        .map_err(|error| PeerHttpError::Protocol(error.to_string()))
 }
 
 fn peer_authority_grant(relationship: &PeerRelationship) -> Result<AuthorityGrant, PeerHttpError> {
@@ -1176,10 +1511,13 @@ fn peer_authority_grant(relationship: &PeerRelationship) -> Result<AuthorityGran
     let resource_scope = ResourceScope {
         workflow_run: WorkflowRunScope::Any,
         capability,
-        filesystem: Vec::new(),
-        network: NetworkScope::new(BTreeSet::new(), BTreeSet::new())
-            .map_err(|error| PeerHttpError::Configuration(error.to_string()))?,
-        secrets: BTreeSet::new(),
+        filesystem: relationship.execution_filesystem.clone(),
+        network: NetworkScope::new(
+            relationship.execution_network_profiles.clone(),
+            relationship.execution_network_destinations.clone(),
+        )
+        .map_err(|error| PeerHttpError::Configuration(error.to_string()))?,
+        secrets: relationship.execution_secrets.clone(),
         artifacts: if actions.contains(&PeerAction::ArtifactUpload)
             || actions.contains(&PeerAction::ArtifactDownload)
         {
@@ -1227,6 +1565,8 @@ struct PeerStoreReporter {
     lease_ms: u64,
     limits: milkdrift_peer_protocol::ExecutionLimits,
     deadline_unix_ms: u64,
+    worker: WorkerId,
+    claim_generation: u64,
 }
 
 impl AdapterReporter for PeerStoreReporter {
@@ -1277,10 +1617,10 @@ impl AdapterReporter for PeerStoreReporter {
             InvocationEventKind::Terminal { .. } => ObservationCategory::Terminal,
         };
         self.executions
-            .append_observation(
+            .append_peer_observation(
                 &self.owner_peer,
                 &self.execution,
-                PeerObservation {
+                &PeerObservation {
                     execution: self.execution.clone(),
                     sequence: event.sequence(),
                     category,
@@ -1288,7 +1628,7 @@ impl AdapterReporter for PeerStoreReporter {
                     observed_at_unix_ms: self.clock.now_unix_ms().max(1),
                 },
             )
-            .map(|_record| ())
+            .map(|_outcome| ())
             .map_err(|error| AdapterError::external_failure(error.to_string()))
     }
 
@@ -1299,9 +1639,11 @@ impl AdapterReporter for PeerStoreReporter {
             ));
         }
         self.executions
-            .extend_lease(
+            .extend_peer_claim(
                 &self.owner_peer,
                 &self.execution,
+                &self.worker,
+                self.claim_generation,
                 self.clock.now_unix_ms().saturating_add(self.lease_ms),
             )
             .map_err(|error| AdapterError::external_failure(error.to_string()))
@@ -1368,6 +1710,38 @@ fn rejection(
     }
 }
 
+const fn relationship_generation(relationship: &PeerRelationship) -> u64 {
+    relationship.revocation_generation.saturating_add(1)
+}
+
+const fn admission_rejection_code(reason: PeerAdmissionRejection) -> &'static str {
+    match reason {
+        PeerAdmissionRejection::RelationshipUnavailable => "relationship_stale",
+        PeerAdmissionRejection::CatalogUnavailable => "catalog_stale",
+        PeerAdmissionRejection::PeerCapacity
+        | PeerAdmissionRejection::GlobalCapacity
+        | PeerAdmissionRejection::DispatchCapacity => "overload",
+        PeerAdmissionRejection::RetentionCapacity => "retention_capacity",
+    }
+}
+
+const fn admission_rejection_detail(reason: PeerAdmissionRejection) -> &'static str {
+    match reason {
+        PeerAdmissionRejection::RelationshipUnavailable => {
+            "peer relationship generation is unavailable for new acceptance"
+        }
+        PeerAdmissionRejection::CatalogUnavailable => {
+            "selected catalog generation is unavailable for new acceptance"
+        }
+        PeerAdmissionRejection::PeerCapacity => "peer execution quota reached",
+        PeerAdmissionRejection::GlobalCapacity => "global peer execution quota reached",
+        PeerAdmissionRejection::DispatchCapacity => "durable peer dispatch queue is full",
+        PeerAdmissionRejection::RetentionCapacity => {
+            "peer execution retention bound requires operator archival policy"
+        }
+    }
+}
+
 fn bounded(value: &str, maximum: usize) -> String {
     if value.len() <= maximum {
         return value.to_owned();
@@ -1377,12 +1751,6 @@ fn bounded(value: &str, maximum: usize) -> String {
         end = end.saturating_sub(1);
     }
     value[..end].to_owned()
-}
-
-impl From<PeerStoreError> for PeerHttpError {
-    fn from(error: PeerStoreError) -> Self {
-        Self::Persistence(error.to_string())
-    }
 }
 
 impl From<milkdrift_capability_host::HostError> for PeerHttpError {
@@ -1398,7 +1766,7 @@ impl From<PeerArtifactError> for PeerHttpError {
             PeerArtifactError::Conflict(message) | PeerArtifactError::Verification(message) => {
                 Self::Protocol(message)
             }
-            PeerArtifactError::Io(message) => Self::Persistence(message),
+            PeerArtifactError::Persistence(message) => Self::Persistence(message),
             PeerArtifactError::Unavailable => {
                 Self::Persistence("artifact state unavailable".to_owned())
             }

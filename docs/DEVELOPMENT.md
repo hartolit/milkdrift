@@ -27,8 +27,18 @@ cargo test -p milkdrift-daemon --test control_plane daemon_bounded_overload_retu
 cargo test -p milkdrift-daemon --test control_plane daemon_stream_reconnect_auth_rotation_and_shutdown -- --exact --nocapture
 cargo test -p milkdrift-daemon --test control_plane daemon_graceful_shutdown_and_restart -- --exact --nocapture
 cargo test -p milkdrift-daemon --test control_plane daemon_configured_process_adapter_executes_to_terminal -- --exact --nocapture
-cargo test -p milkdrift-daemon --test control_plane daemon_startup_corruption_refuses_command_admission -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane layout_is_optimistic_restart_durable_and_semantically_inert -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane proposal_listing_uses_durable_projection_and_survives_restart -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane daemon_startup_refuses_legacy_sidecar_and_peer_prototype_authority -- --exact --nocapture
 cargo test -p milkdrift-cli --all-features -- --nocapture
+```
+
+Focused application-persistence and cross-transaction recovery checks are:
+
+```sh
+cargo test -p milkdrift-redb-store --test application_state -- --nocapture
+cargo test -p milkdrift-redb-store --test contracts runtime_acceptance_reconciles_external_receipt_without_competing_effect_authority -- --exact --nocapture
+cargo test -p milkdrift-redb-store --test contracts command_fault_boundaries_are_atomic_and_replayable -- --exact --nocapture
 ```
 
 Focused peer protocol, durability, artifact, reconnect, and real two-daemon checks are:
@@ -39,9 +49,9 @@ cargo test -p milkdrift-peer-http --all-features --test peer_service -- --nocapt
 cargo test -p milkdrift-daemon --all-features --test two_daemon_peer -- --nocapture
 ```
 
-They use temporary stores, ephemeral loopback listeners, local bearer files, and a fake capability adapter. They require no internet, VPN, provider credential, or manual peer service. Coverage includes incompatible major negotiation, hostile bounds/duplicates, HTTPS/loopback safety, authenticated identity cross-checking and live revocation, authority-filtered catalogs, request-rate/concurrency/terminal-reserved observation bounds, generation-safe remote registration, durable acceptance replay/conflict, acceptance response loss, observation-append failure, contiguous resume cursors, restart uncertainty after adapter-entry intent, terminal cancellation evidence, verified/deduplicated/interrupted/mismatched artifact transfer, artifact-publication recovery, path/content/quota rejection, auth-realm separation, request-time peer credential rotation, disconnect, and graceful two-daemon shutdown.
+They use temporary redb/core-artifact stores, ephemeral loopback listeners, local bearer files, controlled adapters, and one pinned local `/bin/echo` profile. They require no internet, VPN, provider credential, or manual peer service. Coverage includes incompatible major negotiation, hostile bounds/duplicates, HTTPS/loopback safety, atomic final-slot admission, exact replay/conflict across response loss and restart, durable queue/claim/entry recovery, deterministic transaction and spawn faults, fixed worker/shutdown bounds, append-only cursor pages, cancellation before/after entry and terminal, revocation history, late terminal evidence, core artifact resume/deduplication/digest/provenance/range reads, prototype-directory refusal, reconnect registration replacement, and real two-daemon remote process execution.
 
-These tests use temporary redb/artifact roots and ephemeral loopback listeners only. They cover fail-closed configuration/authentication, server-owned actor mapping, workflow/run/revision/proposal/layout/artifact/capability/provider/health scope, protected metadata/content audit, cross-actor cursor rejection, grant-narrowing page and stream failure, queue overload, durable command replay across restart, stale guards, credential rotation, startup corruption, and ordered shutdown. They require no internet or real credential. Run the daemon manually with `cargo run -p milkdrift-daemon -- --config PATH`; run the client with `cargo run -p milkdrift-cli -- [GLOBAL OPTIONS] COMMAND`. Keep bearer values in a private file or a referenced environment variable, never a command argument.
+These tests use temporary redb/artifact roots and ephemeral loopback listeners only. They cover fail-closed configuration/authentication, server-owned actor mapping, workflow/run/revision/proposal/layout/artifact/capability/provider/health scope, protected metadata/content audit, cross-actor cursor rejection, grant-narrowing page and stream failure, queue overload, exact accepted/rejected command replay across restart, stale layout guards, first-class proposal discovery, credential rotation, legacy-sidecar refusal, startup corruption, runtime/receipt crash reconciliation, and ordered shutdown. They require no internet or real credential. Run the daemon manually with `cargo run -p milkdrift-daemon -- --config PATH`; run the client with `cargo run -p milkdrift-cli -- [GLOBAL OPTIONS] COMMAND`. Keep bearer values in a private file or a referenced environment variable, never a command argument.
 
 Focused Pass-03C checks are:
 

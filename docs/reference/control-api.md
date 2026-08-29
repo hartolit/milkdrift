@@ -57,7 +57,9 @@ All mutations use `POST /v1/commands`. A command envelope has no actor field:
 }
 ```
 
-`command_id` is an actor-and-grant-scoped idempotency key. Repeating the exact body under the same actor and exact grant identity/revision/digest returns the committed result with `replayed: true`; reusing the identity with different content or after grant replacement returns `conflict`. The durable external ledger survives daemon restart and has a configured finite record bound. Mutating requests are not implicitly retried by `milkdrift-control-client`; a caller retry must preserve the exact body, idempotency identity, and authority basis.
+`command_id` is an actor-and-grant-scoped idempotency key. The daemon computes a canonical digest over the protocol/command schema, complete command envelope, authenticated actor, and exact grant identity/revision/digest before application. Repeating that exact request returns the durably stored accepted result with `replayed: true`, or the exact stored deterministic rejection; reusing the identity with different content or after grant replacement returns `conflict`. Receipts survive daemon restart and have a configured finite non-evicting bound: capacity exhaustion rejects a new identity instead of discarding prior idempotency truth. Mutating requests are not implicitly retried by `milkdrift-control-client`; a caller retry must preserve the exact body, idempotency identity, and authority basis.
+
+For layout writes and proposal discovery, the receipt and same-store application effect commit in one redb transaction. Runtime/control effects retain their existing idempotent transaction as authority. If the daemon crashes after such an effect commits but before its application receipt, redelivery uses the same stable internal command identity, observes runtime replay, and commits the missing external receipt without applying replacement work. Transient storage, overload, unavailable, timeout, uncertain, corruption, and internal failures are not converted into durable rejections.
 
 The closed command types are:
 
@@ -93,7 +95,7 @@ Every route is authenticated and authority-filtered. List queries constrain or f
 | `GET /v1/runs/{run}/nodes/{execution}` | One retained node execution. |
 | `GET /v1/runs/{run}/attempts/{attempt}` | One exact current or historical attempt; journal paging supplies older attempts without retaining lifetime history in the compact run model. Includes capability/provider/peer linkage, frozen snapshot/trust/implementation provenance, and separately authorized context-manifest detail when present. |
 | `GET /v1/runs/{run}/timeline?limit=&cursor=` | Paged external timeline projection with exact durable sequence anchors. |
-| `GET /v1/runs/{run}/proposals?limit=&cursor=` | Bounded proposal identities/statuses discovered from the durable command ledger. |
+| `GET /v1/runs/{run}/proposals?limit=&cursor=` | Bounded proposal identities/statuses from the durable validated proposal projection; exact status remains owned by `milkdrift-control`. |
 | `GET /v1/runs/{run}/proposals/{proposal}?revision={revision}` | Exact status from `milkdrift-control`. |
 | `GET /v1/capabilities` | Only generations within capability scope, with descriptor category/operations/locality/peer/trust, provider profile where allowed, and scoped health/availability. |
 | `GET /v1/peers` | Only configured peer identities within `inspect_peer` scope. |
@@ -136,7 +138,7 @@ Run-feed positions interleave durable timeline sequence (`2 × sequence`) and it
 
 `LayoutDocument` contains `schema_version`, exact `workflow_id` and `revision_id`, positive optimistic `generation`, server-overwritten `author`, independent BLAKE3 `digest`, bounded `nodes` positions/dimensions, `collapsed_groups`, non-executable `annotations`, and optional `viewport`. The first generation is 1; a changed document must advance by exactly one. The daemon recomputes author and digest before storing.
 
-Layout cannot contain executable edges, node/task configuration, requirements, prompts, secrets, or semantic mutations. It is stored in the atomically synced schema-2 control sidecar, independently from the immutable blueprint revision. Layout edits therefore do not create a revision or alter its semantic digest.
+Layout cannot contain executable edges, node/task configuration, requirements, prompts, secrets, or semantic mutations. Each exact workflow/revision layout is stored as an independently checked schema-1 application record in redb, independently from the immutable blueprint revision. Layout edits therefore do not create a revision, run event, or semantic digest change. Concurrent changed writes must advance from the current generation by exactly one; stale writes are durable deterministic conflicts under the external command receipt policy.
 
 ## CLI automation contract
 

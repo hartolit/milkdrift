@@ -1,0 +1,77 @@
+//! Authorized artifact metadata and bounded content-release ownership.
+
+use super::*;
+
+impl Owner {
+    pub(super) fn artifact_metadata(
+        &mut self,
+        session: &ActorSession,
+        artifact: &str,
+    ) -> Result<ArtifactMetadataRead, PublicFailure> {
+        let artifact =
+            ArtifactId::new(artifact.to_owned()).map_err(|error| invalid(&error.to_string()))?;
+        let metadata = self
+            .store
+            .metadata(&artifact)
+            .map_err(public_persistence)?
+            .ok_or_else(not_found)?;
+        let mut resources = RequestedResourceFacts::empty();
+        resources.artifact = Some(artifact);
+        resources.artifact_sensitivity = Some(metadata.sensitivity());
+        let decision = self.authorize(
+            session,
+            AuthorityOperation::ReadArtifactMetadata,
+            resources,
+            "read:artifact-metadata",
+        )?;
+        if metadata.sensitivity() != ArtifactSensitivity::Public {
+            self.record_security_decision(&decision)?;
+        }
+        Ok(public_artifact_metadata(&metadata))
+    }
+
+    pub(super) fn artifact_range(
+        &mut self,
+        session: &ActorSession,
+        artifact: &str,
+        offset: u64,
+        maximum: u32,
+        evidence: &str,
+    ) -> Result<OwnerValue, PublicFailure> {
+        let artifact_id =
+            ArtifactId::new(artifact.to_owned()).map_err(|error| invalid(&error.to_string()))?;
+        let metadata = self
+            .store
+            .metadata(&artifact_id)
+            .map_err(public_persistence)?
+            .ok_or_else(not_found)?;
+        let mut resources = RequestedResourceFacts::empty();
+        resources.artifact = Some(artifact_id);
+        resources.artifact_sensitivity = Some(metadata.sensitivity());
+        let decision = self.authorize(
+            session,
+            AuthorityOperation::ReadArtifactContent,
+            resources,
+            "read:artifact-content",
+        )?;
+        let authority = ArtifactReadAuthority::Authorized {
+            actor: session.actor.clone(),
+            evidence: EvidenceId::new(format!("{evidence}-{}", decision.digest()))
+                .map_err(public_persistence)?,
+        };
+        let chunk = self
+            .store
+            .read_chunk(
+                &ArtifactReadRequest::new(metadata.reference().clone(), offset, maximum, authority)
+                    .map_err(public_persistence)?,
+            )
+            .map_err(public_persistence)?;
+        self.record_security_decision(&decision)?;
+        Ok(OwnerValue::ArtifactRange {
+            metadata: public_artifact_metadata(&metadata),
+            offset: chunk.offset,
+            bytes: chunk.bytes,
+            end: chunk.end_of_artifact,
+        })
+    }
+}

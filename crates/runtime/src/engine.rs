@@ -532,6 +532,15 @@ impl RuntimeService {
     /// administrative integrity scanner or rehash artifact content. A failure leaves
     /// admission closed and preserves resumable recovery progress for an explicit retry.
     pub fn initialize_startup(&self) -> Result<(), RuntimeError> {
+        self.recover_startup_closed()?;
+        self.resume_admission()
+    }
+
+    /// Completes bounded-page active-run recovery while keeping command admission closed.
+    ///
+    /// Daemon composition uses this split phase so application state and adapters can finish
+    /// validation before any externally initiated runtime command is admitted.
+    pub fn recover_startup_closed(&self) -> Result<(), RuntimeError> {
         let _guard = self.startup_gate.lock().map_err(|_error| {
             RuntimeError::Scheduling("runtime startup coordination lock is poisoned".to_owned())
         })?;
@@ -544,7 +553,6 @@ impl RuntimeService {
                 Ordering::SeqCst,
             );
         }
-        self.accepting_admission.store(true, Ordering::SeqCst);
         Ok(())
     }
 

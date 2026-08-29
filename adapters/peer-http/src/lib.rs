@@ -6,25 +6,24 @@ mod artifact;
 mod auth;
 mod client;
 mod config;
+mod dispatch;
 mod http;
 mod remote;
 mod service;
 mod store;
 
 pub use artifact::{
-    FilePeerArtifactStore, PeerArtifactError, PeerArtifactFaultInjector, PeerArtifactFaultPoint,
-    PeerArtifactStore,
+    CorePeerArtifactStore, PeerArtifactError, PeerArtifactStore, PeerCoreArtifactStore,
 };
 pub use auth::{PeerAuthenticator, PeerCredentialSource, StaticPeerCredential};
 pub use client::PeerHttpClient;
-pub use config::{InsecureLoopbackMode, PeerClientConfig, PeerRelationship, PeerServerConfig};
-pub use http::peer_router;
-pub use remote::{PeerRegistry, PeerRegistryStatus, RemoteCapabilityProvenance};
-pub use service::{PeerClock, PeerService, SystemPeerClock};
-pub use store::{
-    FilePeerExecutionStore, PeerExecutionStore, PeerStoreError, PeerStoreFaultInjector,
-    PeerStoreFaultPoint, StoreAcceptance, StoredExecution,
+pub use config::{
+    InsecureLoopbackMode, PeerClientConfig, PeerRelationship, PeerServerConfig, PeerWorkerConfig,
 };
+pub use http::peer_router;
+pub use milkdrift_persistence::{PeerExecutionRecord, PeerExecutionStore};
+pub use remote::{PeerRegistry, PeerRegistryStatus, RemoteCapabilityProvenance};
+pub use service::{PeerClock, PeerService, PeerWorkerShutdownReport, SystemPeerClock};
 
 use thiserror::Error;
 

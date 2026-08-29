@@ -1,5 +1,7 @@
 use milkdrift_authority::PeerId;
-use milkdrift_capability::ArtifactReference;
+use milkdrift_workspace::{
+    ArtifactProvenance, ArtifactReference, ArtifactRetention, ArtifactSensitivity,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{PeerExecutionId, PeerProtocolError, TransferId};
@@ -27,6 +29,12 @@ pub struct ArtifactMetadataOffer {
     pub direction: ArtifactTransferDirection,
     /// Exact digest, size, media type, and opaque artifact identity.
     pub artifact: ArtifactReference,
+    /// Source sensitivity classification preserved at import.
+    pub sensitivity: ArtifactSensitivity,
+    /// Source retention floor preserved at import.
+    pub retention: ArtifactRetention,
+    /// Source causal provenance, augmented with peer/execution origin on import.
+    pub provenance: ArtifactProvenance,
     /// Authenticated source peer retained in provenance.
     pub source_peer: PeerId,
     /// Exact remote execution that produced or consumes the artifact.
@@ -38,10 +46,7 @@ pub struct ArtifactMetadataOffer {
 impl ArtifactMetadataOffer {
     /// Requires exact media type/size and a nonzero transfer expiry.
     pub fn validate(&self) -> Result<(), PeerProtocolError> {
-        if self.artifact.size_bytes().is_none()
-            || self.artifact.media_type().is_none()
-            || self.expires_at_unix_ms == 0
-        {
+        if self.expires_at_unix_ms == 0 {
             return Err(PeerProtocolError::InvalidContract(
                 "artifact transfer requires exact size, content type, and expiry".to_owned(),
             ));

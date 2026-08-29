@@ -13,6 +13,42 @@ use crate::{
 const INVOCATION_DIGEST_DOMAIN: &[u8] = b"milkdrift.peer.invocation.v1\0";
 const MAX_OBSERVATIONS_PER_PAGE: usize = 256;
 
+/// Exact originating workflow coordinates carried across the peer execution boundary.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeerExecutionProvenance {
+    /// Originating durable run identity.
+    pub run: String,
+    /// Originating immutable revision identity.
+    pub revision: String,
+    /// Originating semantic node identity.
+    pub node: String,
+    /// Originating logical node-execution identity.
+    pub execution: String,
+    /// Originating immutable attempt identity.
+    pub attempt: String,
+}
+
+impl PeerExecutionProvenance {
+    fn validate(&self) -> Result<(), PeerProtocolError> {
+        if [
+            self.run.as_str(),
+            self.revision.as_str(),
+            self.node.as_str(),
+            self.execution.as_str(),
+            self.attempt.as_str(),
+        ]
+        .into_iter()
+        .any(|value| !safe_reference(value))
+        {
+            return Err(PeerProtocolError::InvalidContract(
+                "peer execution provenance contains an invalid identity".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Per-request resource ceilings checked before durable remote acceptance.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -72,12 +108,15 @@ pub struct DelegatedAuthorization {
     pub expires_at_unix_ms: u64,
     /// Non-reusable nonce bound to the server record.
     pub nonce: String,
+    /// Exact originating workflow coordinates used by materializing adapters.
+    pub provenance: PeerExecutionProvenance,
 }
 
 impl DelegatedAuthorization {
     /// Validates non-secret bounded delegation facts.
     pub fn validate(&self) -> Result<(), PeerProtocolError> {
         self.limits.validate()?;
+        self.provenance.validate()?;
         if self.expires_at_unix_ms == 0
             || self.nonce.is_empty()
             || self.nonce.len() > 192
@@ -89,6 +128,16 @@ impl DelegatedAuthorization {
         }
         Ok(())
     }
+}
+
+fn safe_reference(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 192
+        && value.is_ascii()
+        && value.as_bytes()[0].is_ascii_alphanumeric()
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
+        })
 }
 
 /// Exact immutable invocation submitted to one selected peer/catalog/generation.

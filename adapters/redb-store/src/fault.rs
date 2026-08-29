@@ -20,6 +20,10 @@ pub enum FaultPoint {
     AfterHistoryChainUpdate,
     /// Immediately after redb has committed a command transaction.
     AfterCommandCommit,
+    /// Immediately before committing an application receipt/same-store effect transaction.
+    BeforeApplicationCommit,
+    /// Immediately after an application receipt/same-store effect transaction commits.
+    AfterApplicationCommit,
     /// Immediately before committing an immutable revision transaction.
     BeforeRevisionCommit,
     /// Immediately after redb has committed an immutable revision transaction.
@@ -32,6 +36,18 @@ pub enum FaultPoint {
     BeforeSnapshotDiscardCommit,
     /// Immediately after redb has committed a snapshot-discard transaction.
     AfterSnapshotDiscardCommit,
+    /// After peer admission rows and accounting are prepared, before their atomic commit.
+    BeforePeerAdmissionCommit,
+    /// Immediately after durable peer admission commits, before its response is returned.
+    AfterPeerAdmissionCommit,
+    /// After a peer dispatch claim and its indexes are prepared, before their atomic commit.
+    BeforePeerClaimCommit,
+    /// Immediately after a durable peer dispatch claim commits.
+    AfterPeerClaimCommit,
+    /// After a peer observation row and execution head are prepared, before their atomic commit.
+    BeforePeerObservationCommit,
+    /// Immediately after a durable peer observation commit.
+    AfterPeerObservationCommit,
     /// After the empty stream is durable, before committing its publication session.
     BeforeArtifactBeginCommit,
     /// Immediately after the publication session transaction commits.

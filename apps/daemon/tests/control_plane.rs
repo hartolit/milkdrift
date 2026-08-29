@@ -10,15 +10,19 @@ use std::{
 
 use futures_util::StreamExt as _;
 use milkdrift_authority::{
-    ArtifactAuthorityScope, AuthorityBudget, BoundaryTimeMillis, CapabilityAuthorityScope,
-    DaemonAuthorityScope, LayoutAuthorityScope, NetworkScope, PeerAuthorityScope, ResourceScope,
-    WorkflowRunScope, WorkspaceAuthorityScope,
+    ActorRef, ArtifactAuthorityScope, AuthorityBudget, BoundaryTimeMillis,
+    CapabilityAuthorityScope, DaemonAuthorityScope, LayoutAuthorityScope, NetworkScope,
+    PeerAuthorityScope, ResourceScope, WorkflowRunScope, WorkspaceAuthorityScope,
 };
 use milkdrift_blueprint::{
-    AuthorRef, BlueprintRevision, BlueprintRevisionDocument, Edge, EdgeId, EdgeKind, Mutation,
-    MutationBatch, Node, NodeId, NodeKind, PortId, TerminalOutcome, WorkflowId,
+    AuthorRef, BlueprintMetadata, BlueprintRevision, BlueprintRevisionDocument, Edge, EdgeId,
+    EdgeKind, Mutation, MutationBatch, Node, NodeId, NodeKind, PortId, TerminalOutcome, WorkflowId,
 };
 use milkdrift_capability::{CapabilityId, CapabilityRequirement, OperationId, SideEffectClass};
+use milkdrift_control::{
+    ClaimedStopCondition, ProposalApplicationPolicy, ProposalId, ProposalProvenance,
+    WorkflowProposal, WorkflowProposalDocument,
+};
 use milkdrift_control_client::{BearerCredential, ClientConfig, ClientError, ControlClient};
 use milkdrift_control_protocol::{
     Command, CommandRequest, ErrorCode, LayoutDocument, LayoutPoint, Observation, PageRequest,
@@ -29,7 +33,10 @@ use milkdrift_daemon::{
     DaemonHost, PeerHostConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig,
     ValidatedDaemonConfig, serve,
 };
-use milkdrift_persistence::{ArtifactPublicationId, ArtifactStore, BeginArtifactPublication};
+use milkdrift_persistence::{
+    ApplicationPageQuery, ArtifactPublicationId, ArtifactStore, BeginArtifactPublication, PageSize,
+    SecurityAuditStore,
+};
 use milkdrift_redb_store::RedbStore;
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactReference, ArtifactRetention,
@@ -151,7 +158,7 @@ fn configuration_with_process_profiles(
         },
         peers: PeerHostConfig::default(),
         shutdown: ShutdownConfig::default(),
-        command_ledger_bound: 1_000,
+        command_receipt_bound: 1_000,
     }
     .validate(directory.path())
     .map_err(Into::into)
@@ -278,6 +285,40 @@ fn blueprint() -> TestResult<serde_json::Value> {
         "/../../crates/blueprint/tests/fixtures/revision-v2.json"
     )))
     .map_err(Into::into)
+}
+
+fn proposal_document(run: &RunId, sequence: u64) -> TestResult<serde_json::Value> {
+    let bytes = serde_json::to_vec(&blueprint()?)?;
+    let (_document, base) = BlueprintRevisionDocument::from_json(&bytes)?;
+    let proposal = WorkflowProposal::new(
+        ProposalId::new("proposal-daemon-index")?,
+        ActorRef::new("human:integration-controller")?,
+        ProposalProvenance::Direct,
+        base.semantic().workflow().clone(),
+        Some(run.clone()),
+        base.id().clone(),
+        base.content_digest().clone(),
+        Some(milkdrift_persistence::RunSequence::new(sequence)),
+        MutationBatch::new(vec![Mutation::SetMetadata {
+            metadata: BlueprintMetadata::new(
+                "golden",
+                "proposal discovery survives restart",
+                Default::default(),
+                Default::default(),
+            )?,
+        }])?,
+        "exercise first-class proposal discovery",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        ProposalApplicationPolicy::ProposeOnly,
+        None,
+        ClaimedStopCondition::Continue,
+    )?;
+    let document = WorkflowProposalDocument::new(proposal);
+    decode_json(&document.to_canonical_json()?).map_err(Into::into)
 }
 
 fn process_blueprint() -> TestResult<serde_json::Value> {
@@ -589,6 +630,19 @@ async fn daemon_command_idempotency_restart_and_stale_conflict() -> TestResult {
         ))
         .await?;
     assert!(replay.replayed);
+    assert!(matches!(
+        daemon
+            .client
+            .submit(&request(
+                "import-retry",
+                None,
+                Command::ValidateBlueprint {
+                    document: blueprint()?,
+                },
+            ))
+            .await,
+        Err(ClientError::Api(error)) if error.code == ErrorCode::Conflict
+    ));
 
     let started = daemon
         .client
@@ -613,9 +667,26 @@ async fn daemon_command_idempotency_restart_and_stale_conflict() -> TestResult {
             },
         ))
         .await;
+    let stale_error = match stale {
+        Err(ClientError::Api(error)) if error.code == ErrorCode::Conflict => error,
+        other => return Err(format!("expected durable stale conflict, got {other:?}").into()),
+    };
+    let repeated_stale = daemon
+        .client
+        .submit(&request(
+            "pause-stale",
+            Some(0),
+            Command::PauseRun {
+                run_id: "run-integration".to_owned(),
+            },
+        ))
+        .await;
     assert!(matches!(
-        stale,
-        Err(ClientError::Api(error)) if error.code == ErrorCode::Conflict
+        repeated_stale,
+        Err(ClientError::Api(ref error))
+            if error.code == stale_error.code
+                && error.message == stale_error.message
+                && error.details == stale_error.details
     ));
     daemon.stop().await?;
 
@@ -631,7 +702,203 @@ async fn daemon_command_idempotency_restart_and_stale_conflict() -> TestResult {
         ))
         .await?;
     assert!(restart_replay.replayed);
+    let restarted_stale = restarted
+        .client
+        .submit(&request(
+            "pause-stale",
+            Some(0),
+            Command::PauseRun {
+                run_id: "run-integration".to_owned(),
+            },
+        ))
+        .await;
+    assert!(matches!(
+        restarted_stale,
+        Err(ClientError::Api(ref error))
+            if error.code == stale_error.code
+                && error.message == stale_error.message
+                && error.details == stale_error.details
+    ));
     assert!(restarted.client.run("run-integration").await?.sequence > 0);
+    restarted.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn layout_is_optimistic_restart_durable_and_semantically_inert() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let config = configuration(&directory, 16)?;
+    let daemon = start(config.clone(), CONTROLLER_TOKEN).await?;
+    let revision_id = import_blueprint(&daemon.client, "layout-import").await?;
+    let semantic_digest = daemon
+        .client
+        .revision(&revision_id)
+        .await?
+        .summary
+        .semantic_digest;
+    let layout = LayoutDocument {
+        schema_version: 1,
+        workflow_id: "golden".to_owned(),
+        revision_id: revision_id.clone(),
+        generation: 1,
+        author: "ignored:client-author".to_owned(),
+        digest: String::new(),
+        nodes: BTreeMap::from([(
+            "first".to_owned(),
+            LayoutPoint {
+                x: 10.0,
+                y: 20.0,
+                width: Some(120.0),
+                height: None,
+            },
+        )]),
+        collapsed_groups: Default::default(),
+        annotations: Default::default(),
+        viewport: None,
+    }
+    .seal()?;
+    daemon
+        .client
+        .submit(&request(
+            "layout-put-one",
+            None,
+            Command::PutLayout {
+                layout: layout.clone(),
+            },
+        ))
+        .await?;
+    let mut stale = layout.clone();
+    stale.nodes.get_mut("first").ok_or("missing layout node")?.x = 30.0;
+    stale.digest = stale.computed_digest()?;
+    let first_conflict = daemon
+        .client
+        .submit(&request(
+            "layout-stale",
+            None,
+            Command::PutLayout {
+                layout: stale.clone(),
+            },
+        ))
+        .await;
+    assert!(matches!(
+        first_conflict,
+        Err(ClientError::Api(error)) if error.code == ErrorCode::Conflict
+    ));
+    assert!(matches!(
+        daemon
+            .client
+            .submit(&request(
+                "layout-stale",
+                None,
+                Command::PutLayout { layout: stale },
+            ))
+            .await,
+        Err(ClientError::Api(error)) if error.code == ErrorCode::Conflict
+    ));
+    assert_eq!(
+        daemon.client.layout("golden", &revision_id).await?.nodes,
+        layout.nodes
+    );
+    assert_eq!(
+        daemon
+            .client
+            .revision(&revision_id)
+            .await?
+            .summary
+            .semantic_digest,
+        semantic_digest
+    );
+    assert!(
+        !config
+            .document
+            .data_root
+            .join("control-state-v1.json")
+            .exists()
+    );
+    daemon.stop().await?;
+
+    let restarted = start(config, CONTROLLER_TOKEN).await?;
+    assert_eq!(
+        restarted.client.layout("golden", &revision_id).await?.nodes,
+        layout.nodes
+    );
+    assert_eq!(
+        restarted
+            .client
+            .revision(&revision_id)
+            .await?
+            .summary
+            .semantic_digest,
+        semantic_digest
+    );
+    restarted.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn proposal_listing_uses_durable_projection_and_survives_restart() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let config = configuration(&directory, 16)?;
+    let daemon = start(config.clone(), CONTROLLER_TOKEN).await?;
+    let revision_id = import_blueprint(&daemon.client, "proposal-index-import").await?;
+    daemon
+        .client
+        .submit(&request(
+            "proposal-index-start",
+            None,
+            Command::StartRun {
+                run_id: "run-proposal-index".to_owned(),
+                workflow_id: "golden".to_owned(),
+                revision_id: revision_id.clone(),
+            },
+        ))
+        .await?;
+    let started_sequence = daemon.client.run("run-proposal-index").await?.sequence;
+    daemon
+        .client
+        .submit(&request(
+            "proposal-index-pause",
+            Some(started_sequence),
+            Command::PauseRun {
+                run_id: "run-proposal-index".to_owned(),
+            },
+        ))
+        .await?;
+    let run = RunId::new("run-proposal-index")?;
+    let sequence = daemon.client.run(run.as_str()).await?.sequence;
+    let mut submit = request(
+        "proposal-index-submit",
+        Some(sequence),
+        Command::SubmitProposal {
+            document: proposal_document(&run, sequence)?,
+        },
+    );
+    submit.expected_revision = Some(revision_id);
+    daemon.client.submit(&submit).await?;
+    let listed = daemon
+        .client
+        .proposals(
+            run.as_str(),
+            &PageRequest {
+                cursor: None,
+                limit: 10,
+            },
+        )
+        .await?;
+    assert_eq!(listed.items.len(), 1);
+    assert_eq!(listed.items[0].proposal_id, "proposal-daemon-index");
+    daemon.stop().await?;
+
+    let restarted = start(config, CONTROLLER_TOKEN).await?;
+    let reopened = restarted
+        .client
+        .proposals(
+            run.as_str(),
+            &PageRequest {
+                cursor: None,
+                limit: 10,
+            },
+        )
+        .await?;
+    assert_eq!(reopened.items, listed.items);
     restarted.stop().await
 }
 
@@ -926,20 +1193,19 @@ async fn daemon_configured_process_adapter_executes_to_terminal() -> TestResult 
         observer.artifact_range(&artifact_id, 0, 0).await,
         Err(ClientError::Api(error)) if error.code == ErrorCode::Unauthorized
     ));
-    let sidecar: serde_json::Value = serde_json::from_slice(&fs::read(
-        directory.path().join("data/control-state-v1.json"),
-    )?)?;
-    let audit = sidecar["audit"]
-        .as_array()
-        .ok_or("control sidecar omitted the bounded security audit")?;
-    assert!(audit.iter().any(|entry| {
-        entry["operation"] == serde_json::json!("read_artifact_content")
-            && entry["grant_revision"] == serde_json::json!(1)
-            && entry["decision_digest"]
-                .as_str()
-                .is_some_and(|digest| digest.starts_with("b3_"))
-    }));
+    assert!(!directory.path().join("data/control-state-v1.json").exists());
     daemon.stop().await?;
+    let store = RedbStore::open(directory.path().join("data"))?;
+    let audit = store.security_audit(&ApplicationPageQuery {
+        after: None,
+        limit: PageSize::new(1_000)?,
+    })?;
+    assert!(audit.items.iter().any(|record| {
+        record.entry.operation == "read_artifact_content"
+            && record.entry.grant_revision == 1
+            && record.entry.decision_digest.starts_with("b3_")
+    }));
+    drop(store);
     let restarted = start(config, CONTROLLER_TOKEN).await?;
     let reopened = restarted.client.attempt("run-process", &attempt_id).await?;
     assert_eq!(reopened.context_access, "authorized");
@@ -949,7 +1215,7 @@ async fn daemon_configured_process_adapter_executes_to_terminal() -> TestResult 
 }
 
 #[test]
-fn daemon_startup_corruption_refuses_command_admission() -> TestResult {
+fn daemon_startup_refuses_legacy_sidecar_and_peer_prototype_authority() -> TestResult {
     let directory = tempfile::tempdir()?;
     let config = configuration(&directory, 16)?;
     fs::create_dir_all(&config.document.data_root)?;
@@ -959,6 +1225,12 @@ fn daemon_startup_corruption_refuses_command_admission() -> TestResult {
     )?;
     let result = DaemonHost::start(config);
     assert!(result.is_err());
+    for prototype in ["peer-executions-v1", "peer-artifacts-v1"] {
+        let directory = tempfile::tempdir()?;
+        let config = configuration(&directory, 16)?;
+        fs::create_dir_all(config.document.data_root.join(prototype))?;
+        assert!(DaemonHost::start(config).is_err());
+    }
     Ok(())
 }
 

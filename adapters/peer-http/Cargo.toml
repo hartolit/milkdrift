@@ -12,10 +12,13 @@ axum.workspace = true
 blake3.workspace = true
 futures-util.workspace = true
 milkdrift-authority = { version = "=0.1.0", path = "../../crates/authority" }
+milkdrift-blueprint = { version = "=0.1.0", path = "../../crates/blueprint" }
 milkdrift-capability = { version = "=0.1.0", path = "../../crates/capability" }
 milkdrift-capability-host = { version = "=0.1.0", path = "../../crates/capability-host" }
 milkdrift-contracts.workspace = true
 milkdrift-peer-protocol = { version = "=0.1.0", path = "../../crates/peer-protocol" }
+milkdrift-persistence = { version = "=0.1.0", path = "../../crates/persistence" }
+milkdrift-workspace = { version = "=0.1.0", path = "../../crates/workspace" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -28,6 +31,7 @@ tracing.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+milkdrift-redb-store = { version = "=0.1.0", path = "../redb-store" }
 tempfile.workspace = true
 
 [lints]

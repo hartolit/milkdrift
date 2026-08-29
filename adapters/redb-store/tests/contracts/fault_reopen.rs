@@ -3,7 +3,7 @@ use super::*;
 fn reopen_and_single_owner_are_enforced() -> Result<(), Box<dyn std::error::Error>> {
     let directory = TempDir::new()?;
     let store = RedbStore::open(directory.path())?;
-    assert_eq!(store.schema_info()?.stored_version, 3);
+    assert_eq!(store.schema_info()?.stored_version, 5);
     assert!(matches!(
         RedbStore::open(directory.path()),
         Err(PersistenceError::Storage {
@@ -13,7 +13,7 @@ fn reopen_and_single_owner_are_enforced() -> Result<(), Box<dyn std::error::Erro
     ));
     drop(store);
     let reopened = RedbStore::open(directory.path())?;
-    assert_eq!(reopened.schema_info()?.stored_version, 3);
+    assert_eq!(reopened.schema_info()?.stored_version, 5);
     Ok(())
 }
 
@@ -21,7 +21,7 @@ fn reopen_and_single_owner_are_enforced() -> Result<(), Box<dyn std::error::Erro
 fn older_and_future_storage_schemas_are_refused() -> Result<(), Box<dyn std::error::Error>> {
     const METADATA: TableDefinition<'static, &'static str, u64> =
         TableDefinition::new("milkdrift.v1.metadata");
-    for found in [2, 4] {
+    for found in [4, 6] {
         let directory = TempDir::new()?;
         drop(RedbStore::open(directory.path())?);
         let database = Database::open(directory.path().join("milkdrift.redb"))?;
@@ -37,7 +37,7 @@ fn older_and_future_storage_schemas_are_refused() -> Result<(), Box<dyn std::err
             Err(PersistenceError::UnsupportedVersion {
                 document: "storage",
                 found: observed,
-                supported: 3
+                supported: 5
             }) if observed == found as u32
         ));
     }
@@ -131,6 +131,72 @@ fn command_fault_boundaries_are_atomic_and_replayable() -> Result<(), Box<dyn st
         after.commit_command(&request)?,
         AtomicRunCommitOutcome::Replayed(_)
     ));
+    Ok(())
+}
+
+#[test]
+fn runtime_acceptance_reconciles_external_receipt_without_competing_effect_authority()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = TempDir::new()?;
+    let store = RedbStore::open_with_config(
+        RedbStoreConfig::new(directory.path())
+            .with_fault_injector(Arc::new(FailOnce::new(FaultPoint::BeforeApplicationCommit))),
+    )?;
+    let runtime = accepted_request(
+        "run-application-reconcile",
+        "runtime-command-reconcile",
+        "runtime-event-reconcile",
+        "start",
+    )?;
+    assert!(matches!(
+        store.commit_command(&runtime)?,
+        AtomicRunCommitOutcome::Committed(_)
+    ));
+    let actor = ActorRef::new("actor-external-reconcile")?;
+    let external_command = CommandId::new("external-command-reconcile")?;
+    let external = ApplicationCommandReceipt::new(
+        actor.clone(),
+        external_command.clone(),
+        1,
+        milkdrift_persistence::IntegrityDigest::hash(b"external-command-reconcile"),
+        GrantId::new("grant-external-reconcile")?,
+        1,
+        GrantDigest::new(format!("b3_{}", "a".repeat(64)))?,
+        None,
+        TimestampMillis::new(10),
+        TimestampMillis::new(11),
+        ApplicationCommandResult::Accepted {
+            document: br#"{"outcome":"accepted"}"#.to_vec(),
+            effect: Some(ApplicationEffectReference::RunSequence {
+                run: runtime.receipt().run().clone(),
+                resulting_sequence: RunSequence::FIRST,
+            }),
+        },
+    )?;
+    let application = ApplicationCommandCommit {
+        receipt: external,
+        effect: ApplicationCommandEffect::None,
+    };
+    assert!(store.commit_application_command(&application).is_err());
+    assert!(
+        store
+            .application_command_receipt(&actor, &external_command)?
+            .is_none()
+    );
+    assert!(matches!(
+        store.commit_command(&runtime)?,
+        AtomicRunCommitOutcome::Replayed(_)
+    ));
+    assert!(matches!(
+        store.commit_application_command(&application)?,
+        ApplicationCommandCommitOutcome::Committed
+    ));
+    assert_eq!(store.head(runtime.receipt().run())?, RunSequence::FIRST);
+    assert!(
+        store
+            .application_command_receipt(&actor, &external_command)?
+            .is_some()
+    );
     Ok(())
 }
 

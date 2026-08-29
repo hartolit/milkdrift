@@ -28,6 +28,13 @@ Peer support is disabled unless `peers.enabled` and explicit relationships are c
     "capability_deny": [],
     "operation_allow": ["process.execute"],
     "maximum_side_effect": "read_only",
+    "execution_filesystem": [{
+      "root": "/opt/milkdrift-tools/my-process",
+      "access": ["execute"]
+    }],
+    "execution_network_profiles": [],
+    "execution_network_destinations": [],
+    "execution_secrets": [],
     "maximum_concurrent": 2,
     "maximum_requests_per_minute": 600,
     "maximum_artifact_bytes": 1048576,
@@ -40,7 +47,7 @@ Peer support is disabled unless `peers.enabled` and explicit relationships are c
 }
 ```
 
-The peer credential remains in `secret_sources`, is resolved at each request, and is never printed. Configure the inverse relationship on daemon A, start both daemons, then run:
+The peer credential remains in `secret_sources`, is resolved at each request, and is never printed. Capability/operation allowlists do not grant host resources: `execution_filesystem`, network, and secret scopes must explicitly contain the selected adapter's declared requirements. Configure the inverse relationship on daemon A, start both daemons, then run:
 
 ```sh
 milkdrift peer list
@@ -148,7 +155,7 @@ cargo run -p milkdrift-cli -- --json capability list
 cargo run -p milkdrift-cli -- blueprint import crates/blueprint/tests/fixtures/revision-v2.json
 ```
 
-The daemon refuses non-loopback plaintext binds and permissive CORS is not enabled. Older configuration schemas are not silently migrated, and broad/unbounded authority requires an explicit dangerous acknowledgement. Empty artifact, layout, peer, and workspace scopes deny access. See [the authority configuration guide](docs/operator-authority.md) and [the control API reference](docs/reference/control-api.md).
+The daemon refuses non-loopback plaintext binds and permissive CORS is not enabled. Older configuration/storage schemas and legacy sidecar authority are not silently migrated, and broad/unbounded authority requires an explicit dangerous acknowledgement. Empty artifact, layout, peer, and workspace scopes deny access. See [the daemon operation guide](docs/operator-daemon.md), [the authority configuration guide](docs/operator-authority.md), and [the control API reference](docs/reference/control-api.md).
 
 A minimal revision is constructed through a validated mutation batch; see the crate-level example in `milkdrift-blueprint` and the integration tests under `crates/blueprint/tests`.
 

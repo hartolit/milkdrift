@@ -343,7 +343,7 @@ mod tests {
             adapters: AdapterConfig::default(),
             peers: PeerHostConfig::default(),
             shutdown: ShutdownConfig::default(),
-            command_ledger_bound: 100,
+            command_receipt_bound: 100,
         }
     }
 

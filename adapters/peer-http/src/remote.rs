@@ -20,8 +20,8 @@ use milkdrift_capability_host::{
 };
 use milkdrift_peer_protocol::{
     CancellationDisposition, CatalogDigest, CatalogSnapshot, DelegatedAuthorization,
-    InvocationAcceptance, PeerCancellationRequest, PeerExecutionId, PeerInvocationRequest,
-    PeerRequestId, SessionId,
+    InvocationAcceptance, PeerCancellationRequest, PeerExecutionId, PeerExecutionProvenance,
+    PeerInvocationRequest, PeerRequestId, SessionId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +43,8 @@ pub struct RemoteCapabilityProvenance {
     pub remote_descriptor_revision: u64,
     /// Hard catalog expiry.
     pub expires_at_unix_ms: u64,
+    /// Process-local registration generation, advanced after an irreversible local drain.
+    pub registration_generation: u64,
 }
 
 #[derive(Clone)]
@@ -75,6 +77,7 @@ pub struct PeerRegistry {
     client: Arc<PeerHttpClient>,
     relationship: PeerRelationship,
     registrations: Mutex<BTreeMap<(CapabilityId, u64), Registration>>,
+    registration_generation: Mutex<u64>,
     status: Mutex<PeerRegistryStatus>,
 }
 
@@ -106,6 +109,7 @@ impl PeerRegistry {
             client,
             relationship,
             registrations: Mutex::new(BTreeMap::new()),
+            registration_generation: Mutex::new(0),
             status: Mutex::new(PeerRegistryStatus {
                 health: "disconnected".to_owned(),
                 ..PeerRegistryStatus::default()
@@ -191,6 +195,15 @@ impl PeerRegistry {
         let mut registrations = self.registrations.lock().map_err(|_| {
             PeerHttpError::Unavailable("peer registry state unavailable".to_owned())
         })?;
+        let registration_generation = {
+            let mut generation = self.registration_generation.lock().map_err(|_| {
+                PeerHttpError::Unavailable("peer registry generation unavailable".to_owned())
+            })?;
+            if registrations.is_empty() {
+                *generation = generation.saturating_add(1).max(1);
+            }
+            *generation
+        };
         for entry in &catalog.entries {
             if entry.draining || !entry.observation.available() {
                 continue;
@@ -210,6 +223,7 @@ impl PeerRegistry {
                 remote_capability: entry.descriptor.identity().clone(),
                 remote_descriptor_revision: entry.descriptor.descriptor_revision(),
                 expires_at_unix_ms: catalog.expires_at_unix_ms,
+                registration_generation,
             };
             let descriptor = local_descriptor(
                 &entry.descriptor,
@@ -375,6 +389,9 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
             self.client.local_peer().as_str()
         ))
         .map_err(|error| AdapterError::rejected(error.to_string()))?;
+        let context = invocation.context().ok_or_else(|| {
+            AdapterError::rejected("remote execution requires exact durable run provenance")
+        })?;
         let delegation = DelegatedAuthorization {
             reference: self.relationship.delegation.clone(),
             issuer_peer: self.client.local_peer().clone(),
@@ -386,6 +403,13 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
             limits: self.relationship.execution_limits,
             expires_at_unix_ms: deadline,
             nonce: request_id.as_str().to_owned(),
+            provenance: PeerExecutionProvenance {
+                run: context.run().to_string(),
+                revision: context.revision().to_string(),
+                node: context.node().to_string(),
+                execution: context.execution().to_string(),
+                attempt: context.attempt().to_string(),
+            },
         };
         let request = PeerInvocationRequest::new(
             request_id,

@@ -13,6 +13,7 @@ milkdrift-authority = { version = "=0.1.0", path = "../authority" }
 milkdrift-blueprint = { version = "=0.1.0", path = "../blueprint" }
 milkdrift-capability = { version = "=0.1.0", path = "../capability" }
 milkdrift-contracts.workspace = true
+milkdrift-peer-protocol = { version = "=0.1.0", path = "../peer-protocol" }
 milkdrift-workspace = { version = "=0.1.0", path = "../workspace" }
 serde.workspace = true
 serde_json.workspace = true
