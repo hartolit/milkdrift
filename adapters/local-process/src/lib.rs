@@ -7,8 +7,9 @@ mod config;
 mod process;
 
 pub use config::{
-    CapturePolicy, EnvironmentPolicy, FilesystemAccessMode, FilesystemRoot, InputFileRule,
-    MAX_PROCESS_PROFILE_BYTES, OutputRule, OverflowAction, PROCESS_PROFILE_SCHEMA_VERSION_V1,
+    CapturePolicy, EnvironmentPolicy, ExecutableIdentityDeclaration, FilesystemAccessMode,
+    FilesystemRoot, InputFileRule, MAX_EXECUTABLE_BYTES, MAX_PROCESS_PROFILE_BYTES, OutputRule,
+    OverflowAction, PROCESS_PROFILE_SCHEMA_VERSION_V1, PROCESS_PROFILE_SCHEMA_VERSION_V2,
     PlatformSupport, ProcessLimits, ProcessProfile, ProcessProfileDocument, ProcessProfileError,
     RestartPolicy, StdinMode, SubstitutionSource, WorkingDirectoryMode,
 };

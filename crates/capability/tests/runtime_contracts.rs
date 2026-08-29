@@ -229,6 +229,7 @@ fn resolved_snapshot_is_exact_digest_bound_and_golden() -> Result<(), Box<dyn st
         SideEffectClass::IdempotentWrite
     );
     assert_eq!(snapshot.digest().len(), 64);
+    assert_eq!(snapshot.descriptor_extensions(), descriptor.extensions());
 
     let document = ResolvedCapabilitySnapshotDocument::new(snapshot.clone());
     assert_golden(

@@ -163,6 +163,13 @@ impl AuthorityEvaluator for GrantSetEvaluator {
                 .resources
                 .trust_zones
                 .is_subset(capability.trust_zones()))
+            || request
+                .resources
+                .execution_trust_class
+                .is_some_and(|trust| {
+                    !capability.execution_trust_classes().is_empty()
+                        && !capability.execution_trust_classes().contains(&trust)
+                })
             || request.resources.locality.is_some_and(|locality| {
                 !capability.localities().is_empty() && !capability.localities().contains(&locality)
             })
@@ -320,6 +327,10 @@ fn scope_within(
             && set_within(requested.operations(), allowed.operations())
             && set_within(requested.provider_profiles(), allowed.provider_profiles())
             && set_within(requested.trust_zones(), allowed.trust_zones())
+            && set_within(
+                requested.execution_trust_classes(),
+                allowed.execution_trust_classes(),
+            )
             && set_within(requested.localities(), allowed.localities())
             && set_within(requested.peers(), allowed.peers())
             && requested.maximum_side_effect() <= allowed.maximum_side_effect())

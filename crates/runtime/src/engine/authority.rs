@@ -159,11 +159,15 @@ impl RuntimeService {
                     requirement.trust_zones().clone(),
                     BTreeSet::<Locality>::new(),
                     requirement.maximum_side_effect_class(),
+                )?
+                .with_execution_trust_classes(
+                    requirement.execution_trust_class().into_iter().collect(),
                 )?;
                 let mut resources = RequestedResourceFacts::empty();
                 resources.capability = requirement.exact_capability().cloned();
                 resources.capability_operation = Some(requirement.operation().clone());
                 resources.provider_profile = requirement.provider_profile_ref().cloned();
+                resources.execution_trust_class = requirement.execution_trust_class();
                 resources.side_effect = requirement.maximum_side_effect_class();
                 resources.capability_envelope = Some(envelope);
                 let identity = format!(

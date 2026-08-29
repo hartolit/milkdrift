@@ -551,6 +551,15 @@ fn validate_actor_authority(authority: &ActorGrantConfig) -> Result<(), ConfigEr
         authority.resources.capability.maximum_side_effect(),
     )
     .and_then(|scope| scope.with_peers(authority.resources.capability.peers().clone()))
+    .and_then(|scope| {
+        scope.with_execution_trust_classes(
+            authority
+                .resources
+                .capability
+                .execution_trust_classes()
+                .clone(),
+        )
+    })
     .map_err(|error| ConfigError::Invalid(error.to_string()))?;
     NetworkScope::new(
         authority.resources.network.profiles().clone(),

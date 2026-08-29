@@ -100,6 +100,30 @@ pub enum Locality {
     Unspecified,
 }
 
+/// Exact execution-isolation/trust fact advertised by a capability generation.
+///
+/// This is intentionally separate from operator-defined trust-zone labels. A
+/// trusted host process is not interchangeable with an enforced sandbox even
+/// when both are local or share the same policy zone.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionTrustClass {
+    /// The capability does not execute an operating-system process, or makes no
+    /// process-isolation claim.
+    #[default]
+    Unspecified,
+    /// A process executes with the daemon account's host authority while
+    /// Milkdrift mediates declared arguments, environment, inputs, and outputs.
+    TrustedHostProcess,
+    /// A separate adapter enforces and advertises a complete container,
+    /// namespace, or virtual-machine isolation contract.
+    SandboxedProcess,
+}
+
+const fn execution_trust_unspecified(value: &ExecutionTrustClass) -> bool {
+    matches!(value, ExecutionTrustClass::Unspecified)
+}
+
 /// A named schema and its independently versioned contract body.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -524,6 +548,8 @@ pub struct CapabilityDescriptor {
     #[serde(skip_serializing_if = "Option::is_none")]
     peer: Option<PeerId>,
     trust_zones: BTreeSet<TrustZone>,
+    #[serde(default, skip_serializing_if = "execution_trust_unspecified")]
+    execution_trust: ExecutionTrustClass,
     resource_observations: Option<ResourceObservations>,
     labels: BTreeSet<String>,
     extensions: BTreeMap<ExtensionKey, BoundedJson>,
@@ -542,6 +568,8 @@ struct DescriptorWire {
     #[serde(default)]
     peer: Option<PeerId>,
     trust_zones: BTreeSet<TrustZone>,
+    #[serde(default)]
+    execution_trust: ExecutionTrustClass,
     resource_observations: Option<ResourceObservations>,
     labels: BTreeSet<String>,
     extensions: BTreeMap<ExtensionKey, BoundedJson>,
@@ -564,6 +592,7 @@ impl<'de> Deserialize<'de> for CapabilityDescriptor {
         .operations(wire.operations)
         .peer(wire.peer)
         .trust_zones(wire.trust_zones)
+        .execution_trust(wire.execution_trust)
         .resource_observations(wire.resource_observations)
         .labels(wire.labels)
         .extensions(wire.extensions)
@@ -633,6 +662,12 @@ impl CapabilityDescriptor {
         &self.trust_zones
     }
 
+    /// Exact execution-isolation/trust class for this generation.
+    #[must_use]
+    pub const fn execution_trust(&self) -> ExecutionTrustClass {
+        self.execution_trust
+    }
+
     /// Optional adapter-supplied resource estimates.
     #[must_use]
     pub const fn resource_observations(&self) -> Option<&ResourceObservations> {
@@ -700,6 +735,12 @@ impl CapabilityDescriptor {
         {
             reasons.push("trust_zone".to_owned());
         }
+        if requirement
+            .execution_trust
+            .is_some_and(|required| required != self.execution_trust)
+        {
+            reasons.push("execution_trust".to_owned());
+        }
         RequirementMatch { reasons }
     }
 }
@@ -730,6 +771,7 @@ impl DescriptorBuilder {
                 locality,
                 peer: None,
                 trust_zones: BTreeSet::new(),
+                execution_trust: ExecutionTrustClass::Unspecified,
                 resource_observations: None,
                 labels: BTreeSet::new(),
                 extensions: BTreeMap::new(),
@@ -762,6 +804,13 @@ impl DescriptorBuilder {
     #[must_use]
     pub fn trust_zones(mut self, value: BTreeSet<TrustZone>) -> Self {
         self.descriptor.trust_zones = value;
+        self
+    }
+
+    /// Sets the exact execution-isolation/trust class.
+    #[must_use]
+    pub const fn execution_trust(mut self, value: ExecutionTrustClass) -> Self {
+        self.descriptor.execution_trust = value;
         self
     }
 
@@ -851,6 +900,8 @@ pub struct CapabilityRequirement {
     cancellation_required: bool,
     maximum_side_effect: SideEffectClass,
     trust_zones: BTreeSet<TrustZone>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    execution_trust: Option<ExecutionTrustClass>,
 }
 
 #[derive(Deserialize)]
@@ -865,6 +916,8 @@ struct CapabilityRequirementWire {
     cancellation_required: bool,
     maximum_side_effect: SideEffectClass,
     trust_zones: BTreeSet<TrustZone>,
+    #[serde(default)]
+    execution_trust: Option<ExecutionTrustClass>,
 }
 
 impl<'de> Deserialize<'de> for CapabilityRequirement {
@@ -883,6 +936,7 @@ impl<'de> Deserialize<'de> for CapabilityRequirement {
             cancellation_required: wire.cancellation_required,
             maximum_side_effect: wire.maximum_side_effect,
             trust_zones: wire.trust_zones,
+            execution_trust: wire.execution_trust,
         };
         requirement.validate().map_err(serde::de::Error::custom)?;
         Ok(requirement)
@@ -902,6 +956,7 @@ impl CapabilityRequirement {
             cancellation_required: false,
             maximum_side_effect: SideEffectClass::Unknown,
             trust_zones: BTreeSet::new(),
+            execution_trust: None,
         }
     }
 
@@ -961,6 +1016,13 @@ impl CapabilityRequirement {
         self
     }
 
+    /// Requires one exact execution-isolation/trust class.
+    #[must_use]
+    pub const fn execution_trust(mut self, trust: ExecutionTrustClass) -> Self {
+        self.execution_trust = Some(trust);
+        self
+    }
+
     /// Exact namespaced operation required by this expression.
     #[must_use]
     pub const fn operation(&self) -> &OperationId {
@@ -1013,6 +1075,12 @@ impl CapabilityRequirement {
     #[must_use]
     pub const fn trust_zones(&self) -> &BTreeSet<TrustZone> {
         &self.trust_zones
+    }
+
+    /// Exact required execution-isolation/trust class, when constrained.
+    #[must_use]
+    pub const fn execution_trust_class(&self) -> Option<ExecutionTrustClass> {
+        self.execution_trust
     }
 
     /// Validates collection bounds after deserialization or composition.

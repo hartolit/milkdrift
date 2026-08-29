@@ -11,7 +11,7 @@ also leave helpers mutating a workspace after cancellation or output import.
 
 ## Decision
 
-Process profile schema v1 stores an executable plus a fixed vector of argument templates. Every
+The process profile stores an executable plus a fixed vector of argument templates. Every
 named substitution is validated and replaced inside one existing argument; the adapter never
 parses or invokes a shell. The child starts with a cleared environment and only explicit
 non-secret names and secret references.
@@ -36,6 +36,10 @@ Shell metacharacters remain literal argument bytes. Profiles that truly need she
 be a future separate capability with stronger authority. Resource counts such as child count are
 observations, not isolation guarantees; enforced CPU/memory/process ceilings require a future
 platform sandbox or cgroup/job-object boundary.
+
+ADR 0021 subsequently binds schema v2 to byte-pinned executable identity and names this execution
+class `TrustedHostProcess`; those additions do not change the direct-argv or group-ownership
+decision here.
 
 ## Reconsideration triggers
 

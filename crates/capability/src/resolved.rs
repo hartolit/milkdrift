@@ -1,8 +1,11 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CapabilityDescriptor, CapabilityId, ContractError, OperationContract, OperationId,
-    ProviderProfileRef, SCHEMA_VERSION_V1, document::canonical_json_bytes,
+    BoundedJson, CapabilityDescriptor, CapabilityId, ContractError, ExecutionTrustClass,
+    ExtensionKey, OperationContract, OperationId, ProviderProfileRef, SCHEMA_VERSION_V1,
+    document::canonical_json_bytes,
 };
 
 const DIGEST_DOMAIN: &[u8] = b"milkdrift.resolved-capability-snapshot.v1\0";
@@ -19,6 +22,10 @@ pub struct ResolvedCapabilitySnapshot {
     provider_profile: Option<ProviderProfileRef>,
     operation: OperationId,
     operation_contract: OperationContract,
+    #[serde(default, skip_serializing_if = "execution_trust_unspecified")]
+    execution_trust: ExecutionTrustClass,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    descriptor_extensions: BTreeMap<ExtensionKey, BoundedJson>,
     digest: String,
 }
 
@@ -30,6 +37,10 @@ struct ResolvedCapabilitySnapshotWire {
     provider_profile: Option<ProviderProfileRef>,
     operation: OperationId,
     operation_contract: OperationContract,
+    #[serde(default)]
+    execution_trust: ExecutionTrustClass,
+    #[serde(default)]
+    descriptor_extensions: BTreeMap<ExtensionKey, BoundedJson>,
     digest: String,
 }
 
@@ -42,6 +53,14 @@ struct SnapshotDigestPayload<'a> {
     provider_profile: Option<&'a ProviderProfileRef>,
     operation: &'a OperationId,
     operation_contract: &'a OperationContract,
+    #[serde(skip_serializing_if = "execution_trust_unspecified")]
+    execution_trust: ExecutionTrustClass,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    descriptor_extensions: &'a BTreeMap<ExtensionKey, BoundedJson>,
+}
+
+const fn execution_trust_unspecified(value: &ExecutionTrustClass) -> bool {
+    matches!(value, ExecutionTrustClass::Unspecified)
 }
 
 impl<'de> Deserialize<'de> for ResolvedCapabilitySnapshot {
@@ -56,6 +75,8 @@ impl<'de> Deserialize<'de> for ResolvedCapabilitySnapshot {
             provider_profile: wire.provider_profile,
             operation: wire.operation,
             operation_contract: wire.operation_contract,
+            execution_trust: wire.execution_trust,
+            descriptor_extensions: wire.descriptor_extensions,
             digest: wire.digest,
         };
         snapshot.validate().map_err(serde::de::Error::custom)?;
@@ -82,6 +103,8 @@ impl ResolvedCapabilitySnapshot {
             descriptor.provider_profile(),
             operation,
             operation_contract,
+            descriptor.execution_trust(),
+            descriptor.extensions(),
         )?;
         Ok(Self {
             capability: descriptor.identity().clone(),
@@ -89,6 +112,8 @@ impl ResolvedCapabilitySnapshot {
             provider_profile: descriptor.provider_profile().cloned(),
             operation: operation.clone(),
             operation_contract: operation_contract.clone(),
+            execution_trust: descriptor.execution_trust(),
+            descriptor_extensions: descriptor.extensions().clone(),
             digest,
         })
     }
@@ -123,6 +148,18 @@ impl ResolvedCapabilitySnapshot {
         &self.operation_contract
     }
 
+    /// Exact execution-isolation/trust class frozen from the descriptor.
+    #[must_use]
+    pub const fn execution_trust(&self) -> ExecutionTrustClass {
+        self.execution_trust
+    }
+
+    /// Bounded descriptor extension facts frozen for attempt provenance.
+    #[must_use]
+    pub const fn descriptor_extensions(&self) -> &BTreeMap<ExtensionKey, BoundedJson> {
+        &self.descriptor_extensions
+    }
+
     /// Returns the canonical lowercase BLAKE3 digest of all selection facts.
     #[must_use]
     pub fn digest(&self) -> &str {
@@ -143,6 +180,8 @@ impl ResolvedCapabilitySnapshot {
             || self.descriptor_revision != descriptor.descriptor_revision()
             || self.provider_profile.as_ref() != descriptor.provider_profile()
             || self.operation_contract != *descriptor_operation
+            || self.execution_trust != descriptor.execution_trust()
+            || self.descriptor_extensions != *descriptor.extensions()
         {
             return Err(ContractError::InvalidContract(
                 "resolved capability snapshot does not match the exact descriptor revision"
@@ -164,6 +203,8 @@ impl ResolvedCapabilitySnapshot {
             self.provider_profile.as_ref(),
             &self.operation,
             &self.operation_contract,
+            self.execution_trust,
+            &self.descriptor_extensions,
         )?;
         if self.digest != expected {
             return Err(ContractError::InvalidContract(
@@ -179,6 +220,8 @@ impl ResolvedCapabilitySnapshot {
         provider_profile: Option<&ProviderProfileRef>,
         operation: &OperationId,
         operation_contract: &OperationContract,
+        execution_trust: ExecutionTrustClass,
+        descriptor_extensions: &BTreeMap<ExtensionKey, BoundedJson>,
     ) -> Result<String, ContractError> {
         let payload = SnapshotDigestPayload {
             schema_version: SCHEMA_VERSION_V1,
@@ -187,6 +230,8 @@ impl ResolvedCapabilitySnapshot {
             provider_profile,
             operation,
             operation_contract,
+            execution_trust,
+            descriptor_extensions,
         };
         let canonical_payload = canonical_json_bytes(&payload)?;
         let mut hasher = blake3::Hasher::new();

@@ -1325,6 +1325,7 @@ fn filtered_descriptor(
     .provider_profile(generation.descriptor.provider_profile().cloned())
     .operations(operations)
     .trust_zones(generation.descriptor.trust_zones().clone())
+    .execution_trust(generation.descriptor.execution_trust())
     .resource_observations(generation.descriptor.resource_observations().cloned())
     .labels(generation.descriptor.labels().clone())
     .extensions(generation.descriptor.extensions().clone())

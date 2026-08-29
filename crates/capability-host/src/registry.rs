@@ -12,8 +12,8 @@ use milkdrift_authority::{
 use milkdrift_capability::{
     CancellationAcknowledgement, CancellationRequest, CapabilityCategory, CapabilityDescriptor,
     CapabilityDescriptorDocument, CapabilityId, CapabilityObservation, CapabilityRequirement,
-    InvocationEvent, InvocationId, InvocationRequest, Locality, OperationId, ProviderProfileRef,
-    ResolvedCapabilitySnapshot, SideEffectClass, TrustZone,
+    ExecutionTrustClass, InvocationEvent, InvocationId, InvocationRequest, Locality, OperationId,
+    ProviderProfileRef, ResolvedCapabilitySnapshot, SideEffectClass, TrustZone,
 };
 use milkdrift_runtime::{
     CapabilityResolutionContext, ExecutionDispatch, ExecutionReporter, ExecutorError,
@@ -110,6 +110,8 @@ pub struct GenerationView {
     pub peer: Option<PeerId>,
     /// Complete advertised trust-zone set.
     pub trust_zones: BTreeSet<TrustZone>,
+    /// Exact execution-isolation/trust class.
+    pub execution_trust: ExecutionTrustClass,
     /// Whether this is the current resolution generation.
     pub current: bool,
     /// Whether new unpinned resolution is closed.
@@ -796,6 +798,7 @@ impl CapabilityHost {
                 locality: generation.descriptor.locality(),
                 peer: generation.descriptor.peer().cloned(),
                 trust_zones: generation.descriptor.trust_zones().clone(),
+                execution_trust: generation.descriptor.execution_trust(),
                 current: state.current.get(&key.capability) == Some(&key.revision),
                 draining: generation.draining,
                 health: generation_health(
@@ -1184,6 +1187,10 @@ fn scope_allows(
                 .trust_zones()
                 .iter()
                 .any(|zone| scope.trust_zones().contains(zone)))
+        && (scope.execution_trust_classes().is_empty()
+            || scope
+                .execution_trust_classes()
+                .contains(&descriptor.execution_trust()))
         && side_effect <= scope.maximum_side_effect()
 }
 

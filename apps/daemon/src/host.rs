@@ -2173,6 +2173,8 @@ impl Owner {
                         if let Some((_, _, value)) = located.as_mut() {
                             value.capability_id = Some(snapshot.capability().as_str().to_owned());
                             value.descriptor_revision = Some(snapshot.descriptor_revision());
+                            value.capability_provenance =
+                                Some(public_capability_provenance(snapshot));
                             value.provider_profile = snapshot
                                 .provider_profile()
                                 .map(|profile| profile.as_str().to_owned());
@@ -2500,6 +2502,7 @@ impl Owner {
                             .iter()
                             .map(|zone| zone.as_str().to_owned())
                             .collect(),
+                        execution_trust: snake_debug(&view.execution_trust),
                         current: view.current,
                         draining: view.draining,
                         health: snake_debug(&view.health),
@@ -2997,11 +3000,11 @@ fn register_configured_adapters(
         let profile = ProcessProfileDocument::from_json(&bytes)
             .map_err(|error| error.to_string())?
             .into_profile();
-        let descriptor = profile.descriptor().map_err(|error| error.to_string())?;
         let adapter = Arc::new(
             LocalProcessAdapter::new(profile, data.clone(), secrets.clone())
                 .map_err(|error| error.to_string())?,
         );
+        let descriptor = adapter.descriptor().clone();
         let capability = descriptor.identity().clone();
         let revision = descriptor.descriptor_revision();
         host.register(descriptor, adapter, None)
@@ -3460,6 +3463,7 @@ fn empty_attempt_read(attempt: &str, state: &str) -> AttemptRead {
         state: state.to_owned(),
         capability_id: None,
         descriptor_revision: None,
+        capability_provenance: None,
         provider_profile: None,
         peer_id: None,
         context_manifest: None,
@@ -3496,6 +3500,7 @@ fn public_attempt(value: milkdrift_control::AttemptInspection) -> AttemptRead {
         .capability
         .as_ref()
         .map(milkdrift_capability::ResolvedCapabilitySnapshot::descriptor_revision);
+    let capability_provenance = value.capability.as_ref().map(public_capability_provenance);
     let provider_profile = value.capability.as_ref().and_then(|capability| {
         capability
             .provider_profile()
@@ -3513,6 +3518,7 @@ fn public_attempt(value: milkdrift_control::AttemptInspection) -> AttemptRead {
         state: snake_debug(&value.state),
         capability_id,
         descriptor_revision,
+        capability_provenance,
         provider_profile,
         peer_id: None,
         context_manifest,
@@ -3524,6 +3530,41 @@ fn public_attempt(value: milkdrift_control::AttemptInspection) -> AttemptRead {
         },
         terminal: value.terminal.as_ref().map(snake_debug),
         uncertain: value.external_outcome.is_some(),
+    }
+}
+
+fn public_capability_provenance(
+    snapshot: &milkdrift_capability::ResolvedCapabilitySnapshot,
+) -> milkdrift_control_protocol::CapabilityProvenanceRead {
+    let process = snapshot
+        .descriptor_extensions()
+        .iter()
+        .find(|(key, _)| key.as_str() == "org.milkdrift/process-profile")
+        .map(|(_, value)| value.value());
+    let implementation = process.and_then(|value| value.get("implementation"));
+    let string = |value: Option<&serde_json::Value>| {
+        value.and_then(serde_json::Value::as_str).map(str::to_owned)
+    };
+    milkdrift_control_protocol::CapabilityProvenanceRead {
+        snapshot_digest: snapshot.digest().to_owned(),
+        execution_trust: snake_debug(&snapshot.execution_trust()),
+        implementation_identity: string(
+            implementation.and_then(|value| value.get("identity_digest")),
+        ),
+        implementation_content_digest: string(
+            implementation.and_then(|value| value.get("content_digest")),
+        ),
+        implementation_size_bytes: implementation
+            .and_then(|value| value.get("size_bytes"))
+            .and_then(serde_json::Value::as_u64),
+        process_profile_digest: string(process.and_then(|value| value.get("profile_digest"))),
+        execution_policy_digest: string(
+            process.and_then(|value| value.get("execution_policy_digest")),
+        ),
+        package_revision: string(implementation.and_then(|value| value.get("package_revision"))),
+        documentation_reference: string(
+            implementation.and_then(|value| value.get("documentation_reference")),
+        ),
     }
 }
 

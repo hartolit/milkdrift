@@ -886,6 +886,8 @@ pub struct AttemptRead {
     pub capability_id: Option<String>,
     /// Exact resolved capability descriptor revision.
     pub descriptor_revision: Option<u64>,
+    /// Exact frozen capability-generation and safe implementation provenance.
+    pub capability_provenance: Option<CapabilityProvenanceRead>,
     /// Exact provider profile selected for this attempt.
     pub provider_profile: Option<String>,
     /// Authenticated peer identity when remote execution recorded one.
@@ -900,6 +902,30 @@ pub struct AttemptRead {
     pub terminal: Option<String>,
     /// Whether external outcome remains unresolved.
     pub uncertain: bool,
+}
+
+/// Safe immutable capability-generation facts retained with an attempt.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilityProvenanceRead {
+    /// Domain-separated digest of the complete resolved capability snapshot.
+    pub snapshot_digest: String,
+    /// Exact execution isolation/trust class selected for the attempt.
+    pub execution_trust: String,
+    /// Local-process implementation identity, including safe path digests, when applicable.
+    pub implementation_identity: Option<String>,
+    /// Exact executable content digest, when the generation is a byte-pinned local process.
+    pub implementation_content_digest: Option<String>,
+    /// Exact executable byte size, when the generation is a byte-pinned local process.
+    pub implementation_size_bytes: Option<u64>,
+    /// Digest of the complete local-process profile, when applicable.
+    pub process_profile_digest: Option<String>,
+    /// Digest of execution-semantic local-process policy, when applicable.
+    pub execution_policy_digest: Option<String>,
+    /// Bounded operator-declared package/deployment revision, when supplied.
+    pub package_revision: Option<String>,
+    /// Bounded operator-declared implementation documentation reference, when supplied.
+    pub documentation_reference: Option<String>,
 }
 
 /// Bounded authorized context policy, selection, omissions, and accounting.
@@ -996,6 +1022,8 @@ pub struct CapabilityRead {
     pub peer_id: Option<String>,
     /// Complete advertised trust-zone labels.
     pub trust_zones: Vec<String>,
+    /// Exact execution-isolation/trust class.
+    pub execution_trust: String,
     /// Whether this generation is selected for new work.
     pub current: bool,
     /// Whether new work is refused.

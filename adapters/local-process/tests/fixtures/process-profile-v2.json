@@ -1,0 +1,76 @@
+{
+  "schema_version": 2,
+  "profile": {
+    "profile_id": "golden-trusted-host-process",
+    "revision": 2,
+    "capability": "golden-local-process",
+    "descriptor_revision": 2,
+    "provider_profile": null,
+    "operation": "process.execute",
+    "side_effect": "none",
+    "idempotency": "unsupported",
+    "cancellation": "best_effort",
+    "trust_class": "trusted_host_process",
+    "executable": "/bin/echo",
+    "implementation": {
+      "content_digest": "b3_0000000000000000000000000000000000000000000000000000000000000000",
+      "size_bytes": 1,
+      "package_revision": "example-package-revision",
+      "documentation_reference": "https://example.invalid/tools/echo/revision"
+    },
+    "arguments": ["golden"],
+    "substitutions": {},
+    "working_directory": { "type": "isolated_root" },
+    "filesystem_roots": [
+      { "path": "/usr/bin", "access": "execute" },
+      { "path": "/tmp", "access": "read_write" }
+    ],
+    "inputs": [],
+    "environment": {
+      "allowed_non_secret": [],
+      "secrets": {},
+      "max_value_bytes": 4096
+    },
+    "stdin": { "type": "disabled" },
+    "stdout": {
+      "max_capture_bytes": 0,
+      "stream_progress": false,
+      "max_progress_events": 0,
+      "overflow_action": "continue_truncated",
+      "artifact_name": null
+    },
+    "stderr": {
+      "max_capture_bytes": 0,
+      "stream_progress": false,
+      "max_progress_events": 0,
+      "overflow_action": "continue_truncated",
+      "artifact_name": null
+    },
+    "outputs": [],
+    "limits": {
+      "max_argv_entries": 8,
+      "max_argv_bytes": 1024,
+      "max_children_observed": 8,
+      "max_files": 8,
+      "max_file_bytes": 1024,
+      "max_total_materialized_bytes": 4096,
+      "max_path_bytes": 1024,
+      "max_directory_depth": 8,
+      "artifact_chunk_bytes": 1024,
+      "max_output_files": 1,
+      "max_total_output_bytes": 1024,
+      "wall_timeout_ms": 1000,
+      "graceful_termination_ms": 100,
+      "forced_termination_ms": 100,
+      "heartbeat_interval_ms": 200
+    },
+    "restart": "retain_uncertain",
+    "platform": {
+      "owned_process_group": true,
+      "descendant_escape_prevention": false,
+      "terminal_group_observation": true
+    },
+    "max_concurrent": 1,
+    "extensions": {}
+  }
+}

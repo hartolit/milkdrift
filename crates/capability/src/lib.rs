@@ -14,9 +14,9 @@ mod resolved;
 pub use bounded::{BoundedJson, ContractError, MAX_DOCUMENT_BYTES, MAX_JSON_DEPTH};
 pub use descriptor::{
     AdmissionConstraints, CancellationBehavior, CapabilityCategory, CapabilityDescriptor,
-    CapabilityObservation, CapabilityRequirement, DescriptorBuilder, FeatureContract,
-    IdempotencyBehavior, Locality, OperationContract, RequirementMatch, ResourceObservations,
-    SchemaContract, SideEffectClass, StreamingMode,
+    CapabilityObservation, CapabilityRequirement, DescriptorBuilder, ExecutionTrustClass,
+    FeatureContract, IdempotencyBehavior, Locality, OperationContract, RequirementMatch,
+    ResourceObservations, SchemaContract, SideEffectClass, StreamingMode,
 };
 pub use document::{
     CancellationAcknowledgementDocument, CancellationRequestDocument, CapabilityDescriptorDocument,

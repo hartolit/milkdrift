@@ -16,8 +16,8 @@ use milkdrift_authority::{
 };
 use milkdrift_blueprint::{AuthorRef, WorkflowId};
 use milkdrift_capability::{
-    CapabilityCategory, CapabilityId, Locality, OperationId, ProviderProfileRef, SideEffectClass,
-    TrustZone,
+    CapabilityCategory, CapabilityId, ExecutionTrustClass, Locality, OperationId,
+    ProviderProfileRef, SideEffectClass, TrustZone,
 };
 use milkdrift_workspace::{ArtifactId, ArtifactSensitivity, RunId};
 
@@ -92,6 +92,7 @@ fn request() -> TestResult<AuthorityRequest> {
             provider_profile: Some(ProviderProfileRef::new("profile-a")?),
             trust_zone: Some(TrustZone::new("trusted")?),
             trust_zones: set(TrustZone::new("trusted")?),
+            execution_trust_class: None,
             locality: Some(Locality::Remote),
             peer: None,
             capability_envelope: None,
@@ -125,6 +126,99 @@ fn request() -> TestResult<AuthorityRequest> {
         evaluated_at: BoundaryTimeMillis::new(150),
         provenance: AuthorityExecutionProvenance::default(),
     })
+}
+
+#[test]
+fn grants_can_independently_permit_or_deny_trusted_host_processes() -> TestResult {
+    let actor = ActorRef::new("service:trusted-process-runner")?;
+    let trusted_scope = CapabilityAuthorityScope::any(SideEffectClass::Unknown)
+        .with_execution_trust_classes(set(ExecutionTrustClass::TrustedHostProcess))?;
+    let trusted_grant =
+        AuthorityGrantBuilder::new(GrantId::new("grant:trusted-process")?, 1, actor.clone())
+            .operations(set(AuthorityOperation::InvokeCapability))
+            .resources(ResourceScope {
+                workflow_run: WorkflowRunScope::Any,
+                capability: trusted_scope,
+                filesystem: Vec::new(),
+                network: NetworkScope::empty(),
+                secrets: BTreeSet::new(),
+                artifacts: ArtifactAuthorityScope::none(),
+                layouts: LayoutAuthorityScope::none(),
+                peers: PeerAuthorityScope::none(),
+                daemon: DaemonAuthorityScope::default(),
+                workspace: WorkspaceAuthorityScope::none(),
+            })
+            .build()?;
+    let evaluator = GrantSetEvaluator::new(
+        PolicyId::new("policy:trusted-process")?,
+        1,
+        [trusted_grant.clone()],
+        BTreeMap::new(),
+    )?;
+    let mut resources = RequestedResourceFacts::empty();
+    resources.capability = Some(CapabilityId::new("trusted-tool")?);
+    resources.category = Some(CapabilityCategory::Process);
+    resources.capability_operation = Some(OperationId::new("process.execute")?);
+    resources.execution_trust_class = Some(ExecutionTrustClass::TrustedHostProcess);
+    let allowed = AuthorityRequest {
+        decision: DecisionId::new("decision:trusted-process-allowed")?,
+        actor: actor.clone(),
+        grant: trusted_grant.identity().clone(),
+        grant_revision: trusted_grant.revision(),
+        grant_digest: trusted_grant.digest()?,
+        revocation_generation: 0,
+        operation: AuthorityOperation::InvokeCapability,
+        resources: resources.clone(),
+        budget: AuthorityBudget::default(),
+        evaluated_at: BoundaryTimeMillis::new(1),
+        provenance: AuthorityExecutionProvenance::default(),
+    };
+    assert!(evaluator.evaluate(&allowed)?.is_allowed());
+
+    let sandbox_only =
+        AuthorityGrantBuilder::new(GrantId::new("grant:sandbox-only")?, 1, actor.clone())
+            .operations(set(AuthorityOperation::InvokeCapability))
+            .resources(ResourceScope {
+                workflow_run: WorkflowRunScope::Any,
+                capability: CapabilityAuthorityScope::any(SideEffectClass::Unknown)
+                    .with_execution_trust_classes(set(ExecutionTrustClass::SandboxedProcess))?,
+                filesystem: Vec::new(),
+                network: NetworkScope::empty(),
+                secrets: BTreeSet::new(),
+                artifacts: ArtifactAuthorityScope::none(),
+                layouts: LayoutAuthorityScope::none(),
+                peers: PeerAuthorityScope::none(),
+                daemon: DaemonAuthorityScope::default(),
+                workspace: WorkspaceAuthorityScope::none(),
+            })
+            .build()?;
+    let sandbox_evaluator = GrantSetEvaluator::new(
+        PolicyId::new("policy:sandbox-only")?,
+        1,
+        [sandbox_only.clone()],
+        BTreeMap::new(),
+    )?;
+    let denied = AuthorityRequest {
+        decision: DecisionId::new("decision:trusted-process-denied")?,
+        actor,
+        grant: sandbox_only.identity().clone(),
+        grant_revision: sandbox_only.revision(),
+        grant_digest: sandbox_only.digest()?,
+        revocation_generation: 0,
+        operation: AuthorityOperation::InvokeCapability,
+        resources,
+        budget: AuthorityBudget::default(),
+        evaluated_at: BoundaryTimeMillis::new(1),
+        provenance: AuthorityExecutionProvenance::default(),
+    };
+    let decision = sandbox_evaluator.evaluate(&denied)?;
+    assert!(!decision.is_allowed());
+    assert!(
+        decision
+            .reason_codes()
+            .contains(&DecisionReasonCode::PlacementMismatch)
+    );
+    Ok(())
 }
 
 fn evaluate(

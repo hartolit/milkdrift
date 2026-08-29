@@ -13,6 +13,7 @@ test = false
 bench = false
 
 [dependencies]
+blake3.workspace = true
 milkdrift-authority = { version = "=0.1.0", path = "../../crates/authority" }
 milkdrift-capability = { version = "=0.1.0", path = "../../crates/capability" }
 milkdrift-capability-host = { version = "=0.1.0", path = "../../crates/capability-host" }
@@ -26,7 +27,6 @@ thiserror.workspace = true
 rustix = { version = "1.1.4", features = ["process"] }
 
 [dev-dependencies]
-blake3.workspace = true
 milkdrift-blueprint = { version = "=0.1.0", path = "../../crates/blueprint" }
 milkdrift-persistence = { version = "=0.1.0", path = "../../crates/persistence" }
 milkdrift-redb-store = { version = "=0.1.0", path = "../redb-store", features = ["test-admin"] }

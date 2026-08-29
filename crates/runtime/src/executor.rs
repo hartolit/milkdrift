@@ -203,6 +203,7 @@ impl CapabilityResolutionContext {
         resources.capability_operation = Some(operation.clone());
         resources.provider_profile = descriptor.provider_profile().cloned();
         resources.trust_zones = descriptor.trust_zones().clone();
+        resources.execution_trust_class = Some(descriptor.execution_trust());
         resources.locality = Some(descriptor.locality());
         resources.peer = descriptor.peer().cloned();
         resources.side_effect = contract.side_effect();

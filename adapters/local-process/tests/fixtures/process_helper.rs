@@ -65,6 +65,11 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
             thread::sleep(Duration::from_millis(millis));
             Ok(0)
         }
+        "mark" => {
+            let path = arguments.next().ok_or("missing marker path")?;
+            std::fs::write(path, b"entered")?;
+            Ok(0)
+        }
         "exit" => {
             let code: u8 = arguments.next().ok_or("missing exit code")?.parse()?;
             Ok(code)

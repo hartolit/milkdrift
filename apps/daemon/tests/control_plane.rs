@@ -157,6 +157,20 @@ fn configuration_with_process_profiles(
     .map_err(Into::into)
 }
 
+fn configured_process_profile(directory: &TempDir) -> TestResult<std::path::PathBuf> {
+    let executable = std::path::Path::new("/bin/echo");
+    let bytes = fs::read(executable)?;
+    let mut profile: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../adapters/local-process/tests/fixtures/process-profile-v2.json"
+    ))?;
+    profile["profile"]["implementation"]["content_digest"] =
+        serde_json::json!(format!("b3_{}", blake3::hash(&bytes)));
+    profile["profile"]["implementation"]["size_bytes"] = serde_json::json!(bytes.len());
+    let path = directory.path().join("process-profile-v2.json");
+    fs::write(&path, serde_json::to_vec(&profile)?)?;
+    Ok(path)
+}
+
 fn observer_authority() -> TestResult<ActorGrantConfig> {
     Ok(ActorGrantConfig {
         resources: ResourceScope {
@@ -358,9 +372,7 @@ async fn daemon_auth_startup_readiness_and_authority() -> TestResult {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn scoped_read_matrix_and_continuations_fail_closed() -> TestResult {
     let directory = tempfile::tempdir()?;
-    let profile = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../adapters/local-process/tests/fixtures/process-profile-v1.json")
-        .canonicalize()?;
+    let profile = configured_process_profile(&directory)?;
     let config = configuration_with_process_profiles(&directory, 16, vec![profile])?;
     let daemon = start(config.clone(), CONTROLLER_TOKEN).await?;
     let golden_revision = import_blueprint(&daemon.client, "matrix-import-golden").await?;
@@ -750,9 +762,7 @@ async fn daemon_graceful_shutdown_and_restart() -> TestResult {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_configured_process_adapter_executes_to_terminal() -> TestResult {
     let directory = tempfile::tempdir()?;
-    let profile = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../adapters/local-process/tests/fixtures/process-profile-v1.json")
-        .canonicalize()?;
+    let profile = configured_process_profile(&directory)?;
     let config = configuration_with_process_profiles(&directory, 16, vec![profile])?;
     let (artifact_id, artifact_bytes) =
         publish_restricted_test_artifact(&config.document.data_root)?;
@@ -842,7 +852,48 @@ async fn daemon_configured_process_adapter_executes_to_terminal() -> TestResult 
         attempt.capability_id.as_deref(),
         Some("golden-local-process")
     );
-    assert_eq!(attempt.descriptor_revision, Some(1));
+    assert_eq!(attempt.descriptor_revision, Some(2));
+    let provenance = attempt
+        .capability_provenance
+        .as_ref()
+        .ok_or("process attempt omitted exact capability provenance")?;
+    assert_eq!(provenance.execution_trust, "trusted_host_process");
+    assert_eq!(provenance.snapshot_digest.len(), 64);
+    assert!(
+        provenance
+            .snapshot_digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    );
+    assert!(
+        provenance
+            .implementation_identity
+            .as_deref()
+            .is_some_and(|digest| digest.starts_with("b3_"))
+    );
+    assert!(
+        provenance
+            .implementation_content_digest
+            .as_deref()
+            .is_some_and(|digest| digest.starts_with("b3_"))
+    );
+    assert!(
+        provenance
+            .implementation_size_bytes
+            .is_some_and(|size| size > 0)
+    );
+    assert!(
+        provenance
+            .process_profile_digest
+            .as_deref()
+            .is_some_and(|digest| digest.starts_with("b3_"))
+    );
+    assert!(
+        provenance
+            .execution_policy_digest
+            .as_deref()
+            .is_some_and(|digest| digest.starts_with("b3_"))
+    );
     let manifest_metadata = attempt
         .context_manifest
         .as_ref()

@@ -29,6 +29,7 @@ to run:
         "operations": ["process.execute"],
         "provider_profiles": [],
         "trust_zones": ["local-process"],
+        "execution_trust_classes": ["trusted_host_process"],
         "localities": ["local"],
         "peers": [],
         "maximum_side_effect": "read_only"
@@ -68,7 +69,7 @@ to run:
 ```
 
 Capability scope fields are allowlists. `deny_all: true` denies the complete capability scope.
-Otherwise an empty identity/category/profile/trust/locality/peer set means that dimension is not
+Otherwise an empty identity/category/profile/trust-zone/execution-trust/locality/peer set means that dimension is not
 narrowed, but operations must be explicit in a safe configuration.
 Filesystem roots are normalized absolute lexical roots. Network destinations are credential-free
 `host:port` values and network profiles are named immutable transport profiles. Secret references
@@ -87,6 +88,12 @@ Every numeric ceiling must be present for a safe grant, including provider-neutr
 finite `valid_until`, declare the strongest side effect the actor may cause, and grant only the
 filesystem, network, secret, locality, trust zone, and peer facts required by registered adapters.
 The daemon validates these facts before it opens storage.
+
+`trusted_host_process` authorizes code that runs with the daemon account's host privileges. The
+adapter mediates argv, environment, selected materialization, and declared output import, but it is
+not a filesystem or network sandbox. Grant this class only to explicitly byte-pinned process
+generations. `sandboxed_process` is a distinct exact class; granting or requiring it never permits
+the current local-process adapter.
 
 Wildcard workflow, artifact, peer, or workspace scope; unknown side effects; omitted capability
 operations; infinite validity; or missing ceilings are rejected unless

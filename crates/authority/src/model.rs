@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use milkdrift_blueprint::{NodeId, RevisionId, WorkflowId};
 use milkdrift_capability::{
-    BoundedJson, CapabilityCategory, CapabilityId, IdempotencyBehavior, Locality, OperationId,
-    ProviderProfileRef, SideEffectClass, TrustZone,
+    BoundedJson, CapabilityCategory, CapabilityId, ExecutionTrustClass, IdempotencyBehavior,
+    Locality, OperationId, ProviderProfileRef, SideEffectClass, TrustZone,
 };
 use milkdrift_workspace::{ArtifactId, ArtifactSensitivity, RunId, ScopeId};
 use serde::{Deserialize, Serialize};
@@ -319,6 +319,8 @@ pub struct CapabilityAuthorityScope {
     operations: BTreeSet<OperationId>,
     provider_profiles: BTreeSet<ProviderProfileRef>,
     trust_zones: BTreeSet<TrustZone>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    execution_trust_classes: BTreeSet<ExecutionTrustClass>,
     localities: BTreeSet<Locality>,
     #[serde(default)]
     peers: BTreeSet<PeerId>,
@@ -360,6 +362,7 @@ impl CapabilityAuthorityScope {
             operations,
             provider_profiles,
             trust_zones,
+            execution_trust_classes: BTreeSet::new(),
             localities,
             peers: BTreeSet::new(),
             maximum_side_effect,
@@ -376,6 +379,7 @@ impl CapabilityAuthorityScope {
             operations: BTreeSet::new(),
             provider_profiles: BTreeSet::new(),
             trust_zones: BTreeSet::new(),
+            execution_trust_classes: BTreeSet::new(),
             localities: BTreeSet::new(),
             peers: BTreeSet::new(),
             maximum_side_effect,
@@ -392,6 +396,7 @@ impl CapabilityAuthorityScope {
             operations: BTreeSet::new(),
             provider_profiles: BTreeSet::new(),
             trust_zones: BTreeSet::new(),
+            execution_trust_classes: BTreeSet::new(),
             localities: BTreeSet::new(),
             peers: BTreeSet::new(),
             maximum_side_effect,
@@ -413,6 +418,21 @@ impl CapabilityAuthorityScope {
             });
         }
         self.peers = peers;
+        Ok(self)
+    }
+
+    /// Narrows execution to exact isolation/trust classes. Empty accepts any.
+    pub fn with_execution_trust_classes(
+        mut self,
+        classes: BTreeSet<ExecutionTrustClass>,
+    ) -> Result<Self, AuthorityError> {
+        if classes.len() > 8 {
+            return Err(AuthorityError::Bounds {
+                location: "grant.capability_scope.execution_trust_classes",
+                reason: "at most 8 execution trust classes are allowed".to_owned(),
+            });
+        }
+        self.execution_trust_classes = classes;
         Ok(self)
     }
 
@@ -440,6 +460,11 @@ impl CapabilityAuthorityScope {
     #[must_use]
     pub const fn trust_zones(&self) -> &BTreeSet<TrustZone> {
         &self.trust_zones
+    }
+    /// Allowed exact execution-isolation/trust classes; empty means any.
+    #[must_use]
+    pub const fn execution_trust_classes(&self) -> &BTreeSet<ExecutionTrustClass> {
+        &self.execution_trust_classes
     }
     /// Allowed localities; empty means any.
     #[must_use]
@@ -1095,7 +1120,8 @@ impl AuthorityGrantBuilder {
             grant.resources.capability.localities.clone(),
             grant.resources.capability.maximum_side_effect,
         )?
-        .with_peers(grant.resources.capability.peers.clone())?;
+        .with_peers(grant.resources.capability.peers.clone())?
+        .with_execution_trust_classes(grant.resources.capability.execution_trust_classes.clone())?;
         NetworkScope::new(
             grant.resources.network.profiles.clone(),
             grant.resources.network.destinations.clone(),
@@ -1469,6 +1495,9 @@ pub struct RequestedResourceFacts {
     /// Complete trust-zone set advertised by an exact candidate.
     #[serde(default)]
     pub trust_zones: BTreeSet<TrustZone>,
+    /// Exact execution-isolation/trust class advertised by an exact candidate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_trust_class: Option<ExecutionTrustClass>,
     /// Execution locality when known.
     pub locality: Option<Locality>,
     /// Authenticated remote peer when a remote candidate is exact.
@@ -1534,6 +1563,7 @@ impl RequestedResourceFacts {
             provider_profile: None,
             trust_zone: None,
             trust_zones: BTreeSet::new(),
+            execution_trust_class: None,
             locality: None,
             peer: None,
             capability_envelope: None,

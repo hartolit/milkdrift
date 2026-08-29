@@ -83,6 +83,7 @@ cat > daemon.json <<'JSON'
           "operations": ["process.execute"],
           "provider_profiles": [],
           "trust_zones": ["local-process"],
+          "execution_trust_classes": ["trusted_host_process"],
           "localities": ["local"],
           "peers": [],
           "maximum_side_effect": "read_only"
@@ -165,7 +166,7 @@ A minimal revision is constructed through a validated mutation batch; see the cr
 - `crates/persistence`: versioned events and narrow journal/revision/snapshot/workspace/artifact ports.
 - `crates/runtime`: commands, pure projections, scheduling, execution ownership, recovery, reconciliation, and authoritative causal-context discovery/materialization.
 - `adapters/redb-store`: transactional local redb storage and content-addressed artifact bytes.
-- `adapters/local-process`: versioned safe-argv profiles and the production local process adapter.
+- `adapters/local-process`: byte-pinned schema-v2 safe-argv profiles and the trusted-host process adapter; it is not a sandbox.
 - `adapters/model-provider`: bounded HTTP endpoint profiles plus OpenAI-compatible and native Anthropic mappings.
 - `adapters/secret-env`: explicit opaque-secret-reference to environment-name resolution.
 - `apps/daemon`: authoritative local host, bounded runtime owner, authentication, HTTP/SSE API, recovery, and shutdown.

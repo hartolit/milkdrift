@@ -620,6 +620,7 @@ fn local_descriptor(
     .provider_profile(remote.provider_profile().cloned())
     .operations(operations)
     .trust_zones(trust_zones)
+    .execution_trust(remote.execution_trust())
     .resource_observations(remote.resource_observations().cloned())
     .labels(remote.labels().clone())
     .extensions(extensions)
