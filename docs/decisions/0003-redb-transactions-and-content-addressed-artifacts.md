@@ -42,7 +42,7 @@ artifact publication/accounting coordination. Discovery rows, digest/ordered ind
 pointers, and occurrence indexes are derived and verifiable. Per-run artifact ownership is
 authoritative membership paired exactly with workspace artifact usage; no automatic repair API
 is claimed. Snapshots are optional accelerators: envelope v2 carries a strict padded
-standard-Base64 representation of raw projection payload v3, while its direct
+standard-Base64 representation of raw projection payload v4, while its direct
 domain-separated, length-framed BLAKE3 checksum binds the raw bytes and semantic metadata. A
 history-chain v2 row at the covered head must also carry the equal projection-payload commitment
 recorded atomically with that event append.
@@ -55,7 +55,7 @@ walking an authenticated structure.
 
 ADR 0022 extends the same narrow-port rule to daemon application receipts, layouts, proposal
 discovery, and security audit; ADR 0018 now applies it to peer admission, dispatch, observations,
-and retention. Physical schema version 5 and internal document format 8 are exact-current only. Earlier and
+and retention. Physical schema version 5 and internal document format 9 are exact-current only. Earlier and
 future formats are refused; no migration is implemented. Pre-release users must create a new
 store or wait for an explicit future migration tool rather than reinterpret old bytes.
 

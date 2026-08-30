@@ -526,6 +526,9 @@ pub enum ApplicationCommandCommitOutcome {
 
 /// Narrow external-command receipt/idempotency port.
 pub trait ApplicationCommandStore: Send + Sync {
+    /// Fails before semantic mutation when the fixed non-evicting receipt set has no free slot.
+    fn ensure_application_command_capacity(&self) -> Result<(), PersistenceError>;
+
     /// Reads one exact actor-scoped external receipt.
     fn application_command_receipt(
         &self,

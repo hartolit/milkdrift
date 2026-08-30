@@ -242,6 +242,13 @@ fn reviewer_receives_frozen_causal_evidence_without_private_sibling_transcript()
         inputs: Vec::new(),
     })?;
     command(RunCommand::StartRun)?;
+    command(RunCommand::PauseRun)?;
+    for segment in 0..6_usize {
+        seed_irrelevant_recovery_history(store.as_ref(), &run, segment * 700, 700)?;
+        command(RunCommand::ResumeRun)?;
+        command(RunCommand::PauseRun)?;
+    }
+    command(RunCommand::ResumeRun)?;
     for _ in 0..32 {
         runtime.tick()?;
         clock.advance(2)?;
@@ -338,12 +345,13 @@ fn reviewer_receives_frozen_causal_evidence_without_private_sibling_transcript()
             .semantic_roles()
             .contains(&milkdrift_blueprint::ContextSemanticRole::Implementation)
     }));
-    assert!(manifest.entries().iter().any(|entry| {
-        entry.kind() == milkdrift_model::ContextSemanticKind::Failure
-            && entry.source_execution().is_some()
-            && entry.source_attempt().is_some()
-            && entry.source_sequence().is_some()
-    }));
+    assert!(
+        !manifest
+            .entries()
+            .iter()
+            .any(|entry| { entry.kind() == milkdrift_model::ContextSemanticKind::Failure }),
+        "a branch-local retry failure crossed the join without being a declared join output"
+    );
     assert!(!digests.contains(&ContentDigest::from_hex(private.digest())?));
     assert!(manifest.omissions().iter().any(|omission| {
         omission.reason == milkdrift_model::ContextOmissionReason::BranchIsolated
@@ -371,10 +379,14 @@ fn reviewer_receives_frozen_causal_evidence_without_private_sibling_transcript()
             ))
             .count()
     );
-    let review_output = runtime
-        .history(&run)?
-        .into_iter()
-        .find_map(|event| match event.kind() {
+    let mut cursor = None;
+    let review_output = loop {
+        let page = runtime.history_page(&EventPageQuery::new(
+            run.clone(),
+            cursor,
+            PageSize::new(256)?,
+        )?)?;
+        if let Some(reference) = page.events.iter().find_map(|event| match event.kind() {
             RunEventKind::NodeOutputPublished {
                 artifact: Some(reference),
                 ..
@@ -382,8 +394,14 @@ fn reviewer_receives_frozen_causal_evidence_without_private_sibling_transcript()
                 Some(reference.clone())
             }
             _ => None,
-        })
-        .ok_or("review output was not published")?;
+        }) {
+            break reference;
+        }
+        let Some(next) = page.next else {
+            return Err("review output was not published".into());
+        };
+        cursor = Some(next);
+    };
     let metadata = store
         .metadata(review_output.artifact())?
         .ok_or("review output metadata missing")?;
@@ -404,6 +422,94 @@ fn reviewer_receives_frozen_causal_evidence_without_private_sibling_transcript()
         },
     )?;
     assert_eq!(manifest, reopened_manifest);
+    Ok(())
+}
+
+fn seed_irrelevant_recovery_history(
+    store: &RedbStore,
+    run: &RunId,
+    first: usize,
+    count: usize,
+) -> TestResult {
+    let mut created = 0_usize;
+    let mut batch = 0_usize;
+    while created < count {
+        let expected = store.head(run)?;
+        let mut sequence = expected;
+        let batch_size = count.saturating_sub(created).min(500);
+        let mut events = Vec::with_capacity(batch_size);
+        for offset in 0..batch_size {
+            let number = first.saturating_add(created).saturating_add(offset);
+            sequence = sequence.next()?;
+            events.push(RunEventEnvelope::new(
+                EventId::new(format!("context-history-recovery-{number:05}"))?,
+                run.clone(),
+                sequence,
+                TimestampMillis::new(NOW),
+                RunEventKind::RecoveryStarted {
+                    controller: WorkerId::new("worker-context-history")?,
+                    through_sequence: milkdrift_persistence::RunSequence::new(
+                        sequence.get().saturating_sub(1),
+                    ),
+                },
+            )?);
+        }
+        let command = CommandId::new(format!("seed-context-history-{first:05}-{batch:03}"))?;
+        let receipt = CommandReceipt::new(
+            command.clone(),
+            run.clone(),
+            ActorRef::new("controller:context-history")?,
+            expected,
+            TimestampMillis::new(NOW),
+            format!(r#"{{"batch":{batch},"schema_version":1,"type":"seed_context_history"}}"#)
+                .into_bytes(),
+        )?;
+        let result = CommandResultDocument::new(
+            command,
+            run.clone(),
+            receipt.fingerprint().clone(),
+            CommandDisposition::Accepted,
+            sequence,
+            events
+                .iter()
+                .map(|event| event.event_id().clone())
+                .collect(),
+            BoundedJson::new(json!({"accepted": true}))?,
+        )?;
+        let summary = store
+            .run_summary(run)?
+            .ok_or("context run summary missing")?;
+        let usage = store.workspace_usage(run)?;
+        store.commit_command(&AtomicRunCommitRequest::new(
+            receipt,
+            events,
+            Vec::new(),
+            Some(WorkspaceAccounting {
+                budget: generous_budget()?,
+                expected_usage: usage,
+                resulting_usage: usage,
+            }),
+            Vec::new(),
+            Vec::new(),
+            None,
+            result,
+            RunIndexUpdate::new(
+                Some(RunSummaryIndex {
+                    run: run.clone(),
+                    workflow: summary.workflow,
+                    revision: summary.revision,
+                    state: summary.state,
+                    through_sequence: sequence,
+                    updated_at: TimestampMillis::new(NOW),
+                }),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        )?)?;
+        created = created.saturating_add(batch_size);
+        batch = batch.saturating_add(1);
+    }
     Ok(())
 }
 

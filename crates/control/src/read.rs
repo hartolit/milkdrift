@@ -1,3 +1,4 @@
+use milkdrift_authority::{AuthorityDecisionSnapshot, ExecutionAuthorityBasis};
 use milkdrift_blueprint::{AuthorRef, ContentDigest, NodeId, RevisionId, WorkflowId};
 use milkdrift_capability::{
     ArtifactReference, InvocationId, ResolvedCapabilitySnapshot, SideEffectClass,
@@ -51,6 +52,14 @@ pub struct AttemptInspection {
     pub state: AttemptState,
     /// Exact capability, descriptor revision, provider profile, operation, and contract.
     pub capability: Option<ResolvedCapabilitySnapshot>,
+    /// Frozen actor/grant/policy basis inherited by the run and its child workflows.
+    pub execution_authority: Option<ExecutionAuthorityBasis>,
+    /// Candidate-set decision made before exact capability resolution.
+    pub resolution_authorization: Option<AuthorityDecisionSnapshot>,
+    /// Fresh exact-candidate decision made when an effect claim was acquired.
+    pub claim_authorization: Option<AuthorityDecisionSnapshot>,
+    /// Final decision made immediately before adapter entry.
+    pub entry_authorization: Option<AuthorityDecisionSnapshot>,
     /// Exact immutable context-manifest artifact bound before dispatch.
     pub context_manifest: Option<ArtifactReference>,
     /// Frozen side-effect and external-idempotency facts.

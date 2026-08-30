@@ -1,15 +1,16 @@
 use milkdrift_authority::ActorRef;
-use milkdrift_blueprint::BlueprintRevision;
+use milkdrift_blueprint::{AuthorRef, BlueprintRevision};
+use milkdrift_capability::ExtensionKey;
 use milkdrift_control::{
     ClaimedStopCondition, ProposalApplicationPolicy, ProposalId, ProposalProvenance,
     WorkflowProposal, WorkflowProposalDocument,
 };
-use milkdrift_persistence::RunSequence;
+use milkdrift_persistence::{EvidenceId, EvidenceKind, EvidenceReference, RunSequence};
 use milkdrift_workspace::RunId;
 
 use crate::{
     PromptSequenceDocument, PromptSequenceError, PromptSource, VerificationContract,
-    compiler::remediation_mutation,
+    compiler::{compile, remediation_mutation},
 };
 
 /// Exact live-run facts used to build a bounded prospective remediation proposal.
@@ -46,6 +47,48 @@ pub fn build_remediation_proposal(
             "remediation base revision belongs to a different workflow".to_owned(),
         ));
     }
+    let compiled = compile(
+        document,
+        AuthorRef::new("system:remediation-provenance")
+            .map_err(|error| PromptSequenceError::Compilation(error.to_string()))?,
+    )?;
+    let metadata_key = ExtensionKey::new("org.milkdrift/prompt-sequence")
+        .map_err(|error| PromptSequenceError::Compilation(error.to_string()))?;
+    let metadata = base
+        .semantic()
+        .metadata()
+        .extensions()
+        .get(&metadata_key)
+        .map(milkdrift_capability::BoundedJson::value)
+        .ok_or_else(|| {
+            PromptSequenceError::Invalid(
+                "remediation base revision has no prompt-sequence provenance".to_owned(),
+            )
+        })?;
+    let expected_stages = serde_json::to_value(compiled.stages())
+        .map_err(|error| PromptSequenceError::Compilation(error.to_string()))?;
+    let provenance_matches = metadata
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        == Some(2)
+        && metadata
+            .get("sequence_id")
+            .and_then(serde_json::Value::as_str)
+            == Some(document.sequence().id.as_str())
+        && metadata
+            .get("import_digest")
+            .and_then(serde_json::Value::as_str)
+            == Some(compiled.import_digest())
+        && metadata
+            .get("repository_profile_digest")
+            .and_then(serde_json::Value::as_str)
+            == Some(compiled.repository_profile_digest())
+        && metadata.get("stages") == Some(&expected_stages);
+    if !provenance_matches {
+        return Err(PromptSequenceError::Invalid(
+            "remediation document does not exactly match the imported base sequence".to_owned(),
+        ));
+    }
     if spec.generation == 0 || spec.generation > document.sequence().budget.max_review_loops {
         return Err(PromptSequenceError::Invalid(format!(
             "remediation generation must be within 1..={}",
@@ -66,7 +109,7 @@ pub fn build_remediation_proposal(
     base.revise(
         base.id(),
         mutation.clone(),
-        milkdrift_blueprint::AuthorRef::new(spec.proposer.as_str().to_owned())
+        AuthorRef::new(spec.proposer.as_str().to_owned())
             .map_err(|error| PromptSequenceError::Compilation(error.to_string()))?,
         format!(
             "prospective remediation {} for stage {}",
@@ -96,7 +139,14 @@ pub fn build_remediation_proposal(
                 .to_owned(),
         ],
         vec!["selected failure branch is waiting at its shared-control approval gate".to_owned()],
-        Vec::new(),
+        vec![EvidenceReference {
+            id: EvidenceId::new(format!(
+                "prompt-sequence-import:{}",
+                compiled.import_digest()
+            ))
+            .map_err(|error| PromptSequenceError::Compilation(error.to_string()))?,
+            kind: EvidenceKind::RecoveryObservation,
+        }],
         Vec::new(),
         ProposalApplicationPolicy::RequireApproval,
         None,

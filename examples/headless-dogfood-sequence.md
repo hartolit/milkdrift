@@ -1,6 +1,6 @@
 ```milkdrift-sequence
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "sequence": {
     "id": "milkdrift-core-convergence",
     "title": "Milkdrift core convergence",
@@ -47,7 +47,6 @@
           "result_artifact": "verification_result",
           "log_artifact": "verification_logs"
         },
-        "checkpoint": "verification_artifacts",
         "failure": "pause_for_review",
         "reviewer": {
           "capability": "configured-reviewer",
@@ -58,12 +57,6 @@
         },
         "approval": "shared_control_path",
         "context_policy_ref": "context:implementation-v1",
-        "budget": {
-          "max_coding_attempts": 1,
-          "max_verification_attempts": 2,
-          "timeout_ms": 3600000,
-          "max_output_bytes": 67108864
-        },
         "outputs": [
           {"name": "diff", "media_type": "text/x-diff", "required": true},
           {"name": "result", "media_type": "application/json", "required": true},
@@ -72,11 +65,7 @@
       }
     ],
     "budget": {
-      "max_revisions": 8,
-      "max_review_loops": 3,
-      "max_elapsed_ms": 7200000,
-      "max_capability_calls": 32,
-      "max_artifact_bytes": 268435456
+      "max_review_loops": 3
     },
     "extensions": {}
   }

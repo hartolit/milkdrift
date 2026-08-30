@@ -98,6 +98,10 @@ pub(super) fn empty_attempt_read(attempt: &str, state: &str) -> AttemptRead {
         capability_id: None,
         descriptor_revision: None,
         capability_provenance: None,
+        execution_authority: None,
+        resolution_authorization: None,
+        claim_authorization: None,
+        entry_authorization: None,
         provider_profile: None,
         peer_id: None,
         context_manifest: None,
@@ -153,6 +157,22 @@ pub(super) fn public_attempt(value: milkdrift_control::AttemptInspection) -> Att
         capability_id,
         descriptor_revision,
         capability_provenance,
+        execution_authority: value
+            .execution_authority
+            .as_ref()
+            .map(public_execution_authority),
+        resolution_authorization: value
+            .resolution_authorization
+            .as_ref()
+            .map(public_authority_decision),
+        claim_authorization: value
+            .claim_authorization
+            .as_ref()
+            .map(public_authority_decision),
+        entry_authorization: value
+            .entry_authorization
+            .as_ref()
+            .map(public_authority_decision),
         provider_profile,
         peer_id: None,
         context_manifest,
@@ -164,6 +184,42 @@ pub(super) fn public_attempt(value: milkdrift_control::AttemptInspection) -> Att
         },
         terminal: value.terminal.as_ref().map(snake_debug),
         uncertain: value.external_outcome.is_some(),
+    }
+}
+
+pub(super) fn public_execution_authority(
+    basis: &milkdrift_authority::ExecutionAuthorityBasis,
+) -> milkdrift_control_protocol::ExecutionAuthorityRead {
+    milkdrift_control_protocol::ExecutionAuthorityRead {
+        actor_id: basis.actor().as_str().to_owned(),
+        grant_id: basis.grant().as_str().to_owned(),
+        grant_revision: basis.grant_revision(),
+        grant_digest: basis.grant_digest().as_str().to_owned(),
+        revocation_generation: basis.revocation_generation(),
+        policy_id: basis.policy().as_str().to_owned(),
+        policy_version: basis.policy_version(),
+        accepted_decision_id: basis.accepted_decision().as_str().to_owned(),
+        accepted_decision_digest: basis.accepted_decision_digest().to_owned(),
+        basis_digest: basis.digest().to_owned(),
+    }
+}
+
+pub(super) fn public_authority_decision(
+    decision: &milkdrift_authority::AuthorityDecisionSnapshot,
+) -> milkdrift_control_protocol::AuthorityDecisionRead {
+    let request = decision.request();
+    milkdrift_control_protocol::AuthorityDecisionRead {
+        decision_id: request.decision.as_str().to_owned(),
+        actor_id: request.actor.as_str().to_owned(),
+        grant_id: request.grant.as_str().to_owned(),
+        grant_revision: request.grant_revision,
+        grant_digest: request.grant_digest.as_str().to_owned(),
+        revocation_generation: request.revocation_generation,
+        policy_id: decision.policy().as_str().to_owned(),
+        policy_version: decision.policy_version(),
+        operation: snake_debug(&request.operation),
+        allowed: decision.is_allowed(),
+        decision_digest: decision.digest().to_owned(),
     }
 }
 

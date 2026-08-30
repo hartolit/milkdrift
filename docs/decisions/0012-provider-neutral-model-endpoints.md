@@ -22,7 +22,9 @@ secret, provider SDK, or model-identity dependency.
 share only bounded transport mechanics. An exact non-secret endpoint profile selects protocol,
 model alias, base URL, secret reference/no-auth, bounds, redirect/TLS/proxy policy, concurrency,
 trust/locality, advertised features, and bounded namespaced options. Feature negotiation happens
-before external entry and any unmapped role, part, option, session, or control is rejected.
+before external entry over the complete materialized wire request, including the adapter-injected
+system manifest and selected context images. Any unmapped role, part, option, session, or control is
+rejected before HTTP.
 
 The HTTP implementation uses reqwest with rustls roots, disables decompression by feature choice,
 defaults to no ambient proxy and no redirects, rejects cross-origin redirects even when same-origin

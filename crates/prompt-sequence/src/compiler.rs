@@ -79,12 +79,6 @@ impl CompiledPromptSequence {
     pub fn stages(&self) -> &[StageBlueprintSummary] {
         &self.stages
     }
-
-    /// Consumes the result and returns the revision for persistence.
-    #[must_use]
-    pub fn into_revision(self) -> BlueprintRevision {
-        self.revision
-    }
 }
 
 /// Compiles one bounded sequence into ordinary task, branch, signal-wait, and terminal nodes.
@@ -583,7 +577,6 @@ fn reviewer_node_named(
                     "stage_id": stage.id,
                     "approval": stage.approval,
                     "failure": stage.failure,
-                    "max_review_loops": stage.budget.max_verification_attempts,
                 }),
             )?,
         )?
@@ -714,7 +707,7 @@ fn metadata(
     stages: &[StageBlueprintSummary],
 ) -> Result<BlueprintMetadata, PromptSequenceError> {
     let extension = BoundedJson::new(json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "sequence_id": document.sequence().id,
         "import_digest": import_digest,
         "repository_profile_id": document.sequence().repository.id,
@@ -730,7 +723,7 @@ fn metadata(
         BTreeSet::from([
             "headless".to_owned(),
             "prompt-sequence".to_owned(),
-            "schema-v1".to_owned(),
+            "schema-v2".to_owned(),
         ]),
         BTreeMap::from([(
             ExtensionKey::new("org.milkdrift/prompt-sequence")

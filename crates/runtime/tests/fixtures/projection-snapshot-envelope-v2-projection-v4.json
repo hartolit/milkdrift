@@ -1,0 +1,192 @@
+{
+  "snapshot_envelope": {
+    "checksum": "b3_8e046b5681dbd9bec808c97491eb0e439079a51a4f19cc29198ef676c7eca48f",
+    "covered_sequence": 5,
+    "history_digest": "b3_3613438c1c85f4a16cc0559d3e1d4438f9bde51d0ebe3ae625d4f6602cbc3cf4",
+    "projection_payload_schema": 4,
+    "run": "run-snapshot-golden",
+    "schema_version": 2,
+    "snapshot": "snapshot-runtime-projection-v4-golden"
+  },
+  "projection_payload": {
+    "schema_version": 4,
+    "projection": {
+      "sequence": 5,
+      "history_compacted_through": 5,
+      "run_id": "run-snapshot-golden",
+      "lifecycle": "Running",
+      "workflow": "workflow-snapshot-golden",
+      "revision": "rev_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "revision_digest": "b3_1111111111111111111111111111111111111111111111111111111111111111",
+      "pins": [
+        {
+          "revision": "rev_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "b3_1111111111111111111111111111111111111111111111111111111111111111",
+          "effective_sequence": 1,
+          "plan": null
+        }
+      ],
+      "root_scope": {
+        "reference": {
+          "run": "run-snapshot-golden",
+          "scope": "root"
+        },
+        "kind": {
+          "type": "run_root"
+        },
+        "parent": null
+      },
+      "workspace_budget": {
+        "max_value_versions": 100,
+        "max_inline_bytes_per_value": 10000,
+        "max_total_inline_bytes": 100000,
+        "max_artifacts": 100,
+        "max_bytes_per_artifact": 100000,
+        "max_total_artifact_bytes": 1000000
+      },
+      "inputs": [],
+      "scopes": [
+        [
+          {
+            "run": "run-snapshot-golden",
+            "scope": "root"
+          },
+          {
+            "reference": {
+              "run": "run-snapshot-golden",
+              "scope": "root"
+            },
+            "kind": {
+              "type": "run_root"
+            },
+            "parent": null
+          }
+        ]
+      ],
+      "workspace_values": [],
+      "cancellation": null,
+      "termination": null,
+      "node_executions": [],
+      "settled_node_executions": [
+        [
+          "snapshot-golden-execution",
+          {
+            "execution": "snapshot-golden-execution",
+            "node": "work",
+            "scope": {
+              "run": "run-snapshot-golden",
+              "scope": "root"
+            },
+            "mode": "runtime",
+            "revision": "rev_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "epoch_retired_sequence": null,
+            "created_sequence": 3,
+            "attempt_count": 0,
+            "attempts": [],
+            "state": {
+              "Terminal": "succeeded"
+            },
+            "terminal_sequence": 4,
+            "side_effect": "none",
+            "route": null,
+            "outputs": []
+          }
+        ]
+      ],
+      "settled_execution_by_scope_node": [
+        [
+          [
+            {
+              "run": "run-snapshot-golden",
+              "scope": "root"
+            },
+            "work"
+          ],
+          "snapshot-golden-execution"
+        ]
+      ],
+      "execution_ids_by_node": [
+        [
+          "work",
+          [
+            "snapshot-golden-execution"
+          ]
+        ]
+      ],
+      "latest_descendant_execution_by_scope_node": [
+        [
+          [
+            {
+              "run": "run-snapshot-golden",
+              "scope": "root"
+            },
+            "work"
+          ],
+          "snapshot-golden-execution"
+        ]
+      ],
+      "active_execution_ids": [],
+      "eligible_executions": [],
+      "pending_successor_executions": [],
+      "reserved_executions": [],
+      "attempts": [],
+      "active_attempt_ids": [],
+      "invocations": [],
+      "leases": [],
+      "active_lease_by_attempt": [],
+      "timers": [],
+      "pending_timer_ids": [],
+      "pending_timers_by_execution": [],
+      "retries": [],
+      "retry_by_attempt": [],
+      "branches": [],
+      "branch_by_fork_port": [],
+      "branch_ids_by_fork_execution": [],
+      "active_branch_ids": [],
+      "cancelling_branch_ids": [],
+      "active_scope_ownership": [],
+      "active_structured_children_by_execution": [],
+      "branch_owner": [],
+      "branch_routes": [],
+      "joins": [],
+      "iterations": [],
+      "active_iteration_ids": [],
+      "latest_iteration": [],
+      "repeat_continuations": [],
+      "repeat_terminations": [],
+      "signals": [],
+      "pending_broadcast_signals": [],
+      "waits": [],
+      "pending_wait_execution_ids": [],
+      "subworkflows": [],
+      "subworkflow_usage_by_execution": [],
+      "active_subworkflow_ids": [],
+      "active_attached_subworkflow_ids": [],
+      "child_runs": [],
+      "artifacts": [],
+      "reconciliation": {
+        "requests": [],
+        "plans": [],
+        "current_request": null
+      },
+      "pending_pin": null,
+      "reconciliation_cancellations": [],
+      "pending_reconciliation_restarts": [],
+      "reconciliation_remediations": [],
+      "recovery_decisions": [],
+      "recovery": [],
+      "current_recovery": null,
+      "remediations": [],
+      "resource_usage": {
+        "input_units": null,
+        "output_units": null,
+        "duration_ms": null,
+        "cost_micros": [],
+        "workspace_value_references": 0,
+        "artifacts": 0,
+        "artifact_bytes": 0
+      },
+      "terminal": null
+    }
+  }
+}

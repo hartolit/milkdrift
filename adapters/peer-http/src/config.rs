@@ -8,6 +8,7 @@ use milkdrift_peer_protocol::{
     DelegationRef, ExecutionLimits, HardLimits, HeartbeatLease, PeerAuthority,
     ProtocolVersionRange, SessionId,
 };
+use milkdrift_workspace::ArtifactSensitivity;
 use url::{Host, Url};
 
 use crate::PeerHttpError;
@@ -57,6 +58,8 @@ pub struct PeerRelationship {
     pub maximum_requests_per_minute: u32,
     /// Maximum sum of artifact bytes accepted per execution.
     pub maximum_artifact_bytes: u64,
+    /// Explicit artifact sensitivity classes transferable over this relationship.
+    pub artifact_sensitivities: BTreeSet<ArtifactSensitivity>,
     /// Catalog TTL.
     pub catalog_ttl_ms: u64,
     /// Trust/locality zone added only to the local remote-adapter descriptor.
@@ -100,6 +103,7 @@ impl fmt::Debug for PeerRelationship {
                 &self.maximum_requests_per_minute,
             )
             .field("maximum_artifact_bytes", &self.maximum_artifact_bytes)
+            .field("artifact_sensitivities", &self.artifact_sensitivities)
             .field("catalog_ttl_ms", &self.catalog_ttl_ms)
             .field("trust_zone", &self.trust_zone)
             .field("delegation", &"[opaque]")
@@ -132,6 +136,7 @@ impl PeerRelationship {
             || self.catalog_ttl_ms == 0
             || self.catalog_ttl_ms > 300_000
             || self.expires_at_unix_ms == 0
+            || self.artifact_sensitivities.len() > 3
         {
             return Err(PeerHttpError::Configuration(
                 "peer credential, concurrency, TTL, or expiry is invalid".to_owned(),

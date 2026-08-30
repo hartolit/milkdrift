@@ -395,17 +395,22 @@ where
         .map_err(|error| HostError::Startup(error.to_string()))?;
     info!(%address, phase = "listening", "daemon control listener ready");
     let shutdown_host = host.clone();
+    let (shutdown_result, shutdown_observed) = tokio::sync::oneshot::channel();
     let graceful = async move {
         shutdown.await;
-        shutdown_host.begin_draining();
-        if let Err(error) = shutdown_host.shutdown().await {
+        let result = shutdown_host.shutdown().await;
+        if let Err(error) = &result {
             warn!(phase = "shutdown", outcome = "error", "{error}");
         }
+        let _ = shutdown_result.send(result);
     };
     axum::serve(listener, router(host))
         .with_graceful_shutdown(graceful)
         .await
-        .map_err(|error| HostError::Startup(error.to_string()))
+        .map_err(|error| HostError::Startup(error.to_string()))?;
+    shutdown_observed
+        .await
+        .map_err(|_| HostError::Shutdown("shutdown result channel closed".to_owned()))?
 }
 
 async fn version(

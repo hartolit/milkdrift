@@ -13,11 +13,12 @@ use milkdrift_authority::{
 use milkdrift_capability::SideEffectClass;
 use milkdrift_control_protocol::MAX_DOCUMENT_BYTES;
 use milkdrift_peer_protocol::PeerAction;
+use milkdrift_workspace::ArtifactSensitivity;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Current daemon configuration document version.
-pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 3;
+pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 4;
 
 /// Configuration load or deterministic validation failure.
 #[derive(Debug, Error)]
@@ -88,7 +89,7 @@ pub struct ActorBindingConfig {
     pub enabled: bool,
 }
 
-/// Explicit schema-v3 grant facts; preset names choose operations only.
+/// Explicit schema-v4 grant facts; preset names choose operations only.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActorGrantConfig {
@@ -265,6 +266,8 @@ pub struct PeerRelationshipConfig {
     /// Maximum artifact bytes per execution.
     #[serde(default = "default_peer_artifact_bytes")]
     pub maximum_artifact_bytes: u64,
+    /// Explicit transferable artifact sensitivity classes; empty denies artifact transfer.
+    pub artifact_sensitivities: BTreeSet<ArtifactSensitivity>,
     /// Maximum execution duration.
     #[serde(default = "default_peer_duration_ms")]
     pub maximum_duration_ms: u64,
@@ -838,11 +841,11 @@ mod tests {
     use super::*;
 
     fn fixture_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v3.json")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v4.json")
     }
 
     #[test]
-    fn schema_v3_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>>
+    fn schema_v4_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>>
     {
         let validated = DaemonConfig::load(&fixture_path())?;
         let actor = &validated.document.actors[0];
@@ -868,7 +871,7 @@ mod tests {
     fn old_and_future_config_versions_are_rejected_truthfully()
     -> Result<(), Box<dyn std::error::Error>> {
         let source = fs::read(fixture_path())?;
-        for unsupported in [1_u32, 2_u32, 4_u32] {
+        for unsupported in [1_u32, 2_u32, 3_u32, 5_u32] {
             let directory = tempfile::tempdir()?;
             let mut value: serde_json::Value = serde_json::from_slice(&source)?;
             value["schema_version"] = serde_json::json!(unsupported);
@@ -907,7 +910,7 @@ mod tests {
         let secret = directory.path().join("token");
         fs::write(&secret, "secret")?;
         let config = DaemonConfig {
-            schema_version: 3,
+            schema_version: 4,
             data_root: directory.path().join("data"),
             bind: "0.0.0.0:9734".parse()?,
             secret_sources: BTreeMap::from([(

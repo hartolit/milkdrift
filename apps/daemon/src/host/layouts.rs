@@ -10,19 +10,11 @@ pub(super) fn execute(
 ) -> Result<CommandAccepted, PublicFailure> {
     layout.validate().map_err(public_protocol)?;
     let revision = parse_revision_id(&layout.revision_id)?;
-    let stored_revision = owner
-        .store
-        .revision(&revision)
-        .map_err(public_persistence)?
-        .ok_or_else(not_found)?;
-    if stored_revision.semantic().workflow().as_str() != layout.workflow_id {
-        return Err(invalid(
-            "layout workflow/revision association does not match durable revision",
-        ));
-    }
+    let workflow =
+        WorkflowId::new(layout.workflow_id.clone()).map_err(|error| invalid(&error.to_string()))?;
     let mut resources = RequestedResourceFacts::empty();
-    resources.workflow = Some(stored_revision.semantic().workflow().clone());
-    resources.revision = Some(revision);
+    resources.workflow = Some(workflow.clone());
+    resources.revision = Some(revision.clone());
     resources.layout_owner = Some(LayoutOwner::Shared);
     let decision = owner.authorize(
         session,
@@ -30,6 +22,14 @@ pub(super) fn execute(
         resources,
         "command:put-layout",
     )?;
+    let stored_revision = owner
+        .store
+        .revision(&revision)
+        .map_err(public_persistence)?
+        .ok_or_else(not_found)?;
+    if stored_revision.semantic().workflow() != &workflow {
+        return Err(not_found());
+    }
     owner.record_security_decision(&decision)?;
     Ok(CommandAccepted {
         command_id: request.command_id.clone(),

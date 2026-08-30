@@ -15,7 +15,6 @@ use milkdrift_capability_host::{
     AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter,
 };
 use milkdrift_contracts::{JsonLimits, canonical_json_bytes};
-use serde::{Deserialize, Serialize};
 
 use crate::{
     ActorAuthorityContext, ControlCommand, ControlCommandDocument, ControlError, ControlResult,
@@ -26,48 +25,6 @@ use crate::{
 
 const CONTROL_CAPABILITY_ID: &str = "milkdrift-workflow-control";
 const CONTROL_REQUEST_INPUT: &str = "milkdrift.control_request";
-const AUTHORITY_CONTEXT_INPUT: &str = "milkdrift.authority_context";
-
-/// Safe opaque lookup identity for caller-authenticated authority context.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
-#[serde(transparent)]
-pub struct AuthorityContextRef(String);
-
-impl AuthorityContextRef {
-    /// Constructs a bounded safe reference that contains no grant or credential value.
-    pub fn new(value: impl Into<String>) -> Result<Self, ControlError> {
-        let value = value.into();
-        if value.is_empty()
-            || value.len() > 192
-            || !value.is_ascii()
-            || !value.as_bytes()[0].is_ascii_alphanumeric()
-            || !value.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
-            })
-        {
-            return Err(ControlError::InvalidIdentity {
-                kind: "AuthorityContextRef",
-                reason: "must contain 1..=192 safe ASCII identity bytes".to_owned(),
-            });
-        }
-        Ok(Self(value))
-    }
-
-    /// Returns the opaque lookup reference.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// Trusted resolver that maps an opaque safe reference to immutable actor/grant context.
-pub trait AuthorityContextResolver: Send + Sync {
-    /// Resolves context outside model-controlled text and artifacts.
-    fn resolve(
-        &self,
-        reference: &AuthorityContextRef,
-    ) -> Result<ActorAuthorityContext, ControlError>;
-}
 
 /// Application port that publishes canonical control results as ordinary artifacts.
 pub trait ControlResultSink: Send + Sync {
@@ -82,23 +39,14 @@ pub trait ControlResultSink: Send + Sync {
 /// Concrete in-process workflow-control adapter for `milkdrift-capability-host`.
 pub struct WorkflowControlAdapter {
     service: Arc<ControlService>,
-    contexts: Arc<dyn AuthorityContextResolver>,
     results: Arc<dyn ControlResultSink>,
 }
 
 impl WorkflowControlAdapter {
-    /// Constructs an adapter with explicit authority-context and artifact-publication ports.
+    /// Constructs an adapter with an explicit artifact-publication port.
     #[must_use]
-    pub fn new(
-        service: Arc<ControlService>,
-        contexts: Arc<dyn AuthorityContextResolver>,
-        results: Arc<dyn ControlResultSink>,
-    ) -> Self {
-        Self {
-            service,
-            contexts,
-            results,
-        }
+    pub fn new(service: Arc<ControlService>, results: Arc<dyn ControlResultSink>) -> Self {
+        Self { service, results }
     }
 
     fn execute_control(
@@ -106,20 +54,28 @@ impl WorkflowControlAdapter {
         invocation: &AdapterInvocation<'_>,
     ) -> Result<ControlResult, ControlError> {
         let request_value = inline_input(invocation, CONTROL_REQUEST_INPUT)?;
-        let context_value = inline_input(invocation, AUTHORITY_CONTEXT_INPUT)?;
-        let context_ref = context_value.as_str().ok_or_else(|| {
-            ControlError::InvalidContract(
-                "authority context input must be a string reference".to_owned(),
-            )
-        })?;
-        let context = self
-            .contexts
-            .resolve(&AuthorityContextRef::new(context_ref)?)?;
+        let basis = invocation
+            .context()
+            .and_then(milkdrift_capability_host::AdapterExecutionContext::authority)
+            .ok_or_else(|| {
+                ControlError::InvalidContract(
+                    "workflow control requires the frozen invocation authority basis".to_owned(),
+                )
+            })?;
+        let context = ActorAuthorityContext::new(
+            basis.actor().clone(),
+            milkdrift_runtime::CommandAuthorityClaim::new(
+                basis.grant().clone(),
+                basis.grant_revision(),
+                basis.grant_digest().clone(),
+                basis.revocation_generation(),
+            )?,
+        );
         let bytes = serde_json::to_vec(request_value)?;
         let document = ControlCommandDocument::from_json(&bytes)?;
         if document.context() != &context {
             return Err(ControlError::InvalidContract(
-                "model-provided actor/grant context does not match the trusted reference"
+                "control document actor/grant context does not match the frozen invocation authority"
                     .to_owned(),
             ));
         }
@@ -256,10 +212,9 @@ pub fn workflow_control_descriptor() -> Result<CapabilityDescriptor, ControlErro
         BoundedJson::new(serde_json::json!({
             "type": "object",
             "additionalProperties": false,
-            "required": [CONTROL_REQUEST_INPUT, AUTHORITY_CONTEXT_INPUT],
+            "required": [CONTROL_REQUEST_INPUT],
             "properties": {
-                CONTROL_REQUEST_INPUT: { "type": "object" },
-                AUTHORITY_CONTEXT_INPUT: { "type": "string", "maxLength": 192 }
+                CONTROL_REQUEST_INPUT: { "type": "object" }
             }
         }))?,
     )?;

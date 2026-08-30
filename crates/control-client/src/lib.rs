@@ -596,7 +596,7 @@ impl ControlClient {
         builder
             .bearer_auth(self.credential.expose())
             .header(header::ACCEPT, "application/json")
-            .header("x-milkdrift-protocol", "1.0")
+            .header("x-milkdrift-protocol", "2.0")
     }
 
     fn url(&self, path: &str) -> Result<Url, ClientError> {

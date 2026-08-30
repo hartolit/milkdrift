@@ -30,14 +30,8 @@ impl Owner {
             {
                 return Err(unauthorized());
             }
-            let summary = self
-                .store
-                .run_summary(run)
-                .map_err(public_persistence)?
-                .ok_or_else(not_found)?;
-            let state_matches =
-                state.is_none_or(|expected| snake_debug(&summary.state) == expected);
             let value = self.run_read(session, run.as_str())?;
+            let state_matches = state.is_none_or(|expected| value.lifecycle == expected);
             let workflow_matches = requested_workflow
                 .as_ref()
                 .is_none_or(|expected| value.workflow_id.as_deref() == Some(expected.as_str()));
@@ -134,19 +128,10 @@ impl Owner {
     ) -> Result<Page<TimelineEntry>, PublicFailure> {
         let run_id = RunId::new(run.to_owned()).map_err(|error| invalid(&error.to_string()))?;
         let feed = format!("timeline:{run}");
-        let mut resources = RequestedResourceFacts::empty();
-        resources.run = Some(run_id.clone());
-        let workflow = self
-            .store
-            .run_summary(&run_id)
-            .map_err(public_persistence)?
-            .ok_or_else(not_found)?
-            .workflow;
-        resources.workflow = Some(workflow);
-        let decision = self.authorize(
+        let decision = self.authorize_run_read(
             session,
+            run,
             AuthorityOperation::InspectTimeline,
-            resources,
             "read:timeline",
         )?;
         let binding = cursor_binding(session, &feed)?;
@@ -159,7 +144,7 @@ impl Owner {
             .transpose()?
             .map(|position| position.saturating_add(1))
             .unwrap_or(1);
-        let result = self.inspect_control(
+        let result = match self.inspect_control(
             session,
             ControlCommand::InspectTimeline {
                 run: run_id,
@@ -168,7 +153,10 @@ impl Owner {
             },
             None,
             "timeline",
-        )?;
+        ) {
+            Err(error) if error.code == ErrorCode::Unauthorized => return Err(not_found()),
+            result => result?,
+        };
         let ControlResult::Timeline { value } = result else {
             return Err(internal());
         };

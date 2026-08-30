@@ -137,6 +137,8 @@ pub struct GenerationView {
 pub struct CatalogGenerationView {
     /// Exact immutable descriptor generation.
     pub descriptor: CapabilityDescriptor,
+    /// Immutable filesystem, network, secret, and budget facts declared by the adapter.
+    pub authority_requirements: CapabilityExecutionRequirements,
     /// Latest live health observation, when recorded.
     pub observation: Option<CapabilityObservation>,
     /// Whether this generation is selected for unpinned local resolution.
@@ -844,6 +846,7 @@ impl CapabilityHost {
             })
             .map(|(key, generation)| CatalogGenerationView {
                 descriptor: generation.descriptor.clone(),
+                authority_requirements: generation.authority_requirements.clone(),
                 observation: generation.observation.clone(),
                 current: state.current.get(&key.capability) == Some(&key.revision),
                 draining: generation.draining,

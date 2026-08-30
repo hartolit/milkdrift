@@ -210,6 +210,36 @@ fn receipts_layouts_proposals_and_audit_are_incremental_and_restart_durable() ->
 }
 
 #[test]
+fn application_capacity_preflight_fails_at_the_non_evicting_bound() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let store = RedbStore::open_with_config(
+        RedbStoreConfig::new(directory.path()).with_application_limits(1, 1),
+    )?;
+    store.ensure_application_command_capacity()?;
+    let only = receipt(
+        "actor:capacity",
+        "command-capacity",
+        b"fills-the-only-slot",
+        None,
+    )?;
+    assert_eq!(
+        store.commit_application_command(&ApplicationCommandCommit {
+            receipt: only,
+            effect: ApplicationCommandEffect::None,
+        })?,
+        ApplicationCommandCommitOutcome::Committed
+    );
+    assert!(matches!(
+        store.ensure_application_command_capacity(),
+        Err(PersistenceError::Bounds {
+            location: "application_receipt_retention",
+            ..
+        })
+    ));
+    Ok(())
+}
+
+#[test]
 fn application_transaction_faults_distinguish_before_from_after_commit() -> TestResult {
     for (point, committed) in [
         (FaultPoint::BeforeApplicationCommit, false),

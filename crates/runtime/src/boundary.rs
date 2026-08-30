@@ -122,7 +122,7 @@ impl IdGenerator for SequentialIdGenerator {
         }
         let value = self
             .next
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                 current.checked_add(1)
             })
             .map_err(|_| RuntimeError::InvalidTransition("ID counter overflow".to_owned()))?;

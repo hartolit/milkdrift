@@ -20,7 +20,7 @@ use milkdrift_model::{
 };
 use milkdrift_persistence::{
     AttemptId, EventCursor, EventId, EventPageQuery, NodeExecutionId, PageSize, RunEventEnvelope,
-    RunEventKind, RunQueryStore, RunSequence,
+    RunEventKind, RunQueryStore, RunSequence, SubworkflowId,
 };
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactReference, ArtifactRetention,
@@ -55,6 +55,8 @@ pub struct ContextSourceRequest<'a> {
     pub required_direct_inputs: &'a BTreeSet<String>,
     /// Exact journal head covered by the dispatch projection.
     pub through_sequence: RunSequence,
+    /// Already-validated bounded projection at the same frozen journal boundary.
+    pub projection: &'a crate::RunProjection,
     /// Frozen initiating authority basis.
     pub authority: &'a ExecutionAuthorityBasis,
     /// Caller-supplied boundary time for fresh read decisions.
@@ -293,6 +295,11 @@ impl<'a> DurableContextCandidateSource<'a> {
                 }],
             )
         };
+        parents.push(ContextEvidenceReference::Workspace {
+            reference: CausalReference::WorkspaceValue {
+                reference: value.clone(),
+            },
+        });
         parents.push(ContextEvidenceReference::Execution {
             execution: execution.execution.clone(),
         });
@@ -470,18 +477,176 @@ impl ContextCandidateSource for DurableContextCandidateSource<'_> {
             candidates.push(self.direct_candidate(&request, input)?);
         }
 
-        let mut cursor = None;
+        let maximum_records = request.policy.budget().max_candidate_records;
+        let first_sequence = candidate_tail_start(request.through_sequence.get(), maximum_records);
+        let mut cursor = (first_sequence > 1).then(|| EventCursor {
+            run: request.identity.run.clone(),
+            next_sequence: RunSequence::new(first_sequence),
+        });
         let mut scanned = 0_u32;
         let mut event_summaries = 0_u32;
         let mut current_revision = request.revision.id().clone();
-        let mut executions = BTreeMap::<NodeExecutionId, ExecutionFact>::new();
-        let mut attempts = BTreeMap::<AttemptId, AttemptFact>::new();
+        let mut executions = request
+            .projection
+            .current_node_executions()
+            .map(|execution| {
+                (
+                    execution.execution().clone(),
+                    ExecutionFact {
+                        execution: execution.execution().clone(),
+                        node: execution.node().clone(),
+                        scope: execution.scope().clone(),
+                        revision: execution.revision().clone(),
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut attempts = request
+            .projection
+            .attempts()
+            .iter()
+            .map(|(attempt, fact)| (attempt.clone(), projected_attempt_fact(fact)))
+            .collect::<BTreeMap<_, _>>();
         let mut distances = BTreeMap::new();
-        let mut joined_scopes = BTreeSet::new();
-        loop {
-            let remaining = request.policy.budget().max_candidate_records - scanned;
+        let mut subworkflow_parents = request
+            .projection
+            .subworkflows()
+            .values()
+            .map(|child| {
+                (
+                    child.subworkflow().clone(),
+                    child.parent_execution().clone(),
+                )
+            })
+            .collect::<BTreeMap<SubworkflowId, NodeExecutionId>>();
+        let all_ancestors = ancestor_depths(
+            request.revision.semantic(),
+            &request.identity.node,
+            Some(u16::MAX),
+        );
+        let mut join_exposed_values = BTreeSet::new();
+        for join in request.projection.joins().values() {
+            if executions.get(join.execution()).is_some_and(|execution| {
+                execution.revision == *request.revision.id()
+                    && all_ancestors.contains_key(&execution.node)
+            }) {
+                join_exposed_values.extend(
+                    join.branches()
+                        .iter()
+                        .flat_map(|branch| branch.outputs.iter().cloned()),
+                );
+            }
+        }
+        let mut indexed_sequences = BTreeSet::new();
+        for execution in request.projection.current_node_executions() {
+            let Some(execution_fact) = executions.get(execution.execution()) else {
+                continue;
+            };
+            for output in execution.outputs() {
+                let event = event_at(
+                    self.store,
+                    &request.identity.run,
+                    output.sequence(),
+                    request.through_sequence,
+                )?;
+                let attempt = event_attempt(event.kind());
+                candidates.push(self.output_candidate(
+                    &request,
+                    execution_fact,
+                    attempt,
+                    output.value(),
+                    output.artifact(),
+                    &event,
+                    producer(attempt.and_then(|attempt| attempts.get(attempt)), None),
+                    false,
+                    &mut distances,
+                )?);
+                indexed_sequences.insert(output.sequence());
+            }
+        }
+        for execution in request.projection.node_executions().values() {
+            let sequence = execution
+                .deterministic_terminal()
+                .map(|terminal| terminal.sequence())
+                .or_else(|| {
+                    execution
+                        .attempts()
+                        .last()
+                        .and_then(|attempt| request.projection.attempts().get(attempt))
+                        .and_then(|attempt| attempt.terminal())
+                        .map(|terminal| terminal.sequence())
+                });
+            let Some(sequence) = sequence else {
+                continue;
+            };
+            if event_summaries >= request.policy.budget().max_event_summaries {
+                break;
+            }
+            let event = event_at(
+                self.store,
+                &request.identity.run,
+                sequence,
+                request.through_sequence,
+            )?;
+            let Some((kind, roles)) = event_semantics(event.kind()) else {
+                continue;
+            };
+            let execution_fact = executions.get(execution.execution());
+            let attempt_id = event_attempt(event.kind());
+            let attempt = attempt_id.and_then(|attempt| attempts.get(attempt));
+            candidates.push(self.event_candidate(
+                &request,
+                &event,
+                kind,
+                roles,
+                execution_fact,
+                attempt_id,
+                attempt,
+                event_actor(event.kind()),
+                false,
+                &mut distances,
+            )?);
+            event_summaries += 1;
+            indexed_sequences.insert(sequence);
+        }
+        for execution in request.projection.settled_node_executions().values() {
+            let Some(sequence) = execution.terminal_sequence() else {
+                continue;
+            };
+            if event_summaries >= request.policy.budget().max_event_summaries {
+                break;
+            }
+            let event = event_at(
+                self.store,
+                &request.identity.run,
+                sequence,
+                request.through_sequence,
+            )?;
+            let Some((kind, roles)) = event_semantics(event.kind()) else {
+                continue;
+            };
+            let execution_fact = executions.get(execution.execution());
+            let attempt_id = event_attempt(event.kind());
+            let attempt = attempt_id.and_then(|attempt| attempts.get(attempt));
+            candidates.push(self.event_candidate(
+                &request,
+                &event,
+                kind,
+                roles,
+                execution_fact,
+                attempt_id,
+                attempt,
+                event_actor(event.kind()),
+                false,
+                &mut distances,
+            )?);
+            event_summaries += 1;
+            indexed_sequences.insert(sequence);
+        }
+        'pages: loop {
+            let remaining = maximum_records - scanned;
             if remaining == 0 {
-                return Err(ContextBuildError::RequiredBudget("candidate scan"));
+                break;
             }
             let page_size = SOURCE_PAGE_SIZE.min(remaining);
             let page = self
@@ -503,7 +668,7 @@ impl ContextCandidateSource for DurableContextCandidateSource<'_> {
                 .ok_or(ContextBuildError::AccountingOverflow)?;
             for event in &page.events {
                 if event.sequence() > request.through_sequence {
-                    return Ok(candidates);
+                    break 'pages;
                 }
                 match event.kind() {
                     RunEventKind::RunCreated { revision, .. }
@@ -516,15 +681,14 @@ impl ContextCandidateSource for DurableContextCandidateSource<'_> {
                         scope,
                         ..
                     } => {
-                        executions.insert(
-                            execution.clone(),
-                            ExecutionFact {
+                        executions
+                            .entry(execution.clone())
+                            .or_insert_with(|| ExecutionFact {
                                 execution: execution.clone(),
                                 node: node.clone(),
                                 scope: scope.clone(),
                                 revision: current_revision.clone(),
-                            },
-                        );
+                            });
                     }
                     RunEventKind::NodeScheduled {
                         execution,
@@ -579,6 +743,9 @@ impl ContextCandidateSource for DurableContextCandidateSource<'_> {
                         artifact,
                         ..
                     } => {
+                        if indexed_sequences.contains(&event.sequence()) {
+                            continue;
+                        }
                         if let Some(execution_fact) = executions.get(execution) {
                             candidates.push(self.output_candidate(
                                 &request,
@@ -598,6 +765,9 @@ impl ContextCandidateSource for DurableContextCandidateSource<'_> {
                         value,
                         artifact,
                     } => {
+                        if indexed_sequences.contains(&event.sequence()) {
+                            continue;
+                        }
                         if let Some(execution_fact) = executions.get(execution) {
                             candidates.push(self.output_candidate(
                                 &request,
@@ -612,28 +782,54 @@ impl ContextCandidateSource for DurableContextCandidateSource<'_> {
                             )?);
                         }
                     }
-                    RunEventKind::SubworkflowOutputImported { parent_value, .. } => {
-                        if let Some((_, execution_fact)) = executions
-                            .iter()
-                            .rev()
-                            .find(|(_, execution)| execution.scope == *parent_value.scope())
-                        {
-                            candidates.push(self.output_candidate(
-                                &request,
-                                execution_fact,
-                                None,
-                                parent_value,
-                                None,
-                                event,
-                                ContextProducerFact::default(),
-                                true,
-                                &mut distances,
-                            )?);
-                        }
+                    RunEventKind::SubworkflowCreated {
+                        subworkflow,
+                        parent_execution,
+                        ..
+                    } => {
+                        record_subworkflow_parent(
+                            &mut subworkflow_parents,
+                            subworkflow,
+                            parent_execution,
+                        )?;
                     }
-                    RunEventKind::JoinSatisfied { branches, .. } => {
-                        for branch in branches {
-                            joined_scopes.insert(branch.scope.clone());
+                    RunEventKind::SubworkflowOutputImported {
+                        subworkflow,
+                        parent_value,
+                        ..
+                    } => {
+                        let execution_fact = subworkflow_parents
+                            .get(subworkflow)
+                            .and_then(|execution| executions.get(execution))
+                            .ok_or(ContextBuildError::RequiredUnavailable(
+                                "subworkflow parent provenance",
+                            ))?;
+                        candidates.push(self.output_candidate(
+                            &request,
+                            execution_fact,
+                            None,
+                            parent_value,
+                            None,
+                            event,
+                            ContextProducerFact::default(),
+                            true,
+                            &mut distances,
+                        )?);
+                    }
+                    RunEventKind::JoinSatisfied {
+                        execution,
+                        branches,
+                        ..
+                    } => {
+                        if executions.get(execution).is_some_and(|execution| {
+                            execution.revision == *request.revision.id()
+                                && all_ancestors.contains_key(&execution.node)
+                        }) {
+                            join_exposed_values.extend(
+                                branches
+                                    .iter()
+                                    .flat_map(|branch| branch.outputs.iter().cloned()),
+                            );
                         }
                         if event_summaries < request.policy.budget().max_event_summaries {
                             event_summaries += 1;
@@ -654,7 +850,8 @@ impl ContextCandidateSource for DurableContextCandidateSource<'_> {
                             );
                         }
                     }
-                    kind if event_semantics(kind).is_some()
+                    kind if !indexed_sequences.contains(&event.sequence())
+                        && event_semantics(kind).is_some()
                         && event_summaries < request.policy.budget().max_event_summaries =>
                     {
                         event_summaries += 1;
@@ -690,19 +887,6 @@ impl ContextCandidateSource for DurableContextCandidateSource<'_> {
             if cursor.is_none() {
                 break;
             }
-            if scanned == request.policy.budget().max_candidate_records {
-                return Err(ContextBuildError::RequiredBudget("candidate scan"));
-            }
-        }
-        for candidate in &mut candidates {
-            if candidate.kind == ContextSemanticKind::Failure
-                && candidate
-                    .scope
-                    .as_ref()
-                    .is_some_and(|scope| joined_scopes.contains(scope))
-            {
-                candidate.exposed_across_scope = true;
-            }
         }
         for selector in request.policy.selected_workspace_values() {
             let reference: WorkspaceValueReference =
@@ -736,6 +920,11 @@ impl ContextCandidateSource for DurableContextCandidateSource<'_> {
                 &attempts,
                 &mut distances,
             )?);
+        }
+        for candidate in &mut candidates {
+            if candidate_references_join_output(candidate, &join_exposed_values) {
+                candidate.exposed_across_scope = true;
+            }
         }
         for selected in request.policy.selected_executions() {
             if !candidates.iter().any(|candidate| {
@@ -1259,6 +1448,91 @@ pub(crate) fn summarize_context_event(
     .map_err(|error| ContextBuildError::Policy(error.to_string()))
 }
 
+fn projected_attempt_fact(attempt: &crate::NodeAttemptProjection) -> AttemptFact {
+    let snapshot = attempt.capability().map(|resolution| resolution.snapshot());
+    let authorization = attempt.resolution_authorization();
+    AttemptFact {
+        execution: Some(attempt.execution().clone()),
+        invocation: attempt
+            .invocation()
+            .map(|invocation| invocation.as_str().to_owned()),
+        capability: snapshot.map(|snapshot| snapshot.capability().as_str().to_owned()),
+        descriptor_revision: snapshot.map(|snapshot| snapshot.descriptor_revision()),
+        provider_profile: snapshot.and_then(|snapshot| {
+            snapshot
+                .provider_profile()
+                .map(|profile| profile.as_str().to_owned())
+        }),
+        peer: authorization.and_then(|authorization| {
+            authorization
+                .request()
+                .resources
+                .peer
+                .as_ref()
+                .map(|peer| peer.as_str().to_owned())
+                .or_else(|| {
+                    authorization
+                        .request()
+                        .provenance
+                        .peer
+                        .as_ref()
+                        .map(|peer| peer.as_str().to_owned())
+                })
+        }),
+    }
+}
+
+fn candidate_references_join_output(
+    candidate: &ContextCandidate,
+    exposed: &BTreeSet<WorkspaceValueReference>,
+) -> bool {
+    candidate.source.as_ref().is_some_and(|source| {
+        matches!(
+            source,
+            ContextSource::WorkspaceValue { reference } if exposed.contains(reference)
+        )
+    }) || candidate.causal_parents.iter().any(|parent| {
+        matches!(
+            parent,
+            ContextEvidenceReference::Workspace {
+                reference: CausalReference::WorkspaceValue { reference }
+            } if exposed.contains(reference)
+        )
+    })
+}
+
+fn event_at(
+    store: &dyn RunQueryStore,
+    run: &RunId,
+    sequence: RunSequence,
+    through_sequence: RunSequence,
+) -> Result<RunEventEnvelope, ContextBuildError> {
+    if sequence > through_sequence {
+        return Err(ContextBuildError::RequiredUnavailable(
+            "context event is beyond the frozen boundary",
+        ));
+    }
+    let page = store
+        .events(
+            &EventPageQuery::new(
+                run.clone(),
+                Some(EventCursor {
+                    run: run.clone(),
+                    next_sequence: sequence,
+                }),
+                PageSize::new(1).map_err(persistence)?,
+            )
+            .map_err(persistence)?,
+        )
+        .map_err(persistence)?;
+    page.events
+        .into_iter()
+        .find(|event| event.sequence() == sequence)
+        .ok_or(ContextBuildError::RequiredUnavailable(
+            "context event changed or disappeared",
+        ))
+}
+
 fn exact_event(
     store: &dyn RunQueryStore,
     run: &RunId,
@@ -1361,4 +1635,38 @@ fn combined_authority(left: AuthorityFact, right: AuthorityFact) -> AuthorityFac
 
 fn persistence(error: impl std::fmt::Display) -> ContextBuildError {
     ContextBuildError::Persistence(error.to_string())
+}
+
+fn candidate_tail_start(through_sequence: u64, maximum_records: u32) -> u64 {
+    through_sequence
+        .saturating_sub(u64::from(maximum_records).saturating_sub(1))
+        .max(1)
+}
+
+fn record_subworkflow_parent(
+    parents: &mut BTreeMap<SubworkflowId, NodeExecutionId>,
+    subworkflow: &SubworkflowId,
+    parent_execution: &NodeExecutionId,
+) -> Result<(), ContextBuildError> {
+    if parents
+        .insert(subworkflow.clone(), parent_execution.clone())
+        .is_some_and(|existing| existing != *parent_execution)
+    {
+        return Err(ContextBuildError::Policy(
+            "subworkflow identity has conflicting parent provenance".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::candidate_tail_start;
+
+    #[test]
+    fn candidate_scan_budget_bounds_the_recent_tail_not_the_lifetime_prefix() {
+        assert_eq!(candidate_tail_start(10_000, 4_096), 5_905);
+        assert!(9_999 >= candidate_tail_start(10_000, 4_096));
+        assert_eq!(candidate_tail_start(512, 4_096), 1);
+    }
 }

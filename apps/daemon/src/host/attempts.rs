@@ -9,12 +9,16 @@ impl Owner {
         run: &str,
     ) -> Result<RunRead, PublicFailure> {
         let run_id = RunId::new(run.to_owned()).map_err(|error| invalid(&error.to_string()))?;
-        let result = self.inspect_control(
+        self.authorize_run_read(session, run, AuthorityOperation::InspectRun, "read:run")?;
+        let result = match self.inspect_control(
             session,
             ControlCommand::InspectRun { run: run_id },
             None,
             "run",
-        )?;
+        ) {
+            Err(error) if error.code == ErrorCode::Unauthorized => return Err(not_found()),
+            result => result?,
+        };
         let ControlResult::RunInspection { value } = result else {
             return Err(internal());
         };
@@ -79,6 +83,11 @@ impl Owner {
         };
         let artifact = ArtifactId::new(reference.artifact_id.clone())
             .map_err(|error| invalid(&error.to_string()))?;
+        artifacts::preauthorize_artifact_identity(
+            session,
+            &artifact,
+            AuthorityOperation::ReadArtifactContent,
+        )?;
         let metadata = self
             .store
             .metadata(&artifact)
@@ -180,6 +189,7 @@ impl Owner {
         let page_size = PageSize::new(256).map_err(public_persistence)?;
         let mut cursor = None;
         let mut current_revision = None::<RevisionId>;
+        let mut execution_authority = None;
         let mut executions = BTreeMap::new();
         let mut retry_timer = None;
         let mut located = None::<(String, String, AttemptRead)>;
@@ -189,6 +199,9 @@ impl Owner {
             let page = self.store.events(&query).map_err(public_persistence)?;
             for event in page.events {
                 match event.kind() {
+                    RunEventKind::ExecutionAuthorityEstablished { basis } => {
+                        execution_authority = Some(public_execution_authority(basis));
+                    }
                     RunEventKind::RunCreated { revision, .. }
                     | RunEventKind::RevisionPinned { revision, .. } => {
                         current_revision = Some(revision.clone());
@@ -245,6 +258,7 @@ impl Owner {
                             })
                             .ok_or_else(|| corruption("scheduled attempt has no revision"))?;
                         let mut value = empty_attempt_read(attempt, "scheduled");
+                        value.execution_authority = execution_authority.clone();
                         value.invocation_id = Some(invocation.as_str().to_owned());
                         value.context_manifest =
                             request.context_manifest().map(public_invocation_artifact);
@@ -261,6 +275,8 @@ impl Owner {
                         ..
                     } if resolved == &attempt_id => {
                         if let Some((_, _, value)) = located.as_mut() {
+                            value.resolution_authorization =
+                                Some(public_authority_decision(authorization));
                             value.peer_id = authorization
                                 .request()
                                 .resources
@@ -275,6 +291,24 @@ impl Owner {
                                         .as_ref()
                                         .map(|peer| peer.as_str().to_owned())
                                 });
+                        }
+                    }
+                    RunEventKind::CapabilityEntryDecisionRecorded {
+                        attempt: entered,
+                        authorization,
+                    } if entered == &attempt_id => {
+                        if let Some((_, _, value)) = located.as_mut() {
+                            value.claim_authorization =
+                                Some(public_authority_decision(authorization));
+                        }
+                    }
+                    RunEventKind::CapabilityAdapterEntryDecisionRecorded {
+                        attempt: entered,
+                        authorization,
+                    } if entered == &attempt_id => {
+                        if let Some((_, _, value)) = located.as_mut() {
+                            value.entry_authorization =
+                                Some(public_authority_decision(authorization));
                         }
                     }
                     RunEventKind::CapabilityResolved {
@@ -351,14 +385,36 @@ impl Owner {
         boundary: &str,
     ) -> Result<AuthorityDecisionSnapshot, PublicFailure> {
         let run = RunId::new(run.to_owned()).map_err(|error| invalid(&error.to_string()))?;
+        let mut resources = RequestedResourceFacts::empty();
+        resources.run = Some(run.clone());
+        match &session.grant.resources().workflow_run {
+            WorkflowRunScope::Any => {}
+            WorkflowRunScope::Workflow { workflow } => {
+                resources.workflow = Some(workflow.clone());
+            }
+            WorkflowRunScope::Run {
+                run: allowed,
+                workflow,
+            } => {
+                if allowed != &run {
+                    return Err(unauthorized());
+                }
+                resources.workflow = workflow.clone();
+            }
+        }
+        let decision = self.authorize(session, operation, resources.clone(), boundary)?;
         let summary = self
             .store
             .run_summary(&run)
             .map_err(public_persistence)?
             .ok_or_else(not_found)?;
-        let mut resources = RequestedResourceFacts::empty();
-        resources.workflow = Some(summary.workflow);
-        resources.run = Some(run);
-        self.authorize(session, operation, resources, boundary)
+        if resources
+            .workflow
+            .as_ref()
+            .is_some_and(|workflow| workflow != &summary.workflow)
+        {
+            return Err(not_found());
+        }
+        Ok(decision)
     }
 }

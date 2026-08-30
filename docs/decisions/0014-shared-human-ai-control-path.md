@@ -19,9 +19,10 @@ the existing runtime and persistence owners. It exposes bounded authorization-fi
 revision, reconciliation, proposal, and timeline read models without owning durable truth.
 
 The in-process `milkdrift-workflow-control` capability is a normal capability-host adapter over that
-service. Model-owned input contains only an opaque authority-context reference; a host-supplied
-trusted resolver supplies the immutable actor/grant context and the adapter rejects any embedded
-mismatch. Structured model output is decoded as data; prose and tool calls are ignored. Malformed,
+service. Model-owned input contains only the control request. The adapter derives the immutable
+actor/grant context from the invocation's host-frozen `CommandAuthorityClaim` and rejects a missing
+or internally inconsistent claim; there is no caller-supplied authority-context reference or global
+resolver. Structured model output is decoded as data; prose and tool calls are ignored. Malformed,
 hostile, unauthorized, or stale input is reported as a normal rejected task terminal and cannot
 write events directly. Successful results are published through an ordinary artifact port.
 
@@ -50,7 +51,7 @@ semantic path; a future UI must remain a client of that same boundary.
 Security and recovery tests exercise the same service and runtime commands regardless of caller
 type. Human-facing clients can reuse the command/read-model contract; models gain no bypass around
 approval or reconciliation. The adapter remains embeddable while the daemon owns authentication,
-authority-context resolution, artifact publication, lifecycle, and transport. Adding a new control
+freezing the invocation authority claim, artifact publication, lifecycle, and transport. Adding a new control
 operation requires an exhaustive mapping to an existing authority/runtime operation or a separate
 reviewed ownership change.
 

@@ -200,18 +200,6 @@ impl AuthRegistry {
     pub fn revocations(&self) -> BTreeMap<GrantId, u64> {
         self.revocations.as_ref().clone()
     }
-
-    pub fn contexts(&self) -> BTreeMap<String, ActorAuthorityContext> {
-        self.bindings
-            .iter()
-            .map(|binding| {
-                (
-                    binding.session.actor.as_str().to_owned(),
-                    binding.session.context.clone(),
-                )
-            })
-            .collect()
-    }
 }
 
 fn session(
@@ -320,7 +308,7 @@ mod tests {
 
     fn config(root: &std::path::Path, token: &std::path::Path) -> DaemonConfig {
         DaemonConfig {
-            schema_version: 3,
+            schema_version: 4,
             data_root: root.join("data"),
             bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             secret_sources: BTreeMap::from([(

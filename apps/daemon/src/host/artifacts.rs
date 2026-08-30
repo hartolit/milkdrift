@@ -10,11 +10,25 @@ impl Owner {
     ) -> Result<ArtifactMetadataRead, PublicFailure> {
         let artifact =
             ArtifactId::new(artifact.to_owned()).map_err(|error| invalid(&error.to_string()))?;
+        preauthorize_artifact_identity(
+            session,
+            &artifact,
+            AuthorityOperation::ReadArtifactMetadata,
+        )?;
         let metadata = self
             .store
             .metadata(&artifact)
             .map_err(public_persistence)?
             .ok_or_else(not_found)?;
+        if !session
+            .grant
+            .resources()
+            .artifacts
+            .sensitivities()
+            .contains(&metadata.sensitivity())
+        {
+            return Err(not_found());
+        }
         let mut resources = RequestedResourceFacts::empty();
         resources.artifact = Some(artifact);
         resources.artifact_sensitivity = Some(metadata.sensitivity());
@@ -40,11 +54,25 @@ impl Owner {
     ) -> Result<OwnerValue, PublicFailure> {
         let artifact_id =
             ArtifactId::new(artifact.to_owned()).map_err(|error| invalid(&error.to_string()))?;
+        preauthorize_artifact_identity(
+            session,
+            &artifact_id,
+            AuthorityOperation::ReadArtifactContent,
+        )?;
         let metadata = self
             .store
             .metadata(&artifact_id)
             .map_err(public_persistence)?
             .ok_or_else(not_found)?;
+        if !session
+            .grant
+            .resources()
+            .artifacts
+            .sensitivities()
+            .contains(&metadata.sensitivity())
+        {
+            return Err(not_found());
+        }
         let mut resources = RequestedResourceFacts::empty();
         resources.artifact = Some(artifact_id);
         resources.artifact_sensitivity = Some(metadata.sensitivity());
@@ -74,4 +102,19 @@ impl Owner {
             end: chunk.end_of_artifact,
         })
     }
+}
+
+pub(super) fn preauthorize_artifact_identity(
+    session: &ActorSession,
+    artifact: &ArtifactId,
+    operation: AuthorityOperation,
+) -> Result<(), PublicFailure> {
+    let scope = &session.grant.resources().artifacts;
+    if !session.grant.operations().contains(&operation)
+        || scope.sensitivities().is_empty()
+        || (!scope.identities().is_empty() && !scope.identities().contains(artifact))
+    {
+        return Err(unauthorized());
+    }
+    Ok(())
 }

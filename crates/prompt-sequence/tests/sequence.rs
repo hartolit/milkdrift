@@ -33,17 +33,10 @@ fn stage(identity: &str, prompt: &str) -> Value {
             "result_artifact": "verification_result",
             "log_artifact": "verification_logs"
         },
-        "checkpoint": "verification_artifacts",
         "failure": "pause_for_review",
         "reviewer": profile("fixture-reviewer", "read_only"),
         "approval": "shared_control_path",
         "context_policy_ref": "context:implementation-v1",
-        "budget": {
-            "max_coding_attempts": 1,
-            "max_verification_attempts": 2,
-            "timeout_ms": 30000,
-            "max_output_bytes": 1048576
-        },
         "outputs": [
             {"name": "diff", "media_type": "text/x-diff", "required": true},
             {"name": "result", "media_type": "application/json", "required": true},
@@ -54,7 +47,7 @@ fn stage(identity: &str, prompt: &str) -> Value {
 
 fn document_value() -> Value {
     json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "sequence": {
             "id": "dogfood-sequence",
             "title": "Headless dogfood sequence",
@@ -81,11 +74,7 @@ fn document_value() -> Value {
                 stage("two", "Implement the second bounded change.\n")
             ],
             "budget": {
-                "max_revisions": 8,
-                "max_review_loops": 3,
-                "max_elapsed_ms": 300000,
-                "max_capability_calls": 32,
-                "max_artifact_bytes": 67108864
+                "max_review_loops": 3
             },
             "extensions": {}
         }
@@ -194,11 +183,65 @@ fn prompt_documents_cannot_smuggle_shell_or_unbounded_content() -> TestResult {
     let encoded = serde_json::to_vec(&document_value())?;
     let text = String::from_utf8(encoded)?;
     let duplicate = text.replacen(
-        "\"schema_version\":1",
-        "\"schema_version\":1,\"schema_version\":1",
+        "\"schema_version\":2",
+        "\"schema_version\":2,\"schema_version\":2",
         1,
     );
     assert!(PromptSequenceDocument::from_json(duplicate.as_bytes()).is_err());
+    Ok(())
+}
+
+#[test]
+fn portable_paths_and_process_profile_contract_fail_closed() -> TestResult {
+    let mut legacy = document_value();
+    legacy["schema_version"] = json!(1);
+    assert!(matches!(
+        PromptSequenceDocument::from_json(&serde_json::to_vec(&legacy)?),
+        Err(PromptSequenceError::UnsupportedVersion { found: 1 })
+    ));
+
+    for path in [
+        r"C:\work",
+        r"\\server\share",
+        r"..\secret",
+        r"src\..\secret",
+        r"\\?\C:\device",
+    ] {
+        let mut hostile = document_value();
+        hostile["sequence"]["repository"]["allowed_paths"] = json!([path]);
+        assert!(
+            PromptSequenceDocument::from_json(&serde_json::to_vec(&hostile)?).is_err(),
+            "portable path validator accepted {path:?}"
+        );
+    }
+
+    let mut model_backed = document_value();
+    model_backed["sequence"]["stages"][0]["coding"]["operation"] = json!("model.generate");
+    model_backed["sequence"]["stages"][0]["coding"]["execution_trust"] = json!("remote_provider");
+    assert!(
+        PromptSequenceDocument::from_json(&serde_json::to_vec(&model_backed)?).is_err(),
+        "schema accepted a profile that cannot consume generated task inputs"
+    );
+    Ok(())
+}
+
+#[test]
+fn markdown_header_receives_lexical_bounds_before_value_allocation() -> TestResult {
+    let header = json!({
+        "schema_version": 2,
+        "sequence": {
+            "stages": [],
+            "oversized": (0..4097).collect::<Vec<_>>()
+        }
+    });
+    let markdown = format!(
+        "```milkdrift-sequence\n{}\n```\n\n## Prompt: one\nbody\n",
+        serde_json::to_string(&header)?
+    );
+    assert!(matches!(
+        PromptSequenceDocument::from_bytes(markdown.as_bytes()),
+        Err(PromptSequenceError::Bounds { .. })
+    ));
     Ok(())
 }
 
@@ -265,6 +308,30 @@ fn remediation_is_a_digest_bound_prospective_ordinary_revision() -> TestResult {
     assert_eq!(
         proposal.proposal().observed_run_sequence(),
         Some(milkdrift_persistence::RunSequence::new(42))
+    );
+
+    let mut altered = document_value();
+    altered["sequence"]["repository"]["root_ref"] = json!("workspace:substituted");
+    let altered = PromptSequenceDocument::from_json(&serde_json::to_vec(&altered)?)?;
+    assert!(
+        build_remediation_proposal(
+            &altered,
+            compiled.revision(),
+            RemediationProposalSpec {
+                run: milkdrift_workspace::RunId::new("run-remediation")?,
+                observed_sequence: milkdrift_persistence::RunSequence::new(42),
+                proposal: milkdrift_control::ProposalId::new("proposal-remediation-substituted")?,
+                proposer: milkdrift_authority::ActorRef::new("human:sequence-test")?,
+                stage_id: "two".to_owned(),
+                generation: 1,
+                prompt: PromptSource::InlineMarkdown {
+                    content: "Attempt remediation through altered policy.\n".to_owned(),
+                },
+                verification_override: None,
+            },
+        )
+        .is_err(),
+        "remediation accepted a document that did not match frozen import provenance"
     );
     Ok(())
 }

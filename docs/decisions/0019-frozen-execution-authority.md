@@ -56,9 +56,10 @@ actor's authority.
 Drafts and proposals may be stored without gaining execution authority, but start/adoption fails
 closed when their reachable requirements exceed the run envelope. Availability remains a separate
 mutable concern after semantic authority succeeds. Restart can prove the same basis and resolution
-decision from the journal. ADR 0020 advances authority grants to schema 2 and daemon configuration
-to schema 3 for explicit read/resource scopes; broad or unbounded administration still requires a
-conspicuous dangerous acknowledgement and older schemas are not silently migrated.
+decision from the journal. ADR 0020 advances authority grants to schema 2 for explicit
+read/resource scopes; daemon configuration is now schema 4 because peer artifact relationships must
+also name exact transferable sensitivity classes. Broad or unbounded administration still requires
+a conspicuous dangerous acknowledgement and older schemas are not silently migrated.
 
 ## Reconsideration triggers
 

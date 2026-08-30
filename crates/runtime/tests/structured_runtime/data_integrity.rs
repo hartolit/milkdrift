@@ -168,11 +168,11 @@ fn undeclared_executor_output_is_durably_rejected_without_workspace_mutation() -
             .iter()
             .any(|event| matches!(event.kind(), RunEventKind::NodeOutputPublished { .. }))
     );
-    assert!(
-        !history
-            .iter()
-            .any(|event| matches!(event.kind(), RunEventKind::ExternalOutcomeUncertain { .. }))
-    );
+    assert!(history.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::ExternalOutcomeUncertain { reason, .. }
+            if reason.as_str().contains("report rejected after adapter entry")
+    )));
     assert_eq!(harness.store.head(&run)?, projection.sequence());
     assert_eq!(
         u64::try_from(history.len())?,

@@ -17,15 +17,19 @@ execution/workspace/evidence selectors and defensive discovery/materialization b
 definition also declares output semantic roles; runtime selection never guesses roles from names
 or model prose.
 
-One `ContextCandidateSource` implementation pages the journal only through the dispatcher's frozen
-projection head and joins those facts with immutable revisions, workspace values, artifact metadata,
-scope lineage, and the initiating run's frozen execution-authority basis. Metadata discovery covers
+One `ContextCandidateSource` implementation searches a bounded recent tail only through the
+dispatcher's frozen projection head, anchors settled executions from the compact projection at
+their exact terminal sequences, and joins those facts with immutable revisions, workspace values,
+artifact metadata, scope lineage, and the initiating run's frozen execution-authority basis.
+Metadata discovery covers
 declared inputs, bounded control/data ancestors, exact nodes and executions, tagged outputs,
 failure/cancellation/uncertainty and typed decision events, join exposure, imported subworkflow
 results, selected workspace values, and explicit bounded evidence references. Historical ancestry is
 computed using the revision that governed the source execution. A later revision cannot reinterpret
-it. Successful sibling output remains branch-local; only explicitly imported/joined results and
-joined failure evidence cross the relevant boundary. Authority and branch omissions are redacted.
+it. A join exposes only its exact declared result to executions that are semantically downstream of
+that join. Sibling output and branch-local failures never become visible merely because their scope
+participated in a join. Imported subworkflow output resolves through the exact durable
+subworkflow-to-parent-execution fact. Authority and branch omissions are redacted.
 
 Selection order is causal depth, semantic kind, source revision/node/execution, then canonical
 source-reference bytes. Candidate scans, ancestor depth, historical event summaries, selected item
@@ -71,7 +75,9 @@ context therefore requires a distinct attempt/policy path and remains visibly di
 Context selection is inspectable, bounded, and provider-neutral. The authorized attempt read model
 returns bounded manifest policy, entries, omissions, accounting, schema/digest, and exact
 capability/provider/peer provenance; historical attempt identity is recovered by bounded-memory
-journal paging. Candidate acquisition remains behind runtime/persistence/workspace ports; the
+journal paging. Lifetime settled history cannot consume the candidate budget or make a fixed-active
+run undispatchable: recent discovery is bounded and compact projection anchors retain the exact
+settled facts needed for targeted lookup. Candidate acquisition remains behind runtime/persistence/workspace ports; the
 manifest contains references and bounded metadata rather than unbounded content or secrets.
 Blueprint v1 remains deliberately refused because the repository makes no compatibility promise
 for inventing a policy for old semantics.

@@ -29,7 +29,7 @@ use tracing::{debug, info, info_span, warn};
 
 use crate::projection::RunProjection;
 use crate::query::{
-    RUN_PROJECTION_SNAPSHOT_SCHEMA_V3, load_bounded_history, project_from_latest_snapshot,
+    RUN_PROJECTION_SNAPSHOT_SCHEMA_V4, load_bounded_history, project_from_latest_snapshot,
 };
 use crate::{
     BoundaryClock, CommandAuthorityClaim, IdGenerator, RetryPolicy, RunCommand, RunCommandDocument,
@@ -278,6 +278,33 @@ pub use effects::EffectExecutionResult;
 use support::{command_kind_name, durable_rejection};
 
 impl RuntimeService {
+    fn clear_run_scan_cursors(&self, run: &RunId) {
+        if let Ok(mut cursors) = self.structured_eligible_cursors.lock() {
+            cursors.remove(run);
+        }
+        if let Ok(mut cursors) = self.structured_branch_cursors.lock() {
+            cursors.remove(run);
+        }
+        if let Ok(mut cursors) = self.recovery_attempt_cursors.lock() {
+            cursors.remove(run);
+        }
+        if let Ok(mut cursors) = self.child_subworkflow_cursors.lock() {
+            cursors.remove(run);
+        }
+        if let Ok(mut cursors) = self.reconciliation_restart_cursors.lock() {
+            cursors.remove(run);
+        }
+        if let Ok(mut cursors) = self.cancellation_branch_cursors.lock() {
+            cursors.remove(run);
+        }
+        if let Ok(mut cursors) = self.cancellation_subworkflow_cursors.lock() {
+            cursors.remove(run);
+        }
+        if let Ok(mut cursors) = self.cancellation_execution_cursors.lock() {
+            cursors.remove(run);
+        }
+    }
+
     /// Opens storage, synchronously validates and recovers nonterminal runs, and only
     /// then admits work.
     ///
@@ -457,7 +484,7 @@ impl RuntimeService {
         }
         let history_digest = self.store.history_digest(run, projection.sequence())?;
         let mut identity = blake3::Hasher::new();
-        identity.update(b"milkdrift.runtime-projection-snapshot.v3\0");
+        identity.update(b"milkdrift.runtime-projection-snapshot.v4\0");
         identity.update(run.as_str().as_bytes());
         identity.update(&projection.sequence().get().to_be_bytes());
         let snapshot = SnapshotId::new(format!(
@@ -469,7 +496,7 @@ impl RuntimeService {
             run.clone(),
             projection.sequence(),
             history_digest,
-            RUN_PROJECTION_SNAPSHOT_SCHEMA_V3,
+            RUN_PROJECTION_SNAPSHOT_SCHEMA_V4,
             payload,
         )?)?;
         Ok(())

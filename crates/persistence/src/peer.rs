@@ -12,7 +12,7 @@ use crate::{PageSize, PersistenceError, TimestampMillis, WorkerId};
 pub const PEER_EXECUTION_RECORD_SCHEMA_VERSION_V1: u32 = 1;
 
 /// Durable relationship facts consulted inside the acceptance transaction.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PeerRelationshipState {
     /// Authenticated remote identity.
@@ -58,7 +58,7 @@ pub struct PeerDispatchClaim {
 }
 
 /// Evidence that dispatch crossed the local adapter-entry boundary.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PeerEntryEvidence {
     /// Worker owning the claim at entry.
@@ -67,6 +67,8 @@ pub struct PeerEntryEvidence {
     pub claim_generation: u64,
     /// Durable boundary immediately before local adapter invocation.
     pub entered_at_unix_ms: u64,
+    /// Fresh authority decision made against the exact adapter requirements at entry.
+    pub authority: AuthorityDecisionSnapshot,
 }
 
 /// Latest durable cancellation request and its separately durable acknowledgement.
@@ -84,7 +86,7 @@ pub struct PeerCancellationRecord {
 }
 
 /// Dispatch/entry/outcome state; durable acceptance is represented by existence of the record.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum PeerExecutionPhase {
     /// Accepted work is indexed in the durable dispatch queue.
@@ -250,6 +252,8 @@ pub struct PeerAdmission<'a> {
 /// Stable pre-acceptance capacity/authorization rejection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PeerAdmissionRejection {
+    /// Startup recovery or lifecycle draining has closed durable admission.
+    AdmissionClosed,
     /// Relationship is absent, disabled, stale, or expired.
     RelationshipUnavailable,
     /// Catalog generation/digest is absent, stale, or expired.
@@ -262,6 +266,35 @@ pub enum PeerAdmissionRejection {
     DispatchCapacity,
     /// Explicit total record retention bound is full.
     RetentionCapacity,
+}
+
+/// Atomic adapter-entry outcome after lifecycle and relationship revalidation.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PeerEntryOutcome {
+    /// The exact claim crossed the durable adapter-entry boundary.
+    Entered(Box<PeerExecutionRecord>),
+    /// Durable lifecycle admission closed before entry; the claim remains pre-entry.
+    AdmissionClosed,
+    /// The authorizing relationship generation is no longer eligible; the claim remains pre-entry.
+    RelationshipUnavailable,
+}
+
+/// Complete facts needed by one atomic adapter-entry transaction.
+pub struct PeerEntryRequest<'a> {
+    /// Authenticated execution owner.
+    pub owner: &'a PeerId,
+    /// Stable remote execution identity.
+    pub execution: &'a PeerExecutionId,
+    /// Worker holding the exact durable claim.
+    pub worker: &'a WorkerId,
+    /// Exact claim generation.
+    pub claim_generation: u64,
+    /// Relationship generation authorized immediately before entry.
+    pub relationship_generation: u64,
+    /// Nonzero adapter-entry boundary time.
+    pub entered_at_unix_ms: u64,
+    /// Fresh exact authority decision for the complete adapter requirements.
+    pub authority: &'a AuthorityDecisionSnapshot,
 }
 
 /// Atomic idempotent admission outcome.
@@ -351,6 +384,9 @@ pub struct PeerRetentionPage {
 /// Implementations own atomic admission/accounting, dispatch indexes, append-only
 /// observations, recovery and explicit retention. They expose no database transaction types.
 pub trait PeerExecutionStore: Send + Sync {
+    /// Opens or closes the durable admission/entry gate through one serialized transaction.
+    fn set_peer_admission_open(&self, open: bool) -> Result<(), PersistenceError>;
+
     /// Records or replaces a relationship only at a strictly newer generation; exact replay is safe.
     fn configure_peer_relationship(
         &self,
@@ -401,12 +437,8 @@ pub trait PeerExecutionStore: Send + Sync {
     /// Distinct CAS immediately before adapter invocation.
     fn mark_peer_entered(
         &self,
-        owner: &PeerId,
-        execution: &PeerExecutionId,
-        worker: &WorkerId,
-        claim_generation: u64,
-        entered_at_unix_ms: u64,
-    ) -> Result<PeerExecutionRecord, PersistenceError>;
+        request: &PeerEntryRequest<'_>,
+    ) -> Result<PeerEntryOutcome, PersistenceError>;
 
     /// Releases only an exact pre-entry claim back to the durable queue.
     fn release_peer_claim(

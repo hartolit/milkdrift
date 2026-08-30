@@ -440,6 +440,17 @@ impl SnapshotStore for RedbStore {
             ));
         }
         let previous_latest = validated_latest_pointer(&write, snapshot.run())?;
+        let should_advance = previous_latest.as_ref().is_none_or(|latest| {
+            latest.covered_sequence() < snapshot.covered_sequence()
+                || latest.covered_sequence() == snapshot.covered_sequence()
+                    && latest.snapshot().as_str() <= snapshot.snapshot().as_str()
+        });
+        if !should_advance {
+            return Err(PersistenceError::InvalidDocument(
+                "optional projection snapshots must monotonically replace the latest snapshot"
+                    .to_owned(),
+            ));
+        }
         {
             let mut snapshots = write.open_table(SNAPSHOTS).map_err(error::redb)?;
             if let Some(existing) = snapshots.get(key.as_slice()).map_err(error::redb)? {
@@ -455,16 +466,19 @@ impl SnapshotStore for RedbStore {
                     .map_err(error::redb)?;
             }
         }
-        let should_advance = previous_latest.as_ref().is_none_or(|latest| {
-            latest.covered_sequence() < snapshot.covered_sequence()
-                || latest.covered_sequence() == snapshot.covered_sequence()
-                    && latest.snapshot().as_str() <= snapshot.snapshot().as_str()
-        });
-        if should_advance {
+        write
+            .open_table(SNAPSHOT_LATEST)
+            .map_err(error::redb)?
+            .insert(snapshot.run().as_str(), snapshot.snapshot().as_str())
+            .map_err(error::redb)?;
+        if let Some(previous) = previous_latest
+            && previous.snapshot() != snapshot.snapshot()
+        {
+            let previous_key = codec::pair(snapshot.run().as_str(), previous.snapshot().as_str())?;
             write
-                .open_table(SNAPSHOT_LATEST)
+                .open_table(SNAPSHOTS)
                 .map_err(error::redb)?
-                .insert(snapshot.run().as_str(), snapshot.snapshot().as_str())
+                .remove(previous_key.as_slice())
                 .map_err(error::redb)?;
         }
         self.faults.check(FaultPoint::BeforeSnapshotCommit)?;

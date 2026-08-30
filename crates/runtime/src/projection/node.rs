@@ -143,6 +143,9 @@ pub struct SettledNodeExecutionProjection {
     pub(super) attempt_count: u32,
     pub(super) attempts: Vec<AttemptId>,
     pub(super) state: NodeExecutionState,
+    /// Exact terminal event retained as a bounded causal-context provenance anchor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) terminal_sequence: Option<RunSequence>,
     pub(super) side_effect: SideEffectClass,
     pub(super) route: Option<PortId>,
     pub(super) outputs: Vec<PublishedNodeOutput>,
@@ -189,6 +192,12 @@ impl SettledNodeExecutionProjection {
     #[must_use]
     pub const fn state(&self) -> &NodeExecutionState {
         &self.state
+    }
+
+    /// Exact terminal event sequence retained for bounded context/audit lookup.
+    #[must_use]
+    pub const fn terminal_sequence(&self) -> Option<RunSequence> {
+        self.terminal_sequence
     }
 
     /// Total attempts admitted for the occurrence.
@@ -876,6 +885,12 @@ impl NodeAttemptProjection {
     #[must_use]
     pub const fn capability(&self) -> Option<&CapabilityResolution> {
         self.capability.as_ref()
+    }
+
+    /// Candidate-set authority decision recorded before capability resolution was frozen.
+    #[must_use]
+    pub const fn resolution_authorization(&self) -> Option<&AuthorityDecisionSnapshot> {
+        self.resolution_authorization.as_ref()
     }
 
     /// Fresh exact-candidate decision recorded when the leased effect was claimed.

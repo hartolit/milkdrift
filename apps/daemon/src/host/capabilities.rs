@@ -70,12 +70,10 @@ impl Owner {
 pub(super) fn register_control(
     host: &CapabilityHost,
     control: Arc<ControlService>,
-    contexts: BTreeMap<String, milkdrift_control::ActorAuthorityContext>,
     data: Arc<dyn InvocationDataAccess>,
 ) -> Result<(), String> {
     let adapter = Arc::new(WorkflowControlAdapter::new(
         control,
-        Arc::new(StaticContexts(contexts)),
         Arc::new(ResultSink { data }),
     ));
     let descriptor = workflow_control_descriptor().map_err(|error| error.to_string())?;

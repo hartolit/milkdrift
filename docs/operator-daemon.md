@@ -8,7 +8,7 @@ Startup is deliberately fail-closed and ordered:
 
 1. Validate daemon configuration, normalized paths, credential references, grants, and bounds before opening storage.
 2. Refuse a data root containing legacy `control-state-v1.json`, `peer-executions-v1`, or `peer-artifacts-v1`. This release neither imports nor ignores old sidecar/prototype idempotency and artifact authority; move to a fresh data root or perform an explicitly reviewed offline conversion.
-3. Open exact-current redb physical schema 5/internal document format 8 and the immutable artifact root.
+3. Open exact-current redb physical schema 5/internal document format 9 and the immutable artifact root.
 4. Open runtime admission closed and recover active runtime state.
 5. Validate bounded application-receipt and layout reads; corrupt or unsupported records fail startup.
 6. Register and health-check workflow-control, process, and model adapters.
@@ -31,6 +31,6 @@ Shutdown means owner completion, not merely stopping the HTTP listener. The daem
 
 ## Backup, compatibility, and repair
 
-Stop the daemon cleanly before copying its data root. Artifact bytes remain in the content-addressed filesystem store; application, peer execution, and runtime metadata remain in redb. This pre-release build implements no storage migration: physical schemas other than 5 and internal document formats other than 8 are refused. Do not edit rows or schema markers by hand.
+Stop the daemon cleanly before copying its data root. Artifact bytes remain in the content-addressed filesystem store; application, peer execution, and runtime metadata remain in redb. This pre-release build implements no storage migration: physical schemas other than 5 and internal document formats other than 9 are refused. Do not edit rows or schema markers by hand.
 
 Use the bounded resumable storage-integrity scan for administrative verification. Its current physical phases are `0..=39`; application phases validate receipts, layouts, proposal-to-receipt links, security-audit records, and receipt/audit counters. Proposal projection rebuilding is an explicit adapter operation and should follow diagnosis of projection damage, not replace validation of authoritative receipts.

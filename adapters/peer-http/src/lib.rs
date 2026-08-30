@@ -13,7 +13,8 @@ mod service;
 mod store;
 
 pub use artifact::{
-    CorePeerArtifactStore, PeerArtifactError, PeerArtifactStore, PeerCoreArtifactStore,
+    CorePeerArtifactStore, PeerArtifactError, PeerArtifactStore, PeerArtifactTransferFacts,
+    PeerCoreArtifactStore,
 };
 pub use auth::{PeerAuthenticator, PeerCredentialSource, StaticPeerCredential};
 pub use client::PeerHttpClient;

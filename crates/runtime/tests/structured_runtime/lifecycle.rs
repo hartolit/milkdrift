@@ -840,21 +840,30 @@ fn consumed_non_idempotent_ticket_is_not_reissued_after_deterministic_failure() 
         .into_iter()
         .next()
         .ok_or("effect ticket was not claimed")?;
-    assert!(matches!(
-        runtime.execute_effect(action),
-        Err(RuntimeError::Executor(ExecutorError::InvalidReports(_)))
-    ));
+    let rejected = runtime.execute_effect(action);
+    assert!(
+        matches!(
+            rejected,
+            Err(RuntimeError::Executor(ExecutorError::InvalidReports(_)))
+        ),
+        "invalid post-entry report returned {rejected:?}"
+    );
     assert_eq!(executor.dispatches(), 1);
     assert!(runtime.claim_effects(PageSize::new(1)?)?.is_empty());
     assert_eq!(executor.dispatches(), 1);
+    let history = runtime.history(&run)?;
     assert_eq!(
-        runtime
-            .history(&run)?
+        history
             .iter()
             .filter(|event| matches!(event.kind(), RunEventKind::NodeStarted { .. }))
             .count(),
         1
     );
+    assert!(history.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::ExternalOutcomeUncertain { reason, .. }
+            if reason.as_str().contains("report rejected after adapter entry")
+    )));
     Ok(())
 }
 

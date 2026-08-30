@@ -22,6 +22,13 @@ pub(super) fn execute(
         }
         return stored_application_result(&existing);
     }
+    // The owner serializes external commands; reserve semantic work only while a receipt slot
+    // is known to exist. Runtime/control command identities remain independently idempotent across
+    // a crash between their acceptance and the receipt commit.
+    owner
+        .store
+        .ensure_application_command_capacity()
+        .map_err(public_persistence)?;
     if let Command::PutLayout { layout } = &mut request.command {
         layout.author = session.actor.as_str().to_owned();
         layout.digest = layout.computed_digest().map_err(public_protocol)?;

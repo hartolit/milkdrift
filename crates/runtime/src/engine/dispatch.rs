@@ -571,6 +571,7 @@ impl RuntimeService {
                     direct_inputs: request.inputs(),
                     required_direct_inputs: &required_direct_inputs,
                     through_sequence: projection.sequence(),
+                    projection,
                     authority: basis,
                     evaluated_at_ms: now.get(),
                 })

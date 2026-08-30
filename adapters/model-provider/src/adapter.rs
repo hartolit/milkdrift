@@ -214,7 +214,7 @@ impl ModelEndpointAdapter {
             .map_err(|_| AdapterError::rejected("context manifest is not canonical UTF-8"))?;
         let context_parts = self.load_context_parts(context, request, manifest.body(), limits)?;
         let task = self.load_task(context, request, limits)?;
-        self.negotiate(&task)?;
+        self.negotiate(&task, &context_parts)?;
         let cancelled = Arc::new(AtomicBool::new(false));
         {
             let mut active = self.active.lock().map_err(|_| {
@@ -816,7 +816,11 @@ impl ModelEndpointAdapter {
             .map_err(|_| AdapterError::rejected("model task contract is malformed"))
     }
 
-    fn negotiate(&self, task: &ModelTaskRequest) -> Result<(), AdapterError> {
+    fn negotiate(
+        &self,
+        task: &ModelTaskRequest,
+        context_parts: &[MaterializedContextPart],
+    ) -> Result<(), AdapterError> {
         let features = self.profile.features();
         let require = |feature, reason| {
             if features.contains(&feature) {
@@ -825,6 +829,19 @@ impl ModelEndpointAdapter {
                 Err(AdapterError::rejected(reason))
             }
         };
+        require(
+            ModelFeature::SystemRole,
+            "profile does not advertise the system role required for the frozen context manifest",
+        )?;
+        if context_parts
+            .iter()
+            .any(|part| matches!(part, MaterializedContextPart::Image { .. }))
+        {
+            require(
+                ModelFeature::Images,
+                "profile does not advertise selected context image mapping",
+            )?;
+        }
         if task.streaming() {
             require(
                 ModelFeature::Streaming,

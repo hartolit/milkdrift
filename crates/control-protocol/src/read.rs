@@ -158,6 +158,14 @@ pub struct AttemptRead {
     pub descriptor_revision: Option<u64>,
     /// Exact frozen capability-generation and safe implementation provenance.
     pub capability_provenance: Option<CapabilityProvenanceRead>,
+    /// Frozen run-level actor, grant revision, policy, and accepted start decision.
+    pub execution_authority: Option<ExecutionAuthorityRead>,
+    /// Candidate-set authority decision made before capability resolution.
+    pub resolution_authorization: Option<AuthorityDecisionRead>,
+    /// Fresh exact-candidate authority decision made when the effect claim was acquired.
+    pub claim_authorization: Option<AuthorityDecisionRead>,
+    /// Final authority decision made immediately before adapter entry.
+    pub entry_authorization: Option<AuthorityDecisionRead>,
     /// Exact provider profile selected for this attempt.
     pub provider_profile: Option<String>,
     /// Authenticated peer identity when remote execution recorded one.
@@ -172,6 +180,60 @@ pub struct AttemptRead {
     pub terminal: Option<String>,
     /// Whether external outcome remains unresolved.
     pub uncertain: bool,
+}
+
+/// Bounded immutable run execution-authority provenance.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionAuthorityRead {
+    /// Authenticated actor whose authority follows the work.
+    pub actor_id: String,
+    /// Exact immutable grant identity.
+    pub grant_id: String,
+    /// Exact immutable grant revision.
+    pub grant_revision: u64,
+    /// Digest of that grant revision.
+    pub grant_digest: String,
+    /// Acceptance-time revocation generation.
+    pub revocation_generation: u64,
+    /// Evaluator policy identity.
+    pub policy_id: String,
+    /// Evaluator policy version.
+    pub policy_version: u32,
+    /// Decision that established execution authority.
+    pub accepted_decision_id: String,
+    /// Digest of the accepted decision.
+    pub accepted_decision_digest: String,
+    /// Digest of the complete frozen basis.
+    pub basis_digest: String,
+}
+
+/// Bounded immutable authority-decision provenance for one execution boundary.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityDecisionRead {
+    /// Evaluated decision identity.
+    pub decision_id: String,
+    /// Actor carried into the evaluation.
+    pub actor_id: String,
+    /// Exact grant identity.
+    pub grant_id: String,
+    /// Exact grant revision.
+    pub grant_revision: u64,
+    /// Exact grant digest.
+    pub grant_digest: String,
+    /// Revocation generation evaluated at this boundary.
+    pub revocation_generation: u64,
+    /// Evaluator policy identity.
+    pub policy_id: String,
+    /// Evaluator policy version.
+    pub policy_version: u32,
+    /// Stable requested operation label.
+    pub operation: String,
+    /// True only for an allowed decision.
+    pub allowed: bool,
+    /// Digest of the complete decision snapshot.
+    pub decision_digest: String,
 }
 
 /// Safe immutable capability-generation facts retained with an attempt.

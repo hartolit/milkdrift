@@ -12,11 +12,15 @@ wire compatibility and authority filtering.
 
 ## Decision
 
-`milkdrift-control-protocol` owns pure protocol 1.0 commands, errors, pages, feed cursors,
+`milkdrift-control-protocol` owns pure protocol 2.0 commands, errors, pages, feed cursors,
 observations, and read models. The daemon projects immutable revision summaries/diffs, compact
 runs/nodes/attempts, proposal status, bounded timeline categories, capabilities, current authority,
 artifact metadata, and health. Timeline entries retain exact durable sequence/provenance anchors
 but never expose an internal event discriminant or complete event body.
+
+Protocol 2 adds the run's frozen actor/grant/policy basis and the resolution, claim, and final-entry
+authority decision snapshots to attempt reads. Since protocol DTOs reject unknown fields, this is a
+major-version change; protocol 1 is not silently widened or negotiated.
 
 Queries are page- and byte-bounded. Authenticated cursor schema 2 binds a continuation to one exact
 feed, actor, grant identity/revision/digest, decision, resource/filter digest, and credential MAC.

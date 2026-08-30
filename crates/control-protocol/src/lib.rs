@@ -21,7 +21,7 @@ pub use layout::*;
 pub use read::*;
 
 /// Supported control protocol major version.
-pub const PROTOCOL_MAJOR: u16 = 1;
+pub const PROTOCOL_MAJOR: u16 = 2;
 /// Supported control protocol minor version.
 pub const PROTOCOL_MINOR: u16 = 0;
 /// Independent presentation-layout document version.
@@ -642,7 +642,7 @@ mod tests {
             ProtocolVersion::CURRENT
         );
         assert!(matches!(
-            ProtocolVersion { major: 2, minor: 0 }.negotiate(),
+            ProtocolVersion { major: 1, minor: 0 }.negotiate(),
             Err(ProtocolError::UnsupportedMajor { .. })
         ));
         let cursor = Cursor::new("run:alpha", 42)?;

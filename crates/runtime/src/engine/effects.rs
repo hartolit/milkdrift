@@ -535,29 +535,52 @@ impl RuntimeService {
             });
         }
         if let Some(failure) = outcome.failure {
-            return Err(failure.into_runtime_error());
+            let error = failure.into_runtime_error();
+            self.record_effect_uncertainty(
+                adapter_dispatch.run(),
+                adapter_dispatch.attempt(),
+                &format!("executor report rejected after adapter entry: {error}"),
+            )?;
+            return Err(error);
         }
         match boundary {
-            Ok(()) => Err(RuntimeError::Executor(ExecutorError::InvalidReports(
-                "executor returned without a terminal observation".to_owned(),
-            ))),
-            Err(
-                error @ (ExecutorError::Boundary(_)
-                | ExecutorError::BoundaryAfterEntry(_)
-                | ExecutorError::AdapterPanicked { after_entry: true }),
-            ) => {
+            Ok(()) => {
+                let error = RuntimeError::Executor(ExecutorError::InvalidReports(
+                    "executor returned without a terminal observation".to_owned(),
+                ));
+                self.record_effect_uncertainty(
+                    adapter_dispatch.run(),
+                    adapter_dispatch.attempt(),
+                    &error.to_string(),
+                )?;
+                Err(error)
+            }
+            Err(error @ ExecutorError::InvalidReports(_)) => {
+                self.record_effect_uncertainty(
+                    adapter_dispatch.run(),
+                    adapter_dispatch.attempt(),
+                    &format!("executor report rejected after adapter entry: {error}"),
+                )?;
+                Err(RuntimeError::Executor(error))
+            }
+            Err(error) => {
                 warn!(
                     run = %adapter_dispatch.run(),
                     attempt = %adapter_dispatch.attempt(),
                     reason = %error,
                     "external effect boundary returned without a terminal observation"
                 );
-                self.record_effect_uncertainty(adapter_dispatch.run(), adapter_dispatch.attempt())?;
+                self.record_effect_uncertainty(
+                    adapter_dispatch.run(),
+                    adapter_dispatch.attempt(),
+                    &format!(
+                        "external effect boundary returned without terminal evidence: {error}"
+                    ),
+                )?;
                 Ok(EffectExecutionResult::Uncertain {
                     observations: outcome.observations,
                 })
             }
-            Err(error) => Err(RuntimeError::Executor(error)),
         }
     }
 
@@ -680,6 +703,7 @@ impl RuntimeService {
         &self,
         run: &RunId,
         attempt: &AttemptId,
+        detail: &str,
     ) -> Result<(), RuntimeError> {
         let projection = self.projection(run)?;
         let attempt_view = projection.attempts().get(attempt).ok_or_else(|| {
@@ -708,9 +732,7 @@ impl RuntimeService {
             attempt: attempt.clone(),
             report_sequence,
             side_effect: side_effect.side_effect(),
-            reason: Reason::new(
-                "external effect boundary returned without a terminal observation",
-            )?,
+            reason: bounded_uncertainty_reason(detail)?,
             evidence: Vec::new(),
         });
         if self.config.retry_policy.permits_automatic_retry(
@@ -749,6 +771,30 @@ impl RuntimeService {
         )?;
         Ok(())
     }
+}
+
+fn bounded_uncertainty_reason(detail: &str) -> Result<Reason, PersistenceError> {
+    let mut value = detail
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    if value.is_empty() {
+        value.push_str("external effect boundary returned without terminal evidence");
+    }
+    if value.len() > 2_000 {
+        let mut end = 2_000;
+        while !value.is_char_boundary(end) {
+            end -= 1;
+        }
+        value.truncate(end);
+    }
+    Reason::new(value)
 }
 
 enum ReportIngestionFailure {

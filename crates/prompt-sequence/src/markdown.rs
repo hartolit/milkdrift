@@ -64,6 +64,7 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<PromptSequenceDocument, PromptSequen
         ));
     }
 
+    PromptSequenceDocument::preflight_markdown_header(header.as_bytes())?;
     let mut value = milkdrift_contracts::parse_json_without_duplicates(header.as_bytes())
         .map_err(|error| PromptSequenceError::Markdown(error.to_string()))?;
     let stages = value

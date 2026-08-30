@@ -38,6 +38,7 @@ Peer support is disabled unless `peers.enabled` and explicit relationships are c
     "maximum_concurrent": 2,
     "maximum_requests_per_minute": 600,
     "maximum_artifact_bytes": 1048576,
+    "artifact_sensitivities": [],
     "maximum_duration_ms": 30000,
     "maximum_observations": 128,
     "trust_zone": "operator-wireguard",
@@ -60,14 +61,14 @@ The insecure mode refuses non-loopback URLs. Use ordinary HTTPS directly or term
 
 ## Local daemon quick start
 
-Create a private bearer-token file and a version-three daemon configuration. Relative paths are resolved from the configuration file directory. Presets are deterministic shorthand for exact operation sets only; the required `authority` object supplies every executable resource scope, ceiling, and validity boundary.
+Create a private bearer-token file and a version-four daemon configuration. Relative paths are resolved from the configuration file directory. Presets are deterministic shorthand for exact operation sets only; the required `authority` object supplies every executable resource scope, ceiling, and validity boundary.
 
 ```sh
 install -m 600 /dev/null operator.token
 printf '%s' 'replace-with-a-long-random-local-token' > operator.token
 cat > daemon.json <<'JSON'
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "data_root": "./milkdrift-data",
   "bind": "127.0.0.1:9734",
   "secret_sources": {
@@ -169,7 +170,7 @@ cargo run -p milkdrift-cli -- run timeline RUN_ID --follow
 Successful verification advances to the next fresh coding-agent process while one explicitly
 authorized repository remains persistent. Failure routes to independent review and a durable
 shared-control approval hold; remediation is a normal prospective revision. See [the headless
-dogfood guide](docs/headless-dogfood.md), [schema-1 reference](docs/reference/prompt-sequence-v1.md),
+dogfood guide](docs/headless-dogfood.md), [schema-2 reference](docs/reference/prompt-sequence-v2.md),
 and [complete example](examples/headless-dogfood-sequence.md).
 
 The daemon refuses non-loopback plaintext binds and permissive CORS is not enabled. Older configuration/storage schemas and legacy sidecar authority are not silently migrated, and broad/unbounded authority requires an explicit dangerous acknowledgement. Empty artifact, layout, peer, and workspace scopes deny access. See [the daemon operation guide](docs/operator-daemon.md), [the authority configuration guide](docs/operator-authority.md), and [the control API reference](docs/reference/control-api.md).

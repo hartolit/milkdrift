@@ -11,10 +11,10 @@ use std::{
 use milkdrift_authority::{
     ActorRef, ArtifactAuthorityScope, AuthorityBudget, AuthorityEvaluator,
     AuthorityExecutionProvenance, AuthorityGrant, AuthorityGrantBuilder, AuthorityOperation,
-    AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope, DaemonAuthorityScope,
-    DecisionId, GrantId, GrantSetEvaluator, LayoutAuthorityScope, NetworkScope, PeerAuthorityScope,
-    PeerId, PolicyId, RequestedResourceFacts, ResourceScope, WorkflowRunScope,
-    WorkspaceAuthorityScope,
+    AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope,
+    CapabilityExecutionRequirements, DaemonAuthorityScope, DecisionId, GrantId, GrantSetEvaluator,
+    LayoutAuthorityScope, NetworkScope, PeerAuthorityScope, PeerId, PolicyId,
+    RequestedResourceFacts, ResourceScope, WorkflowRunScope, WorkspaceAuthorityScope,
 };
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_capability::{
@@ -34,7 +34,8 @@ use milkdrift_peer_protocol::{
 use milkdrift_persistence::{
     AttemptId, NodeExecutionId, PageSize, PeerAdmission, PeerAdmissionOutcome,
     PeerAdmissionRejection, PeerCatalogState, PeerClaimOutcome, PeerDispatchClaimRequest,
-    PeerExecutionPhase, PeerExecutionRecord, PeerExecutionStore, PeerRelationshipState, WorkerId,
+    PeerEntryOutcome, PeerEntryRequest, PeerExecutionPhase, PeerExecutionRecord,
+    PeerExecutionStore, PeerRelationshipState, WorkerId,
 };
 use milkdrift_workspace::RunId;
 use subtle::ConstantTimeEq as _;
@@ -189,6 +190,9 @@ impl PeerService {
             BTreeMap::new(),
         )
         .map_err(|error| PeerHttpError::Configuration(error.to_string()))?;
+        executions
+            .set_peer_admission_open(false)
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
         for relationship in relationships.values() {
             executions
                 .configure_peer_relationship(&PeerRelationshipState {
@@ -212,7 +216,8 @@ impl PeerService {
             catalogs: Mutex::new(BTreeMap::new()),
             rate_windows: Mutex::new(BTreeMap::new()),
             revoked_peers: Mutex::new(BTreeSet::new()),
-            drain: AtomicU8::new(0),
+            // Recovery owns startup. Workers and inbound admission remain closed until it finishes.
+            drain: AtomicU8::new(3),
             artifacts,
             authenticator,
             workers: Mutex::new(None),
@@ -408,8 +413,6 @@ impl PeerService {
         request
             .validate()
             .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
-        let authority_decision =
-            self.authorize_invocation(&relationship, &request, self.clock.now_unix_ms())?;
         self.check_rate(
             &relationship,
             &format!("invoke:{}", request.selection.operation().as_str()),
@@ -461,6 +464,14 @@ impl PeerService {
                 "selected operation is not advertised".to_owned(),
             ));
         }
+        let generation = self.exact_generation(&relationship, &request)?;
+        let authority_decision = self.authorize_invocation(
+            &relationship,
+            &request,
+            &generation.descriptor,
+            &generation.authority_requirements,
+            now,
+        )?;
         let execution = execution_identity(authenticated_peer, &request)?;
         match self
             .executions
@@ -690,10 +701,46 @@ impl PeerService {
             ArtifactTransferDirection::Upload => AuthorityOperation::PeerArtifactUpload,
             ArtifactTransferDirection::Download => AuthorityOperation::PeerArtifactDownload,
         };
+        let record = self
+            .executions
+            .peer_execution(authenticated_peer, &offer.execution)
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+            .ok_or_else(|| {
+                PeerHttpError::Unauthorized(
+                    "artifact is not bound to an execution owned by this peer".to_owned(),
+                )
+            })?;
+        if offer.direction == ArtifactTransferDirection::Download {
+            if offer.source_peer != self.config.local_peer {
+                return Err(PeerHttpError::Unauthorized(
+                    "download source is not the serving peer".to_owned(),
+                ));
+            }
+            let mut produced = false;
+            for sequence in 1..=record.last_observation_sequence {
+                if self
+                    .executions
+                    .peer_observation_artifact(&record.execution, sequence)
+                    .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+                    .as_ref()
+                    .is_some_and(|artifact| {
+                        workspace_artifact_matches_capability(&offer.artifact, artifact)
+                    })
+                {
+                    produced = true;
+                    break;
+                }
+            }
+            if !produced {
+                return Err(PeerHttpError::Unauthorized(
+                    "artifact is not a durable output of the claimed execution".to_owned(),
+                ));
+            }
+        }
         self.require_operation(
             &relationship,
             operation,
-            RequestedResourceFacts::empty(),
+            artifact_resource_facts(&offer.artifact, offer.sensitivity),
             AuthorityBudget {
                 artifact_bytes: Some(offer.artifact.size_bytes()),
                 ..AuthorityBudget::default()
@@ -727,10 +774,18 @@ impl PeerService {
         chunk: &ArtifactChunk,
     ) -> Result<ArtifactTransferDecision, PeerHttpError> {
         let relationship = self.relationship(authenticated_peer)?;
+        let facts = self
+            .artifacts
+            .transfer_facts(authenticated_peer, &chunk.transfer)?;
+        if facts.direction != ArtifactTransferDirection::Upload {
+            return Err(PeerHttpError::Unauthorized(
+                "artifact transfer direction is not upload".to_owned(),
+            ));
+        }
         self.require_operation(
             &relationship,
             AuthorityOperation::PeerArtifactUpload,
-            RequestedResourceFacts::empty(),
+            artifact_resource_facts(&facts.artifact, facts.sensitivity),
             AuthorityBudget {
                 artifact_bytes: Some(u64::try_from(chunk.bytes.len()).unwrap_or(u64::MAX)),
                 ..AuthorityBudget::default()
@@ -755,10 +810,18 @@ impl PeerService {
         maximum_bytes: u32,
     ) -> Result<ArtifactChunk, PeerHttpError> {
         let relationship = self.relationship(authenticated_peer)?;
+        let facts = self
+            .artifacts
+            .transfer_facts(authenticated_peer, transfer)?;
+        if facts.direction != ArtifactTransferDirection::Download {
+            return Err(PeerHttpError::Unauthorized(
+                "artifact transfer direction is not download".to_owned(),
+            ));
+        }
         self.require_operation(
             &relationship,
             AuthorityOperation::PeerArtifactDownload,
-            RequestedResourceFacts::empty(),
+            artifact_resource_facts(&facts.artifact, facts.sensitivity),
             AuthorityBudget {
                 artifact_bytes: Some(u64::from(maximum_bytes)),
                 ..AuthorityBudget::default()
@@ -782,41 +845,48 @@ impl PeerService {
         transfer: &TransferId,
     ) -> Result<(), PeerHttpError> {
         let relationship = self.relationship(authenticated_peer)?;
-        if !self.operation_is_allowed(
+        let facts = self
+            .artifacts
+            .transfer_facts(authenticated_peer, transfer)?;
+        let operation = match facts.direction {
+            ArtifactTransferDirection::Upload => AuthorityOperation::PeerArtifactUpload,
+            ArtifactTransferDirection::Download => AuthorityOperation::PeerArtifactDownload,
+        };
+        self.require_operation(
             &relationship,
-            AuthorityOperation::PeerArtifactUpload,
-            RequestedResourceFacts::empty(),
+            operation,
+            artifact_resource_facts(&facts.artifact, facts.sensitivity),
             AuthorityBudget::default(),
-        )? && !self.operation_is_allowed(
-            &relationship,
-            AuthorityOperation::PeerArtifactDownload,
-            RequestedResourceFacts::empty(),
-            AuthorityBudget::default(),
-        )? {
-            return Err(PeerHttpError::Unauthorized(
-                "artifact transfer authority is not granted".to_owned(),
-            ));
-        }
+        )?;
         self.check_rate(&relationship, "artifact_abort")?;
         self.artifacts.abort(authenticated_peer, transfer)?;
         Ok(())
     }
 
     /// Marks all catalogs stale and stops accepting new peer invocations.
-    pub fn begin_drain(&self) {
+    pub fn begin_drain(&self) -> Result<(), PeerHttpError> {
+        self.executions
+            .set_peer_admission_open(false)
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
         self.drain.store(1, Ordering::SeqCst);
         self.notify_workers();
+        Ok(())
     }
 
     /// Marks shutdown state for handshake and catalog consumers.
-    pub fn begin_shutdown(&self) {
+    pub fn begin_shutdown(&self) -> Result<(), PeerHttpError> {
+        let closed = self
+            .executions
+            .set_peer_admission_open(false)
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()));
         self.drain.store(2, Ordering::SeqCst);
         self.notify_workers();
+        closed
     }
 
     /// Stops durable claims and joins the fixed worker owner up to the supplied deadline.
     pub fn shutdown_workers(&self, timeout: Duration) -> PeerWorkerShutdownReport {
-        self.begin_shutdown();
+        let admission_closed = self.begin_shutdown().is_ok();
         let Ok(mut workers) = self.workers.lock() else {
             return PeerWorkerShutdownReport {
                 clean: false,
@@ -824,23 +894,34 @@ impl PeerService {
                 retained_workers: self.config.workers.threads,
             };
         };
-        workers.as_mut().map_or(
+        let mut report = workers.as_mut().map_or(
             PeerWorkerShutdownReport {
                 clean: true,
                 joined: 0,
                 retained_workers: 0,
             },
             |owner| owner.shutdown(timeout),
-        )
+        );
+        report.clean &= admission_closed;
+        report
     }
 
     /// Revokes one relationship immediately for inbound authentication and protocol actions.
     pub fn revoke_peer(&self, peer: &PeerId) -> Result<(), PeerHttpError> {
-        if !self.relationships.contains_key(peer) {
+        let Some(relationship) = self.relationships.get(peer) else {
             return Err(PeerHttpError::NotFound(
                 "peer relationship is not configured".to_owned(),
             ));
-        }
+        };
+        self.executions
+            .configure_peer_relationship(&PeerRelationshipState {
+                peer: peer.clone(),
+                generation: relationship_generation(relationship).saturating_add(1),
+                enabled: false,
+                expires_at_unix_ms: relationship.expires_at_unix_ms,
+                maximum_active: u32::from(relationship.maximum_concurrent),
+            })
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
         self.revoked_peers
             .lock()
             .map_err(|_| {
@@ -869,6 +950,10 @@ impl PeerService {
                 break;
             }
         }
+        self.executions
+            .set_peer_admission_open(true)
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+        self.drain.store(0, Ordering::SeqCst);
         self.notify_workers();
         Ok(())
     }
@@ -912,18 +997,6 @@ impl PeerService {
                     .join(",")
             )))
         }
-    }
-
-    fn operation_is_allowed(
-        &self,
-        relationship: &PeerRelationship,
-        operation: AuthorityOperation,
-        resources: RequestedResourceFacts,
-        budget: AuthorityBudget,
-    ) -> Result<bool, PeerHttpError> {
-        Ok(self
-            .evaluate_operation(relationship, operation, resources, budget)?
-            .is_allowed())
     }
 
     fn evaluate_operation(
@@ -1015,7 +1088,8 @@ impl PeerService {
         match self.drain.load(Ordering::SeqCst) {
             0 => DrainState::Ready,
             1 => DrainState::Draining,
-            _ => DrainState::ShuttingDown,
+            2 => DrainState::ShuttingDown,
+            _ => DrainState::Draining,
         }
     }
 
@@ -1084,6 +1158,8 @@ impl PeerService {
         &self,
         relationship: &PeerRelationship,
         request: &PeerInvocationRequest,
+        descriptor: &CapabilityDescriptor,
+        requirements: &CapabilityExecutionRequirements,
         now: u64,
     ) -> Result<milkdrift_authority::AuthorityDecisionSnapshot, PeerHttpError> {
         let _validated_context = adapter_execution_context(request)?;
@@ -1095,9 +1171,19 @@ impl PeerService {
             ));
         }
         let mut resources = RequestedResourceFacts::empty();
-        resources.capability = Some(request.selection.capability().clone());
+        resources.capability = Some(descriptor.identity().clone());
+        resources.category = Some(descriptor.category().clone());
         resources.capability_operation = Some(request.selection.operation().clone());
+        resources.provider_profile = descriptor.provider_profile().cloned();
+        resources.trust_zones = descriptor.trust_zones().clone();
+        resources.execution_trust_class = Some(descriptor.execution_trust());
+        resources.locality = Some(descriptor.locality());
+        resources.peer = descriptor.peer().cloned();
         resources.side_effect = request.selection.operation_contract().side_effect();
+        resources.filesystem = requirements.filesystem.clone();
+        resources.network_profiles = requirements.network_profiles.clone();
+        resources.network_destinations = requirements.network_destinations.clone();
+        resources.secrets = requirements.secrets.clone();
         let delegated = &request.delegation.provenance;
         let provenance = AuthorityExecutionProvenance {
             revision: Some(parse_revision(&delegated.revision)?),
@@ -1116,11 +1202,21 @@ impl PeerService {
             AuthorityOperation::InvokePeerCapability,
             resources,
             AuthorityBudget {
-                duration_ms: Some(request.limits.duration_ms),
-                invocations: Some(1),
-                artifact_bytes: Some(request.limits.artifact_bytes),
-                concurrency: Some(1),
-                ..AuthorityBudget::default()
+                cost_minor: maximum_budget(
+                    Some(request.limits.cost_micros.saturating_add(9_999) / 10_000),
+                    requirements.budget.cost_minor,
+                ),
+                duration_ms: maximum_budget(
+                    Some(request.limits.duration_ms),
+                    requirements.budget.duration_ms,
+                ),
+                invocations: maximum_budget(Some(1), requirements.budget.invocations),
+                artifact_bytes: maximum_budget(
+                    Some(request.limits.artifact_bytes),
+                    requirements.budget.artifact_bytes,
+                ),
+                units: requirements.budget.units,
+                concurrency: Some(requirements.budget.concurrency.unwrap_or(1).max(1)),
             },
             provenance,
         )?;
@@ -1150,8 +1246,38 @@ impl PeerService {
         Ok(decision)
     }
 
+    fn exact_generation(
+        &self,
+        relationship: &PeerRelationship,
+        request: &PeerInvocationRequest,
+    ) -> Result<CatalogGenerationView, PeerHttpError> {
+        let scope = &self
+            .grants
+            .get(&relationship.remote_peer)
+            .ok_or_else(|| PeerHttpError::Unauthorized("peer grant is absent".to_owned()))?
+            .resources()
+            .capability;
+        self.capability_host
+            .catalog_generations(scope)?
+            .into_iter()
+            .find(|generation| {
+                generation.descriptor.identity() == request.selection.capability()
+                    && generation.descriptor.descriptor_revision()
+                        == request.selection.descriptor_revision()
+                    && generation
+                        .descriptor
+                        .operation(request.selection.operation())
+                        .is_some()
+            })
+            .ok_or_else(|| {
+                PeerHttpError::Unauthorized(
+                    "selected local capability generation is no longer registered".to_owned(),
+                )
+            })
+    }
+
     pub(crate) fn worker_claims_enabled(&self) -> bool {
-        self.drain_state() == DrainState::Ready
+        self.drain.load(Ordering::SeqCst) == 0
     }
 
     pub(crate) fn claim_for_worker(
@@ -1208,16 +1334,72 @@ impl PeerService {
                 "peer execution deadline elapsed before adapter entry",
             );
         }
-        let entered = self
+        if self.drain_state() != DrainState::Ready {
+            return self.append_pre_entry_failure(
+                &record,
+                "peer service stopped admission before adapter entry",
+            );
+        }
+        let relationship = match self.relationship(&record.owner_peer) {
+            Ok(relationship) => relationship,
+            Err(_) => {
+                return self.append_pre_entry_failure(
+                    &record,
+                    "peer relationship was revoked or expired before adapter entry",
+                );
+            }
+        };
+        let generation = match self.exact_generation(&relationship, &record.request) {
+            Ok(generation) => generation,
+            Err(_) => {
+                return self.append_pre_entry_failure(
+                    &record,
+                    "selected capability generation was unavailable before adapter entry",
+                );
+            }
+        };
+        let entry_authority = match self.authorize_invocation(
+            &relationship,
+            &record.request,
+            &generation.descriptor,
+            &generation.authority_requirements,
+            self.clock.now_unix_ms(),
+        ) {
+            Ok(decision) => decision,
+            Err(_) => {
+                return self.append_pre_entry_failure(
+                    &record,
+                    "peer execution authority was denied before adapter entry",
+                );
+            }
+        };
+        let entered = match self
             .executions
-            .mark_peer_entered(
-                &record.owner_peer,
-                &record.execution,
-                &claim.worker,
-                claim.generation,
-                self.clock.now_unix_ms().max(1),
-            )
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            .mark_peer_entered(&PeerEntryRequest {
+                owner: &record.owner_peer,
+                execution: &record.execution,
+                worker: &claim.worker,
+                claim_generation: claim.generation,
+                relationship_generation: relationship_generation(&relationship),
+                entered_at_unix_ms: self.clock.now_unix_ms().max(1),
+                authority: &entry_authority,
+            })
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+        {
+            PeerEntryOutcome::Entered(entered) => *entered,
+            PeerEntryOutcome::AdmissionClosed => {
+                return self.append_pre_entry_failure(
+                    &record,
+                    "peer service stopped admission before adapter entry",
+                );
+            }
+            PeerEntryOutcome::RelationshipUnavailable => {
+                return self.append_pre_entry_failure(
+                    &record,
+                    "peer relationship was revoked or expired before adapter entry",
+                );
+            }
+        };
         let reporter = PeerStoreReporter {
             owner_peer: entered.owner_peer.clone(),
             execution: entered.execution.clone(),
@@ -1518,10 +1700,15 @@ fn peer_authority_grant(relationship: &PeerRelationship) -> Result<AuthorityGran
         )
         .map_err(|error| PeerHttpError::Configuration(error.to_string()))?,
         secrets: relationship.execution_secrets.clone(),
-        artifacts: if actions.contains(&PeerAction::ArtifactUpload)
-            || actions.contains(&PeerAction::ArtifactDownload)
+        artifacts: if (actions.contains(&PeerAction::ArtifactUpload)
+            || actions.contains(&PeerAction::ArtifactDownload))
+            && !relationship.artifact_sensitivities.is_empty()
         {
-            ArtifactAuthorityScope::dangerous_all()
+            ArtifactAuthorityScope::new(
+                BTreeSet::new(),
+                relationship.artifact_sensitivities.clone(),
+            )
+            .map_err(|error| PeerHttpError::Configuration(error.to_string()))?
         } else {
             ArtifactAuthorityScope::none()
         },
@@ -1542,6 +1729,13 @@ fn peer_authority_grant(relationship: &PeerRelationship) -> Result<AuthorityGran
     .operations(operations)
     .resources(resource_scope)
     .budget(AuthorityBudget {
+        cost_minor: Some(
+            relationship
+                .execution_limits
+                .cost_micros
+                .saturating_add(9_999)
+                / 10_000,
+        ),
         duration_ms: Some(relationship.execution_limits.duration_ms),
         invocations: Some(1),
         artifact_bytes: Some(relationship.maximum_artifact_bytes),
@@ -1569,18 +1763,34 @@ struct PeerStoreReporter {
     claim_generation: u64,
 }
 
+impl PeerStoreReporter {
+    fn reject_report(&self, code: &str, detail: &str) -> AdapterError {
+        let reason = bounded(&format!("{code}: {detail}"), 2_048);
+        let _ = self.executions.mark_peer_uncertain(
+            &self.owner_peer,
+            &self.execution,
+            &self.worker,
+            self.claim_generation,
+            self.clock.now_unix_ms().max(1),
+            &reason,
+        );
+        AdapterError::external_failure(reason)
+    }
+}
+
 impl AdapterReporter for PeerStoreReporter {
     fn invocation(&self, event: InvocationEvent) -> Result<(), AdapterError> {
         if self.clock.now_unix_ms() > self.deadline_unix_ms {
-            return Err(AdapterError::external_failure(
-                "peer execution deadline elapsed",
-            ));
+            return Err(
+                self.reject_report("peer_report_deadline", "peer execution deadline elapsed")
+            );
         }
         let maximum = u64::from(self.limits.observations);
         if event.sequence() > maximum
             || (event.sequence() == maximum && event.kind().terminal().is_none())
         {
-            return Err(AdapterError::external_failure(
+            return Err(self.reject_report(
+                "peer_report_observation_quota",
                 "peer observation quota reached before terminal evidence",
             ));
         }
@@ -1593,7 +1803,8 @@ impl AdapterReporter for PeerStoreReporter {
                         .cost_micros()
                         .is_some_and(|cost| cost > self.limits.cost_micros)
             }) {
-                return Err(AdapterError::external_failure(
+                return Err(self.reject_report(
+                    "peer_report_usage_quota",
                     "peer terminal usage exceeds the accepted duration or cost quota",
                 ));
             }
@@ -1601,7 +1812,8 @@ impl AdapterReporter for PeerStoreReporter {
                 output.size_bytes().and_then(|size| total.checked_add(size))
             });
             if output_bytes.is_none_or(|bytes| bytes > self.limits.artifact_bytes) {
-                return Err(AdapterError::external_failure(
+                return Err(self.reject_report(
+                    "peer_report_artifact_quota",
                     "peer output artifact bytes are absent or exceed the accepted quota",
                 ));
             }
@@ -1629,14 +1841,16 @@ impl AdapterReporter for PeerStoreReporter {
                 },
             )
             .map(|_outcome| ())
-            .map_err(|error| AdapterError::external_failure(error.to_string()))
+            .map_err(|error| {
+                self.reject_report("peer_report_rejected", &bounded(&error.to_string(), 1_900))
+            })
     }
 
     fn heartbeat(&self) -> Result<(), AdapterError> {
         if self.clock.now_unix_ms() > self.deadline_unix_ms {
-            return Err(AdapterError::external_failure(
-                "peer execution deadline elapsed",
-            ));
+            return Err(
+                self.reject_report("peer_heartbeat_deadline", "peer execution deadline elapsed")
+            );
         }
         self.executions
             .extend_peer_claim(
@@ -1714,8 +1928,37 @@ const fn relationship_generation(relationship: &PeerRelationship) -> u64 {
     relationship.revocation_generation.saturating_add(1)
 }
 
+fn artifact_resource_facts(
+    artifact: &milkdrift_workspace::ArtifactReference,
+    sensitivity: milkdrift_workspace::ArtifactSensitivity,
+) -> RequestedResourceFacts {
+    let mut resources = RequestedResourceFacts::empty();
+    resources.artifact = Some(artifact.artifact().clone());
+    resources.artifact_sensitivity = Some(sensitivity);
+    resources
+}
+
+fn workspace_artifact_matches_capability(
+    workspace: &milkdrift_workspace::ArtifactReference,
+    capability: &milkdrift_capability::ArtifactReference,
+) -> bool {
+    capability.identity() == workspace.artifact().as_str()
+        && capability.digest() == workspace.digest().to_string()
+        && capability.media_type() == Some(workspace.media_type().as_str())
+        && capability.size_bytes() == Some(workspace.size_bytes())
+}
+
+const fn maximum_budget(left: Option<u64>, right: Option<u64>) -> Option<u64> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(if left > right { left } else { right }),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
+}
+
 const fn admission_rejection_code(reason: PeerAdmissionRejection) -> &'static str {
     match reason {
+        PeerAdmissionRejection::AdmissionClosed => "draining",
         PeerAdmissionRejection::RelationshipUnavailable => "relationship_stale",
         PeerAdmissionRejection::CatalogUnavailable => "catalog_stale",
         PeerAdmissionRejection::PeerCapacity
@@ -1727,6 +1970,9 @@ const fn admission_rejection_code(reason: PeerAdmissionRejection) -> &'static st
 
 const fn admission_rejection_detail(reason: PeerAdmissionRejection) -> &'static str {
     match reason {
+        PeerAdmissionRejection::AdmissionClosed => {
+            "peer lifecycle recovery or draining has closed durable admission"
+        }
         PeerAdmissionRejection::RelationshipUnavailable => {
             "peer relationship generation is unavailable for new acceptance"
         }
@@ -1777,6 +2023,16 @@ impl From<PeerArtifactError> for PeerHttpError {
 struct DisabledArtifactStore;
 
 impl PeerArtifactStore for DisabledArtifactStore {
+    fn transfer_facts(
+        &self,
+        _owner_peer: &PeerId,
+        _transfer: &TransferId,
+    ) -> Result<crate::PeerArtifactTransferFacts, PeerArtifactError> {
+        Err(PeerArtifactError::Rejected(
+            "peer artifact transfer is disabled".to_owned(),
+        ))
+    }
+
     fn negotiate(
         &self,
         _owner_peer: &PeerId,

@@ -14,7 +14,7 @@ use crate::{
 };
 
 /// Current prompt-sequence import schema.
-pub const PROMPT_SEQUENCE_SCHEMA_VERSION_V1: u32 = 1;
+pub const PROMPT_SEQUENCE_SCHEMA_VERSION_V2: u32 = 2;
 const MAX_DOCUMENT_DEPTH: usize = 48;
 const MAX_CONTAINER_ITEMS: usize = 4_096;
 const MAX_EXTENSIONS: usize = 32;
@@ -35,7 +35,7 @@ pub enum PromptSequenceError {
     #[error("invalid prompt-sequence document: {0}")]
     Json(String),
     /// A future schema cannot be interpreted safely.
-    #[error("unsupported prompt-sequence schema version {found}; supported version is 1")]
+    #[error("unsupported prompt-sequence schema version {found}; supported version is 2")]
     UnsupportedVersion {
         /// Observed schema version.
         found: u32,
@@ -118,16 +118,6 @@ pub struct VerificationContract {
     pub log_artifact: Option<String>,
 }
 
-/// Explicit accepted success fact policy.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CheckpointPolicy {
-    /// Successful verification and its exact artifacts are the checkpoint.
-    VerificationArtifacts,
-    /// A separate preconfigured capability records the checkpoint.
-    Capability,
-}
-
 /// Action after verification does not publish its declared success artifact.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -158,20 +148,6 @@ pub struct DeclaredOutput {
     pub required: bool,
 }
 
-/// Per-stage limits additionally bounded by the frozen authority grant and process profile.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct StageBudget {
-    /// Maximum coding attempts requested by policy.
-    pub max_coding_attempts: u16,
-    /// Maximum verification attempts requested by policy.
-    pub max_verification_attempts: u16,
-    /// Stage wall-clock ceiling.
-    pub timeout_ms: u64,
-    /// Aggregate stage output/log ceiling.
-    pub max_output_bytes: u64,
-}
-
 /// One ordered implementation prompt and its exact execution policy.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -188,8 +164,6 @@ pub struct StageDefinition {
     pub coding: CapabilityProfileRef,
     /// Preconfigured verification capability and data-only contract.
     pub verification: VerificationContract,
-    /// Explicit checkpoint semantics.
-    pub checkpoint: CheckpointPolicy,
     /// Verification failure behavior.
     pub failure: FailurePolicy,
     /// Reviewer/controller capability used on the failure path.
@@ -198,8 +172,6 @@ pub struct StageDefinition {
     pub approval: ApprovalPolicy,
     /// Named context policy reference retained in provenance.
     pub context_policy_ref: String,
-    /// Hard requested stage bounds.
-    pub budget: StageBudget,
     /// Optional capability output declarations.
     pub outputs: Vec<DeclaredOutput>,
 }
@@ -290,20 +262,12 @@ pub struct RepositoryWorkspaceProfile {
     pub remote_access_refs: Vec<String>,
 }
 
-/// Sequence-wide import and controller ceilings.
+/// Sequence-wide prospective-remediation limit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PromptSequenceBudget {
-    /// Maximum prospective immutable revisions for this run policy.
-    pub max_revisions: u16,
-    /// Maximum reviewer/remediation loops.
+    /// Maximum reviewer/remediation generations accepted by the proposal builder.
     pub max_review_loops: u16,
-    /// Aggregate elapsed-time ceiling.
-    pub max_elapsed_ms: u64,
-    /// Aggregate capability call ceiling.
-    pub max_capability_calls: u32,
-    /// Aggregate artifact/log/repository evidence ceiling.
-    pub max_artifact_bytes: u64,
 }
 
 /// Fully decoded bounded sequence body.
@@ -379,13 +343,17 @@ impl PromptSequenceDocument {
             .ok_or_else(|| {
                 PromptSequenceError::Json("missing numeric schema_version".to_owned())
             })?;
-        if version != PROMPT_SEQUENCE_SCHEMA_VERSION_V1 {
+        if version != PROMPT_SEQUENCE_SCHEMA_VERSION_V2 {
             return Err(PromptSequenceError::UnsupportedVersion { found: version });
         }
         let document: Self = serde_json::from_value(value)
             .map_err(|error| PromptSequenceError::Json(error.to_string()))?;
         document.validate()?;
         Ok(document)
+    }
+
+    pub(crate) fn preflight_markdown_header(bytes: &[u8]) -> Result<(), PromptSequenceError> {
+        milkdrift_contracts::preflight_json_structure(bytes, DOCUMENT_LIMITS).map_err(map_bound)
     }
 
     /// Recursively key-sorted canonical JSON used for import provenance.
@@ -408,7 +376,7 @@ impl PromptSequenceDocument {
     }
 
     fn validate(&self) -> Result<(), PromptSequenceError> {
-        if self.schema_version != PROMPT_SEQUENCE_SCHEMA_VERSION_V1 {
+        if self.schema_version != PROMPT_SEQUENCE_SCHEMA_VERSION_V2 {
             return Err(PromptSequenceError::UnsupportedVersion {
                 found: self.schema_version,
             });
@@ -506,15 +474,6 @@ fn validate_stage(stage: &StageDefinition, index: usize) -> Result<(), PromptSeq
         validate_safe_name("verification.log_artifact", log)?;
     }
     validate_identity("stage.context_policy_ref", &stage.context_policy_ref, 128)?;
-    if stage.budget.max_coding_attempts == 0
-        || stage.budget.max_verification_attempts == 0
-        || stage.budget.timeout_ms == 0
-        || stage.budget.max_output_bytes == 0
-    {
-        return Err(PromptSequenceError::Invalid(format!(
-            "{location}.budget fields must be nonzero"
-        )));
-    }
     if stage.outputs.len() > MAX_DECLARED_OUTPUTS {
         return Err(PromptSequenceError::Bounds {
             location: format!("{location}.outputs"),
@@ -532,21 +491,19 @@ fn validate_stage(stage: &StageDefinition, index: usize) -> Result<(), PromptSeq
             )));
         }
     }
-    if stage.checkpoint == CheckpointPolicy::Capability {
-        return Err(PromptSequenceError::Invalid(
-            "checkpoint=capability requires a future explicit checkpoint profile field; use verification_artifacts in schema v1"
-                .to_owned(),
-        ));
-    }
     Ok(())
 }
 
 fn validate_profile(profile: &CapabilityProfileRef) -> Result<(), PromptSequenceError> {
-    profile
-        .operation
-        .as_str()
-        .split_once('.')
-        .ok_or_else(|| PromptSequenceError::Invalid("operation must be namespaced".to_owned()))?;
+    if profile.operation.as_str() != "process.execute"
+        || profile.provider_profile.is_some()
+        || profile.execution_trust != ExecutionTrustClass::TrustedHostProcess
+    {
+        return Err(PromptSequenceError::Invalid(
+            "schema-v2 sequence profiles must select process.execute without a provider_profile and require trusted_host_process execution"
+                .to_owned(),
+        ));
+    }
     Ok(())
 }
 
@@ -590,7 +547,7 @@ fn validate_repository(profile: &RepositoryWorkspaceProfile) -> Result<(), Promp
         || !profile.artifacts.require_verification_evidence
     {
         return Err(PromptSequenceError::Invalid(
-            "schema-v1 repository artifact policy must require starting state, diff, and verification evidence"
+            "schema-v2 repository artifact policy must require starting state, diff, and verification evidence"
                 .to_owned(),
         ));
     }
@@ -620,14 +577,9 @@ fn validate_repository(profile: &RepositoryWorkspaceProfile) -> Result<(), Promp
 }
 
 fn validate_sequence_budget(budget: PromptSequenceBudget) -> Result<(), PromptSequenceError> {
-    if budget.max_revisions == 0
-        || budget.max_review_loops == 0
-        || budget.max_elapsed_ms == 0
-        || budget.max_capability_calls == 0
-        || budget.max_artifact_bytes == 0
-    {
+    if budget.max_review_loops == 0 {
         return Err(PromptSequenceError::Invalid(
-            "sequence budget fields must be nonzero".to_owned(),
+            "sequence budget max_review_loops must be nonzero".to_owned(),
         ));
     }
     Ok(())
@@ -659,7 +611,9 @@ fn validate_relative_path(path: &str) -> Result<(), PromptSequenceError> {
     if path.is_empty()
         || path.len() > 1_024
         || path.contains('\0')
+        || path.contains('\\')
         || path.starts_with('/')
+        || path.as_bytes().get(1) == Some(&b':')
         || path
             .split('/')
             .any(|part| part.is_empty() || matches!(part, "." | ".."))

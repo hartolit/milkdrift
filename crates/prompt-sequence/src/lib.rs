@@ -12,11 +12,11 @@ mod remediation;
 
 pub use compiler::{CompiledPromptSequence, StageBlueprintSummary, compile};
 pub use document::{
-    ApprovalPolicy, CapabilityProfileRef, CheckpointPolicy, DeclaredOutput, DirtyTreePolicy,
-    FailurePolicy, PROMPT_SEQUENCE_SCHEMA_VERSION_V1, PromptSequence, PromptSequenceBudget,
+    ApprovalPolicy, CapabilityProfileRef, DeclaredOutput, DirtyTreePolicy, FailurePolicy,
+    PROMPT_SEQUENCE_SCHEMA_VERSION_V2, PromptSequence, PromptSequenceBudget,
     PromptSequenceDocument, PromptSequenceError, PromptSource, RepositoryArtifactPolicy,
     RepositoryCleanupPolicy, RepositoryIsolation, RepositoryOperation, RepositoryWorkspaceProfile,
-    SessionPolicy, StageBudget, StageDefinition, VerificationContract,
+    SessionPolicy, StageDefinition, VerificationContract,
 };
 pub use remediation::{RemediationProposalSpec, build_remediation_proposal};
 

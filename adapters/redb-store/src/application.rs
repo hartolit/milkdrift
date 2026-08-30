@@ -29,6 +29,35 @@ const PROPOSAL_FAMILY: &str = "application proposal index";
 const SECURITY_AUDIT_FAMILY: &str = "security audit record";
 
 impl ApplicationCommandStore for RedbStore {
+    fn ensure_application_command_capacity(&self) -> Result<(), PersistenceError> {
+        let read = self.database().begin_read().map_err(error::redb)?;
+        let receipts = read
+            .open_table(APPLICATION_COMMAND_RECEIPTS)
+            .map_err(error::redb)?;
+        let authoritative_receipt_count = receipts.len().map_err(error::redb)?;
+        let metadata = read.open_table(METADATA).map_err(error::redb)?;
+        let count = metadata
+            .get(APPLICATION_RECEIPT_COUNT_KEY)
+            .map_err(error::redb)?
+            .map(|value| value.value())
+            .ok_or_else(|| error::corruption("application receipt count is missing"))?;
+        if count != authoritative_receipt_count {
+            return Err(error::corruption(
+                "application receipt count disagrees with its authoritative table",
+            ));
+        }
+        if count >= u64::from(self.max_application_receipts) {
+            return Err(PersistenceError::Bounds {
+                location: "application_receipt_retention",
+                reason: format!(
+                    "configured non-evicting receipt bound {} was reached",
+                    self.max_application_receipts
+                ),
+            });
+        }
+        Ok(())
+    }
+
     fn application_command_receipt(
         &self,
         actor: &ActorRef,

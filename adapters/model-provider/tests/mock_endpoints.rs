@@ -427,6 +427,46 @@ fn execute_bound(
 }
 
 #[test]
+fn injected_manifest_system_role_is_negotiated_before_network_entry() -> TestResult {
+    let profile = profile(
+        "127.0.0.1:9",
+        "missing-system-role",
+        ProviderProtocol::OpenAiCompatible {
+            path: "v1/chat/completions".to_owned(),
+        },
+        AuthMode::NoAuth,
+        BTreeSet::new(),
+    )?;
+    let task = ModelTaskRequest::new(
+        vec![Message::new(
+            MessageRole::User,
+            vec![ContentPart::Text {
+                text: "must not reach the network".to_owned(),
+            }],
+            None,
+        )?],
+        Vec::new(),
+        None,
+        SessionSelection::Fresh,
+        None,
+        32,
+        false,
+        BTreeMap::new(),
+    )?;
+    let error = match execute(
+        profile,
+        task,
+        Arc::new(MockData::default()),
+        Arc::new(InMemorySecretResolver::new()),
+    ) {
+        Err(error) => error,
+        Ok(_) => return Err("adapter-injected system context was not negotiated".into()),
+    };
+    assert!(error.to_string().contains("system role"));
+    Ok(())
+}
+
+#[test]
 fn causal_context_is_persisted_sent_streamed_published_and_inspectable_after_restart() -> TestResult
 {
     let body = [
@@ -445,7 +485,7 @@ fn causal_context_is_persisted_sent_streamed_published_and_inspectable_after_res
             path: "v1/chat/completions".to_owned(),
         },
         AuthMode::NoAuth,
-        BTreeSet::from([ModelFeature::Streaming]),
+        BTreeSet::from([ModelFeature::Streaming, ModelFeature::SystemRole]),
     )?;
     let revision = revision()?;
     let identity = ContextBuildIdentity {
@@ -775,7 +815,7 @@ fn anthropic_native_non_streaming_preserves_tool_calls_usage_and_finish() -> Tes
             path: "v1/messages".to_owned(),
         },
         AuthMode::NoAuth,
-        BTreeSet::from([ModelFeature::Tools]),
+        BTreeSet::from([ModelFeature::SystemRole, ModelFeature::Tools]),
     )?;
     let task = ModelTaskRequest::new(
         vec![Message::new(
@@ -881,7 +921,7 @@ fn endpoint_policy_rejects_remote_plaintext_and_cross_origin_redirects_by_defaul
             path: "v1/chat/completions".to_owned(),
         },
         AuthMode::NoAuth,
-        BTreeSet::new(),
+        BTreeSet::from([ModelFeature::SystemRole]),
     )?;
     let bytes = canonical.to_canonical_json()?;
     assert_eq!(EndpointProfile::from_json(&bytes)?, canonical);
@@ -907,7 +947,7 @@ fn endpoint_policy_rejects_remote_plaintext_and_cross_origin_redirects_by_defaul
         RedirectPolicy::Deny,
         TlsPolicy::WebPkiRoots,
         ProxyPolicy::Disabled,
-        BTreeSet::new(),
+        BTreeSet::from([ModelFeature::SystemRole]),
         1,
         true,
         BTreeSet::from(["127.0.0.1".to_owned()]),
@@ -953,7 +993,7 @@ fn unsupported_features_reject_before_entry_and_publication_failure_cannot_succe
             path: "v1/chat/completions".to_owned(),
         },
         AuthMode::NoAuth,
-        BTreeSet::new(),
+        BTreeSet::from([ModelFeature::SystemRole]),
     )?;
     let tool_task = ModelTaskRequest::new(
         vec![Message::new(
@@ -1001,7 +1041,7 @@ fn unsupported_features_reject_before_entry_and_publication_failure_cannot_succe
             path: "v1/chat/completions".to_owned(),
         },
         AuthMode::NoAuth,
-        BTreeSet::new(),
+        BTreeSet::from([ModelFeature::SystemRole]),
     )?;
     let task = ModelTaskRequest::new(
         vec![Message::new(
@@ -1047,7 +1087,7 @@ fn streaming_cancellation_is_cooperative_and_does_not_claim_remote_termination()
             path: "v1/chat/completions".to_owned(),
         },
         AuthMode::NoAuth,
-        BTreeSet::from([ModelFeature::Streaming]),
+        BTreeSet::from([ModelFeature::Streaming, ModelFeature::SystemRole]),
     )?;
     let task = ModelTaskRequest::new(
         vec![Message::new(

@@ -24,10 +24,9 @@ use milkdrift_capability_host::{
     SecretResolver, StoreInvocationDataAccess,
 };
 use milkdrift_control::{
-    AuthorityContextRef, AuthorityContextResolver, ControlCommand, ControlCommandDocument,
-    ControlError, ControlId, ControlResult, ControlResultSink, ControlService, OptimisticGuard,
-    ProposalDigest, ProposalId, WorkflowControlAdapter, WorkflowProposalDocument,
-    workflow_control_descriptor,
+    ControlCommand, ControlCommandDocument, ControlError, ControlId, ControlResult,
+    ControlResultSink, ControlService, OptimisticGuard, ProposalDigest, ProposalId,
+    WorkflowControlAdapter, WorkflowProposalDocument, workflow_control_descriptor,
 };
 use milkdrift_control_protocol::{
     ArtifactMetadataRead, AttemptRead, CapabilityRead, Command, CommandAccepted, CommandRequest,
@@ -338,15 +337,18 @@ impl DaemonHost {
     }
 
     /// Closes mutation admission synchronously before graceful HTTP shutdown begins.
-    pub(crate) fn begin_draining(&self) {
+    pub(crate) fn begin_draining(&self) -> Result<(), HostError> {
         self.mutating_admission.store(false, Ordering::SeqCst);
         self.health.set_lifecycle(Lifecycle::Draining);
         if let Some(service) = &self.peer_service {
-            service.begin_drain();
+            service
+                .begin_drain()
+                .map_err(|error| HostError::Shutdown(error.to_string()))?;
         }
         for registry in self.peer_registries.values() {
             let _ = registry.disconnect();
         }
+        Ok(())
     }
 
     /// Returns the optional distinct peer route service for router composition.
@@ -450,11 +452,14 @@ impl DaemonHost {
 
     /// Runs ordered shutdown and joins the owner thread.
     pub(crate) async fn shutdown(&self) -> Result<(), HostError> {
-        self.begin_draining();
-        let result = self
-            .request(OwnerOperation::Shutdown, true)
-            .await
-            .map_err(|error| HostError::Shutdown(error.message))?;
+        self.begin_draining()?;
+        let result = match self.request(OwnerOperation::Shutdown, true).await {
+            Ok(result) => result,
+            Err(error) => {
+                self.health.set_lifecycle(Lifecycle::Failed);
+                return Err(HostError::Shutdown(error.message));
+            }
+        };
         let join = self
             .join
             .lock()
@@ -471,9 +476,12 @@ impl DaemonHost {
                 clean: true,
                 unresolved: 0,
             } => Ok(()),
-            OwnerValue::Shutdown { clean, unresolved } => Err(HostError::Shutdown(format!(
-                "shutdown retained or could not resolve {unresolved} invocation(s); clean={clean}"
-            ))),
+            OwnerValue::Shutdown { clean, unresolved } => {
+                self.health.set_lifecycle(Lifecycle::Failed);
+                Err(HostError::Shutdown(format!(
+                    "shutdown retained or could not resolve {unresolved} invocation(s); clean={clean}"
+                )))
+            }
             _ => Err(HostError::Shutdown(
                 "runtime owner returned an invalid shutdown result".to_owned(),
             )),
@@ -849,12 +857,7 @@ impl Owner {
                 limit: PageSize::new(1).map_err(|error| error.to_string())?,
             })
             .map_err(|error| error.to_string())?;
-        capabilities::register_control(
-            &capability_host,
-            control.clone(),
-            auth.contexts(),
-            data.clone(),
-        )?;
+        capabilities::register_control(&capability_host, control.clone(), data.clone())?;
         capabilities::register_configured(&config, &capability_host, data, auth.resolver())?;
         let peer_runtime =
             build_peer_runtime(&config, &capability_host, store.clone(), auth.resolver())?;
@@ -1255,7 +1258,9 @@ impl Owner {
         info!(phase = "draining", "runtime owner closing admission");
         health.set_lifecycle(Lifecycle::Draining);
         if let Some(service) = &self.peer_service {
-            service.begin_shutdown();
+            service.begin_shutdown().map_err(|error| {
+                PublicFailure::new(ErrorCode::Unavailable, bounded(&error.to_string()), true)
+            })?;
         }
         for registry in self.peer_registries.values() {
             let _ = registry.disconnect();
@@ -1267,17 +1272,19 @@ impl Owner {
             ShutdownEffectPolicy::Retain => EffectShutdownMode::Retain,
         };
         let deadline = Duration::from_millis(self.config.document.shutdown.deadline_ms);
+        let shutdown_started = std::time::Instant::now();
         let peer_shutdown = self
             .peer_service
             .as_ref()
             .map(|service| service.shutdown_workers(deadline));
+        let effect_deadline = deadline.saturating_sub(shutdown_started.elapsed());
         let result = self
             .effect_workers
             .take()
             .ok_or_else(|| {
                 PublicFailure::new(ErrorCode::Internal, "effect owner is absent", false)
             })?
-            .shutdown(mode, deadline)
+            .shutdown(mode, effect_deadline)
             .map_err(|error| {
                 PublicFailure::new(ErrorCode::Unavailable, bounded(&error.to_string()), true)
             })?;
@@ -1397,23 +1404,6 @@ impl Owner {
             })
             .map_err(public_persistence)?;
         Ok(())
-    }
-}
-
-struct StaticContexts(BTreeMap<String, milkdrift_control::ActorAuthorityContext>);
-
-impl AuthorityContextResolver for StaticContexts {
-    fn resolve(
-        &self,
-        reference: &AuthorityContextRef,
-    ) -> Result<milkdrift_control::ActorAuthorityContext, ControlError> {
-        self.0
-            .get(reference.as_str())
-            .cloned()
-            .ok_or_else(|| ControlError::AuthorizationDenied {
-                reasons: vec![milkdrift_authority::DecisionReasonCode::GrantNotFound],
-                decision_digest: None,
-            })
     }
 }
 
@@ -1566,6 +1556,7 @@ fn build_peer_runtime(
             maximum_concurrent: configured.maximum_concurrent,
             maximum_requests_per_minute: configured.maximum_requests_per_minute,
             maximum_artifact_bytes: configured.maximum_artifact_bytes,
+            artifact_sensitivities: configured.artifact_sensitivities.clone(),
             catalog_ttl_ms: configured.catalog_ttl_ms,
             trust_zone: milkdrift_capability::TrustZone::new(configured.trust_zone.clone())
                 .map_err(|error| error.to_string())?,

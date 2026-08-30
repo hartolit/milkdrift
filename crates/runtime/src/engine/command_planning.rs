@@ -7,7 +7,7 @@ use super::support::{
     require_lifecycle, run_drain_reason, wait_signal_matches,
 };
 use crate::projection::{AttemptState, IterationState, RunLifecycle, RunProjection, TimerPurpose};
-use crate::query::{RUN_PROJECTION_SNAPSHOT_SCHEMA_V3, encode_projection_snapshot};
+use crate::query::{RUN_PROJECTION_SNAPSHOT_SCHEMA_V4, encode_projection_snapshot};
 use crate::{RunCommand, RunCommandDocument, RuntimeError, WorkerReport};
 use milkdrift_authority::AuthorityDecisionSnapshot;
 use milkdrift_blueprint::{NodeKind, PortId, RepeatTermination, RevisionId, WorkflowId};
@@ -1325,7 +1325,7 @@ impl RuntimeService {
         };
         let projection_checkpoint = if let Some(payload) = projection_payload.as_deref() {
             Some(ProjectionCheckpoint::new(
-                RUN_PROJECTION_SNAPSHOT_SCHEMA_V3,
+                RUN_PROJECTION_SNAPSHOT_SCHEMA_V4,
                 payload,
             )?)
         } else {
@@ -1358,6 +1358,9 @@ impl RuntimeService {
                 reason = %error,
                 "optional projection checkpoint could not be persisted"
             );
+        }
+        if matches!(candidate.lifecycle(), RunLifecycle::Terminal(_)) {
+            self.clear_run_scan_cursors(document.run_id());
         }
         Ok(outcome)
     }

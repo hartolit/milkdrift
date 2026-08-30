@@ -12,8 +12,9 @@ use std::{
 
 use milkdrift_authority::{
     ActorRef, AuthorityBudget, AuthorityDecisionSnapshot, AuthorityExecutionProvenance,
-    AuthorityOperation, AuthorityRequest, BoundaryTimeMillis, DecisionId, DecisionReasonCode,
-    GrantDigest, GrantId, PeerId, PolicyId, RequestedResourceFacts, SensitiveSecret,
+    AuthorityOperation, AuthorityRequest, BoundaryTimeMillis, CapabilityExecutionRequirements,
+    DecisionId, DecisionReasonCode, GrantDigest, GrantId, PeerId, PolicyId, RequestedResourceFacts,
+    SecretRef, SensitiveSecret,
 };
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_capability::{
@@ -41,8 +42,9 @@ use milkdrift_peer_protocol::{
 };
 use milkdrift_persistence::{
     ArtifactStore, PageSize, PeerAdmission, PeerAdmissionOutcome, PeerAdmissionRejection,
-    PeerCatalogState, PeerClaimOutcome, PeerDispatchClaimRequest, PeerExecutionPhase,
-    PeerExecutionStore, PeerRelationshipState, PeerRetentionRequest, TimestampMillis, WorkerId,
+    PeerCatalogState, PeerClaimOutcome, PeerDispatchClaimRequest, PeerEntryOutcome,
+    PeerEntryRequest, PeerExecutionPhase, PeerExecutionStore, PeerRelationshipState,
+    PeerRetentionRequest, TimestampMillis, WorkerId,
 };
 use milkdrift_redb_store::{
     FaultInjector, FaultPoint, RedbStore, RedbStoreConfig, injected_failure,
@@ -355,7 +357,13 @@ fn commit_boundary_faults_preserve_acceptance_claim_and_observation_truth() -> T
     let claim_store = RedbStore::open(claim_root.path())?;
     let claimed = claim(&claim_store, &worker)?;
     let claim = claimed.phase.claim().ok_or("claim missing")?.clone();
-    claim_store.mark_peer_entered(&peer, &claim_execution, &worker, claim.generation, now())?;
+    enter(
+        &claim_store,
+        &peer,
+        &claim_execution,
+        &worker,
+        claim.generation,
+    )?;
     drop(claim_store);
 
     let observation_store =
@@ -414,7 +422,7 @@ fn claims_recover_at_truthful_entry_boundary_and_late_terminal_is_idempotent() -
     let second = claim(&store, &worker)?;
     let second_claim = second.phase.claim().ok_or("second claim absent")?.clone();
     assert_ne!(first_generation, second_claim.generation);
-    store.mark_peer_entered(&peer, &execution, &worker, second_claim.generation, now())?;
+    enter(&store, &peer, &execution, &worker, second_claim.generation)?;
     let recovery = store.recover_peer_claims(now(), PageSize::new(8)?)?;
     assert_eq!(recovery.uncertain, 1);
     let uncertain = store
@@ -447,6 +455,77 @@ fn claims_recover_at_truthful_entry_boundary_and_late_terminal_is_idempotent() -
         store
             .peer_execution_by_request(&peer, &request.request_id)?
             .is_some()
+    );
+    Ok(())
+}
+
+#[test]
+fn durable_drain_and_relationship_generation_close_the_adapter_entry_race() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let store = RedbStore::open(root.path())?;
+    let peer = PeerId::new("peer-entry-race")?;
+    let target = PeerId::new("peer-entry-target")?;
+    let descriptor = descriptor()?;
+    let catalog = milkdrift_peer_protocol::CatalogSnapshot::new(
+        1,
+        now().saturating_sub(1),
+        now().saturating_add(60_000),
+        Vec::new(),
+    )?;
+    configure_store(&store, &peer, &catalog.digest, 1)?;
+    let request = request(
+        &peer,
+        &target,
+        &descriptor,
+        1,
+        catalog.digest,
+        "request-entry-race",
+        "invocation-entry-race",
+    )?;
+    let execution = PeerExecutionId::new("execution-entry-race")?;
+    assert!(matches!(
+        store.admit_peer_execution(&PeerAdmission {
+            owner_peer: &peer,
+            request: &request,
+            authority: &allowed_decision(&peer)?,
+            execution: &execution,
+            relationship_generation: 1,
+            accepted_at_unix_ms: now(),
+            maximum_global_active: 1,
+            maximum_dispatch_queue: 1,
+            maximum_records: 8,
+        })?,
+        PeerAdmissionOutcome::Accepted(_)
+    ));
+    let worker = WorkerId::new("worker-entry-race")?;
+    let claimed = claim(&store, &worker)?;
+    let generation = claimed.phase.claim().ok_or("claim missing")?.generation;
+    store.set_peer_admission_open(false)?;
+    let authority = allowed_decision(&peer)?;
+    let entry_request = PeerEntryRequest {
+        owner: &peer,
+        execution: &execution,
+        worker: &worker,
+        claim_generation: generation,
+        relationship_generation: 1,
+        entered_at_unix_ms: now(),
+        authority: &authority,
+    };
+    assert_eq!(
+        store.mark_peer_entered(&entry_request)?,
+        PeerEntryOutcome::AdmissionClosed
+    );
+    store.set_peer_admission_open(true)?;
+    store.configure_peer_relationship(&PeerRelationshipState {
+        peer: peer.clone(),
+        generation: 2,
+        enabled: false,
+        expires_at_unix_ms: now().saturating_add(60_000),
+        maximum_active: 1,
+    })?;
+    assert_eq!(
+        store.mark_peer_entered(&entry_request)?,
+        PeerEntryOutcome::RelationshipUnavailable
     );
     Ok(())
 }
@@ -496,7 +575,15 @@ fn cancellation_before_entry_prevents_adapter_invocation_and_survives_claim_reco
     ));
     assert!(
         store
-            .mark_peer_entered(&peer, &execution, &worker, 2, now())
+            .mark_peer_entered(&PeerEntryRequest {
+                owner: &peer,
+                execution: &execution,
+                worker: &worker,
+                claim_generation: 2,
+                relationship_generation: 1,
+                entered_at_unix_ms: now(),
+                authority: &allowed_decision(&peer)?,
+            })
             .is_err()
     );
     let recovered = store.recover_peer_claims(now(), PageSize::new(8)?)?;
@@ -533,7 +620,7 @@ fn post_entry_and_post_terminal_cancellation_and_revocation_preserve_truth() -> 
     let worker = WorkerId::new("cancel-entered-worker")?;
     let claimed = claim(&store, &worker)?;
     let generation = claimed.phase.claim().ok_or("claim missing")?.generation;
-    store.mark_peer_entered(&peer, &entered_execution, &worker, generation, now())?;
+    enter(&store, &peer, &entered_execution, &worker, generation)?;
     let entered_cancellation = PeerCancellationRequest {
         request_id: PeerRequestId::new("cancel-entered")?,
         execution: entered_execution.clone(),
@@ -677,7 +764,7 @@ fn observation_history_is_append_only_and_pages_bound_long_stream_memory() -> Te
     let worker = WorkerId::new("observation-worker")?;
     let claimed = claim(&store, &worker)?;
     let generation = claimed.phase.claim().ok_or("claim missing")?.generation;
-    store.mark_peer_entered(&peer, &execution, &worker, generation, now())?;
+    enter(&store, &peer, &execution, &worker, generation)?;
     for sequence in 1..100 {
         store.append_peer_observation(
             &peer,
@@ -713,6 +800,52 @@ fn observation_history_is_append_only_and_pages_bound_long_stream_memory() -> Te
 }
 
 #[test]
+fn inbound_peer_authority_includes_adapter_declared_secret_requirements() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let store = Arc::new(RedbStore::open(root.path())?);
+    let active = Arc::new(AtomicUsize::new(0));
+    let maximum = Arc::new(AtomicUsize::new(0));
+    let (host, descriptor) = host_with_adapter(Arc::new(TerminalAdapter {
+        capability: CapabilityId::new("test-capability")?,
+        delay: Duration::ZERO,
+        active,
+        maximum,
+        requirements: CapabilityExecutionRequirements {
+            secrets: BTreeSet::from([SecretRef::new("secret:peer-denied")?]),
+            ..CapabilityExecutionRequirements::default()
+        },
+    }))?;
+    let peer = PeerId::new("peer-secret-denied")?;
+    let target = PeerId::new("peer-secret-target")?;
+    let service = PeerService::new(
+        server_config(peer.clone(), target.clone(), 1, 4)?,
+        host,
+        store,
+        Arc::new(SystemPeerClock),
+    )?;
+    service.recover(1_024)?;
+    let catalog = service.catalog(&peer)?;
+    let denied = service.invoke(
+        &peer,
+        request(
+            &peer,
+            &target,
+            &descriptor,
+            catalog.generation,
+            catalog.digest,
+            "request-secret-denied",
+            "invocation-secret-denied",
+        )?,
+    );
+    assert!(
+        denied.is_err(),
+        "undelegated adapter secret reached admission"
+    );
+    assert!(service.shutdown_workers(Duration::from_secs(2)).clean);
+    Ok(())
+}
+
+#[test]
 fn fixed_worker_owner_bounds_execution_and_shutdown_joins() -> TestResult {
     let root = tempfile::tempdir()?;
     let store = Arc::new(RedbStore::open(root.path())?);
@@ -723,6 +856,7 @@ fn fixed_worker_owner_bounds_execution_and_shutdown_joins() -> TestResult {
         delay: Duration::from_millis(20),
         active: active.clone(),
         maximum: maximum.clone(),
+        requirements: CapabilityExecutionRequirements::default(),
     }))?;
     let peer = PeerId::new("peer-a")?;
     let target = PeerId::new("peer-b")?;
@@ -732,6 +866,21 @@ fn fixed_worker_owner_bounds_execution_and_shutdown_joins() -> TestResult {
         store,
         Arc::new(SystemPeerClock),
     )?;
+    let closed_catalog = service.catalog(&peer)?;
+    let closed_request = request(
+        &peer,
+        &target,
+        &descriptor,
+        closed_catalog.generation,
+        closed_catalog.digest,
+        "request-before-recovery",
+        "invocation-before-recovery",
+    )?;
+    assert!(matches!(
+        service.invoke(&peer, closed_request)?,
+        InvocationAcceptance::Rejected { code, .. } if code == "draining"
+    ));
+    service.recover(1_024)?;
     let catalog = service.catalog(&peer)?;
     let mut accepted = Vec::new();
     for index in 0..8 {
@@ -761,6 +910,32 @@ fn fixed_worker_owner_bounds_execution_and_shutdown_joins() -> TestResult {
     }
     assert_eq!(accepted.len(), 8);
     assert!(maximum.load(Ordering::SeqCst) <= 2);
+    let forged_reference = ArtifactReference::new(
+        ArtifactId::new("forged-peer-artifact")?,
+        ContentDigest::for_bytes(b"forged"),
+        MediaType::new("application/octet-stream")?,
+        6,
+    );
+    let forged_offer = ArtifactMetadataOffer {
+        transfer: TransferId::new("forged-peer-transfer")?,
+        direction: ArtifactTransferDirection::Upload,
+        artifact: forged_reference,
+        sensitivity: ArtifactSensitivity::Internal,
+        retention: ArtifactRetention::WhileReferenced,
+        provenance: ArtifactProvenance::new(
+            CausalReference::External {
+                source: CausalId::new("caller-asserted-producer")?,
+            },
+            Vec::new(),
+        )?,
+        source_peer: peer.clone(),
+        execution: PeerExecutionId::new("nonexistent-peer-execution")?,
+        expires_at_unix_ms: now().saturating_add(60_000),
+    };
+    assert!(
+        service.negotiate_artifact(&peer, &forged_offer).is_err(),
+        "artifact upload accepted caller-asserted execution provenance"
+    );
     let shutdown = service.shutdown_workers(Duration::from_secs(2));
     assert!(shutdown.clean);
     assert_eq!(shutdown.joined, 2);
@@ -809,6 +984,11 @@ fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbou
         transfer.negotiate(&peer, &offer, 1_048_576)?,
         ArtifactTransferDecision::Transfer { next_offset: 0, .. }
     ));
+    assert!(
+        transfer
+            .abort(&PeerId::new("peer-foreign")?, &offer.transfer)
+            .is_err()
+    );
     transfer.write_chunk(
         &peer,
         &ArtifactChunk {
@@ -847,8 +1027,14 @@ fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbou
         .ok_or("metadata missing")?;
     assert_eq!(metadata.sensitivity(), ArtifactSensitivity::Internal);
     assert_eq!(metadata.retention(), &ArtifactRetention::Indefinite);
-    assert_eq!(metadata.provenance().producer(), provenance.producer());
+    assert_eq!(
+        metadata.provenance().producer(),
+        &CausalReference::External {
+            source: CausalId::new("peer:peer-a/execution:execution-artifact")?,
+        }
+    );
     assert_eq!(metadata.provenance().causes().len(), 1);
+    assert_eq!(&metadata.provenance().causes()[0], provenance.producer());
     assert_eq!(
         transfer.negotiate(&peer, &offer, 1_048_576)?,
         ArtifactTransferDecision::AlreadyPresent
@@ -947,9 +1133,14 @@ struct TerminalAdapter {
     delay: Duration,
     active: Arc<AtomicUsize>,
     maximum: Arc<AtomicUsize>,
+    requirements: CapabilityExecutionRequirements,
 }
 
 impl CapabilityAdapter for TerminalAdapter {
+    fn authority_requirements(&self) -> CapabilityExecutionRequirements {
+        self.requirements.clone()
+    }
+
     fn execute(
         &self,
         invocation: &AdapterInvocation<'_>,
@@ -1064,6 +1255,11 @@ fn relationship(remote_peer: PeerId, maximum_concurrent: u16) -> TestResult<Peer
         maximum_concurrent,
         maximum_requests_per_minute: 10_000,
         maximum_artifact_bytes: limits.artifact_bytes,
+        artifact_sensitivities: BTreeSet::from([
+            ArtifactSensitivity::Public,
+            ArtifactSensitivity::Internal,
+            ArtifactSensitivity::Restricted,
+        ]),
         catalog_ttl_ms: 60_000,
         trust_zone: TrustZone::new("trusted-peer")?,
         delegation: DelegationRef::new("delegation-configured")?,
@@ -1107,6 +1303,7 @@ fn configure_store(
     digest: &CatalogDigest,
     maximum: u32,
 ) -> TestResult {
+    store.set_peer_admission_open(true)?;
     store.configure_peer_relationship(&PeerRelationshipState {
         peer: peer.clone(),
         generation: 1,
@@ -1160,6 +1357,28 @@ fn claim(
         PeerClaimOutcome::Claimed(record) => Ok(record),
         other => Err(format!("expected claimed execution, got {other:?}").into()),
     }
+}
+
+fn enter(
+    store: &RedbStore,
+    peer: &PeerId,
+    execution: &PeerExecutionId,
+    worker: &WorkerId,
+    claim_generation: u64,
+) -> TestResult {
+    assert!(matches!(
+        store.mark_peer_entered(&PeerEntryRequest {
+            owner: peer,
+            execution,
+            worker,
+            claim_generation,
+            relationship_generation: 1,
+            entered_at_unix_ms: now(),
+            authority: &allowed_decision(peer)?,
+        })?,
+        PeerEntryOutcome::Entered(_)
+    ));
+    Ok(())
 }
 
 fn allowed_decision(peer: &PeerId) -> TestResult<AuthorityDecisionSnapshot> {

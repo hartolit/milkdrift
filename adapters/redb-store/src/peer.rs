@@ -6,10 +6,11 @@ use milkdrift_peer_protocol::{
 use milkdrift_persistence::{
     PEER_EXECUTION_RECORD_SCHEMA_VERSION_V1, PeerAdmission, PeerAdmissionOutcome,
     PeerAdmissionRejection, PeerCancellationRecord, PeerCatalogState, PeerClaimOutcome,
-    PeerDispatchClaim, PeerDispatchClaimRequest, PeerEntryEvidence, PeerExecutionAccounting,
-    PeerExecutionPhase, PeerExecutionRecord, PeerExecutionRetention, PeerExecutionStore,
-    PeerObservationAppend, PeerObservationPage, PeerRecoveryResult, PeerRelationshipState,
-    PeerRetentionPage, PeerRetentionRequest, PersistenceError, StorageFailureClass, WorkerId,
+    PeerDispatchClaim, PeerDispatchClaimRequest, PeerEntryEvidence, PeerEntryOutcome,
+    PeerEntryRequest, PeerExecutionAccounting, PeerExecutionPhase, PeerExecutionRecord,
+    PeerExecutionRetention, PeerExecutionStore, PeerObservationAppend, PeerObservationPage,
+    PeerRecoveryResult, PeerRelationshipState, PeerRetentionPage, PeerRetentionRequest,
+    PersistenceError, StorageFailureClass, WorkerId,
 };
 use redb::{ReadableTable, ReadableTableMetadata};
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,7 @@ pub(crate) struct GlobalPeerAccounting {
     active: u32,
     dispatch_queued: u32,
     terminal_records: u64,
+    admission_open: bool,
 }
 
 impl GlobalPeerAccounting {
@@ -47,6 +49,7 @@ impl GlobalPeerAccounting {
         active: 0,
         dispatch_queued: 0,
         terminal_records: 0,
+        admission_open: false,
     };
 }
 
@@ -71,6 +74,14 @@ impl PerPeerAccounting {
 }
 
 impl PeerExecutionStore for RedbStore {
+    fn set_peer_admission_open(&self, open: bool) -> Result<(), PersistenceError> {
+        let write = self.database().begin_write().map_err(error::redb)?;
+        let mut global = global_accounting(&write)?;
+        global.admission_open = open;
+        put_global_accounting(&write, global)?;
+        write.commit().map_err(error::redb)
+    }
+
     fn configure_peer_relationship(
         &self,
         relationship: &PeerRelationshipState,
@@ -181,6 +192,13 @@ impl PeerExecutionStore for RedbStore {
             );
         }
 
+        let mut global = global_accounting(&write)?;
+        if !global.admission_open {
+            return Ok(PeerAdmissionOutcome::Rejected(
+                PeerAdmissionRejection::AdmissionClosed,
+            ));
+        }
+
         let Some(relationship) = relationship_in_transaction(&write, admission.owner_peer)? else {
             return Ok(PeerAdmissionOutcome::Rejected(
                 PeerAdmissionRejection::RelationshipUnavailable,
@@ -206,7 +224,6 @@ impl PeerExecutionStore for RedbStore {
             ));
         }
 
-        let mut global = global_accounting(&write)?;
         let mut peer = peer_accounting(&write, admission.owner_peer)?;
         if peer.active >= relationship.maximum_active {
             return Ok(PeerAdmissionOutcome::Rejected(
@@ -466,26 +483,36 @@ impl PeerExecutionStore for RedbStore {
 
     fn mark_peer_entered(
         &self,
-        owner: &PeerId,
-        execution: &PeerExecutionId,
-        worker: &WorkerId,
-        claim_generation: u64,
-        entered_at_unix_ms: u64,
-    ) -> Result<PeerExecutionRecord, PersistenceError> {
-        if entered_at_unix_ms == 0 {
+        request: &PeerEntryRequest<'_>,
+    ) -> Result<PeerEntryOutcome, PersistenceError> {
+        if request.entered_at_unix_ms == 0 {
             return Err(invalid("peer adapter entry time must be nonzero"));
         }
         let write = self.database().begin_write().map_err(error::redb)?;
-        let mut record = owned_execution_in_transaction(&write, owner, execution)?;
-        let claim = exact_pre_entry_claim(&record, worker, claim_generation)?.clone();
+        let mut record = owned_execution_in_transaction(&write, request.owner, request.execution)?;
+        validate_entry_authority(&record, request.authority)?;
+        let claim =
+            exact_pre_entry_claim(&record, request.worker, request.claim_generation)?.clone();
+        let mut global = global_accounting(&write)?;
+        if !global.admission_open {
+            return Ok(PeerEntryOutcome::AdmissionClosed);
+        }
+        let relationship = relationship_in_transaction(&write, request.owner)?;
+        if relationship.as_ref().is_none_or(|relationship| {
+            !relationship.enabled
+                || relationship.generation != request.relationship_generation
+                || request.entered_at_unix_ms > relationship.expires_at_unix_ms
+        }) {
+            return Ok(PeerEntryOutcome::RelationshipUnavailable);
+        }
         let evidence = PeerEntryEvidence {
-            worker: worker.clone(),
-            claim_generation,
-            entered_at_unix_ms,
+            worker: request.worker.clone(),
+            claim_generation: request.claim_generation,
+            entered_at_unix_ms: request.entered_at_unix_ms,
+            authority: request.authority.clone(),
         };
         record.phase = PeerExecutionPhase::Entered { claim, evidence };
         bump_record(&mut record)?;
-        let mut global = global_accounting(&write)?;
         global.dispatch_queued = global
             .dispatch_queued
             .checked_sub(1)
@@ -493,7 +520,7 @@ impl PeerExecutionStore for RedbStore {
         put_execution(&write, &record)?;
         put_global_accounting(&write, global)?;
         write.commit().map_err(error::redb)?;
-        Ok(record)
+        Ok(PeerEntryOutcome::Entered(Box::new(record)))
     }
 
     fn release_peer_claim(
@@ -1444,6 +1471,26 @@ fn validate_admission(value: &PeerAdmission<'_>) -> Result<(), PersistenceError>
         || value.maximum_records == 0
     {
         return Err(invalid("peer admission persistence facts are invalid"));
+    }
+    Ok(())
+}
+
+fn validate_entry_authority(
+    record: &PeerExecutionRecord,
+    authority: &milkdrift_authority::AuthorityDecisionSnapshot,
+) -> Result<(), PersistenceError> {
+    let accepted = record.authority.request();
+    let entry = authority.request();
+    if !authority.is_allowed()
+        || entry.operation != AuthorityOperation::InvokePeerCapability
+        || entry.actor != record.request.delegation.actor
+        || entry.resources != accepted.resources
+        || entry.budget != accepted.budget
+        || entry.provenance != accepted.provenance
+    {
+        return Err(invalid(
+            "peer adapter-entry authority does not match the accepted execution envelope",
+        ));
     }
     Ok(())
 }

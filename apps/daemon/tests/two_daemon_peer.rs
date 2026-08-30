@@ -4,7 +4,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     net::Ipv4Addr,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 use milkdrift_authority::{AccessMode, FilesystemScope, NetworkProfileRef, NetworkScope, PeerId};
@@ -53,8 +53,10 @@ async fn authenticated_catalog_registers_and_disconnect_drains_remote_generation
     let root_b = tempfile::tempdir()?;
     let listener_a = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
     let listener_b = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
-    let endpoint_a = Url::parse(&format!("http://{}/", listener_a.local_addr()?))?;
-    let endpoint_b = Url::parse(&format!("http://{}/", listener_b.local_addr()?))?;
+    let address_a = listener_a.local_addr()?;
+    let address_b = listener_b.local_addr()?;
+    let endpoint_a = Url::parse(&format!("http://{address_a}/"))?;
+    let endpoint_b = Url::parse(&format!("http://{address_b}/"))?;
     let daemon_a = start(&root_a, "peer-a", "peer-b", &endpoint_b, listener_a).await?;
     let daemon_b = start(&root_b, "peer-b", "peer-a", &endpoint_a, listener_b).await?;
 
@@ -220,6 +222,46 @@ async fn authenticated_catalog_registers_and_disconnect_drains_remote_generation
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 
+    daemon_b.stop().await?;
+    daemon_a.stop().await?;
+    let listener_a = tokio::net::TcpListener::bind(address_a).await?;
+    let listener_b = tokio::net::TcpListener::bind(address_b).await?;
+    let daemon_a = start(&root_a, "peer-a", "peer-b", &endpoint_b, listener_a).await?;
+    let daemon_b = start(&root_b, "peer-b", "peer-a", &endpoint_a, listener_b).await?;
+    assert!(
+        daemon_b
+            .client
+            .peer_action("peer-a", "connect")
+            .await?
+            .connected
+    );
+    daemon_b
+        .client
+        .submit(&command(
+            "peer-process-restart-start",
+            Command::StartRun {
+                run_id: "run-peer-process-after-restart".to_owned(),
+                workflow_id: "daemon-peer-process".to_owned(),
+                revision_id: revision.to_owned(),
+            },
+        ))
+        .await?;
+    let restart_deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    loop {
+        let run = daemon_b
+            .client
+            .run("run-peer-process-after-restart")
+            .await?;
+        if run.lifecycle == "terminal" {
+            assert_eq!(run.terminal.as_deref(), Some("succeeded"));
+            break;
+        }
+        if tokio::time::Instant::now() >= restart_deadline {
+            return Err(format!("remote process run after daemon restart stalled: {run:?}").into());
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
     let revoked = daemon_b.client.peer_action("peer-a", "revoke").await?;
     assert!(!revoked.connected);
     assert!(revoked.revoked);
@@ -270,11 +312,8 @@ fn configuration(
     let peer = root.path().join("peer.token");
     write_secret(&operator, OPERATOR_TOKEN)?;
     write_secret(&peer, PEER_TOKEN)?;
-    let expires = SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_millis()
-        .saturating_add(600_000);
-    let expires = u64::try_from(expires)?;
+    // This immutable fixture value must remain identical across the restart half of the test.
+    let expires = 4_000_000_000_000_u64;
     let remote_destination = format!(
         "{}:{}",
         remote_endpoint
@@ -295,7 +334,7 @@ fn configuration(
         Vec::new()
     };
     DaemonConfig {
-        schema_version: 3,
+        schema_version: 4,
         data_root: root.path().join("data"),
         bind: "127.0.0.1:0".parse()?,
         secret_sources: BTreeMap::from([
@@ -358,6 +397,7 @@ fn configuration(
                 maximum_concurrent: 2,
                 maximum_requests_per_minute: 600,
                 maximum_artifact_bytes: 1_048_576,
+                artifact_sensitivities: BTreeSet::new(),
                 maximum_duration_ms: 30_000,
                 maximum_cost_micros: 0,
                 maximum_observations: 128,

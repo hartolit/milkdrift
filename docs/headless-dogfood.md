@@ -7,11 +7,11 @@ verification fails. Remediation is a normal digest-bound prospective revision; i
 completed work or enlarge the run's frozen authority.
 
 The complete example is [`examples/headless-dogfood-sequence.md`](../examples/headless-dogfood-sequence.md).
-Its capability identities are placeholders for operator-configured process or model profiles.
+Its capability identities are placeholders for operator-configured trusted-host process profiles.
 
 ## What the import creates
 
-For each stage `S`, schema 1 creates only existing blueprint primitives:
+For each stage `S`, schema 2 creates only existing blueprint primitives:
 
 ```text
 stage-S-coding -> stage-S-verification -> stage-S-gate
@@ -32,10 +32,10 @@ merge capabilities; the runtime does not manufacture branches or commits.
 
 ## Configure the execution boundary
 
-Register separate exact generations for coding, verification, and review. A sequence names only
-their capability, operation, optional provider profile, execution trust class, and maximum side
-effect. It cannot provide argv, executable paths, network destinations, environment variables, or
-secret values.
+Register separate exact trusted-host process generations for coding, verification, and review. A
+sequence names only their capability, exact `process.execute` operation, null provider-profile
+field, execution trust class, and maximum side effect. It cannot provide argv, executable paths,
+network destinations, environment variables, or secret values.
 
 For a sequential repository process profile, declare the repository itself as a read-write root
 and select it explicitly:
@@ -61,7 +61,7 @@ the persistent repository. This is an authority boundary and provenance fact, no
 
 The repository section of the import is a bounded policy/reference document. `root_ref`, starting
 revision, credentials, and remote profile references are opaque identifiers interpreted by the
-configured capabilities, never executable prompt data. Schema 1 requires explicit read, write,
+configured capabilities, never executable prompt data. Schema 2 requires explicit read, write,
 and execute operations plus starting-state, diff, and verification evidence policies.
 
 ## Import and run
@@ -127,9 +127,10 @@ existing reconciliation plan preserves completed executions and facts. Apply cha
 revision while the run remains paused; an explicit signal and resume are still required.
 
 The frozen run grant remains authoritative. A proposed verifier/profile or other requirement
-outside that envelope is rejected at revision adoption. The sequence-wide revision/review limits,
-stage budgets, runtime grant ceilings, adapter timeouts/admission bounds, artifact budgets, and
-retention policies all remain cumulative constraints; an import never grants them by itself.
+outside that envelope is rejected at revision adoption. The sequence document limits remediation
+generation only. Runtime retry and authority budgets, adapter timeouts/admission bounds, artifact
+budgets, and retention policies are configured and enforced by their owning layers; the import
+does not pretend to add additional ceilings and never grants authority by itself.
 
 ## Codex as one generic coding-agent profile
 

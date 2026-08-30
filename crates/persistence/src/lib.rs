@@ -84,10 +84,10 @@ pub use journal::{
 pub use peer::{
     PEER_EXECUTION_RECORD_SCHEMA_VERSION_V1, PeerAdmission, PeerAdmissionOutcome,
     PeerAdmissionRejection, PeerCancellationRecord, PeerCatalogState, PeerClaimOutcome,
-    PeerDispatchClaim, PeerDispatchClaimRequest, PeerEntryEvidence, PeerExecutionAccounting,
-    PeerExecutionPhase, PeerExecutionRecord, PeerExecutionRetention, PeerExecutionStore,
-    PeerObservationAppend, PeerObservationPage, PeerRecoveryResult, PeerRelationshipState,
-    PeerRetentionPage, PeerRetentionRequest,
+    PeerDispatchClaim, PeerDispatchClaimRequest, PeerEntryEvidence, PeerEntryOutcome,
+    PeerEntryRequest, PeerExecutionAccounting, PeerExecutionPhase, PeerExecutionRecord,
+    PeerExecutionRetention, PeerExecutionStore, PeerObservationAppend, PeerObservationPage,
+    PeerRecoveryResult, PeerRelationshipState, PeerRetentionPage, PeerRetentionRequest,
 };
 pub use revision::{
     ImmutableRevisionPut, RevisionCursor, RevisionFilter, RevisionPage, RevisionPageQuery,

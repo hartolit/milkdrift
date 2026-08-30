@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "data_root": "./test-data",
   "bind": "127.0.0.1:9734",
   "secret_sources": {

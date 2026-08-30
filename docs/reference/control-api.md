@@ -1,4 +1,4 @@
-# Local control API 1.0
+# Local control API 2.0
 
 This document is the implemented external contract for `milkdrift-daemon`. It describes a local control plane, not a peer protocol or public internet service.
 
@@ -9,14 +9,17 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":1,"minor":0}}
+{"protocol":{"major":2,"minor":0}}
 ```
 
-Major 1 is required. The current minor is 0. JSON success bodies use:
+Major 2 is required. Protocol 1 is deliberately unsupported because attempt inspection now carries
+the complete frozen authority basis and execution-boundary decisions. The current minor is 0. The
+authenticated `/v1/...` HTTP route namespace is stable and independent from the negotiated envelope
+version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 1, "minor": 0},
+  "protocol": {"major": 2, "minor": 0},
   "request_id": "req-1",
   "value": {}
 }
@@ -30,7 +33,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 1, "minor": 0},
+  "protocol": {"major": 2, "minor": 0},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -47,7 +50,7 @@ All mutations use `POST /v1/commands`. A command envelope has no actor field:
 
 ```json
 {
-  "protocol": {"major": 1, "minor": 0},
+  "protocol": {"major": 2, "minor": 0},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,
@@ -67,7 +70,7 @@ The closed command types are:
 | --- | --- | --- | --- |
 | `import_blueprint` | `document` | `import_blueprint` | Validate and store an exact immutable workflow/revision. |
 | `validate_blueprint` | `document` | `validate_blueprint` | Validate one exact workflow/revision without storing it. |
-| `import_prompt_sequence` | `document` | `import_blueprint` | Compile bounded schema-1 JSON/Markdown-derived data and store the ordinary immutable revision. |
+| `import_prompt_sequence` | `document` | `import_blueprint` | Compile bounded schema-2 JSON/Markdown-derived data and store the ordinary immutable revision. |
 | `validate_prompt_sequence` | `document` | `validate_blueprint` | Compile and validate a prompt sequence without storing its generated revision. |
 | `start_run` | `run_id`, `workflow_id`, `revision_id` | `create_run`, then `start_run` | Atomically create then start at an exact revision through ordinary control authority. |
 | `pause_run`, `resume_run`, `cancel_run` | `run_id` | `pause`, `resume`, `cancel` | Durable exact-run lifecycle control. |
@@ -84,7 +87,7 @@ The wire command carries the decoded prompt-sequence JSON document. Markdown par
 the CLI/library before submission, and the daemon independently performs strict schema validation
 and ordinary blueprint compilation. Validate/import responses include schema/sequence/workflow,
 revision and semantic identity, import and repository-profile digests, and ordered stage-node
-summaries. The full schema is documented in [`prompt-sequence-v1.md`](prompt-sequence-v1.md).
+summaries. The full schema is documented in [`prompt-sequence-v2.md`](prompt-sequence-v2.md).
 
 ## Query routes
 

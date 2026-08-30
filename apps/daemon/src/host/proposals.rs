@@ -50,18 +50,10 @@ pub(super) fn page(
 ) -> Result<Page<ProposalRead>, PublicFailure> {
     let run_id = RunId::new(run.to_owned()).map_err(|error| invalid(&error.to_string()))?;
     let feed = format!("proposals:{run}");
-    let summary = owner
-        .store
-        .run_summary(&run_id)
-        .map_err(public_persistence)?
-        .ok_or_else(not_found)?;
-    let mut resources = RequestedResourceFacts::empty();
-    resources.workflow = Some(summary.workflow);
-    resources.run = Some(run_id.clone());
-    let decision = owner.authorize(
+    let decision = owner.authorize_run_read(
         session,
+        run,
         AuthorityOperation::InspectProposal,
-        resources,
         "read:proposals",
     )?;
     let binding = cursor_binding(session, &feed)?;

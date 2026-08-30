@@ -116,7 +116,7 @@ fn configuration_with_process_profiles(
         ..RuntimeHostConfig::default()
     };
     DaemonConfig {
-        schema_version: 3,
+        schema_version: 4,
         data_root: directory.path().join("data"),
         bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         secret_sources: BTreeMap::from([
@@ -525,17 +525,10 @@ fn dogfood_stage(identity: &str, prompt: &str, verifier: &str) -> serde_json::Va
             "result_artifact": "verification_result",
             "log_artifact": "verification_logs"
         },
-        "checkpoint": "verification_artifacts",
         "failure": "pause_for_review",
         "reviewer": dogfood_profile_reference("dogfood-reviewer", "read_only"),
         "approval": "shared_control_path",
         "context_policy_ref": "context:dogfood-v1",
-        "budget": {
-            "max_coding_attempts": 1,
-            "max_verification_attempts": 2,
-            "timeout_ms": 30000,
-            "max_output_bytes": 4194304
-        },
         "outputs": [
             {"name": "diff", "media_type": "application/octet-stream", "required": true},
             {"name": "logs", "media_type": "application/octet-stream", "required": false}
@@ -545,7 +538,7 @@ fn dogfood_stage(identity: &str, prompt: &str, verifier: &str) -> serde_json::Va
 
 fn executable_dogfood_sequence() -> TestResult<PromptSequenceDocument> {
     let value = serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "sequence": {
             "id": "daemon-headless-dogfood",
             "title": "Daemon headless dogfood",
@@ -580,11 +573,7 @@ fn executable_dogfood_sequence() -> TestResult<PromptSequenceDocument> {
                 )
             ],
             "budget": {
-                "max_revisions": 8,
-                "max_review_loops": 3,
-                "max_elapsed_ms": 300000,
-                "max_capability_calls": 32,
-                "max_artifact_bytes": 67108864
+                "max_review_loops": 3
             },
             "extensions": {}
         }
@@ -1086,6 +1075,50 @@ async fn daemon_auth_startup_readiness_and_authority() -> TestResult {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exhausted_application_receipt_capacity_rejects_before_semantic_mutation() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let mut config = configuration(&directory, 16)?;
+    config.document.command_receipt_bound = 1;
+    let config = config.document.validate(&config.configuration_directory)?;
+    let daemon = start(config, CONTROLLER_TOKEN).await?;
+    let imported = daemon
+        .client
+        .submit(&request(
+            "capacity-import",
+            None,
+            Command::ImportBlueprint {
+                document: blueprint()?,
+            },
+        ))
+        .await?;
+    let revision = imported
+        .value
+        .get("revision_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("capacity import omitted revision")?;
+    assert!(
+        daemon
+            .client
+            .submit(&request(
+                "capacity-start-must-not-mutate",
+                None,
+                Command::StartRun {
+                    run_id: "run-capacity-rejected".to_owned(),
+                    workflow_id: "golden".to_owned(),
+                    revision_id: revision.to_owned(),
+                },
+            ))
+            .await
+            .is_err()
+    );
+    assert!(matches!(
+        daemon.client.run("run-capacity-rejected").await,
+        Err(ClientError::Api(error)) if error.code == ErrorCode::NotFound
+    ));
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn scoped_read_matrix_and_continuations_fail_closed() -> TestResult {
     let directory = tempfile::tempdir()?;
     let profile = configured_process_profile(&directory)?;
@@ -1117,6 +1150,18 @@ async fn scoped_read_matrix_and_continuations_fail_closed() -> TestResult {
                 run_id: "run-matrix".to_owned(),
                 workflow_id: "golden".to_owned(),
                 revision_id: golden_revision.clone(),
+            },
+        ))
+        .await?;
+    daemon
+        .client
+        .submit(&request(
+            "matrix-start-process",
+            None,
+            Command::StartRun {
+                run_id: "run-matrix-process".to_owned(),
+                workflow_id: "daemon-process".to_owned(),
+                revision_id: process_revision.clone(),
             },
         ))
         .await?;
@@ -1176,7 +1221,7 @@ async fn scoped_read_matrix_and_continuations_fail_closed() -> TestResult {
     );
     assert!(matches!(
         observer.revision(&process_revision).await,
-        Err(ClientError::Api(error)) if error.code == ErrorCode::Unauthorized
+        Err(ClientError::Api(error)) if error.code == ErrorCode::NotFound
     ));
     assert!(matches!(
         observer.revisions(
@@ -1188,6 +1233,14 @@ async fn scoped_read_matrix_and_continuations_fail_closed() -> TestResult {
     assert_eq!(
         observer.run("run-matrix").await?.workflow_id.as_deref(),
         Some("golden")
+    );
+    let hidden_run = observer.run("run-matrix-process").await;
+    assert!(
+        matches!(
+            hidden_run,
+            Err(ClientError::Api(ref error)) if error.code == ErrorCode::NotFound
+        ),
+        "out-of-scope exact run was distinguishable from absence: {hidden_run:?}"
     );
     assert!(
         observer

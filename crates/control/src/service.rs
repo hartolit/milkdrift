@@ -1,11 +1,15 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::{BTreeSet, VecDeque},
+    sync::Arc,
+};
 
 use milkdrift_authority::{
     AuthorityBudget, AuthorityEvaluator, AuthorityExecutionProvenance, AuthorityOperation,
-    AuthorityRequest, BoundaryTimeMillis, DecisionId, RequestedResourceFacts,
+    AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope, DecisionId,
+    RequestedResourceFacts,
 };
-use milkdrift_blueprint::{AuthorRef, BlueprintRevision, NodeKind, RevisionId};
-use milkdrift_capability::{CapabilityCategory, TrustZone};
+use milkdrift_blueprint::{AuthorRef, BlueprintRevision, NodeKind, ReducerStrategy, RevisionId};
+use milkdrift_capability::{CapabilityRequirement, Locality};
 use milkdrift_persistence::{
     AuthorityDecision, CommandDisposition, CommandId, EventCursor, EventPageQuery,
     EvidenceReference, PageSize, Reason, ReconciliationDecisionId, ReconciliationId,
@@ -21,6 +25,8 @@ use crate::{
     RequestedRunAction, RevisionInspection, RiskClass, RunInspection, TimelinePage,
     WorkflowProposal, classify_proposal,
 };
+
+const MAX_PROPOSAL_AUTHORITY_REVISION_WALK: usize = 512;
 
 /// Shared application service for authority-scoped human, service, and AI workflow control.
 pub struct ControlService {
@@ -65,12 +71,20 @@ impl ControlService {
                     .revisions
                     .revision(revision)?
                     .ok_or(ControlError::BaseRevisionNotFound)?;
-                self.authorize_simple(
+                match self.authorize_simple(
                     document,
                     AuthorityOperation::InspectRevision,
                     Some(value.semantic().workflow()),
                     None,
-                )?;
+                ) {
+                    Ok(()) => {}
+                    Err(ControlError::AuthorizationDenied { .. }) => {
+                        // Exact revision identifiers are content addresses. Normalize an
+                        // out-of-scope existing revision to the same response as an absent one.
+                        return Err(ControlError::BaseRevisionNotFound);
+                    }
+                    Err(error) => return Err(error),
+                }
                 Ok(ControlResult::RevisionInspection {
                     value: RevisionInspection {
                         revision: value.id().clone(),
@@ -645,7 +659,7 @@ impl ControlService {
                 let latest_attempt = latest_attempt_id
                     .as_ref()
                     .and_then(|attempt| projection.attempts().get(attempt))
-                    .map(attempt_inspection);
+                    .map(|attempt| attempt_inspection(attempt, projection.execution_authority()));
                 let side_effect = latest_attempt
                     .as_ref()
                     .and_then(|attempt| attempt.side_effect.as_ref())
@@ -672,7 +686,9 @@ impl ControlService {
                     let latest_attempt = latest_attempt_id
                         .as_ref()
                         .and_then(|attempt| projection.attempts().get(attempt))
-                        .map(attempt_inspection);
+                        .map(|attempt| {
+                            attempt_inspection(attempt, projection.execution_authority())
+                        });
                     NodeExecutionRead {
                         execution: execution.execution().clone(),
                         node: execution.node().clone(),
@@ -834,61 +850,74 @@ impl ControlService {
         if !self.evaluate_allowed(document, operation, general, budget)? {
             return Ok(false);
         }
-        let changed_nodes = old
-            .semantic()
-            .nodes()
-            .keys()
-            .chain(new.semantic().nodes().keys())
-            .filter(|node| old.semantic().nodes().get(*node) != new.semantic().nodes().get(*node))
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        for node_id in changed_nodes {
-            for node in [
-                old.semantic().nodes().get(&node_id),
-                new.semantic().nodes().get(&node_id),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                let NodeKind::Task { config } = node.kind() else {
-                    continue;
-                };
-                let requirement = config.requirement();
-                let categories: Vec<Option<CapabilityCategory>> =
-                    if requirement.categories().is_empty() {
-                        vec![None]
-                    } else {
-                        requirement.categories().iter().cloned().map(Some).collect()
-                    };
-                let zones: Vec<Option<TrustZone>> = if requirement.trust_zones().is_empty() {
-                    vec![None]
-                } else {
+        // A proposal is authorized against the complete old and candidate execution envelopes,
+        // including capability reducers and every pinned subworkflow/repeat body. This prevents a
+        // harmless-looking parent mutation from importing authority the controller does not own.
+        for root in [old, new] {
+            for requirement in self.revision_requirements(root)? {
+                let envelope = CapabilityAuthorityScope::new(
                     requirement
-                        .trust_zones()
-                        .iter()
+                        .exact_capability()
                         .cloned()
-                        .map(Some)
-                        .collect()
-                };
-                for category in &categories {
-                    for zone in &zones {
-                        let mut resources = RequestedResourceFacts::empty();
-                        resources.workflow = Some(new.semantic().workflow().clone());
-                        resources.run = run.cloned();
-                        resources.capability = requirement.exact_capability().cloned();
-                        resources.category = category.clone();
-                        resources.capability_operation = Some(requirement.operation().clone());
-                        resources.provider_profile = requirement.provider_profile_ref().cloned();
-                        resources.trust_zone = zone.clone();
-                        resources.side_effect = requirement.maximum_side_effect_class();
-                        if !self.evaluate_allowed(document, operation, resources, budget)? {
-                            return Ok(false);
-                        }
-                    }
+                        .into_iter()
+                        .collect(),
+                    requirement.categories().clone(),
+                    BTreeSet::from([requirement.operation().clone()]),
+                    requirement
+                        .provider_profile_ref()
+                        .cloned()
+                        .into_iter()
+                        .collect(),
+                    requirement.trust_zones().clone(),
+                    BTreeSet::<Locality>::new(),
+                    requirement.maximum_side_effect_class(),
+                )?
+                .with_execution_trust_classes(
+                    requirement.execution_trust_class().into_iter().collect(),
+                )?;
+                let mut resources = RequestedResourceFacts::empty();
+                resources.workflow = Some(new.semantic().workflow().clone());
+                resources.run = run.cloned();
+                resources.capability = requirement.exact_capability().cloned();
+                resources.capability_operation = Some(requirement.operation().clone());
+                resources.provider_profile = requirement.provider_profile_ref().cloned();
+                resources.trust_zones = requirement.trust_zones().clone();
+                resources.execution_trust_class = requirement.execution_trust_class();
+                resources.side_effect = requirement.maximum_side_effect_class();
+                resources.capability_envelope = Some(envelope);
+                if !self.evaluate_allowed(document, operation, resources, budget)? {
+                    return Ok(false);
                 }
             }
         }
         Ok(true)
+    }
+
+    fn revision_requirements(
+        &self,
+        root: &BlueprintRevision,
+    ) -> Result<Vec<CapabilityRequirement>, ControlError> {
+        let mut requirements = Vec::new();
+        let mut pending = VecDeque::new();
+        let mut visited = BTreeSet::from([root.id().clone()]);
+        collect_revision_requirements(root, &mut requirements, &mut pending);
+        while let Some(revision_id) = pending.pop_front() {
+            if !visited.insert(revision_id.clone()) {
+                continue;
+            }
+            if visited.len() > MAX_PROPOSAL_AUTHORITY_REVISION_WALK {
+                return Err(ControlError::Bounds {
+                    location: "proposal.authority_revision_graph".to_owned(),
+                    reason: "proposal authority revision graph exceeds 512 revisions".to_owned(),
+                });
+            }
+            let revision = self
+                .revisions
+                .revision(&revision_id)?
+                .ok_or(ControlError::BaseRevisionNotFound)?;
+            collect_revision_requirements(&revision, &mut requirements, &mut pending);
+        }
+        Ok(requirements)
     }
 
     fn authorize(
@@ -968,7 +997,39 @@ fn ensure_accepted(execution: &milkdrift_runtime::CommandExecution) -> Result<()
     )))
 }
 
-fn attempt_inspection(attempt: &milkdrift_runtime::NodeAttemptProjection) -> AttemptInspection {
+fn collect_revision_requirements(
+    revision: &BlueprintRevision,
+    requirements: &mut Vec<CapabilityRequirement>,
+    pending: &mut VecDeque<RevisionId>,
+) {
+    for node in revision.semantic().nodes().values() {
+        match node.kind() {
+            NodeKind::Task { config } => requirements.push(config.requirement().clone()),
+            NodeKind::Reducer { config } => {
+                if let ReducerStrategy::Capability(operation) = config.strategy() {
+                    // Reducer operation contracts are resolved at dispatch; absent a narrower
+                    // blueprint envelope, treating them as unknown-effect is fail-closed.
+                    requirements.push(CapabilityRequirement::new(operation.clone()));
+                }
+            }
+            NodeKind::Subworkflow { reference } => {
+                pending.push_back(reference.revision().clone());
+            }
+            NodeKind::Repeat { config } => pending.push_back(config.body().revision().clone()),
+            NodeKind::Branch { .. }
+            | NodeKind::Fork { .. }
+            | NodeKind::Join { .. }
+            | NodeKind::Wait { .. }
+            | NodeKind::SignalWait { .. }
+            | NodeKind::Terminal { .. } => {}
+        }
+    }
+}
+
+fn attempt_inspection(
+    attempt: &milkdrift_runtime::NodeAttemptProjection,
+    execution_authority: Option<&milkdrift_authority::ExecutionAuthorityBasis>,
+) -> AttemptInspection {
     AttemptInspection {
         attempt: attempt.attempt().clone(),
         invocation: attempt.invocation().cloned(),
@@ -976,6 +1037,10 @@ fn attempt_inspection(attempt: &milkdrift_runtime::NodeAttemptProjection) -> Att
         capability: attempt
             .capability()
             .map(|resolution| resolution.snapshot().clone()),
+        execution_authority: execution_authority.cloned(),
+        resolution_authorization: attempt.resolution_authorization().cloned(),
+        claim_authorization: attempt.entry_authorization().cloned(),
+        entry_authorization: attempt.adapter_entry_authorization().cloned(),
         context_manifest: attempt
             .request()
             .and_then(|request| request.context_manifest())

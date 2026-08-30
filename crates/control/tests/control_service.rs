@@ -10,25 +10,25 @@ use milkdrift_authority::{
     WorkflowRunScope,
 };
 use milkdrift_blueprint::{
-    AuthorRef, BlueprintRevision, Edge, EdgeId, EdgeKind, Mutation, MutationBatch, Node, NodeId,
-    NodeKind, PortId, TerminalOutcome, WorkflowId,
+    AuthorRef, BlueprintRevision, DataPort, Edge, EdgeId, EdgeKind, Mutation, MutationBatch, Node,
+    NodeId, NodeKind, PortId, ReducerConfig, ReducerStrategy, SchemaRef, TerminalOutcome,
+    WorkflowId,
 };
 use milkdrift_capability::{
     ArtifactReference, BoundedJson, CapabilityDescriptorDocument, CapabilityId,
     CapabilityRequirement, ErrorClass, InputReference, InvocationEvent, InvocationId,
     InvocationRequest, InvocationValueReference, OperationId, ProviderProfileRef,
-    ResolvedCapabilitySnapshot, SideEffectClass, TerminalStatus,
+    ResolvedCapabilitySnapshot, SchemaId, SideEffectClass, TerminalStatus,
 };
 use milkdrift_capability_host::{
     AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter,
 };
 use milkdrift_control::{
-    ActorAuthorityContext, AuthorityContextRef, AuthorityContextResolver, AuthorityPreset,
-    ClaimedStopCondition, ControlCommand, ControlCommandDocument, ControlError, ControlId,
-    ControlResult, ControlResultSink, ControlService, OptimisticGuard, ProposalApplicationPolicy,
-    ProposalId, ProposalProvenance, RequestedRunAction, RiskClass, WORKFLOW_PROPOSE_OPERATION,
-    WorkflowControlAdapter, WorkflowProposal, WorkflowProposalDocument,
-    workflow_control_descriptor,
+    ActorAuthorityContext, AuthorityPreset, ClaimedStopCondition, ControlCommand,
+    ControlCommandDocument, ControlError, ControlId, ControlResult, ControlResultSink,
+    ControlService, OptimisticGuard, ProposalApplicationPolicy, ProposalId, ProposalProvenance,
+    RequestedRunAction, RiskClass, WORKFLOW_PROPOSE_OPERATION, WorkflowControlAdapter,
+    WorkflowProposal, WorkflowProposalDocument, workflow_control_descriptor,
 };
 use milkdrift_persistence::{
     Reason, ReconciliationDecisionId, RevisionStore, RunSequence, TimestampMillis, WorkerId,
@@ -44,22 +44,6 @@ use tempfile::TempDir;
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const NOW: u64 = 20_000;
-
-struct StaticAuthorityContext(ActorAuthorityContext);
-
-impl AuthorityContextResolver for StaticAuthorityContext {
-    fn resolve(
-        &self,
-        reference: &AuthorityContextRef,
-    ) -> Result<ActorAuthorityContext, ControlError> {
-        if reference.as_str() != "trusted-context" {
-            return Err(ControlError::InvalidContract(
-                "unknown authority context".to_owned(),
-            ));
-        }
-        Ok(self.0.clone())
-    }
-}
 
 struct UnusedResultSink;
 
@@ -662,7 +646,7 @@ fn unauthorized_provider_expansion_stores_no_revision() -> TestResult {
             CapabilityAuthorityScope::new(
                 BTreeSet::new(),
                 BTreeSet::new(),
-                BTreeSet::new(),
+                BTreeSet::from([OperationId::new("model.generate")?]),
                 BTreeSet::from([allowed_profile]),
                 BTreeSet::new(),
                 BTreeSet::new(),
@@ -693,9 +677,9 @@ fn unauthorized_provider_expansion_stores_no_revision() -> TestResult {
     let mutation = MutationBatch::new(vec![Mutation::ReplaceNode { node: replacement }])?;
     let proposal = WorkflowProposal::new(
         ProposalId::new("proposal-provider-expansion")?,
-        actor,
+        actor.clone(),
         ProposalProvenance::Direct,
-        workflow,
+        workflow.clone(),
         None,
         base.id().clone(),
         base.content_digest().clone(),
@@ -738,6 +722,118 @@ fn unauthorized_provider_expansion_stores_no_revision() -> TestResult {
         Err(ControlError::AuthorizationDenied { .. })
     ));
     assert!(store.revision(expected.id())?.is_none());
+
+    let item_schema = SchemaRef::new(SchemaId::new("control.reducer.item")?, 1)?;
+    let producer = Node::new(
+        NodeId::new("work")?,
+        NodeKind::task_direct_inputs(
+            CapabilityRequirement::new(OperationId::new("model.generate")?)
+                .maximum_side_effect(SideEffectClass::ReadOnly),
+        )?,
+    )?
+    .with_control_output(PortId::new("out")?)?
+    .with_data_output(PortId::new("item")?, DataPort::output(item_schema.clone()))?;
+    let reducer = Node::new(
+        NodeId::new("reducer")?,
+        NodeKind::Reducer {
+            config: ReducerConfig::new(
+                PortId::new("items")?,
+                item_schema.clone(),
+                1,
+                ReducerStrategy::Capability(OperationId::new("filesystem.write")?),
+            )?,
+        },
+    )?
+    .with_control_input(PortId::new("in")?)?
+    .with_control_output(PortId::new("out")?)?
+    .with_data_input(
+        PortId::new("items")?,
+        DataPort::input(item_schema, false, None)?,
+    )?;
+    let mutation = MutationBatch::new(vec![
+        Mutation::ReplaceNode { node: producer },
+        Mutation::AddNode { node: reducer },
+        Mutation::RemoveEdge {
+            edge: EdgeId::new("work-done")?,
+        },
+        Mutation::AddEdge {
+            edge: Edge::new(
+                EdgeId::new("work-reducer")?,
+                EdgeKind::Control,
+                NodeId::new("work")?,
+                PortId::new("out")?,
+                NodeId::new("reducer")?,
+                PortId::new("in")?,
+            ),
+        },
+        Mutation::AddEdge {
+            edge: Edge::new(
+                EdgeId::new("reducer-done")?,
+                EdgeKind::Control,
+                NodeId::new("reducer")?,
+                PortId::new("out")?,
+                NodeId::new("done")?,
+                PortId::new("in")?,
+            ),
+        },
+        Mutation::AddEdge {
+            edge: Edge::new(
+                EdgeId::new("work-reducer-item")?,
+                EdgeKind::Data,
+                NodeId::new("work")?,
+                PortId::new("item")?,
+                NodeId::new("reducer")?,
+                PortId::new("items")?,
+            ),
+        },
+    ])?;
+    let proposal = WorkflowProposal::new(
+        ProposalId::new("proposal-reducer-expansion")?,
+        actor,
+        ProposalProvenance::Direct,
+        workflow,
+        None,
+        base.id().clone(),
+        base.content_digest().clone(),
+        None,
+        mutation.clone(),
+        "attempt to select an unauthorized reducer operation",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        ProposalApplicationPolicy::ProposeOnly,
+        None,
+        ClaimedStopCondition::Continue,
+    )?;
+    let expected = base.revise(
+        base.id(),
+        mutation,
+        AuthorRef::new(format!("proposal:{}", &proposal.digest().as_str()[3..35]))?,
+        format!(
+            "proposal_id={};proposal_digest={};proposer={};source=direct",
+            proposal.identity(),
+            proposal.digest(),
+            proposal.proposer()
+        ),
+    )?;
+    let document = WorkflowProposalDocument::new(proposal);
+    let result = service.execute(&command(
+        "control-reducer-expansion",
+        &context,
+        OptimisticGuard {
+            expected_run_sequence: None,
+            expected_revision: Some(base.id().clone()),
+            expected_proposal_digest: Some(document.proposal().digest().clone()),
+        },
+        ControlCommand::SubmitProposal { proposal: document },
+    )?);
+    assert!(matches!(
+        result,
+        Err(ControlError::AuthorizationDenied { .. })
+    ));
+    assert!(store.revision(expected.id())?.is_none());
     Ok(())
 }
 
@@ -748,7 +844,7 @@ fn malformed_control_capability_input_is_a_normal_rejected_terminal() -> TestRes
     let actor = ActorRef::new("ai:hostile-output")?;
     let run = RunId::new("run-control-hostile-output")?;
     let grant_id = GrantId::new("grant:control-hostile-output")?;
-    let (_runtime, service, context) =
+    let (_runtime, service, _context) =
         services(store, &actor, &run, &grant_id, "control-hostile-output")?;
     let descriptor = workflow_control_descriptor()?;
     let operation = OperationId::new(WORKFLOW_PROPOSE_OPERATION)?;
@@ -759,30 +855,18 @@ fn malformed_control_capability_input_is_a_normal_rejected_terminal() -> TestRes
         operation,
         descriptor.provider_profile().cloned(),
         None,
-        vec![
-            InputReference::new(
-                "milkdrift.control_request",
-                InvocationValueReference::Inline {
-                    value: BoundedJson::new(serde_json::json!({
-                        "schema_version": 1,
-                        "hostile_untrusted_output": ["not", "a", "command"]
-                    }))?,
-                },
-            )?,
-            InputReference::new(
-                "milkdrift.authority_context",
-                InvocationValueReference::Inline {
-                    value: BoundedJson::new(serde_json::json!("trusted-context"))?,
-                },
-            )?,
-        ],
+        vec![InputReference::new(
+            "milkdrift.control_request",
+            InvocationValueReference::Inline {
+                value: BoundedJson::new(serde_json::json!({
+                    "schema_version": 1,
+                    "hostile_untrusted_output": ["not", "a", "command"]
+                }))?,
+            },
+        )?],
         BTreeMap::new(),
     )?;
-    let adapter = WorkflowControlAdapter::new(
-        service,
-        Arc::new(StaticAuthorityContext(context)),
-        Arc::new(UnusedResultSink),
-    );
+    let adapter = WorkflowControlAdapter::new(service, Arc::new(UnusedResultSink));
     let reporter = RecordingReporter::default();
     adapter.execute(&AdapterInvocation::new(&resolution, &request), &reporter)?;
 

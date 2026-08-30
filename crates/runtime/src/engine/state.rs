@@ -333,7 +333,7 @@ impl RuntimeService {
             return requested;
         }
         let mut claimed = 0;
-        let _ = self.structured_scan_budget.fetch_update(
+        let _ = self.structured_scan_budget.try_update(
             Ordering::AcqRel,
             Ordering::Acquire,
             |remaining| {

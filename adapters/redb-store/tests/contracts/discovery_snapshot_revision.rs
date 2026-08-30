@@ -576,11 +576,32 @@ fn verified_snapshot_survives_reopen() -> Result<(), Box<dyn std::error::Error>>
             store.put_snapshot(&divergent),
             Err(PersistenceError::InvalidDocument(_))
         ));
+        let replacement = SnapshotDocument::new(
+            SnapshotId::new("snapshot-two")?,
+            request.receipt().run().clone(),
+            RunSequence::FIRST,
+            history_digest(request.events())?,
+            1,
+            snapshot.payload().to_vec(),
+        )?;
+        store.put_snapshot(&replacement)?;
+        assert_eq!(
+            store.latest_snapshot(request.receipt().run())?,
+            SnapshotLoad::Verified(replacement)
+        );
     }
     let store = RedbStore::open(directory.path())?;
+    let replacement = SnapshotDocument::new(
+        SnapshotId::new("snapshot-two")?,
+        request.receipt().run().clone(),
+        RunSequence::FIRST,
+        history_digest(request.events())?,
+        1,
+        snapshot.payload().to_vec(),
+    )?;
     assert_eq!(
         store.latest_snapshot(request.receipt().run())?,
-        SnapshotLoad::Verified(snapshot)
+        SnapshotLoad::Verified(replacement)
     );
     assert_complete_integrity_scan_is_clean(&store)?;
     Ok(())

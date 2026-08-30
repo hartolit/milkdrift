@@ -216,12 +216,22 @@ fn classify_added_node(
                 constraints.insert(RiskConstraint::PrivilegedCapabilityClass);
             }
         }
+        NodeKind::Reducer { config } => match config.strategy() {
+            milkdrift_blueprint::ReducerStrategy::Capability(_) => {
+                elevate(risk, RiskClass::ApprovalRequired);
+                constraints.insert(RiskConstraint::ExternalWriteOrUnknownEffect);
+                constraints.insert(RiskConstraint::PrivilegedCapabilityClass);
+            }
+            milkdrift_blueprint::ReducerStrategy::Collect
+            | milkdrift_blueprint::ReducerStrategy::First => {
+                constraints.insert(RiskConstraint::FutureReadOnlyWorkAdded);
+            }
+        },
         NodeKind::Wait { .. }
         | NodeKind::SignalWait { .. }
         | NodeKind::Branch { .. }
         | NodeKind::Fork { .. }
-        | NodeKind::Join { .. }
-        | NodeKind::Reducer { .. } => {
+        | NodeKind::Join { .. } => {
             constraints.insert(RiskConstraint::FutureReadOnlyWorkAdded);
         }
         NodeKind::Repeat { .. } => {
@@ -265,6 +275,18 @@ fn classify_replacement(
         && config.requirement().maximum_side_effect_class() > SideEffectClass::ReadOnly
     {
         constraints.insert(RiskConstraint::ExternalWriteOrUnknownEffect);
+    }
+    if matches!(
+        new_kind,
+        NodeKind::Reducer {
+            config
+        } if matches!(
+            config.strategy(),
+            milkdrift_blueprint::ReducerStrategy::Capability(_)
+        )
+    ) {
+        constraints.insert(RiskConstraint::ExternalWriteOrUnknownEffect);
+        constraints.insert(RiskConstraint::PrivilegedCapabilityClass);
     }
 }
 

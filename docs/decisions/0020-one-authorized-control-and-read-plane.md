@@ -31,7 +31,8 @@ Readiness and detailed health are deliberately different operations and daemon s
 
 Schema-2 grants add explicit artifact, layout, peer, daemon, and workspace scopes plus an explicit
 capability deny-all representation. Empty protected scopes deny access. Daemon configuration schema
-3 requires those scopes and rejects older schemas rather than inventing access. Operations exist for
+4 requires those scopes plus exact peer artifact sensitivity classes and rejects older schemas
+rather than inventing access. Operations exist for
 currently implemented routes and for adjacent reserved administration contracts; a reserved
 operation does not create a route.
 

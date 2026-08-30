@@ -313,6 +313,17 @@ impl RunProjection {
                 )
             })?;
             let latest_attempt = execution.attempts.last().cloned();
+            let terminal_sequence = execution
+                .deterministic_terminal
+                .as_ref()
+                .map(|terminal| terminal.sequence())
+                .or_else(|| {
+                    latest_attempt
+                        .as_ref()
+                        .and_then(|attempt| self.attempts.get(attempt))
+                        .and_then(|attempt| attempt.terminal.as_ref())
+                        .map(|terminal| terminal.sequence())
+                });
             let mut side_effect = execution
                 .attempts
                 .iter()
@@ -372,6 +383,7 @@ impl RunProjection {
                     attempt_count: execution.attempt_count,
                     attempts: latest_attempt.into_iter().collect(),
                     state: execution.state,
+                    terminal_sequence,
                     side_effect,
                     route,
                     outputs: execution.outputs,
