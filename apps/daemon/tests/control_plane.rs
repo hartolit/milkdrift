@@ -37,6 +37,10 @@ use milkdrift_persistence::{
     ApplicationPageQuery, ArtifactPublicationId, ArtifactStore, BeginArtifactPublication, PageSize,
     SecurityAuditStore,
 };
+use milkdrift_prompt_sequence::PromptSequenceDocument;
+use milkdrift_prompt_sequence::{
+    PromptSource, RemediationProposalSpec, build_remediation_proposal,
+};
 use milkdrift_redb_store::RedbStore;
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactReference, ArtifactRetention,
@@ -178,6 +182,208 @@ fn configured_process_profile(directory: &TempDir) -> TestResult<std::path::Path
     Ok(path)
 }
 
+struct DogfoodProfiles {
+    coding: std::path::PathBuf,
+    good_verification: std::path::PathBuf,
+    weak_verification: std::path::PathBuf,
+    reviewer: std::path::PathBuf,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_dogfood_process_profile(
+    directory: &TempDir,
+    repository: &std::path::Path,
+    name: &str,
+    capability: &str,
+    executable: &std::path::Path,
+    arguments: serde_json::Value,
+    substitutions: serde_json::Value,
+    working_directory: serde_json::Value,
+    inputs: serde_json::Value,
+    stdin: serde_json::Value,
+    stdout_name: &str,
+    stderr_name: &str,
+    outputs: serde_json::Value,
+    side_effect: &str,
+) -> TestResult<std::path::PathBuf> {
+    let bytes = fs::read(executable)?;
+    let executable_root = executable.parent().ok_or("executable has no parent")?;
+    let value = serde_json::json!({
+        "schema_version": 2,
+        "profile": {
+            "profile_id": name,
+            "revision": 1,
+            "capability": capability,
+            "descriptor_revision": 1,
+            "provider_profile": null,
+            "operation": "process.execute",
+            "side_effect": side_effect,
+            "idempotency": "unsupported",
+            "cancellation": "best_effort",
+            "trust_class": "trusted_host_process",
+            "executable": executable,
+            "implementation": {
+                "content_digest": format!("b3_{}", blake3::hash(&bytes)),
+                "size_bytes": bytes.len(),
+                "package_revision": "deterministic-dogfood-fixture-v1",
+                "documentation_reference": "urn:milkdrift:deterministic-dogfood-fixture"
+            },
+            "arguments": arguments,
+            "substitutions": substitutions,
+            "working_directory": working_directory,
+            "filesystem_roots": [
+                {"path": executable_root, "access": "execute"},
+                {"path": directory.path(), "access": "read_write"}
+            ],
+            "inputs": inputs,
+            "environment": {
+                "allowed_non_secret": [],
+                "secrets": {},
+                "max_value_bytes": 4096
+            },
+            "stdin": stdin,
+            "stdout": {
+                "max_capture_bytes": 1048576,
+                "stream_progress": true,
+                "max_progress_events": 8,
+                "overflow_action": "continue_truncated",
+                "artifact_name": stdout_name
+            },
+            "stderr": {
+                "max_capture_bytes": 1048576,
+                "stream_progress": true,
+                "max_progress_events": 8,
+                "overflow_action": "continue_truncated",
+                "artifact_name": stderr_name
+            },
+            "outputs": outputs,
+            "limits": {
+                "max_argv_entries": 16,
+                "max_argv_bytes": 16384,
+                "max_children_observed": 8,
+                "max_files": 16,
+                "max_file_bytes": 2097152,
+                "max_total_materialized_bytes": 4194304,
+                "max_path_bytes": 4096,
+                "max_directory_depth": 32,
+                "artifact_chunk_bytes": 65536,
+                "max_output_files": 8,
+                "max_total_output_bytes": 4194304,
+                "wall_timeout_ms": 5000,
+                "graceful_termination_ms": 100,
+                "forced_termination_ms": 100,
+                "heartbeat_interval_ms": 1000
+            },
+            "restart": "retain_uncertain",
+            "platform": milkdrift_local_process::PlatformSupport::current(),
+            "max_concurrent": 1,
+            "extensions": {
+                "org.milkdrift/test-fixture": {
+                    "deterministic": true,
+                    "repository": repository
+                }
+            }
+        }
+    });
+    let path = directory.path().join(format!("{name}.json"));
+    fs::write(&path, serde_json::to_vec(&value)?)?;
+    Ok(path)
+}
+
+fn dogfood_process_profiles(
+    directory: &TempDir,
+    repository: &std::path::Path,
+) -> TestResult<DogfoodProfiles> {
+    let host_directory = serde_json::json!({
+        "type": "authorized_host_path",
+        "path": repository
+    });
+    let coding = write_dogfood_process_profile(
+        directory,
+        repository,
+        "dogfood-coding",
+        "dogfood-coding-agent",
+        std::path::Path::new("/usr/bin/tee"),
+        serde_json::json!(["-a", "progress.md"]),
+        serde_json::json!({}),
+        host_directory.clone(),
+        serde_json::json!([{"input": "prompt", "relative_path": "prompt.json"}]),
+        serde_json::json!({"type": "input", "input": "prompt", "max_bytes": 65536}),
+        "diff",
+        "logs",
+        serde_json::json!([]),
+        "non_idempotent_write",
+    )?;
+    let good_verification = write_dogfood_process_profile(
+        directory,
+        repository,
+        "dogfood-verification-good",
+        "dogfood-verifier-good",
+        std::path::Path::new("/bin/cp"),
+        serde_json::json!(["progress.md", "{{execution_root}}/verification-pass.json"]),
+        serde_json::json!({
+            "execution_root": {"type": "execution_root"}
+        }),
+        host_directory.clone(),
+        serde_json::json!([]),
+        serde_json::json!({"type": "disabled"}),
+        "verification_result",
+        "verification_logs",
+        serde_json::json!([{
+            "name": "verification_pass",
+            "relative_path": "verification-pass.json",
+            "media_type": "application/json",
+            "required": true
+        }]),
+        "read_only",
+    )?;
+    let weak_verification = write_dogfood_process_profile(
+        directory,
+        repository,
+        "dogfood-verification-weak",
+        "dogfood-verifier-weak",
+        std::path::Path::new("/bin/cp"),
+        serde_json::json!([
+            "progress.md",
+            "{{execution_root}}/weak-verification-result.json"
+        ]),
+        serde_json::json!({
+            "execution_root": {"type": "execution_root"}
+        }),
+        host_directory.clone(),
+        serde_json::json!([]),
+        serde_json::json!({"type": "disabled"}),
+        "verification_result",
+        "verification_logs",
+        serde_json::json!([]),
+        "read_only",
+    )?;
+    let reviewer = write_dogfood_process_profile(
+        directory,
+        repository,
+        "dogfood-reviewer",
+        "dogfood-reviewer",
+        std::path::Path::new("/bin/cp"),
+        serde_json::json!(["progress.md", "{{execution_root}}/review.json"]),
+        serde_json::json!({
+            "execution_root": {"type": "execution_root"}
+        }),
+        host_directory,
+        serde_json::json!([]),
+        serde_json::json!({"type": "disabled"}),
+        "review",
+        "remediation_proposal",
+        serde_json::json!([]),
+        "read_only",
+    )?;
+    Ok(DogfoodProfiles {
+        coding,
+        good_verification,
+        weak_verification,
+        reviewer,
+    })
+}
+
 fn observer_authority() -> TestResult<ActorGrantConfig> {
     Ok(ActorGrantConfig {
         resources: ResourceScope {
@@ -287,6 +493,147 @@ fn blueprint() -> TestResult<serde_json::Value> {
     .map_err(Into::into)
 }
 
+fn prompt_sequence() -> TestResult<serde_json::Value> {
+    let document = PromptSequenceDocument::from_bytes(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/headless-dogfood-sequence.md"
+    )))?;
+    serde_json::to_value(document).map_err(Into::into)
+}
+
+fn dogfood_profile_reference(capability: &str, side_effect: &str) -> serde_json::Value {
+    serde_json::json!({
+        "capability": capability,
+        "operation": "process.execute",
+        "provider_profile": null,
+        "execution_trust": "trusted_host_process",
+        "maximum_side_effect": side_effect
+    })
+}
+
+fn dogfood_stage(identity: &str, prompt: &str, verifier: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": identity,
+        "title": format!("Dogfood stage {identity}"),
+        "prompt": {"type": "inline_markdown", "content": prompt},
+        "session": "fresh",
+        "coding": dogfood_profile_reference("dogfood-coding-agent", "unknown"),
+        "verification": {
+            "profile": dogfood_profile_reference(verifier, "read_only"),
+            "checks": ["fixture.repository_progress"],
+            "success_artifact": "verification_pass",
+            "result_artifact": "verification_result",
+            "log_artifact": "verification_logs"
+        },
+        "checkpoint": "verification_artifacts",
+        "failure": "pause_for_review",
+        "reviewer": dogfood_profile_reference("dogfood-reviewer", "read_only"),
+        "approval": "shared_control_path",
+        "context_policy_ref": "context:dogfood-v1",
+        "budget": {
+            "max_coding_attempts": 1,
+            "max_verification_attempts": 2,
+            "timeout_ms": 30000,
+            "max_output_bytes": 4194304
+        },
+        "outputs": [
+            {"name": "diff", "media_type": "application/octet-stream", "required": true},
+            {"name": "logs", "media_type": "application/octet-stream", "required": false}
+        ]
+    })
+}
+
+fn executable_dogfood_sequence() -> TestResult<PromptSequenceDocument> {
+    let value = serde_json::json!({
+        "schema_version": 1,
+        "sequence": {
+            "id": "daemon-headless-dogfood",
+            "title": "Daemon headless dogfood",
+            "workflow_id": "daemon-headless-dogfood",
+            "repository": {
+                "id": "repository:daemon-dogfood",
+                "root_ref": "workspace:daemon-dogfood",
+                "starting_revision": "fixture-start",
+                "allowed_paths": ["progress.md"],
+                "allowed_operations": ["read", "write", "execute"],
+                "dirty_tree": "allow_recorded",
+                "isolation": "shared_sequential",
+                "cleanup": "retain_accepted",
+                "artifacts": {
+                    "require_starting_state": true,
+                    "require_diff": true,
+                    "require_verification_evidence": true
+                },
+                "credential_refs": [],
+                "remote_access_refs": []
+            },
+            "stages": [
+                dogfood_stage(
+                    "one",
+                    "First fresh process writes accepted repository progress.\n",
+                    "dogfood-verifier-good"
+                ),
+                dogfood_stage(
+                    "two",
+                    "Second fresh process intentionally receives weak verification.\n",
+                    "dogfood-verifier-weak"
+                )
+            ],
+            "budget": {
+                "max_revisions": 8,
+                "max_review_loops": 3,
+                "max_elapsed_ms": 300000,
+                "max_capability_calls": 32,
+                "max_artifact_bytes": 67108864
+            },
+            "extensions": {}
+        }
+    });
+    PromptSequenceDocument::from_json(&serde_json::to_vec(&value)?).map_err(Into::into)
+}
+
+async fn wait_for_run<F>(
+    client: &ControlClient,
+    run: &str,
+    predicate: F,
+) -> TestResult<milkdrift_control_protocol::RunRead>
+where
+    F: Fn(&milkdrift_control_protocol::RunRead) -> bool,
+{
+    let mut last = None;
+    for _ in 0..500 {
+        let state = client.run(run).await?;
+        if predicate(&state) {
+            return Ok(state);
+        }
+        last = Some(state);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    Err(format!(
+        "run did not reach the expected bounded state; last={}",
+        serde_json::to_string(&last)?
+    )
+    .into())
+}
+
+async fn attempt_id_for_node(client: &ControlClient, run: &str, node: &str) -> TestResult<String> {
+    let page = client
+        .timeline(
+            run,
+            &PageRequest {
+                cursor: None,
+                limit: 1_000,
+            },
+        )
+        .await?;
+    page.items
+        .iter()
+        .rev()
+        .find(|entry| entry.node_id.as_deref() == Some(node) && entry.attempt_id.is_some())
+        .and_then(|entry| entry.attempt_id.clone())
+        .ok_or_else(|| format!("timeline has no attempt for node {node}").into())
+}
+
 fn proposal_document(run: &RunId, sequence: u64) -> TestResult<serde_json::Value> {
     let bytes = serde_json::to_vec(&blueprint()?)?;
     let (_document, base) = BlueprintRevisionDocument::from_json(&bytes)?;
@@ -375,6 +722,334 @@ async fn import_blueprint(client: &ControlClient, command_id: &str) -> TestResul
         .and_then(serde_json::Value::as_str)
         .map(str::to_owned)
         .ok_or_else(|| "import response did not contain a revision identity".into())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn prompt_sequence_validate_import_inspect_and_restart_are_one_control_path() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let config = configuration(&directory, 32)?;
+    let daemon = start(config.clone(), CONTROLLER_TOKEN).await?;
+    let document = prompt_sequence()?;
+
+    let validated = daemon
+        .client
+        .submit(&request(
+            "prompt-sequence-validate",
+            None,
+            Command::ValidatePromptSequence {
+                document: document.clone(),
+            },
+        ))
+        .await?;
+    assert_eq!(validated.result_type, "prompt_sequence_valid");
+    let revision = validated.value["revision_id"]
+        .as_str()
+        .ok_or("validation omitted revision")?
+        .to_owned();
+    assert!(daemon.client.revision(&revision).await.is_err());
+
+    let imported = daemon
+        .client
+        .submit(&request(
+            "prompt-sequence-import",
+            None,
+            Command::ImportPromptSequence {
+                document: document.clone(),
+            },
+        ))
+        .await?;
+    assert_eq!(imported.result_type, "prompt_sequence_imported");
+    assert_eq!(imported.value["revision_id"], revision);
+    assert_eq!(imported.value["stages"].as_array().map(Vec::len), Some(1));
+    assert!(
+        imported.value["import_digest"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("b3_"))
+    );
+    let read = daemon.client.revision(&revision).await?;
+    assert_eq!(read.summary.workflow_id, "milkdrift-core-convergence");
+    assert_eq!(read.node_count, 7);
+    assert!(read.document.is_some());
+
+    let duplicate = daemon
+        .client
+        .submit(&request(
+            "prompt-sequence-import-duplicate",
+            None,
+            Command::ImportPromptSequence { document },
+        ))
+        .await?;
+    assert!(duplicate.replayed);
+    daemon.stop().await?;
+
+    let restarted = start(config, CONTROLLER_TOKEN).await?;
+    let reopened = restarted.client.revision(&revision).await?;
+    assert_eq!(reopened.node_count, 7);
+    assert_eq!(
+        reopened.summary.semantic_digest,
+        read.summary.semantic_digest
+    );
+    restarted.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn headless_dogfood_failure_remediation_and_restart_are_durable() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let repository = directory.path().join("repository");
+    fs::create_dir(&repository)?;
+    let profiles = dogfood_process_profiles(&directory, &repository)?;
+    let profile_paths = vec![
+        profiles.coding,
+        profiles.good_verification,
+        profiles.weak_verification,
+        profiles.reviewer,
+    ];
+    let config = configuration_with_process_profiles(&directory, 64, profile_paths)?;
+    let sequence = executable_dogfood_sequence()?;
+    let sequence_value = serde_json::to_value(&sequence)?;
+    let daemon = start(config.clone(), CONTROLLER_TOKEN).await?;
+
+    let imported = daemon
+        .client
+        .submit(&request(
+            "dogfood-import",
+            None,
+            Command::ImportPromptSequence {
+                document: sequence_value,
+            },
+        ))
+        .await?;
+    let revision_id = imported.value["revision_id"]
+        .as_str()
+        .ok_or("dogfood import omitted revision")?
+        .to_owned();
+    daemon
+        .client
+        .submit(&request(
+            "dogfood-start",
+            None,
+            Command::StartRun {
+                run_id: "run-headless-dogfood".to_owned(),
+                workflow_id: "daemon-headless-dogfood".to_owned(),
+                revision_id: revision_id.clone(),
+            },
+        ))
+        .await?;
+
+    let waiting = wait_for_run(&daemon.client, "run-headless-dogfood", |state| {
+        state
+            .nodes
+            .iter()
+            .any(|node| node.node_id == "stage-two-approval")
+    })
+    .await?;
+    assert_eq!(waiting.lifecycle, "running");
+    assert!(waiting.terminal.is_none());
+    assert!(!waiting.nodes.iter().any(|node| {
+        node.node_id == "sequence-succeeded" || node.node_id.starts_with("stage-three-")
+    }));
+    daemon.stop().await?;
+
+    let daemon = start(config.clone(), CONTROLLER_TOKEN).await?;
+    let waiting = daemon.client.run("run-headless-dogfood").await?;
+    assert_eq!(waiting.lifecycle, "running");
+    assert!(
+        waiting
+            .nodes
+            .iter()
+            .any(|node| node.node_id == "stage-two-approval")
+    );
+    assert!(!waiting.nodes.iter().any(|node| {
+        node.node_id == "sequence-succeeded" || node.node_id.starts_with("stage-three-")
+    }));
+    let reviewer =
+        attempt_id_for_node(&daemon.client, "run-headless-dogfood", "stage-two-review").await?;
+    let reviewer_attempt = daemon
+        .client
+        .attempt("run-headless-dogfood", &reviewer)
+        .await?;
+    assert_eq!(reviewer_attempt.context_access, "authorized");
+    let reviewer_context = reviewer_attempt
+        .context
+        .ok_or("reviewer context is absent")?;
+    assert_eq!(reviewer_context.policy["session"], "fresh");
+    assert!(
+        serde_json::to_string(&reviewer_context.policy)?.contains("prior_prompt"),
+        "review policy must explicitly exclude chronological prior prompts"
+    );
+
+    daemon
+        .client
+        .submit(&request(
+            "dogfood-pause-after-failure",
+            Some(waiting.sequence),
+            Command::PauseRun {
+                run_id: "run-headless-dogfood".to_owned(),
+            },
+        ))
+        .await?;
+    let paused = daemon.client.run("run-headless-dogfood").await?;
+    assert_eq!(paused.lifecycle, "paused");
+
+    let revision_read = daemon.client.revision(&revision_id).await?;
+    let base_bytes = serde_json::to_vec(
+        revision_read
+            .document
+            .as_ref()
+            .ok_or("base revision document is absent")?,
+    )?;
+    let (_base_document, base) = BlueprintRevisionDocument::from_json(&base_bytes)?;
+    let good_verification = sequence.sequence().stages[0].verification.clone();
+    let proposal = build_remediation_proposal(
+        &sequence,
+        &base,
+        RemediationProposalSpec {
+            run: RunId::new("run-headless-dogfood")?,
+            observed_sequence: milkdrift_persistence::RunSequence::new(paused.sequence),
+            proposal: ProposalId::new("proposal-headless-remediation-1")?,
+            proposer: ActorRef::new("human:integration-controller")?,
+            stage_id: "two".to_owned(),
+            generation: 1,
+            prompt: PromptSource::InlineMarkdown {
+                content: "Remediation fresh process repairs the weak implementation.\n".to_owned(),
+            },
+            verification_override: Some(good_verification),
+        },
+    )?;
+    let proposal_digest = proposal.proposal().digest().as_str().to_owned();
+    let proposal_value = decode_json(&proposal.to_canonical_json()?)?;
+    let mut submit_request = request(
+        "dogfood-submit-remediation",
+        Some(paused.sequence),
+        Command::SubmitProposal {
+            document: proposal_value,
+        },
+    );
+    submit_request.expected_revision = Some(revision_id.clone());
+    let submitted = daemon.client.submit(&submit_request).await?;
+    let proposed_revision = submitted.value["proposed_revision"]
+        .as_str()
+        .ok_or("proposal response omitted proposed revision")?
+        .to_owned();
+    assert!(!submitted.value["applied"].as_bool().unwrap_or(false));
+    daemon.stop().await?;
+
+    let restarted = start(config.clone(), CONTROLLER_TOKEN).await?;
+    let proposal_status = restarted
+        .client
+        .proposal(
+            "run-headless-dogfood",
+            "proposal-headless-remediation-1",
+            &proposed_revision,
+        )
+        .await?;
+    assert!(!proposal_status.approved);
+    let decision_boundary = restarted.client.run("run-headless-dogfood").await?.sequence;
+    let mut approve_request = request(
+        "dogfood-approve-remediation",
+        Some(decision_boundary),
+        Command::DecideProposal {
+            run_id: "run-headless-dogfood".to_owned(),
+            proposal_id: "proposal-headless-remediation-1".to_owned(),
+            proposal_digest: proposal_digest.clone(),
+            proposed_revision: proposed_revision.clone(),
+            decision_id: "decision-headless-remediation-1".to_owned(),
+            decision: milkdrift_control_protocol::ProposalDecision::Approve,
+        },
+    );
+    approve_request.expected_revision = Some(proposed_revision.clone());
+    restarted.client.submit(&approve_request).await?;
+    let apply_boundary = restarted.client.run("run-headless-dogfood").await?.sequence;
+    let mut apply_request = request(
+        "dogfood-apply-remediation",
+        Some(apply_boundary),
+        Command::ApplyProposal {
+            run_id: "run-headless-dogfood".to_owned(),
+            proposal_id: "proposal-headless-remediation-1".to_owned(),
+            proposal_digest,
+            proposed_revision: proposed_revision.clone(),
+        },
+    );
+    apply_request.expected_revision = Some(proposed_revision.clone());
+    restarted.client.submit(&apply_request).await?;
+    let adopted = restarted.client.run("run-headless-dogfood").await?;
+    assert_eq!(
+        adopted.revision_id.as_deref(),
+        Some(proposed_revision.as_str())
+    );
+    assert_eq!(adopted.lifecycle, "paused");
+    restarted.stop().await?;
+
+    let resumed = start(config, CONTROLLER_TOKEN).await?;
+    let signal_boundary = resumed.client.run("run-headless-dogfood").await?.sequence;
+    resumed
+        .client
+        .submit(&request(
+            "dogfood-release-approved-remediation",
+            Some(signal_boundary),
+            Command::SignalRun {
+                run_id: "run-headless-dogfood".to_owned(),
+                signal_id: "signal-headless-remediation-1".to_owned(),
+                signal_type: "sequence.approved".to_owned(),
+                correlation: None,
+                broadcast: false,
+                payload: serde_json::json!({
+                    "proposal": "proposal-headless-remediation-1",
+                    "revision": proposed_revision
+                }),
+            },
+        ))
+        .await?;
+    let resume_boundary = resumed.client.run("run-headless-dogfood").await?.sequence;
+    resumed
+        .client
+        .submit(&request(
+            "dogfood-resume-remediation",
+            Some(resume_boundary),
+            Command::ResumeRun {
+                run_id: "run-headless-dogfood".to_owned(),
+            },
+        ))
+        .await?;
+    let completed = wait_for_run(&resumed.client, "run-headless-dogfood", |state| {
+        state.terminal.as_deref() == Some("succeeded")
+    })
+    .await?;
+    assert_eq!(completed.lifecycle, "terminal");
+    for node in &completed.nodes {
+        if node.node_id.contains("coding")
+            || node.node_id.contains("verification")
+            || node.node_id.contains("review")
+        {
+            assert_eq!(
+                node.attempt_count, 1,
+                "{} executed more than once",
+                node.node_id
+            );
+        }
+    }
+    for coding_node in [
+        "stage-one-coding",
+        "stage-two-coding",
+        "stage-two-remediation-1-coding",
+    ] {
+        let attempt =
+            attempt_id_for_node(&resumed.client, "run-headless-dogfood", coding_node).await?;
+        let inspected = resumed
+            .client
+            .attempt("run-headless-dogfood", &attempt)
+            .await?;
+        assert_eq!(inspected.context_access, "authorized");
+        assert_eq!(
+            inspected.context.ok_or("coding context absent")?.policy["session"],
+            "fresh"
+        );
+    }
+    let progress = fs::read_to_string(repository.join("progress.md"))?;
+    assert!(progress.contains("First fresh process"));
+    assert!(progress.contains("Second fresh process"));
+    assert!(progress.contains("Remediation fresh process"));
+    resumed.stop().await
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

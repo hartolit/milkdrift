@@ -215,6 +215,18 @@ fn application_effect(
                 ApplicationCommandEffect::None,
             ))
         }
+        Command::ImportPromptSequence { .. } | Command::ValidatePromptSequence { .. } => {
+            let revision = result
+                .value
+                .get("revision_id")
+                .and_then(Value::as_str)
+                .ok_or_else(internal)
+                .and_then(parse_revision_id)?;
+            Ok((
+                Some(ApplicationEffectReference::Revision { revision }),
+                ApplicationCommandEffect::None,
+            ))
+        }
         command => {
             let Some(sequence) = result.resulting_sequence else {
                 return Ok((None, ApplicationCommandEffect::None));
@@ -246,6 +258,8 @@ fn command_run_identity(command: &Command) -> Option<&str> {
         | Command::ApplyProposal { run_id, .. } => Some(run_id),
         Command::ImportBlueprint { .. }
         | Command::ValidateBlueprint { .. }
+        | Command::ImportPromptSequence { .. }
+        | Command::ValidatePromptSequence { .. }
         | Command::SubmitProposal { .. }
         | Command::PutLayout { .. } => None,
     }

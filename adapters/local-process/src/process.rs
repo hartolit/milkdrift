@@ -24,7 +24,7 @@ use milkdrift_capability_host::{
 
 use crate::config::{
     FilesystemAccessMode, OverflowAction, ProcessProfile, ProcessProfileError,
-    VerifiedExecutableIdentity,
+    VerifiedExecutableIdentity, WorkingDirectoryMode,
 };
 
 mod identity;
@@ -56,6 +56,7 @@ pub struct LocalProcessAdapter {
     executable_identity: VerifiedExecutableIdentity,
     executable_roots: Vec<PathBuf>,
     writable_roots: Vec<PathBuf>,
+    authorized_host_working_directory: Option<PathBuf>,
     authority_requirements: CapabilityExecutionRequirements,
     data: Arc<dyn InvocationDataAccess>,
     secrets: Arc<dyn SecretResolver>,
@@ -140,6 +141,39 @@ impl LocalProcessAdapter {
                 "canonical executable is outside every executable root".to_owned(),
             ));
         }
+        let authorized_host_working_directory = match &profile.working_directory {
+            WorkingDirectoryMode::AuthorizedHostPath { path } => {
+                let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+                    ProcessProfileError::Invalid(format!(
+                        "authorized host working directory cannot be inspected: {:?}",
+                        error.kind()
+                    ))
+                })?;
+                if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    return Err(ProcessProfileError::Invalid(
+                        "authorized host working directory is not a plain directory".to_owned(),
+                    ));
+                }
+                let canonical = path.canonicalize().map_err(|error| {
+                    ProcessProfileError::Invalid(format!(
+                        "authorized host working directory cannot be canonicalized: {:?}",
+                        error.kind()
+                    ))
+                })?;
+                if !writable_roots
+                    .iter()
+                    .any(|allowed| canonical.starts_with(allowed))
+                {
+                    return Err(ProcessProfileError::Invalid(
+                        "authorized host working directory is outside every read-write root"
+                            .to_owned(),
+                    ));
+                }
+                Some(canonical)
+            }
+            WorkingDirectoryMode::IsolatedRoot
+            | WorkingDirectoryMode::IsolatedSubdirectory { .. } => None,
+        };
         let descriptor = profile.descriptor(&executable_identity)?;
         Ok(Self {
             profile,
@@ -148,6 +182,7 @@ impl LocalProcessAdapter {
             executable_identity,
             executable_roots,
             writable_roots,
+            authorized_host_working_directory,
             authority_requirements,
             data,
             secrets,
@@ -319,20 +354,23 @@ impl LocalProcessAdapter {
                 "isolated execution root is outside configured read-write roots",
             );
         }
-        let working_directory =
-            match prepare_working_directory(&canonical_root, &self.profile.working_directory) {
-                Ok(path) => path,
-                Err(message) => {
-                    return report_rejected(
-                        reporter,
-                        request.invocation(),
-                        &mut sequence,
-                        ErrorClass::InvalidRequest,
-                        "working_directory_rejected",
-                        &message,
-                    );
-                }
-            };
+        let working_directory = match prepare_working_directory(
+            &canonical_root,
+            &self.profile.working_directory,
+            self.authorized_host_working_directory.as_deref(),
+        ) {
+            Ok(path) => path,
+            Err(message) => {
+                return report_rejected(
+                    reporter,
+                    request.invocation(),
+                    &mut sequence,
+                    ErrorClass::InvalidRequest,
+                    "working_directory_rejected",
+                    &message,
+                );
+            }
+        };
         let arguments = match materialize_arguments(&self.profile, request, workspace.as_ref()) {
             Ok(arguments) => arguments,
             Err(message) => {

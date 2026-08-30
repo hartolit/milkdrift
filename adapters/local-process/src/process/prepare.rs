@@ -124,6 +124,7 @@ pub(super) fn stdin_bytes(
 pub(super) fn prepare_working_directory(
     root: &Path,
     mode: &WorkingDirectoryMode,
+    authorized_host_path: Option<&Path>,
 ) -> Result<PathBuf, String> {
     match mode {
         WorkingDirectoryMode::IsolatedRoot => Ok(root.to_path_buf()),
@@ -142,6 +143,32 @@ pub(super) fn prepare_working_directory(
                 return Err("working directory escapes the isolated root".to_owned());
             }
             Ok(canonical)
+        }
+        WorkingDirectoryMode::AuthorizedHostPath { path } => {
+            let bound = authorized_host_path
+                .ok_or_else(|| "authorized host working directory was not bound".to_owned())?;
+            let metadata = fs::symlink_metadata(path).map_err(|error| {
+                format!(
+                    "authorized host working directory cannot be inspected: {:?}",
+                    error.kind()
+                )
+            })?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err("authorized host working directory is not a plain directory".to_owned());
+            }
+            let current = path.canonicalize().map_err(|error| {
+                format!(
+                    "authorized host working directory cannot be canonicalized: {:?}",
+                    error.kind()
+                )
+            })?;
+            if current != bound {
+                return Err(
+                    "authorized host working directory changed after profile registration"
+                        .to_owned(),
+                );
+            }
+            Ok(current)
         }
     }
 }

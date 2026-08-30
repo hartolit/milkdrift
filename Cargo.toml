@@ -16,6 +16,7 @@ members = [
     "crates/control-protocol",
     "crates/model",
     "crates/persistence",
+    "crates/prompt-sequence",
     "crates/peer-protocol",
     "crates/runtime",
     "crates/workspace",

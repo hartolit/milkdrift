@@ -118,6 +118,32 @@ provenance. The attempt inspector returns the snapshot, implementation, content,
 execution-policy digests plus optional safe package/documentation references; it never returns an
 executable path.
 
+### Persistent authorized repository working directory
+
+`working_directory` normally uses `isolated_root` or a relative directory beneath the fresh
+Milkdrift-owned execution root. Ordered coding prompts may instead select one exact operator-owned
+repository:
+
+```json
+"working_directory": {
+  "type": "authorized_host_path",
+  "path": "/srv/milkdrift/worktrees/project-a"
+}
+```
+
+The exact path must be covered by a `read_write` `filesystem_roots` entry. Registration
+canonicalizes it and requires an ordinary directory. Every invocation re-resolves the configured
+path and rejects a path change, symlink replacement, non-directory, or escape from the canonical
+read-write roots before process entry. Separate invocations therefore receive fresh context and
+isolated Milkdrift materialization/output roots while their child processes intentionally share the
+same repository files.
+
+This mode is for operator-authorized sequential work. It is not safe implicit concurrency and does
+not implement Git, branch selection, dirty-tree checks, credentials, merges, cleanup, or rollback.
+Those remain explicit process/capability operations and prompt-sequence repository-policy facts.
+Parallel alternatives should use separately prepared worktrees or another adapter with a stronger
+workspace isolation contract.
+
 ## Registration, rotation, and health
 
 At registration the adapter canonicalizes the executable, verifies it remains within an execute
@@ -148,8 +174,10 @@ operator identity decision. Regenerate v1 profiles as schema v2 under operator c
 
 ## Execution and trust boundaries
 
-The repository example is an immutable selected input inside a fresh execution directory; the
-agent mutates only that copy and exports an explicit patch. A CLI accepting prompt stdin can use
+The first repository example is an immutable selected input inside a fresh execution directory;
+the agent mutates only that copy and exports an explicit patch. The explicit
+`authorized_host_path` mode above instead permits persistent in-place operator-owned repository
+progress. A CLI accepting prompt stdin can use
 `{"type":"input","input":"prompt","max_bytes":...}` instead of `--prompt-file`. Each
 invocation starts a fresh process; a recorded PID is never restart identity. The shown platform
 facts are the Unix values and must exactly equal the support facts of the build loading the

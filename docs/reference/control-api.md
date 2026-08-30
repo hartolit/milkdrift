@@ -67,6 +67,8 @@ The closed command types are:
 | --- | --- | --- | --- |
 | `import_blueprint` | `document` | `import_blueprint` | Validate and store an exact immutable workflow/revision. |
 | `validate_blueprint` | `document` | `validate_blueprint` | Validate one exact workflow/revision without storing it. |
+| `import_prompt_sequence` | `document` | `import_blueprint` | Compile bounded schema-1 JSON/Markdown-derived data and store the ordinary immutable revision. |
+| `validate_prompt_sequence` | `document` | `validate_blueprint` | Compile and validate a prompt sequence without storing its generated revision. |
 | `start_run` | `run_id`, `workflow_id`, `revision_id` | `create_run`, then `start_run` | Atomically create then start at an exact revision through ordinary control authority. |
 | `pause_run`, `resume_run`, `cancel_run` | `run_id` | `pause`, `resume`, `cancel` | Durable exact-run lifecycle control. |
 | `signal_run` | `run_id`, `signal_id`, `signal_type`, `correlation`, `broadcast`, `payload` | `deliver_signal` | Deliver a typed bounded signal to an exact run. |
@@ -77,6 +79,12 @@ The closed command types are:
 | `put_layout` | `layout` | `write_layout` | Optimistically store presentation-only state for the exact workflow/revision/shared owner. |
 
 Evidence kinds accepted by the daemon are `authority_decision`, `worker_observation`, `external_receipt`, `artifact`, and `recovery_observation`. A success returns `CommandAccepted`: `command_id`, `replayed`, optional `resulting_sequence`, stable `result_type`, and a bounded command-specific `value`.
+
+The wire command carries the decoded prompt-sequence JSON document. Markdown parsing is owned by
+the CLI/library before submission, and the daemon independently performs strict schema validation
+and ordinary blueprint compilation. Validate/import responses include schema/sequence/workflow,
+revision and semantic identity, import and repository-profile digests, and ordered stage-node
+summaries. The full schema is documented in [`prompt-sequence-v1.md`](prompt-sequence-v1.md).
 
 ## Query routes
 

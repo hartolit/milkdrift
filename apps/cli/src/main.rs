@@ -10,12 +10,17 @@ use std::{
 
 use clap::{Args, Parser, Subcommand};
 use futures_util::StreamExt as _;
+use milkdrift_control::WorkflowProposalDocument;
 use milkdrift_control_client::{
     BearerCredential, ClientConfig, ClientError, ControlClient, status_class,
 };
 use milkdrift_control_protocol::{
     Command, CommandRequest, Cursor, EvidenceRef, LayoutDocument, PageRequest, ProposalDecision,
     ProtocolVersion,
+};
+use milkdrift_prompt_sequence::{
+    MAX_INLINE_PROMPT_BYTES, PromptSequenceDocument, PromptSource, RemediationProposalSpec,
+    build_remediation_proposal,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -74,6 +79,11 @@ enum TopCommand {
         #[command(subcommand)]
         command: BlueprintCommand,
     },
+    /// Ordered implementation prompt-sequence operations.
+    Sequence {
+        #[command(subcommand)]
+        command: SequenceCommand,
+    },
     /// Durable run operations.
     Run {
         #[command(subcommand)]
@@ -116,6 +126,42 @@ enum DaemonCommand {
     Health,
     /// Require readiness after recovery/adapters.
     Readiness,
+    /// Inspect the server-owned actor and exact immutable grant revision.
+    Authority,
+}
+
+#[derive(Subcommand)]
+enum SequenceCommand {
+    /// Parse and compile a JSON or Markdown sequence without storing it.
+    Validate { file: PathBuf },
+    /// Parse, compile, and store an ordinary immutable blueprint revision.
+    Import { file: PathBuf },
+    /// Inspect the exact generated ordinary blueprint revision.
+    Show { revision: String },
+    /// Show the generated revision and current run stage frontier together.
+    Status { run: String, revision: String },
+    /// Inspect every current node occurrence belonging to one imported stage.
+    Stage { run: String, stage: String },
+    /// Submit a bounded prospective remediation/re-verification/re-review revision.
+    Remediate {
+        /// Original sequence document used for the exact stage contract.
+        sequence_file: PathBuf,
+        /// Paused live run.
+        run: String,
+        /// Exact current base revision.
+        revision: String,
+        /// Failed imported stage identity.
+        stage: String,
+        /// Nonzero bounded remediation generation.
+        #[arg(long)]
+        generation: u16,
+        /// Stable proposal identity.
+        #[arg(long)]
+        proposal: String,
+        /// Fresh remediation prompt Markdown/text file.
+        #[arg(long)]
+        prompt: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -318,6 +364,9 @@ async fn execute(cli: Cli) -> Result<(), CliError> {
             DaemonCommand::Readiness => {
                 output(&cli, "daemon.readiness", &client.readiness().await?)?
             }
+            DaemonCommand::Authority => {
+                output(&cli, "daemon.authority", &client.authority().await?)?
+            }
         },
         TopCommand::Blueprint { command } => match command {
             BlueprintCommand::Import { file } => {
@@ -342,6 +391,122 @@ async fn execute(cli: Cli) -> Result<(), CliError> {
                     "blueprint.diff",
                     &client.revision_diff(from, to).await?,
                 )?;
+            }
+        },
+        TopCommand::Sequence { command } => match command {
+            SequenceCommand::Validate { file } => {
+                let document = read_prompt_sequence(file)?;
+                let request = command_request(&cli, Command::ValidatePromptSequence { document });
+                output(&cli, "sequence.validate", &client.submit(&request).await?)?;
+            }
+            SequenceCommand::Import { file } => {
+                let document = read_prompt_sequence(file)?;
+                let request = command_request(&cli, Command::ImportPromptSequence { document });
+                output(&cli, "sequence.import", &client.submit(&request).await?)?;
+            }
+            SequenceCommand::Show { revision } => {
+                output(&cli, "sequence.show", &client.revision(revision).await?)?;
+            }
+            SequenceCommand::Status { run, revision } => {
+                let revision = client.revision(revision).await?;
+                let run = client.run(run).await?;
+                output(
+                    &cli,
+                    "sequence.status",
+                    &json!({"schema_version": 1, "revision": revision, "run": run}),
+                )?;
+            }
+            SequenceCommand::Stage { run, stage } => {
+                safe_identity(stage)?;
+                let state = client.run(run).await?;
+                let prefix = format!("stage-{stage}-");
+                let nodes = state
+                    .nodes
+                    .iter()
+                    .filter(|node| node.node_id.starts_with(&prefix))
+                    .collect::<Vec<_>>();
+                if nodes.is_empty() {
+                    return Err(CliError::NotFound(
+                        "stage has no current node occurrences".to_owned(),
+                    ));
+                }
+                output(
+                    &cli,
+                    "sequence.stage",
+                    &json!({"schema_version": 1, "run_id": run, "stage_id": stage, "nodes": nodes}),
+                )?;
+            }
+            SequenceCommand::Remediate {
+                sequence_file,
+                run,
+                revision,
+                stage,
+                generation,
+                proposal,
+                prompt,
+            } => {
+                let sequence = read_prompt_sequence_document(sequence_file)?;
+                let state = client.run(run).await?;
+                if state.lifecycle != "paused" {
+                    return Err(CliError::Invalid(
+                        "remediation proposal requires a run paused through 'run pause'".to_owned(),
+                    ));
+                }
+                let revision_read = client.revision(revision).await?;
+                let revision_value = revision_read.document.ok_or_else(|| {
+                    CliError::Internal("revision document is unavailable".to_owned())
+                })?;
+                let revision_bytes = serde_json::to_vec(&revision_value)
+                    .map_err(|error| CliError::Internal(error.to_string()))?;
+                let (_document, base) =
+                    milkdrift_blueprint::BlueprintRevisionDocument::from_json(&revision_bytes)
+                        .map_err(|error| CliError::Invalid(error.to_string()))?;
+                let prompt_bytes = fs::read(prompt).map_err(|error| {
+                    CliError::Invalid(format!(
+                        "remediation prompt read failed: {:?}",
+                        error.kind()
+                    ))
+                })?;
+                if prompt_bytes.is_empty() || prompt_bytes.len() > MAX_INLINE_PROMPT_BYTES {
+                    return Err(CliError::Invalid(format!(
+                        "remediation prompt must contain 1..={MAX_INLINE_PROMPT_BYTES} bytes"
+                    )));
+                }
+                let prompt = String::from_utf8(prompt_bytes)
+                    .map_err(|_| CliError::Invalid("remediation prompt is not UTF-8".to_owned()))?;
+                let authority = client.authority().await?;
+                let proposal_document = build_remediation_proposal(
+                    &sequence,
+                    &base,
+                    RemediationProposalSpec {
+                        run: milkdrift_workspace::RunId::new(run.clone())
+                            .map_err(|error| CliError::Invalid(error.to_string()))?,
+                        observed_sequence: milkdrift_persistence::RunSequence::new(state.sequence),
+                        proposal: milkdrift_control::ProposalId::new(proposal.clone())
+                            .map_err(|error| CliError::Invalid(error.to_string()))?,
+                        proposer: milkdrift_authority::ActorRef::new(authority.actor)
+                            .map_err(|error| CliError::Invalid(error.to_string()))?,
+                        stage_id: stage.clone(),
+                        generation: *generation,
+                        prompt: PromptSource::InlineMarkdown { content: prompt },
+                        verification_override: None,
+                    },
+                )
+                .map_err(|error| CliError::Invalid(error.to_string()))?;
+                let proposal_value = serde_json::from_slice(
+                    &proposal_document
+                        .to_canonical_json()
+                        .map_err(|error| CliError::Invalid(error.to_string()))?,
+                )
+                .map_err(|error| CliError::Internal(error.to_string()))?;
+                let mut request = command_request(
+                    &cli,
+                    Command::SubmitProposal {
+                        document: proposal_value,
+                    },
+                );
+                request.expected_revision = Some(base.id().as_str().to_owned());
+                output(&cli, "sequence.remediate", &client.submit(&request).await?)?;
             }
         },
         TopCommand::Run { command } => match command {
@@ -456,12 +621,14 @@ async fn execute(cli: Cli) -> Result<(), CliError> {
         )?,
         TopCommand::Proposal { command } => match command {
             ProposalCommand::Submit { file } => {
-                let request = command_request(
-                    &cli,
-                    Command::SubmitProposal {
-                        document: read_json(file)?,
-                    },
-                );
+                let document = read_json(file)?;
+                let bytes = serde_json::to_vec(&document)
+                    .map_err(|error| CliError::Internal(error.to_string()))?;
+                let proposal = WorkflowProposalDocument::from_json(&bytes)
+                    .map_err(|error| CliError::Invalid(error.to_string()))?;
+                let mut request = command_request(&cli, Command::SubmitProposal { document });
+                request.expected_revision =
+                    Some(proposal.proposal().base_revision().as_str().to_owned());
                 output(&cli, "proposal.submit", &client.submit(&request).await?)?;
             }
             ProposalCommand::List { run, limit, cursor } => {
@@ -487,7 +654,7 @@ async fn execute(cli: Cli) -> Result<(), CliError> {
             }
             ProposalCommand::Apply(arguments) => {
                 confirm(&cli, "apply this exact workflow proposal")?;
-                let request = command_request(
+                let mut request = command_request(
                     &cli,
                     Command::ApplyProposal {
                         run_id: arguments.run.clone(),
@@ -496,6 +663,7 @@ async fn execute(cli: Cli) -> Result<(), CliError> {
                         proposed_revision: arguments.proposed_revision.clone(),
                     },
                 );
+                request.expected_revision = Some(arguments.proposed_revision.clone());
                 output(&cli, "proposal.apply", &client.submit(&request).await?)?;
             }
         },
@@ -600,7 +768,7 @@ async fn proposal_decision(
     arguments: &ProposalDecisionArgs,
     decision: ProposalDecision,
 ) -> Result<(), CliError> {
-    let request = command_request(
+    let mut request = command_request(
         cli,
         Command::DecideProposal {
             run_id: arguments.run.clone(),
@@ -611,6 +779,7 @@ async fn proposal_decision(
             decision,
         },
     );
+    request.expected_revision = Some(arguments.proposed_revision.clone());
     output(cli, "proposal.decide", &client.submit(&request).await?)
 }
 
@@ -749,6 +918,21 @@ fn read_json(path: &Path) -> Result<Value, CliError> {
         .map_err(|error| CliError::Invalid(format!("JSON file read failed: {:?}", error.kind())))?;
     milkdrift_control_protocol::decode_json(&bytes)
         .map_err(|error| CliError::Invalid(error.to_string()))
+}
+
+fn read_prompt_sequence(path: &Path) -> Result<Value, CliError> {
+    serde_json::to_value(read_prompt_sequence_document(path)?)
+        .map_err(|error| CliError::Internal(error.to_string()))
+}
+
+fn read_prompt_sequence_document(path: &Path) -> Result<PromptSequenceDocument, CliError> {
+    let bytes = fs::read(path).map_err(|error| {
+        CliError::Invalid(format!(
+            "prompt-sequence file read failed: {:?}",
+            error.kind()
+        ))
+    })?;
+    PromptSequenceDocument::from_bytes(&bytes).map_err(|error| CliError::Invalid(error.to_string()))
 }
 
 fn load_credential(cli: &Cli) -> Result<BearerCredential, CliError> {

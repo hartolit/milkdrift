@@ -18,6 +18,7 @@ The repository does not own tensor loading or execution, model architectures, to
 - An **edge** is an explicit control and/or typed data dependency.
 - A **capability requirement** states what a task needs, not which provider wins selection.
 - A **capability descriptor** is an immutable, honest advertisement; an **observation** is mutable health, availability, load, or lease state.
+- A **prompt sequence** is a bounded operator import/template compiled into an ordinary immutable blueprint revision; it is not a runtime scheduler or node kind.
 - **Layout** is presentation state, stored separately and excluded from semantic identity.
 - An **author** is bounded revision/mutation provenance, never an authority grant.
 - An **actor** is a human, service, controller, peer, or delegated principal authenticated for an action.
@@ -102,9 +103,24 @@ A **repeat** explicitly invokes a pinned acyclic body, evaluates a safe conditio
 
 Structured concurrency means a parent scope owns its children, branch-local resources, join, cancellation, and cleanup. A run cannot report a scope complete while owned work remains unaccounted for.
 
+An imported implementation prompt sequence is a product-facing composition of these primitives.
+Each stage is a fresh or explicitly continued coding task, a distinct verification task, a safe
+artifact-presence branch, and either the next stage or an explicit failure/review route. Review uses
+a fresh causal policy and a signal wait. A remediation request creates an ordinary prospective
+revision through the shared proposal and reconciliation service; completed executions retain their
+original revision and never become eligible again. The import layer owns parsing, bounds, canonical
+digests, generated identifiers, and template policy only. It owns no executor, repository, grant,
+persistence, scheduler, or control privilege.
+
 ## 9. Workspaces, artifacts, context, provenance, and retention
 
 Each concurrent branch receives an isolated logical workspace. Cross-branch values move only through declared data edges, artifacts, joins, reducers, or explicit merge operations. An artifact has identity, digest, media contract, size, producer, causal inputs, and retention class; large bytes stay outside semantic documents and ordinary events.
+
+An operator may authorize one persistent host repository for sequential fresh-process tasks. The
+local-process adapter revalidates that exact canonical directory under a declared read-write root at
+each entry while keeping host-owned input/context materialization and output publication isolated.
+This is a trusted-host authority decision, not a sandbox or Git implementation. Parallel work uses
+separate worktrees/scopes and explicit merge/reducer capabilities.
 
 Each task revision owns a private-invariant context policy, and task output metadata is the canonical owner of output semantic roles such as requirement, decision, implementation, verification, and review. One runtime candidate-source boundary pages the journal through a frozen sequence and joins those durable facts with the exact historical revision graph, workspace, artifact metadata, scope lineage, and frozen execution authority. It discovers declared inputs, bounded ancestors, exact nodes/executions, tagged outputs, failures/uncertainty/decisions, explicit workspace/evidence references, joins, and imported subworkflow results as metadata before reading selected content. Historical ancestry uses the revision that governed each execution; a later reconciliation never reinterprets it. Sibling scopes remain invisible until an explicit join/import exposure rule permits a result, and redacted branch/authority omissions do not disclose protected names or sizes. Stable order is causal depth, semantic kind, source node, execution, and canonical source-reference bytes. Candidate-scan, depth, event-summary, item, artifact-count, per-item, byte, artifact-byte, manifest-byte, and optional provider-neutral unit bounds are enforced deterministically. Optional losses receive stable policy, budget, authority, missing/corrupt, unsupported, superseded, or branch-isolation codes; required losses fail before dispatch. There is no chronological whole-history fallback.
 
@@ -158,8 +174,9 @@ milkdrift-capability-host -> {local-process, model-provider, control}
 milkdrift-authority   -> {secret-env, local-process, model-provider}
 milkdrift-control-protocol -> {control-client, daemon}
 milkdrift-control-client   -> {cli}
+{authority, blueprint, capability, contracts, control, persistence, workspace} -> prompt-sequence
 {authority, blueprint, capability-host, control, persistence, runtime, redb-store,
- local-process, model-provider, control-protocol} -> daemon
+ local-process, model-provider, control-protocol, prompt-sequence} -> daemon
 ```
 
 `milkdrift-contracts` owns only cross-domain implementation mechanics with
@@ -184,7 +201,10 @@ capability observations; it owns neither durable truth nor a host lifecycle.
 `milkdrift-local-process` depends outward on that port and owns process/filesystem APIs;
 it never depends on redb or mutates runtime state. `milkdrift-secret-env` is a separate
 concrete secret boundary. `milkdrift-control-protocol` is a pure outward DTO boundary;
-the HTTP stack exists only in `milkdrift-control-client` and `milkdrift-daemon`. Dependencies
+the HTTP stack exists only in `milkdrift-control-client` and `milkdrift-daemon`.
+`milkdrift-prompt-sequence` is an outer import/template layer over stable semantic, authority,
+control, persistence-identity, and workspace contracts; it emits ordinary revisions/proposals and
+cannot call adapters or persistence. Dependencies
 may point toward stable semantics, never from semantics toward a host.
 
 Forbidden in the semantic crates are Tokio or another executor, HTTP clients/servers, databases, Iced, provider SDKs, subprocess/OS APIs, transport types, secret values, tensor/inference types, live handles, clocks, randomness that affects identity, and mutable singleton registries. Project-authored code is safe Rust unless an independently proven requirement has a focused safety contract and tests.
@@ -201,7 +221,7 @@ Local-process profile schema v2 binds one immutable generation to the operator-d
 
 ## 15. Disk/wire schemas and compatibility
 
-Portable documents use explicit numeric schema versions: blueprint revision/mutation, invocation request, the context-manifest body, and local-process profiles are currently v2; daemon configuration is v3; authority grants and external authenticated cursors are v2; the external control protocol is 1.0; CLI JSON output, layout documents, durable application receipt/layout/peer-execution records, the model document envelope, other capability documents, model-task/response contracts, and endpoint profiles are schema 1. Redb physical schema 5 and internal document format 8 are exact-current and deliberately refuse older or future stores without migration. Obsolete file-per-peer-execution and parallel peer-artifact directories are explicitly refused. Context-manifest v1 is retained only as a named legacy constant and refused because it cannot prove selected content or producer provenance. Local-process profile v1 is likewise retained only for explicit refusal because its path-only executable reference cannot prove implementation identity. Digest inputs use recursively key-sorted deterministic JSON and deterministic collections. Unknown core variants, malformed typed identities, invalid derived fields, and unsupported future versions fail clearly. Explicit bounded DNS-namespaced extension maps are the only forward-compatible unknown field mechanism.
+Portable documents use explicit numeric schema versions: blueprint revision/mutation, invocation request, the context-manifest body, and local-process profiles are currently v2; daemon configuration is v3; authority grants and external authenticated cursors are v2; the external control protocol is 1.0; prompt-sequence imports, CLI JSON output, layout documents, durable application receipt/layout/peer-execution records, the model document envelope, other capability documents, model-task/response contracts, and endpoint profiles are schema 1. Redb physical schema 5 and internal document format 8 are exact-current and deliberately refuse older or future stores without migration. Obsolete file-per-peer-execution and parallel peer-artifact directories are explicitly refused. Context-manifest v1 is retained only as a named legacy constant and refused because it cannot prove selected content or producer provenance. Local-process profile v1 is likewise retained only for explicit refusal because its path-only executable reference cannot prove implementation identity. Digest inputs use recursively key-sorted deterministic JSON and deterministic collections. Unknown core variants, malformed typed identities, invalid derived fields, and unsupported future versions fail clearly. Explicit bounded DNS-namespaced extension maps are the only forward-compatible unknown field mechanism.
 
 Readers support only versions they can interpret without guessing. A writer emits one current canonical version. Adding optional meaning still requires a schema review; changing existing meaning or canonical bytes requires a new version and fixtures. Old golden fixtures remain read tests for every supported version. Disk events, projections, daemon commands, layouts, peer messages, and artifacts each declare independent version ownership rather than sharing one global version.
 

@@ -24,7 +24,9 @@ use milkdrift_capability_host::{
     CapabilitySelectionPolicy, HostConfig, InMemorySecretResolver, InputMaterialization,
     InvocationDataAccess, InvocationDataError, MaterializationLimits, MaterializedExecution,
 };
-use milkdrift_local_process::{LocalProcessAdapter, PlatformSupport, ProcessProfileDocument};
+use milkdrift_local_process::{
+    LocalProcessAdapter, PlatformSupport, ProcessProfileDocument, ProcessProfileError,
+};
 use milkdrift_persistence::{AttemptId, NodeExecutionId};
 use milkdrift_runtime::TaskExecutor;
 use milkdrift_workspace::RunId;
@@ -518,6 +520,69 @@ fn profile_semantics_change_policy_and_descriptor_identity() -> TestResult {
         second_extension["implementation"]["identity_digest"]
     );
     assert_ne!(first.descriptor(), second.descriptor());
+    Ok(())
+}
+
+#[test]
+fn authorized_host_working_directory_persists_across_fresh_process_invocations() -> TestResult {
+    let repository = tempfile::tempdir()?;
+    let data = Arc::new(TestDataAccess::new()?);
+    let mut value = profile_value(
+        &data.root,
+        vec![json!("mark"), json!("persistent-progress.txt")],
+    )?;
+    value["profile"]["working_directory"] = json!({
+        "type": "authorized_host_path",
+        "path": repository.path()
+    });
+    value["profile"]["filesystem_roots"]
+        .as_array_mut()
+        .ok_or("filesystem roots must be an array")?
+        .push(json!({
+            "path": repository.path(),
+            "access": "read_write"
+        }));
+    value["profile"]["max_concurrent"] = json!(1);
+    let profile = parse_profile(&value)?;
+    let (host, snapshot) = setup(
+        profile.clone(),
+        data,
+        Arc::new(InMemorySecretResolver::new()),
+    )?;
+    for suffix in ["first", "second"] {
+        let reporter = TestReporter::default();
+        host.execute_exact_with_context(
+            &snapshot,
+            &request(
+                &profile,
+                &format!("invocation-persistent-{suffix}"),
+                Vec::new(),
+            )?,
+            &context()?,
+            &reporter,
+        )?;
+        let events = reporter.events()?;
+        assert_eq!(terminal_status(&events), Some(TerminalStatus::Success));
+        assert_eq!(
+            fs::read(repository.path().join("persistent-progress.txt"))?,
+            b"entered"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn authorized_host_working_directory_must_be_inside_a_read_write_root() -> TestResult {
+    let repository = tempfile::tempdir()?;
+    let data = Arc::new(TestDataAccess::new()?);
+    let mut value = profile_value(&data.root, vec![json!("exit"), json!("0")])?;
+    value["profile"]["working_directory"] = json!({
+        "type": "authorized_host_path",
+        "path": repository.path()
+    });
+    let profile = parse_profile(&value)?;
+    let result = LocalProcessAdapter::new(profile, data, Arc::new(InMemorySecretResolver::new()));
+    assert!(matches!(result, Err(ProcessProfileError::Invalid(_))));
     Ok(())
 }
 

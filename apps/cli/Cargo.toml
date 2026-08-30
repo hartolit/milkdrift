@@ -9,8 +9,14 @@ rust-version.workspace = true
 [dependencies]
 clap.workspace = true
 futures-util.workspace = true
+milkdrift-authority = { version = "=0.1.0", path = "../../crates/authority" }
+milkdrift-blueprint = { version = "=0.1.0", path = "../../crates/blueprint" }
+milkdrift-control = { version = "=0.1.0", path = "../../crates/control" }
 milkdrift-control-client = { version = "=0.1.0", path = "../../crates/control-client" }
 milkdrift-control-protocol = { version = "=0.1.0", path = "../../crates/control-protocol" }
+milkdrift-persistence = { version = "=0.1.0", path = "../../crates/persistence" }
+milkdrift-prompt-sequence = { version = "=0.1.0", path = "../../crates/prompt-sequence" }
+milkdrift-workspace = { version = "=0.1.0", path = "../../crates/workspace" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

@@ -30,9 +30,19 @@ cargo test -p milkdrift-daemon --test control_plane daemon_graceful_shutdown_and
 cargo test -p milkdrift-daemon --test control_plane daemon_configured_process_adapter_executes_to_terminal -- --exact --nocapture
 cargo test -p milkdrift-daemon --test control_plane layout_is_optimistic_restart_durable_and_semantically_inert -- --exact --nocapture
 cargo test -p milkdrift-daemon --test control_plane proposal_listing_uses_durable_projection_and_survives_restart -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane prompt_sequence_validate_import_inspect_and_restart_are_one_control_path -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane headless_dogfood_failure_remediation_and_restart_are_durable -- --exact --nocapture
 cargo test -p milkdrift-daemon --test control_plane daemon_startup_refuses_legacy_sidecar_and_peer_prototype_authority -- --exact --nocapture
 cargo test -p milkdrift-cli --all-features -- --nocapture
+cargo test -p milkdrift-prompt-sequence --all-features -- --nocapture
+cargo test -p milkdrift-local-process --test process_execution authorized_host_working_directory_ -- --nocapture
 ```
+
+The prompt-sequence contract suite covers JSON/Markdown equivalence, ordinary-node compilation,
+canonical digests, hostile shell-shaped fields, duplicates, and prompt/document bounds. The
+headless daemon proof uses a temporary repository and real byte-pinned local processes with no
+network or credential. It crosses proposal-created and revision-adopted restart boundaries, proves
+failure gating and causal reviewer context, and verifies exact-once attempts plus persistent files.
 
 Focused application-persistence and cross-transaction recovery checks are:
 

@@ -16,7 +16,7 @@ use milkdrift_authority::{
     DecisionId, GrantSetEvaluator, LayoutOwner, PeerId, PolicyId, RequestedResourceFacts,
     SecretRef, WorkflowRunScope,
 };
-use milkdrift_blueprint::{BlueprintRevisionDocument, RevisionId, WorkflowId};
+use milkdrift_blueprint::{AuthorRef, BlueprintRevisionDocument, RevisionId, WorkflowId};
 use milkdrift_capability::{CapabilityId, ErrorClass, SideEffectClass};
 use milkdrift_capability_host::{
     AdapterInvocation, CapabilityHost, CapabilitySelectionPolicy, EffectShutdownMode,
@@ -59,6 +59,7 @@ use milkdrift_persistence::{
     RunSummaryFilter, RunSummaryPageQuery, SecurityAuditEntry, SecurityAuditStore,
     SignalDeliveryMode, SignalId, SignalTypeId, TimestampMillis, WorkerId,
 };
+use milkdrift_prompt_sequence::{PromptSequenceDocument, compile as compile_prompt_sequence};
 use milkdrift_redb_store::{RedbStore, RedbStoreConfig};
 use milkdrift_runtime::{
     ExternalWorkAction, RetryPolicy, RuntimeConfig, RuntimeService, SchedulerLimits,

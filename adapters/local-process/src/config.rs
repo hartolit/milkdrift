@@ -183,6 +183,16 @@ pub enum WorkingDirectoryMode {
         /// Directory created beneath the isolated root before entry.
         relative_path: PathBuf,
     },
+    /// Enter one exact operator-configured host directory while keeping
+    /// invocation inputs/outputs in the isolated materialization root.
+    ///
+    /// This is the trusted-host repository/workspace mode. The adapter binds
+    /// the canonical path at registration and requires it to remain beneath a
+    /// configured read-write filesystem root at every entry.
+    AuthorizedHostPath {
+        /// Absolute configured host directory.
+        path: PathBuf,
+    },
 }
 
 /// Filesystem access fact used for executable and workspace-root validation.
@@ -895,6 +905,15 @@ impl ProcessProfile {
             WorkingDirectoryMode::IsolatedSubdirectory { relative_path } => {
                 validate_relative_path(relative_path, &self.limits)?;
             }
+            WorkingDirectoryMode::AuthorizedHostPath { path }
+                if !path.is_absolute() || path_text(path)?.contains('\0') =>
+            {
+                return Err(ProcessProfileError::Invalid(
+                    "authorized host working directory must be an absolute NUL-free path"
+                        .to_owned(),
+                ));
+            }
+            WorkingDirectoryMode::AuthorizedHostPath { .. } => {}
         }
         Ok(())
     }

@@ -566,6 +566,10 @@ fn command_trace(command: &Command) -> CommandTrace {
     let (operation, run, revision, attempt, proposal) = match command {
         Command::ImportBlueprint { .. } => ("import_blueprint", None, None, None, None),
         Command::ValidateBlueprint { .. } => ("validate_blueprint", None, None, None, None),
+        Command::ImportPromptSequence { .. } => ("import_prompt_sequence", None, None, None, None),
+        Command::ValidatePromptSequence { .. } => {
+            ("validate_prompt_sequence", None, None, None, None)
+        }
         Command::StartRun {
             run_id,
             revision_id,

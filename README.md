@@ -155,6 +155,23 @@ cargo run -p milkdrift-cli -- --json capability list
 cargo run -p milkdrift-cli -- blueprint import crates/blueprint/tests/fixtures/revision-v2.json
 ```
 
+With exact coding, verification, and reviewer capability profiles registered and included in the
+actor's scoped grant, the same headless client can import and run an ordered Markdown implementation
+sequence:
+
+```sh
+cargo run -p milkdrift-cli -- sequence validate examples/headless-dogfood-sequence.md
+cargo run -p milkdrift-cli -- sequence import examples/headless-dogfood-sequence.md
+cargo run -p milkdrift-cli -- run start RUN_ID milkdrift-core-convergence REVISION_ID
+cargo run -p milkdrift-cli -- run timeline RUN_ID --follow
+```
+
+Successful verification advances to the next fresh coding-agent process while one explicitly
+authorized repository remains persistent. Failure routes to independent review and a durable
+shared-control approval hold; remediation is a normal prospective revision. See [the headless
+dogfood guide](docs/headless-dogfood.md), [schema-1 reference](docs/reference/prompt-sequence-v1.md),
+and [complete example](examples/headless-dogfood-sequence.md).
+
 The daemon refuses non-loopback plaintext binds and permissive CORS is not enabled. Older configuration/storage schemas and legacy sidecar authority are not silently migrated, and broad/unbounded authority requires an explicit dangerous acknowledgement. Empty artifact, layout, peer, and workspace scopes deny access. See [the daemon operation guide](docs/operator-daemon.md), [the authority configuration guide](docs/operator-authority.md), and [the control API reference](docs/reference/control-api.md).
 
 A minimal revision is constructed through a validated mutation batch; see the crate-level example in `milkdrift-blueprint` and the integration tests under `crates/blueprint/tests`.
@@ -166,6 +183,7 @@ A minimal revision is constructed through a validated mutation batch; see the cr
 - `crates/control`: shared human/service/AI workflow proposals, risk policy, authority presets, read models, and the in-process workflow-control capability adapter.
 - `crates/control-protocol`: pure version-one external commands, read models, envelopes, cursors, streams, and layout schema.
 - `crates/control-client`: authenticated typed HTTP queries, exact command submission, bounded artifact ranges, and resumable SSE.
+- `crates/prompt-sequence`: bounded JSON/Markdown implementation sequences, ordinary blueprint compilation, and prospective remediation proposal construction.
 - `crates/capability-host`: live adapter generations, resolution, admission, cancellation, health, drain, and shutdown.
 - `crates/blueprint`: immutable workflow definitions, fingerprints, and revision transactions.
 - `crates/model`: provider-neutral model task/response and exact schema-v2 causal-context manifest contracts.

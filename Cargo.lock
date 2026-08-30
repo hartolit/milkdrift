@@ -947,8 +947,14 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "futures-util",
+ "milkdrift-authority",
+ "milkdrift-blueprint",
+ "milkdrift-control",
  "milkdrift-control-client",
  "milkdrift-control-protocol",
+ "milkdrift-persistence",
+ "milkdrift-prompt-sequence",
+ "milkdrift-workspace",
  "serde",
  "serde_json",
  "tempfile",
@@ -1035,6 +1041,7 @@ dependencies = [
  "milkdrift-peer-http",
  "milkdrift-peer-protocol",
  "milkdrift-persistence",
+ "milkdrift-prompt-sequence",
  "milkdrift-redb-store",
  "milkdrift-runtime",
  "milkdrift-workspace",
@@ -1169,6 +1176,24 @@ dependencies = [
  "milkdrift-workspace",
  "serde",
  "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "milkdrift-prompt-sequence"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "milkdrift-authority",
+ "milkdrift-blueprint",
+ "milkdrift-capability",
+ "milkdrift-contracts",
+ "milkdrift-control",
+ "milkdrift-persistence",
+ "milkdrift-workspace",
+ "serde",
+ "serde_json",
+ "tempfile",
  "thiserror",
 ]
 

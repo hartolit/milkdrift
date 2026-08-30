@@ -65,6 +65,12 @@ impl Owner {
                     value: json!({"revision_id": revision.id().as_str(), "semantic_digest": revision.content_digest().as_str()}),
                 })
             }
+            Command::ImportPromptSequence { document } => {
+                self.prompt_sequence_command(session, request, document, true)
+            }
+            Command::ValidatePromptSequence { document } => {
+                self.prompt_sequence_command(session, request, document, false)
+            }
             Command::StartRun {
                 run_id,
                 workflow_id,
@@ -229,14 +235,14 @@ impl Owner {
                     .map_err(|error| invalid(&error.to_string()))?;
                 let command = match decision {
                     ProposalDecision::Approve => ControlCommand::ApproveProposal {
-                        run,
+                        run: run.clone(),
                         proposal,
                         proposal_digest: digest.clone(),
                         proposed_revision: revision,
                         decision: decision_id,
                     },
                     ProposalDecision::Reject => ControlCommand::RejectProposal {
-                        run,
+                        run: run.clone(),
                         proposal,
                         proposal_digest: digest.clone(),
                         proposed_revision: revision,
@@ -265,7 +271,7 @@ impl Owner {
                     serde_json::from_value(Value::String(proposal_digest.clone()))
                         .map_err(|error| invalid(&error.to_string()))?;
                 let command = ControlCommand::ApplyProposal {
-                    run,
+                    run: run.clone(),
                     proposal: ProposalId::new(proposal_id.clone())
                         .map_err(|error| invalid(&error.to_string()))?,
                     proposal_digest: digest.clone(),
@@ -283,6 +289,76 @@ impl Owner {
             }
             Command::PutLayout { layout } => layouts::execute(self, session, request, layout),
         }
+    }
+
+    fn prompt_sequence_command(
+        &self,
+        session: &ActorSession,
+        request: &CommandRequest,
+        document: &Value,
+        store: bool,
+    ) -> Result<CommandAccepted, PublicFailure> {
+        let bytes =
+            serde_json::to_vec(document).map_err(|_| invalid("invalid prompt-sequence JSON"))?;
+        let document = PromptSequenceDocument::from_json(&bytes)
+            .map_err(|error| invalid(&bounded(&error.to_string())))?;
+        let author = AuthorRef::new(session.actor.as_str().to_owned())
+            .map_err(|error| invalid(&error.to_string()))?;
+        let compiled = compile_prompt_sequence(&document, author)
+            .map_err(|error| invalid(&bounded(&error.to_string())))?;
+        let revision = compiled.revision();
+        let mut resources = RequestedResourceFacts::empty();
+        resources.workflow = Some(revision.semantic().workflow().clone());
+        resources.revision = Some(revision.id().clone());
+        let operation = if store {
+            AuthorityOperation::ImportBlueprint
+        } else {
+            AuthorityOperation::ValidateBlueprint
+        };
+        let decision = self.authorize(
+            session,
+            operation,
+            resources,
+            if store {
+                "command:import-prompt-sequence"
+            } else {
+                "command:validate-prompt-sequence"
+            },
+        )?;
+        let replayed = if store {
+            matches!(
+                self.store
+                    .put_revision(revision)
+                    .map_err(public_persistence)?,
+                milkdrift_persistence::ImmutableRevisionPut::AlreadyPresent
+            )
+        } else {
+            false
+        };
+        if store {
+            self.record_security_decision(&decision)?;
+        }
+        Ok(CommandAccepted {
+            command_id: request.command_id.clone(),
+            replayed,
+            resulting_sequence: None,
+            result_type: if store {
+                "prompt_sequence_imported"
+            } else {
+                "prompt_sequence_valid"
+            }
+            .to_owned(),
+            value: json!({
+                "schema_version": 1,
+                "sequence_id": document.sequence().id,
+                "workflow_id": revision.semantic().workflow().as_str(),
+                "revision_id": revision.id().as_str(),
+                "semantic_digest": revision.content_digest().as_str(),
+                "import_digest": compiled.import_digest(),
+                "repository_profile_digest": compiled.repository_profile_digest(),
+                "stages": compiled.stages(),
+            }),
+        })
     }
 
     fn simple_run_command<F>(
@@ -338,6 +414,12 @@ impl Owner {
         command: ControlCommand,
         suffix: &str,
     ) -> Result<u64, PublicFailure> {
+        let run = match &command {
+            ControlCommand::ApproveProposal { run, .. }
+            | ControlCommand::RejectProposal { run, .. }
+            | ControlCommand::ApplyProposal { run, .. } => run.clone(),
+            _ => return Err(internal()),
+        };
         let result = self.execute_control_result(
             session,
             request,
@@ -348,6 +430,12 @@ impl Owner {
         )?;
         match result {
             ControlResult::RuntimeCommand { resulting_sequence } => Ok(resulting_sequence.get()),
+            ControlResult::ProposalStatus { .. } => self
+                .store
+                .run_summary(&run)
+                .map_err(public_persistence)?
+                .map(|summary| summary.through_sequence.get())
+                .ok_or_else(not_found),
             _ => Err(internal()),
         }
     }

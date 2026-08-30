@@ -68,6 +68,10 @@ pub enum Command {
     ImportBlueprint { document: Value },
     /// Validate an immutable blueprint document without storing it.
     ValidateBlueprint { document: Value },
+    /// Compile, validate, and store a bounded prompt-sequence as an ordinary blueprint revision.
+    ImportPromptSequence { document: Value },
+    /// Compile and validate a bounded prompt-sequence without storing its generated revision.
+    ValidatePromptSequence { document: Value },
     /// Create and start a run at one exact revision.
     StartRun {
         run_id: String,

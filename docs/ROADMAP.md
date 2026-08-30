@@ -10,5 +10,13 @@ Peer worker recovery is complete: serving acceptance/admission/dispatch/observat
 
 Public-surface and semantic-change-cone contraction is complete: current consumers define the exported adapter/application surface, internal storage records are not re-exported by transport adapters, large lifecycle/read-model and test-builder ownership is separated, and every retained lint exception records its reviewed semantic boundary.
 
-1. **Dogfood and continuous remediation** — Imported prompt sequences, fresh coding-agent sessions, verification gates, live reviewer/remediation insertion, daemon-owned bounded controller lifecycles, authorized AI supervision, and historical provenance inspection.
+The headless dogfood vertical is complete: bounded Markdown prompt sequences compile into ordinary
+workflow revisions; fresh coding processes share an explicitly authorized persistent repository;
+verification, review, approval, prospective remediation, reconciliation, restart recovery, and
+historical provenance all use the existing daemon/control/CLI path.
+
+1. **Optional distributed dogfood and continuous supervision** — An operator-configured two-daemon
+   prompt stage, explicit checkpoint capability, and daemon-owned bounded controller lifecycle for
+   authorized AI supervision; these must reuse current peer, proposal, authority, and repeat
+   boundaries rather than introduce autonomous privilege.
 2. **Iced control center** — A thin native canvas over `milkdrift-control-client` with revision history, a virtualized timeline, peer/catalog provenance, inspector, schema-1 layout documents, live controls, and authenticated-cursor reconnect/resume behavior.

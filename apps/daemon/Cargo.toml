@@ -24,6 +24,7 @@ milkdrift-model-provider = { version = "=0.1.0", path = "../../adapters/model-pr
 milkdrift-peer-http = { version = "=0.1.0", path = "../../adapters/peer-http" }
 milkdrift-peer-protocol = { version = "=0.1.0", path = "../../crates/peer-protocol" }
 milkdrift-persistence = { version = "=0.1.0", path = "../../crates/persistence" }
+milkdrift-prompt-sequence = { version = "=0.1.0", path = "../../crates/prompt-sequence" }
 milkdrift-redb-store = { version = "=0.1.0", path = "../../adapters/redb-store" }
 milkdrift-runtime = { version = "=0.1.0", path = "../../crates/runtime" }
 milkdrift-workspace = { version = "=0.1.0", path = "../../crates/workspace" }
