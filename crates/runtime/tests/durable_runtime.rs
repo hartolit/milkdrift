@@ -211,7 +211,7 @@ fn service(
     )?)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // This reviewed boundary keeps its complete invariant-bearing fact set explicit.
 fn exact_grant_service(
     store: Arc<RedbStore>,
     clock: Arc<ManualClock>,

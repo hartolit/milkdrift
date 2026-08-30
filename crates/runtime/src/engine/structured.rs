@@ -405,7 +405,7 @@ impl RuntimeService {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn drive_terminal_node(
         &self,
         run: &RunId,
@@ -540,7 +540,7 @@ impl RuntimeService {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn drive_timer_wait_node(
         &self,
         run: &RunId,
@@ -613,7 +613,7 @@ impl RuntimeService {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn drive_signal_wait_node(
         &self,
         run: &RunId,
@@ -721,7 +721,7 @@ impl RuntimeService {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn drive_branch_node(
         &self,
         run: &RunId,
@@ -816,7 +816,7 @@ impl RuntimeService {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn drive_fork_node(
         &self,
         run: &RunId,
@@ -924,7 +924,7 @@ impl RuntimeService {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn drive_subworkflow_node(
         &self,
         run: &RunId,
@@ -971,7 +971,7 @@ impl RuntimeService {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn drive_join_node(
         &self,
         run: &RunId,

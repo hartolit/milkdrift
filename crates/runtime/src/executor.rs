@@ -286,7 +286,7 @@ pub struct ExecutionDispatch {
 }
 
 impl ExecutionDispatch {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One validated runtime boundary keeps its complete semantic fact set explicit.
     pub(crate) fn from_snapshot(
         run: RunId,
         revision: RevisionId,

@@ -190,7 +190,7 @@ struct ProposalDigestInput<'a> {
 
 impl WorkflowProposal {
     /// Constructs a bounded proposal and derives its deterministic digest.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One validated control operation keeps its authority and optimistic facts explicit.
     pub fn new(
         identity: ProposalId,
         proposer: ActorRef,

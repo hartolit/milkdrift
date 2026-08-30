@@ -1200,7 +1200,7 @@ fn allowed_decision(peer: &PeerId) -> TestResult<AuthorityDecisionSnapshot> {
     )?)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // This reviewed boundary keeps its complete invariant-bearing fact set explicit.
 fn request(
     issuer: &PeerId,
     target: &PeerId,

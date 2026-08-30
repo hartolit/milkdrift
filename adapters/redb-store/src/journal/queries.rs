@@ -604,7 +604,7 @@ fn expected_run_index<T: Clone + Eq>(
     Ok(result)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // One bounded storage query keeps its cursor and table views explicit.
 fn complete_run_index<T>(
     read: &redb::ReadTransaction,
     identities: redb::TableDefinition<'_, &'static [u8], &'static [u8]>,

@@ -215,7 +215,7 @@ impl<'de> Deserialize<'de> for PeerInvocationRequest {
 
 impl PeerInvocationRequest {
     /// Constructs and canonically digests one exact peer request.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One validated peer execution contract keeps its exact provenance facts explicit.
     pub fn new(
         request_id: PeerRequestId,
         catalog_generation: u64,
@@ -290,7 +290,7 @@ impl PeerInvocationRequest {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // One validated peer execution contract keeps its exact provenance facts explicit.
 fn compute_request_digest(
     request_id: &PeerRequestId,
     catalog_generation: u64,

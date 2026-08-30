@@ -270,7 +270,7 @@ impl ScanContext<'_, '_> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // Integrity verification keeps every cross-table evidence source explicit.
 pub(crate) fn scan_index_integrity(
     read: &redb::ReadTransaction,
     cursor: Option<&IntegrityScanCursor>,

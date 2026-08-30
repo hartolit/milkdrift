@@ -234,7 +234,7 @@ struct ControlCommandWire {
 
 impl ControlCommandDocument {
     /// Constructs a complete schema-v1 command envelope.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One validated control operation keeps its authority and optimistic facts explicit.
     pub fn new(
         control_id: ControlId,
         context: ActorAuthorityContext,

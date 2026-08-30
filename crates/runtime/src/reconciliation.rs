@@ -328,7 +328,7 @@ pub fn plan_reconciliation(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // One reconciliation classification compares the complete old/new/history fact set.
 fn classify_node(
     node: &NodeId,
     old_node: Option<&milkdrift_blueprint::Node>,

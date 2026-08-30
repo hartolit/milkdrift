@@ -329,7 +329,7 @@ pub struct CapabilityAuthorityScope {
 
 impl CapabilityAuthorityScope {
     /// Constructs a capability scope; empty sets are explicit wildcards.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One validated authority scope keeps every independently bounded dimension explicit.
     pub fn new(
         identities: BTreeSet<CapabilityId>,
         categories: BTreeSet<CapabilityCategory>,

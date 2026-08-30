@@ -400,7 +400,7 @@ impl ControlService {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One validated control operation keeps its authority and optimistic facts explicit.
     fn decide_proposal(
         &self,
         document: &ControlCommandDocument,
@@ -557,7 +557,7 @@ impl ControlService {
         ensure_accepted(&execution)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One validated control operation keeps its authority and optimistic facts explicit.
     fn runtime_command(
         &self,
         document: &ControlCommandDocument,

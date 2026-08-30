@@ -30,14 +30,21 @@ struct AppState {
 }
 
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
 enum PeerRouteAuthorityMapping {
     Exact(AuthorityOperation),
     QueryDerived,
 }
 
+impl PeerRouteAuthorityMapping {
+    const fn exact_operation(self) -> Option<AuthorityOperation> {
+        match self {
+            Self::Exact(operation) => Some(operation),
+            Self::QueryDerived => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
 enum PeerRouteResourceMapping {
     Relationship,
     Capability,
@@ -45,7 +52,6 @@ enum PeerRouteResourceMapping {
     Artifact,
 }
 
-#[allow(dead_code)]
 struct AuthorizedPeerRouteDeclaration {
     path: &'static str,
     authority: PeerRouteAuthorityMapping,
@@ -57,11 +63,16 @@ macro_rules! authorized_peer_routes {
         $path:literal => $method:expr, $authority:expr, $resource:expr;
     )+) => {{
         $(
-            let _declaration = AuthorizedPeerRouteDeclaration {
+            let declaration = AuthorizedPeerRouteDeclaration {
                 path: $path,
                 authority: $authority,
                 resource: $resource,
             };
+            let _ = (
+                declaration.path,
+                declaration.authority.exact_operation(),
+                declaration.resource,
+            );
         )+
         $router$(.route($path, $method))+
     }};

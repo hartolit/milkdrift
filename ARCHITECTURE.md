@@ -213,78 +213,46 @@ claiming ownership of the append-only event contract.
 
 ## 16. Logical ownership and crate extraction
 
-The following map is the long-lived ownership reference:
+The following map matches the current physical workspace. Focused private modules
+within these packages carry the logical responsibilities described in the table
+below; absent products are not represented as placeholder directories.
 
 ```text
 milkdrift/
 ├── crates/
-│   ├── blueprint/
-│   │   ├── model
-│   │   ├── validation
-│   │   ├── revision
-│   │   └── mutation
-│   ├── contracts/
-│   │   ├── canonical-json
-│   │   └── validated-newtype-mechanics
 │   ├── authority/
-│   │   ├── actors-and-grants
-│   │   ├── policy-evaluation
-│   │   └── secret-references
-│   ├── control/
-│   │   ├── proposal-and-command-contracts
-│   │   ├── risk-and-authority-policy
-│   │   ├── shared-application-service
-│   │   ├── workflow-control-adapter
-│   │   └── bounded-controller-pattern
-│   ├── runtime/
-│   │   ├── scheduler
-│   │   ├── execution
-│   │   ├── structured-concurrency
-│   │   ├── reconciliation
-│   │   └── recovery
+│   ├── blueprint/
 │   ├── capability/
-│   │   ├── contracts
-│   │   └── resolution
 │   ├── capability-host/
-│   │   ├── registry-and-health
-│   │   ├── admission-and-generation-lifecycle
-│   │   ├── materialization-and-publication-port
-│   │   ├── bounded-effect-worker-owner
-│   │   └── adapter-and-secret-ports
+│   ├── contracts/
+│   ├── control/
+│   ├── control-client/
+│   ├── control-protocol/
 │   ├── model/
-│   │   ├── context-manifest
-│   │   └── task-and-response-contracts
-│   ├── workspace/
-│   │   ├── context
-│   │   ├── artifacts
-│   │   └── branches
+│   ├── peer-protocol/
 │   ├── persistence/
-│   │   ├── events
-│   │   ├── journal
-│   │   └── projections
-│   └── peer/
-│       ├── protocol
-│       └── capability-advertisement
+│   ├── runtime/
+│   └── workspace/
 ├── adapters/
-│   ├── model-provider/
 │   ├── local-process/
-│   ├── secret-env/
-│   ├── filesystem/
-│   └── peer-transport/
+│   ├── model-provider/
+│   ├── peer-http/
+│   ├── redb-store/
+│   └── secret-env/
 ├── apps/
-│   ├── desktop-iced/
+│   ├── cli/
 │   └── daemon/
 └── docs/
 ```
 
-The logical map is the long-lived ownership reference. Its exact current physical mapping is:
+The exact current logical-to-physical mapping is:
 
 | Logical responsibility | Current physical crate/module |
 | --- | --- |
 | Shared contract mechanics | `milkdrift-contracts` owns bounded/canonical JSON mechanics and the common validated-string implementation; semantic rules remain in consuming domain crates |
 | Actor/grant/policy/secret-reference authority | `milkdrift-authority::{identity,model,evaluator,secret,document}` remains pure and owns no transport authentication or live secret source; `milkdrift-daemon::auth` maps local credential references to those server-owned facts |
 | Human/service/AI workflow control | `milkdrift-control::{document,command,policy,preset,service,adapter,controller,read}` owns strict proposals and application orchestration while durable revisions, authorization decisions, reconciliation, and events remain with their existing owners |
-| External control protocol | `milkdrift-control-protocol` owns protocol 1.0 commands, stable errors/results, bounded read models/pages, authenticated actor/grant/resource-bound cursors/SSE observations, and layout schema 1 without async, HTTP, runtime, or storage types |
+| External control protocol | `milkdrift-control-protocol` owns protocol 1.0 common envelopes/cursors/codecs with focused private `command`, `read`, and `layout` modules for mutation DTOs, observation/read DTOs, and layout schema 1; it contains no async, HTTP, runtime, or storage types |
 | Reusable control client | `milkdrift-control-client` owns version negotiation, bearer-authenticated typed HTTP calls, bounded safe-query retries and artifact ranges, and exact-cursor SSE reconnect |
 | `blueprint/model` | `milkdrift-blueprint::model` (public types re-exported at crate root) |
 | `blueprint/validation` | `milkdrift-blueprint::validation` |
@@ -316,13 +284,19 @@ The logical map is the long-lived ownership reference. Its exact current physica
 | `adapters/redb` | The transactional local adapter, split across `milkdrift-redb-store::{admin,journal,store}` facades and their private child modules |
 | `adapters/peer-transport` | `milkdrift-peer-http::{auth,config,http,client,store,artifact,dispatch,remote,service}` owns fixed HTTPS/loopback transport, bearer identity, bounded worker lifecycle, core artifact transfer, quotas, and remote adapters; redb owns durable peer rows through persistence ports |
 | `apps/desktop-iced` | Not implemented |
-| `apps/daemon` | `milkdrift-daemon::{config,auth,host,http}` owns validated local/peer configuration, credential-to-actor/peer mapping, redb/runtime/capability/effect/peer lifecycles, the bounded owner boundary, separated control/peer HTTP realms, readiness, and ordered shutdown |
+| `apps/daemon` | `milkdrift-daemon::{config,auth,host,http}` owns validated local/peer configuration, credential-to-actor/peer mapping, redb/runtime/capability/effect/peer lifecycles, the bounded owner boundary, separated control/peer HTTP realms, readiness, and ordered shutdown; `host::read_model` separately owns external DTO/error projection |
 | `apps/cli` | `milkdrift-cli` is a thin argument/presentation layer over `milkdrift-control-client`; it owns confirmations, stable JSON schema 1, output/download policy, and exit codes, never durable truth |
 
 Physical crates are extracted only for a real dependency, lifecycle, host, publication, or multiple-consumer boundary. No empty crate or placeholder directory may be created merely to resemble the diagram. A later pass may merge or split physical packages when it preserves logical ownership and reduces coupling. Within a cohesive crate, private modules are preferred until extraction creates a measurable boundary; conversely, a growing module must split when unrelated invariants, dependencies, lifecycle, or test ownership become entangled.
+
+Pre-release public APIs follow current consumers. Semantic contracts, adapter ports,
+validated serialized documents, and application entry points remain public. Provider
+wire payloads, storage rows, daemon read-model projection, and operational profile
+inspection stay private to their owners. In particular, peer HTTP does not re-export
+persistence records merely because it consumes the persistence port.
 
 ## 17. Testing philosophy
 
 Tests establish independent invariants rather than restating algorithms. Small hand-reviewed examples cover each semantic node and capability variance. Golden JSON fixtures own compatibility and exact canonical re-encoding. Property/model tests generate mutation batches and require every published revision to validate. Compile-fail examples prove private API boundaries.
 
-The runtime and persistence layers must add deterministic state-machine tests, crash/restart and fault injection, duplicate/out-of-order delivery, uncertain-effect recovery, reconciliation histories, compatibility fixtures, and cross-adapter contract suites. Security-critical policy, graph validation, reconciliation, idempotency, and recovery logic should receive mutation testing once implemented; surviving mutants are missing assertions or deliberately justified equivalents. Coverage volume is not a substitute for testing the invariant from an independent observation.
+The runtime and persistence layers must add deterministic state-machine tests, crash/restart and fault injection, duplicate/out-of-order delivery, uncertain-effect recovery, reconciliation histories, compatibility fixtures, and cross-adapter contract suites. The structured-runtime integration target keeps shared contract builders in `structured_runtime/builders.rs` and scenario families in independent child modules; scenario-specific fakes remain local instead of growing one universal backend. Security-critical policy, graph validation, reconciliation, idempotency, and recovery logic should receive mutation testing once implemented; surviving mutants are missing assertions or deliberately justified equivalents. Coverage volume is not a substitute for testing the invariant from an independent observation.

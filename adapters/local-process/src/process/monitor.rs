@@ -7,14 +7,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use milkdrift_capability::{InvocationEventKind, InvocationId};
-use milkdrift_capability_host::{AdapterError, AdapterReporter};
+use milkdrift_capability::InvocationEventKind;
+use milkdrift_capability_host::AdapterError;
 
 use crate::config::{OverflowAction, ProcessProfile};
 
 use super::{
     platform::{ProcessControl, wait_for_group_absence},
-    report,
+    reporting::TerminalReportContext,
     streams::{Stream, StreamMessage, progress_message},
 };
 
@@ -39,14 +39,11 @@ pub(super) enum Termination {
     Unresolved,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn monitor_process(
     child: &mut Child,
     control: &ProcessControl,
     receiver: Receiver<StreamMessage>,
-    reporter: &dyn AdapterReporter,
-    invocation: &InvocationId,
-    sequence: &mut u64,
+    reports: &mut TerminalReportContext<'_>,
     profile: &ProcessProfile,
     started: Instant,
 ) -> Result<ProcessObservation, AdapterError> {
@@ -74,16 +71,11 @@ pub(super) fn monitor_process(
                 capture.extend_from_slice(&bytes);
                 if policy.stream_progress && *count < policy.max_progress_events {
                     let message = progress_message(stream, &bytes);
-                    report(
-                        reporter,
-                        invocation,
-                        sequence,
-                        InvocationEventKind::Progress {
-                            message,
-                            completed_units: None,
-                            total_units: None,
-                        },
-                    )?;
+                    reports.report(InvocationEventKind::Progress {
+                        message,
+                        completed_units: None,
+                        total_units: None,
+                    })?;
                     *count = count.saturating_add(1);
                 }
             }
@@ -166,7 +158,7 @@ pub(super) fn monitor_process(
             break;
         }
         if now >= next_heartbeat && status.is_none() {
-            reporter.heartbeat()?;
+            reports.heartbeat()?;
             next_heartbeat = now + Duration::from_millis(profile.limits.heartbeat_interval_ms);
         }
         if status.is_some() && stdout_closed && stderr_closed {

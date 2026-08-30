@@ -53,7 +53,7 @@ impl RuntimeService {
 
     /// Performs one bounded fair scheduling pass.  This call never spawns, polls, or
     /// retains an in-memory queue; another call is required for later work.
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines)] // Scheduling is one ordered admission pass over a single projection snapshot.
     pub fn scheduler_tick(&self) -> Result<SchedulerTickResult, RuntimeError> {
         let now = self.clock.now()?;
         let span = info_span!(

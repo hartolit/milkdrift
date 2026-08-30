@@ -76,6 +76,27 @@ pub(crate) enum MaterializedContextPart {
     },
 }
 
+/// Immutable state shared by every phase of one entered provider request.
+struct ModelExecution<'a> {
+    context: &'a milkdrift_capability_host::AdapterExecutionContext,
+    request: &'a InvocationRequest,
+    task: &'a ModelTaskRequest,
+    context_manifest: &'a str,
+    context_parts: &'a [MaterializedContextPart],
+    secret: Option<&'a [u8]>,
+    cancelled: &'a AtomicBool,
+    reporter: &'a dyn AdapterReporter,
+    started: Instant,
+}
+
+/// Provider-neutral failure facts after adapter-specific status/error mapping.
+struct ProviderFailure<'a> {
+    class: ErrorClass,
+    retryable: bool,
+    code: &'a str,
+    message: &'a str,
+}
+
 /// One synchronous host adapter for an exact endpoint-profile revision.
 pub struct ModelEndpointAdapter {
     capability: CapabilityId,
@@ -206,17 +227,17 @@ impl ModelEndpointAdapter {
         }
         let started = Instant::now();
         let result = match self.profile.auth() {
-            AuthMode::NoAuth => self.perform(
+            AuthMode::NoAuth => self.perform(ModelExecution {
                 context,
                 request,
-                &task,
-                manifest_text,
-                &context_parts,
-                None,
-                &cancelled,
+                task: &task,
+                context_manifest: manifest_text,
+                context_parts: &context_parts,
+                secret: None,
+                cancelled: &cancelled,
                 reporter,
                 started,
-            ),
+            }),
             AuthMode::Bearer { secret } | AuthMode::AnthropicApiKey { secret } => {
                 match self.secrets.resolve(secret) {
                     Err(_) => Err(AdapterError::rejected(
@@ -226,17 +247,17 @@ impl ModelEndpointAdapter {
                         Err(AdapterError::rejected("model endpoint secret is empty"))
                     }
                     Ok(secret) => secret.expose(|bytes| {
-                        self.perform(
+                        self.perform(ModelExecution {
                             context,
                             request,
-                            &task,
-                            manifest_text,
-                            &context_parts,
-                            Some(bytes),
-                            &cancelled,
+                            task: &task,
+                            context_manifest: manifest_text,
+                            context_parts: &context_parts,
+                            secret: Some(bytes),
+                            cancelled: &cancelled,
                             reporter,
                             started,
-                        )
+                        })
                     }),
                 }
             }
@@ -247,19 +268,18 @@ impl ModelEndpointAdapter {
         result
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn perform(
-        &self,
-        context: &milkdrift_capability_host::AdapterExecutionContext,
-        request: &InvocationRequest,
-        task: &ModelTaskRequest,
-        context_manifest: &str,
-        context_parts: &[MaterializedContextPart],
-        secret: Option<&[u8]>,
-        cancelled: &AtomicBool,
-        reporter: &dyn AdapterReporter,
-        started: Instant,
-    ) -> Result<(), AdapterError> {
+    fn perform(&self, execution: ModelExecution<'_>) -> Result<(), AdapterError> {
+        let ModelExecution {
+            context,
+            request,
+            task,
+            context_manifest,
+            context_parts,
+            secret,
+            cancelled,
+            reporter,
+            started,
+        } = execution;
         let load = |reference: &milkdrift_capability::ArtifactReference| {
             self.data
                 .read_artifact_bytes(context, reference, self.materialization_limits())
@@ -325,11 +345,12 @@ impl ModelEndpointAdapter {
                 request,
                 reporter,
                 1,
-                mapped.class,
-                mapped.retryable,
-                mapped.code,
-                "model endpoint rejected the request",
-                None,
+                ProviderFailure {
+                    class: mapped.class,
+                    retryable: mapped.retryable,
+                    code: mapped.code,
+                    message: "model endpoint rejected the request",
+                },
                 started,
             );
         }
@@ -387,11 +408,12 @@ impl ModelEndpointAdapter {
                     request,
                     reporter,
                     sequence,
-                    error.class(),
-                    false,
-                    error.code(),
-                    "model response was rejected by bounded protocol validation",
-                    None,
+                    ProviderFailure {
+                        class: error.class(),
+                        retryable: false,
+                        code: error.code(),
+                        message: "model response was rejected by bounded protocol validation",
+                    },
                     started,
                 );
             }
@@ -522,11 +544,12 @@ impl ModelEndpointAdapter {
                     request,
                     reporter,
                     sequence,
-                    ErrorClass::Adapter,
-                    false,
-                    "artifact_publication",
-                    "model response artifact publication failed",
-                    None,
+                    ProviderFailure {
+                        class: ErrorClass::Adapter,
+                        retryable: false,
+                        code: "artifact_publication",
+                        message: "model response artifact publication failed",
+                    },
                     started,
                 );
             }
@@ -548,11 +571,12 @@ impl ModelEndpointAdapter {
                         request,
                         reporter,
                         sequence,
-                        ErrorClass::Adapter,
-                        false,
-                        "artifact_publication",
-                        "model text artifact publication failed",
-                        None,
+                        ProviderFailure {
+                            class: ErrorClass::Adapter,
+                            retryable: false,
+                            code: "artifact_publication",
+                            message: "model text artifact publication failed",
+                        },
                         started,
                     );
                 }
@@ -577,11 +601,12 @@ impl ModelEndpointAdapter {
                         request,
                         reporter,
                         sequence,
-                        ErrorClass::Adapter,
-                        false,
-                        "artifact_publication",
-                        "structured output artifact publication failed",
-                        None,
+                        ProviderFailure {
+                            class: ErrorClass::Adapter,
+                            retryable: false,
+                            code: "artifact_publication",
+                            message: "structured output artifact publication failed",
+                        },
                         started,
                     );
                 }
@@ -606,11 +631,12 @@ impl ModelEndpointAdapter {
                         request,
                         reporter,
                         sequence,
-                        ErrorClass::Adapter,
-                        false,
-                        "artifact_publication",
-                        "tool call artifact publication failed",
-                        None,
+                        ProviderFailure {
+                            class: ErrorClass::Adapter,
+                            retryable: false,
+                            code: "artifact_publication",
+                            message: "tool call artifact publication failed",
+                        },
                         started,
                     );
                 }
@@ -635,11 +661,12 @@ impl ModelEndpointAdapter {
                         request,
                         reporter,
                         sequence,
-                        ErrorClass::Adapter,
-                        false,
-                        "artifact_publication",
-                        "provider metadata artifact publication failed",
-                        None,
+                        ProviderFailure {
+                            class: ErrorClass::Adapter,
+                            retryable: false,
+                            code: "artifact_publication",
+                            message: "provider metadata artifact publication failed",
+                        },
                         started,
                     );
                 }
@@ -695,21 +722,22 @@ impl ModelEndpointAdapter {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn report_failure(
         &self,
         request: &InvocationRequest,
         reporter: &dyn AdapterReporter,
         sequence: u64,
-        class: ErrorClass,
-        retryable: bool,
-        code: &str,
-        message: &str,
-        retry_after_ms: Option<u64>,
+        failure: ProviderFailure<'_>,
         started: Instant,
     ) -> Result<(), AdapterError> {
-        let failure = InvocationFailure::new(class, retryable, code, message, retry_after_ms)
-            .map_err(|_| AdapterError::external_failure("invalid model failure event"))?;
+        let failure = InvocationFailure::new(
+            failure.class,
+            failure.retryable,
+            failure.code,
+            failure.message,
+            None,
+        )
+        .map_err(|_| AdapterError::external_failure("invalid model failure event"))?;
         let duration = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let usage = UsageObservation::new(None, None, Some(duration), None, None, BTreeMap::new())
             .map_err(|_| AdapterError::external_failure("invalid failure usage"))?;

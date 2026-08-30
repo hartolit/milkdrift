@@ -51,7 +51,6 @@ pub struct RemoteCapabilityProvenance {
 struct Registration {
     local_capability: CapabilityId,
     local_revision: u64,
-    expires_at_unix_ms: u64,
 }
 
 /// Safe live peer/session/catalog diagnostics without credentials or endpoint internals.
@@ -169,14 +168,8 @@ impl PeerRegistry {
         )
     }
 
-    /// Earliest current catalog expiry, when connected.
-    #[must_use]
-    pub fn catalog_expires_at_unix_ms(&self) -> Option<u64> {
-        self.status().catalog_expires_at_unix_ms
-    }
-
     /// Applies one exact complete snapshot, draining generations absent from the replacement.
-    pub fn apply_catalog(
+    fn apply_catalog(
         &self,
         catalog: CatalogSnapshot,
     ) -> Result<Vec<RemoteCapabilityProvenance>, PeerHttpError> {
@@ -263,7 +256,6 @@ impl PeerRegistry {
                 Registration {
                     local_capability,
                     local_revision,
-                    expires_at_unix_ms: catalog.expires_at_unix_ms,
                 },
             );
             provenance.push(facts);
@@ -308,34 +300,6 @@ impl PeerRegistry {
             ..PeerRegistryStatus::default()
         };
         Ok(())
-    }
-
-    /// Drains registrations whose catalog TTL has elapsed; stale capability is never retained.
-    pub fn expire_at(&self, observed_at_unix_ms: u64) -> Result<usize, PeerHttpError> {
-        let mut registrations = self.registrations.lock().map_err(|_| {
-            PeerHttpError::Unavailable("peer registry state unavailable".to_owned())
-        })?;
-        let expired = registrations
-            .iter()
-            .filter(|(_key, registration)| registration.expires_at_unix_ms < observed_at_unix_ms)
-            .map(|(key, registration)| (key.clone(), registration.clone()))
-            .collect::<Vec<_>>();
-        for (key, registration) in &expired {
-            let _ = self
-                .host
-                .begin_drain(&registration.local_capability, registration.local_revision);
-            registrations.remove(key);
-        }
-        if !expired.is_empty() && registrations.is_empty() {
-            let mut status = self.status.lock().map_err(|_| {
-                PeerHttpError::Unavailable("peer registry status unavailable".to_owned())
-            })?;
-            *status = PeerRegistryStatus {
-                health: "catalog_expired".to_owned(),
-                ..PeerRegistryStatus::default()
-            };
-        }
-        Ok(expired.len())
     }
 }
 

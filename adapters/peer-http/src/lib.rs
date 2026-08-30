@@ -21,7 +21,6 @@ pub use config::{
     InsecureLoopbackMode, PeerClientConfig, PeerRelationship, PeerServerConfig, PeerWorkerConfig,
 };
 pub use http::peer_router;
-pub use milkdrift_persistence::{PeerExecutionRecord, PeerExecutionStore};
 pub use remote::{PeerRegistry, PeerRegistryStatus, RemoteCapabilityProvenance};
 pub use service::{PeerClock, PeerService, PeerWorkerShutdownReport, SystemPeerClock};
 

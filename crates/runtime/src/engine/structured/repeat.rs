@@ -15,7 +15,7 @@ use milkdrift_persistence::{
 use milkdrift_workspace::{IterationId, RunId, ScopeReference, WorkspaceScope};
 
 impl RuntimeService {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     pub(super) fn drive_repeat_intent(
         &self,
         run: &RunId,
@@ -258,7 +258,7 @@ impl RuntimeService {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn drive_exhausted_repeat_budget(
         &self,
         run: &RunId,
@@ -405,7 +405,7 @@ impl RuntimeService {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn drive_completed_repeat_body(
         &self,
         run: &RunId,
@@ -682,7 +682,7 @@ impl RuntimeService {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn request_repeat_continuation(
         &self,
         run: &RunId,
@@ -759,7 +759,7 @@ impl RuntimeService {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn create_repeat_iteration(
         &self,
         run: &RunId,
@@ -860,7 +860,7 @@ impl RuntimeService {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn publish_repeat_latest_outputs(
         &self,
         run: &RunId,

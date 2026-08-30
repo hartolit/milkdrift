@@ -359,7 +359,7 @@ impl<'de> Deserialize<'de> for InvocationRequest {
 
 impl InvocationRequest {
     /// Constructs a completely validated invocation request.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One validated capability contract keeps every invocation fact explicit.
     pub fn new(
         invocation: InvocationId,
         capability: CapabilityId,

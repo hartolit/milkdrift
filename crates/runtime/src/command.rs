@@ -383,7 +383,7 @@ struct AuthorizedCommandIntent<'a> {
 
 impl RunCommandDocument {
     /// Constructs and validates a complete command envelope.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One validated runtime boundary keeps its complete semantic fact set explicit.
     pub fn new(
         command_id: CommandId,
         run_id: RunId,

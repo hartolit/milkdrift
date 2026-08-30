@@ -46,7 +46,7 @@ impl RuntimeService {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     pub(super) fn complete_deterministic_with_outcome(
         &self,
         run: &RunId,
@@ -241,7 +241,7 @@ impl RuntimeService {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     pub(super) fn materialize_success_terminal_outputs(
         &self,
         run: &RunId,
@@ -597,8 +597,8 @@ impl RuntimeService {
         Ok(())
     }
 
-    #[allow(deprecated)]
-    #[allow(clippy::too_many_arguments)]
+    #[allow(deprecated)] // Legacy join handling remains isolated to the compatibility transition.
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     pub(super) fn try_satisfy_join(
         &self,
         run: &RunId,

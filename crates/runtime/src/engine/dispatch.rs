@@ -371,7 +371,7 @@ impl RuntimeService {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn invocation_request(
         &self,
         revision: &BlueprintRevision,

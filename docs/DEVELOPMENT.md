@@ -13,6 +13,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps
 cargo deny check
 cargo tree --workspace --duplicates
+cargo test --workspace --all-features -- --list
 ```
 
 Focused daemon/control-plane checks are:
@@ -107,6 +108,13 @@ cargo deny check
 ```
 
 Git dependencies require a documented necessity.
+
+For a public-surface review, install `cargo-public-api` as local tooling (it is not a
+workspace dependency), then inventory each library package with `cargo public-api -p
+PACKAGE -sss --color never`. The tool uses a nightly rustdoc JSON toolchain, while all
+product builds and gates continue to use the pinned stable toolchain. Compare totals and
+inspect removals against actual cross-package, application, documentation, and test
+consumers; a lower count is evidence, not permission to hide a real port or wire contract.
 
 Keep module ownership visible. A source file that accumulates multiple lifecycle or
 domain responsibilities must be split into real Rust child modules; `include!` and

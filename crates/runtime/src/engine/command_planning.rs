@@ -213,7 +213,7 @@ impl RuntimeService {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn plan_create_run(
         &self,
         document: &RunCommandDocument,
@@ -359,7 +359,7 @@ impl RuntimeService {
         Ok(plan)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn plan_signal(
         &self,
         document: &RunCommandDocument,
@@ -1110,7 +1110,7 @@ impl RuntimeService {
         Ok(plan)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     pub(super) fn build_retry_event(
         &self,
         execution: &NodeExecutionId,

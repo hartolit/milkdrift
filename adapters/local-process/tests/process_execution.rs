@@ -390,10 +390,10 @@ fn setup(
     data: Arc<TestDataAccess>,
     secrets: Arc<InMemorySecretResolver>,
 ) -> TestResult<(CapabilityHost, ResolvedCapabilitySnapshot)> {
+    let operation = profile.operation().clone();
     let adapter = Arc::new(LocalProcessAdapter::new(profile, data, secrets)?);
     let descriptor = adapter.descriptor().clone();
-    let snapshot =
-        ResolvedCapabilitySnapshot::from_descriptor(&descriptor, adapter.profile().operation())?;
+    let snapshot = ResolvedCapabilitySnapshot::from_descriptor(&descriptor, &operation)?;
     let host = CapabilityHost::new(
         HostConfig {
             max_registrations: 4,

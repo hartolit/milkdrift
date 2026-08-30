@@ -31,7 +31,7 @@ impl RuntimeService {
     /// immutable attempt. Started work becomes a truthful uncertainty obligation;
     /// only work whose frozen side-effect and idempotency facts permit exact replay
     /// receives a bounded retry timer.
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines)] // Recovery is one ordered replay-and-repair pass with shared progress invariants.
     pub fn recover(&self) -> Result<RecoveryResult, RuntimeError> {
         let now = self.clock.now()?;
         let span = info_span!(

@@ -134,8 +134,7 @@ pub struct EndpointLimits {
 }
 
 impl EndpointLimits {
-    /// Validates nonzero, bounded, internally ordered limits.
-    pub fn validate(self) -> Result<Self, ProfileError> {
+    fn validate(self) -> Result<Self, ProfileError> {
         if self.connect_timeout_ms == 0
             || self.request_timeout_ms == 0
             || self.idle_timeout_ms == 0
@@ -186,7 +185,7 @@ pub struct EndpointProfile {
 
 impl EndpointProfile {
     /// Constructs a completely validated non-secret profile.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One validated endpoint profile owns this closed schema.
     pub fn new(
         identity: ProviderProfileRef,
         revision: u64,
@@ -349,77 +348,62 @@ impl EndpointProfile {
     }
     /// Profile revision.
     #[must_use]
-    pub const fn revision(&self) -> u64 {
+    pub(crate) const fn revision(&self) -> u64 {
         self.revision
     }
     /// Protocol family.
     #[must_use]
-    pub const fn protocol(&self) -> &ProviderProtocol {
+    pub(crate) const fn protocol(&self) -> &ProviderProtocol {
         &self.protocol
-    }
-    /// Secret-free base URL.
-    #[must_use]
-    pub fn base_url(&self) -> &str {
-        &self.base_url
     }
     /// Exact configured model identifier.
     #[must_use]
-    pub fn model(&self) -> &str {
+    pub(crate) fn model(&self) -> &str {
         &self.model
     }
     /// Authentication mode containing only a reference.
     #[must_use]
-    pub const fn auth(&self) -> &AuthMode {
+    pub(crate) const fn auth(&self) -> &AuthMode {
         &self.auth
     }
     /// HTTP/stream limits.
     #[must_use]
-    pub const fn limits(&self) -> EndpointLimits {
+    pub(crate) const fn limits(&self) -> EndpointLimits {
         self.limits
     }
     /// Redirect policy.
     #[must_use]
-    pub const fn redirect(&self) -> RedirectPolicy {
+    pub(crate) const fn redirect(&self) -> RedirectPolicy {
         self.redirect
-    }
-    /// TLS policy.
-    #[must_use]
-    pub const fn tls(&self) -> TlsPolicy {
-        self.tls
     }
     /// Proxy policy.
     #[must_use]
-    pub const fn proxy(&self) -> ProxyPolicy {
+    pub(crate) const fn proxy(&self) -> ProxyPolicy {
         self.proxy
     }
     /// Explicit advertised features.
     #[must_use]
-    pub const fn features(&self) -> &BTreeSet<ModelFeature> {
+    pub(crate) const fn features(&self) -> &BTreeSet<ModelFeature> {
         &self.features
     }
     /// Admission cap.
     #[must_use]
-    pub const fn max_concurrent(&self) -> u32 {
+    pub(crate) const fn max_concurrent(&self) -> u32 {
         self.max_concurrent
     }
     /// True only for explicit local development.
     #[must_use]
-    pub const fn local_development(&self) -> bool {
+    pub(crate) const fn local_development(&self) -> bool {
         self.local_development
-    }
-    /// Authority-controlled host allowlist.
-    #[must_use]
-    pub const fn allowed_hosts(&self) -> &BTreeSet<String> {
-        &self.allowed_hosts
     }
     /// Profile trust zones.
     #[must_use]
-    pub const fn trust_zones(&self) -> &BTreeSet<String> {
+    pub(crate) const fn trust_zones(&self) -> &BTreeSet<String> {
         &self.trust_zones
     }
     /// Bounded provider options.
     #[must_use]
-    pub const fn provider_options(&self) -> &BTreeMap<ExtensionKey, BoundedJson> {
+    pub(crate) const fn provider_options(&self) -> &BTreeMap<ExtensionKey, BoundedJson> {
         &self.provider_options
     }
     pub(crate) fn endpoint_url(&self) -> Result<Url, ProfileError> {

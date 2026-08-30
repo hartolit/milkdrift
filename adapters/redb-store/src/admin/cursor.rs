@@ -79,7 +79,7 @@ pub(crate) fn scan_index_sample(
     Ok(result)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // Test-admin cursor corruption fixtures name each physical table boundary explicitly.
 pub(crate) fn make_artifact_digest_cursor(
     phase: u8,
     physical_key: &[u8],
@@ -280,7 +280,7 @@ pub(crate) fn parse_delete_guard_cursor(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // Test-admin cursor corruption fixtures name each physical table boundary explicitly.
 pub(crate) fn scan_binary_bytes_phase(
     phase: u8,
     start_phase: u8,
@@ -325,7 +325,7 @@ pub(crate) fn scan_binary_bytes_phase(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // Test-admin cursor corruption fixtures name each physical table boundary explicitly.
 pub(crate) fn scan_u64_bytes_phase(
     phase: u8,
     start_phase: u8,
@@ -381,7 +381,7 @@ pub(crate) fn scan_u64_bytes_phase(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // Test-admin cursor corruption fixtures name each physical table boundary explicitly.
 pub(crate) fn scan_binary_string_phase(
     phase: u8,
     start_phase: u8,
@@ -426,7 +426,7 @@ pub(crate) fn scan_binary_string_phase(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // Test-admin cursor corruption fixtures name each physical table boundary explicitly.
 pub(crate) fn scan_binary_u64_phase(
     phase: u8,
     start_phase: u8,
@@ -471,7 +471,7 @@ pub(crate) fn scan_binary_u64_phase(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // Test-admin cursor corruption fixtures name each physical table boundary explicitly.
 pub(crate) fn scan_binary_u8_phase(
     phase: u8,
     start_phase: u8,
@@ -516,7 +516,7 @@ pub(crate) fn scan_binary_u8_phase(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // Test-admin cursor corruption fixtures name each physical table boundary explicitly.
 pub(crate) fn scan_string_bytes_phase(
     phase: u8,
     start_phase: u8,
@@ -569,7 +569,7 @@ pub(crate) fn scan_string_bytes_phase(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // Test-admin cursor corruption fixtures name each physical table boundary explicitly.
 pub(crate) fn scan_string_string_phase(
     phase: u8,
     start_phase: u8,
@@ -622,7 +622,7 @@ pub(crate) fn scan_string_string_phase(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // Test-admin cursor corruption fixtures name each physical table boundary explicitly.
 pub(crate) fn scan_string_u64_phase(
     phase: u8,
     start_phase: u8,
@@ -652,7 +652,7 @@ pub(crate) fn scan_string_u64_phase(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // Test-admin cursor corruption fixtures name each physical table boundary explicitly.
 pub(crate) fn scan_string_u8_phase(
     phase: u8,
     start_phase: u8,
@@ -682,7 +682,7 @@ pub(crate) fn scan_string_u8_phase(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // Test-admin cursor corruption fixtures name each physical table boundary explicitly.
 pub(crate) fn scan_string_scalar_phase<V: redb::Value + 'static, T: Copy>(
     phase: u8,
     start_phase: u8,

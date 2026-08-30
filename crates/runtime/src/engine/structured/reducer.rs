@@ -12,7 +12,7 @@ use milkdrift_persistence::{
 use milkdrift_workspace::{RunId, ScopeReference, ValueKey, WorkspaceValue};
 
 impl RuntimeService {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     pub(super) fn drive_reducer(
         &self,
         run: &RunId,

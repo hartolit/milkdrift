@@ -8,6 +8,7 @@ Daemon application persistence ownership is complete: external receipts, layouts
 
 Peer worker recovery is complete: serving acceptance/admission/dispatch/observations are transactional redb state, fixed workers have truthful entry/restart/shutdown boundaries, artifact transfer uses core publication/read authority, and loopback process execution survives disconnect/reconnect generation replacement.
 
-1. **Public-surface contraction** — Review exported APIs and semantic change cones, remove bypass-capable helpers, and preserve typed route/authority registration guards.
+Public-surface and semantic-change-cone contraction is complete: current consumers define the exported adapter/application surface, internal storage records are not re-exported by transport adapters, large lifecycle/read-model and test-builder ownership is separated, and every retained lint exception records its reviewed semantic boundary.
+
+1. **Dogfood and continuous remediation** — Imported prompt sequences, fresh coding-agent sessions, verification gates, live reviewer/remediation insertion, daemon-owned bounded controller lifecycles, authorized AI supervision, and historical provenance inspection.
 2. **Iced control center** — A thin native canvas over `milkdrift-control-client` with revision history, a virtualized timeline, peer/catalog provenance, inspector, schema-1 layout documents, live controls, and authenticated-cursor reconnect/resume behavior.
-3. **Dogfood and continuous remediation** — Imported prompt sequences, fresh coding-agent sessions, verification gates, live reviewer/remediation insertion, daemon-owned bounded controller lifecycles, authorized AI supervision, and historical provenance inspection.

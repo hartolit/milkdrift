@@ -247,18 +247,6 @@ impl ExecutableIdentityDeclaration {
     pub const fn size_bytes(&self) -> u64 {
         self.size_bytes
     }
-
-    /// Optional operator-declared immutable package or deployment revision.
-    #[must_use]
-    pub fn package_revision(&self) -> Option<&str> {
-        self.package_revision.as_deref()
-    }
-
-    /// Optional bounded documentation reference.
-    #[must_use]
-    pub fn documentation_reference(&self) -> Option<&str> {
-        self.documentation_reference.as_deref()
-    }
 }
 
 /// Host-verified executable evidence used to construct one immutable descriptor.
@@ -557,12 +545,6 @@ impl ProcessProfile {
     #[must_use]
     pub const fn operation(&self) -> &OperationId {
         &self.operation
-    }
-
-    /// Configured executable identity before host canonicalization.
-    #[must_use]
-    pub fn executable(&self) -> &Path {
-        &self.executable
     }
 
     /// Exact operator-declared executable byte identity.

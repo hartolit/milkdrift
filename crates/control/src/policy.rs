@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use milkdrift_blueprint::{BlueprintRevision, Mutation, NodeId, NodeKind, TerminalOutcome};
+use milkdrift_blueprint::{BlueprintRevision, Mutation, NodeId, NodeKind};
 use milkdrift_capability::{CapabilityCategory, IdempotencyBehavior, SideEffectClass};
 use milkdrift_runtime::{NodeExecutionState, RunProjection};
 use serde::{Deserialize, Serialize};
@@ -346,12 +346,4 @@ fn classify_action(
 
 fn elevate(current: &mut RiskClass, candidate: RiskClass) {
     *current = (*current).max(candidate);
-}
-
-#[allow(dead_code)]
-fn _terminal_outcome_is_closed(value: TerminalOutcome) -> bool {
-    matches!(
-        value,
-        TerminalOutcome::Success | TerminalOutcome::Failure | TerminalOutcome::Cancelled
-    )
 }

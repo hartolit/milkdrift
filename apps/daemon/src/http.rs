@@ -44,7 +44,6 @@ const STREAM_PAGE_ITEMS: u32 = 128;
 const CAPABILITY_FEED_ITEMS: usize = 256;
 
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
 enum RouteAuthorityMapping {
     Exact(AuthorityOperation),
     CommandDerived,
@@ -52,8 +51,16 @@ enum RouteAuthorityMapping {
     StreamDerived,
 }
 
+impl RouteAuthorityMapping {
+    const fn exact_operation(self) -> Option<AuthorityOperation> {
+        match self {
+            Self::Exact(operation) => Some(operation),
+            Self::CommandDerived | Self::QueryDerived | Self::StreamDerived => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
 enum RouteResourceMapping {
     Daemon,
     WorkflowRevision,
@@ -64,7 +71,6 @@ enum RouteResourceMapping {
     Layout,
 }
 
-#[allow(dead_code)]
 struct AuthorizedRouteDeclaration {
     path: &'static str,
     authority: RouteAuthorityMapping,
@@ -76,11 +82,16 @@ macro_rules! authorized_routes {
         $path:literal => $method:expr, $authority:expr, $resource:expr;
     )+) => {{
         $(
-            let _declaration = AuthorizedRouteDeclaration {
+            let declaration = AuthorizedRouteDeclaration {
                 path: $path,
                 authority: $authority,
                 resource: $resource,
             };
+            let _ = (
+                declaration.path,
+                declaration.authority.exact_operation(),
+                declaration.resource,
+            );
         )+
         $router$(.route($path, $method))+
     }};

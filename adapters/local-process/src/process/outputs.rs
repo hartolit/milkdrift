@@ -2,24 +2,21 @@ use std::fs;
 
 use milkdrift_capability::{ArtifactReference, InvocationEventKind, InvocationRequest};
 use milkdrift_capability_host::{
-    AdapterExecutionContext, AdapterReporter, InvocationDataAccess, MaterializedExecution,
+    AdapterExecutionContext, InvocationDataAccess, MaterializedExecution,
 };
 
 use crate::config::ProcessProfile;
 
-use super::{bounded, reporting::report};
+use super::{bounded, monitor::ProcessObservation, reporting::TerminalReportContext};
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn publish(
     profile: &ProcessProfile,
     data: &dyn InvocationDataAccess,
     context: &AdapterExecutionContext,
     request: &InvocationRequest,
     workspace: &dyn MaterializedExecution,
-    stdout: &[u8],
-    stderr: &[u8],
-    reporter: &dyn AdapterReporter,
-    sequence: &mut u64,
+    observed: &ProcessObservation,
+    reports: &mut TerminalReportContext<'_>,
 ) -> Result<Vec<ArtifactReference>, String> {
     let mut planned_count = profile.outputs.len();
     planned_count = planned_count
@@ -28,9 +25,9 @@ pub(super) fn publish(
     if planned_count > usize::from(profile.limits.max_output_files) {
         return Err("declared output count exceeds the publication bound".to_owned());
     }
-    let mut total = u64::try_from(stdout.len())
+    let mut total = u64::try_from(observed.stdout.len())
         .ok()
-        .and_then(|value| value.checked_add(u64::try_from(stderr.len()).ok()?))
+        .and_then(|value| value.checked_add(u64::try_from(observed.stderr.len()).ok()?))
         .ok_or_else(|| "captured output byte accounting overflow".to_owned())?;
     for output in &profile.outputs {
         match fs::symlink_metadata(workspace.root().join(&output.relative_path)) {
@@ -56,7 +53,10 @@ pub(super) fn publish(
         return Err("declared outputs exceed the aggregate publication bound".to_owned());
     }
     let mut outputs = Vec::new();
-    for (capture, bytes) in [(&profile.stdout, stdout), (&profile.stderr, stderr)] {
+    for (capture, bytes) in [
+        (&profile.stdout, observed.stdout.as_slice()),
+        (&profile.stderr, observed.stderr.as_slice()),
+    ] {
         if let Some(name) = &capture.artifact_name {
             let reference = data
                 .publish_bytes(
@@ -68,16 +68,12 @@ pub(super) fn publish(
                     profile.limits.materialization(),
                 )
                 .map_err(|error| bounded(&error.to_string()))?;
-            report(
-                reporter,
-                request.invocation(),
-                sequence,
-                InvocationEventKind::Output {
+            reports
+                .report(InvocationEventKind::Output {
                     name: name.clone(),
                     reference: reference.clone(),
-                },
-            )
-            .map_err(|error| error.to_string())?;
+                })
+                .map_err(|error| error.to_string())?;
             outputs.push(reference);
         }
     }
@@ -99,16 +95,12 @@ pub(super) fn publish(
                 profile.limits.materialization(),
             )
             .map_err(|error| bounded(&error.to_string()))?;
-        report(
-            reporter,
-            request.invocation(),
-            sequence,
-            InvocationEventKind::Output {
+        reports
+            .report(InvocationEventKind::Output {
                 name: output.name.clone(),
                 reference: reference.clone(),
-            },
-        )
-        .map_err(|error| error.to_string())?;
+            })
+            .map_err(|error| error.to_string())?;
         outputs.push(reference);
     }
     Ok(outputs)

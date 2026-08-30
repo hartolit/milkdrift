@@ -213,7 +213,7 @@ struct SnapshotWireRef<'a> {
 
 impl SnapshotDocument {
     /// Creates and checksums a bounded snapshot.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One validated durable document keeps its complete storage facts explicit.
     pub fn new(
         snapshot: SnapshotId,
         run: RunId,

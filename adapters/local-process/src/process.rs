@@ -40,10 +40,7 @@ use identity::{ExecutableBinding, IdentityFailure};
 use monitor::monitor_process;
 use platform::{ActiveRegistration, ProcessControl, terminate_child_immediately};
 use prepare::{materialize_arguments, prepare_working_directory, stdin_bytes};
-use reporting::{
-    exit_failure, report, report_rejected, terminal_failure, terminal_for_termination,
-    terminal_uncertain, usage,
-};
+use reporting::{TerminalReportContext, exit_failure, report_rejected, usage};
 use streams::{
     Stream, join_io, join_reader, os_bytes_len, redact_capture, secret_os_string, spawn_reader,
     spawn_stdin_writer,
@@ -158,12 +155,6 @@ impl LocalProcessAdapter {
             identity_failure: Mutex::new(None),
             active: Arc::new(Mutex::new(BTreeMap::new())),
         })
-    }
-
-    /// Immutable validated profile.
-    #[must_use]
-    pub const fn profile(&self) -> &ProcessProfile {
-        &self.profile
     }
 
     /// Immutable descriptor constructed from verified executable and profile facts.
@@ -463,27 +454,27 @@ impl LocalProcessAdapter {
         );
         drop(environment);
 
-        report(
+        let mut reports = TerminalReportContext::new(
             reporter,
             request.invocation(),
             &mut sequence,
-            InvocationEventKind::Progress {
-                message: format!(
-                    "local process started; pre-entry identity {} verified",
-                    pre_entry_identity.identity_digest
-                ),
-                completed_units: None,
-                total_units: None,
-            },
-        )?;
+            self.profile.side_effect,
+            spawn_started,
+        );
+        reports.report(InvocationEventKind::Progress {
+            message: format!(
+                "local process started; pre-entry identity {} verified",
+                pre_entry_identity.identity_digest
+            ),
+            completed_units: None,
+            total_units: None,
+        })?;
 
         let lifecycle = monitor_process(
             &mut child,
             &control,
             stream_receiver,
-            reporter,
-            request.invocation(),
-            &mut sequence,
+            &mut reports,
             &self.profile,
             spawn_started,
         );
@@ -499,70 +490,34 @@ impl LocalProcessAdapter {
             }
         };
         if let Err(message) = stdin_result.and(stdout_result).and(stderr_result) {
-            return terminal_failure(
-                reporter,
-                request.invocation(),
-                &mut sequence,
-                ErrorClass::Adapter,
-                "process_io_failed",
-                &message,
-                self.profile.side_effect,
-                spawn_started,
-            );
+            return reports.failure(ErrorClass::Adapter, "process_io_failed", &message);
         }
         redact_capture(&mut observed.stdout, &resolved_secrets);
         redact_capture(&mut observed.stderr, &resolved_secrets);
         drop(resolved_secrets);
 
         if let Some(termination) = observed.termination {
-            return terminal_for_termination(
-                reporter,
-                request.invocation(),
-                &mut sequence,
-                termination,
-                self.profile.side_effect,
-                spawn_started,
-                observed.group_absent,
-            );
+            return reports.for_termination(termination, observed.group_absent);
         }
         let Some(status) = observed.status else {
-            return terminal_uncertain(
-                reporter,
-                request.invocation(),
-                &mut sequence,
+            return reports.uncertain(
                 "process_terminal_unobserved",
                 "process outcome could not be observed after external entry",
-                self.profile.side_effect,
-                spawn_started,
             );
         };
         if !status.success() {
             let (code, message) = exit_failure(&status);
-            return terminal_failure(
-                reporter,
-                request.invocation(),
-                &mut sequence,
-                ErrorClass::Provider,
-                &code,
-                &message,
-                self.profile.side_effect,
-                spawn_started,
-            );
+            return reports.failure(ErrorClass::Provider, &code, &message);
         }
         if observed.stdout_overflow
             && self.profile.stdout.overflow_action == OverflowAction::Terminate
             || observed.stderr_overflow
                 && self.profile.stderr.overflow_action == OverflowAction::Terminate
         {
-            return terminal_failure(
-                reporter,
-                request.invocation(),
-                &mut sequence,
+            return reports.failure(
                 ErrorClass::Adapter,
                 "process_output_overflow",
                 "process output exceeded a terminate-on-overflow bound",
-                self.profile.side_effect,
-                spawn_started,
             );
         }
         let outputs = match outputs::publish(
@@ -571,23 +526,12 @@ impl LocalProcessAdapter {
             context,
             request,
             workspace.as_ref(),
-            &observed.stdout,
-            &observed.stderr,
-            reporter,
-            &mut sequence,
+            &observed,
+            &mut reports,
         ) {
             Ok(outputs) => outputs,
             Err(message) => {
-                return terminal_failure(
-                    reporter,
-                    request.invocation(),
-                    &mut sequence,
-                    ErrorClass::Adapter,
-                    "output_publication_failed",
-                    &message,
-                    self.profile.side_effect,
-                    spawn_started,
-                );
+                return reports.failure(ErrorClass::Adapter, "output_publication_failed", &message);
             }
         };
         let terminal = InvocationTerminal::new(
@@ -598,12 +542,7 @@ impl LocalProcessAdapter {
             self.profile.side_effect,
         )
         .map_err(|error| AdapterError::external_failure(error.to_string()))?;
-        report(
-            reporter,
-            request.invocation(),
-            &mut sequence,
-            InvocationEventKind::Terminal { terminal },
-        )
+        reports.report(InvocationEventKind::Terminal { terminal })
     }
 
     fn resolve_environment(

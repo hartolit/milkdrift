@@ -129,7 +129,7 @@ pub struct ApplicationCommandReceipt {
 
 impl ApplicationCommandReceipt {
     /// Constructs and validates one exact external command result.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // One validated durable document keeps its complete storage facts explicit.
     pub fn new(
         actor: ActorRef,
         command: CommandId,
