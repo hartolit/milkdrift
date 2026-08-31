@@ -340,7 +340,7 @@ fn bounded_queues_backpressure_and_forced_shutdown_preserves_unresolved_truth() 
     assert_eq!(shutdown.health.active_executions, 0);
     assert!(
         host.generations(
-            &CapabilityAuthorityScope::any(SideEffectClass::Unknown),
+            &CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
             1_000
         )?
         .is_empty()

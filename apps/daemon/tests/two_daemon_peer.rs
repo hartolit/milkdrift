@@ -377,7 +377,7 @@ fn configuration(
         Vec::new()
     };
     DaemonConfig {
-        schema_version: 6,
+        schema_version: 7,
         data_root: root.path().join("data"),
         bind: "127.0.0.1:0".parse()?,
         secret_sources: BTreeMap::from([

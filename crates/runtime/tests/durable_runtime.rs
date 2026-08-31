@@ -11,8 +11,8 @@ use std::{
 use milkdrift_authority::{
     AuthorityBudget, AuthorityDecisionSnapshot, AuthorityError, AuthorityEvaluator,
     AuthorityGrantBuilder, AuthorityOperation, BoundaryTimeMillis, CapabilityAuthorityScope,
-    DecisionReasonCode, ExecutionAuthorityBasis, GrantDigest, GrantId, GrantSetEvaluator,
-    NetworkScope, PolicyId, ResourceScope, WorkflowRunScope,
+    CapabilityAuthorityScopeBuilder, DecisionReasonCode, ExecutionAuthorityBasis, GrantDigest,
+    GrantId, GrantSetEvaluator, NetworkScope, PolicyId, ResourceScope, WorkflowRunScope,
 };
 
 use milkdrift_blueprint::{
@@ -434,15 +434,11 @@ fn draft_only_actor_cannot_start_and_out_of_envelope_start_keeps_typed_denial() 
         let store = Arc::new(RedbStore::open(directory.path())?);
         let revision = sequence_revision()?;
         store.put_revision(&revision)?;
-        let capability_scope = CapabilityAuthorityScope::new(
-            BTreeSet::from([descriptor.identity().clone()]),
-            BTreeSet::new(),
-            BTreeSet::from([operation.clone()]),
-            BTreeSet::new(),
-            BTreeSet::new(),
-            BTreeSet::from([Locality::Remote]),
-            SideEffectClass::Unknown,
-        )?;
+        let capability_scope = CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
+            .only_capabilities(BTreeSet::from([descriptor.identity().clone()]))?
+            .only_operations(BTreeSet::from([operation.clone()]))?
+            .only_localities(BTreeSet::from([Locality::Remote]))?
+            .build();
         let (runtime, authority_claim) = exact_grant_service(
             store.clone(),
             Arc::new(ManualClock::new(2_000)),
@@ -495,15 +491,11 @@ fn draft_only_actor_cannot_start_and_out_of_envelope_start_keeps_typed_denial() 
         )?;
         store.put_revision(&revision)?;
         let allowed_other = CapabilityId::new("different-capability")?;
-        let capability_scope = CapabilityAuthorityScope::new(
-            BTreeSet::from([allowed_other]),
-            BTreeSet::new(),
-            BTreeSet::from([operation]),
-            BTreeSet::new(),
-            BTreeSet::new(),
-            BTreeSet::from([Locality::Remote]),
-            SideEffectClass::Unknown,
-        )?;
+        let capability_scope = CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
+            .only_capabilities(BTreeSet::from([allowed_other]))?
+            .only_operations(BTreeSet::from([operation]))?
+            .only_localities(BTreeSet::from([Locality::Remote]))?
+            .build();
         let (runtime, authority_claim) = exact_grant_service(
             store.clone(),
             Arc::new(ManualClock::new(2_000)),

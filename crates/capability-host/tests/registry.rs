@@ -11,9 +11,10 @@ use std::{
 use milkdrift_authority::{
     ActorRef, AuthorityBudget, AuthorityEvaluator, AuthorityExecutionProvenance,
     AuthorityGrantBuilder, AuthorityOperation, AuthorityRequest, BoundaryTimeMillis,
-    CapabilityAuthorityScope, CapabilityExecutionRequirements, DecisionId, DecisionReasonCode,
-    ExecutionAuthorityBasis, GrantId, GrantSetEvaluator, NetworkScope, PeerId, PolicyId,
-    RequestedResourceFacts, ResourceScope, SecretRef, WorkflowRunScope,
+    CapabilityAuthorityScope, CapabilityAuthorityScopeBuilder, CapabilityExecutionRequirements,
+    DecisionId, DecisionReasonCode, ExecutionAuthorityBasis, GrantId, GrantSetEvaluator,
+    NetworkScope, PeerId, PolicyId, RequestedResourceFacts, ResourceScope, SecretRef,
+    WorkflowRunScope,
 };
 use milkdrift_blueprint::{NodeId, RevisionId, WorkflowId};
 use milkdrift_capability::{
@@ -433,7 +434,7 @@ fn resolution_is_stable_policy_constrained_and_health_aware() -> TestResult {
         Err(ExecutorError::Unavailable(_))
     ));
     let views = host_one.generations(
-        &CapabilityAuthorityScope::any(SideEffectClass::Unknown),
+        &CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
         201,
     )?;
     assert!(
@@ -490,15 +491,9 @@ fn resolution_is_stable_policy_constrained_and_health_aware() -> TestResult {
     assert_eq!(
         constrained_host
             .generations(
-                &CapabilityAuthorityScope::new(
-                    BTreeSet::from([a.identity().clone()]),
-                    BTreeSet::new(),
-                    BTreeSet::new(),
-                    BTreeSet::new(),
-                    BTreeSet::new(),
-                    BTreeSet::new(),
-                    SideEffectClass::Unknown,
-                )?,
+                &CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
+                    .only_capabilities(BTreeSet::from([a.identity().clone()]))?
+                    .build(),
                 150,
             )?
             .len(),
@@ -525,15 +520,10 @@ fn exact_actor_authority_filters_identity_profile_locality_and_peer_before_healt
         Arc::new(FakeAdapter::new(b.identity().clone())),
         Some(observation(&b, 100, true)?),
     )?;
-    let identity_scope = CapabilityAuthorityScope::new(
-        BTreeSet::from([b.identity().clone()]),
-        BTreeSet::new(),
-        BTreeSet::from([operation.clone()]),
-        BTreeSet::new(),
-        BTreeSet::new(),
-        BTreeSet::new(),
-        SideEffectClass::Unknown,
-    )?;
+    let identity_scope = CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
+        .only_capabilities(BTreeSet::from([b.identity().clone()]))?
+        .only_operations(BTreeSet::from([operation.clone()]))?
+        .build();
     let (identity_evaluator, identity_context) = exact_authority(identity_scope, BTreeSet::new())?;
     assert_eq!(
         identity_host
@@ -543,15 +533,10 @@ fn exact_actor_authority_filters_identity_profile_locality_and_peer_before_healt
         b.identity()
     );
 
-    let profile_scope = CapabilityAuthorityScope::new(
-        BTreeSet::new(),
-        BTreeSet::new(),
-        BTreeSet::from([operation.clone()]),
-        BTreeSet::from([ProviderProfileRef::new("profile-a")?]),
-        BTreeSet::new(),
-        BTreeSet::new(),
-        SideEffectClass::Unknown,
-    )?;
+    let profile_scope = CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
+        .only_operations(BTreeSet::from([operation.clone()]))?
+        .only_provider_profiles(BTreeSet::from([ProviderProfileRef::new("profile-a")?]))?
+        .build();
     let (profile_evaluator, profile_context) = exact_authority(profile_scope, BTreeSet::new())?;
     assert_eq!(
         identity_host
@@ -580,15 +565,10 @@ fn exact_actor_authority_filters_identity_profile_locality_and_peer_before_healt
         Arc::new(FakeAdapter::new(peer.identity().clone())),
         Some(observation(&peer, 100, true)?),
     )?;
-    let local_scope = CapabilityAuthorityScope::new(
-        BTreeSet::new(),
-        BTreeSet::new(),
-        BTreeSet::from([operation.clone()]),
-        BTreeSet::new(),
-        BTreeSet::new(),
-        BTreeSet::from([Locality::Local]),
-        SideEffectClass::Unknown,
-    )?;
+    let local_scope = CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
+        .only_operations(BTreeSet::from([operation.clone()]))?
+        .only_localities(BTreeSet::from([Locality::Local]))?
+        .build();
     let (local_evaluator, local_context) = exact_authority(local_scope, BTreeSet::new())?;
     assert!(matches!(
         placement_host.resolve_authorized_at(&requirement, &local_context, &local_evaluator, 150,),
@@ -605,20 +585,43 @@ fn exact_actor_authority_filters_identity_profile_locality_and_peer_before_healt
         peer.descriptor_revision(),
         observation(&peer, 110, false)?,
     )?;
-    let peer_scope = CapabilityAuthorityScope::new(
-        BTreeSet::new(),
-        BTreeSet::new(),
-        BTreeSet::from([operation]),
-        BTreeSet::new(),
-        BTreeSet::new(),
-        BTreeSet::from([Locality::Peer]),
-        SideEffectClass::Unknown,
-    )?
-    .with_peers(BTreeSet::from([remote_peer]))?;
+    let peer_scope = CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
+        .only_operations(BTreeSet::from([operation]))?
+        .only_localities(BTreeSet::from([Locality::Peer]))?
+        .only_peers(BTreeSet::from([remote_peer]))?
+        .build();
     let (peer_evaluator, peer_context) = exact_authority(peer_scope, BTreeSet::new())?;
     assert!(matches!(
         placement_host.resolve_authorized_at(&requirement, &peer_context, &peer_evaluator, 150,),
         Err(ExecutorError::Unavailable(_))
+    ));
+    Ok(())
+}
+
+#[test]
+fn deny_all_hides_catalog_and_returns_authorization_denial_not_absence() -> TestResult {
+    let operation = OperationId::new("model.generate")?;
+    let descriptor = placed_descriptor("cap-denied", "profile-denied", Locality::Local, None)?;
+    let denied_host = host(BTreeMap::new(), 1)?;
+    denied_host.register(
+        descriptor.clone(),
+        Arc::new(FakeAdapter::new(descriptor.identity().clone())),
+        Some(observation(&descriptor, 100, true)?),
+    )?;
+    let deny_all = CapabilityAuthorityScope::deny_all();
+    assert!(denied_host.generations(&deny_all, 150)?.is_empty());
+
+    let (evaluator, context) = exact_authority(deny_all, BTreeSet::new())?;
+    let denied = denied_host.resolve_authorized_at(
+        &CapabilityRequirement::new(operation),
+        &context,
+        &evaluator,
+        150,
+    );
+    assert!(matches!(
+        denied,
+        Err(ExecutorError::AuthorityDenied { reasons, .. })
+            if reasons.contains(&DecisionReasonCode::CapabilityMismatch)
     ));
     Ok(())
 }
@@ -644,15 +647,10 @@ fn declared_adapter_resources_are_denied_before_unavailable_health() -> TestResu
         )),
         Some(observation(&capability, 100, false)?),
     )?;
-    let scope = CapabilityAuthorityScope::new(
-        BTreeSet::from([capability.identity().clone()]),
-        BTreeSet::new(),
-        BTreeSet::from([OperationId::new("model.generate")?]),
-        BTreeSet::new(),
-        BTreeSet::new(),
-        BTreeSet::new(),
-        SideEffectClass::Unknown,
-    )?;
+    let scope = CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
+        .only_capabilities(BTreeSet::from([capability.identity().clone()]))?
+        .only_operations(BTreeSet::from([OperationId::new("model.generate")?]))?
+        .build();
     let (denying_evaluator, denying_context) = exact_authority(scope.clone(), BTreeSet::new())?;
     let denied = resource_host.resolve_authorized_at(
         &CapabilityRequirement::new(OperationId::new("model.generate")?),
@@ -815,7 +813,7 @@ fn permits_cancel_exact_owner_and_release_after_panic_and_completion() -> TestRe
         .join()
         .map_err(|_panic| "adapter thread panicked")??;
     let views = host.generations(
-        &CapabilityAuthorityScope::any(SideEffectClass::Unknown),
+        &CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
         150,
     )?;
     assert_eq!(views[0].active_permits, 0);
@@ -830,7 +828,7 @@ fn permits_cancel_exact_owner_and_release_after_panic_and_completion() -> TestRe
         Err(ExecutorError::AdapterPanicked { after_entry: true })
     ));
     let views = host.generations(
-        &CapabilityAuthorityScope::any(SideEffectClass::Unknown),
+        &CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
         150,
     )?;
     assert_eq!(views[0].active_permits, 0);
@@ -882,7 +880,7 @@ fn adapter_failures_preserve_pre_entry_and_post_entry_uncertainty() -> TestResul
         );
         assert_eq!(
             host.generations(
-                &CapabilityAuthorityScope::any(SideEffectClass::Unknown),
+                &CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
                 150,
             )?[0]
                 .active_permits,
@@ -925,5 +923,54 @@ fn registry_bounds_shutdown_and_secret_resolution_are_explicit() -> TestResult {
     let value = resolver.resolve(&reference)?;
     assert_eq!(value.expose(|bytes| bytes.len()), 12);
     assert!(!format!("{resolver:?} {reference:?} {value:?}").contains("super-secret"));
+    Ok(())
+}
+
+#[test]
+fn visible_generation_operations_are_filtered_by_the_exact_selector() -> TestResult {
+    let allowed = OperationId::new("model.generate")?;
+    let denied = OperationId::new("model.embed")?;
+    let base = descriptor("cap-operation-filter", 1, "profile-filter", 1)?;
+    let contract = base
+        .operation(&allowed)
+        .ok_or("fixture descriptor lacks model.generate")?
+        .clone();
+    let mut operations = base.operations().clone();
+    operations.insert(denied.clone(), contract);
+    let descriptor = DescriptorBuilder::new(
+        base.identity().clone(),
+        base.descriptor_revision(),
+        base.category().clone(),
+        base.admission().clone(),
+        base.locality(),
+    )
+    .provider_profile(base.provider_profile().cloned())
+    .operations(operations)
+    .trust_zones(base.trust_zones().clone())
+    .execution_trust(base.execution_trust())
+    .resource_observations(base.resource_observations().cloned())
+    .labels(base.labels().clone())
+    .extensions(base.extensions().clone())
+    .build()?;
+    let host = host(BTreeMap::new(), 1)?;
+    host.register(
+        descriptor.clone(),
+        Arc::new(FakeAdapter::new(descriptor.identity().clone())),
+        Some(observation(&descriptor, 100, true)?),
+    )?;
+
+    let allow_one = CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
+        .only_operations(BTreeSet::from([allowed.clone()]))?
+        .build();
+    let views = host.generations(&allow_one, 150)?;
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].operations, BTreeSet::from([allowed]));
+    assert!(!views[0].operations.contains(&denied));
+
+    let deny_every_operation = CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
+        .only_operations(BTreeSet::from([OperationId::new("model.missing")?]))?
+        .build();
+    assert!(host.generations(&deny_every_operation, 150)?.is_empty());
+    assert!(host.catalog_generations(&deny_every_operation)?.is_empty());
     Ok(())
 }

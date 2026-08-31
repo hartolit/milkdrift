@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Current daemon configuration document version.
-pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 6;
+pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 7;
 
 /// Configuration load or deterministic validation failure.
 #[derive(Debug, Error)]
@@ -30,7 +30,7 @@ pub enum ConfigError {
     #[error("invalid daemon configuration JSON: {0}")]
     Json(String),
     /// The schema version is unsupported.
-    #[error("unsupported daemon configuration version {0}; supported version is 6")]
+    #[error("unsupported daemon configuration version {0}; supported version is 7")]
     UnsupportedVersion(u32),
     /// A host-safety invariant is invalid.
     #[error("invalid daemon configuration: {0}")]
@@ -89,7 +89,7 @@ pub struct ActorBindingConfig {
     pub enabled: bool,
 }
 
-/// Explicit schema-v5 grant facts; preset names choose operations only.
+/// Explicit schema-v7 grant facts; preset names choose operations only.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActorGrantConfig {
@@ -113,7 +113,7 @@ impl ActorGrantConfig {
         Self {
             resources: ResourceScope {
                 workflow_run: WorkflowRunScope::Any,
-                capability: CapabilityAuthorityScope::any(SideEffectClass::Unknown),
+                capability: CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
                 filesystem: vec![milkdrift_authority::FilesystemScope::dangerous_all_access_root()],
                 network: NetworkScope::empty(),
                 secrets: BTreeSet::new(),
@@ -633,26 +633,6 @@ impl DaemonConfig {
 }
 
 fn validate_actor_authority(authority: &ActorGrantConfig) -> Result<(), ConfigError> {
-    CapabilityAuthorityScope::new(
-        authority.resources.capability.identities().clone(),
-        authority.resources.capability.categories().clone(),
-        authority.resources.capability.operations().clone(),
-        authority.resources.capability.provider_profiles().clone(),
-        authority.resources.capability.trust_zones().clone(),
-        authority.resources.capability.localities().clone(),
-        authority.resources.capability.maximum_side_effect(),
-    )
-    .and_then(|scope| scope.with_peers(authority.resources.capability.peers().clone()))
-    .and_then(|scope| {
-        scope.with_execution_trust_classes(
-            authority
-                .resources
-                .capability
-                .execution_trust_classes()
-                .clone(),
-        )
-    })
-    .map_err(|error| ConfigError::Invalid(error.to_string()))?;
     NetworkScope::new(
         authority.resources.network.profiles().clone(),
         authority.resources.network.destinations().clone(),
@@ -697,8 +677,15 @@ fn validate_actor_authority(authority: &ActorGrantConfig) -> Result<(), ConfigEr
     let capability = &authority.resources.capability;
     let broad_workflow = matches!(authority.resources.workflow_run, WorkflowRunScope::Any);
     let broad_capability = !capability.denies_all()
-        && ((capability.identities().is_empty() && capability.categories().is_empty())
-            || capability.operations().is_empty()
+        && ((capability
+            .identity_selection()
+            .is_some_and(milkdrift_authority::Selection::is_any)
+            && capability
+                .category_selection()
+                .is_some_and(milkdrift_authority::Selection::is_any))
+            || capability
+                .operation_selection()
+                .is_some_and(milkdrift_authority::Selection::is_any)
             || capability.maximum_side_effect() == SideEffectClass::Unknown);
     let unbounded_budget = authority.budget.cost_minor.is_none()
         || authority.budget.duration_ms.is_none()
@@ -937,11 +924,11 @@ mod tests {
     use super::*;
 
     fn fixture_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v6.json")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v7.json")
     }
 
     #[test]
-    fn schema_v6_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>>
+    fn schema_v7_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>>
     {
         let validated = DaemonConfig::load(&fixture_path())?;
         let actor = &validated.document.actors[0];
@@ -954,8 +941,26 @@ mod tests {
             actor.authority.resources.workflow_run,
             WorkflowRunScope::Workflow { .. }
         ));
-        assert_eq!(actor.authority.resources.capability.identities().len(), 1);
-        assert_eq!(actor.authority.resources.capability.operations().len(), 1);
+        assert_eq!(
+            actor
+                .authority
+                .resources
+                .capability
+                .identity_selection()
+                .and_then(milkdrift_authority::Selection::only_values)
+                .map(BTreeSet::len),
+            Some(1)
+        );
+        assert_eq!(
+            actor
+                .authority
+                .resources
+                .capability
+                .operation_selection()
+                .and_then(milkdrift_authority::Selection::only_values)
+                .map(BTreeSet::len),
+            Some(1)
+        );
         assert_eq!(actor.authority.budget.concurrency, Some(4));
         let bytes = serde_json::to_vec(&validated.document)?;
         let decoded: DaemonConfig = serde_json::from_slice(&bytes)?;
@@ -967,7 +972,7 @@ mod tests {
     fn old_and_future_config_versions_are_rejected_truthfully()
     -> Result<(), Box<dyn std::error::Error>> {
         let source = fs::read(fixture_path())?;
-        for unsupported in [1_u32, 2_u32, 3_u32, 4_u32, 5_u32, 7_u32] {
+        for unsupported in [1_u32, 2_u32, 3_u32, 4_u32, 5_u32, 6_u32, 8_u32] {
             let directory = tempfile::tempdir()?;
             let mut value: serde_json::Value = serde_json::from_slice(&source)?;
             value["schema_version"] = serde_json::json!(unsupported);
@@ -996,6 +1001,60 @@ mod tests {
             Err(ConfigError::Invalid(message))
                 if message.contains("dangerous_allow_broad_authority=true")
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn empty_or_legacy_capability_selectors_are_rejected_not_widened()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = fs::read(fixture_path())?;
+        let mut empty_only: serde_json::Value = serde_json::from_slice(&source)?;
+        empty_only["actors"][0]["authority"]["resources"]["capability"]["operations"] =
+            serde_json::json!({"type": "only", "values": []});
+        assert!(serde_json::from_value::<DaemonConfig>(empty_only).is_err());
+
+        let mut legacy_array: serde_json::Value = serde_json::from_slice(&source)?;
+        legacy_array["actors"][0]["authority"]["resources"]["capability"]["operations"] =
+            serde_json::json!([]);
+        assert!(serde_json::from_value::<DaemonConfig>(legacy_array).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_capability_wildcard_alone_requires_acknowledgement()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut config: DaemonConfig = serde_json::from_slice(&fs::read(fixture_path())?)?;
+        config.actors[0].authority.resources.capability =
+            CapabilityAuthorityScope::allow_any(SideEffectClass::ReadOnly);
+        config.actors[0].authority.dangerous_allow_broad_authority = false;
+        let directory = tempfile::tempdir()?;
+        assert!(matches!(
+            config.validate(directory.path()),
+            Err(ConfigError::Invalid(message))
+                if message.contains("dangerous_allow_broad_authority=true")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn deny_all_is_not_broad_and_redaction_preserves_selector_kinds()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut config: DaemonConfig = serde_json::from_slice(&fs::read(fixture_path())?)?;
+        let redacted = config.redacted_json()?;
+        assert_eq!(
+            redacted["actors"][0]["authority"]["resources"]["capability"]["type"],
+            "allow"
+        );
+        assert_eq!(
+            redacted["actors"][0]["authority"]["resources"]["capability"]["operations"]["type"],
+            "only"
+        );
+        assert_eq!(redacted["secret_sources"]["values"], "[redacted]");
+
+        config.actors[0].authority.resources.capability = CapabilityAuthorityScope::deny_all();
+        config.actors[0].authority.dangerous_allow_broad_authority = false;
+        let directory = tempfile::tempdir()?;
+        config.validate(directory.path())?;
         Ok(())
     }
 
@@ -1032,7 +1091,7 @@ mod tests {
         let secret = directory.path().join("token");
         fs::write(&secret, "secret")?;
         let config = DaemonConfig {
-            schema_version: 6,
+            schema_version: 7,
             data_root: directory.path().join("data"),
             bind: "0.0.0.0:9734".parse()?,
             secret_sources: BTreeMap::from([(

@@ -9,7 +9,7 @@ use milkdrift_authority::{
     RequestedResourceFacts,
 };
 use milkdrift_blueprint::{AuthorRef, BlueprintRevision, NodeKind, ReducerStrategy, RevisionId};
-use milkdrift_capability::{CapabilityRequirement, Locality};
+use milkdrift_capability::CapabilityRequirement;
 use milkdrift_persistence::{
     AuthorityDecision, CommandDisposition, CommandId, EventCursor, EventPageQuery,
     EvidenceReference, PageSize, Reason, ReconciliationDecisionId, ReconciliationId,
@@ -855,26 +855,7 @@ impl ControlService {
         // harmless-looking parent mutation from importing authority the controller does not own.
         for root in [old, new] {
             for requirement in self.revision_requirements(root)? {
-                let envelope = CapabilityAuthorityScope::new(
-                    requirement
-                        .exact_capability()
-                        .cloned()
-                        .into_iter()
-                        .collect(),
-                    requirement.categories().clone(),
-                    BTreeSet::from([requirement.operation().clone()]),
-                    requirement
-                        .provider_profile_ref()
-                        .cloned()
-                        .into_iter()
-                        .collect(),
-                    requirement.trust_zones().clone(),
-                    BTreeSet::<Locality>::new(),
-                    requirement.maximum_side_effect_class(),
-                )?
-                .with_execution_trust_classes(
-                    requirement.execution_trust_class().into_iter().collect(),
-                )?;
+                let envelope = CapabilityAuthorityScope::requirement_envelope(&requirement)?;
                 let mut resources = RequestedResourceFacts::empty();
                 resources.workflow = Some(new.semantic().workflow().clone());
                 resources.run = run.cloned();

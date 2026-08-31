@@ -11,8 +11,9 @@ use std::{
 use futures_util::StreamExt as _;
 use milkdrift_authority::{
     ActorRef, ArtifactAuthorityScope, AuthorityBudget, BoundaryTimeMillis,
-    CapabilityAuthorityScope, DaemonAuthorityScope, LayoutAuthorityScope, NetworkScope,
-    PeerAuthorityScope, ResourceScope, WorkflowRunScope, WorkspaceAuthorityScope,
+    CapabilityAuthorityScope, CapabilityAuthorityScopeBuilder, DaemonAuthorityScope,
+    LayoutAuthorityScope, NetworkScope, PeerAuthorityScope, ResourceScope, WorkflowRunScope,
+    WorkspaceAuthorityScope,
 };
 use milkdrift_blueprint::{
     AuthorRef, BlueprintMetadata, BlueprintRevision, BlueprintRevisionDocument, Edge, EdgeId,
@@ -116,7 +117,7 @@ fn configuration_with_process_profiles(
         ..RuntimeHostConfig::default()
     };
     DaemonConfig {
-        schema_version: 6,
+        schema_version: 7,
         data_root: directory.path().join("data"),
         bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         secret_sources: BTreeMap::from([
@@ -394,17 +395,14 @@ fn observer_authority() -> TestResult<ActorGrantConfig> {
             workflow_run: WorkflowRunScope::Workflow {
                 workflow: WorkflowId::new("golden")?,
             },
-            capability: CapabilityAuthorityScope::new(
-                std::collections::BTreeSet::from([CapabilityId::new(
+            capability: CapabilityAuthorityScopeBuilder::new(SideEffectClass::ReadOnly)
+                .only_capabilities(std::collections::BTreeSet::from([CapabilityId::new(
                     "milkdrift-workflow-control",
-                )?]),
-                std::collections::BTreeSet::new(),
-                std::collections::BTreeSet::from([OperationId::new("workflow.inspect")?]),
-                std::collections::BTreeSet::new(),
-                std::collections::BTreeSet::new(),
-                std::collections::BTreeSet::new(),
-                SideEffectClass::ReadOnly,
-            )?,
+                )?]))?
+                .only_operations(std::collections::BTreeSet::from([OperationId::new(
+                    "workflow.inspect",
+                )?]))?
+                .build(),
             filesystem: Vec::new(),
             network: NetworkScope::empty(),
             secrets: std::collections::BTreeSet::new(),
@@ -1344,7 +1342,7 @@ async fn scoped_read_matrix_and_continuations_fail_closed() -> TestResult {
     let mut narrowed = config;
     narrowed.document.actors[0].grant_revision = 2;
     narrowed.document.actors[0].authority.resources.capability =
-        CapabilityAuthorityScope::none(SideEffectClass::None);
+        CapabilityAuthorityScope::deny_all();
     let restarted = start(narrowed, CONTROLLER_TOKEN).await?;
     assert!(matches!(
         restarted.client.revisions(

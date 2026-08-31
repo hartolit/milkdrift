@@ -894,6 +894,7 @@ dependencies = [
  "milkdrift-capability",
  "milkdrift-contracts",
  "milkdrift-workspace",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror",

@@ -6,8 +6,8 @@ use std::{
 };
 
 use milkdrift_authority::{
-    ActorRef, AuthorityBudget, CapabilityAuthorityScope, GrantId, GrantSetEvaluator, PolicyId,
-    WorkflowRunScope,
+    ActorRef, AuthorityBudget, CapabilityAuthorityScope, CapabilityAuthorityScopeBuilder, GrantId,
+    GrantSetEvaluator, PolicyId, WorkflowRunScope,
 };
 use milkdrift_blueprint::{
     AuthorRef, BlueprintRevision, DataPort, Edge, EdgeId, EdgeKind, Mutation, MutationBatch, Node,
@@ -139,7 +139,7 @@ fn grant(
                 run: run.clone(),
                 workflow: None,
             },
-            CapabilityAuthorityScope::any(SideEffectClass::ReadOnly),
+            CapabilityAuthorityScope::allow_any(SideEffectClass::ReadOnly),
             AuthorityBudget {
                 cost_minor: Some(1_000_000),
                 duration_ms: Some(3_600_000),
@@ -643,15 +643,10 @@ fn unauthorized_provider_expansion_stores_no_revision() -> TestResult {
             WorkflowRunScope::Workflow {
                 workflow: workflow.clone(),
             },
-            CapabilityAuthorityScope::new(
-                BTreeSet::new(),
-                BTreeSet::new(),
-                BTreeSet::from([OperationId::new("model.generate")?]),
-                BTreeSet::from([allowed_profile]),
-                BTreeSet::new(),
-                BTreeSet::new(),
-                SideEffectClass::ReadOnly,
-            )?,
+            CapabilityAuthorityScopeBuilder::new(SideEffectClass::ReadOnly)
+                .only_operations(BTreeSet::from([OperationId::new("model.generate")?]))?
+                .only_provider_profiles(BTreeSet::from([allowed_profile]))?
+                .build(),
             AuthorityBudget {
                 invocations: Some(16),
                 ..AuthorityBudget::default()

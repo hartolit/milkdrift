@@ -8,7 +8,7 @@ Startup is deliberately fail-closed and ordered:
 
 1. Validate daemon configuration, normalized paths, credential references, grants, and bounds before opening storage.
 2. Refuse a data root containing legacy `control-state-v1.json`, `peer-executions-v1`, or `peer-artifacts-v1`. This release neither imports nor ignores old sidecar/prototype idempotency and artifact authority; move to a fresh data root or perform an explicitly reviewed offline conversion.
-3. Open exact-current redb physical schema 7/internal document format 10 and the immutable artifact root.
+3. Open exact-current redb physical schema 8/internal document format 11 and the immutable artifact root.
 4. Open runtime admission closed and recover active runtime state.
 5. Validate bounded application-receipt and layout reads; corrupt or unsupported records fail startup.
 6. Register and health-check workflow-control, process, and model adapters.
@@ -19,7 +19,7 @@ Until the final step, readiness returns unavailable and no external command is a
 
 ## Application receipts and retention
 
-Configuration schema 6 uses `application_receipts.hot_receipt_bound` for the recent operational tier and `application_receipts.archive_batch_size` for one oldest-first move. The existing runtime maintenance interval performs a bounded archive when the tier is full; the new-command transaction also reclaims a bounded batch if needed, so maintenance delay cannot create a permanent refusal. `security_audit_record_bound` is a separate evicting audit-prefix policy. `peers.serving.maximum_hot_terminal_records`, `archive_batch_size`, and `observation_hot_retention_ms` independently govern peer execution detail. Artifacts and runtime event/snapshot retention are not derived from any of those values.
+Configuration schema 7 uses `application_receipts.hot_receipt_bound` for the recent operational tier and `application_receipts.archive_batch_size` for one oldest-first move. The existing runtime maintenance interval performs a bounded archive when the tier is full; the new-command transaction also reclaims a bounded batch if needed, so maintenance delay cannot create a permanent refusal. `security_audit_record_bound` is a separate evicting audit-prefix policy. `peers.serving.maximum_hot_terminal_records`, `archive_batch_size`, and `observation_hot_retention_ms` independently govern peer execution detail. Artifacts and runtime event/snapshot retention are not derived from any of those values.
 
 An application receipt binds the authenticated actor, exact grant identity/revision/digest, client command identity, canonical command/schema digest, accepted or intentional deterministic rejected result, effect reference, and timestamps. Reuse with the same digest returns that stored result from either tier; reuse with another digest permanently fails conflict. Same-store layout/proposal effects commit atomically with receipt insertion and any required hot-to-cold move. Runtime/control effects reconcile through their existing stable internal command identities when a crash separates runtime acceptance from receipt commit.
 
@@ -35,7 +35,7 @@ Shutdown means owner completion, not merely stopping the HTTP listener. The daem
 
 ## Backup, compatibility, and repair
 
-Stop the daemon cleanly before copying its data root. Artifact bytes remain in the content-addressed filesystem store; application, peer execution, and runtime metadata remain in redb. This pre-release build implements no storage migration: physical schemas other than 7 and internal document formats other than 10 are refused. Do not edit rows or schema markers by hand.
+Stop the daemon cleanly before copying its data root. Artifact bytes remain in the content-addressed filesystem store; application, peer execution, and runtime metadata remain in redb. This pre-release build implements no storage migration: physical schemas other than 8 and internal document formats other than 11 are refused. The advance refuses persisted schema-1 authority decisions rather than reinterpreting legacy capability envelopes. Do not edit rows or schema markers by hand.
 
 Exact command replay is preserved only within one store generation. To create a new generation, stop the daemon, make and independently verify a complete backup/export of the old data root, configure an empty new data root, and retain the old generation read-only for forensic/replay needs. There is no automatic rotation and no implemented cold-archive export/delete command. Command IDs must not be reused across generations unless every caller also rotates an explicit namespaced client epoch; otherwise a delayed request from the old generation is indistinguishable from new intent.
 

@@ -71,14 +71,14 @@ The insecure mode refuses non-loopback URLs. Use ordinary HTTPS directly or term
 
 ## Local daemon quick start
 
-Create a private bearer-token file and a version-six daemon configuration. Relative paths are resolved from the configuration file directory. Presets are deterministic shorthand for exact operation sets only; the required `authority` object supplies every executable resource scope, ceiling, and validity boundary.
+Create a private bearer-token file and a version-seven daemon configuration. Relative paths are resolved from the configuration file directory. Presets are deterministic shorthand for exact operation sets only; the required `authority` object supplies every executable resource scope, ceiling, and validity boundary.
 
 ```sh
 install -m 600 /dev/null operator.token
 printf '%s' 'replace-with-a-long-random-local-token' > operator.token
 cat > daemon.json <<'JSON'
 {
-  "schema_version": 6,
+  "schema_version": 7,
   "data_root": "./milkdrift-data",
   "bind": "127.0.0.1:9734",
   "secret_sources": {
@@ -95,15 +95,15 @@ cat > daemon.json <<'JSON'
       "resources": {
         "workflow_run": { "type": "workflow", "workflow": "example-workflow" },
         "capability": {
-          "deny_all": false,
-          "identities": ["local-example"],
-          "categories": [],
-          "operations": ["process.execute"],
-          "provider_profiles": [],
-          "trust_zones": ["local-process"],
-          "execution_trust_classes": ["trusted_host_process"],
-          "localities": ["local"],
-          "peers": [],
+          "type": "allow",
+          "identities": { "type": "only", "values": ["local-example"] },
+          "categories": { "type": "any" },
+          "operations": { "type": "only", "values": ["process.execute"] },
+          "provider_profiles": { "type": "any" },
+          "trust_zones": { "type": "only", "values": ["local-process"] },
+          "execution_trust_classes": { "type": "only", "values": ["trusted_host_process"] },
+          "localities": { "type": "only", "values": ["local"] },
+          "peers": { "type": "any" },
           "maximum_side_effect": "read_only"
         },
         "filesystem": [],

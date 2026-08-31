@@ -8,8 +8,9 @@ mod evaluator;
 mod identity;
 mod model;
 mod secret;
+mod selection;
 
-pub use document::{AUTHORITY_GRANT_SCHEMA_VERSION_V2, MAX_AUTHORITY_DOCUMENT_BYTES};
+pub use document::{AUTHORITY_GRANT_SCHEMA_VERSION_V3, MAX_AUTHORITY_DOCUMENT_BYTES};
 pub use evaluator::{AuthorityEvaluator, GrantSetEvaluator};
 pub use identity::{
     ActorRef, AuthorityError, DecisionId, GrantDigest, GrantId, NetworkProfileRef, PolicyId,
@@ -20,9 +21,10 @@ pub use model::{
     AccessMode, ArtifactAuthorityScope, AuthorityBudget, AuthorityDecisionSnapshot,
     AuthorityExecutionProvenance, AuthorityGrant, AuthorityGrantBuilder, AuthorityOperation,
     AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope,
-    CapabilityExecutionRequirements, DaemonAuthorityScope, DecisionOutcome, DecisionReasonCode,
-    ExecutionAuthorityBasis, FilesystemScope, LayoutAuthorityScope, LayoutOwner, NetworkScope,
-    PeerAuthorityScope, RequestedResourceFacts, ResourceScope, WorkflowRunScope,
-    WorkspaceAuthorityScope,
+    CapabilityAuthorityScopeBuilder, CapabilityExecutionRequirements, DaemonAuthorityScope,
+    DecisionOutcome, DecisionReasonCode, ExecutionAuthorityBasis, FilesystemScope,
+    LayoutAuthorityScope, LayoutOwner, NetworkScope, PeerAuthorityScope, RequestedResourceFacts,
+    ResourceScope, WorkflowRunScope, WorkspaceAuthorityScope,
 };
 pub use secret::SensitiveSecret;
+pub use selection::{MAX_SELECTION_ITEMS, Selection};

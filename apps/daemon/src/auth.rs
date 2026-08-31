@@ -309,7 +309,7 @@ mod tests {
 
     fn config(root: &std::path::Path, token: &std::path::Path) -> DaemonConfig {
         DaemonConfig {
-            schema_version: 6,
+            schema_version: 7,
             data_root: root.join("data"),
             bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             secret_sources: BTreeMap::from([(

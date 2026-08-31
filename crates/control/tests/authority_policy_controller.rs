@@ -4,8 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use milkdrift_authority::{
     ActorRef, AuthorityBudget, AuthorityEvaluator, AuthorityExecutionProvenance,
-    AuthorityOperation, AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope, DecisionId,
-    GrantDigest, GrantId, GrantSetEvaluator, PolicyId, RequestedResourceFacts, WorkflowRunScope,
+    AuthorityOperation, AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope,
+    CapabilityAuthorityScopeBuilder, DecisionId, GrantDigest, GrantId, GrantSetEvaluator, PolicyId,
+    RequestedResourceFacts, WorkflowRunScope,
 };
 use milkdrift_blueprint::{
     AuthorRef, Condition, Mutation, MutationBatch, Node, NodeId, NodeKind, PinnedSubworkflow,
@@ -70,12 +71,19 @@ fn every_preset_is_an_ordinary_scoped_grant() -> TestResult {
                     run: run_a.clone(),
                     workflow: Some(workflow.clone()),
                 },
-                CapabilityAuthorityScope::any(SideEffectClass::ReadOnly),
+                CapabilityAuthorityScope::allow_any(SideEffectClass::ReadOnly),
                 AuthorityBudget::default(),
             )
             .build()?;
         assert_eq!(grant.actor(), &actor);
         assert!(grant.operations().contains(&AuthorityOperation::Inspect));
+        if matches!(preset, AuthorityPreset::Observer | AuthorityPreset::Advisor) {
+            assert!(
+                !grant
+                    .operations()
+                    .contains(&AuthorityOperation::InvokeCapability)
+            );
+        }
     }
 
     let grant_id = GrantId::new("grant:same-preset-different-scope")?;
@@ -88,7 +96,7 @@ fn every_preset_is_an_ordinary_scoped_grant() -> TestResult {
                 run: run_a.clone(),
                 workflow: Some(workflow.clone()),
             },
-            CapabilityAuthorityScope::any(SideEffectClass::ReadOnly),
+            CapabilityAuthorityScope::allow_any(SideEffectClass::ReadOnly),
             AuthorityBudget::default(),
         )
         .build()?;
@@ -140,15 +148,11 @@ fn preset_never_bypasses_provider_or_budget_scope() -> TestResult {
                 run: run.clone(),
                 workflow: Some(workflow.clone()),
             },
-            CapabilityAuthorityScope::new(
-                BTreeSet::new(),
-                BTreeSet::new(),
-                BTreeSet::new(),
-                BTreeSet::from([ProviderProfileRef::new("profile-allowed")?]),
-                BTreeSet::new(),
-                BTreeSet::new(),
-                SideEffectClass::ReadOnly,
-            )?,
+            CapabilityAuthorityScopeBuilder::new(SideEffectClass::ReadOnly)
+                .only_provider_profiles(BTreeSet::from([ProviderProfileRef::new(
+                    "profile-allowed",
+                )?]))?
+                .build(),
             AuthorityBudget {
                 invocations: Some(2),
                 ..AuthorityBudget::default()

@@ -1,10 +1,10 @@
 # Daemon control and execution authority
 
-Daemon configuration schema 6 requires every actor binding to contain an explicit `authority`
+Daemon configuration schema 7 requires every actor binding to contain an explicit `authority`
 object. Preset names deterministically expand to typed operation sets; they do not imply resource
 access and are not retained as executable session policy. The resource scope, numeric ceilings,
 validity interval, grant identity/revision, and revocation generation are independent inputs to the
-immutable schema-2 grant. Authentication selects that exact actor and grant but grants nothing by
+immutable schema-3 grant. Authentication selects that exact actor and grant but grants nothing by
 itself.
 
 The following safe pattern grants one actor access to one workflow lineage and one local process
@@ -23,15 +23,15 @@ to run:
     "resources": {
       "workflow_run": { "type": "workflow", "workflow": "example-workflow" },
       "capability": {
-        "deny_all": false,
-        "identities": ["local-example"],
-        "categories": [],
-        "operations": ["process.execute"],
-        "provider_profiles": [],
-        "trust_zones": ["local-process"],
-        "execution_trust_classes": ["trusted_host_process"],
-        "localities": ["local"],
-        "peers": [],
+        "type": "allow",
+        "identities": { "type": "only", "values": ["local-example"] },
+        "categories": { "type": "any" },
+        "operations": { "type": "only", "values": ["process.execute"] },
+        "provider_profiles": { "type": "any" },
+        "trust_zones": { "type": "only", "values": ["local-process"] },
+        "execution_trust_classes": { "type": "only", "values": ["trusted_host_process"] },
+        "localities": { "type": "only", "values": ["local"] },
+        "peers": { "type": "any" },
         "maximum_side_effect": "read_only"
       },
       "filesystem": [
@@ -68,9 +68,10 @@ to run:
 }
 ```
 
-Capability scope fields are allowlists. `deny_all: true` denies the complete capability scope.
-Otherwise an empty identity/category/profile/trust-zone/execution-trust/locality/peer set means that dimension is not
-narrowed, but operations must be explicit in a safe configuration.
+Capability authority is either `{ "type": "deny_all" }` or an explicit conjunctive allow scope.
+Every allow dimension is `{ "type": "any" }` or `{ "type": "only", "values": [...] }`.
+`Only` requires 1..=128 ordered unique values; an empty array is invalid and never means wildcard.
+The side-effect ceiling applies in addition to every selector.
 Filesystem roots are normalized absolute lexical roots. Network destinations are credential-free
 `host:port` values and network profiles are named immutable transport profiles. Secret references
 are opaque names; secret values never belong in the document.
@@ -95,16 +96,16 @@ not a filesystem or network sandbox. Grant this class only to explicitly byte-pi
 generations. `sandboxed_process` is a distinct exact class; granting or requiring it never permits
 the current local-process adapter.
 
-Wildcard workflow, artifact, peer, or workspace scope; unknown side effects; omitted capability
-operations; infinite validity; or missing ceilings are rejected unless
+Wildcard workflow, capability target/operation, artifact, peer, or workspace scope; unknown side
+effects; infinite validity; or missing ceilings are rejected unless
 `dangerous_allow_broad_authority` is `true`. That flag is a deliberate acknowledgement, not a
 shortcut for generating hidden wildcard facts. Broad grants remain limited by the resources
 written in the configuration.
 
-Older configuration and authority-grant schemas are rejected. Migration is manual: add the
-artifact, layout, peer, daemon, and workspace scopes, choose finite limits, advance
-`schema_version` to 5, explicitly configure each peer relationship's `artifact_sensitivities`,
-application receipt lifecycle, and security-audit bound, run
+Older configuration and authority-grant schemas are rejected. Migration is manual: start from a
+reviewed schema-7 configuration, replace every legacy capability array with an explicit `Any` or
+nonempty `Only` selector, retain `DenyAll` where no invocation is intended, choose finite limits,
+and explicitly configure each peer relationship's `artifact_sensitivities`. Run
 `milkdrift-daemon --config PATH --check-config`, and inspect the redacted
 effective configuration before starting the daemon. When narrowing or revoking, advance the grant
 revision/revocation generation or disable the actor and restart. Existing page and reconnect

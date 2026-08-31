@@ -3,7 +3,7 @@ use super::*;
 fn reopen_and_single_owner_are_enforced() -> Result<(), Box<dyn std::error::Error>> {
     let directory = TempDir::new()?;
     let store = RedbStore::open(directory.path())?;
-    assert_eq!(store.schema_info()?.stored_version, 7);
+    assert_eq!(store.schema_info()?.stored_version, 8);
     assert!(matches!(
         RedbStore::open(directory.path()),
         Err(PersistenceError::Storage {
@@ -13,7 +13,7 @@ fn reopen_and_single_owner_are_enforced() -> Result<(), Box<dyn std::error::Erro
     ));
     drop(store);
     let reopened = RedbStore::open(directory.path())?;
-    assert_eq!(reopened.schema_info()?.stored_version, 7);
+    assert_eq!(reopened.schema_info()?.stored_version, 8);
     Ok(())
 }
 
@@ -21,7 +21,7 @@ fn reopen_and_single_owner_are_enforced() -> Result<(), Box<dyn std::error::Erro
 fn older_and_future_storage_schemas_are_refused() -> Result<(), Box<dyn std::error::Error>> {
     const METADATA: TableDefinition<'static, &'static str, u64> =
         TableDefinition::new("milkdrift.v1.metadata");
-    for found in [6, 8] {
+    for found in [7, 9] {
         let directory = TempDir::new()?;
         drop(RedbStore::open(directory.path())?);
         let database = Database::open(directory.path().join("milkdrift.redb"))?;
@@ -37,7 +37,7 @@ fn older_and_future_storage_schemas_are_refused() -> Result<(), Box<dyn std::err
             Err(PersistenceError::UnsupportedVersion {
                 document: "storage",
                 found: observed,
-                supported: 7
+                supported: 8
             }) if observed == found as u32
         ));
     }

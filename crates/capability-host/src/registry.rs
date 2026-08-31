@@ -788,14 +788,38 @@ impl CapabilityHost {
             .generations
             .iter()
             .filter(|(_key, generation)| {
-                scope_allows(visible, &generation.descriptor, SideEffectClass::None)
+                generation
+                    .descriptor
+                    .operations()
+                    .iter()
+                    .any(|(identity, operation)| {
+                        scope_allows_operation(
+                            visible,
+                            &generation.descriptor,
+                            identity,
+                            operation.side_effect(),
+                        )
+                    })
             })
             .map(|(key, generation)| GenerationView {
                 capability: key.capability.clone(),
                 descriptor_revision: key.revision,
                 descriptor_digest: generation.descriptor_digest.clone(),
                 category: generation.descriptor.category().clone(),
-                operations: generation.descriptor.operations().keys().cloned().collect(),
+                operations: generation
+                    .descriptor
+                    .operations()
+                    .iter()
+                    .filter(|(identity, operation)| {
+                        scope_allows_operation(
+                            visible,
+                            &generation.descriptor,
+                            identity,
+                            operation.side_effect(),
+                        )
+                    })
+                    .map(|(identity, _operation)| identity.clone())
+                    .collect(),
                 provider_profile: generation.descriptor.provider_profile().cloned(),
                 locality: generation.descriptor.locality(),
                 peer: generation.descriptor.peer().cloned(),
@@ -839,9 +863,14 @@ impl CapabilityHost {
                 generation
                     .descriptor
                     .operations()
-                    .values()
-                    .any(|operation| {
-                        scope_allows(visible, &generation.descriptor, operation.side_effect())
+                    .iter()
+                    .any(|(identity, operation)| {
+                        scope_allows_operation(
+                            visible,
+                            &generation.descriptor,
+                            identity,
+                            operation.side_effect(),
+                        )
                     })
             })
             .map(|(key, generation)| CatalogGenerationView {
@@ -1163,37 +1192,47 @@ fn observation_available(
     )
 }
 
-fn scope_allows(
+fn scope_allows_operation(
     scope: &CapabilityAuthorityScope,
     descriptor: &CapabilityDescriptor,
+    operation: &OperationId,
     side_effect: SideEffectClass,
 ) -> bool {
     !scope.denies_all()
-        && (scope.identities().is_empty() || scope.identities().contains(descriptor.identity()))
-        && (scope.categories().is_empty() || scope.categories().contains(descriptor.category()))
-        && (scope.operations().is_empty()
-            || descriptor
-                .operations()
-                .keys()
-                .any(|operation| scope.operations().contains(operation)))
-        && (scope.provider_profiles().is_empty()
-            || descriptor
-                .provider_profile()
-                .is_some_and(|profile| scope.provider_profiles().contains(profile)))
-        && (scope.localities().is_empty() || scope.localities().contains(&descriptor.locality()))
-        && (scope.peers().is_empty()
-            || descriptor
-                .peer()
-                .is_some_and(|peer| scope.peers().contains(peer)))
-        && (scope.trust_zones().is_empty()
-            || descriptor
-                .trust_zones()
-                .iter()
-                .any(|zone| scope.trust_zones().contains(zone)))
-        && (scope.execution_trust_classes().is_empty()
-            || scope
-                .execution_trust_classes()
-                .contains(&descriptor.execution_trust()))
+        && scope
+            .identity_selection()
+            .is_some_and(|selection| selection.matches(descriptor.identity()))
+        && scope
+            .category_selection()
+            .is_some_and(|selection| selection.matches(descriptor.category()))
+        && scope
+            .operation_selection()
+            .is_some_and(|selection| selection.matches(operation))
+        && scope.provider_profile_selection().is_some_and(|selection| {
+            selection.is_any()
+                || descriptor
+                    .provider_profile()
+                    .is_some_and(|profile| selection.matches(profile))
+        })
+        && scope
+            .locality_selection()
+            .is_some_and(|selection| selection.matches(&descriptor.locality()))
+        && scope.peer_selection().is_some_and(|selection| {
+            selection.is_any()
+                || descriptor
+                    .peer()
+                    .is_some_and(|peer| selection.matches(peer))
+        })
+        && scope.trust_zone_selection().is_some_and(|selection| {
+            selection.is_any()
+                || descriptor
+                    .trust_zones()
+                    .iter()
+                    .any(|zone| selection.matches(zone))
+        })
+        && scope
+            .execution_trust_class_selection()
+            .is_some_and(|selection| selection.matches(&descriptor.execution_trust()))
         && side_effect <= scope.maximum_side_effect()
 }
 

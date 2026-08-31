@@ -8,7 +8,6 @@ use milkdrift_authority::{
     ExecutionAuthorityBasis, RequestedResourceFacts,
 };
 use milkdrift_blueprint::{NodeKind, ReducerStrategy, RevisionId};
-use milkdrift_capability::Locality;
 use milkdrift_persistence::RunEventKind;
 
 use super::RuntimeService;
@@ -141,28 +140,7 @@ impl RuntimeService {
                 let Some(requirement) = requirement else {
                     continue;
                 };
-                let identities = requirement
-                    .exact_capability()
-                    .cloned()
-                    .into_iter()
-                    .collect();
-                let profiles = requirement
-                    .provider_profile_ref()
-                    .cloned()
-                    .into_iter()
-                    .collect();
-                let envelope = CapabilityAuthorityScope::new(
-                    identities,
-                    requirement.categories().clone(),
-                    BTreeSet::from([requirement.operation().clone()]),
-                    profiles,
-                    requirement.trust_zones().clone(),
-                    BTreeSet::<Locality>::new(),
-                    requirement.maximum_side_effect_class(),
-                )?
-                .with_execution_trust_classes(
-                    requirement.execution_trust_class().into_iter().collect(),
-                )?;
+                let envelope = CapabilityAuthorityScope::requirement_envelope(&requirement)?;
                 let mut resources = RequestedResourceFacts::empty();
                 resources.capability = requirement.exact_capability().cloned();
                 resources.capability_operation = Some(requirement.operation().clone());

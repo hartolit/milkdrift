@@ -97,27 +97,29 @@ fn a_nonempty_partially_initialized_database_is_refused() -> Result<(), Box<dyn 
 }
 
 #[test]
-fn unpublished_internal_document_formats_are_refused_without_migration()
+fn older_and_future_internal_document_formats_are_refused_without_migration()
 -> Result<(), Box<dyn std::error::Error>> {
-    let directory = TempDir::new()?;
-    drop(RedbStore::open(directory.path())?);
+    for found in [10, 12] {
+        let directory = TempDir::new()?;
+        drop(RedbStore::open(directory.path())?);
 
-    let database = Database::open(directory.path().join(DATABASE_FILENAME))?;
-    let write = database.begin_write()?;
-    {
-        let mut metadata = write.open_table(METADATA)?;
-        metadata.insert("internal_document_format_version", 3)?;
+        let database = Database::open(directory.path().join(DATABASE_FILENAME))?;
+        let write = database.begin_write()?;
+        {
+            let mut metadata = write.open_table(METADATA)?;
+            metadata.insert("internal_document_format_version", found)?;
+        }
+        write.commit()?;
+        drop(database);
+
+        assert!(matches!(
+            RedbStore::open(directory.path()),
+            Err(PersistenceError::UnsupportedVersion {
+                document: "redb internal document envelope",
+                found: observed,
+                supported: 11,
+            }) if observed == found as u32
+        ));
     }
-    write.commit()?;
-    drop(database);
-
-    assert!(matches!(
-        RedbStore::open(directory.path()),
-        Err(PersistenceError::UnsupportedVersion {
-            document: "redb internal document envelope",
-            found: 3,
-            supported: 10,
-        })
-    ));
     Ok(())
 }

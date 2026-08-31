@@ -2,21 +2,21 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use milkdrift_blueprint::{NodeId, RevisionId, WorkflowId};
 use milkdrift_capability::{
-    BoundedJson, CapabilityCategory, CapabilityId, ExecutionTrustClass, IdempotencyBehavior,
-    Locality, OperationId, ProviderProfileRef, SideEffectClass, TrustZone,
+    BoundedJson, CapabilityCategory, CapabilityId, CapabilityRequirement, ExecutionTrustClass,
+    IdempotencyBehavior, Locality, OperationId, ProviderProfileRef, SideEffectClass, TrustZone,
 };
 use milkdrift_workspace::{ArtifactId, ArtifactSensitivity, RunId, ScopeId};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     ActorRef, AuthorityError, DecisionId, GrantDigest, GrantId, NetworkProfileRef, PeerId,
-    PolicyId, SecretRef,
-    document::{AUTHORITY_GRANT_SCHEMA_VERSION_V2, canonical_json},
+    PolicyId, SecretRef, Selection,
+    document::{AUTHORITY_GRANT_SCHEMA_VERSION_V3, canonical_json},
 };
 
 const MAX_SCOPE_ITEMS: usize = 128;
 const MAX_DIAGNOSTIC_CODES: usize = 16;
-const DECISION_DIGEST_DOMAIN: &[u8] = b"milkdrift.authority-decision.v1\0";
+const DECISION_DIGEST_DOMAIN: &[u8] = b"milkdrift.authority-decision.v2\0";
 
 /// Caller-supplied epoch-millisecond fact used at a deterministic policy boundary.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
@@ -310,176 +310,309 @@ impl NetworkScope {
 
 /// Capability-selection constraints in a grant.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct CapabilityAuthorityScope(CapabilityAuthorityScopeKind);
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+enum CapabilityAuthorityScopeKind {
+    DenyAll,
+    Allow(Box<CapabilityAuthorityAllowScope>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct CapabilityAuthorityScope {
-    #[serde(default)]
-    deny_all: bool,
-    identities: BTreeSet<CapabilityId>,
-    categories: BTreeSet<CapabilityCategory>,
-    operations: BTreeSet<OperationId>,
-    provider_profiles: BTreeSet<ProviderProfileRef>,
-    trust_zones: BTreeSet<TrustZone>,
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    execution_trust_classes: BTreeSet<ExecutionTrustClass>,
-    localities: BTreeSet<Locality>,
-    #[serde(default)]
-    peers: BTreeSet<PeerId>,
+struct CapabilityAuthorityAllowScope {
+    identities: Selection<CapabilityId>,
+    categories: Selection<CapabilityCategory>,
+    operations: Selection<OperationId>,
+    provider_profiles: Selection<ProviderProfileRef>,
+    trust_zones: Selection<TrustZone>,
+    execution_trust_classes: Selection<ExecutionTrustClass>,
+    localities: Selection<Locality>,
+    peers: Selection<PeerId>,
     maximum_side_effect: SideEffectClass,
 }
 
 impl CapabilityAuthorityScope {
-    /// Constructs a capability scope; empty sets are explicit wildcards.
-    #[allow(clippy::too_many_arguments)] // One validated authority scope keeps every independently bounded dimension explicit.
-    pub fn new(
-        identities: BTreeSet<CapabilityId>,
-        categories: BTreeSet<CapabilityCategory>,
-        operations: BTreeSet<OperationId>,
-        provider_profiles: BTreeSet<ProviderProfileRef>,
-        trust_zones: BTreeSet<TrustZone>,
-        localities: BTreeSet<Locality>,
-        maximum_side_effect: SideEffectClass,
-    ) -> Result<Self, AuthorityError> {
-        if [
-            identities.len(),
-            categories.len(),
-            operations.len(),
-            provider_profiles.len(),
-            trust_zones.len(),
-            localities.len(),
-        ]
-        .into_iter()
-        .any(|count| count > MAX_SCOPE_ITEMS)
-        {
-            return Err(AuthorityError::Bounds {
-                location: "grant.capability_scope",
-                reason: format!("each scope set is limited to {MAX_SCOPE_ITEMS} entries"),
-            });
-        }
-        Ok(Self {
-            deny_all: false,
-            identities,
-            categories,
-            operations,
-            provider_profiles,
-            trust_zones,
-            execution_trust_classes: BTreeSet::new(),
-            localities,
-            peers: BTreeSet::new(),
-            maximum_side_effect,
-        })
-    }
-
-    /// Unconstrained identity/category/profile scope capped at the supplied side effect.
-    #[must_use]
-    pub fn any(maximum_side_effect: SideEffectClass) -> Self {
-        Self {
-            deny_all: false,
-            identities: BTreeSet::new(),
-            categories: BTreeSet::new(),
-            operations: BTreeSet::new(),
-            provider_profiles: BTreeSet::new(),
-            trust_zones: BTreeSet::new(),
-            execution_trust_classes: BTreeSet::new(),
-            localities: BTreeSet::new(),
-            peers: BTreeSet::new(),
-            maximum_side_effect,
-        }
-    }
-
     /// Explicitly denies every capability identity, descriptor, profile, and operation.
     #[must_use]
-    pub fn none(maximum_side_effect: SideEffectClass) -> Self {
-        Self {
-            deny_all: true,
-            identities: BTreeSet::new(),
-            categories: BTreeSet::new(),
-            operations: BTreeSet::new(),
-            provider_profiles: BTreeSet::new(),
-            trust_zones: BTreeSet::new(),
-            execution_trust_classes: BTreeSet::new(),
-            localities: BTreeSet::new(),
-            peers: BTreeSet::new(),
-            maximum_side_effect,
+    pub const fn deny_all() -> Self {
+        Self(CapabilityAuthorityScopeKind::DenyAll)
+    }
+
+    /// Explicitly permits every selector value subject to the supplied side-effect ceiling.
+    #[must_use]
+    pub fn allow_any(maximum_side_effect: SideEffectClass) -> Self {
+        CapabilityAuthorityScopeBuilder::new(maximum_side_effect).build()
+    }
+
+    /// Constructs the exact semantic envelope requested by one workflow requirement.
+    ///
+    /// Unspecified requirement dimensions become explicit `Any` selectors. Exact identity,
+    /// operation, provider profile, category, trust-zone, and execution-trust facts become
+    /// nonempty `Only` selectors.
+    pub fn requirement_envelope(
+        requirement: &CapabilityRequirement,
+    ) -> Result<Self, AuthorityError> {
+        let mut builder =
+            CapabilityAuthorityScopeBuilder::new(requirement.maximum_side_effect_class())
+                .only_operations(BTreeSet::from([requirement.operation().clone()]))?;
+        if let Some(identity) = requirement.exact_capability() {
+            builder = builder.only_capabilities(BTreeSet::from([identity.clone()]))?;
         }
+        if !requirement.categories().is_empty() {
+            builder = builder.only_categories(requirement.categories().clone())?;
+        }
+        if let Some(profile) = requirement.provider_profile_ref() {
+            builder = builder.only_provider_profiles(BTreeSet::from([profile.clone()]))?;
+        }
+        if !requirement.trust_zones().is_empty() {
+            builder = builder.only_trust_zones(requirement.trust_zones().clone())?;
+        }
+        if let Some(trust_class) = requirement.execution_trust_class() {
+            builder = builder.only_execution_trust_classes(BTreeSet::from([trust_class]))?;
+        }
+        Ok(builder.build())
     }
 
     /// Whether this scope is the explicit default-deny capability scope.
     #[must_use]
     pub const fn denies_all(&self) -> bool {
-        self.deny_all
+        matches!(self.0, CapabilityAuthorityScopeKind::DenyAll)
     }
 
-    /// Narrows remote selection to exact authenticated peer identities.
-    pub fn with_peers(mut self, peers: BTreeSet<PeerId>) -> Result<Self, AuthorityError> {
-        if peers.len() > MAX_SCOPE_ITEMS {
-            return Err(AuthorityError::Bounds {
-                location: "grant.capability_scope.peers",
-                reason: format!("at most {MAX_SCOPE_ITEMS} peers are allowed"),
-            });
+    /// Capability identity selector for an allow scope.
+    #[must_use]
+    pub const fn identity_selection(&self) -> Option<&Selection<CapabilityId>> {
+        match &self.0 {
+            CapabilityAuthorityScopeKind::DenyAll => None,
+            CapabilityAuthorityScopeKind::Allow(scope) => Some(&scope.identities),
         }
-        self.peers = peers;
-        Ok(self)
     }
-
-    /// Narrows execution to exact isolation/trust classes. Empty accepts any.
-    pub fn with_execution_trust_classes(
-        mut self,
-        classes: BTreeSet<ExecutionTrustClass>,
-    ) -> Result<Self, AuthorityError> {
-        if classes.len() > 8 {
-            return Err(AuthorityError::Bounds {
-                location: "grant.capability_scope.execution_trust_classes",
-                reason: "at most 8 execution trust classes are allowed".to_owned(),
-            });
+    /// Capability category selector for an allow scope.
+    #[must_use]
+    pub const fn category_selection(&self) -> Option<&Selection<CapabilityCategory>> {
+        match &self.0 {
+            CapabilityAuthorityScopeKind::DenyAll => None,
+            CapabilityAuthorityScopeKind::Allow(scope) => Some(&scope.categories),
         }
-        self.execution_trust_classes = classes;
-        Ok(self)
     }
-
-    /// Allowed capability identities; empty means any.
+    /// Capability operation selector for an allow scope.
     #[must_use]
-    pub const fn identities(&self) -> &BTreeSet<CapabilityId> {
-        &self.identities
+    pub const fn operation_selection(&self) -> Option<&Selection<OperationId>> {
+        match &self.0 {
+            CapabilityAuthorityScopeKind::DenyAll => None,
+            CapabilityAuthorityScopeKind::Allow(scope) => Some(&scope.operations),
+        }
     }
-    /// Allowed categories; empty means any.
+    /// Provider profile selector for an allow scope.
     #[must_use]
-    pub const fn categories(&self) -> &BTreeSet<CapabilityCategory> {
-        &self.categories
+    pub const fn provider_profile_selection(&self) -> Option<&Selection<ProviderProfileRef>> {
+        match &self.0 {
+            CapabilityAuthorityScopeKind::DenyAll => None,
+            CapabilityAuthorityScopeKind::Allow(scope) => Some(&scope.provider_profiles),
+        }
     }
-    /// Allowed operations; empty means any.
+    /// Trust-zone selector for an allow scope.
     #[must_use]
-    pub const fn operations(&self) -> &BTreeSet<OperationId> {
-        &self.operations
+    pub const fn trust_zone_selection(&self) -> Option<&Selection<TrustZone>> {
+        match &self.0 {
+            CapabilityAuthorityScopeKind::DenyAll => None,
+            CapabilityAuthorityScopeKind::Allow(scope) => Some(&scope.trust_zones),
+        }
     }
-    /// Allowed provider profiles; empty means any.
+    /// Execution trust-class selector for an allow scope.
     #[must_use]
-    pub const fn provider_profiles(&self) -> &BTreeSet<ProviderProfileRef> {
-        &self.provider_profiles
+    pub const fn execution_trust_class_selection(&self) -> Option<&Selection<ExecutionTrustClass>> {
+        match &self.0 {
+            CapabilityAuthorityScopeKind::DenyAll => None,
+            CapabilityAuthorityScopeKind::Allow(scope) => Some(&scope.execution_trust_classes),
+        }
     }
-    /// Required/allowed trust-zone labels; empty means any.
+    /// Locality selector for an allow scope.
     #[must_use]
-    pub const fn trust_zones(&self) -> &BTreeSet<TrustZone> {
-        &self.trust_zones
+    pub const fn locality_selection(&self) -> Option<&Selection<Locality>> {
+        match &self.0 {
+            CapabilityAuthorityScopeKind::DenyAll => None,
+            CapabilityAuthorityScopeKind::Allow(scope) => Some(&scope.localities),
+        }
     }
-    /// Allowed exact execution-isolation/trust classes; empty means any.
+    /// Authenticated peer selector for an allow scope.
     #[must_use]
-    pub const fn execution_trust_classes(&self) -> &BTreeSet<ExecutionTrustClass> {
-        &self.execution_trust_classes
-    }
-    /// Allowed localities; empty means any.
-    #[must_use]
-    pub const fn localities(&self) -> &BTreeSet<Locality> {
-        &self.localities
-    }
-    /// Allowed authenticated remote peers; empty means any peer within other constraints.
-    #[must_use]
-    pub const fn peers(&self) -> &BTreeSet<PeerId> {
-        &self.peers
+    pub const fn peer_selection(&self) -> Option<&Selection<PeerId>> {
+        match &self.0 {
+            CapabilityAuthorityScopeKind::DenyAll => None,
+            CapabilityAuthorityScopeKind::Allow(scope) => Some(&scope.peers),
+        }
     }
     /// Maximum permitted side-effect class.
     #[must_use]
     pub const fn maximum_side_effect(&self) -> SideEffectClass {
-        self.maximum_side_effect
+        match self.0 {
+            CapabilityAuthorityScopeKind::DenyAll => SideEffectClass::None,
+            CapabilityAuthorityScopeKind::Allow(ref scope) => scope.maximum_side_effect,
+        }
+    }
+
+    /// Whether this allow scope contains an explicit wildcard in any dimension.
+    #[must_use]
+    pub fn has_any_selector(&self) -> bool {
+        match &self.0 {
+            CapabilityAuthorityScopeKind::DenyAll => false,
+            CapabilityAuthorityScopeKind::Allow(scope) => [
+                scope.identities.is_any(),
+                scope.categories.is_any(),
+                scope.operations.is_any(),
+                scope.provider_profiles.is_any(),
+                scope.trust_zones.is_any(),
+                scope.execution_trust_classes.is_any(),
+                scope.localities.is_any(),
+                scope.peers.is_any(),
+            ]
+            .into_iter()
+            .any(|value| value),
+        }
+    }
+
+    /// Tests exact containment using selector algebra and the side-effect ceiling.
+    #[must_use]
+    pub fn is_subset_of(&self, allowed: &Self) -> bool {
+        match (&self.0, &allowed.0) {
+            (CapabilityAuthorityScopeKind::DenyAll, _) => true,
+            (_, CapabilityAuthorityScopeKind::DenyAll) => false,
+            (
+                CapabilityAuthorityScopeKind::Allow(requested),
+                CapabilityAuthorityScopeKind::Allow(allowed),
+            ) => {
+                requested.identities.is_subset_of(&allowed.identities)
+                    && requested.categories.is_subset_of(&allowed.categories)
+                    && requested.operations.is_subset_of(&allowed.operations)
+                    && requested
+                        .provider_profiles
+                        .is_subset_of(&allowed.provider_profiles)
+                    && requested.trust_zones.is_subset_of(&allowed.trust_zones)
+                    && requested
+                        .execution_trust_classes
+                        .is_subset_of(&allowed.execution_trust_classes)
+                    && requested.localities.is_subset_of(&allowed.localities)
+                    && requested.peers.is_subset_of(&allowed.peers)
+                    && requested.maximum_side_effect <= allowed.maximum_side_effect
+            }
+        }
+    }
+}
+
+/// Validating builder for an explicit conjunctive capability allow scope.
+#[derive(Clone, Debug)]
+pub struct CapabilityAuthorityScopeBuilder {
+    identities: Selection<CapabilityId>,
+    categories: Selection<CapabilityCategory>,
+    operations: Selection<OperationId>,
+    provider_profiles: Selection<ProviderProfileRef>,
+    trust_zones: Selection<TrustZone>,
+    execution_trust_classes: Selection<ExecutionTrustClass>,
+    localities: Selection<Locality>,
+    peers: Selection<PeerId>,
+    maximum_side_effect: SideEffectClass,
+}
+
+impl CapabilityAuthorityScopeBuilder {
+    /// Starts an explicit allow scope with `Any` in every dimension.
+    #[must_use]
+    pub const fn new(maximum_side_effect: SideEffectClass) -> Self {
+        Self {
+            identities: Selection::any(),
+            categories: Selection::any(),
+            operations: Selection::any(),
+            provider_profiles: Selection::any(),
+            trust_zones: Selection::any(),
+            execution_trust_classes: Selection::any(),
+            localities: Selection::any(),
+            peers: Selection::any(),
+            maximum_side_effect,
+        }
+    }
+
+    /// Narrows capability identities to a nonempty exact allowlist.
+    pub fn only_capabilities(
+        mut self,
+        values: BTreeSet<CapabilityId>,
+    ) -> Result<Self, AuthorityError> {
+        self.identities = Selection::only(values)?;
+        Ok(self)
+    }
+
+    /// Narrows categories to a nonempty exact allowlist.
+    pub fn only_categories(
+        mut self,
+        values: BTreeSet<CapabilityCategory>,
+    ) -> Result<Self, AuthorityError> {
+        self.categories = Selection::only(values)?;
+        Ok(self)
+    }
+
+    /// Narrows operations to a nonempty exact allowlist.
+    pub fn only_operations(
+        mut self,
+        values: BTreeSet<OperationId>,
+    ) -> Result<Self, AuthorityError> {
+        self.operations = Selection::only(values)?;
+        Ok(self)
+    }
+
+    /// Narrows provider profiles to a nonempty exact allowlist.
+    pub fn only_provider_profiles(
+        mut self,
+        values: BTreeSet<ProviderProfileRef>,
+    ) -> Result<Self, AuthorityError> {
+        self.provider_profiles = Selection::only(values)?;
+        Ok(self)
+    }
+
+    /// Narrows trust zones to a nonempty exact allowlist.
+    pub fn only_trust_zones(mut self, values: BTreeSet<TrustZone>) -> Result<Self, AuthorityError> {
+        self.trust_zones = Selection::only(values)?;
+        Ok(self)
+    }
+
+    /// Narrows execution trust classes to a nonempty exact allowlist.
+    pub fn only_execution_trust_classes(
+        mut self,
+        values: BTreeSet<ExecutionTrustClass>,
+    ) -> Result<Self, AuthorityError> {
+        self.execution_trust_classes = Selection::only(values)?;
+        Ok(self)
+    }
+
+    /// Narrows localities to a nonempty exact allowlist.
+    pub fn only_localities(mut self, values: BTreeSet<Locality>) -> Result<Self, AuthorityError> {
+        self.localities = Selection::only(values)?;
+        Ok(self)
+    }
+
+    /// Narrows authenticated peers to a nonempty exact allowlist.
+    pub fn only_peers(mut self, values: BTreeSet<PeerId>) -> Result<Self, AuthorityError> {
+        self.peers = Selection::only(values)?;
+        Ok(self)
+    }
+
+    /// Publishes the explicit allow scope.
+    #[must_use]
+    pub fn build(self) -> CapabilityAuthorityScope {
+        CapabilityAuthorityScope(CapabilityAuthorityScopeKind::Allow(Box::new(
+            CapabilityAuthorityAllowScope {
+                identities: self.identities,
+                categories: self.categories,
+                operations: self.operations,
+                provider_profiles: self.provider_profiles,
+                trust_zones: self.trust_zones,
+                execution_trust_classes: self.execution_trust_classes,
+                localities: self.localities,
+                peers: self.peers,
+                maximum_side_effect: self.maximum_side_effect,
+            },
+        )))
     }
 }
 
@@ -970,7 +1103,7 @@ impl AuthorityGrant {
     pub fn digest(&self) -> Result<GrantDigest, AuthorityError> {
         Ok(GrantDigest::for_bytes(&self.to_canonical_json()?))
     }
-    /// Strictly decodes and validates one schema-v2 grant.
+    /// Strictly decodes and validates one schema-v3 grant.
     pub fn from_json(bytes: &[u8]) -> Result<Self, AuthorityError> {
         if bytes.len() > crate::MAX_AUTHORITY_DOCUMENT_BYTES {
             return Err(AuthorityError::Bounds {
@@ -987,11 +1120,11 @@ impl AuthorityGrant {
             .ok_or_else(|| {
                 AuthorityError::InvalidContract("grant requires numeric schema_version".to_owned())
             })?;
-        if version != AUTHORITY_GRANT_SCHEMA_VERSION_V2 {
+        if version != AUTHORITY_GRANT_SCHEMA_VERSION_V3 {
             return Err(AuthorityError::UnsupportedVersion {
                 document: "authority_grant",
                 found: version,
-                supported: AUTHORITY_GRANT_SCHEMA_VERSION_V2,
+                supported: AUTHORITY_GRANT_SCHEMA_VERSION_V3,
             });
         }
         serde_json::from_value(value).map_err(|error| AuthorityError::Json(error.to_string()))
@@ -1009,14 +1142,14 @@ impl AuthorityGrantBuilder {
     pub fn new(identity: GrantId, revision: u64, actor: ActorRef) -> Self {
         Self {
             grant: AuthorityGrant {
-                schema_version: AUTHORITY_GRANT_SCHEMA_VERSION_V2,
+                schema_version: AUTHORITY_GRANT_SCHEMA_VERSION_V3,
                 identity,
                 revision,
                 actor,
                 operations: BTreeSet::new(),
                 resources: ResourceScope {
                     workflow_run: WorkflowRunScope::Any,
-                    capability: CapabilityAuthorityScope::none(SideEffectClass::None),
+                    capability: CapabilityAuthorityScope::deny_all(),
                     filesystem: Vec::new(),
                     network: NetworkScope {
                         profiles: BTreeSet::new(),
@@ -1081,11 +1214,11 @@ impl AuthorityGrantBuilder {
     /// Validates and publishes the immutable grant revision.
     pub fn build(self) -> Result<AuthorityGrant, AuthorityError> {
         let grant = self.grant;
-        if grant.schema_version != AUTHORITY_GRANT_SCHEMA_VERSION_V2 {
+        if grant.schema_version != AUTHORITY_GRANT_SCHEMA_VERSION_V3 {
             return Err(AuthorityError::UnsupportedVersion {
                 document: "authority_grant",
                 found: grant.schema_version,
-                supported: AUTHORITY_GRANT_SCHEMA_VERSION_V2,
+                supported: AUTHORITY_GRANT_SCHEMA_VERSION_V3,
             });
         }
         if grant.revision == 0
@@ -1111,17 +1244,6 @@ impl AuthorityGrantBuilder {
                 reason: "scope or extension count exceeded".to_owned(),
             });
         }
-        CapabilityAuthorityScope::new(
-            grant.resources.capability.identities.clone(),
-            grant.resources.capability.categories.clone(),
-            grant.resources.capability.operations.clone(),
-            grant.resources.capability.provider_profiles.clone(),
-            grant.resources.capability.trust_zones.clone(),
-            grant.resources.capability.localities.clone(),
-            grant.resources.capability.maximum_side_effect,
-        )?
-        .with_peers(grant.resources.capability.peers.clone())?
-        .with_execution_trust_classes(grant.resources.capability.execution_trust_classes.clone())?;
         NetworkScope::new(
             grant.resources.network.profiles.clone(),
             grant.resources.network.destinations.clone(),
@@ -1803,7 +1925,7 @@ impl AuthorityDecisionSnapshot {
             DecisionOutcome::Deny
         };
         let mut value = Self {
-            schema_version: 1,
+            schema_version: 2,
             policy,
             policy_version,
             request,
@@ -1867,7 +1989,7 @@ impl AuthorityDecisionSnapshot {
     }
     fn validate(&self) -> Result<(), AuthorityError> {
         self.request.validate()?;
-        if self.schema_version != 1
+        if self.schema_version != 2
             || self.policy_version == 0
             || self.reason_codes.is_empty()
             || self.reason_codes.len() > MAX_DIAGNOSTIC_CODES
@@ -1894,7 +2016,7 @@ impl AuthorityDecisionSnapshot {
     }
     fn compute_digest(&self) -> Result<String, AuthorityError> {
         let payload = DecisionDigest {
-            domain: "milkdrift.authority-decision.v1",
+            domain: "milkdrift.authority-decision.v2",
             schema_version: self.schema_version,
             policy: &self.policy,
             policy_version: self.policy_version,

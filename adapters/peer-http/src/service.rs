@@ -12,9 +12,10 @@ use milkdrift_authority::{
     ActorRef, ArtifactAuthorityScope, AuthorityBudget, AuthorityEvaluator,
     AuthorityExecutionProvenance, AuthorityGrant, AuthorityGrantBuilder, AuthorityOperation,
     AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope,
-    CapabilityExecutionRequirements, DaemonAuthorityScope, DecisionId, GrantId, GrantSetEvaluator,
-    LayoutAuthorityScope, NetworkScope, PeerAuthorityScope, PeerId, PolicyId,
-    RequestedResourceFacts, ResourceScope, WorkflowRunScope, WorkspaceAuthorityScope,
+    CapabilityAuthorityScopeBuilder, CapabilityExecutionRequirements, DaemonAuthorityScope,
+    DecisionId, GrantId, GrantSetEvaluator, LayoutAuthorityScope, NetworkScope, PeerAuthorityScope,
+    PeerId, PolicyId, RequestedResourceFacts, ResourceScope, WorkflowRunScope,
+    WorkspaceAuthorityScope,
 };
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_capability::{
@@ -1257,7 +1258,9 @@ impl PeerService {
                 .operations()
                 .iter()
                 .filter(|(identity, contract)| {
-                    (scope.operations().is_empty() || scope.operations().contains(*identity))
+                    scope
+                        .operation_selection()
+                        .is_some_and(|selection| selection.matches(*identity))
                         && contract.side_effect() <= scope.maximum_side_effect()
                 })
                 .map(|(identity, contract)| (identity.clone(), contract.clone()))
@@ -1397,6 +1400,9 @@ impl PeerService {
                 generation.descriptor.identity() == request.selection.capability()
                     && generation.descriptor.descriptor_revision()
                         == request.selection.descriptor_revision()
+                    && scope
+                        .operation_selection()
+                        .is_some_and(|selection| selection.matches(request.selection.operation()))
                     && generation
                         .descriptor
                         .operation(request.selection.operation())
@@ -1820,20 +1826,11 @@ fn peer_authority_grant(relationship: &PeerRelationship) -> Result<AuthorityGran
         .difference(&relationship.capability_deny)
         .cloned()
         .collect();
-    let capability = if identities.is_empty() || relationship.operation_allow.is_empty() {
-        CapabilityAuthorityScope::none(relationship.maximum_side_effect)
-    } else {
-        CapabilityAuthorityScope::new(
-            identities,
-            BTreeSet::new(),
-            relationship.operation_allow.clone(),
-            BTreeSet::new(),
-            BTreeSet::new(),
-            BTreeSet::new(),
-            relationship.maximum_side_effect,
-        )
-        .map_err(|error| PeerHttpError::Configuration(error.to_string()))?
-    };
+    let capability = peer_capability_authority(
+        identities,
+        relationship.operation_allow.clone(),
+        relationship.maximum_side_effect,
+    )?;
     let resource_scope = ResourceScope {
         workflow_run: WorkflowRunScope::Any,
         capability,
@@ -1893,6 +1890,22 @@ fn peer_authority_grant(relationship: &PeerRelationship) -> Result<AuthorityGran
     .revocation_generation(relationship.revocation_generation)
     .build()
     .map_err(|error| PeerHttpError::Configuration(error.to_string()))
+}
+
+fn peer_capability_authority(
+    identities: BTreeSet<milkdrift_capability::CapabilityId>,
+    operations: BTreeSet<milkdrift_capability::OperationId>,
+    maximum_side_effect: milkdrift_capability::SideEffectClass,
+) -> Result<CapabilityAuthorityScope, PeerHttpError> {
+    if identities.is_empty() || operations.is_empty() {
+        Ok(CapabilityAuthorityScope::deny_all())
+    } else {
+        Ok(CapabilityAuthorityScopeBuilder::new(maximum_side_effect)
+            .only_capabilities(identities)
+            .and_then(|builder| builder.only_operations(operations))
+            .map_err(|error| PeerHttpError::Configuration(error.to_string()))?
+            .build())
+    }
 }
 
 struct PeerStoreReporter {
@@ -2212,6 +2225,52 @@ impl PeerArtifactStore for DisabledArtifactStore {
     }
 
     fn abort(&self, _owner_peer: &PeerId, _transfer: &TransferId) -> Result<(), PeerArtifactError> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_peer_filters_are_explicit_deny_all_not_wildcards()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let capability = milkdrift_capability::CapabilityId::new("peer-capability")?;
+        let operation = milkdrift_capability::OperationId::new("peer.execute")?;
+        assert!(
+            peer_capability_authority(
+                BTreeSet::new(),
+                BTreeSet::from([operation.clone()]),
+                milkdrift_capability::SideEffectClass::ReadOnly,
+            )?
+            .denies_all()
+        );
+        assert!(
+            peer_capability_authority(
+                BTreeSet::from([capability.clone()]),
+                BTreeSet::new(),
+                milkdrift_capability::SideEffectClass::ReadOnly,
+            )?
+            .denies_all()
+        );
+
+        let exact = peer_capability_authority(
+            BTreeSet::from([capability.clone()]),
+            BTreeSet::from([operation.clone()]),
+            milkdrift_capability::SideEffectClass::ReadOnly,
+        )?;
+        assert!(
+            exact
+                .identity_selection()
+                .is_some_and(|selection| selection.matches(&capability))
+        );
+        assert!(
+            exact
+                .operation_selection()
+                .is_some_and(|selection| selection.matches(&operation))
+        );
+        assert!(!exact.denies_all());
         Ok(())
     }
 }

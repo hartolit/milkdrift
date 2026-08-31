@@ -8,11 +8,11 @@ use std::{
 use milkdrift_authority::{
     AccessMode, ActorRef, ArtifactAuthorityScope, AuthorityBudget, AuthorityEvaluator,
     AuthorityExecutionProvenance, AuthorityGrant, AuthorityGrantBuilder, AuthorityOperation,
-    AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope, DaemonAuthorityScope,
-    DecisionId, DecisionReasonCode, FilesystemScope, GrantId, GrantSetEvaluator,
-    LayoutAuthorityScope, NetworkProfileRef, NetworkScope, PeerAuthorityScope, PolicyId,
-    RequestedResourceFacts, ResourceScope, SecretRef, SensitiveSecret, WorkflowRunScope,
-    WorkspaceAuthorityScope,
+    AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope,
+    CapabilityAuthorityScopeBuilder, DaemonAuthorityScope, DecisionId, DecisionReasonCode,
+    FilesystemScope, GrantId, GrantSetEvaluator, LayoutAuthorityScope, NetworkProfileRef,
+    NetworkScope, PeerAuthorityScope, PolicyId, RequestedResourceFacts, ResourceScope, SecretRef,
+    SensitiveSecret, WorkflowRunScope, WorkspaceAuthorityScope,
 };
 use milkdrift_blueprint::{AuthorRef, WorkflowId};
 use milkdrift_capability::{
@@ -39,15 +39,14 @@ fn grant() -> TestResult<AuthorityGrant> {
             run: RunId::new("run-a")?,
             workflow: Some(WorkflowId::new("workflow-a")?),
         },
-        capability: CapabilityAuthorityScope::new(
-            set(CapabilityId::new("cap-a")?),
-            set(CapabilityCategory::Model),
-            set(OperationId::new("model.generate")?),
-            set(ProviderProfileRef::new("profile-a")?),
-            set(TrustZone::new("trusted")?),
-            set(Locality::Remote),
-            SideEffectClass::ReadOnly,
-        )?,
+        capability: CapabilityAuthorityScopeBuilder::new(SideEffectClass::ReadOnly)
+            .only_capabilities(set(CapabilityId::new("cap-a")?))?
+            .only_categories(set(CapabilityCategory::Model))?
+            .only_operations(set(OperationId::new("model.generate")?))?
+            .only_provider_profiles(set(ProviderProfileRef::new("profile-a")?))?
+            .only_trust_zones(set(TrustZone::new("trusted")?))?
+            .only_localities(set(Locality::Remote))?
+            .build(),
         filesystem: vec![FilesystemScope::new("/workspace", set(AccessMode::Read))?],
         network: NetworkScope::new(
             set(NetworkProfileRef::new("network-default")?),
@@ -131,8 +130,9 @@ fn request() -> TestResult<AuthorityRequest> {
 #[test]
 fn grants_can_independently_permit_or_deny_trusted_host_processes() -> TestResult {
     let actor = ActorRef::new("service:trusted-process-runner")?;
-    let trusted_scope = CapabilityAuthorityScope::any(SideEffectClass::Unknown)
-        .with_execution_trust_classes(set(ExecutionTrustClass::TrustedHostProcess))?;
+    let trusted_scope = CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
+        .only_execution_trust_classes(set(ExecutionTrustClass::TrustedHostProcess))?
+        .build();
     let trusted_grant =
         AuthorityGrantBuilder::new(GrantId::new("grant:trusted-process")?, 1, actor.clone())
             .operations(set(AuthorityOperation::InvokeCapability))
@@ -180,8 +180,9 @@ fn grants_can_independently_permit_or_deny_trusted_host_processes() -> TestResul
             .operations(set(AuthorityOperation::InvokeCapability))
             .resources(ResourceScope {
                 workflow_run: WorkflowRunScope::Any,
-                capability: CapabilityAuthorityScope::any(SideEffectClass::Unknown)
-                    .with_execution_trust_classes(set(ExecutionTrustClass::SandboxedProcess))?,
+                capability: CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
+                    .only_execution_trust_classes(set(ExecutionTrustClass::SandboxedProcess))?
+                    .build(),
                 filesystem: Vec::new(),
                 network: NetworkScope::empty(),
                 secrets: BTreeSet::new(),
@@ -252,7 +253,7 @@ fn grant_schema_has_a_canonical_golden_fixture_and_hostile_bounds() -> TestResul
     .build()?;
     assert_eq!(
         grant.to_canonical_json()?,
-        String::from_utf8(include_bytes!("fixtures/authority-grant-v2.json").to_vec())?
+        String::from_utf8(include_bytes!("fixtures/authority-grant-v3.json").to_vec())?
             .trim()
             .as_bytes()
     );
@@ -260,9 +261,11 @@ fn grant_schema_has_a_canonical_golden_fixture_and_hostile_bounds() -> TestResul
         AuthorityGrant::from_json(&grant.to_canonical_json()?)?,
         grant
     );
-    let mut old: serde_json::Value = serde_json::from_slice(&grant.to_canonical_json()?)?;
-    old["schema_version"] = serde_json::json!(1);
-    assert!(AuthorityGrant::from_json(&serde_json::to_vec(&old)?).is_err());
+    for unsupported in [1, 2, 4] {
+        let mut old: serde_json::Value = serde_json::from_slice(&grant.to_canonical_json()?)?;
+        old["schema_version"] = serde_json::json!(unsupported);
+        assert!(AuthorityGrant::from_json(&serde_json::to_vec(&old)?).is_err());
+    }
     assert!(AuthorityGrant::from_json(br#"{"schema_version":1,"schema_version":1}"#).is_err());
     assert!(ActorRef::new("x".repeat(193)).is_err());
     assert!(FilesystemScope::new("/workspace/../secret", set(AccessMode::Read)).is_err());
@@ -401,7 +404,7 @@ fn artifact_metadata_and_content_require_exact_identity_and_sensitivity_scope() 
             ]))
             .resources(ResourceScope {
                 workflow_run: WorkflowRunScope::Any,
-                capability: CapabilityAuthorityScope::none(SideEffectClass::None),
+                capability: CapabilityAuthorityScope::deny_all(),
                 filesystem: Vec::new(),
                 network: NetworkScope::empty(),
                 secrets: BTreeSet::new(),
@@ -486,7 +489,7 @@ fn human_and_ai_actors_receive_identical_results_for_equivalent_grants() -> Test
                 workflow_run: WorkflowRunScope::Workflow {
                     workflow: workflow.clone(),
                 },
-                capability: CapabilityAuthorityScope::none(SideEffectClass::None),
+                capability: CapabilityAuthorityScope::deny_all(),
                 filesystem: Vec::new(),
                 network: NetworkScope::empty(),
                 secrets: BTreeSet::new(),

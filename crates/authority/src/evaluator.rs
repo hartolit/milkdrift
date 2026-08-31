@@ -120,62 +120,59 @@ impl AuthorityEvaluator for GrantSetEvaluator {
         }
 
         let capability = &grant.resources().capability;
-        if (capability.denies_all()
-            && (request.resources.capability.is_some()
-                || request.resources.category.is_some()
-                || request.resources.capability_operation.is_some()
-                || request.resources.provider_profile.is_some()
-                || request.resources.capability_envelope.is_some()))
+        if (capability.denies_all() && capability_facts_are_requested(&request.resources))
             || request
                 .resources
                 .capability
                 .as_ref()
                 .is_some_and(|identity| {
-                    !capability.identities().is_empty()
-                        && !capability.identities().contains(identity)
+                    !selection_matches(capability.identity_selection(), identity)
                 })
             || request.resources.category.as_ref().is_some_and(|category| {
-                !capability.categories().is_empty() && !capability.categories().contains(category)
+                !selection_matches(capability.category_selection(), category)
             })
             || request
                 .resources
                 .capability_operation
                 .as_ref()
                 .is_some_and(|operation| {
-                    !capability.operations().is_empty()
-                        && !capability.operations().contains(operation)
+                    !selection_matches(capability.operation_selection(), operation)
                 })
             || request
                 .resources
                 .provider_profile
                 .as_ref()
                 .is_some_and(|profile| {
-                    !capability.provider_profiles().is_empty()
-                        && !capability.provider_profiles().contains(profile)
+                    !selection_matches(capability.provider_profile_selection(), profile)
                 })
         {
             reasons.push(DecisionReasonCode::CapabilityMismatch);
         }
-        if request.resources.trust_zone.as_ref().is_some_and(|zone| {
-            !capability.trust_zones().is_empty() && !capability.trust_zones().contains(zone)
-        }) || (!capability.trust_zones().is_empty()
-            && !request
-                .resources
-                .trust_zones
-                .is_subset(capability.trust_zones()))
+        if request
+            .resources
+            .trust_zone
+            .as_ref()
+            .is_some_and(|zone| !selection_matches(capability.trust_zone_selection(), zone))
+            || (!request.resources.trust_zones.is_empty()
+                && !request
+                    .resources
+                    .trust_zones
+                    .iter()
+                    .all(|zone| selection_matches(capability.trust_zone_selection(), zone)))
             || request
                 .resources
                 .execution_trust_class
                 .is_some_and(|trust| {
-                    !capability.execution_trust_classes().is_empty()
-                        && !capability.execution_trust_classes().contains(&trust)
+                    !selection_matches(capability.execution_trust_class_selection(), &trust)
                 })
             || request.resources.locality.is_some_and(|locality| {
-                !capability.localities().is_empty() && !capability.localities().contains(&locality)
+                !selection_matches(capability.locality_selection(), &locality)
             })
-            || request.resources.peer.as_ref().is_some_and(|peer| {
-                !capability.peers().is_empty() && !capability.peers().contains(peer)
-            })
+            || request
+                .resources
+                .peer
+                .as_ref()
+                .is_some_and(|peer| !selection_matches(capability.peer_selection(), peer))
         {
             reasons.push(DecisionReasonCode::PlacementMismatch);
         }
@@ -320,27 +317,24 @@ fn scope_within(
     requested: &crate::CapabilityAuthorityScope,
     allowed: &crate::CapabilityAuthorityScope,
 ) -> bool {
-    requested.denies_all()
-        || (!allowed.denies_all()
-            && set_within(requested.identities(), allowed.identities())
-            && set_within(requested.categories(), allowed.categories())
-            && set_within(requested.operations(), allowed.operations())
-            && set_within(requested.provider_profiles(), allowed.provider_profiles())
-            && set_within(requested.trust_zones(), allowed.trust_zones())
-            && set_within(
-                requested.execution_trust_classes(),
-                allowed.execution_trust_classes(),
-            )
-            && set_within(requested.localities(), allowed.localities())
-            && set_within(requested.peers(), allowed.peers())
-            && requested.maximum_side_effect() <= allowed.maximum_side_effect())
+    requested.is_subset_of(allowed)
 }
 
-fn set_within<T: Ord>(
-    requested: &std::collections::BTreeSet<T>,
-    allowed: &std::collections::BTreeSet<T>,
-) -> bool {
-    requested.is_empty() || allowed.is_empty() || requested.is_subset(allowed)
+fn selection_matches<T: Ord>(selection: Option<&crate::Selection<T>>, value: &T) -> bool {
+    selection.is_some_and(|selection| selection.matches(value))
+}
+
+fn capability_facts_are_requested(resources: &crate::RequestedResourceFacts) -> bool {
+    resources.capability.is_some()
+        || resources.category.is_some()
+        || resources.capability_operation.is_some()
+        || resources.provider_profile.is_some()
+        || resources.trust_zone.is_some()
+        || !resources.trust_zones.is_empty()
+        || resources.execution_trust_class.is_some()
+        || resources.locality.is_some()
+        || resources.peer.is_some()
+        || resources.capability_envelope.is_some()
 }
 
 fn filesystem_contains(allowed: &FilesystemScope, requested: &FilesystemScope) -> bool {

@@ -1,5 +1,5 @@
 {
-  "schema_version": 6,
+  "schema_version": 7,
   "data_root": "./test-data",
   "bind": "127.0.0.1:9734",
   "secret_sources": {
@@ -23,13 +23,15 @@
             "workflow": "example-workflow"
           },
           "capability": {
-            "identities": ["local-example"],
-            "categories": [],
-            "operations": ["process.execute"],
-            "provider_profiles": [],
-            "trust_zones": ["local-process"],
-            "localities": ["local"],
-            "peers": [],
+            "type": "allow",
+            "identities": {"type": "only", "values": ["local-example"]},
+            "categories": {"type": "any"},
+            "operations": {"type": "only", "values": ["process.execute"]},
+            "provider_profiles": {"type": "any"},
+            "trust_zones": {"type": "only", "values": ["local-process"]},
+            "execution_trust_classes": {"type": "any"},
+            "localities": {"type": "only", "values": ["local"]},
+            "peers": {"type": "any"},
             "maximum_side_effect": "read_only"
           },
           "filesystem": [],
