@@ -1,0 +1,108 @@
+{
+  "schema_version": 2,
+  "profile": {
+    "profile_id": "external-evidence-coding-agent",
+    "revision": 1,
+    "capability": "external-evidence-coding-agent",
+    "descriptor_revision": 1,
+    "provider_profile": null,
+    "operation": "process.execute",
+    "side_effect": "non_idempotent_write",
+    "idempotency": "unsupported",
+    "cancellation": "best_effort",
+    "trust_class": "trusted_host_process",
+    "executable": "/absolute/path/to/codex",
+    "implementation": {
+      "content_digest": "b3_0000000000000000000000000000000000000000000000000000000000000000",
+      "size_bytes": 1,
+      "package_revision": "replace-with-exact-version",
+      "documentation_reference": "https://developers.openai.com/codex/cli"
+    },
+    "arguments": [
+      "exec",
+      "--ephemeral",
+      "--ignore-user-config",
+      "--sandbox",
+      "workspace-write",
+      "--color",
+      "never",
+      "-"
+    ],
+    "substitutions": {},
+    "working_directory": {
+      "type": "authorized_host_path",
+      "path": "/absolute/path/replaced-by-the-evidence-harness"
+    },
+    "filesystem_roots": [
+      {
+        "path": "/absolute/path/to",
+        "access": "execute"
+      },
+      {
+        "path": "/absolute/operator-owned/work",
+        "access": "read_write"
+      }
+    ],
+    "inputs": [
+      {
+        "input": "prompt",
+        "relative_path": "inputs/prompt.json"
+      }
+    ],
+    "environment": {
+      "allowed_non_secret": [
+        "LANG",
+        "PATH"
+      ],
+      "secrets": {
+        "OPENAI_API_KEY": "secret:coding-agent-token"
+      },
+      "max_value_bytes": 8192
+    },
+    "stdin": {
+      "type": "input",
+      "input": "prompt",
+      "max_bytes": 65536
+    },
+    "stdout": {
+      "max_capture_bytes": 1048576,
+      "stream_progress": false,
+      "max_progress_events": 0,
+      "overflow_action": "terminate",
+      "artifact_name": "diff"
+    },
+    "stderr": {
+      "max_capture_bytes": 1048576,
+      "stream_progress": false,
+      "max_progress_events": 0,
+      "overflow_action": "terminate",
+      "artifact_name": "agent_stderr"
+    },
+    "outputs": [],
+    "limits": {
+      "max_argv_entries": 32,
+      "max_argv_bytes": 65536,
+      "max_children_observed": 64,
+      "max_files": 32,
+      "max_file_bytes": 16777216,
+      "max_total_materialized_bytes": 67108864,
+      "max_path_bytes": 4096,
+      "max_directory_depth": 32,
+      "artifact_chunk_bytes": 1048576,
+      "max_output_files": 8,
+      "max_total_output_bytes": 33554432,
+      "wall_timeout_ms": 900000,
+      "graceful_termination_ms": 5000,
+      "forced_termination_ms": 5000,
+      "heartbeat_interval_ms": 5000
+    },
+    "restart": "retain_uncertain",
+    "platform": {
+      "owned_process_group": true,
+      "descendant_escape_prevention": false,
+      "terminal_group_observation": true
+    },
+    "max_concurrent": 1,
+    "extensions": {}
+  }
+}

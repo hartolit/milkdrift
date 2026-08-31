@@ -18,9 +18,11 @@ milkdrift-capability = { version = "=0.1.0", path = "../../crates/capability" }
 milkdrift-capability-host = { version = "=0.1.0", path = "../../crates/capability-host" }
 milkdrift-contracts.workspace = true
 milkdrift-control = { version = "=0.1.0", path = "../../crates/control" }
+milkdrift-control-client = { version = "=0.1.0", path = "../../crates/control-client" }
 milkdrift-control-protocol = { version = "=0.1.0", path = "../../crates/control-protocol" }
 milkdrift-local-process = { version = "=0.1.0", path = "../../adapters/local-process" }
 milkdrift-model-provider = { version = "=0.1.0", path = "../../adapters/model-provider" }
+milkdrift-model = { version = "=0.1.0", path = "../../crates/model" }
 milkdrift-peer-http = { version = "=0.1.0", path = "../../adapters/peer-http" }
 milkdrift-peer-protocol = { version = "=0.1.0", path = "../../crates/peer-protocol" }
 milkdrift-persistence = { version = "=0.1.0", path = "../../crates/persistence" }
@@ -40,7 +42,6 @@ tracing-subscriber.workspace = true
 url.workspace = true
 
 [dev-dependencies]
-milkdrift-control-client = { version = "=0.1.0", path = "../../crates/control-client" }
 reqwest.workspace = true
 tempfile.workspace = true
 url.workspace = true

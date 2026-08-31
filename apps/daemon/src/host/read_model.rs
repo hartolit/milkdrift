@@ -61,6 +61,9 @@ pub(super) fn public_run(value: milkdrift_control::RunInspection) -> RunRead {
             revision_id: node.revision.as_str().to_owned(),
             state: snake_debug(&node.state),
             attempt_count: node.attempt_count,
+            latest_attempt_id: node
+                .latest_attempt_id
+                .map(|value| value.as_str().to_owned()),
             latest_attempt: node.latest_attempt.map(public_attempt),
         })
         .collect::<Vec<_>>();
@@ -107,6 +110,10 @@ pub(super) fn empty_attempt_read(attempt: &str, state: &str) -> AttemptRead {
         context_manifest: None,
         context: None,
         context_access: "absent".to_owned(),
+        progress_observations: 0,
+        progress_bytes: 0,
+        usage: None,
+        outputs: Vec::new(),
         terminal: None,
         uncertain: false,
     }
@@ -148,6 +155,16 @@ pub(super) fn public_attempt(value: milkdrift_control::AttemptInspection) -> Att
         .context_manifest
         .as_ref()
         .map(public_invocation_artifact);
+    let progress_observations = u32::try_from(value.progress.len()).unwrap_or(u32::MAX);
+    let progress_bytes = value.progress.iter().fold(0_u64, |total, observation| {
+        total.saturating_add(u64::try_from(observation.detail().as_str().len()).unwrap_or(u64::MAX))
+    });
+    let usage = value.usage.as_ref().map(public_attempt_usage);
+    let outputs = value
+        .outputs
+        .iter()
+        .filter_map(public_attempt_output)
+        .collect();
     AttemptRead {
         attempt_id: value.attempt.as_str().to_owned(),
         invocation_id: value
@@ -182,9 +199,47 @@ pub(super) fn public_attempt(value: milkdrift_control::AttemptInspection) -> Att
         } else {
             "absent".to_owned()
         },
+        progress_observations,
+        progress_bytes,
+        usage,
+        outputs,
         terminal: value.terminal.as_ref().map(snake_debug),
         uncertain: value.external_outcome.is_some(),
     }
+}
+
+pub(super) fn public_attempt_usage(
+    usage: &milkdrift_persistence::AttemptUsage,
+) -> milkdrift_control_protocol::AttemptUsageRead {
+    milkdrift_control_protocol::AttemptUsageRead {
+        input_units: usage.input_units,
+        output_units: usage.output_units,
+        duration_ms: usage.duration_ms,
+        cost_micros: usage.cost.as_ref().map(|cost| cost.micros),
+        currency: usage
+            .cost
+            .as_ref()
+            .map(|cost| cost.currency.as_str().to_owned()),
+    }
+}
+
+pub(super) fn public_attempt_output(
+    output: &milkdrift_runtime::PublishedNodeOutput,
+) -> Option<milkdrift_control_protocol::AttemptOutputRead> {
+    let artifact = output.artifact()?;
+    Some(milkdrift_control_protocol::AttemptOutputRead {
+        name: output.value().key().as_str().to_owned(),
+        report_sequence: output.report_sequence(),
+        publication_sequence: output.sequence().get(),
+        artifact: ArtifactMetadataRead {
+            artifact_id: artifact.artifact().as_str().to_owned(),
+            digest: artifact.digest().to_hex(),
+            size: artifact.size_bytes(),
+            content_type: artifact.media_type().as_str().to_owned(),
+            disposition_name: None,
+            sensitivity: "restricted".to_owned(),
+        },
+    })
 }
 
 pub(super) fn public_execution_authority(
@@ -232,6 +287,11 @@ pub(super) fn public_capability_provenance(
         .find(|(key, _)| key.as_str() == "org.milkdrift/process-profile")
         .map(|(_, value)| value.value());
     let implementation = process.and_then(|value| value.get("implementation"));
+    let model = snapshot
+        .descriptor_extensions()
+        .iter()
+        .find(|(key, _)| key.as_str() == "org.milkdrift/model-profile")
+        .map(|(_, value)| value.value());
     let string = |value: Option<&serde_json::Value>| {
         value.and_then(serde_json::Value::as_str).map(str::to_owned)
     };
@@ -240,6 +300,12 @@ pub(super) fn public_capability_provenance(
         execution_trust: snake_debug(&snapshot.execution_trust()),
         implementation_identity: string(
             implementation.and_then(|value| value.get("identity_digest")),
+        ),
+        configured_path_digest: string(
+            implementation.and_then(|value| value.get("configured_path_digest")),
+        ),
+        canonical_path_digest: string(
+            implementation.and_then(|value| value.get("canonical_path_digest")),
         ),
         implementation_content_digest: string(
             implementation.and_then(|value| value.get("content_digest")),
@@ -255,6 +321,13 @@ pub(super) fn public_capability_provenance(
         documentation_reference: string(
             implementation.and_then(|value| value.get("documentation_reference")),
         ),
+        model_profile_digest: string(model.and_then(|value| value.get("profile_digest"))),
+        model_profile_revision: model
+            .and_then(|value| value.get("revision"))
+            .and_then(serde_json::Value::as_u64),
+        provider_protocol: string(model.and_then(|value| value.get("protocol_family"))),
+        model_alias: string(model.and_then(|value| value.get("model_alias"))),
+        endpoint_origin: string(model.and_then(|value| value.get("endpoint_origin"))),
     }
 }
 

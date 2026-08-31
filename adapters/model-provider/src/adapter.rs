@@ -38,11 +38,10 @@ use crate::{
 };
 
 const CONTEXT_MEDIA: &str = "application/vnd.milkdrift.context-manifest.v2+json";
-const RESPONSE_MEDIA: &str = "application/vnd.milkdrift.model-response+json;version=1";
-const TOOL_CALLS_MEDIA: &str = "application/vnd.milkdrift.model-tool-calls+json;version=1";
-const STRUCTURED_MEDIA: &str = "application/vnd.milkdrift.model-structured-output+json;version=1";
-const PROVIDER_METADATA_MEDIA: &str =
-    "application/vnd.milkdrift.model-provider-metadata+json;version=1";
+const RESPONSE_MEDIA: &str = "application/vnd.milkdrift.model-response.v1+json";
+const TOOL_CALLS_MEDIA: &str = "application/vnd.milkdrift.model-tool-calls.v1+json";
+const STRUCTURED_MEDIA: &str = "application/vnd.milkdrift.model-structured-output.v1+json";
+const PROVIDER_METADATA_MEDIA: &str = "application/vnd.milkdrift.model-provider-metadata.v1+json";
 
 fn verify_context_bytes(
     entry: &milkdrift_model::ContextManifestEntry,
@@ -560,7 +559,7 @@ impl ModelEndpointAdapter {
                 context,
                 request,
                 "final_text",
-                "text/plain; charset=utf-8",
+                "text/plain",
                 response.text().as_bytes(),
                 limits,
             );
@@ -1025,6 +1024,23 @@ pub fn descriptor_for_profile(
     capability: CapabilityId,
     profile: &EndpointProfile,
 ) -> Result<CapabilityDescriptor, milkdrift_capability::ContractError> {
+    let profile_bytes = profile
+        .to_canonical_json()
+        .map_err(|error| milkdrift_capability::ContractError::InvalidContract(error.to_string()))?;
+    let protocol_family = match profile.protocol() {
+        ProviderProtocol::OpenAiCompatible { .. } => "open_ai_compatible",
+        ProviderProtocol::Anthropic { .. } => "anthropic",
+    };
+    let endpoint_origin = profile
+        .redacted_origin()
+        .map_err(|error| milkdrift_capability::ContractError::InvalidContract(error.to_string()))?;
+    let provenance = BoundedJson::new(json!({
+        "profile_digest": format!("b3_{}", blake3::hash(&profile_bytes)),
+        "revision": profile.revision(),
+        "protocol_family": protocol_family,
+        "model_alias": profile.model(),
+        "endpoint_origin": endpoint_origin,
+    }))?;
     let input = SchemaContract::new(
         SchemaId::new("milkdrift.model-task")?,
         1,
@@ -1092,6 +1108,10 @@ pub fn descriptor_for_profile(
         operation,
     )]))
     .trust_zones(trust)
+    .extensions(BTreeMap::from([(
+        milkdrift_capability::ExtensionKey::new("org.milkdrift/model-profile")?,
+        provenance,
+    )]))
     .build()
 }
 

@@ -11,9 +11,9 @@ mod http;
 
 pub use config::{
     ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
-    AuthorityPresetConfig, DaemonConfig, PeerHostConfig, PeerRelationshipConfig, PeerServingConfig,
-    PeerSideEffectConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig,
-    ValidatedDaemonConfig,
+    AuthorityPresetConfig, DaemonConfig, ModelProfileConfig, PeerHostConfig,
+    PeerRelationshipConfig, PeerServingConfig, PeerSideEffectConfig, RuntimeHostConfig,
+    SecretSourceConfig, ShutdownConfig, ShutdownEffectPolicy, ValidatedDaemonConfig,
 };
 pub use host::{DaemonHost, HostError};
 pub use http::{router, serve};

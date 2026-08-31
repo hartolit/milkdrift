@@ -161,6 +161,8 @@ pub(crate) struct StreamState {
     tools: BTreeMap<u64, ToolAccumulator>,
     finish: FinishReason,
     usage: Usage,
+    response_id: Option<Value>,
+    response_model: Option<Value>,
     last_block: Option<u64>,
 }
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -189,6 +191,8 @@ impl StreamState {
                 cost_micros: None,
                 currency: None,
             },
+            response_id: None,
+            response_model: None,
             last_block: None,
         }
     }
@@ -205,7 +209,13 @@ impl StreamState {
         {
             "message_start" if self.phase == Phase::Initial => {
                 self.phase = Phase::Started;
-                if let Some(usage) = value.get("message").and_then(|v| v.get("usage")) {
+                let message = value.get("message").ok_or(HttpError::MalformedResponse)?;
+                self.response_id = message.get("id").filter(|value| !value.is_null()).cloned();
+                self.response_model = message
+                    .get("model")
+                    .filter(|value| !value.is_null())
+                    .cloned();
+                if let Some(usage) = message.get("usage") {
                     self.usage = parse_usage(Some(usage));
                 }
             }
@@ -325,15 +335,21 @@ impl StreamState {
                 .map_err(|_| HttpError::MalformedResponse)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        ModelResponse::new(
-            self.text,
-            None,
-            calls,
-            self.finish,
-            self.usage,
-            BTreeMap::new(),
-        )
-        .map_err(|_| HttpError::MalformedResponse)
+        let metadata = if self.response_id.is_some() || self.response_model.is_some() {
+            BTreeMap::from([(
+                ExtensionKey::new("org.milkdrift.anthropic/response")
+                    .map_err(|_| HttpError::MalformedResponse)?,
+                BoundedJson::new(json!({
+                    "id": self.response_id,
+                    "model": self.response_model,
+                }))
+                .map_err(|_| HttpError::MalformedResponse)?,
+            )])
+        } else {
+            BTreeMap::new()
+        };
+        ModelResponse::new(self.text, None, calls, self.finish, self.usage, metadata)
+            .map_err(|_| HttpError::MalformedResponse)
     }
 }
 
@@ -420,5 +436,51 @@ mod tests {
                 |_| Ok(())
             )
             .is_err());
+    }
+
+    #[test]
+    fn native_stream_retains_provider_identity_and_usage() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut state = StreamState::new();
+        let mut fragments = Vec::new();
+        state
+            .event(
+                r#"{"type":"message_start","message":{"id":"msg_fixture","model":"fixture-claude","usage":{"input_tokens":17,"cache_read_input_tokens":3}}}"#,
+                |_| Ok(()),
+            )?;
+        state.event(
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            |_| Ok(()),
+        )?;
+        state
+            .event(
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"MILKDRIFT_EVIDENCE_OK"}}"#,
+                |fragment| {
+                    fragments.push(fragment.to_owned());
+                    Ok(())
+                },
+            )?;
+        state.event(r#"{"type":"content_block_stop","index":0}"#, |_| Ok(()))?;
+        state
+            .event(
+                r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}"#,
+                |_| Ok(()),
+            )?;
+        state.event(r#"{"type":"message_stop"}"#, |_| Ok(()))?;
+        let response = state.complete()?;
+        assert_eq!(fragments, ["MILKDRIFT_EVIDENCE_OK"]);
+        assert_eq!(response.usage().input_units, Some(17));
+        assert_eq!(response.usage().output_units, Some(5));
+        assert_eq!(response.usage().cached_input_units, Some(3));
+        let key = ExtensionKey::new("org.milkdrift.anthropic/response")?;
+        let expected = json!({"id":"msg_fixture","model":"fixture-claude"});
+        assert_eq!(
+            response
+                .provider_metadata()
+                .get(&key)
+                .map(BoundedJson::value),
+            Some(&expected)
+        );
+        Ok(())
     }
 }

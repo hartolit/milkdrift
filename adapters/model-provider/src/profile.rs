@@ -361,6 +361,23 @@ impl EndpointProfile {
     pub(crate) fn model(&self) -> &str {
         &self.model
     }
+    /// Redacted endpoint origin containing no path, query, fragment, or credentials.
+    pub(crate) fn redacted_origin(&self) -> Result<String, ProfileError> {
+        let url = Url::parse(&self.base_url)
+            .map_err(|_| ProfileError::Invalid("invalid endpoint URL".to_owned()))?;
+        let host = url
+            .host_str()
+            .ok_or_else(|| ProfileError::Invalid("endpoint URL requires a host".to_owned()))?;
+        let host = match url.host() {
+            Some(url::Host::Ipv6(address)) => format!("[{address}]"),
+            _ => host.to_owned(),
+        };
+        let port = url
+            .port()
+            .map(|value| format!(":{value}"))
+            .unwrap_or_default();
+        Ok(format!("{}://{host}{port}", url.scheme()))
+    }
     /// Authentication mode containing only a reference.
     #[must_use]
     pub(crate) const fn auth(&self) -> &AuthMode {

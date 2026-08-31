@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "identity": "external-evidence-openai-compatible",
+  "revision": 1,
+  "protocol": {
+    "type": "open_ai_compatible",
+    "path": "v1/chat/completions"
+  },
+  "base_url": "https://models.example.invalid",
+  "model": "replace-with-exact-model-alias",
+  "auth": {
+    "type": "bearer",
+    "secret": "secret:model-token"
+  },
+  "limits": {
+    "connect_timeout_ms": 10000,
+    "request_timeout_ms": 120000,
+    "idle_timeout_ms": 30000,
+    "max_headers": 128,
+    "max_header_bytes": 65536,
+    "max_request_bytes": 4194304,
+    "max_response_bytes": 4194304,
+    "max_stream_line_bytes": 65536,
+    "max_stream_event_bytes": 262144,
+    "max_fragment_bytes": 4096
+  },
+  "redirect": "deny",
+  "tls": "web_pki_roots",
+  "proxy": "disabled",
+  "features": [
+    "streaming",
+    "structured_output",
+    "system_role"
+  ],
+  "max_concurrent": 1,
+  "local_development": false,
+  "allowed_hosts": [
+    "models.example.invalid"
+  ],
+  "trust_zones": [
+    "operator-configured-hosted-model"
+  ],
+  "provider_options": {}
+}

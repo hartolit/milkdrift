@@ -12,7 +12,7 @@ wire compatibility and authority filtering.
 
 ## Decision
 
-`milkdrift-control-protocol` owns pure protocol 2.1 commands, errors, pages, feed cursors,
+`milkdrift-control-protocol` owns pure protocol 2.2 commands, errors, pages, feed cursors,
 observations, and read models. The daemon projects immutable revision summaries/diffs, compact
 runs/nodes/attempts, proposal status, bounded timeline categories, capabilities, current authority,
 artifact metadata, and health. Timeline entries retain exact durable sequence/provenance anchors

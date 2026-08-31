@@ -1133,6 +1133,8 @@ fn attempt_inspection(
             .cloned(),
         side_effect: attempt.side_effect().cloned(),
         outputs: attempt.outputs().to_vec(),
+        progress: attempt.progress().to_vec(),
+        usage: attempt.usage().cloned(),
         terminal: attempt.terminal().cloned(),
         late_terminal_evidence: attempt.late_terminal_evidence().cloned(),
         external_outcome: attempt.obligation().cloned(),

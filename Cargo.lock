@@ -1039,6 +1039,7 @@ dependencies = [
  "milkdrift-control-client",
  "milkdrift-control-protocol",
  "milkdrift-local-process",
+ "milkdrift-model",
  "milkdrift-model-provider",
  "milkdrift-peer-http",
  "milkdrift-peer-protocol",

@@ -4,12 +4,12 @@ use milkdrift_capability::{
     ArtifactReference, InvocationId, ResolvedCapabilitySnapshot, SideEffectClass,
 };
 use milkdrift_persistence::{
-    AttemptId, NodeExecutionId, ReconciliationPlanId, RunEventEnvelope, RunSequence,
+    AttemptId, AttemptUsage, NodeExecutionId, ReconciliationPlanId, RunEventEnvelope, RunSequence,
 };
 use milkdrift_runtime::{
     AttemptState, AttemptTerminal, ExternalOutcomeObligation, LateTerminalEvidence,
-    NodeExecutionState, PublishedNodeOutput, ReconciliationRequestState, RunLifecycle,
-    SideEffectClassification,
+    NodeExecutionState, ProgressObservation, PublishedNodeOutput, ReconciliationRequestState,
+    RunLifecycle, SideEffectClassification,
 };
 use milkdrift_workspace::{RunId, WorkspaceBudget};
 use serde::Serialize;
@@ -119,6 +119,10 @@ pub struct AttemptInspection {
     pub side_effect: Option<SideEffectClassification>,
     /// Attempt-owned output and artifact publications.
     pub outputs: Vec<PublishedNodeOutput>,
+    /// Bounded durable progress observations; callers decide how much detail to expose.
+    pub progress: Vec<ProgressObservation>,
+    /// Exact provider-neutral usage recorded with the terminal report.
+    pub usage: Option<AttemptUsage>,
     /// Known terminal outcome and classified failure, when observed.
     pub terminal: Option<AttemptTerminal>,
     /// Truthful terminal evidence received after active worker ownership ended.

@@ -60,8 +60,8 @@ impl AuthorityPreset {
             InspectNodeExecution, InspectOwnAuthority, InspectPeer, InspectProposal,
             InspectProviderProfile, InspectRevision, InspectRun, InspectTimeline, InvokeCapability,
             ListCapabilities, NegotiateControlProtocol, Pause, Propose, ReadArtifactContent,
-            ReadArtifactMetadata, ReadLayout, ReadReadiness, Resume, Retry, StartRun, Terminate,
-            ValidateBlueprint, WriteLayout,
+            ReadArtifactMetadata, ReadLayout, ReadReadiness, ReadWorkspaceValue, Resume, Retry,
+            StartRun, Terminate, ValidateBlueprint, WriteLayout,
         };
         let reads = [
             Inspect,
@@ -77,6 +77,7 @@ impl AuthorityPreset {
             InspectProviderProfile,
             ReadArtifactMetadata,
             ReadArtifactContent,
+            ReadWorkspaceValue,
             ReadLayout,
             NegotiateControlProtocol,
             ReadReadiness,

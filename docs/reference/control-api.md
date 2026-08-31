@@ -1,4 +1,4 @@
-# Local control API 2.1
+# Local control API 2.2
 
 This document is the implemented external contract for `milkdrift-daemon`. It describes a local control plane, not a peer protocol or public internet service.
 
@@ -9,18 +9,20 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":2,"minor":1}}
+{"protocol":{"major":2,"minor":2}}
 ```
 
 Major 2 is required. Protocol 1 is deliberately unsupported because attempt inspection now carries
-the complete frozen authority basis and execution-boundary decisions. The current minor is 1 and
-adds redacted application-receipt lifecycle health. The
+the complete frozen authority basis and execution-boundary decisions. Minor 1 added redacted
+application-receipt lifecycle health. The current minor is 2 and adds durable attempt output,
+progress/stream-byte, provider usage, compacted latest-attempt identity, byte-pinned executable path
+digest, and redacted model profile/protocol/model/origin provenance reads. The
 authenticated `/v1/...` HTTP route namespace is stable and independent from the negotiated envelope
 version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 1},
+  "protocol": {"major": 2, "minor": 2},
   "request_id": "req-1",
   "value": {}
 }
@@ -34,7 +36,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 1},
+  "protocol": {"major": 2, "minor": 2},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -51,7 +53,7 @@ All mutations use `POST /v1/commands`. A command envelope has no actor field:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 1},
+  "protocol": {"major": 2, "minor": 2},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,
@@ -136,7 +138,7 @@ Artifact metadata and content are separately authorized against the exact immuta
 
 External timeline entries use the stable categories `lifecycle`, `execution`, `progress`, `artifact`, `coordination`, `authority`, `recovery`, `reconciliation`, and `uncertainty`. An entry carries the exact durable sequence, timestamp, bounded actor and run/node/attempt/revision references, stable summary, and bounded structured detail. It is deliberately not an internal `RunEventKind` document.
 
-Run models carry aggregate sequence, stable lifecycle, optional terminal outcome, workflow/revision/digest, a compact retained node frontier, and unresolved-uncertainty count. Node models retain the latest attempt for compact status, while the exact-attempt route pages authoritative history for an older identity. Attempt models carry immutable attempt state, exact capability/descriptor/provider/peer linkage, optional context-manifest artifact metadata, terminal summary, and uncertainty. `capability_provenance` carries the exact frozen snapshot digest and execution trust class. For a byte-pinned local process it also carries the safe implementation identity, executable content digest and size, complete profile digest, execution-policy digest, and optional package/documentation references; executable paths are never returned.
+Run models carry aggregate sequence, stable lifecycle, optional terminal outcome, workflow/revision/digest, a compact retained node frontier, and unresolved-uncertainty count. Node models retain the latest attempt identity even after detailed frontier compaction; the exact-attempt route pages authoritative history for that older identity. Attempt models carry immutable attempt state, exact capability/descriptor/provider/peer linkage, optional context-manifest artifact metadata, progress observation/byte counts without content, provider-neutral terminal usage, named immutable output artifact metadata, terminal summary, and uncertainty. `capability_provenance` carries the exact frozen snapshot digest and execution trust class. For a byte-pinned local process it also carries the safe implementation identity, configured/canonical executable path digests, executable content digest and size, complete profile digest, execution-policy digest, and optional package/documentation references; executable paths are never returned. For a model generation it carries the complete non-secret profile digest/revision, protocol family, exact model alias, and redacted endpoint origin without path, query, fragment, credentials, or authorization data.
 
 When a manifest exists, the daemon separately evaluates `read_artifact_content` for that exact restricted artifact. An allowed read verifies its schema, digest, size, and attempt binding, then returns a bounded context object containing the immutable task policy, selected causal/provenance metadata, stable omissions, totals, applied budget, and a truncation flag. A denial sets `context_access` to `denied` and returns neither policy nor entry/omission detail; `metadata_only` means only the compact manifest reference was disclosed. Artifact bytes remain available only through the separately authorized bounded range route. Complete lifetime history remains the paged journal-backed timeline.
 

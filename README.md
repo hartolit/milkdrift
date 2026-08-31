@@ -187,6 +187,13 @@ shared-control approval hold; remediation is a normal prospective revision. See 
 dogfood guide](docs/headless-dogfood.md), [schema-2 reference](docs/reference/prompt-sequence-v2.md),
 and [complete example](examples/headless-dogfood-sequence.md).
 
+To generate redacted operator evidence against one real coding-agent executable and one real model
+endpoint, use [`scripts/run-external-evidence.sh`](scripts/run-external-evidence.sh) with the safe
+templates under [`examples/external-evidence`](examples/external-evidence/README.md). The exact
+prerequisites, qualification rules, costs, restart/failure scenario, report schema, fixture mode,
+and cleanup guidance are in [the external-evidence guide](docs/external-evidence.md). Fixture mode
+tests the harness but never qualifies as external interoperability proof.
+
 The daemon refuses non-loopback plaintext binds and permissive CORS is not enabled. Older configuration/storage schemas and legacy sidecar authority are not silently migrated, and broad/unbounded authority requires an explicit dangerous acknowledgement. Empty artifact, layout, peer, and workspace scopes deny access. See [the daemon operation guide](docs/operator-daemon.md), [the authority configuration guide](docs/operator-authority.md), and [the control API reference](docs/reference/control-api.md).
 
 A minimal revision is constructed through a validated mutation batch; see the crate-level example in `milkdrift-blueprint` and the integration tests under `crates/blueprint/tests`.

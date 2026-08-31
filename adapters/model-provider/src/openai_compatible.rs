@@ -158,6 +158,8 @@ pub(crate) struct StreamState {
     tools: BTreeMap<u64, ToolAccumulator>,
     finish: FinishReason,
     usage: Usage,
+    response_id: Option<Value>,
+    response_model: Option<Value>,
     done: bool,
     saw_payload: bool,
 }
@@ -181,6 +183,8 @@ impl StreamState {
                 cost_micros: None,
                 currency: None,
             },
+            response_id: None,
+            response_model: None,
             done: false,
             saw_payload: false,
         }
@@ -199,6 +203,8 @@ impl StreamState {
         }
         let value: Value = serde_json::from_str(data).map_err(|_| HttpError::MalformedResponse)?;
         self.saw_payload = true;
+        retain_consistent_metadata(&mut self.response_id, value.get("id"))?;
+        retain_consistent_metadata(&mut self.response_model, value.get("model"))?;
         if let Some(usage) = value.get("usage") {
             self.usage = parse_usage(Some(usage));
         }
@@ -289,16 +295,45 @@ impl StreamState {
         } else {
             None
         };
+        let metadata = if self.response_id.is_some() || self.response_model.is_some() {
+            BTreeMap::from([(
+                ExtensionKey::new("org.milkdrift.openai/response")
+                    .map_err(|_| HttpError::MalformedResponse)?,
+                BoundedJson::new(json!({
+                    "id": self.response_id,
+                    "model": self.response_model,
+                }))
+                .map_err(|_| HttpError::MalformedResponse)?,
+            )])
+        } else {
+            BTreeMap::new()
+        };
         ModelResponse::new(
             self.text,
             structured,
             calls,
             self.finish,
             self.usage,
-            BTreeMap::new(),
+            metadata,
         )
         .map_err(|_| HttpError::MalformedResponse)
     }
+}
+
+fn retain_consistent_metadata(
+    retained: &mut Option<Value>,
+    observed: Option<&Value>,
+) -> Result<(), HttpError> {
+    let Some(observed) = observed.filter(|value| !value.is_null()) else {
+        return Ok(());
+    };
+    if retained.as_ref().is_some_and(|value| value != observed) {
+        return Err(HttpError::MalformedResponse);
+    }
+    if retained.is_none() {
+        *retained = Some(observed.clone());
+    }
+    Ok(())
 }
 
 fn parse_tool_calls(value: Option<&Value>) -> Result<Vec<ToolCall>, HttpError> {
@@ -411,5 +446,44 @@ mod tests {
                 .event(r#"{"choices":[{"delta":{"content":"late"}}]}"#, |_| Ok(()))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn stream_retains_provider_identity_usage_and_structured_output()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = StreamState::new();
+        let mut fragments = Vec::new();
+        state
+            .event(
+                r#"{"id":"fixture-response","model":"fixture-model","choices":[{"delta":{"content":"{\"ok\":"},"finish_reason":null}]}"#,
+                |fragment| {
+                    fragments.push(fragment.to_owned());
+                    Ok(())
+                },
+            )?;
+        state
+            .event(
+                r#"{"id":"fixture-response","model":"fixture-model","choices":[{"delta":{"content":"true}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":19,"completion_tokens":4}}"#,
+                |fragment| {
+                    fragments.push(fragment.to_owned());
+                    Ok(())
+                },
+            )?;
+        state.event("[DONE]", |_| Ok(()))?;
+        let response = state.complete(true)?;
+        assert_eq!(fragments, [r#"{"ok":"#, "true}"]);
+        assert_eq!(response.text(), r#"{"ok":true}"#);
+        assert_eq!(response.usage().input_units, Some(19));
+        assert_eq!(response.usage().output_units, Some(4));
+        let key = ExtensionKey::new("org.milkdrift.openai/response")?;
+        let expected = json!({"id":"fixture-response","model":"fixture-model"});
+        assert_eq!(
+            response
+                .provider_metadata()
+                .get(&key)
+                .map(BoundedJson::value),
+            Some(&expected)
+        );
+        Ok(())
     }
 }

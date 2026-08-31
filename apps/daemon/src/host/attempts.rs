@@ -198,6 +198,7 @@ impl Owner {
                 .map_err(public_persistence)?;
             let page = self.store.events(&query).map_err(public_persistence)?;
             for event in page.events {
+                let event_sequence = event.sequence().get();
                 match event.kind() {
                     RunEventKind::ExecutionAuthorityEstablished { basis } => {
                         execution_authority = Some(public_execution_authority(basis));
@@ -338,6 +339,52 @@ impl Owner {
                     } if started == &attempt_id => {
                         if let Some((_, _, value)) = located.as_mut() {
                             value.state = "running".to_owned();
+                        }
+                    }
+                    RunEventKind::NodeProgressRecorded {
+                        attempt: progressed,
+                        detail,
+                        ..
+                    } if progressed == &attempt_id => {
+                        if let Some((_, _, value)) = located.as_mut() {
+                            value.progress_observations =
+                                value.progress_observations.saturating_add(1);
+                            value.progress_bytes = value.progress_bytes.saturating_add(
+                                u64::try_from(detail.as_str().len()).unwrap_or(u64::MAX),
+                            );
+                        }
+                    }
+                    RunEventKind::AttemptUsageRecorded {
+                        attempt: measured,
+                        usage,
+                    } if measured == &attempt_id => {
+                        if let Some((_, _, value)) = located.as_mut() {
+                            value.usage = Some(public_attempt_usage(usage));
+                        }
+                    }
+                    RunEventKind::NodeOutputPublished {
+                        attempt: published,
+                        report_sequence,
+                        value: reference,
+                        artifact: Some(artifact),
+                        ..
+                    } if published == &attempt_id => {
+                        if let Some((_, _, value)) = located.as_mut() {
+                            value
+                                .outputs
+                                .push(milkdrift_control_protocol::AttemptOutputRead {
+                                    name: reference.key().as_str().to_owned(),
+                                    report_sequence: Some(*report_sequence),
+                                    publication_sequence: event_sequence,
+                                    artifact: ArtifactMetadataRead {
+                                        artifact_id: artifact.artifact().as_str().to_owned(),
+                                        digest: artifact.digest().to_hex(),
+                                        size: artifact.size_bytes(),
+                                        content_type: artifact.media_type().as_str().to_owned(),
+                                        disposition_name: None,
+                                        sensitivity: "restricted".to_owned(),
+                                    },
+                                });
                         }
                     }
                     RunEventKind::NodeTerminal {

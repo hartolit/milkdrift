@@ -78,6 +78,11 @@ fn every_preset_is_an_ordinary_scoped_grant() -> TestResult {
             .build()?;
         assert_eq!(grant.actor(), &actor);
         assert!(grant.operations().contains(&AuthorityOperation::Inspect));
+        assert!(
+            grant
+                .operations()
+                .contains(&AuthorityOperation::ReadWorkspaceValue)
+        );
         if matches!(preset, AuthorityPreset::Observer | AuthorityPreset::Advisor) {
             assert!(
                 !grant

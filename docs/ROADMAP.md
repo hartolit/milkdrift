@@ -28,7 +28,7 @@ privilege path. The daemon-owned bounded controller lifecycle is complete.
 1. **Iced control center** — A thin native canvas over `milkdrift-control-client` with revision
    history, a virtualized timeline, peer/catalog provenance, inspector, schema-1 layout documents,
    live controls, and authenticated-cursor reconnect/resume behavior. It must remain a client of the
-   existing protocol-2.1 command/read plane and introduce no workflow semantics.
+   existing protocol-2.2 command/read plane and introduce no workflow semantics.
 2. **Optional distributed dogfood and continuous supervision** — An operator-configured two-daemon
    prompt stage and explicit checkpoint capability for authorized AI supervision; these must reuse
    the current controller, peer, proposal, authority, and repeat boundaries rather than introduce

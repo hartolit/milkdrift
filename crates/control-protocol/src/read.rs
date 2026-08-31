@@ -198,6 +198,8 @@ pub struct NodeRead {
     pub state: String,
     /// Total attempts.
     pub attempt_count: u32,
+    /// Latest durable attempt identity, retained even after hot attempt detail is compacted.
+    pub latest_attempt_id: Option<String>,
     /// Latest retained attempt.
     pub latest_attempt: Option<AttemptRead>,
 }
@@ -236,10 +238,48 @@ pub struct AttemptRead {
     pub context: Option<ContextManifestRead>,
     /// `absent`, `metadata_only`, `authorized`, or `denied` without leaking contents.
     pub context_access: String,
+    /// Number of durable streaming/progress observations, without prompt or response text.
+    pub progress_observations: u32,
+    /// Aggregate UTF-8 bytes across durable progress observations, without their content.
+    pub progress_bytes: u64,
+    /// Exact provider-neutral usage supplied for this attempt, when present.
+    pub usage: Option<AttemptUsageRead>,
+    /// Exact immutable attempt-owned output artifact references.
+    pub outputs: Vec<AttemptOutputRead>,
     /// Stable terminal summary.
     pub terminal: Option<String>,
     /// Whether external outcome remains unresolved.
     pub uncertain: bool,
+}
+
+/// Safe provider-neutral usage facts exposed without arbitrary provider payloads.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttemptUsageRead {
+    /// Provider-defined input units when supplied.
+    pub input_units: Option<u64>,
+    /// Provider-defined output units when supplied.
+    pub output_units: Option<u64>,
+    /// Adapter-observed wall duration when supplied.
+    pub duration_ms: Option<u64>,
+    /// Exact monetary cost in millionths when supplied.
+    pub cost_micros: Option<u64>,
+    /// Uppercase ISO currency paired with `cost_micros`.
+    pub currency: Option<String>,
+}
+
+/// One named immutable artifact publication owned by an attempt.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttemptOutputRead {
+    /// Declared node output name.
+    pub name: String,
+    /// Executor-local report sequence when supplied by an adapter.
+    pub report_sequence: Option<u64>,
+    /// Durable run sequence that accepted the publication.
+    pub publication_sequence: u64,
+    /// Exact safe content-addressed artifact metadata.
+    pub artifact: ArtifactMetadataRead,
 }
 
 /// Bounded immutable run execution-authority provenance.
@@ -306,6 +346,10 @@ pub struct CapabilityProvenanceRead {
     pub execution_trust: String,
     /// Local-process implementation identity, including safe path digests, when applicable.
     pub implementation_identity: Option<String>,
+    /// Digest of the configured executable path string, never the path itself.
+    pub configured_path_digest: Option<String>,
+    /// Digest of the registration-time canonical executable path, never the path itself.
+    pub canonical_path_digest: Option<String>,
     /// Exact executable content digest, when the generation is a byte-pinned local process.
     pub implementation_content_digest: Option<String>,
     /// Exact executable byte size, when the generation is a byte-pinned local process.
@@ -318,6 +362,16 @@ pub struct CapabilityProvenanceRead {
     pub package_revision: Option<String>,
     /// Bounded operator-declared implementation documentation reference, when supplied.
     pub documentation_reference: Option<String>,
+    /// Digest of the complete non-secret model endpoint profile, when applicable.
+    pub model_profile_digest: Option<String>,
+    /// Exact model endpoint profile revision, when applicable.
+    pub model_profile_revision: Option<u64>,
+    /// Provider wire protocol family selected by the profile.
+    pub provider_protocol: Option<String>,
+    /// Exact configured provider model alias.
+    pub model_alias: Option<String>,
+    /// Redacted scheme/host/explicit-port origin without path or credentials.
+    pub endpoint_origin: Option<String>,
 }
 
 /// Bounded authorized context policy, selection, omissions, and accounting.
