@@ -24,9 +24,9 @@ use super::reconciliation::{
     ReconciliationRemediationProjection, RecoveryProjection, RemediationProjection,
 };
 use super::structured::{
-    BranchProjection, IterationProjection, JoinProjection, RepeatContinuationProjection,
-    RepeatTermination, SignalProjection, SubworkflowProjection, SubworkflowUsageSummary,
-    WaitProjection,
+    BranchProjection, ControllerAssessmentProjection, IterationProjection, JoinProjection,
+    RepeatContinuationProjection, RepeatTermination, SignalProjection, SubworkflowProjection,
+    SubworkflowUsageSummary, WaitProjection,
 };
 
 /// Current lifecycle derived exclusively from authoritative run facts.
@@ -180,6 +180,20 @@ pub struct ResourceUsage {
     pub(super) workspace_value_references: u64,
     pub(super) artifacts: u64,
     pub(super) artifact_bytes: u64,
+    #[serde(default, skip_serializing_if = "u64_is_zero")]
+    pub(super) process_invocations: u64,
+    #[serde(default, skip_serializing_if = "u64_is_zero")]
+    pub(super) model_invocations: u64,
+    #[serde(default, skip_serializing_if = "u64_is_zero")]
+    pub(super) unknown_input_usage: u64,
+    #[serde(default, skip_serializing_if = "u64_is_zero")]
+    pub(super) unknown_output_usage: u64,
+    #[serde(default, skip_serializing_if = "u64_is_zero")]
+    pub(super) unknown_cost_usage: u64,
+}
+
+fn u64_is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 impl ResourceUsage {
@@ -223,6 +237,36 @@ impl ResourceUsage {
     #[must_use]
     pub const fn artifact_bytes(&self) -> u64 {
         self.artifact_bytes
+    }
+
+    /// Process-category attempts admitted under exact resolved descriptors.
+    #[must_use]
+    pub const fn process_invocations(&self) -> u64 {
+        self.process_invocations
+    }
+
+    /// Model-category attempts admitted under exact resolved descriptors.
+    #[must_use]
+    pub const fn model_invocations(&self) -> u64 {
+        self.model_invocations
+    }
+
+    /// Model/process attempts without an authoritative input-unit observation.
+    #[must_use]
+    pub const fn unknown_input_usage(&self) -> u64 {
+        self.unknown_input_usage
+    }
+
+    /// Model/process attempts without an authoritative output-unit observation.
+    #[must_use]
+    pub const fn unknown_output_usage(&self) -> u64 {
+        self.unknown_output_usage
+    }
+
+    /// Model/process attempts without an authoritative monetary observation.
+    #[must_use]
+    pub const fn unknown_cost_usage(&self) -> u64 {
+        self.unknown_cost_usage
     }
 }
 
@@ -353,6 +397,12 @@ pub struct RunProjection {
     pub(super) repeat_continuations: BTreeMap<NodeExecutionId, RepeatContinuationProjection>,
     #[serde(with = "super::serde_map")]
     pub(super) repeat_terminations: BTreeMap<NodeExecutionId, RepeatTermination>,
+    #[serde(
+        default,
+        with = "super::serde_map",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    pub(super) controller_assessments: BTreeMap<NodeExecutionId, ControllerAssessmentProjection>,
     #[serde(with = "super::serde_map")]
     pub(super) signals: BTreeMap<SignalId, SignalProjection>,
     pub(super) pending_broadcast_signals: BTreeSet<(RunSequence, SignalId)>,
@@ -385,6 +435,10 @@ pub struct RunProjection {
     pub(super) current_recovery: Option<usize>,
     #[serde(with = "super::serde_map")]
     pub(super) remediations: BTreeMap<NodeExecutionId, RemediationProjection>,
+    #[serde(default, skip_serializing_if = "u64_is_zero")]
+    pub(super) run_actor_revision_requests: u64,
+    #[serde(default, skip_serializing_if = "u64_is_zero")]
+    pub(super) run_actor_rejections: u64,
     pub(super) resource_usage: ResourceUsage,
     pub(super) terminal: Option<RunTerminalProjection>,
 }

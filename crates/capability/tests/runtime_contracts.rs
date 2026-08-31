@@ -219,6 +219,7 @@ fn resolved_snapshot_is_exact_digest_bound_and_golden() -> Result<(), Box<dyn st
         snapshot.provider_profile().map(ProviderProfileRef::as_str),
         Some("publisher-prod")
     );
+    assert_eq!(snapshot.category(), Some(&CapabilityCategory::Tool));
     assert_eq!(snapshot.operation(), &operation_id);
     assert_eq!(
         snapshot.operation_contract().idempotency(),
@@ -241,6 +242,16 @@ fn resolved_snapshot_is_exact_digest_bound_and_golden() -> Result<(), Box<dyn st
     assert_eq!(
         ResolvedCapabilitySnapshotDocument::from_json(&encoded)?,
         document
+    );
+    let legacy_bytes = include_bytes!("fixtures/resolved-capability-snapshot-v1-legacy.json");
+    let legacy = ResolvedCapabilitySnapshotDocument::from_json(legacy_bytes)?;
+    assert_eq!(legacy.body().category(), None);
+    legacy.body().validate_against(&descriptor)?;
+    assert_eq!(
+        legacy.to_canonical_json()?,
+        legacy_bytes
+            .strip_suffix(b"\n")
+            .unwrap_or(legacy_bytes.as_slice())
     );
 
     assert!(snapshot.validate_against(&descriptor_at(8)?).is_err());

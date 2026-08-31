@@ -3,16 +3,17 @@ use milkdrift_blueprint::{RevisionId, WorkflowId};
 use milkdrift_capability::BoundedJson;
 use milkdrift_contracts::{CanonicalJsonError, JsonBoundKind, JsonLimits, canonical_json_bytes};
 use milkdrift_persistence::{
-    AttemptId, CorrelationKey, EvidenceReference, PageSize, ReconciliationDecisionId, RunSequence,
-    SignalDeliveryMode, SignalId, SignalTypeId, TimestampMillis,
+    AttemptId, CorrelationKey, EvidenceReference, NodeExecutionId, PageSize,
+    ReconciliationDecisionId, RepeatDecisionId, RunSequence, SignalDeliveryMode, SignalId,
+    SignalTypeId, TimestampMillis,
 };
 use milkdrift_runtime::{CommandAuthorityClaim, ExternalWorkAction};
 use milkdrift_workspace::{RunId, WorkspaceBudget, WorkspaceScope, WorkspaceValueEntry};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ControlError, ControlId, ProposalDigest, ProposalId, ProposalStatusRead, ProposalSubmission,
-    RevisionInspection, RunInspection, TimelinePage, WorkflowProposalDocument,
+    ControlError, ControlId, ControllerStatusRead, ProposalDigest, ProposalId, ProposalStatusRead,
+    ProposalSubmission, RevisionInspection, RunInspection, TimelinePage, WorkflowProposalDocument,
 };
 
 /// Current versioned control-command schema.
@@ -88,6 +89,13 @@ pub enum ControlCommand {
         after: Option<RunSequence>,
         /// Bounded page size.
         limit: PageSize,
+    },
+    /// Inspect one exact durable controller occurrence.
+    InspectController {
+        /// Owning run.
+        run: RunId,
+        /// Exact logical controller execution.
+        controller_execution: NodeExecutionId,
     },
     /// Parse, validate, authorize, classify, and store one proposal revision.
     SubmitProposal {
@@ -202,6 +210,15 @@ pub enum ControlCommand {
         mode: SignalDeliveryMode,
         /// Bounded payload.
         payload: BoundedJson,
+    },
+    /// Continue one exact durable human checkpoint through ordinary approval authority.
+    ContinueController {
+        /// Owning run.
+        run: RunId,
+        /// Exact waiting controller occurrence.
+        controller_execution: NodeExecutionId,
+        /// Stable checkpoint decision identity.
+        decision: RepeatDecisionId,
     },
 }
 
@@ -409,6 +426,11 @@ pub enum ControlResult {
     ProposalStatus {
         /// Current reconciliation-backed status.
         value: ProposalStatusRead,
+    },
+    /// Current controller lifecycle status.
+    ControllerStatus {
+        /// Authorization-filtered exact status.
+        value: ControllerStatusRead,
     },
     /// A runtime command completed durably.
     RuntimeCommand {

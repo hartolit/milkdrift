@@ -218,6 +218,7 @@ fn fixtures() -> TestResult<Vec<(&'static str, RunEventEnvelope)>> {
                     outcome: RunOutcome::Succeeded,
                     outputs: Vec::new(),
                     cost_micros: BTreeMap::new(),
+                    usage: Default::default(),
                 },
             )?,
         ),
@@ -237,6 +238,7 @@ fn fixtures() -> TestResult<Vec<(&'static str, RunEventEnvelope)>> {
                 15,
                 RunEventKind::RevisionAdoptionRequested {
                     reconciliation: ReconciliationId::new("reconciliation-family")?,
+                    requested_by: None,
                     from_revision: revision('0')?,
                     to_revision: revision('1')?,
                     policy: ReconciliationPolicy::RequireAuthority,

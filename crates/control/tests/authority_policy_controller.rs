@@ -16,9 +16,10 @@ use milkdrift_capability::ProviderProfileRef;
 use milkdrift_capability::SideEffectClass;
 use milkdrift_control::{
     AuthorityPreset, ControllerBlueprintSpec, ControllerBound, ControllerLimits,
-    ControllerProgress, ControllerStop, build_controller_blueprint,
+    ControllerPolicyDocument, ControllerProgress, ControllerStop, build_controller_blueprint,
 };
 use milkdrift_workspace::RunId;
+use proptest::prelude::*;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -243,11 +244,15 @@ fn controller_pattern_is_explicit_bounded_repeat() -> TestResult {
     assert_eq!(wrapper.semantic().nodes().len(), 2);
     assert_eq!(wrapper.semantic().edges().len(), 1);
     assert!(wrapper.semantic().nodes().values().any(|node| {
-        matches!(node.kind(), NodeKind::Repeat { config } if config.maximum_iterations() == 5)
+        matches!(node.kind(), NodeKind::Repeat { config } if config.maximum_iterations() == 11)
     }));
     assert!(wrapper.semantic().metadata().extensions().contains_key(
-        &milkdrift_capability::ExtensionKey::new("org.milkdrift/controller-limits")?
+        &milkdrift_capability::ExtensionKey::new("org.milkdrift/controller-policy")?
     ));
+    let policy = ControllerPolicyDocument::from_controller_revision(&wrapper)?
+        .ok_or("builder did not emit a typed controller policy")?;
+    assert_eq!(policy.0.as_str(), "controller-repeat");
+    assert_eq!(policy.1.policy().limits(), &limits);
     assert_eq!(
         limits.assess(&ControllerProgress::default()),
         ControllerStop::Continue
@@ -269,6 +274,13 @@ fn controller_pattern_is_explicit_bounded_repeat() -> TestResult {
         }
     );
     for (progress, bound) in [
+        (
+            ControllerProgress {
+                invocations: 10,
+                ..ControllerProgress::default()
+            },
+            ControllerBound::Invocations,
+        ),
         (
             ControllerProgress {
                 revisions: 8,
@@ -306,10 +318,66 @@ fn controller_pattern_is_explicit_bounded_repeat() -> TestResult {
         ),
         (
             ControllerProgress {
+                input_units: 100_000,
+                ..ControllerProgress::default()
+            },
+            ControllerBound::InputUnits,
+        ),
+        (
+            ControllerProgress {
+                output_units: 100_000,
+                ..ControllerProgress::default()
+            },
+            ControllerBound::OutputUnits,
+        ),
+        (
+            ControllerProgress {
+                artifact_bytes: 1_000_000,
+                ..ControllerProgress::default()
+            },
+            ControllerBound::ArtifactBytes,
+        ),
+        (
+            ControllerProgress {
+                process_invocations: 10,
+                ..ControllerProgress::default()
+            },
+            ControllerBound::ProcessInvocations,
+        ),
+        (
+            ControllerProgress {
+                model_invocations: 10,
+                ..ControllerProgress::default()
+            },
+            ControllerBound::ModelInvocations,
+        ),
+        (
+            ControllerProgress {
                 failures: 3,
                 ..ControllerProgress::default()
             },
             ControllerBound::Failures,
+        ),
+        (
+            ControllerProgress {
+                rejections: 3,
+                ..ControllerProgress::default()
+            },
+            ControllerBound::Rejections,
+        ),
+        (
+            ControllerProgress {
+                repeat_depth: 3,
+                ..ControllerProgress::default()
+            },
+            ControllerBound::RepeatDepth,
+        ),
+        (
+            ControllerProgress {
+                child_depth: 3,
+                ..ControllerProgress::default()
+            },
+            ControllerBound::ChildDepth,
         ),
     ] {
         assert_eq!(
@@ -317,6 +385,94 @@ fn controller_pattern_is_explicit_bounded_repeat() -> TestResult {
             ControllerStop::BoundReached { bound }
         );
     }
+    for (progress, bound) in [
+        (
+            ControllerProgress {
+                unknown_cost_observations: 1,
+                ..ControllerProgress::default()
+            },
+            ControllerBound::Cost,
+        ),
+        (
+            ControllerProgress {
+                unknown_input_observations: 1,
+                ..ControllerProgress::default()
+            },
+            ControllerBound::InputUnits,
+        ),
+        (
+            ControllerProgress {
+                unknown_output_observations: 1,
+                ..ControllerProgress::default()
+            },
+            ControllerBound::OutputUnits,
+        ),
+    ] {
+        assert_eq!(
+            limits.assess(&progress),
+            ControllerStop::BoundReached { bound }
+        );
+    }
+
+    let mut tampered = serde_json::to_value(&policy.1)?;
+    tampered["policy"]["limits"]["max_invocations"] = serde_json::json!(9);
+    assert!(serde_json::from_value::<ControllerPolicyDocument>(tampered).is_err());
+    let mut future = serde_json::to_value(&policy.1)?;
+    future["schema_version"] = serde_json::json!(2);
+    assert!(serde_json::from_value::<ControllerPolicyDocument>(future).is_err());
     assert_eq!(BTreeSet::from([wrapper.id().clone()]).len(), 1);
     Ok(())
+}
+
+proptest! {
+    #[test]
+    fn cumulative_cycle_accounting_is_monotone_and_duplicate_invariant(
+        delivered_cycle_ids in proptest::collection::vec(0_u16..500, 0..256)
+    ) {
+        let unique = delivered_cycle_ids.iter().copied().collect::<BTreeSet<_>>();
+        let repeated = delivered_cycle_ids
+            .iter()
+            .chain(delivered_cycle_ids.iter())
+            .copied()
+            .collect::<BTreeSet<_>>();
+        prop_assert_eq!(&unique, &repeated);
+        let accepted = u32::try_from(unique.len())
+            .map_err(|error| TestCaseError::fail(error.to_string()))?;
+        let ceiling = accepted.saturating_add(1);
+        let limits = ControllerLimits::new(
+            ceiling,
+            999,
+            999,
+            999,
+            1_000_000,
+            1_000_000,
+            1_000_000,
+            1_000_000,
+            1_000_000,
+            999,
+            999,
+            999,
+            999,
+            999,
+            999,
+            None,
+        )
+        .map_err(|error| TestCaseError::fail(error.to_string()))?;
+        prop_assert_eq!(
+            limits.assess(&ControllerProgress {
+                invocations: accepted,
+                ..ControllerProgress::default()
+            }),
+            ControllerStop::Continue
+        );
+        prop_assert_eq!(
+            limits.assess(&ControllerProgress {
+                invocations: ceiling,
+                ..ControllerProgress::default()
+            }),
+            ControllerStop::BoundReached {
+                bound: ControllerBound::Invocations
+            }
+        );
+    }
 }

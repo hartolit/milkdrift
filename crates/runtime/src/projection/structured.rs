@@ -3,13 +3,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use milkdrift_authority::ActorRef;
-use milkdrift_blueprint::{PortId, RevisionId};
+use milkdrift_blueprint::{NodeId, PortId, RevisionId};
 use milkdrift_capability::BoundedJson;
 use milkdrift_persistence::{
-    BranchResultReference, CommandId, CorrelationKey, CurrencyCode, EvidenceReference, JoinRule,
-    NodeExecutionId, Reason, RepeatContinuationCause, RepeatContinuationDecision, RepeatDecisionId,
-    RepeatTerminationReason, RunOutcome, RunSequence, SignalDeliveryMode, SignalId, SignalTypeId,
-    SubworkflowOwnership, WaitCondition, WaitSatisfaction,
+    BranchResultReference, CommandId, ControllerAssessmentBoundary, ControllerAssessmentOutcome,
+    CorrelationKey, CurrencyCode, EvidenceReference, JoinRule, NodeExecutionId, Reason,
+    RepeatContinuationCause, RepeatContinuationDecision, RepeatDecisionId, RepeatTerminationReason,
+    RunOutcome, RunSequence, SignalDeliveryMode, SignalId, SignalTypeId, SubworkflowOwnership,
+    WaitCondition, WaitSatisfaction,
 };
 use milkdrift_workspace::{
     BranchId, IterationId, RunId, SubworkflowId, WorkspaceScope, WorkspaceValueReference,
@@ -19,6 +20,111 @@ use milkdrift_workspace::{
 pub(crate) const MAX_PENDING_SIGNAL_COUNT: usize = 1_000;
 /// Maximum aggregate payload bytes retained by pending signal obligations.
 pub(crate) const MAX_PENDING_SIGNAL_PAYLOAD_BYTES: usize = 1_048_576;
+
+/// Latest reproducible controller assessment retained for one live controller occurrence.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct ControllerAssessmentProjection {
+    pub(super) controller_id: String,
+    pub(super) policy_digest: String,
+    pub(super) governing_revision: RevisionId,
+    pub(super) controller_node: NodeId,
+    pub(super) controller_execution: NodeExecutionId,
+    pub(super) assessment_id: String,
+    pub(super) cycle_id: Option<String>,
+    pub(super) boundary: ControllerAssessmentBoundary,
+    pub(super) through_sequence: RunSequence,
+    pub(super) progress: BoundedJson,
+    pub(super) outcome: ControllerAssessmentOutcome,
+    pub(super) started_at: milkdrift_persistence::TimestampMillis,
+    pub(super) recorded_sequence: RunSequence,
+    pub(super) recorded_at: milkdrift_persistence::TimestampMillis,
+}
+
+impl ControllerAssessmentProjection {
+    /// Stable controller identity from the immutable policy.
+    #[must_use]
+    pub fn controller_id(&self) -> &str {
+        &self.controller_id
+    }
+
+    /// Digest binding every executable policy field.
+    #[must_use]
+    pub fn policy_digest(&self) -> &str {
+        &self.policy_digest
+    }
+
+    /// Exact immutable governing revision.
+    #[must_use]
+    pub const fn governing_revision(&self) -> &RevisionId {
+        &self.governing_revision
+    }
+
+    /// Exact repeat node governed by the policy.
+    #[must_use]
+    pub const fn controller_node(&self) -> &NodeId {
+        &self.controller_node
+    }
+
+    /// Exact logical controller occurrence.
+    #[must_use]
+    pub const fn controller_execution(&self) -> &NodeExecutionId {
+        &self.controller_execution
+    }
+
+    /// Stable assessment idempotency identity.
+    #[must_use]
+    pub fn assessment_id(&self) -> &str {
+        &self.assessment_id
+    }
+
+    /// Stable considered-cycle identity, when applicable.
+    #[must_use]
+    pub fn cycle_id(&self) -> Option<&str> {
+        self.cycle_id.as_deref()
+    }
+
+    /// Boundary at which this result was recorded.
+    #[must_use]
+    pub const fn boundary(&self) -> ControllerAssessmentBoundary {
+        self.boundary
+    }
+
+    /// Parent journal prefix used by the controller owner.
+    #[must_use]
+    pub const fn through_sequence(&self) -> RunSequence {
+        self.through_sequence
+    }
+
+    /// Typed progress payload owned and decoded by `milkdrift-control`.
+    #[must_use]
+    pub const fn progress(&self) -> &BoundedJson {
+        &self.progress
+    }
+
+    /// Closed runtime-consumed assessment result.
+    #[must_use]
+    pub const fn outcome(&self) -> &ControllerAssessmentOutcome {
+        &self.outcome
+    }
+
+    /// Durable caller-clock time of this controller occurrence's first assessment.
+    #[must_use]
+    pub const fn started_at(&self) -> milkdrift_persistence::TimestampMillis {
+        self.started_at
+    }
+
+    /// Exact event sequence recording this result.
+    #[must_use]
+    pub const fn recorded_sequence(&self) -> RunSequence {
+        self.recorded_sequence
+    }
+
+    /// Caller-clock time on the durable assessment event.
+    #[must_use]
+    pub const fn recorded_at(&self) -> milkdrift_persistence::TimestampMillis {
+        self.recorded_at
+    }
+}
 
 /// Current state of a structured branch scope.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -455,9 +561,18 @@ pub enum SubworkflowState {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct SubworkflowUsageSummary {
     pub(super) completed_children: u64,
+    pub(super) failed_children: u64,
     #[serde(with = "super::serde_map")]
     pub(super) cost_micros: BTreeMap<CurrencyCode, u64>,
     pub(super) overflowed: bool,
+    pub(super) input_units: Option<u64>,
+    pub(super) output_units: Option<u64>,
+    pub(super) artifact_bytes: u64,
+    pub(super) process_invocations: u64,
+    pub(super) model_invocations: u64,
+    pub(super) unknown_input_usage: u64,
+    pub(super) unknown_output_usage: u64,
+    pub(super) unknown_cost_usage: u64,
 }
 
 impl SubworkflowUsageSummary {
@@ -465,6 +580,12 @@ impl SubworkflowUsageSummary {
     #[must_use]
     pub const fn completed_children(&self) -> u64 {
         self.completed_children
+    }
+
+    /// Number of failed or cancelled child cycles.
+    #[must_use]
+    pub const fn failed_children(&self) -> u64 {
+        self.failed_children
     }
 
     /// Exact accumulated child cost by currency while no overflow occurred.
@@ -477,6 +598,54 @@ impl SubworkflowUsageSummary {
     #[must_use]
     pub const fn overflowed(&self) -> bool {
         self.overflowed
+    }
+
+    /// Exact accumulated observed input units.
+    #[must_use]
+    pub const fn input_units(&self) -> Option<u64> {
+        self.input_units
+    }
+
+    /// Exact accumulated observed output units.
+    #[must_use]
+    pub const fn output_units(&self) -> Option<u64> {
+        self.output_units
+    }
+
+    /// Logical artifact bytes produced by controller children.
+    #[must_use]
+    pub const fn artifact_bytes(&self) -> u64 {
+        self.artifact_bytes
+    }
+
+    /// Exact process-category invocation count.
+    #[must_use]
+    pub const fn process_invocations(&self) -> u64 {
+        self.process_invocations
+    }
+
+    /// Exact model-category invocation count.
+    #[must_use]
+    pub const fn model_invocations(&self) -> u64 {
+        self.model_invocations
+    }
+
+    /// Missing input-unit observations for fail-closed policy.
+    #[must_use]
+    pub const fn unknown_input_usage(&self) -> u64 {
+        self.unknown_input_usage
+    }
+
+    /// Missing output-unit observations for fail-closed policy.
+    #[must_use]
+    pub const fn unknown_output_usage(&self) -> u64 {
+        self.unknown_output_usage
+    }
+
+    /// Missing cost observations for fail-closed policy.
+    #[must_use]
+    pub const fn unknown_cost_usage(&self) -> u64 {
+        self.unknown_cost_usage
     }
 }
 

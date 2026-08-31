@@ -790,6 +790,7 @@ fn deterministic_branch_and_cross_run_subworkflow_output_facts_are_explicit()
                 outcome: milkdrift_persistence::RunOutcome::Succeeded,
                 outputs: vec![child_value.clone()],
                 cost_micros: std::collections::BTreeMap::new(),
+                usage: Default::default(),
             },
         )
         .is_ok()

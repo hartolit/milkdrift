@@ -8,7 +8,10 @@ use super::support::{
 };
 use crate::projection::{AttemptState, IterationState, RunLifecycle, RunProjection, TimerPurpose};
 use crate::query::{RUN_PROJECTION_SNAPSHOT_SCHEMA_V4, encode_projection_snapshot};
-use crate::{RunCommand, RunCommandDocument, RuntimeError, WorkerReport};
+use crate::{
+    CONTROLLER_POLICY_EXTENSION_KEY, ControllerAssessmentContext, RunCommand, RunCommandDocument,
+    RuntimeError, WorkerReport,
+};
 use milkdrift_authority::AuthorityDecisionSnapshot;
 use milkdrift_blueprint::{NodeKind, PortId, RepeatTermination, RevisionId, WorkflowId};
 use milkdrift_capability::{
@@ -17,10 +20,11 @@ use milkdrift_capability::{
 };
 use milkdrift_persistence::{
     AtomicRunCommitOutcome, AtomicRunCommitRequest, AttemptId, AttemptUsage, BoundedDetail,
-    CommandDisposition, CommandReceipt, CommandResultDocument, CurrencyCode,
-    MAX_WORKSPACE_MUTATIONS_PER_COMMIT, NodeExecutionId, NodeOutcome, ProjectionCheckpoint, Reason,
-    RunEventEnvelope, RunEventKind, RunIndexUpdate, SignalDeliveryMode, TimerId, TimestampMillis,
-    WaitSatisfaction, WorkerId, WorkspaceAccounting, WorkspaceMutation,
+    CommandDisposition, CommandReceipt, CommandResultDocument, ControllerAssessmentBoundary,
+    ControllerAssessmentOutcome, CurrencyCode, MAX_WORKSPACE_MUTATIONS_PER_COMMIT, NodeExecutionId,
+    NodeOutcome, ProjectionCheckpoint, Reason, RunEventEnvelope, RunEventKind, RunIndexUpdate,
+    SignalDeliveryMode, TimerId, TimestampMillis, WaitSatisfaction, WorkerId, WorkspaceAccounting,
+    WorkspaceMutation,
 };
 use milkdrift_workspace::{
     ArtifactId, ArtifactReference, ValueKey, ValueOrigin, ValueVersion, WorkspaceBudget,
@@ -101,7 +105,13 @@ impl RuntimeService {
                 reconciliation,
                 revision,
                 policy,
-            } => self.plan_revision_adoption(projection, reconciliation, revision, *policy),
+            } => self.plan_revision_adoption(
+                projection,
+                document.actor(),
+                reconciliation,
+                revision,
+                *policy,
+            ),
             RunCommand::DecideReconciliation {
                 plan,
                 decision,
@@ -180,7 +190,7 @@ impl RuntimeService {
                             .to_owned(),
                     ));
                 }
-                Ok(CommandPlan::one(RunEventKind::RepeatContinuationDecided {
+                let decision_event = RunEventKind::RepeatContinuationDecided {
                     repeat_execution: repeat_execution.clone(),
                     decision: decision.clone(),
                     actor: document.actor().clone(),
@@ -188,7 +198,56 @@ impl RuntimeService {
                     approved_additional_iterations: *approved_additional_iterations,
                     reason: document.reason().clone(),
                     evidence: document.evidence().to_vec(),
-                }))
+                };
+                if !matches!(
+                    pending_request.cause(),
+                    milkdrift_persistence::RepeatContinuationCause::ControllerCheckpoint { .. }
+                ) {
+                    return Ok(CommandPlan::one(decision_event));
+                }
+                let marked = revision
+                    .semantic()
+                    .metadata()
+                    .extensions()
+                    .keys()
+                    .any(|key| key.as_str() == CONTROLLER_POLICY_EXTENSION_KEY);
+                let lifecycle = self.controller_lifecycle()?;
+                let Some(lifecycle) = lifecycle else {
+                    return Err(RuntimeError::Scheduling(
+                        "controller checkpoint has no installed lifecycle owner".to_owned(),
+                    ));
+                };
+                let assessment = {
+                    let context = ControllerAssessmentContext {
+                        run: document.run_id(),
+                        revision: &revision,
+                        node,
+                        execution: repeat_execution,
+                        projection,
+                        observed_at: document.issued_at(),
+                        boundary: ControllerAssessmentBoundary::CheckpointContinuation,
+                        next_cycle: None,
+                    };
+                    lifecycle.assess(&context)?.map(|assessment| {
+                        let outcome = assessment.outcome.clone();
+                        (assessment.into_event(&context), outcome)
+                    })
+                };
+                let Some((assessment_event, assessment_outcome)) = assessment else {
+                    if marked {
+                        return Err(RuntimeError::InvalidHistory(
+                            "marked controller checkpoint was not recognized".to_owned(),
+                        ));
+                    }
+                    return Ok(CommandPlan::one(decision_event));
+                };
+                let mut plan = CommandPlan::one(assessment_event);
+                if *outcome == milkdrift_persistence::RepeatContinuationDecision::Rejected
+                    || assessment_outcome == ControllerAssessmentOutcome::Continue
+                {
+                    plan.events.push(decision_event);
+                }
+                Ok(plan)
             }
             RunCommand::ResolveExternalWork {
                 attempt,

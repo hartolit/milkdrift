@@ -603,6 +603,7 @@ fn ten_thousand_completed_repeat_children_keep_only_import_frontier() -> TestRes
                 outcome: milkdrift_persistence::RunOutcome::Succeeded,
                 outputs: Vec::new(),
                 cost_micros: std::collections::BTreeMap::new(),
+                usage: Default::default(),
             },
         )?)?;
         sequence += 1;
@@ -1296,6 +1297,7 @@ fn ten_thousand_revision_node_churn_drops_removed_root_summaries() -> TestResult
             &fixture.run,
             RunEventKind::RevisionAdoptionRequested {
                 reconciliation: reconciliation.clone(),
+                requested_by: None,
                 from_revision: current.clone(),
                 to_revision: next.clone(),
                 policy: ReconciliationPolicy::RemoveUnstartedOnly,

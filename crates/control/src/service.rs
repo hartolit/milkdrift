@@ -13,17 +13,17 @@ use milkdrift_capability::CapabilityRequirement;
 use milkdrift_persistence::{
     AuthorityDecision, CommandDisposition, CommandId, EventCursor, EventPageQuery,
     EvidenceReference, PageSize, Reason, ReconciliationDecisionId, ReconciliationId,
-    ReconciliationPolicy, RevisionStore, RunSequence,
+    ReconciliationPolicy, RepeatContinuationDecision, RevisionStore, RunSequence,
 };
 use milkdrift_runtime::{ExternalWorkAction, RunCommand, RunCommandDocument, RuntimeService};
 use milkdrift_workspace::RunId;
 
 use crate::{
     AttemptInspection, ControlCommand, ControlCommandDocument, ControlError, ControlResult,
-    NodeExecutionRead, OptimisticGuard, PolicyClassification, ProposalApplicationPolicy,
-    ProposalProvenance, ProposalStatusRead, ProposalSubmission, ReconciliationStatusRead,
-    RequestedRunAction, RevisionInspection, RiskClass, RunInspection, TimelinePage,
-    WorkflowProposal, classify_proposal,
+    ControllerLifecycleOwner, NodeExecutionRead, OptimisticGuard, PolicyClassification,
+    ProposalApplicationPolicy, ProposalProvenance, ProposalStatusRead, ProposalSubmission,
+    ReconciliationStatusRead, RequestedRunAction, RevisionInspection, RiskClass, RunInspection,
+    TimelinePage, WorkflowProposal, classify_proposal,
 };
 
 const MAX_PROPOSAL_AUTHORITY_REVISION_WALK: usize = 512;
@@ -33,6 +33,7 @@ pub struct ControlService {
     revisions: Arc<dyn RevisionStore>,
     runtime: Arc<RuntimeService>,
     authority: Arc<dyn AuthorityEvaluator>,
+    controller: Arc<ControllerLifecycleOwner>,
 }
 
 impl ControlService {
@@ -43,11 +44,19 @@ impl ControlService {
         runtime: Arc<RuntimeService>,
         authority: Arc<dyn AuthorityEvaluator>,
     ) -> Self {
+        let controller = Arc::new(ControllerLifecycleOwner::new(revisions.clone()));
         Self {
             revisions,
             runtime,
             authority,
+            controller,
         }
+    }
+
+    /// Returns the one lifecycle owner installed into the deterministic runtime.
+    #[must_use]
+    pub fn controller_lifecycle_owner(&self) -> Arc<ControllerLifecycleOwner> {
+        self.controller.clone()
     }
 
     /// Executes one complete versioned command through a single authoritative path.
@@ -109,6 +118,26 @@ impl ControlService {
                 )?;
                 Ok(ControlResult::Timeline {
                     value: self.timeline(run, *after, *limit)?,
+                })
+            }
+            ControlCommand::InspectController {
+                run,
+                controller_execution,
+            } => {
+                let projection = self.runtime.projection(run)?;
+                self.authorize_simple(
+                    document,
+                    AuthorityOperation::InspectRun,
+                    projection.workflow(),
+                    Some(run),
+                )?;
+                Ok(ControlResult::ControllerStatus {
+                    value: self.controller.status(
+                        run,
+                        &projection,
+                        controller_execution,
+                        document.issued_at().get(),
+                    )?,
                 })
             }
             ControlCommand::SubmitProposal { proposal } => {
@@ -236,6 +265,37 @@ impl ControlService {
                     payload: payload.clone(),
                 },
             ),
+            ControlCommand::ContinueController {
+                run,
+                controller_execution,
+                decision,
+            } => {
+                let expected_sequence = required_sequence(document.guard())?;
+                let execution = self.runtime_command(
+                    document,
+                    run,
+                    expected_sequence,
+                    "continue-controller",
+                    document.reason().clone(),
+                    document.evidence().to_vec(),
+                    RunCommand::DecideRepeatContinuation {
+                        repeat_execution: controller_execution.clone(),
+                        decision: decision.clone(),
+                        outcome: RepeatContinuationDecision::Approved,
+                        approved_additional_iterations: Some(1),
+                    },
+                )?;
+                ensure_accepted(&execution)?;
+                let projection = self.runtime.projection(run)?;
+                Ok(ControlResult::ControllerStatus {
+                    value: self.controller.status(
+                        run,
+                        &projection,
+                        controller_execution,
+                        document.issued_at().get(),
+                    )?,
+                })
+            }
         }
     }
 
@@ -312,6 +372,25 @@ impl ControlService {
             }
             None => None,
         };
+        if let (Some(run), Some(projection)) = (proposal.run(), live_projection.as_ref()) {
+            self.controller.assess_proposal(
+                run,
+                projection,
+                proposal,
+                document.issued_at().get(),
+            )?;
+            let controller_actor = projection.execution_authority().map(|value| value.actor());
+            if controller_actor == Some(proposal.proposer()) {
+                let old_policy = crate::ControllerPolicyDocument::from_controller_revision(&base)?;
+                let new_policy =
+                    crate::ControllerPolicyDocument::from_controller_revision(&candidate)?;
+                if old_policy.as_ref().map(|(_, value)| value.digest())
+                    != new_policy.as_ref().map(|(_, value)| value.digest())
+                {
+                    return Err(ControlError::ForbiddenProposal);
+                }
+            }
+        }
         self.authorize_revision_delta(
             document,
             AuthorityOperation::Propose,
@@ -381,6 +460,13 @@ impl ControlService {
             )?
         {
             let current = self.runtime.projection(run)?;
+            self.controller.assess_proposal_transition(
+                run,
+                &current,
+                &candidate,
+                milkdrift_persistence::ControllerAssessmentBoundary::ProposalApplication,
+                document.issued_at().get(),
+            )?;
             let plan = self
                 .reconciliation_status(run, proposal, candidate.id())?
                 .plan
@@ -426,8 +512,19 @@ impl ControlService {
         outcome: AuthorityDecision,
     ) -> Result<ControlResult, ControlError> {
         validate_proposal_guard(document.guard(), proposal_digest, proposed_revision)?;
-        self.validate_proposed_revision(proposal, proposal_digest, proposed_revision)?;
+        let candidate =
+            self.validate_proposed_revision(proposal, proposal_digest, proposed_revision)?;
         let expected_sequence = required_sequence(document.guard())?;
+        if outcome == AuthorityDecision::Approve {
+            let projection = self.runtime.projection(run)?;
+            self.controller.assess_proposal_transition(
+                run,
+                &projection,
+                &candidate,
+                milkdrift_persistence::ControllerAssessmentBoundary::ProposalApproval,
+                document.issued_at().get(),
+            )?;
+        }
         let status = self.proposal_status(run, proposal, proposed_revision)?;
         let plan = status
             .reconciliation
@@ -478,6 +575,14 @@ impl ControlService {
             &base,
             &candidate,
             Some(run),
+        )?;
+        let projection = self.runtime.projection(run)?;
+        self.controller.assess_proposal_transition(
+            run,
+            &projection,
+            &candidate,
+            milkdrift_persistence::ControllerAssessmentBoundary::ProposalApplication,
+            document.issued_at().get(),
         )?;
         let status = self.proposal_status(run, proposal, proposed_revision)?;
         let plan = status

@@ -53,11 +53,11 @@ use milkdrift_persistence::{
     ApplicationPageQuery, ApplicationReceiptArchiveRequest, ApplicationReceiptStatus,
     ArtifactReadAuthority, ArtifactReadRequest, ArtifactStore, AttemptId, CommandId,
     CorrelationKey, EventPageQuery, EvidenceId, EvidenceKind, EvidenceReference, IndexedRunState,
-    IntegrityDigest, PageSize, PeerExecutionStatus, PersistenceError, ProposalIndexEntry,
-    ProposalIndexStore, Reason, ReconciliationDecisionId, RevisionCursor, RevisionFilter,
-    RevisionPageQuery, RevisionStore, RunEventKind, RunQueryStore, RunSequence, RunSummaryCursor,
-    RunSummaryFilter, RunSummaryPageQuery, SecurityAuditEntry, SecurityAuditStore,
-    SignalDeliveryMode, SignalId, SignalTypeId, TimestampMillis, WorkerId,
+    IntegrityDigest, NodeExecutionId, PageSize, PeerExecutionStatus, PersistenceError,
+    ProposalIndexEntry, ProposalIndexStore, Reason, ReconciliationDecisionId, RepeatDecisionId,
+    RevisionCursor, RevisionFilter, RevisionPageQuery, RevisionStore, RunEventKind, RunQueryStore,
+    RunSequence, RunSummaryCursor, RunSummaryFilter, RunSummaryPageQuery, SecurityAuditEntry,
+    SecurityAuditStore, SignalDeliveryMode, SignalId, SignalTypeId, TimestampMillis, WorkerId,
 };
 use milkdrift_prompt_sequence::{PromptSequenceDocument, compile as compile_prompt_sequence};
 use milkdrift_redb_store::{RedbStore, RedbStoreConfig};
@@ -976,6 +976,9 @@ impl Owner {
             runtime.clone(),
             authority.clone(),
         ));
+        runtime
+            .install_controller_lifecycle(control.controller_lifecycle_owner())
+            .map_err(|error| error.to_string())?;
         let data = Arc::new(
             StoreInvocationDataAccess::new(
                 store.clone(),

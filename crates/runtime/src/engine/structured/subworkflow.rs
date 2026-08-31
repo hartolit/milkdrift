@@ -7,8 +7,8 @@ use crate::{RunCommand, RunCommandDocument, RuntimeError, SystemTransition};
 use milkdrift_blueprint::{Node, NodeKind, PortId, RevisionId};
 use milkdrift_persistence::{
     BoundedDetail, CommandDisposition, NodeExecutionId, NodeOutcome, PageSize, Reason,
-    RunEventEnvelope, RunEventKind, RunSequence, SubworkflowOwnership, TimestampMillis,
-    WorkspaceMutation,
+    RunEventEnvelope, RunEventKind, RunSequence, SubworkflowOwnership, SubworkflowResourceUsage,
+    TimestampMillis, WorkspaceMutation,
 };
 use milkdrift_workspace::{
     RunId, ScopeId, ScopeReference, SubworkflowId, ValueKey, WorkspaceScope, WorkspaceValueEntry,
@@ -279,6 +279,17 @@ impl RuntimeService {
             outcome: terminal.outcome(),
             outputs: terminal.outputs().to_vec(),
             cost_micros: child.resource_usage().cost_micros().clone(),
+            usage: SubworkflowResourceUsage {
+                input_units: child.resource_usage().input_units(),
+                output_units: child.resource_usage().output_units(),
+                artifact_bytes: child.resource_usage().artifact_bytes(),
+                cost_micros: child.resource_usage().cost_micros().clone(),
+                process_invocations: child.resource_usage().process_invocations(),
+                model_invocations: child.resource_usage().model_invocations(),
+                unknown_input_usage: child.resource_usage().unknown_input_usage(),
+                unknown_output_usage: child.resource_usage().unknown_output_usage(),
+                unknown_cost_usage: child.resource_usage().unknown_cost_usage(),
+            },
         });
         for child_value in terminal.outputs() {
             let source = self.projected_workspace_value(child, child_value, &[])?;

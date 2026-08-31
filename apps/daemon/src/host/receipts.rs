@@ -254,6 +254,8 @@ fn command_run_identity(command: &Command) -> Option<&str> {
         | Command::CancelRun { run_id }
         | Command::SignalRun { run_id, .. }
         | Command::ResolveWork { run_id, .. }
+        | Command::InspectController { run_id, .. }
+        | Command::ContinueController { run_id, .. }
         | Command::DecideProposal { run_id, .. }
         | Command::ApplyProposal { run_id, .. } => Some(run_id),
         Command::ImportBlueprint { .. }

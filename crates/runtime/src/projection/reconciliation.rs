@@ -30,6 +30,8 @@ pub enum ReconciliationRequestState {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ReconciliationRequestProjection {
     pub(super) reconciliation: ReconciliationId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) requested_by: Option<ActorRef>,
     pub(super) from_revision: RevisionId,
     pub(super) to_revision: RevisionId,
     pub(super) policy: ReconciliationPolicy,
@@ -43,6 +45,12 @@ impl ReconciliationRequestProjection {
     #[must_use]
     pub const fn reconciliation(&self) -> &ReconciliationId {
         &self.reconciliation
+    }
+
+    /// Actor that requested this prospective revision, when recorded.
+    #[must_use]
+    pub const fn requested_by(&self) -> Option<&ActorRef> {
+        self.requested_by.as_ref()
     }
 
     /// Exact pin against which adoption was requested.

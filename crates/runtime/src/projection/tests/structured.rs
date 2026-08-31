@@ -4,9 +4,9 @@ use super::{
     RepeatContinuationCause, RepeatContinuationDecision, RepeatContinuationRequestProjection,
     RepeatDecisionId, RepeatTerminationReason, RunEventKind, RunId, RunOutcome, RunProjection,
     RunSequence, ScopeId, SignalDeliveryMode, SignalId, SignalTypeId, SubworkflowId,
-    SubworkflowOwnership, SubworkflowProjection, TestResult, TimerId, TimestampMillis,
-    WaitCondition, WaitProjection, WaitSatisfaction, WorkspaceScope, WorkspaceValueReference,
-    created, envelope, fixture, revision, runtime_eligible,
+    SubworkflowOwnership, SubworkflowProjection, SubworkflowResourceUsage, TestResult, TimerId,
+    TimestampMillis, WaitCondition, WaitProjection, WaitSatisfaction, WorkspaceScope,
+    WorkspaceValueReference, created, envelope, fixture, revision, runtime_eligible,
 };
 
 #[test]
@@ -260,6 +260,7 @@ fn projects_structured_scopes_waits_signals_and_subworkflows() -> TestResult {
                 outcome: RunOutcome::Succeeded,
                 outputs: Vec::new(),
                 cost_micros: std::collections::BTreeMap::new(),
+                usage: Default::default(),
             },
         )?,
     ];
@@ -1255,6 +1256,7 @@ fn subworkflow_imports_require_exact_child_output_coverage() -> TestResult {
                 outcome: RunOutcome::Succeeded,
                 outputs: vec![child_a.clone(), child_b.clone()],
                 cost_micros: std::collections::BTreeMap::new(),
+                usage: Default::default(),
             },
         )?,
         envelope(
@@ -1295,5 +1297,77 @@ fn subworkflow_imports_require_exact_child_output_coverage() -> TestResult {
         },
     )?)?;
     assert!(projection.subworkflows()[&subworkflow].outputs_fully_imported());
+    Ok(())
+}
+
+#[test]
+fn controller_resource_summary_folds_exact_child_usage_once() -> TestResult {
+    let fixture = fixture("controller-resource-summary")?;
+    let parent = NodeExecutionId::new("execution-controller-resource-summary")?;
+    let subworkflow = SubworkflowId::new("subworkflow-controller-resource-summary")?;
+    let child_run = RunId::new("run-controller-resource-summary-child")?;
+    let child_scope = WorkspaceScope::subworkflow(
+        ScopeId::new("controller-resource-summary-scope")?,
+        &fixture.root,
+        subworkflow.clone(),
+    )?;
+    let currency = CurrencyCode::new("USD")?;
+    let terminal = envelope(
+        5,
+        &fixture.run,
+        RunEventKind::SubworkflowTerminal {
+            subworkflow: subworkflow.clone(),
+            child_run: child_run.clone(),
+            outcome: RunOutcome::Failed,
+            outputs: Vec::new(),
+            cost_micros: std::collections::BTreeMap::from([(currency.clone(), 17)]),
+            usage: SubworkflowResourceUsage {
+                input_units: Some(11),
+                output_units: Some(13),
+                artifact_bytes: 19,
+                cost_micros: std::collections::BTreeMap::from([(currency.clone(), 17)]),
+                process_invocations: 2,
+                model_invocations: 3,
+                unknown_input_usage: 0,
+                unknown_output_usage: 1,
+                unknown_cost_usage: 0,
+            },
+        },
+    )?;
+    let mut projection = RunProjection::replay(&[
+        created(&fixture, 1)?,
+        envelope(2, &fixture.run, RunEventKind::RunStarted)?,
+        runtime_eligible(3, &fixture, "controller", &parent, fixture.root.reference())?,
+        envelope(
+            4,
+            &fixture.run,
+            RunEventKind::SubworkflowCreated {
+                subworkflow,
+                parent_execution: parent.clone(),
+                child_run,
+                child_revision: revision('b')?,
+                scope: child_scope,
+                ownership: SubworkflowOwnership::Attached,
+                inputs: Vec::new(),
+            },
+        )?,
+        terminal.clone(),
+    ])?;
+    let usage = projection
+        .subworkflow_usage_for_execution(&parent)
+        .ok_or("controller child usage summary is absent")?;
+    assert_eq!(usage.completed_children(), 1);
+    assert_eq!(usage.failed_children(), 1);
+    assert_eq!(usage.input_units(), Some(11));
+    assert_eq!(usage.output_units(), Some(13));
+    assert_eq!(usage.artifact_bytes(), 19);
+    assert_eq!(usage.cost_micros().get(&currency), Some(&17));
+    assert_eq!(usage.process_invocations(), 2);
+    assert_eq!(usage.model_invocations(), 3);
+    assert_eq!(usage.unknown_output_usage(), 1);
+
+    let before = projection.clone();
+    assert!(projection.apply(&terminal).is_err());
+    assert_eq!(projection, before);
     Ok(())
 }

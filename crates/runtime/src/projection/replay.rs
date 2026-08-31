@@ -27,9 +27,9 @@ use super::run::{
     RunTerminalProjection, RunTerminationIntent,
 };
 use super::structured::{
-    BranchProjection, IterationProjection, JoinProjection, RepeatContinuationProjection,
-    RepeatTermination, SignalProjection, SubworkflowProjection, SubworkflowUsageSummary,
-    WaitProjection,
+    BranchProjection, ControllerAssessmentProjection, IterationProjection, JoinProjection,
+    RepeatContinuationProjection, RepeatTermination, SignalProjection, SubworkflowProjection,
+    SubworkflowUsageSummary, WaitProjection,
 };
 
 impl RunProjection {
@@ -223,6 +223,23 @@ impl RunProjection {
         execution: &NodeExecutionId,
     ) -> Option<&SubworkflowUsageSummary> {
         self.subworkflow_usage_by_execution.get(execution)
+    }
+
+    /// Latest durable controller assessment for one logical controller occurrence.
+    #[must_use]
+    pub fn controller_assessment(
+        &self,
+        execution: &NodeExecutionId,
+    ) -> Option<&ControllerAssessmentProjection> {
+        self.controller_assessments.get(execution)
+    }
+
+    /// Latest assessments for independently identified controllers in this run.
+    #[must_use]
+    pub const fn controller_assessments(
+        &self,
+    ) -> &BTreeMap<NodeExecutionId, ControllerAssessmentProjection> {
+        &self.controller_assessments
     }
 
     /// Logical executions that have not reached a closed terminal/removed state.
@@ -571,6 +588,18 @@ impl RunProjection {
     #[must_use]
     pub const fn resource_usage(&self) -> &ResourceUsage {
         &self.resource_usage
+    }
+
+    /// Prospective revision requests attributed to the frozen run actor.
+    #[must_use]
+    pub const fn run_actor_revision_requests(&self) -> u64 {
+        self.run_actor_revision_requests
+    }
+
+    /// Rejected prospective revision requests attributed to the frozen run actor.
+    #[must_use]
+    pub const fn run_actor_rejections(&self) -> u64 {
+        self.run_actor_rejections
     }
 
     /// Truthful terminal output summary, when present.

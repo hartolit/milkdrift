@@ -1331,6 +1331,7 @@ mod tests {
                 3,
                 RunEventKind::RevisionAdoptionRequested {
                     reconciliation: reconciliation.clone(),
+                    requested_by: None,
                     from_revision: old.id().clone(),
                     to_revision: new.id().clone(),
                     policy: ReconciliationPolicy::FinishCurrentThenAdopt,

@@ -89,11 +89,11 @@ pub use run::{
     RunTerminalProjection, RunTerminationIntent,
 };
 pub use structured::{
-    BranchProjection, BranchState, IterationProjection, IterationState, JoinProjection,
-    RepeatContinuationDecisionProjection, RepeatContinuationProjection,
-    RepeatContinuationRequestProjection, RepeatTermination, SignalProjection,
-    SubworkflowOutputImport, SubworkflowProjection, SubworkflowState, WaitCancellationProjection,
-    WaitProjection,
+    BranchProjection, BranchState, ControllerAssessmentProjection, IterationProjection,
+    IterationState, JoinProjection, RepeatContinuationDecisionProjection,
+    RepeatContinuationProjection, RepeatContinuationRequestProjection, RepeatTermination,
+    SignalProjection, SubworkflowOutputImport, SubworkflowProjection, SubworkflowState,
+    WaitCancellationProjection, WaitProjection,
 };
 
 #[cfg(test)]

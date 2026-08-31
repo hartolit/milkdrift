@@ -19,17 +19,17 @@ restart recovery, and historical provenance all use the existing daemon/control/
 headless command/read model is now the stable prerequisite on which the first graphical client can
 be designed.
 
-Before graphical-client implementation begins, the remaining pre-UI closure sequence must add the
-daemon-owned bounded controller lifecycle, prove real process/model interoperability, collect the
-required mutation/performance/operational evidence, finish public API and agent documentation
-contraction, and pass an independent closure review. Those passes must reuse the explicit authority
-boundary and may not introduce an autonomous privilege path.
+Before graphical-client implementation begins, the remaining pre-UI closure sequence must prove
+real process/model interoperability, collect the required mutation/performance/operational
+evidence, finish public API and agent documentation contraction, and pass an independent closure
+review. Those passes must reuse the explicit authority boundary and may not introduce an autonomous
+privilege path. The daemon-owned bounded controller lifecycle is complete.
 
 1. **Iced control center** — A thin native canvas over `milkdrift-control-client` with revision
    history, a virtualized timeline, peer/catalog provenance, inspector, schema-1 layout documents,
    live controls, and authenticated-cursor reconnect/resume behavior. It must remain a client of the
    existing protocol-2.1 command/read plane and introduce no workflow semantics.
 2. **Optional distributed dogfood and continuous supervision** — An operator-configured two-daemon
-   prompt stage, explicit checkpoint capability, and daemon-owned bounded controller lifecycle for
-   authorized AI supervision; these must reuse current peer, proposal, authority, and repeat
-   boundaries rather than introduce autonomous privilege.
+   prompt stage and explicit checkpoint capability for authorized AI supervision; these must reuse
+   the current controller, peer, proposal, authority, and repeat boundaries rather than introduce
+   autonomous privilege.

@@ -7,7 +7,7 @@
 use std::{
     collections::BTreeMap,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
         atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
     },
 };
@@ -32,8 +32,8 @@ use crate::query::{
     RUN_PROJECTION_SNAPSHOT_SCHEMA_V4, load_bounded_history, project_from_latest_snapshot,
 };
 use crate::{
-    BoundaryClock, CommandAuthorityClaim, IdGenerator, RetryPolicy, RunCommand, RunCommandDocument,
-    RuntimeError, SchedulerLimits, TaskExecutor,
+    BoundaryClock, CommandAuthorityClaim, ControllerLifecycle, IdGenerator, RetryPolicy,
+    RunCommand, RunCommandDocument, RuntimeError, SchedulerLimits, TaskExecutor,
 };
 
 const STRUCTURED_EVENT_SOFT_LIMIT: usize = milkdrift_persistence::MAX_EVENTS_PER_COMMIT - 192;
@@ -259,6 +259,7 @@ pub struct RuntimeService {
     effect_claim_gate: Mutex<()>,
     structured_scan_budget_active: AtomicBool,
     structured_scan_budget: AtomicUsize,
+    controller_lifecycle: RwLock<Option<Arc<dyn ControllerLifecycle>>>,
 }
 
 mod authority;
@@ -423,7 +424,44 @@ impl RuntimeService {
             effect_claim_gate: Mutex::new(()),
             structured_scan_budget_active: AtomicBool::new(false),
             structured_scan_budget: AtomicUsize::new(0),
+            controller_lifecycle: RwLock::new(None),
         })
+    }
+
+    /// Installs the single control-owned controller lifecycle before admission opens.
+    ///
+    /// Installation is intentionally one-shot. Marked controller revisions fail
+    /// closed when no owner is installed, while ordinary repeats remain unchanged.
+    pub fn install_controller_lifecycle(
+        &self,
+        lifecycle: Arc<dyn ControllerLifecycle>,
+    ) -> Result<(), RuntimeError> {
+        if self.is_accepting_admission() {
+            return Err(RuntimeError::Scheduling(
+                "controller lifecycle must be installed while admission is closed".to_owned(),
+            ));
+        }
+        let mut installed = self.controller_lifecycle.write().map_err(|_error| {
+            RuntimeError::Scheduling("controller lifecycle lock is poisoned".to_owned())
+        })?;
+        if installed.is_some() {
+            return Err(RuntimeError::Scheduling(
+                "controller lifecycle is already installed".to_owned(),
+            ));
+        }
+        *installed = Some(lifecycle);
+        Ok(())
+    }
+
+    pub(super) fn controller_lifecycle(
+        &self,
+    ) -> Result<Option<Arc<dyn ControllerLifecycle>>, RuntimeError> {
+        self.controller_lifecycle
+            .read()
+            .map(|value| value.clone())
+            .map_err(|_error| {
+                RuntimeError::Scheduling("controller lifecycle lock is poisoned".to_owned())
+            })
     }
 
     fn recover_startup_to_completion(&self) -> Result<(), RuntimeError> {

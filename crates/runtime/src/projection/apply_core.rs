@@ -65,6 +65,7 @@ impl RunProjection {
             | RunEventKind::BranchCancellationRequested { .. }
             | RunEventKind::BranchTerminal { .. }
             | RunEventKind::JoinSatisfied { .. }
+            | RunEventKind::ControllerAssessmentRecorded { .. }
             | RunEventKind::RepeatIterationCreated { .. }
             | RunEventKind::RepeatConditionRecorded { .. }
             | RunEventKind::RepeatContinuationRequested { .. }

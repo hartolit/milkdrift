@@ -9,13 +9,33 @@ Startup is deliberately fail-closed and ordered:
 1. Validate daemon configuration, normalized paths, credential references, grants, and bounds before opening storage.
 2. Refuse a data root containing legacy `control-state-v1.json`, `peer-executions-v1`, or `peer-artifacts-v1`. This release neither imports nor ignores old sidecar/prototype idempotency and artifact authority; move to a fresh data root or perform an explicitly reviewed offline conversion.
 3. Open exact-current redb physical schema 8/internal document format 11 and the immutable artifact root.
-4. Open runtime admission closed and recover active runtime state.
+4. Open runtime admission closed, construct the shared control service, install its single
+   controller lifecycle owner, and only then recover active runtime state.
 5. Validate bounded application-receipt and layout reads; corrupt or unsupported records fail startup.
 6. Register and health-check workflow-control, process, and model adapters.
 7. Build peer relationships and recover owned peer work when enabled.
 8. Start bounded effect workers, resume runtime admission, and then report the API ready.
 
 Until the final step, readiness returns unavailable and no external command is admitted. Axum owns sockets and streaming only; redb, runtime, control, layout, proposal, and artifact work crosses the bounded owner queue. Queue saturation returns overload instead of blocking an async reactor task or allocating an unbounded backlog.
+
+## Bounded controllers
+
+A controller is an ordinary immutable revision containing the validated
+`org.milkdrift/controller-policy` schema-1 extension and an explicit pinned `Repeat`. The daemon
+does not scan for work in a separate controller loop. Runtime scheduling calls the installed
+`ControllerLifecycleOwner` before activation, each cycle, and checkpoint continuation; the
+assessment and any admitted iteration are committed together. A marked controller cannot run if
+the owner was not installed or its policy version/digest/wrapper binding is invalid.
+
+Use `milkdrift-cli controller status RUN CONTROLLER_EXECUTION` to inspect the exact policy,
+progress/limits, last durable assessment, checkpoint or bound, and eligibility. Continue a pending
+checkpoint with `milkdrift-cli controller continue RUN CONTROLLER_EXECUTION DECISION_ID`; this is a
+confirmed mutating command using the configured actor's normal approval authority. Restart does not
+approve a checkpoint. A stale/duplicate different decision, grant revocation, elapsed/resource
+bound, or terminal controller prevents continuation. Reaching a bound deterministically fails the
+controller repeat without retrying a provider. Raising a bound requires an authorized immutable
+revision and prospective reconciliation; the controller actor cannot widen or remove its own
+policy.
 
 ## Application receipts and retention
 

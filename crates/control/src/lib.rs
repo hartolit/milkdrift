@@ -22,8 +22,10 @@ pub use command::{
     ControlCommandDocument, ControlResult, OptimisticGuard,
 };
 pub use controller::{
-    ControllerBlueprintSpec, ControllerBound, ControllerLimits, ControllerProgress, ControllerStop,
-    build_controller_blueprint,
+    CONTROLLER_POLICY_SCHEMA_VERSION_V1, ControllerBlueprintSpec, ControllerBound,
+    ControllerLifecycleOwner, ControllerLimits, ControllerOperationRequirements, ControllerPolicy,
+    ControllerPolicyDocument, ControllerProgress, ControllerStop, ControllerStopBehavior,
+    ControllerWrapperBinding, UnknownUsagePolicy, build_controller_blueprint,
 };
 pub use document::{
     ClaimedStopCondition, MAX_PROPOSAL_DOCUMENT_BYTES, PROPOSAL_SCHEMA_VERSION_V1,
@@ -31,15 +33,16 @@ pub use document::{
     WorkflowProposal, WorkflowProposalDocument, workflow_proposal_structured_output,
 };
 pub use error::ControlError;
-pub use identity::{ControlId, ProposalDigest, ProposalId};
+pub use identity::{ControlId, ControllerId, ControllerPolicyDigest, ProposalDigest, ProposalId};
 pub use policy::{
     CONTROL_RISK_POLICY_ID, CONTROL_RISK_POLICY_VERSION_V1, PolicyClassification, RiskClass,
     RiskConstraint, classify_proposal,
 };
 pub use preset::{AuthorityPreset, GrantTemplate};
 pub use read::{
-    AttemptInspection, NodeExecutionRead, ProposalStatusRead, ProposalSubmission,
-    ReconciliationStatusRead, RevisionInspection, RunInspection, TimelinePage,
+    AttemptInspection, ControllerLifecycleState, ControllerStatusRead, NodeExecutionRead,
+    ProposalStatusRead, ProposalSubmission, ReconciliationStatusRead, RevisionInspection,
+    RunInspection, TimelinePage,
 };
 pub use service::ControlService;
 
@@ -57,3 +60,7 @@ pub const WORKFLOW_APPLY_OPERATION: &str = "workflow.apply_proposal";
 pub const WORKFLOW_RETRY_OPERATION: &str = "workflow.retry";
 /// Namespaced capability operation for delivering a signal.
 pub const WORKFLOW_SIGNAL_OPERATION: &str = "workflow.signal";
+/// Namespaced capability operation for controller lifecycle inspection.
+pub const CONTROLLER_INSPECT_OPERATION: &str = "controller.inspect";
+/// Namespaced capability operation for authorized checkpoint continuation.
+pub const CONTROLLER_CONTINUE_OPERATION: &str = "controller.continue";

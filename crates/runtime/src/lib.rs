@@ -10,6 +10,7 @@
 mod boundary;
 mod command;
 mod context;
+mod controller;
 mod engine;
 mod error;
 mod executor;
@@ -32,6 +33,10 @@ pub use context::{
     ContextCandidateSource, ContextSourceRequest, DurableContextCandidateSource,
     materialize_selected_context, persist_context_manifest, read_context_manifest,
 };
+pub use controller::{
+    CONTROLLER_POLICY_EXTENSION_KEY, ControllerAssessment, ControllerAssessmentContext,
+    ControllerLifecycle,
+};
 pub use engine::{
     CommandExecution, EffectExecutionResult, EffectTickResult, RecoveryResult, RuntimeConfig,
     RuntimeHealth, RuntimeService, RuntimeStartupState, RuntimeStore, SchedulerTickResult,
@@ -44,10 +49,10 @@ pub use executor::{
 };
 pub use projection::{
     AttemptState, AttemptTerminal, BranchProjection, BranchState, CapabilityResolution,
-    DeterministicNodeTerminalProjection, ExternalOutcomeObligation, IterationProjection,
-    IterationState, JoinProjection, LateTerminalEvidence, LeaseProjection, LeaseState,
-    NodeAttemptProjection, NodeExecutionCancellationProjection, NodeExecutionProjection,
-    NodeExecutionState, ProgressObservation, PublishedNodeOutput,
+    ControllerAssessmentProjection, DeterministicNodeTerminalProjection, ExternalOutcomeObligation,
+    IterationProjection, IterationState, JoinProjection, LateTerminalEvidence, LeaseProjection,
+    LeaseState, NodeAttemptProjection, NodeExecutionCancellationProjection,
+    NodeExecutionProjection, NodeExecutionState, ProgressObservation, PublishedNodeOutput,
     ReconciliationCancellationProjection, ReconciliationDecision, ReconciliationPlanProjection,
     ReconciliationProjection, ReconciliationRemediationProjection, ReconciliationRequestProjection,
     ReconciliationRequestState, RecoveryDecision, RecoveryObservation, RecoveryProjection,

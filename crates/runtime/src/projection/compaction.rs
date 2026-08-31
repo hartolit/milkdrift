@@ -230,6 +230,7 @@ impl RunProjection {
             self.node_executions
                 .get(execution)
                 .is_some_and(|parent| !parent.is_completed())
+                || self.controller_assessments.contains_key(execution)
         });
     }
 
@@ -404,8 +405,9 @@ impl RunProjection {
             });
         self.eligible_executions
             .retain(|identity| !retired.contains(identity));
-        self.subworkflow_usage_by_execution
-            .retain(|identity, _| !retired.contains(identity));
+        self.subworkflow_usage_by_execution.retain(|identity, _| {
+            !retired.contains(identity) || self.controller_assessments.contains_key(identity)
+        });
         Ok(())
     }
 
@@ -612,6 +614,14 @@ impl RunProjection {
                 self.node_executions.contains_key(execution)
                     || self.settled_node_executions.contains_key(execution)
             });
+        self.controller_assessments.retain(|execution, _| {
+            self.node_executions.contains_key(execution)
+                || self.settled_node_executions.contains_key(execution)
+        });
+        self.subworkflow_usage_by_execution.retain(|execution, _| {
+            self.node_executions.contains_key(execution)
+                || self.controller_assessments.contains_key(execution)
+        });
     }
 
     fn compact_scopes(&mut self) {

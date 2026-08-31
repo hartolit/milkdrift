@@ -136,6 +136,55 @@ pub enum RepeatContinuationCause {
         /// Exact currency ledger whose configured ceiling was exhausted.
         currency: CurrencyCode,
     },
+    /// A typed controller policy reached its exact human-checkpoint interval.
+    ControllerCheckpoint {
+        /// Stable digest-derived checkpoint identity.
+        checkpoint_id: String,
+        /// Number of controller cycles accepted before this checkpoint.
+        completed_cycles: u32,
+    },
+}
+
+/// Runtime boundary at which the ordinary controller lifecycle was assessed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControllerAssessmentBoundary {
+    /// Controller activation before its first cycle is admitted.
+    Activation,
+    /// Entry to a later explicit repeat cycle.
+    CycleEntry,
+    /// Re-evaluation immediately before an authorized checkpoint continuation.
+    CheckpointContinuation,
+    /// Validation of a controller-produced proposal before persistence.
+    ProposalAcceptance,
+    /// Re-evaluation before proposal approval.
+    ProposalApproval,
+    /// Re-evaluation before proposal application.
+    ProposalApplication,
+}
+
+/// Durable closed result of one controller-policy assessment.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+pub enum ControllerAssessmentOutcome {
+    /// The assessed boundary may proceed.
+    Continue,
+    /// An exact human checkpoint must be decided through ordinary authority.
+    HumanCheckpoint {
+        /// Stable digest-derived checkpoint identity.
+        checkpoint_id: String,
+    },
+    /// A hard immutable controller ceiling prevents the boundary.
+    BoundReached {
+        /// Stable snake-case controller dimension.
+        bound: String,
+        /// Exact accounted value, absent only for fail-closed unknown usage.
+        current: Option<u64>,
+        /// Immutable configured limit.
+        limit: u64,
+        /// Whether missing authoritative usage caused the fail-closed result.
+        unknown_usage: bool,
+    },
 }
 
 /// Durable signal consumption shape.
@@ -357,6 +406,36 @@ pub struct AttemptUsage {
     pub duration_ms: Option<u64>,
     /// Exact monetary observation when supplied.
     pub cost: Option<MonetaryUsage>,
+}
+
+/// Compact exact child-run accounting folded into its structured parent.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SubworkflowResourceUsage {
+    /// Sum of observed input units, absent when no child observation exists.
+    pub input_units: Option<u64>,
+    /// Sum of observed output units, absent when no child observation exists.
+    pub output_units: Option<u64>,
+    /// Logical artifact bytes published by the child run.
+    pub artifact_bytes: u64,
+    /// Exact cost totals grouped by currency.
+    pub cost_micros: BTreeMap<CurrencyCode, u64>,
+    /// Exact process-category attempts admitted by the child.
+    pub process_invocations: u64,
+    /// Exact model-category attempts admitted by the child.
+    pub model_invocations: u64,
+    /// Metered attempts missing input-unit observations.
+    pub unknown_input_usage: u64,
+    /// Metered attempts missing output-unit observations.
+    pub unknown_output_usage: u64,
+    /// Metered attempts missing cost observations.
+    pub unknown_cost_usage: u64,
+}
+
+impl SubworkflowResourceUsage {
+    fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
 }
 
 /// Closed schema-v1 run facts. Variants describe observations, never requested actions.
@@ -786,6 +865,31 @@ pub enum RunEventKind {
         /// Branches retained instead of being cancelled after early satisfaction.
         retained_branches: Vec<BranchId>,
     },
+    /// The canonical controller lifecycle assessed one autonomous boundary.
+    ControllerAssessmentRecorded {
+        /// Stable controller identity from the immutable policy document.
+        controller_id: String,
+        /// Digest of every executable controller-policy field.
+        policy_digest: String,
+        /// Immutable revision governing this controller execution.
+        governing_revision: RevisionId,
+        /// Exact repeat node owned by the policy.
+        controller_node: NodeId,
+        /// Exact logical repeat occurrence.
+        controller_execution: NodeExecutionId,
+        /// Stable identity derived from controller, execution, boundary, and cycle facts.
+        assessment_id: String,
+        /// Stable cycle identity when a cycle is being considered.
+        cycle_id: Option<String>,
+        /// Boundary assessed by production code.
+        boundary: ControllerAssessmentBoundary,
+        /// Last authoritative parent sequence included in the assessment input.
+        through_sequence: RunSequence,
+        /// Exact typed progress snapshot encoded by the controller-policy owner.
+        progress: BoundedJson,
+        /// Closed decision consumed by deterministic runtime control flow.
+        outcome: ControllerAssessmentOutcome,
+    },
     /// One isolated repeat iteration and workspace scope was created.
     RepeatIterationCreated {
         /// Owning repeat execution.
@@ -956,6 +1060,9 @@ pub enum RunEventKind {
         /// Child cost totals folded into the parent's bounded repeat budget summary.
         #[serde(default)]
         cost_micros: BTreeMap<CurrencyCode, u64>,
+        /// Complete controller-relevant child usage; legacy cost remains above for v1 readers.
+        #[serde(default, skip_serializing_if = "SubworkflowResourceUsage::is_empty")]
+        usage: SubworkflowResourceUsage,
     },
     /// One exact child-run output was imported into an immutable parent value.
     SubworkflowOutputImported {
@@ -979,6 +1086,11 @@ pub enum RunEventKind {
     RevisionAdoptionRequested {
         /// Reconciliation request identity.
         reconciliation: ReconciliationId,
+        /// Actor that produced the immutable prospective revision request.
+        ///
+        /// Absent only in histories written before controller attribution existed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requested_by: Option<ActorRef>,
         /// Exact old revision.
         from_revision: RevisionId,
         /// Exact requested new revision.
@@ -1303,6 +1415,14 @@ impl RunEventKind {
                         observed_micros,
                         ..
                     } => *maximum_micros > 0 && observed_micros >= maximum_micros,
+                    RepeatContinuationCause::ControllerCheckpoint {
+                        checkpoint_id,
+                        completed_cycles,
+                    } => {
+                        !checkpoint_id.is_empty()
+                            && checkpoint_id.len() <= 192
+                            && *completed_cycles > 0
+                    }
                 };
                 if !limits_valid || !cause_valid {
                     return Err(PersistenceError::InvalidDocument(format!(
@@ -1329,6 +1449,46 @@ impl RunEventKind {
                     return Err(PersistenceError::InvalidDocument(format!(
                         "repeat approval requires 1..={MAX_REPEAT_CONTINUATION_ADDITIONAL_ITERATIONS} additional iterations and rejection forbids them"
                     )));
+                }
+            }
+            Self::ControllerAssessmentRecorded {
+                controller_id,
+                policy_digest,
+                assessment_id,
+                cycle_id,
+                through_sequence: _,
+                outcome,
+                ..
+            } => {
+                let bounded_identity = |value: &str| !value.is_empty() && value.len() <= 192;
+                let outcome_valid = match outcome {
+                    ControllerAssessmentOutcome::Continue => true,
+                    ControllerAssessmentOutcome::HumanCheckpoint { checkpoint_id } => {
+                        bounded_identity(checkpoint_id)
+                    }
+                    ControllerAssessmentOutcome::BoundReached {
+                        bound,
+                        current,
+                        limit,
+                        unknown_usage,
+                    } => {
+                        bounded_identity(bound)
+                            && *limit > 0
+                            && (*unknown_usage == current.is_none())
+                    }
+                };
+                if !bounded_identity(controller_id)
+                    || !bounded_identity(policy_digest)
+                    || !bounded_identity(assessment_id)
+                    || cycle_id
+                        .as_deref()
+                        .is_some_and(|value| !bounded_identity(value))
+                    || !outcome_valid
+                {
+                    return Err(PersistenceError::InvalidDocument(
+                        "controller assessment identities, sequence, or outcome are invalid"
+                            .to_owned(),
+                    ));
                 }
             }
             Self::NodeScheduled {

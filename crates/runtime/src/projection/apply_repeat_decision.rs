@@ -78,8 +78,13 @@ impl RunProjection {
                 let budget_frontier = match pending_request.cause {
                     RepeatContinuationCause::DurationBudget { .. }
                     | RepeatContinuationCause::CostBudget { .. } => Some(frontier.iteration_number),
-                    RepeatContinuationCause::IterationLimit => None,
+                    RepeatContinuationCause::IterationLimit
+                    | RepeatContinuationCause::ControllerCheckpoint { .. } => None,
                 };
+                let controller_checkpoint = matches!(
+                    pending_request.cause,
+                    RepeatContinuationCause::ControllerCheckpoint { .. }
+                );
                 let decision_projection = RepeatContinuationDecisionProjection {
                     decision: decision.clone(),
                     actor: actor.clone(),
@@ -94,23 +99,30 @@ impl RunProjection {
                     .get_mut(repeat_execution)
                     .ok_or_else(|| invalid_at(event, "unknown repeat continuation"))?;
                 if let Some(additional) = approved_additional_iterations {
-                    continuation.effective_iteration_limit = continuation
-                        .effective_iteration_limit
-                        .checked_add(*additional)
-                        .filter(|limit| *limit <= MAX_REPEAT_EFFECTIVE_ITERATIONS)
-                        .ok_or_else(|| {
-                            invalid_at(event, "repeat effective iteration limit overflow")
-                        })?;
-                    continuation.budget_override_iteration_limit = budget_frontier
-                        .map(|frontier| {
-                            frontier
-                                .checked_add(*additional)
-                                .filter(|limit| *limit <= MAX_REPEAT_EFFECTIVE_ITERATIONS)
-                                .ok_or_else(|| {
-                                    invalid_at(event, "repeat budget override frontier overflow")
-                                })
-                        })
-                        .transpose()?;
+                    if controller_checkpoint {
+                        continuation.budget_override_iteration_limit = None;
+                    } else {
+                        continuation.effective_iteration_limit = continuation
+                            .effective_iteration_limit
+                            .checked_add(*additional)
+                            .filter(|limit| *limit <= MAX_REPEAT_EFFECTIVE_ITERATIONS)
+                            .ok_or_else(|| {
+                                invalid_at(event, "repeat effective iteration limit overflow")
+                            })?;
+                        continuation.budget_override_iteration_limit = budget_frontier
+                            .map(|frontier| {
+                                frontier
+                                    .checked_add(*additional)
+                                    .filter(|limit| *limit <= MAX_REPEAT_EFFECTIVE_ITERATIONS)
+                                    .ok_or_else(|| {
+                                        invalid_at(
+                                            event,
+                                            "repeat budget override frontier overflow",
+                                        )
+                                    })
+                            })
+                            .transpose()?;
+                    }
                 } else {
                     continuation.rejected = true;
                     continuation.budget_override_iteration_limit = None;
@@ -149,6 +161,9 @@ impl RunProjection {
                                 RepeatContinuationCause::DurationBudget { .. }
                                 | RepeatContinuationCause::CostBudget { .. } => {
                                     RepeatTerminationReason::BudgetExhausted
+                                }
+                                RepeatContinuationCause::ControllerCheckpoint { .. } => {
+                                    RepeatTerminationReason::MaximumIterations
                                 }
                             };
                             *termination != expected

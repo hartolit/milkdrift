@@ -15,8 +15,8 @@ use milkdrift_persistence::{
     ReconciliationItem, ReconciliationPlanId, ReconciliationPolicy, RecoveryClassification,
     RepeatContinuationCause, RepeatContinuationDecision, RepeatDecisionId, RepeatTerminationReason,
     RunEventEnvelope, RunEventKind, RunOutcome, RunSequence, SignalDeliveryMode, SignalId,
-    SignalTypeId, SubworkflowOwnership, TimerId, TimestampMillis, WaitCondition, WaitSatisfaction,
-    WorkerId,
+    SignalTypeId, SubworkflowOwnership, SubworkflowResourceUsage, TimerId, TimestampMillis,
+    WaitCondition, WaitSatisfaction, WorkerId,
 };
 use milkdrift_workspace::{
     BranchId, IterationId, RunId, ScopeId, ScopeReference, SubworkflowId, WorkspaceBudget,

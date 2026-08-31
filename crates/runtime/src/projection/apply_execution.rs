@@ -1,4 +1,4 @@
-use milkdrift_capability::{IdempotencyBehavior, SideEffectClass};
+use milkdrift_capability::{CapabilityCategory, IdempotencyBehavior, SideEffectClass};
 use milkdrift_persistence::{NodeExecutionMode, RunEventEnvelope, RunEventKind};
 
 use crate::RuntimeError;
@@ -251,6 +251,56 @@ impl RunProjection {
                     snapshot: snapshot.clone(),
                     authorization: resolution_authorization,
                 });
+                let (count_process, count_model, controller_metered) = match snapshot.category() {
+                    Some(CapabilityCategory::Model) => (false, true, true),
+                    Some(CapabilityCategory::Process) => (true, false, true),
+                    Some(
+                        CapabilityCategory::Tool
+                        | CapabilityCategory::Human
+                        | CapabilityCategory::Peer
+                        | CapabilityCategory::Custom(_),
+                    ) => (false, false, false),
+                    // Schema-v1 snapshots written before exact category freezing retain
+                    // their original digest. Count both resource-bearing categories so
+                    // controller replay cannot turn missing historical classification
+                    // into a bypass.
+                    None => (true, true, true),
+                };
+                if count_process {
+                    self.resource_usage.process_invocations = self
+                        .resource_usage
+                        .process_invocations
+                        .checked_add(1)
+                        .ok_or_else(|| {
+                            invalid_at(event, "controller process invocation accounting overflow")
+                        })?;
+                }
+                if count_model {
+                    self.resource_usage.model_invocations = self
+                        .resource_usage
+                        .model_invocations
+                        .checked_add(1)
+                        .ok_or_else(|| {
+                            invalid_at(event, "controller model invocation accounting overflow")
+                        })?;
+                }
+                if controller_metered {
+                    self.resource_usage.unknown_input_usage = self
+                        .resource_usage
+                        .unknown_input_usage
+                        .checked_add(1)
+                        .ok_or_else(|| invalid_at(event, "unknown input accounting overflow"))?;
+                    self.resource_usage.unknown_output_usage = self
+                        .resource_usage
+                        .unknown_output_usage
+                        .checked_add(1)
+                        .ok_or_else(|| invalid_at(event, "unknown output accounting overflow"))?;
+                    self.resource_usage.unknown_cost_usage = self
+                        .resource_usage
+                        .unknown_cost_usage
+                        .checked_add(1)
+                        .ok_or_else(|| invalid_at(event, "unknown cost accounting overflow"))?;
+                }
             }
             RunEventKind::SideEffectClassified {
                 attempt,

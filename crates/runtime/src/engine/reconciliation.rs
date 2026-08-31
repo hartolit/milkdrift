@@ -7,6 +7,7 @@ use super::support::{
 use crate::projection::RunProjection;
 use crate::query::fold_history_from;
 use crate::{ExternalWorkAction, RunCommandDocument, RuntimeError, plan_reconciliation};
+use milkdrift_authority::ActorRef;
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_persistence::{
     AttemptId, AuthorityDecision, ReconciliationAction, ReconciliationClassification,
@@ -18,6 +19,7 @@ impl RuntimeService {
     pub(super) fn plan_revision_adoption(
         &self,
         projection: &RunProjection,
+        requested_by: &ActorRef,
         reconciliation: &milkdrift_persistence::ReconciliationId,
         requested_revision: &RevisionId,
         policy: milkdrift_persistence::ReconciliationPolicy,
@@ -49,6 +51,7 @@ impl RuntimeService {
         )?;
         let mut result = CommandPlan::one(RunEventKind::RevisionAdoptionRequested {
             reconciliation: reconciliation.clone(),
+            requested_by: Some(requested_by.clone()),
             from_revision: old.id().clone(),
             to_revision: new.id().clone(),
             policy,

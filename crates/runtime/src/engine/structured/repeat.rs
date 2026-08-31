@@ -5,12 +5,15 @@ use super::super::support::{
     RepeatBudgetStatus, cancellation_reason_for_execution, run_drain_reason,
 };
 use crate::projection::{IterationState, RunProjection, SubworkflowState};
-use crate::{RuntimeError, evaluate_condition};
+use crate::{
+    CONTROLLER_POLICY_EXTENSION_KEY, ControllerAssessmentContext, RuntimeError, evaluate_condition,
+};
 use milkdrift_blueprint::{Node, RepeatTermination};
 use milkdrift_persistence::{
-    BoundedDetail, CurrencyCode, MAX_REPEAT_CONTINUATION_DECISIONS, NodeExecutionId, NodeOutcome,
-    Reason, RepeatContinuationCause, RepeatTerminationReason, RunEventEnvelope, RunEventKind,
-    RunOutcome, TimestampMillis, WorkspaceMutation,
+    BoundedDetail, ControllerAssessmentBoundary, ControllerAssessmentOutcome, CurrencyCode,
+    MAX_REPEAT_CONTINUATION_DECISIONS, NodeExecutionId, NodeOutcome, Reason,
+    RepeatContinuationCause, RepeatTerminationReason, RunEventEnvelope, RunEventKind, RunOutcome,
+    TimestampMillis, WorkspaceMutation,
 };
 use milkdrift_workspace::{IterationId, RunId, ScopeReference, WorkspaceScope};
 
@@ -120,6 +123,9 @@ impl RuntimeService {
                         RepeatContinuationCause::DurationBudget { .. }
                         | RepeatContinuationCause::CostBudget { .. } => {
                             RepeatTerminationReason::BudgetExhausted
+                        }
+                        RepeatContinuationCause::ControllerCheckpoint { .. } => {
+                            RepeatTerminationReason::MaximumIterations
                         }
                     },
                 );
@@ -719,6 +725,9 @@ impl RuntimeService {
                 | RepeatContinuationCause::CostBudget { .. } => {
                     RepeatTerminationReason::BudgetExhausted
                 }
+                RepeatContinuationCause::ControllerCheckpoint { .. } => {
+                    RepeatTerminationReason::MaximumIterations
+                }
             };
             self.push_projected_event(
                 run,
@@ -773,6 +782,80 @@ impl RuntimeService {
         config: &milkdrift_blueprint::RepeatConfig,
         iteration_number: u32,
     ) -> Result<(), RuntimeError> {
+        match self.assess_controller_cycle(
+            run,
+            occurred_at,
+            projection,
+            events,
+            node,
+            execution,
+            iteration_number,
+        )? {
+            ControllerCycleGate::Continue => {}
+            ControllerCycleGate::HumanCheckpoint { checkpoint_id } => {
+                let frontier = projection
+                    .iterations()
+                    .values()
+                    .filter(|iteration| iteration.repeat_execution() == execution)
+                    .max_by_key(|iteration| iteration.iteration_number())
+                    .filter(|iteration| {
+                        iteration.state() == IterationState::ConditionRecorded(true)
+                    })
+                    .ok_or_else(|| {
+                        RuntimeError::InvalidHistory(
+                            "controller checkpoint has no completed true-condition frontier"
+                                .to_owned(),
+                        )
+                    })?
+                    .iteration()
+                    .clone();
+                return self.request_repeat_continuation(
+                    run,
+                    occurred_at,
+                    projection,
+                    events,
+                    node,
+                    execution,
+                    &frontier,
+                    config,
+                    RepeatContinuationCause::ControllerCheckpoint {
+                        checkpoint_id,
+                        completed_cycles: iteration_number.saturating_sub(1),
+                    },
+                );
+            }
+            ControllerCycleGate::BoundReached { bound } => {
+                let last_iteration = projection
+                    .iterations()
+                    .values()
+                    .filter(|iteration| iteration.repeat_execution() == execution)
+                    .max_by_key(|iteration| iteration.iteration_number())
+                    .map(|iteration| iteration.iteration().clone());
+                self.push_projected_event(
+                    run,
+                    occurred_at,
+                    projection,
+                    events,
+                    RunEventKind::RepeatTerminated {
+                        repeat_execution: execution.clone(),
+                        termination: RepeatTerminationReason::BudgetExhausted,
+                        last_iteration,
+                    },
+                )?;
+                return self.complete_deterministic_with_outcome(
+                    run,
+                    occurred_at,
+                    projection,
+                    events,
+                    node,
+                    execution,
+                    NodeOutcome::Failed,
+                    Some(BoundedDetail::new(format!(
+                        "controller policy reached immutable {bound} bound"
+                    ))?),
+                );
+            }
+        }
         let parent = projection.scopes().get(scope_reference).ok_or_else(|| {
             RuntimeError::InvalidHistory("repeat execution scope is absent".to_owned())
         })?;
@@ -805,6 +888,75 @@ impl RuntimeService {
             &iteration_scope,
             config.body(),
         )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn assess_controller_cycle(
+        &self,
+        run: &RunId,
+        occurred_at: TimestampMillis,
+        projection: &mut RunProjection,
+        events: &mut Vec<RunEventEnvelope>,
+        node: &Node,
+        execution: &NodeExecutionId,
+        iteration_number: u32,
+    ) -> Result<ControllerCycleGate, RuntimeError> {
+        let revision = self.revision_for_execution(projection, execution)?;
+        let marked = revision
+            .semantic()
+            .metadata()
+            .extensions()
+            .keys()
+            .any(|key| key.as_str() == CONTROLLER_POLICY_EXTENSION_KEY);
+        let lifecycle = self.controller_lifecycle()?;
+        if !marked && lifecycle.is_none() {
+            return Ok(ControllerCycleGate::Continue);
+        }
+        let Some(lifecycle) = lifecycle else {
+            return Err(RuntimeError::Scheduling(
+                "controller policy is marked but no lifecycle owner is installed".to_owned(),
+            ));
+        };
+        let boundary =
+            if iteration_number == 1 && projection.controller_assessment(execution).is_none() {
+                ControllerAssessmentBoundary::Activation
+            } else {
+                ControllerAssessmentBoundary::CycleEntry
+            };
+        let assessment = {
+            let context = ControllerAssessmentContext {
+                run,
+                revision: &revision,
+                node,
+                execution,
+                projection,
+                observed_at: occurred_at,
+                boundary,
+                next_cycle: Some(iteration_number),
+            };
+            lifecycle.assess(&context)?.map(|assessment| {
+                let outcome = assessment.outcome.clone();
+                (assessment.into_event(&context), outcome)
+            })
+        };
+        let Some((event, outcome)) = assessment else {
+            if marked {
+                return Err(RuntimeError::InvalidHistory(
+                    "marked controller policy was not recognized by its lifecycle owner".to_owned(),
+                ));
+            }
+            return Ok(ControllerCycleGate::Continue);
+        };
+        self.push_projected_event(run, occurred_at, projection, events, event)?;
+        Ok(match outcome {
+            ControllerAssessmentOutcome::Continue => ControllerCycleGate::Continue,
+            ControllerAssessmentOutcome::HumanCheckpoint { checkpoint_id } => {
+                ControllerCycleGate::HumanCheckpoint { checkpoint_id }
+            }
+            ControllerAssessmentOutcome::BoundReached { bound, .. } => {
+                ControllerCycleGate::BoundReached { bound }
+            }
+        })
     }
 
     fn repeat_budget_exhaustion(
@@ -920,4 +1072,10 @@ impl RuntimeService {
         }
         Ok(())
     }
+}
+
+enum ControllerCycleGate {
+    Continue,
+    HumanCheckpoint { checkpoint_id: String },
+    BoundReached { bound: String },
 }

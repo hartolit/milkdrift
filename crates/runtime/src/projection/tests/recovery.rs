@@ -475,6 +475,7 @@ fn rejects_stale_reconciliation_and_requires_immediate_exact_repin() -> TestResu
             &fixture.run,
             RunEventKind::RevisionAdoptionRequested {
                 reconciliation: reconciliation.clone(),
+                requested_by: None,
                 from_revision: fixture.revision.clone(),
                 to_revision: next_revision.clone(),
                 policy: ReconciliationPolicy::FinishCurrentThenAdopt,
@@ -560,6 +561,7 @@ fn reconciliation_removal_without_a_created_execution_is_an_enacted_noop() -> Te
             &fixture.run,
             RunEventKind::RevisionAdoptionRequested {
                 reconciliation: reconciliation.clone(),
+                requested_by: None,
                 from_revision: fixture.revision.clone(),
                 to_revision: next_revision.clone(),
                 policy: ReconciliationPolicy::RemoveUnstartedOnly,
@@ -644,6 +646,7 @@ fn reconciliation_removal_rejects_eligible_execution_with_live_wait_ownership() 
             &fixture.run,
             RunEventKind::RevisionAdoptionRequested {
                 reconciliation: reconciliation.clone(),
+                requested_by: None,
                 from_revision: fixture.revision.clone(),
                 to_revision: next_revision.clone(),
                 policy: ReconciliationPolicy::RemoveUnstartedOnly,
@@ -751,6 +754,7 @@ fn reconciliation_cancellation_is_execution_cancellation_authority() -> TestResu
             &fixture.run,
             RunEventKind::RevisionAdoptionRequested {
                 reconciliation: reconciliation.clone(),
+                requested_by: None,
                 from_revision: fixture.revision.clone(),
                 to_revision: next_revision.clone(),
                 policy: ReconciliationPolicy::CancelAndRestartSafeWork,

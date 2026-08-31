@@ -14,7 +14,60 @@ use milkdrift_runtime::{
 use milkdrift_workspace::{RunId, WorkspaceBudget};
 use serde::Serialize;
 
+use crate::{
+    ControllerBound, ControllerId, ControllerLimits, ControllerPolicyDigest, ControllerProgress,
+};
 use crate::{PolicyClassification, ProposalDigest, ProposalId};
+
+/// Current deterministic lifecycle state of one controller occurrence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControllerLifecycleState {
+    /// Another explicit cycle is currently eligible.
+    Eligible,
+    /// A durable checkpoint awaits an authorized decision.
+    AwaitingHumanCheckpoint,
+    /// An immutable cumulative ceiling stopped continuation.
+    BoundReached,
+    /// The repeat occurrence is already terminal.
+    Completed,
+}
+
+/// Authorization-filtered controller status derived from exact durable facts.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControllerStatusRead {
+    /// Stable controller policy identity.
+    pub controller: ControllerId,
+    /// Digest binding every executable policy field.
+    pub policy_digest: ControllerPolicyDigest,
+    /// Governing aggregate.
+    pub run: RunId,
+    /// Exact immutable governing revision.
+    pub revision: RevisionId,
+    /// Exact controller node.
+    pub node: NodeId,
+    /// Exact logical controller occurrence.
+    pub execution: NodeExecutionId,
+    /// Current lifecycle state.
+    pub state: ControllerLifecycleState,
+    /// Authoritative cumulative progress.
+    pub progress: ControllerProgress,
+    /// Immutable ceilings.
+    pub limits: ControllerLimits,
+    /// Last durable assessment sequence.
+    pub last_assessment_sequence: Option<RunSequence>,
+    /// Last assessment caller-clock time.
+    pub last_assessment_time: Option<u64>,
+    /// Stable last assessment identity.
+    pub last_assessment_id: Option<String>,
+    /// Current checkpoint identity, when waiting.
+    pub checkpoint_id: Option<String>,
+    /// Exact reached bound, when stopped.
+    pub reached_bound: Option<ControllerBound>,
+    /// Whether another cycle is eligible now.
+    pub cycle_eligible: bool,
+}
 
 /// Bounded operational detail for one current node occurrence.
 #[derive(Clone, Debug, PartialEq, Serialize)]

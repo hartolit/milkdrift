@@ -23,6 +23,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 milkdrift-redb-store = { version = "=0.1.0", path = "../../adapters/redb-store", features = ["test-admin"] }
+proptest.workspace = true
 tempfile.workspace = true
 
 [lints]

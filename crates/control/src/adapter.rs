@@ -17,8 +17,9 @@ use milkdrift_capability_host::{
 use milkdrift_contracts::{JsonLimits, canonical_json_bytes};
 
 use crate::{
-    ActorAuthorityContext, ControlCommand, ControlCommandDocument, ControlError, ControlResult,
-    ControlService, WORKFLOW_APPLY_OPERATION, WORKFLOW_INSPECT_OPERATION, WORKFLOW_PAUSE_OPERATION,
+    ActorAuthorityContext, CONTROLLER_CONTINUE_OPERATION, CONTROLLER_INSPECT_OPERATION,
+    ControlCommand, ControlCommandDocument, ControlError, ControlResult, ControlService,
+    WORKFLOW_APPLY_OPERATION, WORKFLOW_INSPECT_OPERATION, WORKFLOW_PAUSE_OPERATION,
     WORKFLOW_PROPOSE_OPERATION, WORKFLOW_RESUME_OPERATION, WORKFLOW_RETRY_OPERATION,
     WORKFLOW_SIGNAL_OPERATION,
 };
@@ -238,6 +239,11 @@ pub fn workflow_control_descriptor() -> Result<CapabilityDescriptor, ControlErro
         (WORKFLOW_APPLY_OPERATION, SideEffectClass::IdempotentWrite),
         (WORKFLOW_RETRY_OPERATION, SideEffectClass::IdempotentWrite),
         (WORKFLOW_SIGNAL_OPERATION, SideEffectClass::IdempotentWrite),
+        (CONTROLLER_INSPECT_OPERATION, SideEffectClass::ReadOnly),
+        (
+            CONTROLLER_CONTINUE_OPERATION,
+            SideEffectClass::IdempotentWrite,
+        ),
     ]
     .into_iter()
     .map(|(name, side_effect)| {
@@ -268,7 +274,9 @@ pub fn workflow_control_descriptor() -> Result<CapabilityDescriptor, ControlErro
         WORKFLOW_RESUME_OPERATION: "resume",
         WORKFLOW_APPLY_OPERATION: "apply",
         WORKFLOW_RETRY_OPERATION: "retry",
-        WORKFLOW_SIGNAL_OPERATION: "deliver_signal"
+        WORKFLOW_SIGNAL_OPERATION: "deliver_signal",
+        CONTROLLER_INSPECT_OPERATION: "inspect_run",
+        CONTROLLER_CONTINUE_OPERATION: "approve"
     }))?;
     Ok(DescriptorBuilder::new(
         CapabilityId::new(CONTROL_CAPABILITY_ID)?,
@@ -320,6 +328,7 @@ fn ensure_operation_matches(
         | ControlCommand::InspectRevision { .. }
         | ControlCommand::InspectTimeline { .. }
         | ControlCommand::QueryProposal { .. } => WORKFLOW_INSPECT_OPERATION,
+        ControlCommand::InspectController { .. } => CONTROLLER_INSPECT_OPERATION,
         ControlCommand::SubmitProposal { .. } => WORKFLOW_PROPOSE_OPERATION,
         ControlCommand::PauseRun { .. } => WORKFLOW_PAUSE_OPERATION,
         ControlCommand::ResumeRun { .. } => WORKFLOW_RESUME_OPERATION,
@@ -331,6 +340,7 @@ fn ensure_operation_matches(
         | ControlCommand::RequestCancellation { .. } => WORKFLOW_APPLY_OPERATION,
         ControlCommand::ResolveExternalWork { .. } => WORKFLOW_RETRY_OPERATION,
         ControlCommand::Signal { .. } => WORKFLOW_SIGNAL_OPERATION,
+        ControlCommand::ContinueController { .. } => CONTROLLER_CONTINUE_OPERATION,
     };
     if operation.as_str() != expected {
         return Err(ControlError::InvalidContract(format!(

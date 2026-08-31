@@ -133,6 +133,12 @@ impl RunProjection {
                     | RepeatContinuationCause::CostBudget { .. } => {
                         frontier.iteration_number <= *effective_iteration_limit
                     }
+                    RepeatContinuationCause::ControllerCheckpoint {
+                        completed_cycles, ..
+                    } => {
+                        frontier.iteration_number == *completed_cycles
+                            && frontier.iteration_number < *effective_iteration_limit
+                    }
                 };
                 if execution_view.is_completed()
                     || self.repeat_terminations.contains_key(repeat_execution)

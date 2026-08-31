@@ -89,6 +89,11 @@ enum TopCommand {
         #[command(subcommand)]
         command: RunCommand,
     },
+    /// Durable bounded controller lifecycle operations.
+    Controller {
+        #[command(subcommand)]
+        command: ControllerCommand,
+    },
     /// Inspect one node execution.
     Node(NodeInspect),
     /// Inspect one attempt.
@@ -234,6 +239,21 @@ enum RunCommand {
         cursor: Option<String>,
         #[arg(long)]
         follow: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ControllerCommand {
+    /// Inspect exact progress, limits, checkpoint, and reached-bound provenance.
+    Status {
+        run: String,
+        controller_execution: String,
+    },
+    /// Continue one exact human checkpoint under the current actor grant.
+    Continue {
+        run: String,
+        controller_execution: String,
+        decision_id: String,
     },
 }
 
@@ -607,6 +627,37 @@ async fn execute(cli: Cli) -> Result<(), CliError> {
                 if *should_follow {
                     follow(&cli, &client, run, page.observed_cursor.or(request.cursor)).await?;
                 }
+            }
+        },
+        TopCommand::Controller { command } => match command {
+            ControllerCommand::Status {
+                run,
+                controller_execution,
+            } => {
+                let request = command_request(
+                    &cli,
+                    Command::InspectController {
+                        run_id: run.clone(),
+                        controller_execution: controller_execution.clone(),
+                    },
+                );
+                output(&cli, "controller.status", &client.submit(&request).await?)?;
+            }
+            ControllerCommand::Continue {
+                run,
+                controller_execution,
+                decision_id,
+            } => {
+                confirm(&cli, "continue this exact controller checkpoint")?;
+                let request = command_request(
+                    &cli,
+                    Command::ContinueController {
+                        run_id: run.clone(),
+                        controller_execution: controller_execution.clone(),
+                        decision_id: decision_id.clone(),
+                    },
+                );
+                output(&cli, "controller.continue", &client.submit(&request).await?)?;
             }
         },
         TopCommand::Node(arguments) => output(

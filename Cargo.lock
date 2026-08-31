@@ -987,6 +987,7 @@ dependencies = [
  "milkdrift-redb-store",
  "milkdrift-runtime",
  "milkdrift-workspace",
+ "proptest",
  "serde",
  "serde_json",
  "tempfile",

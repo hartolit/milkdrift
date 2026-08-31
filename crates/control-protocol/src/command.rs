@@ -101,6 +101,17 @@ pub enum Command {
         action: ResolveAction,
         remediation_node: Option<String>,
     },
+    /// Inspect one exact durable controller occurrence through the shared control path.
+    InspectController {
+        run_id: String,
+        controller_execution: String,
+    },
+    /// Continue one exact durable controller checkpoint with ordinary approval authority.
+    ContinueController {
+        run_id: String,
+        controller_execution: String,
+        decision_id: String,
+    },
     /// Submit a versioned workflow proposal document.
     SubmitProposal { document: Value },
     /// Decide an exact proposal/reconciliation plan.

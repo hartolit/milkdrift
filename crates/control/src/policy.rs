@@ -163,6 +163,10 @@ pub fn classify_proposal(
         elevate(&mut risk, RiskClass::ApprovalRequired);
         constraints.insert(RiskConstraint::InterfaceOrSubworkflowChanged);
     }
+    if controller_policy_extension(old) != controller_policy_extension(new) {
+        elevate(&mut risk, RiskClass::ApprovalRequired);
+        constraints.insert(RiskConstraint::RepeatOrControllerBoundsChanged);
+    }
     classify_action(
         proposal.requested_action(),
         projection,
@@ -180,6 +184,18 @@ pub fn classify_proposal(
         risk,
         constraints: constraints.into_iter().collect(),
     }
+}
+
+fn controller_policy_extension(
+    revision: &BlueprintRevision,
+) -> Option<&milkdrift_capability::BoundedJson> {
+    revision
+        .semantic()
+        .metadata()
+        .extensions()
+        .iter()
+        .find(|(key, _)| key.as_str() == milkdrift_runtime::CONTROLLER_POLICY_EXTENSION_KEY)
+        .map(|(_, value)| value)
 }
 
 fn classify_added_node(

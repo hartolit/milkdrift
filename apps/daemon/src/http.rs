@@ -618,6 +618,20 @@ fn command_trace(command: &Command) -> CommandTrace {
             Some(attempt_id.as_str()),
             None,
         ),
+        Command::InspectController { run_id, .. } => (
+            "inspect_controller",
+            Some(run_id.as_str()),
+            None,
+            None,
+            None,
+        ),
+        Command::ContinueController { run_id, .. } => (
+            "continue_controller",
+            Some(run_id.as_str()),
+            None,
+            None,
+            None,
+        ),
         Command::SubmitProposal { .. } => ("submit_proposal", None, None, None, None),
         Command::DecideProposal {
             run_id,

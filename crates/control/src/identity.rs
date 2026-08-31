@@ -80,6 +80,8 @@ identity_type!(/// Stable identity and idempotency scope of one control request.
     ControlId);
 identity_type!(/// Stable identity of one untrusted workflow proposal.
     ProposalId);
+identity_type!(/// Stable identity of one immutable controller policy lineage.
+    ControllerId);
 
 /// Domain-separated deterministic digest of a canonical proposal body.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -136,6 +138,69 @@ impl Serialize for ProposalDigest {
 }
 
 impl<'de> Deserialize<'de> for ProposalDigest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::parse(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Domain-separated deterministic digest of every executable controller-policy field.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ControllerPolicyDigest(String);
+
+impl ControllerPolicyDigest {
+    pub(crate) fn for_bytes(bytes: &[u8]) -> Self {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"milkdrift.controller-policy.v1\0");
+        hasher.update(bytes);
+        Self(format!("cp1_{}", hasher.finalize()))
+    }
+
+    fn parse(value: String) -> Result<Self, ControlError> {
+        let Some(hex) = value.strip_prefix("cp1_") else {
+            return Err(ControlError::InvalidIdentity {
+                kind: "ControllerPolicyDigest",
+                reason: "missing cp1_ prefix".to_owned(),
+            });
+        };
+        if hex.len() != 64
+            || !hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(ControlError::InvalidIdentity {
+                kind: "ControllerPolicyDigest",
+                reason: "expected 64 lowercase hexadecimal characters".to_owned(),
+            });
+        }
+        Ok(Self(value))
+    }
+
+    /// Returns the canonical digest text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ControllerPolicyDigest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl Serialize for ControllerPolicyDigest {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for ControllerPolicyDigest {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,

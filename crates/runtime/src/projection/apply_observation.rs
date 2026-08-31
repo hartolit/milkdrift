@@ -1,3 +1,4 @@
+use milkdrift_capability::CapabilityCategory;
 use milkdrift_persistence::{NodeExecutionMode, RunEventEnvelope, RunEventKind};
 
 use crate::RuntimeError;
@@ -87,6 +88,12 @@ impl RunProjection {
             }
             RunEventKind::AttemptUsageRecorded { attempt, usage } => {
                 let attempt_view = self.attempt(attempt, event)?;
+                let controller_metered = attempt_view.capability.as_ref().is_some_and(|value| {
+                    matches!(
+                        value.snapshot().category(),
+                        None | Some(CapabilityCategory::Model | CapabilityCategory::Process)
+                    )
+                });
                 if !matches!(
                     attempt_view.state,
                     AttemptState::Running | AttemptState::Terminal(_)
@@ -98,6 +105,31 @@ impl RunProjection {
                     ));
                 }
                 self.accumulate_usage(usage, event)?;
+                if controller_metered {
+                    if usage.input_units.is_some() {
+                        self.resource_usage.unknown_input_usage = self
+                            .resource_usage
+                            .unknown_input_usage
+                            .checked_sub(1)
+                            .ok_or_else(|| invalid_at(event, "input usage accounting underflow"))?;
+                    }
+                    if usage.output_units.is_some() {
+                        self.resource_usage.unknown_output_usage = self
+                            .resource_usage
+                            .unknown_output_usage
+                            .checked_sub(1)
+                            .ok_or_else(|| {
+                                invalid_at(event, "output usage accounting underflow")
+                            })?;
+                    }
+                    if usage.cost.is_some() {
+                        self.resource_usage.unknown_cost_usage = self
+                            .resource_usage
+                            .unknown_cost_usage
+                            .checked_sub(1)
+                            .ok_or_else(|| invalid_at(event, "cost usage accounting underflow"))?;
+                    }
+                }
                 self.attempts
                     .get_mut(attempt)
                     .ok_or_else(|| invalid_at(event, "unknown attempt"))?

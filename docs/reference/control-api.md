@@ -80,9 +80,19 @@ The closed command types are:
 | `submit_proposal` | `document` | `propose` | Submit an exact schema-1 workflow proposal through `milkdrift-control`. |
 | `decide_proposal` | `run_id`, `proposal_id`, `proposal_digest`, `proposed_revision`, `decision_id`, `decision` | `approve` | Approve or reject an exact proposal. |
 | `apply_proposal` | `run_id`, `proposal_id`, `proposal_digest`, `proposed_revision` | `apply` | Apply an approved prospective revision through reconciliation. |
+| `inspect_controller` | `run_id`, `controller_execution` | `inspect_run` | Return one authorization-filtered typed controller status from durable projection facts. |
+| `continue_controller` | `run_id`, `controller_execution`, `decision_id` | `approve` | Decide the exact pending controller checkpoint through ordinary repeat-continuation authority; the runtime reassesses policy and revocation before accepting it. |
 | `put_layout` | `layout` | `write_layout` | Optimistically store presentation-only state for the exact workflow/revision/shared owner. |
 
 Evidence kinds accepted by the daemon are `authority_decision`, `worker_observation`, `external_receipt`, `artifact`, and `recovery_observation`. A success returns `CommandAccepted`: `command_id`, `replayed`, optional `resulting_sequence`, stable `result_type`, and a bounded command-specific `value`.
+
+Controller status contains the policy controller identity/digest; exact run, governing revision,
+node, and execution; lifecycle state; every progress and limit field; last assessment
+sequence/time/identity; current checkpoint or reached bound; and `cycle_eligible`. It contains no
+prompt, secret, model transcript, or sibling evidence. `continue_controller` is valid only for the
+pending digest-derived checkpoint on that execution. Duplicate use of the same external command and
+decision identity replays exactly; a stale/different decision, revoked grant, reached bound, or
+changed optimistic sequence cannot create another cycle.
 
 The wire command carries the decoded prompt-sequence JSON document. Markdown parsing is owned by
 the CLI/library before submission, and the daemon independently performs strict schema validation
@@ -160,4 +170,4 @@ Layout cannot contain executable edges, node/task configuration, requirements, p
 {"schema_version":1,"type":"run.show","value":{}}
 ```
 
-JSON mode has no colors or terminal control sequences. Exit categories are 0 success, 2 invalid input/confirmation, 3 authentication or authority, 4 conflict, 5 retryable unavailable/overload/transport, 6 not found, 7 internal/nonclassified failure, and 8 when `run show` observes a failed terminal task. Cancel and proposal decision/apply operations require interactive `yes` or `--yes`; JSON-mode high-risk operations require `--yes`. Credentials come from `--token-file`/`MILKDRIFT_TOKEN_FILE` or the configured environment-variable name, never a token command argument. Artifact downloads require an explicit new destination and remove a partial file after failure.
+JSON mode has no colors or terminal control sequences. Exit categories are 0 success, 2 invalid input/confirmation, 3 authentication or authority, 4 conflict, 5 retryable unavailable/overload/transport, 6 not found, 7 internal/nonclassified failure, and 8 when `run show` observes a failed terminal task. `milkdrift-cli controller status RUN CONTROLLER_EXECUTION` is read-only; `milkdrift-cli controller continue RUN CONTROLLER_EXECUTION DECISION_ID` requires interactive `yes` or `--yes`. Cancel, controller continuation, and proposal decision/apply operations require confirmation; JSON-mode high-risk operations require `--yes`. Credentials come from `--token-file`/`MILKDRIFT_TOKEN_FILE` or the configured environment-variable name, never a token command argument. Artifact downloads require an explicit new destination and remove a partial file after failure.

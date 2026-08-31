@@ -56,14 +56,15 @@ pub use bounded::{
 pub use document::{MAX_EVENT_DOCUMENT_BYTES, RUN_EVENT_SCHEMA_VERSION_V1, RunEventEnvelope};
 pub use error::{PersistenceError, StorageFailureClass};
 pub use event::{
-    AttemptUsage, AuthorityDecision, BranchResultReference, JoinRule,
-    MAX_RECONCILIATION_PLAN_ITEMS, MAX_REPEAT_CONTINUATION_ADDITIONAL_ITERATIONS,
-    MAX_REPEAT_CONTINUATION_CYCLES, MAX_REPEAT_CONTINUATION_DECISIONS,
-    MAX_REPEAT_EFFECTIVE_ITERATIONS, MonetaryUsage, NodeExecutionMode, NodeOutcome,
-    ReconciliationAction, ReconciliationClassification, ReconciliationItem, ReconciliationPolicy,
-    RecoveryClassification, RepeatContinuationCause, RepeatContinuationDecision,
-    RepeatTerminationReason, RunEventKind, RunOutcome, SignalDeliveryMode, SubworkflowOwnership,
-    WaitCondition, WaitSatisfaction,
+    AttemptUsage, AuthorityDecision, BranchResultReference, ControllerAssessmentBoundary,
+    ControllerAssessmentOutcome, JoinRule, MAX_RECONCILIATION_PLAN_ITEMS,
+    MAX_REPEAT_CONTINUATION_ADDITIONAL_ITERATIONS, MAX_REPEAT_CONTINUATION_CYCLES,
+    MAX_REPEAT_CONTINUATION_DECISIONS, MAX_REPEAT_EFFECTIVE_ITERATIONS, MonetaryUsage,
+    NodeExecutionMode, NodeOutcome, ReconciliationAction, ReconciliationClassification,
+    ReconciliationItem, ReconciliationPolicy, RecoveryClassification, RepeatContinuationCause,
+    RepeatContinuationDecision, RepeatTerminationReason, RunEventKind, RunOutcome,
+    SignalDeliveryMode, SubworkflowOwnership, SubworkflowResourceUsage, WaitCondition,
+    WaitSatisfaction,
 };
 pub use identity::{
     ArtifactPublicationId, AttemptId, CommandId, CorrelationKey, EventId, EvidenceId,

@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BoundedJson, CapabilityDescriptor, CapabilityId, ContractError, ExecutionTrustClass,
-    ExtensionKey, OperationContract, OperationId, ProviderProfileRef, SCHEMA_VERSION_V1,
-    document::canonical_json_bytes,
+    BoundedJson, CapabilityCategory, CapabilityDescriptor, CapabilityId, ContractError,
+    ExecutionTrustClass, ExtensionKey, OperationContract, OperationId, ProviderProfileRef,
+    SCHEMA_VERSION_V1, document::canonical_json_bytes,
 };
 
 const DIGEST_DOMAIN: &[u8] = b"milkdrift.resolved-capability-snapshot.v1\0";
@@ -20,6 +20,8 @@ pub struct ResolvedCapabilitySnapshot {
     capability: CapabilityId,
     descriptor_revision: u64,
     provider_profile: Option<ProviderProfileRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    category: Option<CapabilityCategory>,
     operation: OperationId,
     operation_contract: OperationContract,
     #[serde(default, skip_serializing_if = "execution_trust_unspecified")]
@@ -35,6 +37,8 @@ struct ResolvedCapabilitySnapshotWire {
     capability: CapabilityId,
     descriptor_revision: u64,
     provider_profile: Option<ProviderProfileRef>,
+    #[serde(default)]
+    category: Option<CapabilityCategory>,
     operation: OperationId,
     operation_contract: OperationContract,
     #[serde(default)]
@@ -51,6 +55,8 @@ struct SnapshotDigestPayload<'a> {
     capability: &'a CapabilityId,
     descriptor_revision: u64,
     provider_profile: Option<&'a ProviderProfileRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    category: Option<&'a CapabilityCategory>,
     operation: &'a OperationId,
     operation_contract: &'a OperationContract,
     #[serde(skip_serializing_if = "execution_trust_unspecified")]
@@ -73,6 +79,7 @@ impl<'de> Deserialize<'de> for ResolvedCapabilitySnapshot {
             capability: wire.capability,
             descriptor_revision: wire.descriptor_revision,
             provider_profile: wire.provider_profile,
+            category: wire.category,
             operation: wire.operation,
             operation_contract: wire.operation_contract,
             execution_trust: wire.execution_trust,
@@ -97,19 +104,22 @@ impl ResolvedCapabilitySnapshot {
                 operation
             ))
         })?;
-        let digest = Self::compute_digest(
-            descriptor.identity(),
-            descriptor.descriptor_revision(),
-            descriptor.provider_profile(),
+        let digest = Self::compute_digest(&SnapshotDigestPayload {
+            schema_version: SCHEMA_VERSION_V1,
+            capability: descriptor.identity(),
+            descriptor_revision: descriptor.descriptor_revision(),
+            provider_profile: descriptor.provider_profile(),
+            category: Some(descriptor.category()),
             operation,
             operation_contract,
-            descriptor.execution_trust(),
-            descriptor.extensions(),
-        )?;
+            execution_trust: descriptor.execution_trust(),
+            descriptor_extensions: descriptor.extensions(),
+        })?;
         Ok(Self {
             capability: descriptor.identity().clone(),
             descriptor_revision: descriptor.descriptor_revision(),
             provider_profile: descriptor.provider_profile().cloned(),
+            category: Some(descriptor.category().clone()),
             operation: operation.clone(),
             operation_contract: operation_contract.clone(),
             execution_trust: descriptor.execution_trust(),
@@ -134,6 +144,12 @@ impl ResolvedCapabilitySnapshot {
     #[must_use]
     pub const fn provider_profile(&self) -> Option<&ProviderProfileRef> {
         self.provider_profile.as_ref()
+    }
+
+    /// Exact stable category frozen from the descriptor revision.
+    #[must_use]
+    pub const fn category(&self) -> Option<&CapabilityCategory> {
+        self.category.as_ref()
     }
 
     /// Returns the exact selected operation identity.
@@ -179,6 +195,10 @@ impl ResolvedCapabilitySnapshot {
         if self.capability != *descriptor.identity()
             || self.descriptor_revision != descriptor.descriptor_revision()
             || self.provider_profile.as_ref() != descriptor.provider_profile()
+            || self
+                .category
+                .as_ref()
+                .is_some_and(|category| category != descriptor.category())
             || self.operation_contract != *descriptor_operation
             || self.execution_trust != descriptor.execution_trust()
             || self.descriptor_extensions != *descriptor.extensions()
@@ -197,15 +217,17 @@ impl ResolvedCapabilitySnapshot {
                 "resolved capability snapshot descriptor revision must be nonzero".to_owned(),
             ));
         }
-        let expected = Self::compute_digest(
-            &self.capability,
-            self.descriptor_revision,
-            self.provider_profile.as_ref(),
-            &self.operation,
-            &self.operation_contract,
-            self.execution_trust,
-            &self.descriptor_extensions,
-        )?;
+        let expected = Self::compute_digest(&SnapshotDigestPayload {
+            schema_version: SCHEMA_VERSION_V1,
+            capability: &self.capability,
+            descriptor_revision: self.descriptor_revision,
+            provider_profile: self.provider_profile.as_ref(),
+            category: self.category.as_ref(),
+            operation: &self.operation,
+            operation_contract: &self.operation_contract,
+            execution_trust: self.execution_trust,
+            descriptor_extensions: &self.descriptor_extensions,
+        })?;
         if self.digest != expected {
             return Err(ContractError::InvalidContract(
                 "resolved capability snapshot digest does not match its exact facts".to_owned(),
@@ -214,26 +236,8 @@ impl ResolvedCapabilitySnapshot {
         Ok(())
     }
 
-    fn compute_digest(
-        capability: &CapabilityId,
-        descriptor_revision: u64,
-        provider_profile: Option<&ProviderProfileRef>,
-        operation: &OperationId,
-        operation_contract: &OperationContract,
-        execution_trust: ExecutionTrustClass,
-        descriptor_extensions: &BTreeMap<ExtensionKey, BoundedJson>,
-    ) -> Result<String, ContractError> {
-        let payload = SnapshotDigestPayload {
-            schema_version: SCHEMA_VERSION_V1,
-            capability,
-            descriptor_revision,
-            provider_profile,
-            operation,
-            operation_contract,
-            execution_trust,
-            descriptor_extensions,
-        };
-        let canonical_payload = canonical_json_bytes(&payload)?;
+    fn compute_digest(payload: &SnapshotDigestPayload<'_>) -> Result<String, ContractError> {
+        let canonical_payload = canonical_json_bytes(payload)?;
         let mut hasher = blake3::Hasher::new();
         hasher.update(DIGEST_DOMAIN);
         hasher.update(&canonical_payload);

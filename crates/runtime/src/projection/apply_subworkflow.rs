@@ -96,6 +96,7 @@ impl RunProjection {
                 outcome,
                 outputs,
                 cost_micros,
+                usage: child_usage,
             } => {
                 let child = self.subworkflows.get(subworkflow).ok_or_else(|| {
                     invalid_at(event, "child terminal references an unknown subworkflow")
@@ -135,6 +136,19 @@ impl RunProjection {
                         usage.overflowed = true;
                         usage.completed_children
                     });
+                if *outcome != RunOutcome::Succeeded {
+                    usage.failed_children =
+                        usage.failed_children.checked_add(1).unwrap_or_else(|| {
+                            usage.overflowed = true;
+                            usage.failed_children
+                        });
+                }
+                if !child_usage.cost_micros.is_empty() && child_usage.cost_micros != *cost_micros {
+                    return Err(invalid_at(
+                        event,
+                        "child compact usage contradicts its legacy cost summary",
+                    ));
+                }
                 for (currency, cost) in cost_micros {
                     let total = usage.cost_micros.entry(currency.clone()).or_default();
                     if let Some(next) = total.checked_add(*cost) {
@@ -143,6 +157,38 @@ impl RunProjection {
                         usage.overflowed = true;
                     }
                 }
+                macro_rules! add_usage {
+                    ($field:ident) => {
+                        if let Some(next) = usage.$field.checked_add(child_usage.$field) {
+                            usage.$field = next;
+                        } else {
+                            usage.overflowed = true;
+                        }
+                    };
+                }
+                macro_rules! add_optional_usage {
+                    ($field:ident) => {
+                        usage.$field = match (usage.$field, child_usage.$field) {
+                            (None, value) => value,
+                            (value, None) => value,
+                            (Some(left), Some(right)) => match left.checked_add(right) {
+                                Some(value) => Some(value),
+                                None => {
+                                    usage.overflowed = true;
+                                    Some(left)
+                                }
+                            },
+                        };
+                    };
+                }
+                add_optional_usage!(input_units);
+                add_optional_usage!(output_units);
+                add_usage!(artifact_bytes);
+                add_usage!(process_invocations);
+                add_usage!(model_invocations);
+                add_usage!(unknown_input_usage);
+                add_usage!(unknown_output_usage);
+                add_usage!(unknown_cost_usage);
                 self.active_subworkflow_ids.remove(subworkflow);
                 self.active_attached_subworkflow_ids.remove(subworkflow);
                 self.adjust_structured_child_count(&parent_execution, false, event)?;

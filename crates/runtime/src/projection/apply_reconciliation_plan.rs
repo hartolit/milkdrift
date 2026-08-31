@@ -48,6 +48,7 @@ impl RunProjection {
         match event.kind() {
             RunEventKind::RevisionAdoptionRequested {
                 reconciliation,
+                requested_by,
                 from_revision,
                 to_revision,
                 policy,
@@ -66,6 +67,7 @@ impl RunProjection {
                     reconciliation.clone(),
                     ReconciliationRequestProjection {
                         reconciliation: reconciliation.clone(),
+                        requested_by: requested_by.clone(),
                         from_revision: from_revision.clone(),
                         to_revision: to_revision.clone(),
                         policy: *policy,
@@ -74,6 +76,16 @@ impl RunProjection {
                         state: ReconciliationRequestState::Requested,
                     },
                 );
+                if requested_by.as_ref()
+                    == self.execution_authority.as_ref().map(|basis| basis.actor())
+                {
+                    self.run_actor_revision_requests = self
+                        .run_actor_revision_requests
+                        .checked_add(1)
+                        .ok_or_else(|| {
+                            invalid_at(event, "run-actor revision request count overflowed")
+                        })?;
+                }
                 self.reconciliation.current_request = Some(reconciliation.clone());
             }
             RunEventKind::ReconciliationPlanRecorded {
@@ -218,11 +230,20 @@ impl RunProjection {
                     sequence,
                 });
                 if *outcome == AuthorityDecision::Reject {
-                    self.reconciliation
+                    let request = self
+                        .reconciliation
                         .requests
                         .get_mut(&plan_view.reconciliation)
-                        .ok_or_else(|| invalid_at(event, "plan request is missing"))?
-                        .state = ReconciliationRequestState::Rejected;
+                        .ok_or_else(|| invalid_at(event, "plan request is missing"))?;
+                    request.state = ReconciliationRequestState::Rejected;
+                    if request.requested_by.as_ref()
+                        == self.execution_authority.as_ref().map(|basis| basis.actor())
+                    {
+                        self.run_actor_rejections =
+                            self.run_actor_rejections.checked_add(1).ok_or_else(|| {
+                                invalid_at(event, "run-actor rejection count overflowed")
+                            })?;
+                    }
                 }
             }
             _ => {

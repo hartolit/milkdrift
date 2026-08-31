@@ -839,6 +839,7 @@ pub(super) fn event_kind_name(event: &RunEventKind) -> &'static str {
         RunEventKind::BranchCancellationRequested { .. } => "branch_cancellation_requested",
         RunEventKind::BranchTerminal { .. } => "branch_terminal",
         RunEventKind::JoinSatisfied { .. } => "join_satisfied",
+        RunEventKind::ControllerAssessmentRecorded { .. } => "controller_assessment_recorded",
         RunEventKind::RepeatIterationCreated { .. } => "repeat_iteration_created",
         RunEventKind::RepeatConditionRecorded { .. } => "repeat_condition_recorded",
         RunEventKind::RepeatContinuationRequested { .. } => "repeat_continuation_requested",
