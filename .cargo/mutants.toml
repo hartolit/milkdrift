@@ -1,0 +1,7 @@
+all_features = true
+gitignore = true
+minimum_test_timeout = 60
+timeout_multiplier = 3.0
+build_timeout_multiplier = 2.0
+test_workspace = false
+skip_calls_defaults = true

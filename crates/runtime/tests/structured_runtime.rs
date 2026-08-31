@@ -12,7 +12,7 @@ use std::{
 
 use milkdrift_authority::{
     AuthorityBudget, AuthorityDecisionSnapshot, AuthorityError, AuthorityEvaluator,
-    DecisionReasonCode, GrantDigest, GrantId, PolicyId,
+    AuthorityOperation, DecisionReasonCode, GrantDigest, GrantId, PolicyId,
 };
 use milkdrift_blueprint::{
     AuthorRef, BindingSource, BlueprintRevision, BranchConfig, Comparison, Condition,
@@ -70,6 +70,10 @@ const NOW: u64 = 10_000;
 
 struct TestAuthorityEvaluator;
 
+struct EntryDenyAuthorityEvaluator {
+    invoke_evaluations: AtomicUsize,
+}
+
 impl AuthorityEvaluator for TestAuthorityEvaluator {
     fn evaluate(
         &self,
@@ -80,6 +84,36 @@ impl AuthorityEvaluator for TestAuthorityEvaluator {
             1,
             request.clone(),
             vec![DecisionReasonCode::Allowed],
+            AuthorityBudget {
+                cost_minor: Some(u64::MAX),
+                duration_ms: Some(u64::MAX),
+                invocations: Some(u64::MAX),
+                artifact_bytes: Some(u64::MAX),
+                units: Some(u64::MAX),
+                concurrency: Some(u32::MAX),
+            },
+            SideEffectClass::Unknown,
+        )
+    }
+}
+
+impl AuthorityEvaluator for EntryDenyAuthorityEvaluator {
+    fn evaluate(
+        &self,
+        request: &milkdrift_authority::AuthorityRequest,
+    ) -> Result<AuthorityDecisionSnapshot, AuthorityError> {
+        let deny_entry = request.operation == AuthorityOperation::InvokeCapability
+            && self.invoke_evaluations.fetch_add(1, Ordering::SeqCst) == 2;
+        let reasons = if deny_entry {
+            vec![DecisionReasonCode::GrantNotFound]
+        } else {
+            vec![DecisionReasonCode::Allowed]
+        };
+        AuthorityDecisionSnapshot::from_evaluation(
+            PolicyId::new("test.deny-entry")?,
+            1,
+            request.clone(),
+            reasons,
             AuthorityBudget {
                 cost_minor: Some(u64::MAX),
                 duration_ms: Some(u64::MAX),
@@ -398,6 +432,10 @@ struct TransientAttemptIdGenerator {
     fail_on_attempt_call: usize,
 }
 
+struct PlanIdFailureGenerator {
+    inner: SequentialIdGenerator,
+}
+
 impl TransientAttemptIdGenerator {
     fn new(prefix: &str, fail_on_attempt_call: usize) -> TestResult<Self> {
         Ok(Self {
@@ -415,6 +453,27 @@ impl IdGenerator for TransientAttemptIdGenerator {
         {
             return Err(RuntimeError::InvalidTransition(
                 "scripted transient retry attempt identity failure".to_owned(),
+            ));
+        }
+        self.inner.next(kind)
+    }
+}
+
+impl PlanIdFailureGenerator {
+    fn new(prefix: &str) -> TestResult<Self> {
+        Ok(Self {
+            inner: SequentialIdGenerator::new(prefix, 1)?,
+        })
+    }
+}
+
+impl IdGenerator for PlanIdFailureGenerator {
+    fn next(&self, kind: &'static str) -> Result<String, RuntimeError> {
+        if kind == "reconciliation-plan" {
+            return Err(RuntimeError::Persistence(
+                milkdrift_persistence::PersistenceError::Corruption(
+                    "scripted transient plan identity failure".to_owned(),
+                ),
             ));
         }
         self.inner.next(kind)
@@ -778,6 +837,57 @@ impl Harness {
         retry_policy: RetryPolicy,
         descriptor: CapabilityDescriptor,
     ) -> TestResult<Self> {
+        Self::with_descriptor_and_ids(
+            prefix,
+            retry_policy,
+            descriptor,
+            Arc::new(SequentialIdGenerator::new(prefix, 1)?),
+        )
+    }
+
+    fn with_plan_id_failure(prefix: &str) -> TestResult<Self> {
+        Self::with_descriptor_and_ids(
+            prefix,
+            RetryPolicy::new(1, Vec::new(), 10, 1_000, 0)?,
+            test_descriptor()?,
+            Arc::new(PlanIdFailureGenerator::new(prefix)?),
+        )
+    }
+
+    fn with_entry_denied(prefix: &str) -> TestResult<Self> {
+        Self::with_descriptor_ids_and_authority(
+            prefix,
+            RetryPolicy::new(1, Vec::new(), 10, 1_000, 0)?,
+            test_descriptor()?,
+            Arc::new(SequentialIdGenerator::new(prefix, 1)?),
+            Arc::new(EntryDenyAuthorityEvaluator {
+                invoke_evaluations: AtomicUsize::new(0),
+            }),
+        )
+    }
+
+    fn with_descriptor_and_ids(
+        prefix: &str,
+        retry_policy: RetryPolicy,
+        descriptor: CapabilityDescriptor,
+        ids: Arc<dyn IdGenerator>,
+    ) -> TestResult<Self> {
+        Self::with_descriptor_ids_and_authority(
+            prefix,
+            retry_policy,
+            descriptor,
+            ids,
+            test_authority(),
+        )
+    }
+
+    fn with_descriptor_ids_and_authority(
+        prefix: &str,
+        retry_policy: RetryPolicy,
+        descriptor: CapabilityDescriptor,
+        ids: Arc<dyn IdGenerator>,
+        authority: Arc<dyn AuthorityEvaluator>,
+    ) -> TestResult<Self> {
         let directory = TempDir::new()?;
         let store = Arc::new(RedbStore::open(directory.path())?);
         let clock = Arc::new(ManualClock::new(NOW));
@@ -793,9 +903,9 @@ impl Harness {
         let runtime = RuntimeService::new_with_authority(
             store.clone(),
             executor.clone(),
-            test_authority(),
+            authority,
             clock.clone(),
-            Arc::new(SequentialIdGenerator::new(prefix, 1)?),
+            ids,
             config,
         )?;
         Ok(Self {

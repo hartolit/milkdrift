@@ -12,6 +12,7 @@ cargo test --workspace --all-features --no-fail-fast
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps
 cargo deny check
+cargo machete
 cargo tree --workspace --duplicates
 cargo test --workspace --all-features -- --list
 ```
@@ -108,8 +109,8 @@ hard deadlines.
 Apply formatting with `cargo fmt --all`. Golden JSON is hand-reviewed compatibility data under each crate's `tests/fixtures` directory. To update a fixture, change the schema implementation and fixture in one review, run its exact canonical re-encoding test, and record any compatibility decision that changes reader behavior in an ADR. Never regenerate fixtures merely to make a failing test disappear.
 
 Dependencies must be stable crates.io releases with a concrete use in current code. Run
-the following audit after any dependency or lockfile change; `cargo machete` is optional
-local tooling and CI does not assume it is installed:
+the following required audit after any dependency or lockfile change; CI installs pinned
+`cargo-deny` and `cargo-machete` versions:
 
 ```sh
 cargo tree --workspace --duplicates
@@ -118,6 +119,26 @@ cargo deny check
 ```
 
 Git dependencies require a documented necessity.
+
+## Mutation, benchmark, and operational evidence
+
+The repeatable fixtures, exact pinned tools, mutation classification policy, report schema,
+cross-platform matrix, local commands, and interpretation limits are owned by
+[`verification-evidence.md`](verification-evidence.md). The shortest local evidence pass is:
+
+```sh
+cargo test -p milkdrift-evidence --test operational_contracts --all-features
+cargo build --release -p milkdrift-evidence \
+  --bin evidence-process-helper --bin operational-evidence
+MILKDRIFT_EVIDENCE_PROCESS_HELPER="$PWD/target/release/evidence-process-helper" \
+  cargo bench -p milkdrift-evidence --bench core_paths -- --test
+MILKDRIFT_EVIDENCE_PROCESS_HELPER="$PWD/target/release/evidence-process-helper" \
+  target/release/operational-evidence --operations 256 --output target/evidence
+```
+
+Run `scripts/run-mutation-shard.sh SHARD` for the seven focused mutation areas. Do not accept a
+survivor because a benchmark looks healthy: add the missing correctness assertion or record an
+exact reviewed classification in `.cargo/mutation-classifications.json`.
 
 For a public-surface review, install `cargo-public-api` as local tooling (it is not a
 workspace dependency), then inventory each library package with `cargo public-api -p

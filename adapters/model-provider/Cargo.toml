@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+operational-evidence = []
+
 [dependencies]
 base64.workspace = true
 blake3.workspace = true

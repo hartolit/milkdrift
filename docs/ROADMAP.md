@@ -25,6 +25,12 @@ evidence, finish public API and agent documentation contraction, and pass an ind
 review. Those passes must reuse the explicit authority boundary and may not introduce an autonomous
 privilege path. The daemon-owned bounded controller lifecycle is complete.
 
+The repeatable mutation, benchmark, storage-growth, daemon-saturation, and three-OS CI definitions
+are implemented. The focused local Linux mutation campaign has no timeout or unclassified
+survivor, and the release benchmark/operational lanes pass locally. This evidence slice remains
+open until the new Windows/macOS plus hosted mutation and benchmark workflows have successful runs;
+local Linux results are not recorded as substitutes for those runner outcomes.
+
 1. **Iced control center** — A thin native canvas over `milkdrift-control-client` with revision
    history, a virtualized timeline, peer/catalog provenance, inspector, schema-1 layout documents,
    live controls, and authenticated-cursor reconnect/resume behavior. It must remain a client of the

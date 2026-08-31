@@ -8,8 +8,7 @@ use milkdrift_blueprint::{
     BlueprintRevision, EdgeKind, Node, NodeId, NodeKind, PathSegment, ReducerStrategy,
 };
 use milkdrift_capability::{
-    BoundedJson, ErrorClass, IdempotencyBehavior, IdempotencyKey, InvocationValueReference,
-    SideEffectClass,
+    BoundedJson, ErrorClass, IdempotencyKey, InvocationValueReference, SideEffectClass,
 };
 use milkdrift_persistence::{
     IntegrityDigest, MAX_RECONCILIATION_PLAN_ITEMS, NodeExecutionId, NodeExecutionMode,
@@ -696,15 +695,12 @@ pub(super) fn recovery_classification(
     };
     match side_effect.side_effect() {
         SideEffectClass::None | SideEffectClass::ReadOnly => RecoveryClassification::Retryable,
-        SideEffectClass::IdempotentWrite
-            if side_effect.idempotency() != IdempotencyBehavior::Unsupported
-                && side_effect.idempotency_key().is_some() =>
-        {
-            RecoveryClassification::Retryable
+        // Projection validation already requires every idempotent-write
+        // classification to carry a supported, stable idempotency key.
+        SideEffectClass::IdempotentWrite => RecoveryClassification::Retryable,
+        SideEffectClass::NonIdempotentWrite | SideEffectClass::Unknown => {
+            RecoveryClassification::Uncertain
         }
-        SideEffectClass::IdempotentWrite
-        | SideEffectClass::NonIdempotentWrite
-        | SideEffectClass::Unknown => RecoveryClassification::Uncertain,
     }
 }
 

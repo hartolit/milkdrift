@@ -41,6 +41,87 @@ impl StartupProbeStore {
     }
 }
 
+#[test]
+fn effect_tick_reports_claimed_work_and_durable_entry_transition() -> TestResult {
+    let harness = Harness::new("effect-tick-claimed")?;
+    let revision = task_revision("workflow-effect-tick-claimed")?;
+    let run = RunId::new("run-effect-tick-claimed")?;
+    harness.put_revision(&revision)?;
+    harness.create_and_start(&run, &revision)?;
+
+    assert_eq!(harness.runtime.scheduler_tick()?.dispatched, 1);
+    let tick = harness.runtime.effect_tick()?;
+    assert_eq!(tick.claimed, 1);
+    assert_eq!(tick.completed, 1);
+    assert_eq!(tick.uncertain, 0);
+    assert_eq!(
+        harness.runtime.projection(&run)?.lifecycle(),
+        RunLifecycle::Terminal(RunOutcome::Succeeded)
+    );
+    assert_eq!(
+        harness
+            .runtime
+            .history(&run)?
+            .iter()
+            .filter(|event| matches!(event.kind(), RunEventKind::NodeStarted { .. }))
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn denied_capability_entry_is_recorded_and_terminates_without_dispatch() -> TestResult {
+    let harness = Harness::with_entry_denied("effect-entry-denied")?;
+    let revision = task_revision("workflow-effect-entry-denied")?;
+    let run = RunId::new("run-effect-entry-denied")?;
+    harness.put_revision(&revision)?;
+    harness.create_and_start(&run, &revision)?;
+
+    assert_eq!(harness.runtime.scheduler_tick()?.dispatched, 1);
+    assert!(harness.runtime.claim_effects(PageSize::new(1)?)?.is_empty());
+    let projection = harness.runtime.projection(&run)?;
+    assert_eq!(
+        projection.lifecycle(),
+        RunLifecycle::Terminal(RunOutcome::Failed)
+    );
+    assert!(
+        projection
+            .settled_node_executions()
+            .values()
+            .any(|execution| {
+                execution.state() == &NodeExecutionState::Terminal(NodeOutcome::Rejected)
+            })
+    );
+    let history = harness.runtime.history(&run)?;
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| matches!(
+                event.kind(),
+                RunEventKind::CapabilityEntryDecisionRecorded { authorization, .. }
+                    if !authorization.is_allowed()
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| matches!(
+                event.kind(),
+                RunEventKind::NodeTerminal {
+                    outcome: NodeOutcome::Rejected,
+                    error_class: Some(ErrorClass::Authorization),
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    Ok(())
+}
+
 macro_rules! forward_store_methods {
     (
         $(

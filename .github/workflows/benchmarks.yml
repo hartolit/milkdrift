@@ -1,0 +1,52 @@
+name: benchmark and operational evidence
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "29 3 * * 6"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-evidence-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # pinned commit
+        with:
+          toolchain: 1.95.0
+      - name: Build pinned process fixture and evidence runner
+        run: cargo build --release -p milkdrift-evidence --bin evidence-process-helper --bin operational-evidence
+      - name: Smoke every benchmark once
+        env:
+          MILKDRIFT_EVIDENCE_PROCESS_HELPER: ${{ github.workspace }}/target/release/evidence-process-helper
+        run: cargo bench -p milkdrift-evidence --bench core_paths -- --test
+      - name: Capture benchmark distributions
+        env:
+          MILKDRIFT_EVIDENCE_PROCESS_HELPER: ${{ github.workspace }}/target/release/evidence-process-helper
+        run: |
+          mkdir -p target/evidence
+          set -o pipefail
+          cargo bench -p milkdrift-evidence --bench core_paths 2>&1 | tee target/evidence/benchmarks.txt
+      - name: Run storage, saturation, stream, and recovery scenarios
+        env:
+          MILKDRIFT_EVIDENCE_PROCESS_HELPER: ${{ github.workspace }}/target/release/evidence-process-helper
+        run: target/release/operational-evidence --operations 256 --output target/evidence
+      - name: Prove fixed effect-worker queue backpressure
+        run: |
+          set -o pipefail
+          cargo test --release -p milkdrift-capability-host --test effect_worker bounded_queues_backpressure_and_forced_shutdown_preserves_unresolved_truth -- --exact --nocapture 2>&1 | tee target/evidence/effect-worker-saturation.txt
+      - name: Upload benchmark and operational evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: benchmark-operational-${{ runner.os }}
+          path: target/evidence
+          if-no-files-found: error
+          retention-days: 30

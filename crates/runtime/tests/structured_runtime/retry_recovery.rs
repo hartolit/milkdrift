@@ -496,6 +496,118 @@ fn crash_after_durable_start_recovers_as_uncertain_without_duplicate_dispatch_hi
 }
 
 #[test]
+fn crash_after_idempotent_start_recovers_as_retryable_with_stable_key() -> TestResult {
+    let directory = TempDir::new()?;
+    let revision = task_revision("workflow-crash-idempotent-start")?;
+    let run = RunId::new("run-crash-idempotent-start")?;
+    let descriptor = descriptor_with_model_side_effect("idempotent_write")?;
+
+    let (original_attempt, original_lease) = {
+        let store = Arc::new(RedbStore::open(directory.path())?);
+        store.put_revision(&revision)?;
+        let runtime = recovery_service(
+            store.clone(),
+            Arc::new(ManualClock::new(NOW)),
+            Arc::new(PanickingExecutor {
+                resolver: DeterministicExecutor::new(descriptor.clone()),
+            }),
+            "crash-idempotent-start",
+        )?;
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::CreateRun {
+                workflow: revision.semantic().workflow().clone(),
+                revision: revision.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    run.clone(),
+                    ScopeId::new("scope-crash-idempotent-start")?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?;
+        submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?;
+        assert_eq!(runtime.scheduler_tick()?.dispatched, 1);
+        let action = runtime
+            .claim_effects(PageSize::new(1)?)?
+            .into_iter()
+            .next()
+            .ok_or("idempotent crash fixture did not claim its invocation")?;
+        let dispatch = match &action {
+            EffectAction::Execute(dispatch) => dispatch,
+            EffectAction::Cancel(_) => return Err("expected idempotent execution effect".into()),
+        };
+        assert!(dispatch.request().idempotency_key().is_some());
+        let attempt = dispatch.attempt().clone();
+        let lease = dispatch.lease().clone();
+        let crash = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runtime.execute_effect(action)
+        }));
+        assert!(crash.is_err(), "idempotent crash fixture did not panic");
+        (attempt, lease)
+    };
+
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let runtime = recovery_service(
+        store,
+        Arc::new(ManualClock::new(NOW + 101)),
+        Arc::new(DeterministicExecutor::new(descriptor)),
+        "recover-idempotent-start",
+    )?;
+    let history = runtime.history(&run)?;
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| matches!(
+                event.kind(),
+                RunEventKind::LeaseExpired {
+                    lease,
+                    classification: RecoveryClassification::Retryable,
+                } if lease == &original_lease
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| matches!(
+                event.kind(),
+                RunEventKind::RecoveryClassified {
+                    attempt,
+                    lease: Some(lease),
+                    classification: RecoveryClassification::Retryable,
+                    ..
+                } if attempt == &original_attempt && lease == &original_lease
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| matches!(
+                event.kind(),
+                RunEventKind::NodeRetryScheduled { previous_attempt, .. }
+                    if previous_attempt == &original_attempt
+            ))
+            .count(),
+        1
+    );
+    assert!(!history.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::RecoveryClassified {
+            attempt,
+            classification: RecoveryClassification::Uncertain,
+            ..
+        } if attempt == &original_attempt
+    )));
+    Ok(())
+}
+
+#[test]
 fn idempotent_boundary_error_retries_exact_request_and_keeps_first_attempt_truthful() -> TestResult
 {
     let directory = TempDir::new()?;

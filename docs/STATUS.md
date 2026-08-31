@@ -2,9 +2,34 @@
 
 This document owns current implementation facts and limitations.
 
+## Verification evidence closure
+
+- The development-only `milkdrift-evidence` package now measures journal commits, projection
+  rebuild/checkpoint recovery, receipt and peer retention turnover, causal-context selection and
+  selected-only materialization, artifact ranges, pinned local-process streams, production model
+  stream parsers, and authenticated daemon owner round trips.
+- A release operational runner emits JSON/CSV storage-growth, reopen, daemon overload/recovery,
+  per-tier logical document bytes, slow-consumer/cursor reconnect, task-count, and graceful-shutdown
+  evidence. Fixed effect-worker queue saturation remains covered by its controlled blocking-adapter
+  regression.
+- Focused cargo-mutants shards and an exact survivor-classification policy cover authority
+  selection, idempotency/retention, runtime recovery/reconciliation, context budgeting, and peer
+  serving lifecycle. The local campaign tested 387 focused mutants with no timeout or unclassified
+  survivor: 316 caught, 21 compiler-unviable, and 50 exact reviewed classifications. Divan and
+  cargo-mutants are exact-version development tools.
+- Pinned CI definitions now include Linux quality/stress/mutation/benchmark lanes and a Linux,
+  Windows, and macOS contract matrix with uploaded failure/success artifacts and explicit bounds.
+- The complete post-change Linux gate, all 12 Divan smoke/full scenarios, the 256-operation release
+  storage/daemon lane, and the fixed effect-worker saturation regression passed locally on
+  2026-08-31. Hosted Windows/macOS, mutation, and benchmark workflow executions are still required
+  before this pass can be called literally closed; no successful hosted run is claimed.
+
+Methodology, commands, artifact locations, and honest limitations are in
+[`verification-evidence.md`](verification-evidence.md).
+
 ## Implemented
 
-- A Rust 1.95.0, edition-2024 workspace with twenty-one safe-Rust packages and a curated lint/dependency policy.
+- A Rust 1.95.0, edition-2024 workspace with twenty-two safe-Rust packages and a curated lint/dependency policy.
 - Prompt-sequence schema 2 accepts bounded duplicate-safe JSON or a lexically bounded Markdown header plus exact per-stage prompt sections; schema 1 is deliberately unsupported rather than reinterpreted. It accepts only preconfigured trusted-host `process.execute` profiles whose emitted input contract is exact, plus an opaque repository workspace policy; model generation remains an ordinary separately authored blueprint task rather than a falsely compatible sequence profile. It compiles to ordinary task/branch/signal-wait/terminal nodes, assigns fresh causal context to coding/review stages, and records import/repository/prompt digests and stage mappings in immutable revision metadata. Verification success is an explicit artifact-presence fact; failure prevents later stages and routes to review plus the shared durable approval wait. Bounded remediation verifies the exact original import, repository, and stage mapping before building a normal digest- and sequence-guarded prospective proposal with import-digest evidence; it inserts fresh remediation, re-verification, re-review, and renewed approval without rewriting completed occurrences or changing the frozen run grant.
 - The daemon and thin CLI expose prompt-sequence validate/import/show/status/stage/remediate operations through the existing authorized command/read plane. Historical timeline entries lead to exact attempt inspection after frontier compaction, including frozen capability/process provenance and separately authorized causal-context detail. A real daemon/redb/local-process integration proof uses a persistent temporary repository, fresh byte-pinned process invocations, a weak verifier, independent review, proposal approval/apply, three restart boundaries, explicit signal/resume, and asserts no duplicate attempts.
 - The operator-driven external-evidence harness uses an isolated data root and disposable Git repository to run the ordinary process, prompt-sequence, proposal/reconciliation, causal-context, model-provider, artifact, authority, read-model, and controlled-shutdown paths. Its hermetic mode proves the harness through a byte-pinned process fixture and exact loopback streaming endpoint while always reporting non-qualifying status. A strict version-one redacted report and consumer JSON Schema record the validated configuration digest, safe executable/profile/model provenance, all invocation/attempt/artifact identities, selected/omitted context, usage, and restart boundaries. Real mode rejects fixture/helper profiles, requires exact executable bytes/version and provider usage/metadata, and exits nonzero for missing proof.

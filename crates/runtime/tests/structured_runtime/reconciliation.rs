@@ -813,6 +813,191 @@ fn removed_side_effecting_history_requires_authority_and_cannot_fabricate_remedi
 }
 
 #[test]
+fn reconciliation_guards_reject_each_invalid_state_independently() -> TestResult {
+    let harness = Harness::new("reconciliation-guards")?;
+    let old = wait_revision("workflow-reconciliation-guards", 5_000)?;
+    let new = revised_wait_revision(&old, 7_500)?;
+    harness.put_revision(&old)?;
+    harness.put_revision(&new)?;
+
+    let created_run = RunId::new("run-reconciliation-guard-created")?;
+    harness.create(&created_run, &old)?;
+    assert_eq!(
+        harness.command(
+            &created_run,
+            RunCommand::RequestRevisionAdoption {
+                reconciliation: ReconciliationId::new("reconciliation-created")?,
+                revision: new.id().clone(),
+                policy: ReconciliationPolicy::FinishCurrentThenAdopt,
+            },
+        )?,
+        CommandDisposition::Rejected
+    );
+
+    let failing_harness = Harness::with_plan_id_failure("reconciliation-plan-id-failure")?;
+    failing_harness.put_revision(&old)?;
+    failing_harness.put_revision(&new)?;
+    let failing_run = RunId::new("run-reconciliation-guard-plan-id-failure")?;
+    failing_harness.create_and_start(&failing_run, &old)?;
+    let before_failure = failing_harness.store.head(&failing_run)?;
+    assert!(
+        failing_harness
+            .command(
+                &failing_run,
+                RunCommand::RequestRevisionAdoption {
+                    reconciliation: ReconciliationId::new("reconciliation-plan-id-failure")?,
+                    revision: new.id().clone(),
+                    policy: ReconciliationPolicy::FinishCurrentThenAdopt,
+                },
+            )
+            .is_err()
+    );
+    assert_eq!(failing_harness.store.head(&failing_run)?, before_failure);
+    assert!(
+        failing_harness
+            .runtime
+            .projection(&failing_run)?
+            .reconciliation()
+            .plans()
+            .is_empty()
+    );
+
+    let active_run = RunId::new("run-reconciliation-guard-active")?;
+    harness.create_and_start(&active_run, &old)?;
+    assert_eq!(
+        harness.command(
+            &active_run,
+            RunCommand::RequestRevisionAdoption {
+                reconciliation: ReconciliationId::new("reconciliation-active-first")?,
+                revision: new.id().clone(),
+                policy: ReconciliationPolicy::FinishCurrentThenAdopt,
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        harness.command(
+            &active_run,
+            RunCommand::RequestRevisionAdoption {
+                reconciliation: ReconciliationId::new("reconciliation-active-second")?,
+                revision: new.id().clone(),
+                policy: ReconciliationPolicy::FinishCurrentThenAdopt,
+            },
+        )?,
+        CommandDisposition::Rejected
+    );
+    let active_plan = harness
+        .runtime
+        .projection(&active_run)?
+        .reconciliation()
+        .plans()
+        .values()
+        .next()
+        .ok_or("active reconciliation plan is absent")?
+        .plan()
+        .clone();
+    assert_eq!(
+        harness.command(
+            &active_run,
+            RunCommand::DecideReconciliation {
+                plan: active_plan.clone(),
+                decision: ReconciliationDecisionId::new("decision-invalid-outcome")?,
+                outcome: AuthorityDecision::Retain,
+            },
+        )?,
+        CommandDisposition::Rejected
+    );
+    let reused_decision = ReconciliationDecisionId::new("decision-reused")?;
+    assert_eq!(
+        harness.command(
+            &active_run,
+            RunCommand::DecideReconciliation {
+                plan: active_plan.clone(),
+                decision: reused_decision.clone(),
+                outcome: AuthorityDecision::Approve,
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        harness.command(
+            &active_run,
+            RunCommand::DecideReconciliation {
+                plan: active_plan.clone(),
+                decision: reused_decision,
+                outcome: AuthorityDecision::Approve,
+            },
+        )?,
+        CommandDisposition::Rejected
+    );
+    assert_eq!(
+        harness.command(
+            &active_run,
+            RunCommand::ApplyReconciliation {
+                plan: active_plan.clone(),
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        harness.command(
+            &active_run,
+            RunCommand::DecideReconciliation {
+                plan: active_plan,
+                decision: ReconciliationDecisionId::new("decision-after-application")?,
+                outcome: AuthorityDecision::Approve,
+            },
+        )?,
+        CommandDisposition::Rejected
+    );
+
+    let rejected_run = RunId::new("run-reconciliation-guard-rejected")?;
+    harness.create_and_start(&rejected_run, &old)?;
+    assert_eq!(
+        harness.command(
+            &rejected_run,
+            RunCommand::RequestRevisionAdoption {
+                reconciliation: ReconciliationId::new("reconciliation-rejected")?,
+                revision: new.id().clone(),
+                policy: ReconciliationPolicy::FinishCurrentThenAdopt,
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    let rejected_plan = harness
+        .runtime
+        .projection(&rejected_run)?
+        .reconciliation()
+        .plans()
+        .values()
+        .next()
+        .ok_or("reject-path reconciliation plan is absent")?
+        .plan()
+        .clone();
+    assert_eq!(
+        harness.command(
+            &rejected_run,
+            RunCommand::DecideReconciliation {
+                plan: rejected_plan.clone(),
+                decision: ReconciliationDecisionId::new("decision-reject")?,
+                outcome: AuthorityDecision::Reject,
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        harness.command(
+            &rejected_run,
+            RunCommand::ApplyReconciliation {
+                plan: rejected_plan,
+            },
+        )?,
+        CommandDisposition::Rejected
+    );
+    Ok(())
+}
+
+#[test]
 fn prospective_revision_adoption_is_persisted_actionable_and_stale_safe() -> TestResult {
     let harness = Harness::new("adoption")?;
     let old = wait_revision("workflow-adoption", 5_000)?;

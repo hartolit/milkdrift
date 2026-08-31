@@ -348,6 +348,28 @@ fn evaluation_covers_allow_and_every_stable_denial_family() -> TestResult {
             .reason_codes()
             .contains(&DecisionReasonCode::SideEffectExcess)
     );
+    let mut exact_envelope = base.clone();
+    exact_envelope.resources.capability_envelope = Some(
+        CapabilityAuthorityScopeBuilder::new(SideEffectClass::ReadOnly)
+            .only_capabilities(set(CapabilityId::new("cap-a")?))?
+            .only_categories(set(CapabilityCategory::Model))?
+            .only_operations(set(OperationId::new("model.generate")?))?
+            .only_provider_profiles(set(ProviderProfileRef::new("profile-a")?))?
+            .only_trust_zones(set(TrustZone::new("trusted")?))?
+            .only_localities(set(Locality::Remote))?
+            .build(),
+    );
+    assert!(evaluate(&exact_envelope)?.is_allowed());
+
+    let mut widened_envelope = base.clone();
+    widened_envelope.resources.capability_envelope = Some(CapabilityAuthorityScope::allow_any(
+        SideEffectClass::NonIdempotentWrite,
+    ));
+    assert!(
+        evaluate(&widened_envelope)?
+            .reason_codes()
+            .contains(&DecisionReasonCode::CapabilityMismatch)
+    );
     let mut trust = base.clone();
     trust.resources.trust_zone = Some(TrustZone::new("untrusted")?);
     assert!(

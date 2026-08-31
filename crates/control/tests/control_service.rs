@@ -10,8 +10,8 @@ use milkdrift_authority::{
     GrantSetEvaluator, PolicyId, WorkflowRunScope,
 };
 use milkdrift_blueprint::{
-    AuthorRef, BlueprintRevision, Condition, DataPort, Edge, EdgeId, EdgeKind, Mutation,
-    MutationBatch, Node, NodeId, NodeKind, PinnedSubworkflow, PortId, ReducerConfig,
+    AuthorRef, BlueprintMetadata, BlueprintRevision, Condition, DataPort, Edge, EdgeId, EdgeKind,
+    Mutation, MutationBatch, Node, NodeId, NodeKind, PinnedSubworkflow, PortId, ReducerConfig,
     ReducerStrategy, SchemaRef, TerminalOutcome, WorkflowId, WorkflowInterface,
 };
 use milkdrift_capability::{
@@ -26,14 +26,15 @@ use milkdrift_capability_host::{
 use milkdrift_control::{
     ActorAuthorityContext, AuthorityPreset, ClaimedStopCondition, ControlCommand,
     ControlCommandDocument, ControlError, ControlId, ControlResult, ControlResultSink,
-    ControlService, ControllerBlueprintSpec, ControllerLimits, OptimisticGuard,
-    ProposalApplicationPolicy, ProposalId, ProposalProvenance, RequestedRunAction, RiskClass,
-    WORKFLOW_PROPOSE_OPERATION, WorkflowControlAdapter, WorkflowProposal, WorkflowProposalDocument,
-    build_controller_blueprint, workflow_control_descriptor,
+    ControlService, ControllerBlueprintSpec, ControllerLimits, ControllerPolicyDocument,
+    OptimisticGuard, ProposalApplicationPolicy, ProposalId, ProposalProvenance, RequestedRunAction,
+    RiskClass, WORKFLOW_PROPOSE_OPERATION, WorkflowControlAdapter, WorkflowProposal,
+    WorkflowProposalDocument, build_controller_blueprint, workflow_control_descriptor,
 };
 use milkdrift_persistence::{
-    ControllerAssessmentOutcome, Reason, ReconciliationDecisionId, RepeatDecisionId, RevisionStore,
-    RunEventKind, RunOutcome, RunSequence, TimestampMillis, WorkerId,
+    ControllerAssessmentBoundary, ControllerAssessmentOutcome, Reason, ReconciliationDecisionId,
+    RepeatDecisionId, RevisionStore, RunEventKind, RunOutcome, RunSequence, TimestampMillis,
+    WorkerId,
 };
 use milkdrift_redb_store::RedbStore;
 use milkdrift_runtime::{
@@ -351,6 +352,120 @@ fn production_runtime_assesses_and_stops_a_controller_at_exact_cycle_bound() -> 
                 && value.reached_bound == Some(milkdrift_control::ControllerBound::Invocations)
                 && value.progress.invocations == 2
                 && !value.cycle_eligible
+    ));
+    Ok(())
+}
+
+#[test]
+fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_proposals()
+-> TestResult {
+    let directory = TempDir::new()?;
+    let store = Arc::new(RedbStore::open(
+        directory.path().join("controller-progress.redb"),
+    )?);
+    let run = RunId::new("run-controller-progress")?;
+    let actor = ActorRef::new("controller:progress")?;
+    let grant_id = GrantId::new("grant:controller-progress")?;
+    let (runtime, service, context) = services(
+        store.clone(),
+        &actor,
+        &run,
+        &grant_id,
+        "controller-progress",
+    )?;
+    let body = base_revision("controller-progress-body")?;
+    store.put_revision(&body)?;
+    let wrapper = build_controller_blueprint(ControllerBlueprintSpec {
+        workflow: WorkflowId::new("controller-progress-wrapper")?,
+        body: PinnedSubworkflow::new(
+            body.semantic().workflow().clone(),
+            body.id().clone(),
+            WorkflowInterface::new([], [])?,
+        ),
+        continue_condition: Condition::Constant { value: true },
+        limits: ControllerLimits::new(
+            2, 64, 8, 4, 60_000, 1_000_000, 10_000, 10_000, 1_000_000, 64, 64, 64, 64, 2, 2, None,
+        )?,
+        author: AuthorRef::new("human:controller-progress-test")?,
+    })?;
+    store.put_revision(&wrapper)?;
+    create_and_start(&service, &runtime, &context, &run, &wrapper)?;
+
+    let projection = runtime.projection(&run)?;
+    let controller_execution = projection
+        .node_executions()
+        .values()
+        .find(|execution| execution.node().as_str() == "controller-repeat")
+        .map(|execution| execution.execution().clone())
+        .ok_or("active controller execution is absent")?;
+    let mut value = serde_json::to_value(&projection)?;
+    value["subworkflow_usage_by_execution"] = serde_json::json!([[
+        serde_json::to_value(&controller_execution)?,
+        {
+            "completed_children": 3,
+            "failed_children": 2,
+            "cost_micros": [["USD", 700]],
+            "overflowed": false,
+            "input_units": 11,
+            "output_units": 13,
+            "artifact_bytes": 17,
+            "process_invocations": 19,
+            "model_invocations": 23,
+            "unknown_input_usage": 29,
+            "unknown_output_usage": 31,
+            "unknown_cost_usage": 37
+        }
+    ]]);
+    value["run_actor_revision_requests"] = serde_json::json!(41);
+    value["run_actor_rejections"] = serde_json::json!(43);
+    let projection: milkdrift_runtime::RunProjection = serde_json::from_value(value)?;
+    let document =
+        ControllerPolicyDocument::from_revision(&wrapper, &NodeId::new("controller-repeat")?)?
+            .ok_or("controller policy document is absent")?;
+    let progress = service.controller_lifecycle_owner().progress(
+        &document,
+        &projection,
+        &controller_execution,
+        NOW + 47,
+    )?;
+    assert_eq!(progress.invocations, 3);
+    assert_eq!(progress.elapsed_ms, 47);
+    assert_eq!(progress.cost_micros, 700);
+    assert_eq!(progress.input_units, 11);
+    assert_eq!(progress.output_units, 13);
+    assert_eq!(progress.artifact_bytes, 17);
+    assert_eq!(progress.process_invocations, 19);
+    assert_eq!(progress.model_invocations, 23);
+    assert_eq!(progress.failures, 2);
+    assert_eq!(progress.revisions, 41);
+    assert_eq!(progress.rejections, 43);
+    assert_eq!(progress.unknown_input_observations, 29);
+    assert_eq!(progress.unknown_output_observations, 31);
+    assert_eq!(progress.unknown_cost_observations, 37);
+
+    let proposed = wrapper.revise(
+        wrapper.id(),
+        MutationBatch::new(vec![Mutation::SetMetadata {
+            metadata: BlueprintMetadata::new(
+                "controller-progress-proposal",
+                "proposal transition cumulative-bound fixture",
+                BTreeSet::from(["controller-progress".to_owned()]),
+                BTreeMap::new(),
+            )?,
+        }])?,
+        AuthorRef::new("controller:progress")?,
+        format!("proposer={actor};source=controller-progress-test"),
+    )?;
+    assert!(matches!(
+        service.controller_lifecycle_owner().assess_proposal_transition(
+            &run,
+            &projection,
+            &proposed,
+            ControllerAssessmentBoundary::ProposalApproval,
+            NOW + 47,
+        ),
+        Err(ControlError::Bounds { location, .. })
+            if location == "controller.proposal.invocations"
     ));
     Ok(())
 }

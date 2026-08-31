@@ -10,6 +10,10 @@ The production local backend uses redb plus a filesystem artifact directory. `mi
 cargo test --workspace
 ```
 
+Repeatable mutation, benchmark, storage-growth, daemon-saturation, and cross-platform evidence is
+documented in [verification and operational evidence](docs/verification-evidence.md). These lanes
+produce reviewable artifacts without treating benchmark values as correctness gates.
+
 ## Two-daemon peer example
 
 Peer support is disabled unless `peers.enabled` and explicit relationships are configured. For a local test, daemon B can point at daemon A with:
@@ -218,6 +222,8 @@ A minimal revision is constructed through a validated mutation batch; see the cr
 - `adapters/secret-env`: explicit opaque-secret-reference to environment-name resolution.
 - `apps/daemon`: authoritative local host, bounded runtime owner, authentication, HTTP/SSE API, recovery, and shutdown.
 - `apps/cli`: thin operator client with human and stable schema-v1 JSON output.
+- `tools/evidence`: development-only Divan and operational fixtures for critical bounded paths.
+- `.github/workflows`: pinned Linux quality/stress/evidence lanes plus Linux, Windows, and macOS contract validation.
 - `docs`: status, roadmap, development commands, and durable decisions.
 - `.github/workflows/quality.yml`: the primary format/check/test/lint/documentation workflow.
 - `.github/workflows/stress.yml`: weekly and manually triggered long-run storage/projection boundary evidence.

@@ -22,6 +22,7 @@ members = [
     "crates/workspace",
     "apps/cli",
     "apps/daemon",
+    "tools/evidence",
 ]
 
 [workspace.package]

@@ -504,9 +504,11 @@ impl RuntimeService {
         previous: RunSequence,
         current: &RunProjection,
     ) -> bool {
-        current.sequence().get() / PROJECTION_SNAPSHOT_INTERVAL_EVENTS
-            > previous.get() / PROJECTION_SNAPSHOT_INTERVAL_EVENTS
-            || current.lifecycle().is_completed()
+        projection_checkpoint_due(
+            previous,
+            current.sequence(),
+            current.lifecycle().is_completed(),
+        )
     }
 
     pub(super) fn persist_projection_snapshot(
@@ -840,5 +842,42 @@ impl RuntimeService {
                         ..
                     }
             )
+    }
+}
+
+fn projection_checkpoint_due(previous: RunSequence, current: RunSequence, completed: bool) -> bool {
+    current.get() / PROJECTION_SNAPSHOT_INTERVAL_EVENTS
+        > previous.get() / PROJECTION_SNAPSHOT_INTERVAL_EVENTS
+        || completed
+}
+
+#[cfg(test)]
+mod checkpoint_tests {
+    use super::{PROJECTION_SNAPSHOT_INTERVAL_EVENTS, projection_checkpoint_due};
+    use milkdrift_persistence::RunSequence;
+
+    #[test]
+    fn checkpoint_interval_and_completion_conditions_are_independent_and_exact() {
+        let boundary = PROJECTION_SNAPSHOT_INTERVAL_EVENTS;
+        assert!(!projection_checkpoint_due(
+            RunSequence::ZERO,
+            RunSequence::new(boundary - 1),
+            false,
+        ));
+        assert!(projection_checkpoint_due(
+            RunSequence::new(boundary - 1),
+            RunSequence::new(boundary),
+            false,
+        ));
+        assert!(!projection_checkpoint_due(
+            RunSequence::new(boundary),
+            RunSequence::new(boundary + 1),
+            false,
+        ));
+        assert!(projection_checkpoint_due(
+            RunSequence::new(boundary),
+            RunSequence::new(boundary + 1),
+            true,
+        ));
     }
 }
