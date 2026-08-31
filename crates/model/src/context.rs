@@ -10,8 +10,6 @@ use milkdrift_workspace::{
 
 use crate::{ModelContractError, document::encode};
 
-/// Legacy metadata-only context-manifest schema, deliberately refused by current readers.
-pub const CONTEXT_MANIFEST_SCHEMA_VERSION_V1: u32 = 1;
 /// Current context-manifest schema with materialization digests and exact producer provenance.
 pub const CONTEXT_MANIFEST_SCHEMA_VERSION_V2: u32 = 2;
 const MAX_ENTRIES: usize = 4_096;

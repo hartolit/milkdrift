@@ -156,8 +156,8 @@ impl IntoResponse for ApiError {
     }
 }
 
-/// Builds the bounded version-one router. CORS is intentionally absent.
-pub fn router(host: DaemonHost) -> Router {
+/// Builds the bounded protocol-2.2 router. CORS is intentionally absent.
+pub(crate) fn router(host: DaemonHost) -> Router {
     let peer_service = host.peer_service();
     let state = AppState {
         host,

@@ -207,7 +207,7 @@ A minimal revision is constructed through a validated mutation batch; see the cr
 - `crates/capability`: provider-neutral capability, exact resolution, and invocation contracts.
 - `crates/authority`: actor identity, scoped immutable grants, deterministic decisions, and opaque secret references.
 - `crates/control`: shared human/service/AI workflow proposals, risk policy, authority presets, the typed durable controller lifecycle/read model, and the in-process workflow-control capability adapter.
-- `crates/control-protocol`: pure version-one external commands, read models, envelopes, cursors, streams, and layout schema.
+- `crates/control-protocol`: pure protocol-2.2 commands, read models, envelopes, authenticated cursors, streams, and layout schema 1.
 - `crates/control-client`: authenticated typed HTTP queries, exact command submission, bounded artifact ranges, and resumable SSE.
 - `crates/prompt-sequence`: bounded JSON/Markdown implementation sequences, ordinary blueprint compilation, and prospective remediation proposal construction.
 - `crates/capability-host`: live adapter generations, resolution, admission, cancellation, health, drain, and shutdown.
@@ -228,6 +228,6 @@ A minimal revision is constructed through a validated mutation batch; see the cr
 - `.github/workflows/quality.yml`: the primary format/check/test/lint/documentation workflow.
 - `.github/workflows/stress.yml`: weekly and manually triggered long-run storage/projection boundary evidence.
 
-The canonical documents are [VISION.md](VISION.md), [ARCHITECTURE.md](ARCHITECTURE.md), [docs/STATUS.md](docs/STATUS.md), [docs/ROADMAP.md](docs/ROADMAP.md), [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), and [the ADR index](docs/decisions/README.md).
+Start with [AGENTS.md](AGENTS.md). The canonical detailed documents are [VISION.md](VISION.md), [ARCHITECTURE.md](ARCHITECTURE.md), [docs/STATUS.md](docs/STATUS.md), [docs/ROADMAP.md](docs/ROADMAP.md), [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), [the public API policy](docs/reference/public-api-policy.md), and [the ADR index](docs/decisions/README.md).
 
 Milkdrift is licensed under either the [MIT license](LICENSE-MIT) or the [Apache License 2.0](LICENSE-APACHE), at your option.

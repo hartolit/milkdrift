@@ -16,4 +16,4 @@ pub use config::{
     SecretSourceConfig, ShutdownConfig, ShutdownEffectPolicy, ValidatedDaemonConfig,
 };
 pub use host::{DaemonHost, HostError};
-pub use http::{router, serve};
+pub use http::serve;

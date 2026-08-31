@@ -29,7 +29,7 @@ tower-http.workspace = true
 url.workspace = true
 
 [dev-dependencies]
-milkdrift-redb-store = { version = "=0.1.0", path = "../redb-store" }
+milkdrift-redb-store = { version = "=0.1.0", path = "../redb-store", features = ["test-admin"] }
 redb = "=2.6.3"
 tempfile.workspace = true
 

@@ -118,6 +118,7 @@ impl RedbStoreConfig {
     }
 
     /// Installs a synchronous deterministic fault hook for durability tests.
+    #[cfg(feature = "test-admin")]
     #[must_use]
     pub fn with_fault_injector(mut self, faults: Arc<dyn FaultInjector>) -> Self {
         self.faults = faults;

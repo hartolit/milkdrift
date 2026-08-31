@@ -73,7 +73,5 @@ pub use mutation::{Mutation, MutationBatch, MutationError};
 pub use revision::BlueprintRevision;
 pub use validation::{Diagnostic, DiagnosticCode, ValidationError};
 
-/// Legacy portable blueprint schema, deliberately not read after task-context semantics changed.
-pub const BLUEPRINT_SCHEMA_VERSION_V1: u32 = 1;
 /// Portable blueprint document schema with explicit task context policy.
 pub const BLUEPRINT_SCHEMA_VERSION_V2: u32 = 2;

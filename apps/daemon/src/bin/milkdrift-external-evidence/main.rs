@@ -354,7 +354,7 @@ async fn run_scenarios(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // Harness assembly keeps independently audited paths, profiles, and secrets explicit.
 fn configuration(
     session_root: &Path,
     repository: &Path,
@@ -482,7 +482,7 @@ fn configuration(
     Ok((config, configuration_digest, process_token, model_token))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // Evidence grants spell out every bounded resource input at the audit boundary.
 fn explicit_grant(
     workflow: &str,
     capabilities: &BTreeSet<String>,

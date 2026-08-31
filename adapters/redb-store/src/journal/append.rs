@@ -814,7 +814,7 @@ pub(crate) fn persist_workspace_accounting(
 pub(crate) fn append_events(
     write: &redb::WriteTransaction,
     request: &AtomicRunCommitRequest,
-    faults: &dyn crate::FaultInjector,
+    faults: &dyn crate::fault::FaultInjector,
 ) -> Result<(), PersistenceError> {
     let mut events = write.open_table(RUN_EVENTS).map_err(error::redb)?;
     let mut signal_receipts = write.open_table(SIGNAL_RECEIPTS).map_err(error::redb)?;

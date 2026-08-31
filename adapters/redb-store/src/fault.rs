@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use milkdrift_persistence::{PersistenceError, StorageFailureClass};
+use milkdrift_persistence::PersistenceError;
+#[cfg(feature = "test-admin")]
+use milkdrift_persistence::StorageFailureClass;
 
 /// Stable durability boundaries exposed for deterministic crash/failure tests.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -144,6 +146,7 @@ pub(crate) fn no_faults() -> Arc<dyn FaultInjector> {
 }
 
 /// Constructs a stable injected-failure error for simple test injectors.
+#[cfg(feature = "test-admin")]
 #[must_use]
 pub fn injected_failure(point: FaultPoint) -> PersistenceError {
     PersistenceError::Storage {

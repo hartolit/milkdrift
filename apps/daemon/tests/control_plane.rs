@@ -194,7 +194,7 @@ struct DogfoodProfiles {
     reviewer: std::path::PathBuf,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // Test fixture mirrors every independently variable process-profile field.
 fn write_dogfood_process_profile(
     directory: &TempDir,
     repository: &std::path::Path,

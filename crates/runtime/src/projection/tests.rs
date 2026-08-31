@@ -1,5 +1,6 @@
 use std::error::Error;
 
+use milkdrift_authority::ActorRef;
 use milkdrift_blueprint::{ContentDigest, NodeId, PortId, RevisionId, WorkflowId};
 use milkdrift_capability::{
     AdmissionConstraints, BoundedJson, CapabilityCategory, CapabilityId, CapabilityRequirement,
@@ -8,8 +9,8 @@ use milkdrift_capability::{
     ResolvedCapabilitySnapshot, ResolvedCapabilitySnapshotDocument, SideEffectClass,
 };
 use milkdrift_persistence::{
-    ActorRef, AttemptId, AuthorityDecision, BoundedDetail, BranchResultReference, CommandId,
-    CurrencyCode, EventId, EvidenceId, EvidenceKind, EvidenceReference, JoinRule, LeaseId,
+    AttemptId, AuthorityDecision, BoundedDetail, BranchResultReference, CommandId, CurrencyCode,
+    EventId, EvidenceId, EvidenceKind, EvidenceReference, JoinRule, LeaseId,
     MAX_REPEAT_CONTINUATION_CYCLES, NodeExecutionId, NodeExecutionMode, NodeOutcome, Reason,
     ReconciliationAction, ReconciliationClassification, ReconciliationDecisionId, ReconciliationId,
     ReconciliationItem, ReconciliationPlanId, ReconciliationPolicy, RecoveryClassification,

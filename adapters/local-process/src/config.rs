@@ -17,8 +17,6 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
 
-/// Legacy path-only schema, retained only so refusal can be explicit.
-pub const PROCESS_PROFILE_SCHEMA_VERSION_V1: u32 = 1;
 /// Exact current byte-pinned trusted-host process-profile document schema.
 pub const PROCESS_PROFILE_SCHEMA_VERSION_V2: u32 = 2;
 /// Maximum encoded profile document size.

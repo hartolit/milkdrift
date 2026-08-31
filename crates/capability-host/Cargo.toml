@@ -19,7 +19,7 @@ tempfile.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-milkdrift-redb-store = { version = "=0.1.0", path = "../../adapters/redb-store" }
+milkdrift-redb-store = { version = "=0.1.0", path = "../../adapters/redb-store", features = ["test-admin"] }
 
 [lints]
 workspace = true

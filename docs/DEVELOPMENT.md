@@ -48,9 +48,9 @@ failure gating and causal reviewer context, and verifies exact-once attempts plu
 Focused application-persistence and cross-transaction recovery checks are:
 
 ```sh
-cargo test -p milkdrift-redb-store --test application_state -- --nocapture
-cargo test -p milkdrift-redb-store --test contracts runtime_acceptance_reconciles_external_receipt_without_competing_effect_authority -- --exact --nocapture
-cargo test -p milkdrift-redb-store --test contracts command_fault_boundaries_are_atomic_and_replayable -- --exact --nocapture
+cargo test -p milkdrift-redb-store --features test-admin --test application_state -- --nocapture
+cargo test -p milkdrift-redb-store --features test-admin --test contracts runtime_acceptance_reconciles_external_receipt_without_competing_effect_authority -- --exact --nocapture
+cargo test -p milkdrift-redb-store --features test-admin --test contracts command_fault_boundaries_are_atomic_and_replayable -- --exact --nocapture
 ```
 
 Focused peer protocol, durability, artifact, reconnect, and real two-daemon checks are:
@@ -65,7 +65,7 @@ They use temporary redb/core-artifact stores, ephemeral loopback listeners, loca
 
 These tests use temporary redb/artifact roots and ephemeral loopback listeners only. They cover fail-closed configuration/authentication, server-owned actor mapping, workflow/run/revision/proposal/layout/artifact/capability/provider/health scope, protected metadata/content audit, cross-actor cursor rejection, grant-narrowing page and stream failure, queue overload, exact accepted/rejected command replay across restart, stale layout guards, first-class proposal discovery, credential rotation, legacy-sidecar refusal, startup corruption, runtime/receipt crash reconciliation, and ordered shutdown. They require no internet or real credential. Run the daemon manually with `cargo run -p milkdrift-daemon -- --config PATH`; run the client with `cargo run -p milkdrift-cli -- [GLOBAL OPTIONS] COMMAND`. Keep bearer values in a private file or a referenced environment variable, never a command argument.
 
-Focused Pass-03C checks are:
+Focused causal-context and model-adapter checks are:
 
 ```sh
 cargo test -p milkdrift-blueprint --test kernel -- --nocapture
@@ -76,7 +76,7 @@ cargo test -p milkdrift-runtime --test structured_runtime causal_context_product
 cargo test -p milkdrift-capability-host --test materialization -- --nocapture
 ```
 
-Focused Pass-03D workflow-control checks are:
+Focused workflow-control checks are:
 
 ```sh
 cargo test -p milkdrift-control --test proposal_contracts -- --nocapture
@@ -140,12 +140,22 @@ Run `scripts/run-mutation-shard.sh SHARD` for the seven focused mutation areas. 
 survivor because a benchmark looks healthy: add the missing correctness assertion or record an
 exact reviewed classification in `.cargo/mutation-classifications.json`.
 
-For a public-surface review, install `cargo-public-api` as local tooling (it is not a
-workspace dependency), then inventory each library package with `cargo public-api -p
-PACKAGE -sss --color never`. The tool uses a nightly rustdoc JSON toolchain, while all
-product builds and gates continue to use the pinned stable toolchain. Compare totals and
-inspect removals against actual cross-package, application, documentation, and test
-consumers; a lower count is evidence, not permission to hide a real port or wire contract.
+For a public-surface review, follow
+[`reference/public-api-policy.md`](reference/public-api-policy.md). Install `cargo-public-api` as
+local tooling (it is not a workspace dependency), then inventory each library package with both
+`cargo public-api -p PACKAGE -sss --all-features --color never` and the default-feature equivalent.
+The tool uses a nightly rustdoc JSON toolchain, while all product builds and gates continue to use
+the pinned stable toolchain. Store raw reports under `target/public-api`, compare them against
+actual production, test, application, and documentation consumers, and review test/evidence
+features separately. A lower count is evidence, not permission to hide a real port or wire
+contract.
+
+Repository contract checks keep canonical links/version statements aligned with source constants,
+guard dependency direction, and prevent narrowed exports from returning:
+
+```sh
+cargo test -p milkdrift-evidence --test repository_contracts --all-features
+```
 
 Keep module ownership visible. A source file that accumulates multiple lifecycle or
 domain responsibilities must be split into real Rust child modules; `include!` and

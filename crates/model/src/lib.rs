@@ -8,10 +8,10 @@ mod document;
 mod task;
 
 pub use context::{
-    AuthorityFact, CONTEXT_MANIFEST_SCHEMA_VERSION_V1, CONTEXT_MANIFEST_SCHEMA_VERSION_V2,
-    ContextEvidenceReference, ContextInclusionReason, ContextManifest, ContextManifestDigest,
-    ContextManifestEntry, ContextManifestReference, ContextOmission, ContextOmissionReason,
-    ContextProducerFact, ContextSemanticKind, ContextSource, ContextTotals,
+    AuthorityFact, CONTEXT_MANIFEST_SCHEMA_VERSION_V2, ContextEvidenceReference,
+    ContextInclusionReason, ContextManifest, ContextManifestDigest, ContextManifestEntry,
+    ContextManifestReference, ContextOmission, ContextOmissionReason, ContextProducerFact,
+    ContextSemanticKind, ContextSource, ContextTotals,
 };
 pub use document::{
     ContextManifestDocument, MODEL_CONTRACT_SCHEMA_VERSION_V1, ModelContractError,

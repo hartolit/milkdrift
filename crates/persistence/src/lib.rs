@@ -103,10 +103,3 @@ pub use snapshot::{
     ProjectionCheckpoint, SNAPSHOT_ENVELOPE_SCHEMA_VERSION_V2, SnapshotDocument, SnapshotLoad,
     SnapshotStore, history_digest, history_genesis_digest, history_link_digest,
 };
-
-// Canonical identities already owned by inward crates are re-exported rather than
-// duplicated into wire-incompatible persistence-local wrappers.
-/// Compatibility re-export; the canonical actor identity is owned by `milkdrift-authority`.
-pub use milkdrift_authority::ActorRef;
-pub use milkdrift_capability::InvocationId;
-pub use milkdrift_workspace::{BranchId, IterationId, RunId, ScopeId, SubworkflowId};

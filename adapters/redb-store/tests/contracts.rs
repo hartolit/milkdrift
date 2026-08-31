@@ -16,6 +16,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+use milkdrift_authority::ActorRef;
 use milkdrift_authority::{GrantDigest, GrantId};
 use milkdrift_blueprint::{
     BlueprintRevisionDocument, ContentDigest as BlueprintContentDigest, NodeId, PortId, RevisionId,
@@ -23,7 +24,7 @@ use milkdrift_blueprint::{
 };
 use milkdrift_capability::{BoundedJson, CapabilityId, InvocationRequest, OperationId};
 use milkdrift_persistence::{
-    ActorRef, ApplicationCommandCommit, ApplicationCommandCommitOutcome, ApplicationCommandEffect,
+    ApplicationCommandCommit, ApplicationCommandCommitOutcome, ApplicationCommandEffect,
     ApplicationCommandReceipt, ApplicationCommandResult, ApplicationCommandStore,
     ApplicationEffectReference, ArtifactPublicationId, ArtifactReadAuthority, ArtifactReadRequest,
     ArtifactStore, AtomicRunCommitOutcome, AtomicRunCommitRequest, AttemptId, BeginArtifactOutcome,

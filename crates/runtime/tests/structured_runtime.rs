@@ -11,7 +11,7 @@ use std::{
 };
 
 use milkdrift_authority::{
-    AuthorityBudget, AuthorityDecisionSnapshot, AuthorityError, AuthorityEvaluator,
+    ActorRef, AuthorityBudget, AuthorityDecisionSnapshot, AuthorityError, AuthorityEvaluator,
     AuthorityOperation, DecisionReasonCode, GrantDigest, GrantId, PolicyId,
 };
 use milkdrift_blueprint::{
@@ -29,7 +29,7 @@ use milkdrift_capability::{
     ResolvedCapabilitySnapshot, SchemaId, SideEffectClass, TerminalStatus,
 };
 use milkdrift_persistence::{
-    ActorRef, ArtifactPublicationId, ArtifactStore, AtomicRunCommitRequest, AuthorityDecision,
+    ArtifactPublicationId, ArtifactStore, AtomicRunCommitRequest, AuthorityDecision,
     BeginArtifactPublication, CommandDisposition, CommandId, CommandReceipt, CommandResultDocument,
     EventId, EventPageQuery, IndexedRunState, IntegrityScanRequest, MAX_INDEX_MUTATIONS_PER_COMMIT,
     MAX_PAGE_SIZE, NodeExecutionId, NodeExecutionMode, NodeOutcome, PageSize, Reason,

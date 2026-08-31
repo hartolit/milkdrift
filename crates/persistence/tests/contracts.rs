@@ -1,25 +1,27 @@
 //! Contract and schema compatibility evidence for persistence-owned documents/ports.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use milkdrift_authority::ActorRef;
 use milkdrift_blueprint::{NodeId, RevisionId, WorkflowId};
 use milkdrift_capability::{
     BoundedJson, CapabilityId, InvocationId, InvocationRequest, OperationId, SideEffectClass,
 };
 use milkdrift_persistence::{
-    ActorRef, ArtifactStore, AtomicRunCommitRequest, BranchId, CommandDisposition, CommandId,
-    CommandReceipt, CommandResultDocument, CurrencyCode, EventId, IndexedRunState, IntegrityDigest,
+    ArtifactStore, AtomicRunCommitRequest, CommandDisposition, CommandId, CommandReceipt,
+    CommandResultDocument, CurrencyCode, EventId, IndexedRunState, IntegrityDigest,
     MAX_SNAPSHOT_DOCUMENT_BYTES, MAX_SNAPSHOT_ENCODED_PAYLOAD_BYTES, MAX_SNAPSHOT_PAYLOAD_BYTES,
     NodeExecutionId, NodeExecutionMode, NodeOutcome, PageSize, PersistenceError, Reason,
     ReconciliationAction, ReconciliationClassification, ReconciliationId, ReconciliationItem,
     ReconciliationPlanId, RepeatContinuationCause, RevisionStore, RunEventEnvelope, RunEventKind,
-    RunId, RunIndexUpdate, RunJournal, RunOutcome, RunQueryStore, RunSequence, RunSummaryIndex,
+    RunIndexUpdate, RunJournal, RunOutcome, RunQueryStore, RunSequence, RunSummaryIndex,
     RunnableIndexMutation, SNAPSHOT_ENVELOPE_SCHEMA_VERSION_V2, SignalId, SnapshotDocument,
-    SnapshotId, SnapshotStore, StorageAdmin, SubworkflowId, SubworkflowOwnership, TimestampMillis,
+    SnapshotId, SnapshotStore, StorageAdmin, SubworkflowOwnership, TimestampMillis,
     WorkspaceAccounting, WorkspaceMutation, WorkspaceStore,
 };
 use milkdrift_workspace::{
-    ScopeId, ScopeReference, ValueKey, ValueVersion, WorkspaceBudget, WorkspaceScope,
-    WorkspaceUsage, WorkspaceValue, WorkspaceValueEntry, WorkspaceValueReference,
+    BranchId, RunId, ScopeId, ScopeReference, SubworkflowId, ValueKey, ValueVersion,
+    WorkspaceBudget, WorkspaceScope, WorkspaceUsage, WorkspaceValue, WorkspaceValueEntry,
+    WorkspaceValueReference,
 };
 use serde_json::json;
 
@@ -647,14 +649,14 @@ fn repeat_continuation_requests_require_bounded_limits_and_exhausted_typed_cause
     let invalid_kinds = [
         RunEventKind::RepeatContinuationRequested {
             repeat_execution: execution.clone(),
-            frontier_iteration: milkdrift_persistence::IterationId::new("iteration-zero")?,
+            frontier_iteration: milkdrift_workspace::IterationId::new("iteration-zero")?,
             initial_iteration_limit: 0,
             effective_iteration_limit: 1,
             cause: RepeatContinuationCause::IterationLimit,
         },
         RunEventKind::RepeatContinuationRequested {
             repeat_execution: execution.clone(),
-            frontier_iteration: milkdrift_persistence::IterationId::new("iteration-duration")?,
+            frontier_iteration: milkdrift_workspace::IterationId::new("iteration-duration")?,
             initial_iteration_limit: 1,
             effective_iteration_limit: 1,
             cause: RepeatContinuationCause::DurationBudget {
@@ -664,7 +666,7 @@ fn repeat_continuation_requests_require_bounded_limits_and_exhausted_typed_cause
         },
         RunEventKind::RepeatContinuationRequested {
             repeat_execution: execution,
-            frontier_iteration: milkdrift_persistence::IterationId::new("iteration-cost")?,
+            frontier_iteration: milkdrift_workspace::IterationId::new("iteration-cost")?,
             initial_iteration_limit: 1,
             effective_iteration_limit: 1,
             cause: RepeatContinuationCause::CostBudget {

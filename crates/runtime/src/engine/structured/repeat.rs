@@ -782,15 +782,14 @@ impl RuntimeService {
         config: &milkdrift_blueprint::RepeatConfig,
         iteration_number: u32,
     ) -> Result<(), RuntimeError> {
-        match self.assess_controller_cycle(
+        let cycle = ControllerCycleRequest {
             run,
             occurred_at,
-            projection,
-            events,
             node,
             execution,
             iteration_number,
-        )? {
+        };
+        match self.assess_controller_cycle(&cycle, projection, events)? {
             ControllerCycleGate::Continue => {}
             ControllerCycleGate::HumanCheckpoint { checkpoint_id } => {
                 let frontier = projection
@@ -890,18 +889,13 @@ impl RuntimeService {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn assess_controller_cycle(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
+        request: &ControllerCycleRequest<'_>,
         projection: &mut RunProjection,
         events: &mut Vec<RunEventEnvelope>,
-        node: &Node,
-        execution: &NodeExecutionId,
-        iteration_number: u32,
     ) -> Result<ControllerCycleGate, RuntimeError> {
-        let revision = self.revision_for_execution(projection, execution)?;
+        let revision = self.revision_for_execution(projection, request.execution)?;
         let marked = revision
             .semantic()
             .metadata()
@@ -917,22 +911,25 @@ impl RuntimeService {
                 "controller policy is marked but no lifecycle owner is installed".to_owned(),
             ));
         };
-        let boundary =
-            if iteration_number == 1 && projection.controller_assessment(execution).is_none() {
-                ControllerAssessmentBoundary::Activation
-            } else {
-                ControllerAssessmentBoundary::CycleEntry
-            };
+        let boundary = if request.iteration_number == 1
+            && projection
+                .controller_assessment(request.execution)
+                .is_none()
+        {
+            ControllerAssessmentBoundary::Activation
+        } else {
+            ControllerAssessmentBoundary::CycleEntry
+        };
         let assessment = {
             let context = ControllerAssessmentContext {
-                run,
+                run: request.run,
                 revision: &revision,
-                node,
-                execution,
+                node: request.node,
+                execution: request.execution,
                 projection,
-                observed_at: occurred_at,
+                observed_at: request.occurred_at,
                 boundary,
-                next_cycle: Some(iteration_number),
+                next_cycle: Some(request.iteration_number),
             };
             lifecycle.assess(&context)?.map(|assessment| {
                 let outcome = assessment.outcome.clone();
@@ -947,7 +944,7 @@ impl RuntimeService {
             }
             return Ok(ControllerCycleGate::Continue);
         };
-        self.push_projected_event(run, occurred_at, projection, events, event)?;
+        self.push_projected_event(request.run, request.occurred_at, projection, events, event)?;
         Ok(match outcome {
             ControllerAssessmentOutcome::Continue => ControllerCycleGate::Continue,
             ControllerAssessmentOutcome::HumanCheckpoint { checkpoint_id } => {
@@ -1078,4 +1075,12 @@ enum ControllerCycleGate {
     Continue,
     HumanCheckpoint { checkpoint_id: String },
     BoundReached { bound: String },
+}
+
+struct ControllerCycleRequest<'a> {
+    run: &'a RunId,
+    occurred_at: TimestampMillis,
+    node: &'a Node,
+    execution: &'a NodeExecutionId,
+    iteration_number: u32,
 }

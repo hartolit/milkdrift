@@ -10,7 +10,7 @@ use std::{
 };
 
 use milkdrift_authority::{
-    AuthorityBudget, AuthorityDecisionSnapshot, AuthorityError, AuthorityEvaluator,
+    ActorRef, AuthorityBudget, AuthorityDecisionSnapshot, AuthorityError, AuthorityEvaluator,
     CapabilityAuthorityScope, DecisionReasonCode, GrantDigest, GrantId, PolicyId,
 };
 use milkdrift_blueprint::{
@@ -28,7 +28,7 @@ use milkdrift_capability_host::{
     HostConfig,
 };
 use milkdrift_persistence::{
-    ActorRef, CommandId, Reason, RevisionStore, RunJournal, RunSequence, TimestampMillis, WorkerId,
+    CommandId, Reason, RevisionStore, RunJournal, RunSequence, TimestampMillis, WorkerId,
 };
 use milkdrift_redb_store::RedbStore;
 use milkdrift_runtime::{

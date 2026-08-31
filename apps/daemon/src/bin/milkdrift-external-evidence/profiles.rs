@@ -265,7 +265,7 @@ fn fixture_agent_value(repository: &Path, session_root: &Path) -> Result<Value, 
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // Profile fixture generation exposes each wire field for scenario-specific variation.
 fn write_profile(
     session_root: &Path,
     repository: &Path,
@@ -315,7 +315,7 @@ fn write_profile(
     Ok(path)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // This is the single schema-shaped fixture constructor for independently bounded fields.
 fn base_profile<I, O>(
     repository: &Path,
     session_root: &Path,
