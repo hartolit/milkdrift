@@ -10,9 +10,10 @@ mod host;
 mod http;
 
 pub use config::{
-    ActorBindingConfig, ActorGrantConfig, AdapterConfig, AuthorityPresetConfig, DaemonConfig,
-    PeerHostConfig, PeerRelationshipConfig, PeerSideEffectConfig, RuntimeHostConfig,
-    SecretSourceConfig, ShutdownConfig, ValidatedDaemonConfig,
+    ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
+    AuthorityPresetConfig, DaemonConfig, PeerHostConfig, PeerRelationshipConfig,
+    PeerSideEffectConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig,
+    ValidatedDaemonConfig,
 };
 pub use host::{DaemonHost, HostError};
 pub use http::{router, serve};

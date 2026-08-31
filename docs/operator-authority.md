@@ -1,6 +1,6 @@
 # Daemon control and execution authority
 
-Daemon configuration schema 4 requires every actor binding to contain an explicit `authority`
+Daemon configuration schema 5 requires every actor binding to contain an explicit `authority`
 object. Preset names deterministically expand to typed operation sets; they do not imply resource
 access and are not retained as executable session policy. The resource scope, numeric ceilings,
 validity interval, grant identity/revision, and revocation generation are independent inputs to the
@@ -103,7 +103,8 @@ written in the configuration.
 
 Older configuration and authority-grant schemas are rejected. Migration is manual: add the
 artifact, layout, peer, daemon, and workspace scopes, choose finite limits, advance
-`schema_version` to 4, explicitly configure each peer relationship's `artifact_sensitivities`, run
+`schema_version` to 5, explicitly configure each peer relationship's `artifact_sensitivities`,
+application receipt lifecycle, and security-audit bound, run
 `milkdrift-daemon --config PATH --check-config`, and inspect the redacted
 effective configuration before starting the daemon. When narrowing or revoking, advance the grant
 revision/revocation generation or disable the actor and restart. Existing page and reconnect

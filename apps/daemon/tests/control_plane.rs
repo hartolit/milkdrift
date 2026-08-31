@@ -29,9 +29,9 @@ use milkdrift_control_protocol::{
     ProtocolVersion, decode_json,
 };
 use milkdrift_daemon::{
-    ActorBindingConfig, ActorGrantConfig, AdapterConfig, AuthorityPresetConfig, DaemonConfig,
-    DaemonHost, PeerHostConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig,
-    ValidatedDaemonConfig, serve,
+    ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
+    AuthorityPresetConfig, DaemonConfig, DaemonHost, PeerHostConfig, RuntimeHostConfig,
+    SecretSourceConfig, ShutdownConfig, ValidatedDaemonConfig, serve,
 };
 use milkdrift_persistence::{
     ApplicationPageQuery, ArtifactPublicationId, ArtifactStore, BeginArtifactPublication, PageSize,
@@ -116,7 +116,7 @@ fn configuration_with_process_profiles(
         ..RuntimeHostConfig::default()
     };
     DaemonConfig {
-        schema_version: 4,
+        schema_version: 5,
         data_root: directory.path().join("data"),
         bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         secret_sources: BTreeMap::from([
@@ -162,7 +162,11 @@ fn configuration_with_process_profiles(
         },
         peers: PeerHostConfig::default(),
         shutdown: ShutdownConfig::default(),
-        command_receipt_bound: 1_000,
+        application_receipts: ApplicationReceiptConfig {
+            hot_receipt_bound: 1_000,
+            archive_batch_size: 64,
+        },
+        security_audit_record_bound: 1_000,
     }
     .validate(directory.path())
     .map_err(Into::into)
@@ -1075,47 +1079,70 @@ async fn daemon_auth_startup_readiness_and_authority() -> TestResult {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn exhausted_application_receipt_capacity_rejects_before_semantic_mutation() -> TestResult {
+async fn daemon_accepts_commands_across_hot_receipt_turnovers_and_replays_cold_after_restart()
+-> TestResult {
     let directory = tempfile::tempdir()?;
     let mut config = configuration(&directory, 16)?;
-    config.document.command_receipt_bound = 1;
+    config.document.application_receipts.hot_receipt_bound = 1;
+    config.document.application_receipts.archive_batch_size = 1;
     let config = config.document.validate(&config.configuration_directory)?;
+    let restart_config = config.clone();
     let daemon = start(config, CONTROLLER_TOKEN).await?;
-    let imported = daemon
-        .client
-        .submit(&request(
-            "capacity-import",
-            None,
-            Command::ImportBlueprint {
-                document: blueprint()?,
-            },
-        ))
-        .await?;
+    let import_request = request(
+        "capacity-import",
+        None,
+        Command::ImportBlueprint {
+            document: blueprint()?,
+        },
+    );
+    let imported = daemon.client.submit(&import_request).await?;
     let revision = imported
         .value
         .get("revision_id")
         .and_then(serde_json::Value::as_str)
         .ok_or("capacity import omitted revision")?;
-    assert!(
+    let start_request = request(
+        "capacity-start-remains-replayable",
+        None,
+        Command::StartRun {
+            run_id: "run-capacity-accepted".to_owned(),
+            workflow_id: "golden".to_owned(),
+            revision_id: revision.to_owned(),
+        },
+    );
+    let accepted = daemon.client.submit(&start_request).await?;
+    for ordinal in 0..8 {
         daemon
             .client
             .submit(&request(
-                "capacity-start-must-not-mutate",
+                &format!("capacity-validate-{ordinal}"),
                 None,
-                Command::StartRun {
-                    run_id: "run-capacity-rejected".to_owned(),
-                    workflow_id: "golden".to_owned(),
-                    revision_id: revision.to_owned(),
+                Command::ValidateBlueprint {
+                    document: blueprint()?,
                 },
             ))
-            .await
-            .is_err()
+            .await?;
+    }
+    let health = daemon.client.health().await?;
+    assert!(health.application_receipts.cold_count >= 9);
+    assert!(health.application_receipts.hot_count <= 1);
+    let before_restart = daemon.client.run("run-capacity-accepted").await?;
+    daemon.stop().await?;
+
+    let restarted = start(restart_config, CONTROLLER_TOKEN).await?;
+    let replay = restarted.client.submit(&start_request).await?;
+    assert!(replay.replayed);
+    assert_eq!(replay.resulting_sequence, accepted.resulting_sequence);
+    assert_eq!(
+        restarted
+            .client
+            .run("run-capacity-accepted")
+            .await?
+            .sequence,
+        before_restart.sequence
     );
-    assert!(matches!(
-        daemon.client.run("run-capacity-rejected").await,
-        Err(ClientError::Api(error)) if error.code == ErrorCode::NotFound
-    ));
-    daemon.stop().await
+    assert!(restarted.client.submit(&import_request).await?.replayed);
+    restarted.stop().await
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

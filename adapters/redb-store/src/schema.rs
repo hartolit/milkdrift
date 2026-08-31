@@ -1,12 +1,17 @@
 use redb::TableDefinition;
 
-pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 5;
+pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 6;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 9;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
 pub(crate) const LEASE_SET_REVISION_KEY: &str = "lease_set_revision";
 pub(crate) const NONTERMINAL_SET_COUNT_KEY: &str = "nonterminal_set_count";
-pub(crate) const APPLICATION_RECEIPT_COUNT_KEY: &str = "application_receipt_count";
+pub(crate) const APPLICATION_HOT_RECEIPT_COUNT_KEY: &str = "application_hot_receipt_count";
+pub(crate) const APPLICATION_COLD_RECEIPT_COUNT_KEY: &str = "application_cold_receipt_count";
+pub(crate) const APPLICATION_RECEIPT_ARCHIVE_GENERATION_KEY: &str =
+    "application_receipt_archive_generation";
+pub(crate) const APPLICATION_RECEIPT_LAST_ARCHIVED_AT_KEY: &str =
+    "application_receipt_last_archived_at";
 pub(crate) const SECURITY_AUDIT_NEXT_SEQUENCE_KEY: &str = "security_audit_next_sequence";
 pub(crate) const SECURITY_AUDIT_COUNT_KEY: &str = "security_audit_count";
 pub(crate) const PEER_EXECUTION_GLOBAL_ACCOUNTING_KEY: &str = "global";
@@ -34,12 +39,23 @@ pub(crate) const RUN_HISTORY_HEADS: TableDefinition<'static, &'static str, &'sta
     TableDefinition::new("milkdrift.v2.runs.history_heads");
 pub(crate) const COMMAND_RESULTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
     TableDefinition::new("milkdrift.v1.commands.results");
-// Daemon-owned application receipts are separate from runtime aggregate command results.
-pub(crate) const APPLICATION_COMMAND_RECEIPTS: TableDefinition<
+// Daemon-owned application receipts have exactly one authoritative physical placement.
+// The completion index is derived bounded operational state for the hot tier only.
+pub(crate) const APPLICATION_COMMAND_RECEIPTS_HOT: TableDefinition<
     'static,
     &'static [u8],
     &'static [u8],
-> = TableDefinition::new("milkdrift.v1.application.command_receipts");
+> = TableDefinition::new("milkdrift.v2.application.command_receipts.hot");
+pub(crate) const APPLICATION_COMMAND_RECEIPTS_COLD: TableDefinition<
+    'static,
+    &'static [u8],
+    &'static [u8],
+> = TableDefinition::new("milkdrift.v2.application.command_receipts.cold");
+pub(crate) const APPLICATION_HOT_RECEIPTS_BY_COMPLETION: TableDefinition<
+    'static,
+    &'static [u8],
+    &'static [u8],
+> = TableDefinition::new("milkdrift.v2.application.command_receipts.hot_by_completion");
 // Presentation layout is authoritative application state but never semantic revision content.
 pub(crate) const APPLICATION_LAYOUTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
     TableDefinition::new("milkdrift.v1.application.layouts");

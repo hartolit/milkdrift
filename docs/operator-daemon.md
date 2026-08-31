@@ -8,7 +8,7 @@ Startup is deliberately fail-closed and ordered:
 
 1. Validate daemon configuration, normalized paths, credential references, grants, and bounds before opening storage.
 2. Refuse a data root containing legacy `control-state-v1.json`, `peer-executions-v1`, or `peer-artifacts-v1`. This release neither imports nor ignores old sidecar/prototype idempotency and artifact authority; move to a fresh data root or perform an explicitly reviewed offline conversion.
-3. Open exact-current redb physical schema 5/internal document format 9 and the immutable artifact root.
+3. Open exact-current redb physical schema 6/internal document format 9 and the immutable artifact root.
 4. Open runtime admission closed and recover active runtime state.
 5. Validate bounded application-receipt and layout reads; corrupt or unsupported records fail startup.
 6. Register and health-check workflow-control, process, and model adapters.
@@ -19,11 +19,13 @@ Until the final step, readiness returns unavailable and no external command is a
 
 ## Application receipts and retention
 
-The schema-3 configuration field `command_ledger_bound` is retained for compatibility but now bounds external application command receipts and, independently, the security-audit window. Receipts are never evicted: when the receipt bound is full, an unseen command identity is rejected with overload so an older idempotency result cannot be forgotten. Audit eviction never changes receipt retention.
+Configuration schema 5 uses `application_receipts.hot_receipt_bound` for the recent operational tier and `application_receipts.archive_batch_size` for one oldest-first move. The existing runtime maintenance interval performs a bounded archive when the tier is full; the new-command transaction also reclaims a bounded batch if needed, so maintenance delay cannot create a permanent refusal. `security_audit_record_bound` is a separate evicting audit-prefix policy. Peer execution, artifacts, and runtime event/snapshot retention are not derived from either value.
 
-An application receipt binds the authenticated actor, exact grant identity/revision/digest, client command identity, canonical command/schema digest, accepted or intentional deterministic rejected result, effect reference, and timestamps. Reuse with the same digest returns that stored result; reuse with another digest fails conflict. Same-store layout/proposal effects commit atomically with the receipt. Runtime/control effects reconcile through their existing stable internal command identities when a crash separates runtime acceptance from receipt commit.
+An application receipt binds the authenticated actor, exact grant identity/revision/digest, client command identity, canonical command/schema digest, accepted or intentional deterministic rejected result, effect reference, and timestamps. Reuse with the same digest returns that stored result from either tier; reuse with another digest permanently fails conflict. Same-store layout/proposal effects commit atomically with receipt insertion and any required hot-to-cold move. Runtime/control effects reconcile through their existing stable internal command identities when a crash separates runtime acceptance from receipt commit.
 
-The application tables are `milkdrift.v1.application.command_receipts`, `milkdrift.v1.application.layouts`, `milkdrift.v1.application.proposals`, and `milkdrift.v1.application.security_audit`. Records are independently keyed, bounded, versioned, and checksummed; growth does not rewrite a whole application document. Proposal rows are rebuildable derived discovery entries validated against authoritative accepted receipts. Layout rows use exact workflow/revision keys and optimistic generations and never participate in blueprint semantic identity or run history.
+Receipt documents live in exactly one of `milkdrift.v2.application.command_receipts.hot` and `milkdrift.v2.application.command_receipts.cold`; `milkdrift.v2.application.command_receipts.hot_by_completion` is a derived bounded order index. Moving a receipt is one redb transaction: cold insertion, hot/index removal, counters, generation, and time become visible together or not at all. Complete history pages merge both tiers in stable actor/command order. Proposal rows are rebuildable streaming derived discovery entries validated against either authoritative tier, so archiving does not change proposal identity or ordering. Layout remains in its independent table with exact workflow/revision keys and optimistic generations.
+
+Detailed health reports hot count/bound, archive batch, cold count, archive generation, last successful archive time, and redacted degraded/failure state. It never includes command content or stored result bytes. Cold receipt history has no configured record-count ceiling and grows until physical storage is exhausted; such exhaustion is reported as a storage failure, not a logical retention limit.
 
 ## Shutdown
 
@@ -31,6 +33,8 @@ Shutdown means owner completion, not merely stopping the HTTP listener. The daem
 
 ## Backup, compatibility, and repair
 
-Stop the daemon cleanly before copying its data root. Artifact bytes remain in the content-addressed filesystem store; application, peer execution, and runtime metadata remain in redb. This pre-release build implements no storage migration: physical schemas other than 5 and internal document formats other than 9 are refused. Do not edit rows or schema markers by hand.
+Stop the daemon cleanly before copying its data root. Artifact bytes remain in the content-addressed filesystem store; application, peer execution, and runtime metadata remain in redb. This pre-release build implements no storage migration: physical schemas other than 6 and internal document formats other than 9 are refused. Do not edit rows or schema markers by hand.
 
-Use the bounded resumable storage-integrity scan for administrative verification. Its current physical phases are `0..=39`; application phases validate receipts, layouts, proposal-to-receipt links, security-audit records, and receipt/audit counters. Proposal projection rebuilding is an explicit adapter operation and should follow diagnosis of projection damage, not replace validation of authoritative receipts.
+Exact command replay is preserved only within one store generation. To create a new generation, stop the daemon, make and independently verify a complete backup/export of the old data root, configure an empty new data root, and retain the old generation read-only for forensic/replay needs. There is no automatic rotation and no implemented cold-archive export/delete command. Command IDs must not be reused across generations unless every caller also rotates an explicit namespaced client epoch; otherwise a delayed request from the old generation is indistinguishable from new intent.
+
+Use the bounded resumable storage-integrity scan for administrative verification. Integrity-cursor schema 2 uses physical phases `0..=41`; application phases validate hot receipts, cold receipts, hot completion order, placement exclusivity, layouts, proposal-to-receipt links, security-audit records, and independent counters. Proposal projection rebuilding is an explicit streaming adapter operation and should follow diagnosis of projection damage, not replace validation of authoritative receipts.

@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Current daemon configuration document version.
-pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 4;
+pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 5;
 
 /// Configuration load or deterministic validation failure.
 #[derive(Debug, Error)]
@@ -30,7 +30,7 @@ pub enum ConfigError {
     #[error("invalid daemon configuration JSON: {0}")]
     Json(String),
     /// The schema version is unsupported.
-    #[error("unsupported daemon configuration version {0}; supported version is 3")]
+    #[error("unsupported daemon configuration version {0}; supported version is 5")]
     UnsupportedVersion(u32),
     /// A host-safety invariant is invalid.
     #[error("invalid daemon configuration: {0}")]
@@ -89,7 +89,7 @@ pub struct ActorBindingConfig {
     pub enabled: bool,
 }
 
-/// Explicit schema-v4 grant facts; preset names choose operations only.
+/// Explicit schema-v5 grant facts; preset names choose operations only.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActorGrantConfig {
@@ -183,6 +183,25 @@ impl Default for RuntimeHostConfig {
             cancellation_queue: 32,
             maximum_effect_claim: 32,
             lease_duration_ms: 30_000,
+        }
+    }
+}
+
+/// Bounded hot lifecycle for exact application-command receipts.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApplicationReceiptConfig {
+    /// Maximum recent receipt documents retained in the hot operational tier.
+    pub hot_receipt_bound: u32,
+    /// Maximum oldest receipts moved atomically by one archival transaction.
+    pub archive_batch_size: u32,
+}
+
+impl Default for ApplicationReceiptConfig {
+    fn default() -> Self {
+        Self {
+            hot_receipt_bound: 10_000,
+            archive_batch_size: 256,
         }
     }
 }
@@ -380,7 +399,7 @@ pub enum ShutdownEffectPolicy {
     Retain,
 }
 
-/// Complete bounded version-two daemon host configuration.
+/// Complete bounded exact-current daemon host configuration.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DaemonConfig {
@@ -406,15 +425,15 @@ pub struct DaemonConfig {
     /// Ordered shutdown policy.
     #[serde(default)]
     pub shutdown: ShutdownConfig,
-    /// Maximum durable external command-idempotency records.
-    #[serde(
-        rename = "command_ledger_bound",
-        default = "default_command_receipt_bound"
-    )]
-    pub command_receipt_bound: u32,
+    /// Bounded hot lifecycle; cold exact replay grows until physical storage is exhausted.
+    #[serde(default)]
+    pub application_receipts: ApplicationReceiptConfig,
+    /// Independently retained security-audit prefix bound.
+    #[serde(default = "default_security_audit_record_bound")]
+    pub security_audit_record_bound: u32,
 }
 
-const fn default_command_receipt_bound() -> u32 {
+const fn default_security_audit_record_bound() -> u32 {
     10_000
 }
 
@@ -481,9 +500,20 @@ impl DaemonConfig {
                 "shutdown deadline must be in 1..=300000 milliseconds".to_owned(),
             ));
         }
-        if self.command_receipt_bound == 0 || self.command_receipt_bound > 1_000_000 {
+        if self.application_receipts.hot_receipt_bound == 0
+            || self.application_receipts.hot_receipt_bound > 1_000_000
+            || self.application_receipts.archive_batch_size == 0
+            || self.application_receipts.archive_batch_size
+                > self.application_receipts.hot_receipt_bound
+        {
             return Err(ConfigError::Invalid(
-                "application command receipt bound must be in 1..=1000000".to_owned(),
+                "application hot receipt bound must be in 1..=1000000 and archive batch must be in 1..=hot bound"
+                    .to_owned(),
+            ));
+        }
+        if self.security_audit_record_bound == 0 || self.security_audit_record_bound > 1_000_000 {
+            return Err(ConfigError::Invalid(
+                "security audit record bound must be in 1..=1000000".to_owned(),
             ));
         }
         let base = base
@@ -841,11 +871,11 @@ mod tests {
     use super::*;
 
     fn fixture_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v4.json")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v5.json")
     }
 
     #[test]
-    fn schema_v4_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>>
+    fn schema_v5_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>>
     {
         let validated = DaemonConfig::load(&fixture_path())?;
         let actor = &validated.document.actors[0];
@@ -871,7 +901,7 @@ mod tests {
     fn old_and_future_config_versions_are_rejected_truthfully()
     -> Result<(), Box<dyn std::error::Error>> {
         let source = fs::read(fixture_path())?;
-        for unsupported in [1_u32, 2_u32, 3_u32, 5_u32] {
+        for unsupported in [1_u32, 2_u32, 3_u32, 4_u32, 6_u32] {
             let directory = tempfile::tempdir()?;
             let mut value: serde_json::Value = serde_json::from_slice(&source)?;
             value["schema_version"] = serde_json::json!(unsupported);
@@ -910,7 +940,7 @@ mod tests {
         let secret = directory.path().join("token");
         fs::write(&secret, "secret")?;
         let config = DaemonConfig {
-            schema_version: 4,
+            schema_version: 5,
             data_root: directory.path().join("data"),
             bind: "0.0.0.0:9734".parse()?,
             secret_sources: BTreeMap::from([(
@@ -931,7 +961,11 @@ mod tests {
             adapters: AdapterConfig::default(),
             peers: PeerHostConfig::default(),
             shutdown: ShutdownConfig::default(),
-            command_receipt_bound: 100,
+            application_receipts: ApplicationReceiptConfig {
+                hot_receipt_bound: 100,
+                archive_batch_size: 10,
+            },
+            security_audit_record_bound: 100,
         };
         assert!(config.validate(directory.path()).is_err());
         assert!(!directory.path().join("data").exists());

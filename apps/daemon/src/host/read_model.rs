@@ -578,6 +578,7 @@ pub(super) fn public_persistence(error: PersistenceError) -> PublicFailure {
         }
         PersistenceError::IdempotencyConflict { .. }
         | PersistenceError::ExternalCommandIdempotencyConflict { .. }
+        | PersistenceError::ApplicationReceiptArchiveGenerationConflict { .. }
         | PersistenceError::ImmutableConflict { .. }
         | PersistenceError::WorkspaceUsageConflict { .. }
         | PersistenceError::LeaseRevisionConflict { .. } => conflict(&bounded(&error.to_string())),
@@ -613,14 +614,6 @@ pub(super) fn public_persistence(error: PersistenceError) -> PublicFailure {
                 matches!(code, ErrorCode::Unavailable | ErrorCode::Overload),
             )
         }
-        PersistenceError::Bounds {
-            location: "application_receipt_retention",
-            ..
-        } => PublicFailure::new(
-            ErrorCode::Overload,
-            "durable command receipt retention bound was reached",
-            false,
-        ),
         _ => invalid(&bounded(&error.to_string())),
     }
 }

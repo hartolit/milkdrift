@@ -23,7 +23,7 @@ pub use read::*;
 /// Supported control protocol major version.
 pub const PROTOCOL_MAJOR: u16 = 2;
 /// Supported control protocol minor version.
-pub const PROTOCOL_MINOR: u16 = 0;
+pub const PROTOCOL_MINOR: u16 = 1;
 /// Independent presentation-layout document version.
 pub const LAYOUT_SCHEMA_VERSION: u32 = 1;
 /// Maximum JSON request or response envelope size.

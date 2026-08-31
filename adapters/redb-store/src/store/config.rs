@@ -5,7 +5,8 @@ pub(crate) const TEMP_DIRECTORY: &str = ".tmp";
 pub(crate) const DEFAULT_MAX_ARTIFACT_BYTES: u64 = 1_073_741_824;
 pub(crate) const DEFAULT_MAX_TOTAL_ARTIFACT_BYTES: u64 = 10_737_418_240;
 pub(crate) const DEFAULT_MAX_READ_BYTES: u64 = 1_073_741_824;
-pub(crate) const DEFAULT_MAX_APPLICATION_RECEIPTS: u32 = 1_000_000;
+pub(crate) const DEFAULT_HOT_APPLICATION_RECEIPTS: u32 = 10_000;
+pub(crate) const DEFAULT_APPLICATION_RECEIPT_ARCHIVE_BATCH_SIZE: u32 = 256;
 pub(crate) const DEFAULT_MAX_SECURITY_AUDIT_RECORDS: u32 = 100_000;
 
 /// Injected boundary clock for artifact-publication facts that control cleanup.
@@ -35,7 +36,8 @@ pub struct RedbStoreConfig {
     pub(crate) max_artifact_bytes: u64,
     pub(crate) max_total_artifact_bytes: u64,
     pub(crate) max_read_bytes: u64,
-    pub(crate) max_application_receipts: u32,
+    pub(crate) hot_application_receipt_bound: u32,
+    pub(crate) application_receipt_archive_batch_size: u32,
     pub(crate) max_security_audit_records: u32,
     pub(crate) faults: Arc<dyn FaultInjector>,
     pub(crate) artifact_clock: Arc<dyn ArtifactClock>,
@@ -49,7 +51,14 @@ impl fmt::Debug for RedbStoreConfig {
             .field("max_artifact_bytes", &self.max_artifact_bytes)
             .field("max_total_artifact_bytes", &self.max_total_artifact_bytes)
             .field("max_read_bytes", &self.max_read_bytes)
-            .field("max_application_receipts", &self.max_application_receipts)
+            .field(
+                "hot_application_receipt_bound",
+                &self.hot_application_receipt_bound,
+            )
+            .field(
+                "application_receipt_archive_batch_size",
+                &self.application_receipt_archive_batch_size,
+            )
             .field(
                 "max_security_audit_records",
                 &self.max_security_audit_records,
@@ -67,24 +76,29 @@ impl RedbStoreConfig {
             max_artifact_bytes: DEFAULT_MAX_ARTIFACT_BYTES,
             max_total_artifact_bytes: DEFAULT_MAX_TOTAL_ARTIFACT_BYTES,
             max_read_bytes: DEFAULT_MAX_READ_BYTES,
-            max_application_receipts: DEFAULT_MAX_APPLICATION_RECEIPTS,
+            hot_application_receipt_bound: DEFAULT_HOT_APPLICATION_RECEIPTS,
+            application_receipt_archive_batch_size: DEFAULT_APPLICATION_RECEIPT_ARCHIVE_BATCH_SIZE,
             max_security_audit_records: DEFAULT_MAX_SECURITY_AUDIT_RECORDS,
             faults: no_faults(),
             artifact_clock: Arc::new(SystemArtifactClock),
         }
     }
 
-    /// Applies independent application receipt and security-audit retention bounds.
-    ///
-    /// Receipts are never evicted: reaching their bound refuses new identities. The audit
-    /// family may evict only its oldest row and therefore cannot weaken idempotency/recovery.
+    /// Applies the bounded hot receipt lifecycle; cold exact replay remains lifetime durable.
     #[must_use]
-    pub fn with_application_limits(
+    pub fn with_application_receipt_lifecycle(
         mut self,
-        max_application_receipts: u32,
-        max_security_audit_records: u32,
+        hot_receipt_bound: u32,
+        archive_batch_size: u32,
     ) -> Self {
-        self.max_application_receipts = max_application_receipts;
+        self.hot_application_receipt_bound = hot_receipt_bound;
+        self.application_receipt_archive_batch_size = archive_batch_size;
+        self
+    }
+
+    /// Applies the independent retained security-audit prefix bound.
+    #[must_use]
+    pub fn with_security_audit_limit(mut self, max_security_audit_records: u32) -> Self {
         self.max_security_audit_records = max_security_audit_records;
         self
     }
@@ -130,7 +144,8 @@ pub struct RedbStore {
     pub(crate) max_artifact_bytes: u64,
     pub(crate) max_total_artifact_bytes: u64,
     pub(crate) max_read_bytes: u64,
-    pub(crate) max_application_receipts: u32,
+    pub(crate) hot_application_receipt_bound: u32,
+    pub(crate) application_receipt_archive_batch_size: u32,
     pub(crate) max_security_audit_records: u32,
     pub(crate) faults: Arc<dyn FaultInjector>,
     pub(crate) artifact_clock: Arc<dyn ArtifactClock>,

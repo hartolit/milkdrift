@@ -19,7 +19,7 @@ These facts are not blueprint or run-event semantics, but neither are they dispo
 - `ProposalIndexStore` for bounded per-run discovery plus explicit validation/rebuild;
 - `SecurityAuditStore` for an independently bounded decision sequence.
 
-An application receipt schema-1 document binds actor, command identity, command schema and canonical digest, exact grant identity/revision/digest, optional application decision digest, accepted or intentionally durable rejected result bytes, an effect reference, and creation/completion timestamps. Receipt capacity is finite but non-evicting: an unseen identity is refused at capacity. Security-audit retention is independent.
+An application receipt schema-1 document binds actor, command identity, command schema and canonical digest, exact grant identity/revision/digest, optional application decision digest, accepted or intentionally durable rejected result bytes, an effect reference, and creation/completion timestamps. ADR 0023 replaces this ADR's original finite non-evicting capacity rule with bounded hot and transparent cold ownership. Security-audit retention is independent.
 
 Redb physical schema 4/internal document format 7 adds separately keyed checked tables for receipts, layouts, proposals, and audit. A new receipt and same-store layout/proposal effect commit in one write transaction. Layout updates preserve creation time and require generation 1 for creation or exactly current plus one for changed content. Proposal discovery is a derived projection that identifies its authoritative accepted receipt; reads and integrity scans validate that link, and rebuilding scans only authoritative application receipts.
 
@@ -40,7 +40,7 @@ Daemon startup refuses legacy `control-state-v1.json` instead of silently import
 
 Application growth inserts or updates bounded rows instead of rewriting one file. Exact accepted and deterministic rejected command results survive restart. Same-ID/different-digest reuse is a typed conflict. Layout conflicts are optimistic and restart durable without touching blueprint digests. Proposal list cursors page a first-class projection rather than unrelated receipts. Corrupt application documents and proposal links are typed storage failures and participate in bounded integrity scanning.
 
-The schema transition is intentionally incompatible for pre-release users. A data root with legacy sidecar state or an older redb schema needs a fresh store or a separately reviewed offline migration. The existing configuration spelling `command_ledger_bound` remains for schema-3 compatibility, although it now bounds application receipts and audit independently.
+The schema transition is intentionally incompatible for pre-release users. A data root with legacy sidecar state or an older redb schema needs a fresh store or a separately reviewed offline migration. Daemon configuration schema 5 removes the misleading `command_ledger_bound` spelling and names hot receipt, archival-batch, and security-audit bounds independently.
 
 ## Reconsideration triggers
 

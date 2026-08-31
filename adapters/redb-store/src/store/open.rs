@@ -50,7 +50,8 @@ impl RedbStore {
             max_artifact_bytes: config.max_artifact_bytes,
             max_total_artifact_bytes: config.max_total_artifact_bytes,
             max_read_bytes: config.max_read_bytes,
-            max_application_receipts: config.max_application_receipts,
+            hot_application_receipt_bound: config.hot_application_receipt_bound,
+            application_receipt_archive_batch_size: config.application_receipt_archive_batch_size,
             max_security_audit_records: config.max_security_audit_records,
             faults: config.faults,
             artifact_clock: config.artifact_clock,
@@ -76,10 +77,15 @@ pub(crate) fn validate_config(config: &RedbStoreConfig) -> Result<(), Persistenc
             reason: "verified read limit must be nonzero".to_owned(),
         });
     }
-    if config.max_application_receipts == 0 || config.max_security_audit_records == 0 {
+    if config.hot_application_receipt_bound == 0
+        || config.application_receipt_archive_batch_size == 0
+        || config.application_receipt_archive_batch_size > config.hot_application_receipt_bound
+        || config.max_security_audit_records == 0
+    {
         return Err(PersistenceError::Bounds {
             location: "redb_store_config",
-            reason: "application receipt and security-audit bounds must be nonzero".to_owned(),
+            reason: "hot application receipt, archive batch, and security-audit bounds are invalid"
+                .to_owned(),
         });
     }
     Ok(())

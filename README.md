@@ -61,14 +61,14 @@ The insecure mode refuses non-loopback URLs. Use ordinary HTTPS directly or term
 
 ## Local daemon quick start
 
-Create a private bearer-token file and a version-four daemon configuration. Relative paths are resolved from the configuration file directory. Presets are deterministic shorthand for exact operation sets only; the required `authority` object supplies every executable resource scope, ceiling, and validity boundary.
+Create a private bearer-token file and a version-five daemon configuration. Relative paths are resolved from the configuration file directory. Presets are deterministic shorthand for exact operation sets only; the required `authority` object supplies every executable resource scope, ceiling, and validity boundary.
 
 ```sh
 install -m 600 /dev/null operator.token
 printf '%s' 'replace-with-a-long-random-local-token' > operator.token
 cat > daemon.json <<'JSON'
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "data_root": "./milkdrift-data",
   "bind": "127.0.0.1:9734",
   "secret_sources": {
@@ -141,7 +141,11 @@ cat > daemon.json <<'JSON'
   },
   "adapters": { "process_profiles": [], "model_profiles": [] },
   "shutdown": { "deadline_ms": 10000, "effect_policy": "drain" },
-  "command_ledger_bound": 10000
+  "application_receipts": {
+    "hot_receipt_bound": 10000,
+    "archive_batch_size": 256
+  },
+  "security_audit_record_bound": 10000
 }
 JSON
 cargo run -p milkdrift-daemon -- --config daemon.json

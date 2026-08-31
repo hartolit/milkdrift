@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "data_root": "./test-data",
   "bind": "127.0.0.1:9734",
   "secret_sources": {
@@ -105,5 +105,9 @@
     "deadline_ms": 10000,
     "effect_policy": "drain"
   },
-  "command_ledger_bound": 10000
+  "application_receipts": {
+    "hot_receipt_bound": 10000,
+    "archive_batch_size": 256
+  },
+  "security_audit_record_bound": 10000
 }

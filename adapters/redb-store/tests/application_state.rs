@@ -11,15 +11,15 @@ use milkdrift_persistence::{
     ApplicationCommandCommit, ApplicationCommandCommitOutcome, ApplicationCommandEffect,
     ApplicationCommandReceipt, ApplicationCommandResult, ApplicationCommandStore,
     ApplicationEffectReference, ApplicationLayoutStore, ApplicationLayoutUpdate,
-    ApplicationPageQuery, CommandId, IntegrityDigest, IntegrityScanRequest, PageSize,
-    PersistenceError, ProposalIndexEntry, ProposalIndexStore, SecurityAuditEntry,
-    SecurityAuditStore, StorageAdmin, TimestampMillis,
+    ApplicationPageQuery, ApplicationReceiptArchiveRequest, CommandId, IntegrityDigest,
+    IntegrityScanRequest, PageSize, PersistenceError, ProposalIndexEntry, ProposalIndexStore,
+    SecurityAuditEntry, SecurityAuditStore, StorageAdmin, StorageFailureClass, TimestampMillis,
 };
 use milkdrift_redb_store::{
     FaultInjector, FaultPoint, RedbStore, RedbStoreConfig, injected_failure,
 };
 use milkdrift_workspace::RunId;
-use redb::{Database, TableDefinition};
+use redb::{Database, ReadableTable as _, TableDefinition};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -43,7 +43,9 @@ fn receipts_layouts_proposals_and_audit_are_incremental_and_restart_durable() ->
         Some(layout_reference),
     )?;
     let store = RedbStore::open_with_config(
-        RedbStoreConfig::new(directory.path()).with_application_limits(16, 2),
+        RedbStoreConfig::new(directory.path())
+            .with_application_receipt_lifecycle(16, 2)
+            .with_security_audit_limit(2),
     )?;
     assert_eq!(
         store.commit_application_command(&ApplicationCommandCommit {
@@ -195,7 +197,9 @@ fn receipts_layouts_proposals_and_audit_are_incremental_and_restart_durable() ->
 
     drop(store);
     let reopened = RedbStore::open_with_config(
-        RedbStoreConfig::new(directory.path()).with_application_limits(16, 2),
+        RedbStoreConfig::new(directory.path())
+            .with_application_receipt_lifecycle(16, 2)
+            .with_security_audit_limit(2),
     )?;
     assert_eq!(
         reopened
@@ -210,13 +214,14 @@ fn receipts_layouts_proposals_and_audit_are_incremental_and_restart_durable() ->
 }
 
 #[test]
-fn application_capacity_preflight_fails_at_the_non_evicting_bound() -> TestResult {
+fn hot_receipt_capacity_reclaims_and_exact_cold_replay_remains_lifetime_durable() -> TestResult {
     let directory = tempfile::tempdir()?;
     let store = RedbStore::open_with_config(
-        RedbStoreConfig::new(directory.path()).with_application_limits(1, 1),
+        RedbStoreConfig::new(directory.path())
+            .with_application_receipt_lifecycle(1, 1)
+            .with_security_audit_limit(1),
     )?;
-    store.ensure_application_command_capacity()?;
-    let only = receipt(
+    let first = receipt(
         "actor:capacity",
         "command-capacity",
         b"fills-the-only-slot",
@@ -224,17 +229,47 @@ fn application_capacity_preflight_fails_at_the_non_evicting_bound() -> TestResul
     )?;
     assert_eq!(
         store.commit_application_command(&ApplicationCommandCommit {
-            receipt: only,
+            receipt: first.clone(),
             effect: ApplicationCommandEffect::None,
         })?,
         ApplicationCommandCommitOutcome::Committed
     );
+    for ordinal in 0..32 {
+        let next = receipt(
+            "actor:capacity",
+            &format!("command-capacity-{ordinal:02}"),
+            format!("capacity-command-{ordinal}").as_bytes(),
+            None,
+        )?;
+        assert_eq!(
+            store.commit_application_command(&ApplicationCommandCommit {
+                receipt: next,
+                effect: ApplicationCommandEffect::None,
+            })?,
+            ApplicationCommandCommitOutcome::Committed
+        );
+    }
+    let status = store.application_receipt_status()?;
+    assert_eq!(status.hot_count, 1);
+    assert_eq!(status.cold_count, 32);
+    assert!(status.archive_generation >= 32);
+    let replay = store.commit_application_command(&ApplicationCommandCommit {
+        receipt: first.clone(),
+        effect: ApplicationCommandEffect::None,
+    })?;
+    assert!(matches!(replay, ApplicationCommandCommitOutcome::Replayed(value) if *value == first));
+    let conflicting = receipt(
+        "actor:capacity",
+        "command-capacity",
+        b"different-cold-command",
+        None,
+    )?;
     assert!(matches!(
-        store.ensure_application_command_capacity(),
-        Err(PersistenceError::Bounds {
-            location: "application_receipt_retention",
-            ..
-        })
+        store.commit_application_command(&ApplicationCommandCommit {
+            receipt: conflicting,
+            effect: ApplicationCommandEffect::None,
+        }),
+        Err(PersistenceError::ExternalCommandIdempotencyConflict { .. })
     ));
     Ok(())
 }
@@ -248,7 +283,8 @@ fn application_transaction_faults_distinguish_before_from_after_commit() -> Test
         let directory = tempfile::tempdir()?;
         let store = RedbStore::open_with_config(
             RedbStoreConfig::new(directory.path())
-                .with_application_limits(8, 8)
+                .with_application_receipt_lifecycle(8, 2)
+                .with_security_audit_limit(8)
                 .with_fault_injector(Arc::new(FailOnce::new(point))),
         )?;
         let receipt = receipt("actor:fault", "command-fault", b"fault-boundary", None)?;
@@ -272,6 +308,429 @@ fn application_transaction_faults_distinguish_before_from_after_commit() -> Test
             ));
         }
     }
+    Ok(())
+}
+
+#[test]
+fn explicit_archival_preserves_rejected_results_proposals_and_stale_generation_truth() -> TestResult
+{
+    let directory = tempfile::tempdir()?;
+    let store = RedbStore::open_with_config(
+        RedbStoreConfig::new(directory.path())
+            .with_application_receipt_lifecycle(4, 1)
+            .with_security_audit_limit(4),
+    )?;
+    let run = RunId::new("run-cold-proposal")?;
+    let proposed_revision = revision_id('4')?;
+    let proposal = receipt(
+        "actor:archive",
+        "command-a-proposal",
+        b"proposal-command",
+        Some(ApplicationEffectReference::Proposal {
+            run: run.clone(),
+            proposal: "proposal-cold".to_owned(),
+            proposed_revision: proposed_revision.clone(),
+        }),
+    )?;
+    store.commit_application_command(&ApplicationCommandCommit {
+        receipt: proposal.clone(),
+        effect: ApplicationCommandEffect::IndexProposal(ProposalIndexEntry {
+            run: run.clone(),
+            proposal: "proposal-cold".to_owned(),
+            proposed_revision,
+            receipt_actor: proposal.actor().clone(),
+            receipt_command: proposal.command().clone(),
+            created_at: proposal.completed_at(),
+        }),
+    })?;
+    let rejected = rejected_receipt("actor:archive", "command-z-rejected", b"rejected-command")?;
+    store.commit_application_command(&ApplicationCommandCommit {
+        receipt: rejected.clone(),
+        effect: ApplicationCommandEffect::None,
+    })?;
+
+    let before = store.application_receipt_status()?;
+    let outcome = store.archive_application_command_receipts(ApplicationReceiptArchiveRequest {
+        expected_generation: before.archive_generation,
+        archived_at: TimestampMillis::new(20),
+    })?;
+    assert_eq!(outcome.archived, 1);
+    assert_eq!(outcome.status.hot_count, 1);
+    assert_eq!(outcome.status.cold_count, 1);
+    assert_eq!(
+        outcome.status.last_archived_at,
+        Some(TimestampMillis::new(20))
+    );
+    assert!(matches!(
+        store.archive_application_command_receipts(ApplicationReceiptArchiveRequest {
+            expected_generation: before.archive_generation,
+            archived_at: TimestampMillis::new(21),
+        }),
+        Err(
+            PersistenceError::ApplicationReceiptArchiveGenerationConflict {
+                expected: 0,
+                actual: 1
+            }
+        )
+    ));
+    assert_eq!(
+        store
+            .application_command_receipt(proposal.actor(), proposal.command())?
+            .ok_or("cold proposal receipt disappeared")?,
+        proposal
+    );
+    assert_eq!(store.proposal_index(&run, &page(10)?)?.items.len(), 1);
+    assert_eq!(store.rebuild_proposal_index()?, 1);
+
+    let next = store.archive_application_command_receipts(ApplicationReceiptArchiveRequest {
+        expected_generation: outcome.status.archive_generation,
+        archived_at: TimestampMillis::new(22),
+    })?;
+    assert_eq!(next.archived, 1);
+    assert_eq!(
+        store
+            .application_command_receipt(rejected.actor(), rejected.command())?
+            .ok_or("cold rejected receipt disappeared")?,
+        rejected
+    );
+    assert!(matches!(
+        store.commit_application_command(&ApplicationCommandCommit {
+            receipt: rejected,
+            effect: ApplicationCommandEffect::None,
+        })?,
+        ApplicationCommandCommitOutcome::Replayed(_)
+    ));
+    Ok(())
+}
+
+#[test]
+fn archival_fault_boundaries_are_atomic_restart_safe_and_idempotent() -> TestResult {
+    for (point, committed) in [
+        (FaultPoint::BeforeApplicationReceiptColdInsert, false),
+        (FaultPoint::AfterApplicationReceiptColdInsert, false),
+        (FaultPoint::AfterApplicationReceiptHotRemove, false),
+        (FaultPoint::BeforeApplicationReceiptArchiveCommit, false),
+        (FaultPoint::AfterApplicationReceiptArchiveCommit, true),
+    ] {
+        let directory = tempfile::tempdir()?;
+        let stored = receipt(
+            "actor:archive-fault",
+            "command-archive-fault",
+            b"archive-fault-command",
+            None,
+        )?;
+        {
+            let store = RedbStore::open_with_config(
+                RedbStoreConfig::new(directory.path())
+                    .with_application_receipt_lifecycle(2, 1)
+                    .with_security_audit_limit(2)
+                    .with_fault_injector(Arc::new(FailOnce::new(point))),
+            )?;
+            store.commit_application_command(&ApplicationCommandCommit {
+                receipt: stored.clone(),
+                effect: ApplicationCommandEffect::None,
+            })?;
+            assert!(
+                store
+                    .archive_application_command_receipts(ApplicationReceiptArchiveRequest {
+                        expected_generation: 0,
+                        archived_at: TimestampMillis::new(30),
+                    })
+                    .is_err()
+            );
+        }
+        let reopened = RedbStore::open_with_config(
+            RedbStoreConfig::new(directory.path())
+                .with_application_receipt_lifecycle(2, 1)
+                .with_security_audit_limit(2),
+        )?;
+        let status = reopened.application_receipt_status()?;
+        assert_eq!(status.cold_count, u64::from(committed));
+        assert_eq!(status.hot_count, u64::from(!committed));
+        assert_eq!(
+            reopened
+                .application_command_receipt(stored.actor(), stored.command())?
+                .ok_or("receipt was lost at archival boundary")?,
+            stored
+        );
+        if !committed {
+            assert_eq!(
+                reopened
+                    .archive_application_command_receipts(ApplicationReceiptArchiveRequest {
+                        expected_generation: status.archive_generation,
+                        archived_at: TimestampMillis::new(31),
+                    })?
+                    .archived,
+                1
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn automatic_archival_failure_aborts_the_new_receipt_and_same_store_effect() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let original = receipt(
+        "actor:automatic-archive",
+        "command-original",
+        b"original-command",
+        None,
+    )?;
+    let workflow = WorkflowId::new("workflow-automatic-archive")?;
+    let revision = revision_id('6')?;
+    let document = b"must-not-survive-aborted-archive".to_vec();
+    let digest = IntegrityDigest::hash(&document);
+    let next = receipt(
+        "actor:automatic-archive",
+        "command-next",
+        b"next-command",
+        Some(ApplicationEffectReference::Layout {
+            workflow: workflow.clone(),
+            revision: revision.clone(),
+            generation: 1,
+            digest: digest.clone(),
+        }),
+    )?;
+    {
+        let store = RedbStore::open_with_config(
+            RedbStoreConfig::new(directory.path())
+                .with_application_receipt_lifecycle(1, 1)
+                .with_security_audit_limit(1)
+                .with_fault_injector(Arc::new(FailOnce::new(
+                    FaultPoint::AfterApplicationReceiptHotRemove,
+                ))),
+        )?;
+        store.commit_application_command(&ApplicationCommandCommit {
+            receipt: original.clone(),
+            effect: ApplicationCommandEffect::None,
+        })?;
+        assert!(
+            store
+                .commit_application_command(&ApplicationCommandCommit {
+                    receipt: next.clone(),
+                    effect: ApplicationCommandEffect::PutLayout(ApplicationLayoutUpdate {
+                        layout_schema_version: 1,
+                        workflow: workflow.clone(),
+                        revision: revision.clone(),
+                        generation: 1,
+                        digest,
+                        author: next.actor().clone(),
+                        updated_at: TimestampMillis::new(10),
+                        document,
+                    }),
+                })
+                .is_err()
+        );
+    }
+    let reopened = RedbStore::open_with_config(
+        RedbStoreConfig::new(directory.path())
+            .with_application_receipt_lifecycle(1, 1)
+            .with_security_audit_limit(1),
+    )?;
+    assert_eq!(reopened.application_receipt_status()?.hot_count, 1);
+    assert_eq!(reopened.application_receipt_status()?.cold_count, 0);
+    assert_eq!(
+        reopened
+            .application_command_receipt(original.actor(), original.command())?
+            .ok_or("original receipt disappeared after aborted automatic archival")?,
+        original
+    );
+    assert!(
+        reopened
+            .application_command_receipt(next.actor(), next.command())?
+            .is_none()
+    );
+    assert!(reopened.application_layout(&workflow, &revision)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn merged_receipt_pagination_is_stable_while_rows_move_between_tiers() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let store = RedbStore::open_with_config(
+        RedbStoreConfig::new(directory.path())
+            .with_application_receipt_lifecycle(8, 2)
+            .with_security_audit_limit(8),
+    )?;
+    for ordinal in 0..5 {
+        let stored = receipt(
+            "actor:page",
+            &format!("command-page-{ordinal}"),
+            format!("page-command-{ordinal}").as_bytes(),
+            None,
+        )?;
+        store.commit_application_command(&ApplicationCommandCommit {
+            receipt: stored,
+            effect: ApplicationCommandEffect::None,
+        })?;
+    }
+    let first = store.application_command_receipts(&page(2)?)?;
+    let cursor = first
+        .next
+        .clone()
+        .ok_or("first receipt page omitted cursor")?;
+    let status = store.application_receipt_status()?;
+    store.archive_application_command_receipts(ApplicationReceiptArchiveRequest {
+        expected_generation: status.archive_generation,
+        archived_at: TimestampMillis::new(40),
+    })?;
+    let second = store.application_command_receipts(&ApplicationPageQuery {
+        after: Some(cursor),
+        limit: PageSize::new(10)?,
+    })?;
+    let commands = first
+        .items
+        .iter()
+        .chain(&second.items)
+        .map(|receipt| receipt.command().as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        commands,
+        vec![
+            "command-page-0",
+            "command-page-1",
+            "command-page-2",
+            "command-page-3",
+            "command-page-4",
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn cold_layout_replay_does_not_repeat_effect_and_audit_retention_is_independent() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let store = RedbStore::open_with_config(
+        RedbStoreConfig::new(directory.path())
+            .with_application_receipt_lifecycle(1, 1)
+            .with_security_audit_limit(2),
+    )?;
+    let workflow = WorkflowId::new("workflow-cold-layout")?;
+    let revision = revision_id('5')?;
+    let document = b"cold-layout-document".to_vec();
+    let layout_digest = IntegrityDigest::hash(&document);
+    let layout_receipt = receipt(
+        "actor:layout-replay",
+        "command-layout-cold",
+        b"put-cold-layout",
+        Some(ApplicationEffectReference::Layout {
+            workflow: workflow.clone(),
+            revision: revision.clone(),
+            generation: 1,
+            digest: layout_digest.clone(),
+        }),
+    )?;
+    let layout_effect = ApplicationCommandEffect::PutLayout(ApplicationLayoutUpdate {
+        layout_schema_version: 1,
+        workflow: workflow.clone(),
+        revision: revision.clone(),
+        generation: 1,
+        digest: layout_digest,
+        author: layout_receipt.actor().clone(),
+        updated_at: TimestampMillis::new(10),
+        document: document.clone(),
+    });
+    store.commit_application_command(&ApplicationCommandCommit {
+        receipt: layout_receipt.clone(),
+        effect: layout_effect.clone(),
+    })?;
+    let second = receipt(
+        "actor:layout-replay",
+        "command-layout-turnover",
+        b"turn-over-layout-receipt",
+        None,
+    )?;
+    store.commit_application_command(&ApplicationCommandCommit {
+        receipt: second,
+        effect: ApplicationCommandEffect::None,
+    })?;
+    assert_eq!(store.application_receipt_status()?.cold_count, 1);
+    assert!(matches!(
+        store.commit_application_command(&ApplicationCommandCommit {
+            receipt: layout_receipt,
+            effect: layout_effect,
+        })?,
+        ApplicationCommandCommitOutcome::Replayed(_)
+    ));
+    let layout = store
+        .application_layout(&workflow, &revision)?
+        .ok_or("layout disappeared after cold replay")?;
+    assert_eq!(layout.generation(), 1);
+    assert_eq!(layout.document(), document);
+
+    for ordinal in 0..3 {
+        store.append_security_audit(&SecurityAuditEntry {
+            evaluated_at: TimestampMillis::new(50 + ordinal),
+            actor: ActorRef::new("actor:layout-replay")?,
+            grant: GrantId::new("grant-application")?,
+            grant_revision: 1,
+            grant_digest: digest('a')?,
+            operation: "inspect_layout".to_owned(),
+            resource_digest: IntegrityDigest::hash(format!("audit-resource-{ordinal}").as_bytes()),
+            decision_digest: IntegrityDigest::hash(format!("audit-decision-{ordinal}").as_bytes())
+                .to_string(),
+            outcome: "allowed".to_owned(),
+            reason_codes: vec!["allowed".to_owned()],
+        })?;
+    }
+    assert_eq!(store.security_audit(&page(10)?)?.items.len(), 2);
+    assert_eq!(store.application_receipt_status()?.cold_count, 1);
+    assert_eq!(
+        store.application_command_receipts(&page(10)?)?.items.len(),
+        2
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "manual release-mode longevity proof across many hot receipt turnovers"]
+fn release_receipt_longevity_crosses_many_hot_bounds_and_replays_after_restart() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let first = receipt(
+        "actor:longevity",
+        "command-longevity-first",
+        b"longevity-first",
+        None,
+    )?;
+    {
+        let store = RedbStore::open_with_config(
+            RedbStoreConfig::new(directory.path())
+                .with_application_receipt_lifecycle(17, 7)
+                .with_security_audit_limit(17),
+        )?;
+        store.commit_application_command(&ApplicationCommandCommit {
+            receipt: first.clone(),
+            effect: ApplicationCommandEffect::None,
+        })?;
+        for ordinal in 0..10_000 {
+            let stored = receipt(
+                "actor:longevity",
+                &format!("command-longevity-{ordinal:05}"),
+                format!("longevity-command-{ordinal}").as_bytes(),
+                None,
+            )?;
+            store.commit_application_command(&ApplicationCommandCommit {
+                receipt: stored,
+                effect: ApplicationCommandEffect::None,
+            })?;
+        }
+        let status = store.application_receipt_status()?;
+        assert!(status.hot_count <= 17);
+        assert!(status.cold_count > 9_900);
+    }
+    let reopened = RedbStore::open_with_config(
+        RedbStoreConfig::new(directory.path())
+            .with_application_receipt_lifecycle(17, 7)
+            .with_security_audit_limit(17),
+    )?;
+    assert!(matches!(
+        reopened.commit_application_command(&ApplicationCommandCommit {
+            receipt: first,
+            effect: ApplicationCommandEffect::None,
+        })?,
+        ApplicationCommandCommitOutcome::Replayed(_)
+    ));
     Ok(())
 }
 
@@ -330,6 +789,89 @@ fn malformed_application_rows_surface_typed_corruption() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn startup_detects_receipt_counter_corruption_and_dual_tier_ownership() -> TestResult {
+    const HOT: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v2.application.command_receipts.hot");
+    const COLD: TableDefinition<'static, &'static [u8], &'static [u8]> =
+        TableDefinition::new("milkdrift.v2.application.command_receipts.cold");
+    const METADATA: TableDefinition<'static, &'static str, u64> =
+        TableDefinition::new("milkdrift.v1.metadata");
+
+    let counter_directory = tempfile::tempdir()?;
+    let stored = receipt(
+        "actor:counter-corruption",
+        "command-counter-corruption",
+        b"counter-corruption",
+        None,
+    )?;
+    {
+        let store = RedbStore::open(counter_directory.path())?;
+        store.commit_application_command(&ApplicationCommandCommit {
+            receipt: stored,
+            effect: ApplicationCommandEffect::None,
+        })?;
+    }
+    let database = Database::open(counter_directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    write
+        .open_table(METADATA)?
+        .insert("application_hot_receipt_count", 0)?;
+    write.commit()?;
+    drop(database);
+    assert!(matches!(
+        RedbStore::open(counter_directory.path()),
+        Err(PersistenceError::Corruption(_))
+            | Err(PersistenceError::Storage {
+                class: StorageFailureClass::Corruption,
+                ..
+            })
+    ));
+
+    let dual_directory = tempfile::tempdir()?;
+    let stored = receipt(
+        "actor:dual-corruption",
+        "command-dual-corruption",
+        b"dual-corruption",
+        None,
+    )?;
+    {
+        let store = RedbStore::open(dual_directory.path())?;
+        store.commit_application_command(&ApplicationCommandCommit {
+            receipt: stored,
+            effect: ApplicationCommandEffect::None,
+        })?;
+    }
+    let database = Database::open(dual_directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    let (key, bytes) = {
+        let hot = write.open_table(HOT)?;
+        let (key, value) = hot
+            .iter()?
+            .next()
+            .transpose()?
+            .ok_or("hot receipt absent")?;
+        (key.value().to_vec(), value.value().to_vec())
+    };
+    write
+        .open_table(COLD)?
+        .insert(key.as_slice(), bytes.as_slice())?;
+    write
+        .open_table(METADATA)?
+        .insert("application_cold_receipt_count", 1)?;
+    write.commit()?;
+    drop(database);
+    assert!(matches!(
+        RedbStore::open(dual_directory.path()),
+        Err(PersistenceError::Corruption(_))
+            | Err(PersistenceError::Storage {
+                class: StorageFailureClass::Corruption,
+                ..
+            })
+    ));
+    Ok(())
+}
+
 fn receipt(
     actor: &str,
     command: &str,
@@ -350,6 +892,28 @@ fn receipt(
         ApplicationCommandResult::Accepted {
             document: br#"{"accepted":true}"#.to_vec(),
             effect,
+        },
+    )
+}
+
+fn rejected_receipt(
+    actor: &str,
+    command: &str,
+    canonical_command: &[u8],
+) -> Result<ApplicationCommandReceipt, PersistenceError> {
+    ApplicationCommandReceipt::new(
+        ActorRef::new(actor).map_err(authority_error)?,
+        CommandId::new(command)?,
+        1,
+        IntegrityDigest::hash(canonical_command),
+        GrantId::new("grant-application").map_err(authority_error)?,
+        1,
+        digest('a').map_err(authority_error)?,
+        Some(IntegrityDigest::hash(b"authority-decision").to_string()),
+        TimestampMillis::new(10),
+        TimestampMillis::new(10),
+        ApplicationCommandResult::Rejected {
+            document: br#"{"accepted":false}"#.to_vec(),
         },
     )
 }

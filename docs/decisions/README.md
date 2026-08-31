@@ -26,3 +26,4 @@ Do not write an ADR for a local refactor, a choice obvious from a small piece of
 - [0020 — One authorized command and read plane](0020-one-authorized-control-and-read-plane.md)
 - [0021 — Byte-pinned identity for trusted host processes](0021-byte-pinned-trusted-host-processes.md)
 - [0022 — Redb owns durable daemon application state](0022-redb-owned-daemon-application-state.md)
+- [0023 — Exact application replay with bounded hot receipts](0023-exact-application-replay-with-bounded-hot-receipts.md)

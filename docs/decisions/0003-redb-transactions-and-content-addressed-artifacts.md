@@ -27,8 +27,8 @@ invalid workspace ancestry/provenance/accounting; invalid snapshots; and missing
 sized, or digest-invalid artifact content. Ordinary reads validate the rows they consume,
 and an explicit bounded, resumable scrub walks the remaining authoritative and derived
 families through run, scheduler, workspace, revision, snapshot, artifact, application-receipt,
-layout, and proposal modules while preserving integrity-cursor schema v1 and physical phase
-ordering. A clean bounded health sample is not a complete-store proof.
+layout, and proposal modules. ADR 0023 advances integrity-cursor schema v2 and the physical phase
+ordering for hot/cold receipt ownership. A clean bounded health sample is not a complete-store proof.
 
 The adapter does not detect replacement or rollback of the entire database, nor an attacker
 who rewrites every affected row and recomputes unkeyed checksums. Those guarantees require a
@@ -55,7 +55,7 @@ walking an authenticated structure.
 
 ADR 0022 extends the same narrow-port rule to daemon application receipts, layouts, proposal
 discovery, and security audit; ADR 0018 now applies it to peer admission, dispatch, observations,
-and retention. Physical schema version 5 and internal document format 9 are exact-current only. Earlier and
+and retention. Physical schema version 6 and internal document format 9 are exact-current only. Earlier and
 future formats are refused; no migration is implemented. Pre-release users must create a new
 store or wait for an explicit future migration tool rather than reinterpret old bytes.
 

@@ -277,6 +277,41 @@ pub struct ApplicationPage<T> {
     pub next: Option<ApplicationCursor>,
 }
 
+/// Current durable accounting and archival boundary for application receipts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ApplicationReceiptStatus {
+    /// Complete immutable receipts in the bounded operational tier.
+    pub hot_count: u64,
+    /// Complete immutable receipts in transparent cold storage.
+    pub cold_count: u64,
+    /// Configured maximum number of hot receipt documents.
+    pub hot_bound: u32,
+    /// Maximum receipts moved by one explicit or transactional archival batch.
+    pub archive_batch_size: u32,
+    /// Monotonic successful archival transaction generation.
+    pub archive_generation: u64,
+    /// Boundary time supplied by the successful archival owner, absent before the first move.
+    pub last_archived_at: Option<TimestampMillis>,
+}
+
+/// One bounded oldest-first archival request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ApplicationReceiptArchiveRequest {
+    /// Exact archival generation observed immediately before this request.
+    pub expected_generation: u64,
+    /// Boundary time recorded if at least one receipt is moved.
+    pub archived_at: TimestampMillis,
+}
+
+/// Result of one bounded transactional archival request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ApplicationReceiptArchiveOutcome {
+    /// Number of complete immutable receipt documents moved from hot to cold.
+    pub archived: u32,
+    /// Accounting and successful archival boundary after the transaction.
+    pub status: ApplicationReceiptStatus,
+}
+
 /// Presentation-only layout update supplied to the atomic command transaction.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ApplicationLayoutUpdate {
@@ -526,9 +561,6 @@ pub enum ApplicationCommandCommitOutcome {
 
 /// Narrow external-command receipt/idempotency port.
 pub trait ApplicationCommandStore: Send + Sync {
-    /// Fails before semantic mutation when the fixed non-evicting receipt set has no free slot.
-    fn ensure_application_command_capacity(&self) -> Result<(), PersistenceError>;
-
     /// Reads one exact actor-scoped external receipt.
     fn application_command_receipt(
         &self,
@@ -545,6 +577,13 @@ pub trait ApplicationCommandStore: Send + Sync {
         &self,
         query: &ApplicationPageQuery,
     ) -> Result<ApplicationPage<ApplicationCommandReceipt>, PersistenceError>;
+    /// Returns exact hot/cold accounting and the most recent successful archival boundary.
+    fn application_receipt_status(&self) -> Result<ApplicationReceiptStatus, PersistenceError>;
+    /// Moves at most the configured batch of oldest complete hot receipts to cold storage.
+    fn archive_application_command_receipts(
+        &self,
+        request: ApplicationReceiptArchiveRequest,
+    ) -> Result<ApplicationReceiptArchiveOutcome, PersistenceError>;
 }
 
 /// Narrow independently addressed layout read/list port.

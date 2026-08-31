@@ -16,9 +16,10 @@ use milkdrift_capability::{CapabilityRequirement, OperationId};
 use milkdrift_control_client::{BearerCredential, ClientConfig, ControlClient};
 use milkdrift_control_protocol::{Command, CommandRequest, PageRequest, ProtocolVersion};
 use milkdrift_daemon::{
-    ActorBindingConfig, ActorGrantConfig, AdapterConfig, AuthorityPresetConfig, DaemonConfig,
-    DaemonHost, PeerHostConfig, PeerRelationshipConfig, PeerSideEffectConfig, RuntimeHostConfig,
-    SecretSourceConfig, ShutdownConfig, ValidatedDaemonConfig, serve,
+    ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
+    AuthorityPresetConfig, DaemonConfig, DaemonHost, PeerHostConfig, PeerRelationshipConfig,
+    PeerSideEffectConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig,
+    ValidatedDaemonConfig, serve,
 };
 use milkdrift_peer_protocol::PeerAction;
 use milkdrift_peer_protocol::PeerRequestId;
@@ -334,7 +335,7 @@ fn configuration(
         Vec::new()
     };
     DaemonConfig {
-        schema_version: 4,
+        schema_version: 5,
         data_root: root.path().join("data"),
         bind: "127.0.0.1:0".parse()?,
         secret_sources: BTreeMap::from([
@@ -410,7 +411,11 @@ fn configuration(
             }],
         },
         shutdown: ShutdownConfig::default(),
-        command_receipt_bound: 100,
+        application_receipts: ApplicationReceiptConfig {
+            hot_receipt_bound: 100,
+            archive_batch_size: 10,
+        },
+        security_audit_record_bound: 100,
     }
     .validate(root.path())
     .map_err(Into::into)

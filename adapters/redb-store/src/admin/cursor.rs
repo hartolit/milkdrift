@@ -1,6 +1,6 @@
 use super::integrity::scan_index_integrity;
 use super::*;
-const INTEGRITY_CURSOR_VERSION: u8 = 1;
+const INTEGRITY_CURSOR_VERSION: u8 = 2;
 const INTEGRITY_CURSOR_PREFIX_BYTES: usize = 33;
 
 pub(crate) fn make_integrity_cursor(
@@ -175,7 +175,7 @@ pub(crate) fn index_cursor_position(
             "index integrity cursor has no phase".to_owned(),
         ));
     };
-    if phase > 39 || key.is_empty() {
+    if phase > 41 || key.is_empty() {
         return Err(PersistenceError::InvalidCursor(
             "index integrity cursor has an unknown phase or empty key".to_owned(),
         ));
@@ -961,10 +961,12 @@ pub(crate) fn index_integrity_cursor_exists(
             .get(key)
             .map_err(error::redb)
             .map(|row| row.is_some()),
-        36 => binary_cursor_exists(read, APPLICATION_COMMAND_RECEIPTS, key),
-        37 => binary_cursor_exists(read, APPLICATION_LAYOUTS, key),
-        38 => binary_cursor_exists(read, APPLICATION_PROPOSALS, key),
-        39 => {
+        36 => binary_cursor_exists(read, APPLICATION_COMMAND_RECEIPTS_HOT, key),
+        37 => binary_cursor_exists(read, APPLICATION_COMMAND_RECEIPTS_COLD, key),
+        38 => binary_cursor_exists(read, APPLICATION_HOT_RECEIPTS_BY_COMPLETION, key),
+        39 => binary_cursor_exists(read, APPLICATION_LAYOUTS, key),
+        40 => binary_cursor_exists(read, APPLICATION_PROPOSALS, key),
+        41 => {
             let sequence = u64::from_be_bytes(key.try_into().map_err(|_| {
                 PersistenceError::InvalidCursor(
                     "security-audit integrity cursor must contain eight bytes".to_owned(),

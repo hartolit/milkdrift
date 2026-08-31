@@ -37,8 +37,10 @@ pub use application::{
     ApplicationCommandCommit, ApplicationCommandCommitOutcome, ApplicationCommandEffect,
     ApplicationCommandReceipt, ApplicationCommandResult, ApplicationCommandStore,
     ApplicationCursor, ApplicationEffectReference, ApplicationLayout, ApplicationLayoutStore,
-    ApplicationLayoutUpdate, ApplicationPage, ApplicationPageQuery, ProposalIndexEntry,
-    ProposalIndexStore, SecurityAuditEntry, SecurityAuditRecord, SecurityAuditStore,
+    ApplicationLayoutUpdate, ApplicationPage, ApplicationPageQuery,
+    ApplicationReceiptArchiveOutcome, ApplicationReceiptArchiveRequest, ApplicationReceiptStatus,
+    ProposalIndexEntry, ProposalIndexStore, SecurityAuditEntry, SecurityAuditRecord,
+    SecurityAuditStore,
 };
 pub use artifact::{
     ArtifactReadAuthority, ArtifactReadChunk, ArtifactReadRequest, ArtifactStore,

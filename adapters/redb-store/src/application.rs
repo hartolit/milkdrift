@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, ops::Bound};
+use std::ops::Bound;
 
 use milkdrift_authority::ActorRef;
 use milkdrift_blueprint::{RevisionId, WorkflowId};
@@ -6,8 +6,9 @@ use milkdrift_persistence::{
     ApplicationCommandCommit, ApplicationCommandCommitOutcome, ApplicationCommandEffect,
     ApplicationCommandReceipt, ApplicationCommandStore, ApplicationCursor,
     ApplicationEffectReference, ApplicationLayout, ApplicationLayoutStore, ApplicationPage,
-    ApplicationPageQuery, CommandId, PersistenceError, ProposalIndexEntry, ProposalIndexStore,
-    SecurityAuditEntry, SecurityAuditRecord, SecurityAuditStore,
+    ApplicationPageQuery, ApplicationReceiptArchiveOutcome, ApplicationReceiptArchiveRequest,
+    ApplicationReceiptStatus, CommandId, PersistenceError, ProposalIndexEntry, ProposalIndexStore,
+    SecurityAuditEntry, SecurityAuditRecord, SecurityAuditStore, TimestampMillis,
 };
 use milkdrift_workspace::RunId;
 use redb::{ReadableTable as _, ReadableTableMetadata as _};
@@ -17,9 +18,11 @@ use crate::{
     fault::FaultPoint,
     json,
     schema::{
-        APPLICATION_COMMAND_RECEIPTS, APPLICATION_LAYOUTS, APPLICATION_PROPOSALS,
-        APPLICATION_RECEIPT_COUNT_KEY, METADATA, SECURITY_AUDIT, SECURITY_AUDIT_COUNT_KEY,
-        SECURITY_AUDIT_NEXT_SEQUENCE_KEY,
+        APPLICATION_COLD_RECEIPT_COUNT_KEY, APPLICATION_COMMAND_RECEIPTS_COLD,
+        APPLICATION_COMMAND_RECEIPTS_HOT, APPLICATION_HOT_RECEIPT_COUNT_KEY,
+        APPLICATION_HOT_RECEIPTS_BY_COMPLETION, APPLICATION_LAYOUTS, APPLICATION_PROPOSALS,
+        APPLICATION_RECEIPT_ARCHIVE_GENERATION_KEY, APPLICATION_RECEIPT_LAST_ARCHIVED_AT_KEY,
+        METADATA, SECURITY_AUDIT, SECURITY_AUDIT_COUNT_KEY, SECURITY_AUDIT_NEXT_SEQUENCE_KEY,
     },
 };
 
@@ -29,35 +32,6 @@ const PROPOSAL_FAMILY: &str = "application proposal index";
 const SECURITY_AUDIT_FAMILY: &str = "security audit record";
 
 impl ApplicationCommandStore for RedbStore {
-    fn ensure_application_command_capacity(&self) -> Result<(), PersistenceError> {
-        let read = self.database().begin_read().map_err(error::redb)?;
-        let receipts = read
-            .open_table(APPLICATION_COMMAND_RECEIPTS)
-            .map_err(error::redb)?;
-        let authoritative_receipt_count = receipts.len().map_err(error::redb)?;
-        let metadata = read.open_table(METADATA).map_err(error::redb)?;
-        let count = metadata
-            .get(APPLICATION_RECEIPT_COUNT_KEY)
-            .map_err(error::redb)?
-            .map(|value| value.value())
-            .ok_or_else(|| error::corruption("application receipt count is missing"))?;
-        if count != authoritative_receipt_count {
-            return Err(error::corruption(
-                "application receipt count disagrees with its authoritative table",
-            ));
-        }
-        if count >= u64::from(self.max_application_receipts) {
-            return Err(PersistenceError::Bounds {
-                location: "application_receipt_retention",
-                reason: format!(
-                    "configured non-evicting receipt bound {} was reached",
-                    self.max_application_receipts
-                ),
-            });
-        }
-        Ok(())
-    }
-
     fn application_command_receipt(
         &self,
         actor: &ActorRef,
@@ -65,13 +39,13 @@ impl ApplicationCommandStore for RedbStore {
     ) -> Result<Option<ApplicationCommandReceipt>, PersistenceError> {
         let key = receipt_key(actor, command)?;
         let read = self.database().begin_read().map_err(error::redb)?;
-        let table = read
-            .open_table(APPLICATION_COMMAND_RECEIPTS)
+        let hot = read
+            .open_table(APPLICATION_COMMAND_RECEIPTS_HOT)
             .map_err(error::redb)?;
-        let value = table.get(key.as_slice()).map_err(error::redb)?;
-        value
-            .map(|bytes| decode_receipt(key.as_slice(), bytes.value()))
-            .transpose()
+        let cold = read
+            .open_table(APPLICATION_COMMAND_RECEIPTS_COLD)
+            .map_err(error::redb)?;
+        receipt_from_tiers(&hot, &cold, key.as_slice())
     }
 
     fn commit_application_command(
@@ -81,49 +55,36 @@ impl ApplicationCommandStore for RedbStore {
         commit.receipt.validate()?;
         let receipt_key = receipt_key(commit.receipt.actor(), commit.receipt.command())?;
         let write = self.database().begin_write().map_err(error::redb)?;
-        let authoritative_receipt_count = {
-            let receipts = write
-                .open_table(APPLICATION_COMMAND_RECEIPTS)
+        let existing = {
+            let hot = write
+                .open_table(APPLICATION_COMMAND_RECEIPTS_HOT)
                 .map_err(error::redb)?;
-            if let Some(bytes) = receipts.get(receipt_key.as_slice()).map_err(error::redb)? {
-                let stored = decode_receipt(receipt_key.as_slice(), bytes.value())?;
-                if stored.command_digest() != commit.receipt.command_digest() {
-                    return Err(PersistenceError::ExternalCommandIdempotencyConflict {
-                        actor: commit.receipt.actor().clone(),
-                        command: commit.receipt.command().clone(),
-                        existing: stored.command_digest().clone(),
-                        supplied: commit.receipt.command_digest().clone(),
-                    });
-                }
-                return Ok(ApplicationCommandCommitOutcome::Replayed(Box::new(stored)));
-            }
-            receipts.len().map_err(error::redb)?
+            let cold = write
+                .open_table(APPLICATION_COMMAND_RECEIPTS_COLD)
+                .map_err(error::redb)?;
+            receipt_from_tiers(&hot, &cold, receipt_key.as_slice())?
         };
-        commit.validate()?;
-        {
-            let mut metadata = write.open_table(METADATA).map_err(error::redb)?;
-            let count = metadata
-                .get(APPLICATION_RECEIPT_COUNT_KEY)
-                .map_err(error::redb)?
-                .map(|value| value.value())
-                .ok_or_else(|| error::corruption("application receipt count is missing"))?;
-            if count != authoritative_receipt_count {
-                return Err(error::corruption(
-                    "application receipt count disagrees with its authoritative table",
-                ));
-            }
-            if count >= u64::from(self.max_application_receipts) {
-                return Err(PersistenceError::Bounds {
-                    location: "application_receipt_retention",
-                    reason: format!(
-                        "configured non-evicting receipt bound {} was reached",
-                        self.max_application_receipts
-                    ),
+        if let Some(stored) = existing {
+            if stored.command_digest() != commit.receipt.command_digest() {
+                return Err(PersistenceError::ExternalCommandIdempotencyConflict {
+                    actor: commit.receipt.actor().clone(),
+                    command: commit.receipt.command().clone(),
+                    existing: stored.command_digest().clone(),
+                    supplied: commit.receipt.command_digest().clone(),
                 });
             }
-            metadata
-                .insert(APPLICATION_RECEIPT_COUNT_KEY, count.saturating_add(1))
-                .map_err(error::redb)?;
+            return Ok(ApplicationCommandCommitOutcome::Replayed(Box::new(stored)));
+        }
+        commit.validate()?;
+        let mut accounting = transaction_receipt_accounting(&write)?;
+        if accounting.hot_count >= u64::from(self.hot_application_receipt_bound) {
+            archive_oldest_hot_receipts(
+                &write,
+                self,
+                &mut accounting,
+                self.application_receipt_archive_batch_size,
+                commit.receipt.completed_at(),
+            )?;
         }
 
         match &commit.effect {
@@ -212,12 +173,30 @@ impl ApplicationCommandStore for RedbStore {
         {
             let bytes = json::encode(&commit.receipt, RECEIPT_FAMILY)?;
             let mut receipts = write
-                .open_table(APPLICATION_COMMAND_RECEIPTS)
+                .open_table(APPLICATION_COMMAND_RECEIPTS_HOT)
                 .map_err(error::redb)?;
             receipts
                 .insert(receipt_key.as_slice(), bytes.as_slice())
                 .map_err(error::redb)?;
+            let order_key = receipt_order_key(&commit.receipt)?;
+            let mut ordered = write
+                .open_table(APPLICATION_HOT_RECEIPTS_BY_COMPLETION)
+                .map_err(error::redb)?;
+            if ordered
+                .insert(order_key.as_slice(), receipt_key.as_slice())
+                .map_err(error::redb)?
+                .is_some()
+            {
+                return Err(error::corruption(
+                    "application receipt completion index rejected a unique identity",
+                ));
+            }
         }
+        accounting.hot_count = accounting
+            .hot_count
+            .checked_add(1)
+            .ok_or(PersistenceError::SequenceOverflow)?;
+        write_receipt_accounting(&write, &accounting)?;
         self.faults.check(FaultPoint::BeforeApplicationCommit)?;
         write.commit().map_err(error::redb)?;
         self.faults.check(FaultPoint::AfterApplicationCommit)?;
@@ -229,13 +208,22 @@ impl ApplicationCommandStore for RedbStore {
         query: &ApplicationPageQuery,
     ) -> Result<ApplicationPage<ApplicationCommandReceipt>, PersistenceError> {
         let read = self.database().begin_read().map_err(error::redb)?;
-        let table = read
-            .open_table(APPLICATION_COMMAND_RECEIPTS)
+        let hot = read
+            .open_table(APPLICATION_COMMAND_RECEIPTS_HOT)
+            .map_err(error::redb)?;
+        let cold = read
+            .open_table(APPLICATION_COMMAND_RECEIPTS_COLD)
             .map_err(error::redb)?;
         let lower: Bound<&[u8]> = query.after.as_ref().map_or(Bound::Unbounded, |cursor| {
             Bound::Excluded(cursor.as_bytes())
         });
-        let rows = table
+        let mut hot_rows = hot
+            .range::<&[u8]>((lower, Bound::Unbounded))
+            .map_err(error::redb)?;
+        let lower: Bound<&[u8]> = query.after.as_ref().map_or(Bound::Unbounded, |cursor| {
+            Bound::Excluded(cursor.as_bytes())
+        });
+        let mut cold_rows = cold
             .range::<&[u8]>((lower, Bound::Unbounded))
             .map_err(error::redb)?;
         let limit = usize::try_from(query.limit.get()).map_err(|_| PersistenceError::Bounds {
@@ -244,17 +232,40 @@ impl ApplicationCommandStore for RedbStore {
         })?;
         let mut items = Vec::with_capacity(limit);
         let mut last_key = None;
-        let mut more = false;
-        for (index, row) in rows.enumerate() {
-            let (key, value) = row.map_err(error::redb)?;
-            if index == limit {
-                more = true;
-                break;
-            }
+        let mut hot_next = hot_rows.next().transpose().map_err(error::redb)?;
+        let mut cold_next = cold_rows.next().transpose().map_err(error::redb)?;
+        while items.len() < limit {
+            let take_hot = match (&hot_next, &cold_next) {
+                (Some((hot_key, _)), Some((cold_key, _))) => {
+                    if hot_key.value() == cold_key.value() {
+                        return Err(error::corruption(
+                            "application receipt has both hot and cold ownership",
+                        ));
+                    }
+                    hot_key.value() < cold_key.value()
+                }
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => break,
+            };
+            let (key, value) = if take_hot {
+                let row = hot_next.take().ok_or_else(|| {
+                    error::corruption("hot application receipt iterator disappeared")
+                })?;
+                hot_next = hot_rows.next().transpose().map_err(error::redb)?;
+                row
+            } else {
+                let row = cold_next.take().ok_or_else(|| {
+                    error::corruption("cold application receipt iterator disappeared")
+                })?;
+                cold_next = cold_rows.next().transpose().map_err(error::redb)?;
+                row
+            };
             let key = key.value().to_vec();
-            items.push(decode_receipt(&key, value.value())?);
+            items.push(decode_receipt(key.as_slice(), value.value())?);
             last_key = Some(key);
         }
+        let more = hot_next.is_some() || cold_next.is_some();
         Ok(ApplicationPage {
             items,
             next: if more {
@@ -262,6 +273,44 @@ impl ApplicationCommandStore for RedbStore {
             } else {
                 None
             },
+        })
+    }
+
+    fn application_receipt_status(&self) -> Result<ApplicationReceiptStatus, PersistenceError> {
+        let read = self.database().begin_read().map_err(error::redb)?;
+        read_receipt_accounting(&read).map(|accounting| accounting.status(self))
+    }
+
+    fn archive_application_command_receipts(
+        &self,
+        request: ApplicationReceiptArchiveRequest,
+    ) -> Result<ApplicationReceiptArchiveOutcome, PersistenceError> {
+        let write = self.database().begin_write().map_err(error::redb)?;
+        let mut accounting = transaction_receipt_accounting(&write)?;
+        if accounting.archive_generation != request.expected_generation {
+            return Err(
+                PersistenceError::ApplicationReceiptArchiveGenerationConflict {
+                    expected: request.expected_generation,
+                    actual: accounting.archive_generation,
+                },
+            );
+        }
+        let archived = archive_oldest_hot_receipts(
+            &write,
+            self,
+            &mut accounting,
+            self.application_receipt_archive_batch_size,
+            request.archived_at,
+        )?;
+        write_receipt_accounting(&write, &accounting)?;
+        self.faults
+            .check(FaultPoint::BeforeApplicationReceiptArchiveCommit)?;
+        write.commit().map_err(error::redb)?;
+        self.faults
+            .check(FaultPoint::AfterApplicationReceiptArchiveCommit)?;
+        Ok(ApplicationReceiptArchiveOutcome {
+            archived,
+            status: accounting.status(self),
         })
     }
 }
@@ -351,8 +400,11 @@ impl ProposalIndexStore for RedbStore {
         let proposals = read
             .open_table(APPLICATION_PROPOSALS)
             .map_err(error::redb)?;
-        let receipts = read
-            .open_table(APPLICATION_COMMAND_RECEIPTS)
+        let hot_receipts = read
+            .open_table(APPLICATION_COMMAND_RECEIPTS_HOT)
+            .map_err(error::redb)?;
+        let cold_receipts = read
+            .open_table(APPLICATION_COMMAND_RECEIPTS_COLD)
             .map_err(error::redb)?;
         let rows = proposals
             .range::<&[u8]>((lower, Bound::Excluded(end.as_slice())))
@@ -372,7 +424,7 @@ impl ProposalIndexStore for RedbStore {
             }
             let key = key.value().to_vec();
             let entry = decode_proposal(&key, value.value())?;
-            validate_proposal_receipt(&receipts, &entry)?;
+            validate_proposal_receipt(&hot_receipts, &cold_receipts, &entry)?;
             last_key = Some(entry.proposal.as_bytes().to_vec());
             items.push(entry);
         }
@@ -388,60 +440,95 @@ impl ProposalIndexStore for RedbStore {
 
     fn rebuild_proposal_index(&self) -> Result<u64, PersistenceError> {
         let write = self.database().begin_write().map_err(error::redb)?;
-        let mut desired = BTreeMap::<Vec<u8>, ProposalIndexEntry>::new();
-        {
-            let receipts = write
-                .open_table(APPLICATION_COMMAND_RECEIPTS)
-                .map_err(error::redb)?;
-            for row in receipts.iter().map_err(error::redb)? {
-                let (key, value) = row.map_err(error::redb)?;
-                let receipt = decode_receipt(key.value(), value.value())?;
-                let Some(ApplicationEffectReference::Proposal {
-                    run,
-                    proposal,
-                    proposed_revision,
-                }) = receipt.result().effect()
-                else {
-                    continue;
-                };
-                let entry = ProposalIndexEntry {
-                    run: run.clone(),
-                    proposal: proposal.clone(),
-                    proposed_revision: proposed_revision.clone(),
-                    receipt_actor: receipt.actor().clone(),
-                    receipt_command: receipt.command().clone(),
-                    created_at: receipt.completed_at(),
-                };
-                let proposal_key = proposal_key(run, proposal, proposed_revision)?;
-                desired.entry(proposal_key).or_insert(entry);
-            }
-        }
-        {
-            let mut proposals = write
-                .open_table(APPLICATION_PROPOSALS)
-                .map_err(error::redb)?;
-            let keys = proposals
-                .iter()
-                .map_err(error::redb)?
-                .map(|row| {
-                    row.map(|(key, _)| key.value().to_vec())
-                        .map_err(error::redb)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            for key in keys {
-                proposals.remove(key.as_slice()).map_err(error::redb)?;
-            }
-            for (key, entry) in &desired {
-                let bytes = json::encode(entry, PROPOSAL_FAMILY)?;
+        write
+            .delete_table(APPLICATION_PROPOSALS)
+            .map_err(error::redb)?;
+        let hot = write
+            .open_table(APPLICATION_COMMAND_RECEIPTS_HOT)
+            .map_err(error::redb)?;
+        let cold = write
+            .open_table(APPLICATION_COMMAND_RECEIPTS_COLD)
+            .map_err(error::redb)?;
+        let mut hot_rows = hot.iter().map_err(error::redb)?;
+        let mut cold_rows = cold.iter().map_err(error::redb)?;
+        let mut hot_next = hot_rows.next().transpose().map_err(error::redb)?;
+        let mut cold_next = cold_rows.next().transpose().map_err(error::redb)?;
+        let mut count = 0_u64;
+        let mut proposals = write
+            .open_table(APPLICATION_PROPOSALS)
+            .map_err(error::redb)?;
+        loop {
+            let take_hot = match (&hot_next, &cold_next) {
+                (Some((hot_key, _)), Some((cold_key, _))) => {
+                    if hot_key.value() == cold_key.value() {
+                        return Err(error::corruption(
+                            "application receipt has both hot and cold ownership",
+                        ));
+                    }
+                    hot_key.value() < cold_key.value()
+                }
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => break,
+            };
+            let (key, value) = if take_hot {
+                let row = hot_next.take().ok_or_else(|| {
+                    error::corruption("hot application receipt iterator disappeared")
+                })?;
+                hot_next = hot_rows.next().transpose().map_err(error::redb)?;
+                row
+            } else {
+                let row = cold_next.take().ok_or_else(|| {
+                    error::corruption("cold application receipt iterator disappeared")
+                })?;
+                cold_next = cold_rows.next().transpose().map_err(error::redb)?;
+                row
+            };
+            let receipt = decode_receipt(key.value(), value.value())?;
+            let Some(ApplicationEffectReference::Proposal {
+                run,
+                proposal,
+                proposed_revision,
+            }) = receipt.result().effect()
+            else {
+                continue;
+            };
+            let entry = ProposalIndexEntry {
+                run: run.clone(),
+                proposal: proposal.clone(),
+                proposed_revision: proposed_revision.clone(),
+                receipt_actor: receipt.actor().clone(),
+                receipt_command: receipt.command().clone(),
+                created_at: receipt.completed_at(),
+            };
+            let key = proposal_key(run, proposal, proposed_revision)?;
+            if let Some(bytes) = proposals.get(key.as_slice()).map_err(error::redb)? {
+                let existing = decode_proposal(key.as_slice(), bytes.value())?;
+                if existing.run != entry.run
+                    || existing.proposal != entry.proposal
+                    || existing.proposed_revision != entry.proposed_revision
+                {
+                    return Err(error::corruption(
+                        "proposal rebuild found conflicting proposal facts",
+                    ));
+                }
+            } else {
+                let bytes = json::encode(&entry, PROPOSAL_FAMILY)?;
                 proposals
                     .insert(key.as_slice(), bytes.as_slice())
                     .map_err(error::redb)?;
+                count = count
+                    .checked_add(1)
+                    .ok_or(PersistenceError::SequenceOverflow)?;
             }
         }
-        let count = u64::try_from(desired.len()).map_err(|_| PersistenceError::Bounds {
-            location: "proposal_index_rebuild",
-            reason: "proposal count exceeds u64".to_owned(),
-        })?;
+        drop(proposals);
+        drop(hot_next);
+        drop(cold_next);
+        drop(hot_rows);
+        drop(cold_rows);
+        drop(hot);
+        drop(cold);
         write.commit().map_err(error::redb)?;
         Ok(count)
     }
@@ -576,6 +663,273 @@ fn receipt_key(actor: &ActorRef, command: &CommandId) -> Result<Vec<u8>, Persist
     codec::pair(actor.as_str(), command.as_str())
 }
 
+pub(crate) fn receipt_order_key(
+    receipt: &ApplicationCommandReceipt,
+) -> Result<Vec<u8>, PersistenceError> {
+    let identity = receipt_key(receipt.actor(), receipt.command())?;
+    let mut key = Vec::with_capacity(8_usize.saturating_add(identity.len()));
+    key.extend_from_slice(&receipt.completed_at().get().to_be_bytes());
+    key.extend_from_slice(&identity);
+    Ok(key)
+}
+
+fn receipt_from_tiers(
+    hot: &impl redb::ReadableTable<&'static [u8], &'static [u8]>,
+    cold: &impl redb::ReadableTable<&'static [u8], &'static [u8]>,
+    key: &[u8],
+) -> Result<Option<ApplicationCommandReceipt>, PersistenceError> {
+    let hot_value = hot.get(key).map_err(error::redb)?;
+    let cold_value = cold.get(key).map_err(error::redb)?;
+    match (hot_value, cold_value) {
+        (Some(_), Some(_)) => Err(error::corruption(
+            "application receipt has both hot and cold ownership",
+        )),
+        (Some(bytes), None) | (None, Some(bytes)) => decode_receipt(key, bytes.value()).map(Some),
+        (None, None) => Ok(None),
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ReceiptAccounting {
+    hot_count: u64,
+    cold_count: u64,
+    archive_generation: u64,
+    last_archived_at: u64,
+}
+
+impl ReceiptAccounting {
+    fn status(self, store: &RedbStore) -> ApplicationReceiptStatus {
+        ApplicationReceiptStatus {
+            hot_count: self.hot_count,
+            cold_count: self.cold_count,
+            hot_bound: store.hot_application_receipt_bound,
+            archive_batch_size: store.application_receipt_archive_batch_size,
+            archive_generation: self.archive_generation,
+            last_archived_at: (self.archive_generation != 0)
+                .then_some(TimestampMillis::new(self.last_archived_at)),
+        }
+    }
+}
+
+fn receipt_accounting_values(
+    metadata: &impl redb::ReadableTable<&'static str, u64>,
+    hot: &impl redb::ReadableTable<&'static [u8], &'static [u8]>,
+    cold: &impl redb::ReadableTable<&'static [u8], &'static [u8]>,
+    ordered: &impl redb::ReadableTable<&'static [u8], &'static [u8]>,
+) -> Result<ReceiptAccounting, PersistenceError> {
+    let value = |key, missing| {
+        metadata
+            .get(key)
+            .map_err(error::redb)?
+            .map(|value| value.value())
+            .ok_or_else(|| error::corruption(missing))
+    };
+    let accounting = ReceiptAccounting {
+        hot_count: value(
+            APPLICATION_HOT_RECEIPT_COUNT_KEY,
+            "hot application receipt count is missing",
+        )?,
+        cold_count: value(
+            APPLICATION_COLD_RECEIPT_COUNT_KEY,
+            "cold application receipt count is missing",
+        )?,
+        archive_generation: value(
+            APPLICATION_RECEIPT_ARCHIVE_GENERATION_KEY,
+            "application receipt archive generation is missing",
+        )?,
+        last_archived_at: value(
+            APPLICATION_RECEIPT_LAST_ARCHIVED_AT_KEY,
+            "application receipt archive time is missing",
+        )?,
+    };
+    if hot.len().map_err(error::redb)? != accounting.hot_count {
+        return Err(error::corruption(
+            "hot application receipt count disagrees with its authoritative table",
+        ));
+    }
+    if cold.len().map_err(error::redb)? != accounting.cold_count {
+        return Err(error::corruption(
+            "cold application receipt count disagrees with its authoritative table",
+        ));
+    }
+    if ordered.len().map_err(error::redb)? != accounting.hot_count {
+        return Err(error::corruption(
+            "hot application receipt count disagrees with its completion index",
+        ));
+    }
+    Ok(accounting)
+}
+
+fn read_receipt_accounting(
+    read: &redb::ReadTransaction,
+) -> Result<ReceiptAccounting, PersistenceError> {
+    let metadata = read.open_table(METADATA).map_err(error::redb)?;
+    let hot = read
+        .open_table(APPLICATION_COMMAND_RECEIPTS_HOT)
+        .map_err(error::redb)?;
+    let cold = read
+        .open_table(APPLICATION_COMMAND_RECEIPTS_COLD)
+        .map_err(error::redb)?;
+    let ordered = read
+        .open_table(APPLICATION_HOT_RECEIPTS_BY_COMPLETION)
+        .map_err(error::redb)?;
+    receipt_accounting_values(&metadata, &hot, &cold, &ordered)
+}
+
+fn transaction_receipt_accounting(
+    write: &redb::WriteTransaction,
+) -> Result<ReceiptAccounting, PersistenceError> {
+    let metadata = write.open_table(METADATA).map_err(error::redb)?;
+    let hot = write
+        .open_table(APPLICATION_COMMAND_RECEIPTS_HOT)
+        .map_err(error::redb)?;
+    let cold = write
+        .open_table(APPLICATION_COMMAND_RECEIPTS_COLD)
+        .map_err(error::redb)?;
+    let ordered = write
+        .open_table(APPLICATION_HOT_RECEIPTS_BY_COMPLETION)
+        .map_err(error::redb)?;
+    receipt_accounting_values(&metadata, &hot, &cold, &ordered)
+}
+
+fn write_receipt_accounting(
+    write: &redb::WriteTransaction,
+    accounting: &ReceiptAccounting,
+) -> Result<(), PersistenceError> {
+    let mut metadata = write.open_table(METADATA).map_err(error::redb)?;
+    metadata
+        .insert(APPLICATION_HOT_RECEIPT_COUNT_KEY, accounting.hot_count)
+        .map_err(error::redb)?;
+    metadata
+        .insert(APPLICATION_COLD_RECEIPT_COUNT_KEY, accounting.cold_count)
+        .map_err(error::redb)?;
+    metadata
+        .insert(
+            APPLICATION_RECEIPT_ARCHIVE_GENERATION_KEY,
+            accounting.archive_generation,
+        )
+        .map_err(error::redb)?;
+    metadata
+        .insert(
+            APPLICATION_RECEIPT_LAST_ARCHIVED_AT_KEY,
+            accounting.last_archived_at,
+        )
+        .map_err(error::redb)?;
+    Ok(())
+}
+
+fn archive_oldest_hot_receipts(
+    write: &redb::WriteTransaction,
+    store: &RedbStore,
+    accounting: &mut ReceiptAccounting,
+    maximum: u32,
+    archived_at: TimestampMillis,
+) -> Result<u32, PersistenceError> {
+    let candidates = {
+        let ordered = write
+            .open_table(APPLICATION_HOT_RECEIPTS_BY_COMPLETION)
+            .map_err(error::redb)?;
+        ordered
+            .iter()
+            .map_err(error::redb)?
+            .take(
+                usize::try_from(maximum).map_err(|_| PersistenceError::Bounds {
+                    location: "application_receipt_archive",
+                    reason: "archive batch exceeds platform".to_owned(),
+                })?,
+            )
+            .map(|row| {
+                row.map(|(order, identity)| (order.value().to_vec(), identity.value().to_vec()))
+                    .map_err(error::redb)
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+    let mut hot = write
+        .open_table(APPLICATION_COMMAND_RECEIPTS_HOT)
+        .map_err(error::redb)?;
+    let mut cold = write
+        .open_table(APPLICATION_COMMAND_RECEIPTS_COLD)
+        .map_err(error::redb)?;
+    let mut ordered = write
+        .open_table(APPLICATION_HOT_RECEIPTS_BY_COMPLETION)
+        .map_err(error::redb)?;
+    for (order_key, identity_key) in &candidates {
+        let bytes = hot
+            .get(identity_key.as_slice())
+            .map_err(error::redb)?
+            .ok_or_else(|| {
+                error::corruption("hot receipt completion index has no authoritative receipt")
+            })?
+            .value()
+            .to_vec();
+        let receipt = decode_receipt(identity_key.as_slice(), bytes.as_slice())?;
+        if receipt_order_key(&receipt)? != *order_key {
+            return Err(error::corruption(
+                "hot receipt completion index disagrees with its receipt",
+            ));
+        }
+        if cold
+            .get(identity_key.as_slice())
+            .map_err(error::redb)?
+            .is_some()
+        {
+            return Err(error::corruption(
+                "application receipt has both hot and cold ownership",
+            ));
+        }
+        store
+            .faults
+            .check(FaultPoint::BeforeApplicationReceiptColdInsert)?;
+        cold.insert(identity_key.as_slice(), bytes.as_slice())
+            .map_err(error::redb)?;
+        store
+            .faults
+            .check(FaultPoint::AfterApplicationReceiptColdInsert)?;
+        if hot
+            .remove(identity_key.as_slice())
+            .map_err(error::redb)?
+            .is_none()
+        {
+            return Err(error::corruption(
+                "hot application receipt disappeared during archival",
+            ));
+        }
+        store
+            .faults
+            .check(FaultPoint::AfterApplicationReceiptHotRemove)?;
+        if ordered
+            .remove(order_key.as_slice())
+            .map_err(error::redb)?
+            .is_none()
+        {
+            return Err(error::corruption(
+                "hot application receipt completion index disappeared during archival",
+            ));
+        }
+    }
+    let archived = u32::try_from(candidates.len()).map_err(|_| PersistenceError::Bounds {
+        location: "application_receipt_archive",
+        reason: "archive result exceeds u32".to_owned(),
+    })?;
+    accounting.hot_count = accounting
+        .hot_count
+        .checked_sub(u64::from(archived))
+        .ok_or_else(|| error::corruption("hot receipt accounting underflow"))?;
+    accounting.cold_count = accounting
+        .cold_count
+        .checked_add(u64::from(archived))
+        .ok_or(PersistenceError::SequenceOverflow)?;
+    accounting.archive_generation = accounting
+        .archive_generation
+        .checked_add(1)
+        .ok_or(PersistenceError::SequenceOverflow)?;
+    accounting.last_archived_at = archived_at.get();
+    Ok(archived)
+}
+
 fn layout_key(workflow: &WorkflowId, revision: &RevisionId) -> Result<Vec<u8>, PersistenceError> {
     codec::pair(workflow.as_str(), revision.as_str())
 }
@@ -661,19 +1015,16 @@ fn validate_stored(
 }
 
 pub(crate) fn validate_proposal_receipt(
-    receipts: &impl redb::ReadableTable<&'static [u8], &'static [u8]>,
+    hot: &impl redb::ReadableTable<&'static [u8], &'static [u8]>,
+    cold: &impl redb::ReadableTable<&'static [u8], &'static [u8]>,
     entry: &ProposalIndexEntry,
 ) -> Result<(), PersistenceError> {
     let key = receipt_key(&entry.receipt_actor, &entry.receipt_command)?;
-    let bytes = receipts
-        .get(key.as_slice())
-        .map_err(error::redb)?
-        .ok_or_else(|| {
-            PersistenceError::Corruption(
-                "proposal index has no authoritative application receipt".to_owned(),
-            )
-        })?;
-    let receipt = decode_receipt(&key, bytes.value())?;
+    let receipt = receipt_from_tiers(hot, cold, key.as_slice())?.ok_or_else(|| {
+        PersistenceError::Corruption(
+            "proposal index has no authoritative application receipt".to_owned(),
+        )
+    })?;
     match receipt.result().effect() {
         Some(ApplicationEffectReference::Proposal {
             run,

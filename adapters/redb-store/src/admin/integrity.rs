@@ -13,7 +13,7 @@ mod scheduler;
 mod snapshots;
 mod workspace;
 
-/// Persisted phase tags. Their values and ordering are integrity-cursor schema v1.
+/// Persisted phase tags. Their values and ordering are integrity-cursor schema v2.
 /// Moving a phase requires an explicit cursor-version decision.
 pub(super) mod phase {
     pub(super) const HEADS: u8 = 0;
@@ -52,10 +52,12 @@ pub(super) mod phase {
     pub(super) const ARTIFACT_PATHS: u8 = 33;
     pub(super) const ARTIFACT_DELETE_GUARDS: u8 = 34;
     pub(super) const ARTIFACT_DIGEST_RESERVATIONS: u8 = 35;
-    pub(super) const APPLICATION_RECEIPTS: u8 = 36;
-    pub(super) const APPLICATION_LAYOUTS: u8 = 37;
-    pub(super) const APPLICATION_PROPOSALS: u8 = 38;
-    pub(super) const SECURITY_AUDIT: u8 = 39;
+    pub(super) const APPLICATION_HOT_RECEIPTS: u8 = 36;
+    pub(super) const APPLICATION_COLD_RECEIPTS: u8 = 37;
+    pub(super) const APPLICATION_HOT_RECEIPT_ORDER: u8 = 38;
+    pub(super) const APPLICATION_LAYOUTS: u8 = 39;
+    pub(super) const APPLICATION_PROPOSALS: u8 = 40;
+    pub(super) const SECURITY_AUDIT: u8 = 41;
 }
 
 /// Shared state for one ordered scan page. Domain modules own tables and validation.

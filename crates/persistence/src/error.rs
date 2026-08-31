@@ -99,6 +99,16 @@ pub enum PersistenceError {
         /// Digest supplied by the conflicting delivery.
         supplied: IntegrityDigest,
     },
+    /// Receipt archival raced a different successful archival generation.
+    #[error(
+        "application receipt archive generation conflict: expected {expected}, actual {actual}"
+    )]
+    ApplicationReceiptArchiveGenerationConflict {
+        /// Generation observed by the caller.
+        expected: u64,
+        /// Authoritative generation inside the archival transaction.
+        actual: u64,
+    },
     /// An immutable identity already exists with different bytes.
     #[error("immutable {entity} conflict for identity {identity}")]
     ImmutableConflict {

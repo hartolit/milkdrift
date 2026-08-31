@@ -29,11 +29,11 @@ use milkdrift_control::{
     WorkflowControlAdapter, WorkflowProposalDocument, workflow_control_descriptor,
 };
 use milkdrift_control_protocol::{
-    ArtifactMetadataRead, AttemptRead, CapabilityRead, Command, CommandAccepted, CommandRequest,
-    ContextManifestRead, Cursor, CursorBinding, DaemonState, ErrorCode, HealthRead, LayoutDocument,
-    NodeRead, Page, PeerRead, ProposalDecision, ProposalRead, ResolveAction, RevisionChange,
-    RevisionDiffRead, RevisionRead, RevisionSummary as PublicRevisionSummary, RunRead,
-    TimelineCategory, TimelineEntry,
+    ApplicationReceiptHealthRead, ArtifactMetadataRead, AttemptRead, CapabilityRead, Command,
+    CommandAccepted, CommandRequest, ContextManifestRead, Cursor, CursorBinding, DaemonState,
+    ErrorCode, HealthRead, LayoutDocument, NodeRead, Page, PeerRead, ProposalDecision,
+    ProposalRead, ResolveAction, RevisionChange, RevisionDiffRead, RevisionRead,
+    RevisionSummary as PublicRevisionSummary, RunRead, TimelineCategory, TimelineEntry,
 };
 use milkdrift_local_process::{LocalProcessAdapter, ProcessProfileDocument};
 use milkdrift_model_provider::{EndpointProfile, ModelEndpointAdapter, descriptor_for_profile};
@@ -50,13 +50,14 @@ use milkdrift_persistence::{
     ApplicationCommandCommit, ApplicationCommandCommitOutcome, ApplicationCommandEffect,
     ApplicationCommandReceipt, ApplicationCommandResult, ApplicationCommandStore,
     ApplicationCursor, ApplicationEffectReference, ApplicationLayoutStore, ApplicationLayoutUpdate,
-    ApplicationPageQuery, ArtifactReadAuthority, ArtifactReadRequest, ArtifactStore, AttemptId,
-    CommandId, CorrelationKey, EventPageQuery, EvidenceId, EvidenceKind, EvidenceReference,
-    IndexedRunState, IntegrityDigest, PageSize, PersistenceError, ProposalIndexEntry,
-    ProposalIndexStore, Reason, ReconciliationDecisionId, RevisionCursor, RevisionFilter,
-    RevisionPageQuery, RevisionStore, RunEventKind, RunQueryStore, RunSequence, RunSummaryCursor,
-    RunSummaryFilter, RunSummaryPageQuery, SecurityAuditEntry, SecurityAuditStore,
-    SignalDeliveryMode, SignalId, SignalTypeId, TimestampMillis, WorkerId,
+    ApplicationPageQuery, ApplicationReceiptArchiveRequest, ApplicationReceiptStatus,
+    ArtifactReadAuthority, ArtifactReadRequest, ArtifactStore, AttemptId, CommandId,
+    CorrelationKey, EventPageQuery, EvidenceId, EvidenceKind, EvidenceReference, IndexedRunState,
+    IntegrityDigest, PageSize, PersistenceError, ProposalIndexEntry, ProposalIndexStore, Reason,
+    ReconciliationDecisionId, RevisionCursor, RevisionFilter, RevisionPageQuery, RevisionStore,
+    RunEventKind, RunQueryStore, RunSequence, RunSummaryCursor, RunSummaryFilter,
+    RunSummaryPageQuery, SecurityAuditEntry, SecurityAuditStore, SignalDeliveryMode, SignalId,
+    SignalTypeId, TimestampMillis, WorkerId,
 };
 use milkdrift_prompt_sequence::{PromptSequenceDocument, compile as compile_prompt_sequence};
 use milkdrift_redb_store::{RedbStore, RedbStoreConfig};
@@ -94,6 +95,7 @@ use read_model::*;
 const OWNER_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
 const APPLICATION_COMMAND_SCHEMA_VERSION: u32 = 1;
 const LEGACY_SIDECAR_FILE: &str = "control-state-v1.json";
+const DEFAULT_PEER_EXECUTION_RECORD_BOUND: u64 = 10_000;
 
 /// Daemon construction, owner-thread, or orderly-shutdown failure.
 #[derive(Debug, Error)]
@@ -182,6 +184,14 @@ struct SharedHealth {
     capacity: u32,
     active_effects: AtomicU32,
     last_failure: Mutex<Option<String>>,
+    receipt_hot_count: AtomicU64,
+    receipt_hot_bound: u32,
+    receipt_archive_batch_size: u32,
+    receipt_cold_count: AtomicU64,
+    receipt_archive_generation: AtomicU64,
+    receipt_last_archived_at: AtomicU64,
+    receipt_archival_degraded: AtomicBool,
+    receipt_archival_failure: Mutex<Option<String>>,
 }
 
 impl SharedHealth {
@@ -193,6 +203,31 @@ impl SharedHealth {
     fn failure(&self, message: &str) {
         if let Ok(mut failure) = self.last_failure.lock() {
             *failure = Some(bounded(message));
+        }
+    }
+
+    fn receipt_status(&self, status: ApplicationReceiptStatus) {
+        self.receipt_hot_count
+            .store(status.hot_count, Ordering::SeqCst);
+        self.receipt_cold_count
+            .store(status.cold_count, Ordering::SeqCst);
+        self.receipt_archive_generation
+            .store(status.archive_generation, Ordering::SeqCst);
+        self.receipt_last_archived_at.store(
+            status.last_archived_at.map_or(0, TimestampMillis::get),
+            Ordering::SeqCst,
+        );
+        self.receipt_archival_degraded
+            .store(false, Ordering::SeqCst);
+        if let Ok(mut failure) = self.receipt_archival_failure.lock() {
+            *failure = None;
+        }
+    }
+
+    fn receipt_failure(&self) {
+        self.receipt_archival_degraded.store(true, Ordering::SeqCst);
+        if let Ok(mut failure) = self.receipt_archival_failure.lock() {
+            *failure = Some("application receipt archival/storage operation failed".to_owned());
         }
     }
 
@@ -211,6 +246,26 @@ impl SharedHealth {
                 .lock()
                 .ok()
                 .and_then(|failure| failure.clone()),
+            application_receipts: ApplicationReceiptHealthRead {
+                hot_count: self.receipt_hot_count.load(Ordering::SeqCst),
+                hot_bound: self.receipt_hot_bound,
+                archive_batch_size: self.receipt_archive_batch_size,
+                cold_count: self.receipt_cold_count.load(Ordering::SeqCst),
+                archive_generation: self.receipt_archive_generation.load(Ordering::SeqCst),
+                last_archived_at_unix_ms: match self
+                    .receipt_archive_generation
+                    .load(Ordering::SeqCst)
+                {
+                    0 => None,
+                    _ => Some(self.receipt_last_archived_at.load(Ordering::SeqCst)),
+                },
+                archival_degraded: self.receipt_archival_degraded.load(Ordering::SeqCst),
+                last_archival_failure: self
+                    .receipt_archival_failure
+                    .lock()
+                    .ok()
+                    .and_then(|failure| failure.clone()),
+            },
         }
     }
 }
@@ -257,6 +312,14 @@ impl DaemonHost {
             capacity: queue_capacity,
             active_effects: AtomicU32::new(0),
             last_failure: Mutex::new(None),
+            receipt_hot_count: AtomicU64::new(0),
+            receipt_hot_bound: config.document.application_receipts.hot_receipt_bound,
+            receipt_archive_batch_size: config.document.application_receipts.archive_batch_size,
+            receipt_cold_count: AtomicU64::new(0),
+            receipt_archive_generation: AtomicU64::new(0),
+            receipt_last_archived_at: AtomicU64::new(0),
+            receipt_archival_degraded: AtomicBool::new(false),
+            receipt_archival_failure: Mutex::new(None),
         });
         let thread_health = health.clone();
         let thread_auth = auth.clone();
@@ -755,10 +818,12 @@ impl Owner {
         }
         let store = Arc::new(
             RedbStore::open_with_config(
-                RedbStoreConfig::new(&config.document.data_root).with_application_limits(
-                    config.document.command_receipt_bound,
-                    config.document.command_receipt_bound,
-                ),
+                RedbStoreConfig::new(&config.document.data_root)
+                    .with_application_receipt_lifecycle(
+                        config.document.application_receipts.hot_receipt_bound,
+                        config.document.application_receipts.archive_batch_size,
+                    )
+                    .with_security_audit_limit(config.document.security_audit_record_bound),
             )
             .map_err(|error| error.to_string())?,
         );
@@ -851,6 +916,11 @@ impl Owner {
                 limit: PageSize::new(1).map_err(|error| error.to_string())?,
             })
             .map_err(|error| error.to_string())?;
+        health.receipt_status(
+            store
+                .application_receipt_status()
+                .map_err(|error| error.to_string())?,
+        );
         store
             .application_layouts(&ApplicationPageQuery {
                 after: None,
@@ -924,6 +994,37 @@ impl Owner {
     }
 
     fn maintenance(&self, health: &SharedHealth) {
+        match self.store.application_receipt_status() {
+            Ok(status) if status.hot_count >= u64::from(status.hot_bound) => {
+                match self.store.archive_application_command_receipts(
+                    ApplicationReceiptArchiveRequest {
+                        expected_generation: status.archive_generation,
+                        archived_at: TimestampMillis::new(unix_millis()),
+                    },
+                ) {
+                    Ok(outcome) => health.receipt_status(outcome.status),
+                    Err(error) => {
+                        warn!(
+                            outcome = "error",
+                            code = "application_receipt_archive",
+                            "{}",
+                            bounded(&error.to_string())
+                        );
+                        health.receipt_failure();
+                    }
+                }
+            }
+            Ok(status) => health.receipt_status(status),
+            Err(error) => {
+                warn!(
+                    outcome = "error",
+                    code = "application_receipt_status",
+                    "{}",
+                    bounded(&error.to_string())
+                );
+                health.receipt_failure();
+            }
+        }
         if let Err(error) = self.runtime.scheduler_tick() {
             warn!(
                 outcome = "error",
@@ -1612,7 +1713,7 @@ fn build_peer_runtime(
                 threads: config.document.runtime.effect_threads,
                 maximum_global_active: config.document.runtime.global_concurrency,
                 maximum_dispatch_queue: config.document.runtime.global_concurrency,
-                maximum_records: u64::from(config.document.command_receipt_bound)
+                maximum_records: DEFAULT_PEER_EXECUTION_RECORD_BOUND
                     .max(u64::from(config.document.runtime.global_concurrency)),
                 recovery_page: config.document.runtime.maximum_effect_claim,
                 poll_interval: Duration::from_millis(

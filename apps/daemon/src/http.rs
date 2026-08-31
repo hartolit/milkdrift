@@ -480,6 +480,7 @@ async fn readiness(
             request_queue_capacity: 0,
             active_effects: 0,
             last_failure: None,
+            application_receipts: health.application_receipts,
         },
     )
 }

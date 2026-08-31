@@ -23,7 +23,16 @@ pub(crate) fn initialize_schema(
             .insert(NONTERMINAL_SET_COUNT_KEY, 0)
             .map_err(error::redb)?;
         table
-            .insert(APPLICATION_RECEIPT_COUNT_KEY, 0)
+            .insert(APPLICATION_HOT_RECEIPT_COUNT_KEY, 0)
+            .map_err(error::redb)?;
+        table
+            .insert(APPLICATION_COLD_RECEIPT_COUNT_KEY, 0)
+            .map_err(error::redb)?;
+        table
+            .insert(APPLICATION_RECEIPT_ARCHIVE_GENERATION_KEY, 0)
+            .map_err(error::redb)?;
+        table
+            .insert(APPLICATION_RECEIPT_LAST_ARCHIVED_AT_KEY, 0)
             .map_err(error::redb)?;
         table
             .insert(SECURITY_AUDIT_NEXT_SEQUENCE_KEY, 1)
@@ -58,7 +67,17 @@ pub(crate) fn initialize_schema(
     }
     {
         let _table = write
-            .open_table(APPLICATION_COMMAND_RECEIPTS)
+            .open_table(APPLICATION_COMMAND_RECEIPTS_HOT)
+            .map_err(error::redb)?;
+    }
+    {
+        let _table = write
+            .open_table(APPLICATION_COMMAND_RECEIPTS_COLD)
+            .map_err(error::redb)?;
+    }
+    {
+        let _table = write
+            .open_table(APPLICATION_HOT_RECEIPTS_BY_COMPLETION)
             .map_err(error::redb)?;
     }
     {
@@ -250,7 +269,10 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
         internal_document_format,
         lease_set_revision,
         nonterminal_set_count,
-        application_receipt_count,
+        application_hot_receipt_count,
+        application_cold_receipt_count,
+        application_receipt_archive_generation,
+        application_receipt_last_archived_at,
         security_audit_next_sequence,
         security_audit_count,
     ) = {
@@ -272,8 +294,20 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
             .get(NONTERMINAL_SET_COUNT_KEY)
             .map_err(error::redb)?
             .map(|value| value.value());
-        let application_receipt_count = table
-            .get(APPLICATION_RECEIPT_COUNT_KEY)
+        let application_hot_receipt_count = table
+            .get(APPLICATION_HOT_RECEIPT_COUNT_KEY)
+            .map_err(error::redb)?
+            .map(|value| value.value());
+        let application_cold_receipt_count = table
+            .get(APPLICATION_COLD_RECEIPT_COUNT_KEY)
+            .map_err(error::redb)?
+            .map(|value| value.value());
+        let application_receipt_archive_generation = table
+            .get(APPLICATION_RECEIPT_ARCHIVE_GENERATION_KEY)
+            .map_err(error::redb)?
+            .map(|value| value.value());
+        let application_receipt_last_archived_at = table
+            .get(APPLICATION_RECEIPT_LAST_ARCHIVED_AT_KEY)
             .map_err(error::redb)?
             .map(|value| value.value());
         let security_audit_next_sequence = table
@@ -289,7 +323,10 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
             internal_document_format,
             lease_set_revision,
             nonterminal_set_count,
-            application_receipt_count,
+            application_hot_receipt_count,
+            application_cold_receipt_count,
+            application_receipt_archive_generation,
+            application_receipt_last_archived_at,
             security_audit_next_sequence,
             security_audit_count,
         )
@@ -320,8 +357,21 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
     }
     lease_set_revision.ok_or_else(|| error::corruption("lease-set revision is missing"))?;
     nonterminal_set_count.ok_or_else(|| error::corruption("nonterminal-set count is missing"))?;
-    let application_receipt_count = application_receipt_count
-        .ok_or_else(|| error::corruption("application receipt count is missing"))?;
+    let application_hot_receipt_count = application_hot_receipt_count
+        .ok_or_else(|| error::corruption("hot application receipt count is missing"))?;
+    let application_cold_receipt_count = application_cold_receipt_count
+        .ok_or_else(|| error::corruption("cold application receipt count is missing"))?;
+    let application_receipt_archive_generation = application_receipt_archive_generation
+        .ok_or_else(|| error::corruption("application receipt archive generation is missing"))?;
+    let application_receipt_last_archived_at = application_receipt_last_archived_at
+        .ok_or_else(|| error::corruption("application receipt archive time is missing"))?;
+    if application_receipt_archive_generation == 0
+        && (application_cold_receipt_count != 0 || application_receipt_last_archived_at != 0)
+    {
+        return Err(error::corruption(
+            "cold application receipts exist before any archive generation",
+        ));
+    }
     let security_audit_next_sequence = security_audit_next_sequence
         .ok_or_else(|| error::corruption("security audit next sequence is missing"))?;
     let security_audit_count =
@@ -355,13 +405,50 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
         let _table = read.open_table(COMMAND_RESULTS).map_err(error::redb)?;
     }
     {
-        let table = read
-            .open_table(APPLICATION_COMMAND_RECEIPTS)
+        let hot = read
+            .open_table(APPLICATION_COMMAND_RECEIPTS_HOT)
             .map_err(error::redb)?;
-        if table.len().map_err(error::redb)? != application_receipt_count {
+        let cold = read
+            .open_table(APPLICATION_COMMAND_RECEIPTS_COLD)
+            .map_err(error::redb)?;
+        let ordered = read
+            .open_table(APPLICATION_HOT_RECEIPTS_BY_COMPLETION)
+            .map_err(error::redb)?;
+        if hot.len().map_err(error::redb)? != application_hot_receipt_count {
             return Err(error::corruption(
-                "application receipt count disagrees with its authoritative table",
+                "hot application receipt count disagrees with its authoritative table",
             ));
+        }
+        if cold.len().map_err(error::redb)? != application_cold_receipt_count {
+            return Err(error::corruption(
+                "cold application receipt count disagrees with its authoritative table",
+            ));
+        }
+        if ordered.len().map_err(error::redb)? != application_hot_receipt_count {
+            return Err(error::corruption(
+                "hot application receipt count disagrees with its completion index",
+            ));
+        }
+        for row in hot.iter().map_err(error::redb)? {
+            let (key, bytes) = row.map_err(error::redb)?;
+            if cold.get(key.value()).map_err(error::redb)?.is_some() {
+                return Err(error::corruption(
+                    "application receipt has both hot and cold ownership",
+                ));
+            }
+            let receipt = crate::application::decode_receipt(key.value(), bytes.value())?;
+            let order_key = crate::application::receipt_order_key(&receipt)?;
+            let indexed = ordered
+                .get(order_key.as_slice())
+                .map_err(error::redb)?
+                .ok_or_else(|| {
+                    error::corruption("hot application receipt is missing its completion index")
+                })?;
+            if indexed.value() != key.value() {
+                return Err(error::corruption(
+                    "hot application receipt completion index points to another identity",
+                ));
+            }
         }
     }
     {

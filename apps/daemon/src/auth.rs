@@ -302,13 +302,14 @@ fn os_bytes(value: std::ffi::OsString) -> Result<Vec<u8>, SecretResolverError> {
 mod tests {
     use super::*;
     use crate::config::{
-        AdapterConfig, DaemonConfig, PeerHostConfig, RuntimeHostConfig, ShutdownConfig,
+        AdapterConfig, ApplicationReceiptConfig, DaemonConfig, PeerHostConfig, RuntimeHostConfig,
+        ShutdownConfig,
     };
     use std::{collections::BTreeMap, net::SocketAddr};
 
     fn config(root: &std::path::Path, token: &std::path::Path) -> DaemonConfig {
         DaemonConfig {
-            schema_version: 4,
+            schema_version: 5,
             data_root: root.join("data"),
             bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             secret_sources: BTreeMap::from([(
@@ -331,7 +332,11 @@ mod tests {
             adapters: AdapterConfig::default(),
             peers: PeerHostConfig::default(),
             shutdown: ShutdownConfig::default(),
-            command_receipt_bound: 100,
+            application_receipts: ApplicationReceiptConfig {
+                hot_receipt_bound: 100,
+                archive_batch_size: 10,
+            },
+            security_audit_record_bound: 100,
         }
     }
 

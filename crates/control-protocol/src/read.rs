@@ -20,6 +20,30 @@ pub struct HealthRead {
     pub active_effects: u32,
     /// Redacted last startup/worker failure.
     pub last_failure: Option<String>,
+    /// Bounded application-receipt lifecycle facts without command or result content.
+    pub application_receipts: ApplicationReceiptHealthRead,
+}
+
+/// Redacted exact-replay receipt lifecycle health.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApplicationReceiptHealthRead {
+    /// Complete immutable receipts in the recent operational tier.
+    pub hot_count: u64,
+    /// Configured hot receipt ceiling.
+    pub hot_bound: u32,
+    /// Maximum receipts moved by one bounded archival transaction.
+    pub archive_batch_size: u32,
+    /// Complete immutable receipts in transparent cold storage.
+    pub cold_count: u64,
+    /// Monotonic successful archival boundary.
+    pub archive_generation: u64,
+    /// Time of the most recent successful move, absent before archival.
+    pub last_archived_at_unix_ms: Option<u64>,
+    /// Whether the last bounded archival/storage refresh failed.
+    pub archival_degraded: bool,
+    /// Redacted failure classification, never command or result content.
+    pub last_archival_failure: Option<String>,
 }
 
 /// Stable daemon lifecycle state.

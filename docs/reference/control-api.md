@@ -1,4 +1,4 @@
-# Local control API 2.0
+# Local control API 2.1
 
 This document is the implemented external contract for `milkdrift-daemon`. It describes a local control plane, not a peer protocol or public internet service.
 
@@ -9,17 +9,18 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":2,"minor":0}}
+{"protocol":{"major":2,"minor":1}}
 ```
 
 Major 2 is required. Protocol 1 is deliberately unsupported because attempt inspection now carries
-the complete frozen authority basis and execution-boundary decisions. The current minor is 0. The
+the complete frozen authority basis and execution-boundary decisions. The current minor is 1 and
+adds redacted application-receipt lifecycle health. The
 authenticated `/v1/...` HTTP route namespace is stable and independent from the negotiated envelope
 version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 0},
+  "protocol": {"major": 2, "minor": 1},
   "request_id": "req-1",
   "value": {}
 }
@@ -33,7 +34,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 0},
+  "protocol": {"major": 2, "minor": 1},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -50,7 +51,7 @@ All mutations use `POST /v1/commands`. A command envelope has no actor field:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 0},
+  "protocol": {"major": 2, "minor": 1},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,
@@ -60,7 +61,7 @@ All mutations use `POST /v1/commands`. A command envelope has no actor field:
 }
 ```
 
-`command_id` is an actor-and-grant-scoped idempotency key. The daemon computes a canonical digest over the protocol/command schema, complete command envelope, authenticated actor, and exact grant identity/revision/digest before application. Repeating that exact request returns the durably stored accepted result with `replayed: true`, or the exact stored deterministic rejection; reusing the identity with different content or after grant replacement returns `conflict`. Receipts survive daemon restart and have a configured finite non-evicting bound: capacity exhaustion rejects a new identity instead of discarding prior idempotency truth. Mutating requests are not implicitly retried by `milkdrift-control-client`; a caller retry must preserve the exact body, idempotency identity, and authority basis.
+`command_id` is an actor-and-grant-scoped idempotency key. The daemon computes a canonical digest over the protocol/command schema, complete command envelope, authenticated actor, and exact grant identity/revision/digest before application. Repeating that exact request returns the durably stored accepted result with `replayed: true`, or the exact stored deterministic rejection; reusing the identity with different content or after grant replacement returns `conflict`. Receipts survive daemon restart and retain exact replay for the complete store generation. A configured hot bound limits recent operational placement only; bounded oldest-first archival moves immutable documents to transparent cold storage, and new-command commit can reclaim capacity transactionally. Mutating requests are not implicitly retried by `milkdrift-control-client`; a caller retry must preserve the exact body, idempotency identity, and authority basis.
 
 For layout writes and proposal discovery, the receipt and same-store application effect commit in one redb transaction. Runtime/control effects retain their existing idempotent transaction as authority. If the daemon crashes after such an effect commits but before its application receipt, redelivery uses the same stable internal command identity, observes runtime replay, and commits the missing external receipt without applying replacement work. Transient storage, overload, unavailable, timeout, uncertain, corruption, and internal failures are not converted into durable rejections.
 
@@ -96,7 +97,7 @@ Every route is authenticated and authority-filtered. List queries constrain or f
 | Method and path | Result |
 | --- | --- |
 | `POST /v1/version` | Protocol negotiation under `negotiate_control_protocol`. |
-| `GET /v1/health` | Detailed lifecycle, queue, worker, and failure health under `inspect_daemon_health` plus daemon detailed-health scope. |
+| `GET /v1/health` | Detailed lifecycle, queue, worker, failure, and redacted hot/cold receipt archival health under `inspect_daemon_health` plus daemon detailed-health scope. |
 | `GET /v1/readiness` | Coarse liveness/readiness with zeroed operational detail under `read_readiness`; returns 503 while not ready. |
 | `GET /v1/revisions?limit=&cursor=&workflow=` | Stable bounded revision-summary page. |
 | `GET /v1/revisions/{revision}` | Immutable revision summary, lineage, provenance, counts, and bounded document. |
